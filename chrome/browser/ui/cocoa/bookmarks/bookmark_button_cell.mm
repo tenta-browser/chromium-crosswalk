@@ -12,6 +12,7 @@
 #import "chrome/browser/ui/cocoa/bookmarks/bookmark_button.h"
 #import "chrome/browser/ui/cocoa/bookmarks/bookmark_context_menu_cocoa_controller.h"
 #include "chrome/browser/ui/cocoa/l10n_util.h"
+#include "chrome/browser/ui/layout_constants.h"
 #include "chrome/grit/generated_resources.h"
 #import "components/bookmarks/browser/bookmark_model.h"
 #import "ui/base/cocoa/nsview_additions.h"
@@ -87,6 +88,11 @@ const CGFloat kKernAmount = 0.2;
 
 @synthesize startingChildIndex = startingChildIndex_;
 @synthesize drawFolderArrow = drawFolderArrow_;
+
+// Overridden from GradientButtonCell.
++ (CGFloat)insetInView:(NSView*)view {
+  return 0;
+}
 
 + (id)buttonCellForNode:(const BookmarkNode*)node
                    text:(NSString*)text
@@ -372,7 +378,7 @@ const CGFloat kKernAmount = 0.2;
   // Return the space needed to display the image and title, with a little
   // distance between them.
   cellSize = NSMakeSize(kIconLeadingPadding + [[self image] size].width,
-                        bookmarks::kBookmarkButtonHeight);
+                        GetLayoutConstant(BOOKMARK_BAR_HEIGHT));
   NSString* title = [self visibleTitle];
   if ([title length] > 0) {
     CGFloat textWidth =
@@ -392,7 +398,7 @@ const CGFloat kKernAmount = 0.2;
 
 - (NSRect)imageRectForBounds:(NSRect)theRect {
   NSRect imageRect = [super imageRectForBounds:theRect];
-  const CGFloat inset = [self insetInView:[self controlView]];
+  const CGFloat inset = [[self class] insetInView:[self controlView]];
   imageRect.origin.y -= 1;
   imageRect.origin.x =
       cocoa_l10n_util::ShouldDoExperimentalRTLLayout()
@@ -402,19 +408,19 @@ const CGFloat kKernAmount = 0.2;
 }
 
 - (NSRect)titleRectForBounds:(NSRect)theRect {
+  // This lays out textRect for LTR and flips it for RTL at the end, if needed.
   NSRect textRect = [super titleRectForBounds:theRect];
   NSRect imageRect = [self imageRectForBounds:theRect];
-  if (cocoa_l10n_util::ShouldDoExperimentalRTLLayout()) {
-    textRect.origin.x = kTrailingPadding;
-    if (drawFolderArrow_) {
-      textRect.origin.x +=
-          [arrowImage_ size].width + kHierarchyButtonTrailingPadding;
-    }
-    textRect.size.width =
-        NSMinX(imageRect) - textRect.origin.x - kIconTextSpacer;
-  } else {
-    textRect.origin.x = NSMaxX(imageRect) + kIconTextSpacer;
-  }
+  CGFloat imageEnd = cocoa_l10n_util::ShouldDoExperimentalRTLLayout()
+                         ? NSWidth(theRect) - NSMinX(imageRect)  // Un-flip
+                         : NSMaxX(imageRect);
+  textRect.origin.x = imageEnd + kIconTextSpacer;
+  textRect.size.width = NSWidth(theRect) - NSMinX(textRect) - kTrailingPadding;
+  if (drawFolderArrow_)
+    textRect.size.width -=
+        [arrowImage_ size].width + kHierarchyButtonTrailingPadding;
+  if (cocoa_l10n_util::ShouldDoExperimentalRTLLayout())
+    textRect.origin.x = NSWidth(theRect) - NSWidth(textRect) - NSMinX(textRect);
   return textRect;
 }
 

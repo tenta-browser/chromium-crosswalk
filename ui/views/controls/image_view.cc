@@ -29,8 +29,7 @@ void* GetBitmapPixels(const gfx::ImageSkia& img, float image_scale) {
 const char ImageView::kViewClassName[] = "ImageView";
 
 ImageView::ImageView()
-    : image_size_set_(false),
-      horiz_alignment_(CENTER),
+    : horiz_alignment_(CENTER),
       vert_alignment_(CENTER),
       last_paint_scale_(0.f),
       last_painted_bitmap_pixels_(NULL) {}
@@ -63,7 +62,6 @@ const gfx::ImageSkia& ImageView::GetImage() const {
 }
 
 void ImageView::SetImageSize(const gfx::Size& image_size) {
-  image_size_set_ = true;
   image_size_ = image_size;
   PreferredSizeChanged();
 }
@@ -74,7 +72,7 @@ gfx::Rect ImageView::GetImageBounds() const {
 }
 
 void ImageView::ResetImageSize() {
-  image_size_set_ = false;
+  image_size_.reset();
 }
 
 bool ImageView::IsImageEqual(const gfx::ImageSkia& img) const {
@@ -89,7 +87,7 @@ bool ImageView::IsImageEqual(const gfx::ImageSkia& img) const {
 }
 
 gfx::Size ImageView::GetImageSize() const {
-  return image_size_set_ ? image_size_ : image_.size();
+  return image_size_.value_or(image_.size());
 }
 
 gfx::Point ImageView::ComputeImageOrigin(const gfx::Size& image_size) const {
@@ -106,7 +104,9 @@ gfx::Point ImageView::ComputeImageOrigin(const gfx::Size& image_size) const {
   switch (actual_horiz_alignment) {
     case LEADING:  x = insets.left();                                 break;
     case TRAILING: x = width() - insets.right() - image_size.width(); break;
-    case CENTER:   x = (width() - image_size.width()) / 2;            break;
+    case CENTER:
+      x = (width() - insets.width() - image_size.width()) / 2 + insets.left();
+      break;
     default:       NOTREACHED(); x = 0;                               break;
   }
 
@@ -114,7 +114,9 @@ gfx::Point ImageView::ComputeImageOrigin(const gfx::Size& image_size) const {
   switch (vert_alignment_) {
     case LEADING:  y = insets.top();                                     break;
     case TRAILING: y = height() - insets.bottom() - image_size.height(); break;
-    case CENTER:   y = (height() - image_size.height()) / 2;             break;
+    case CENTER:
+      y = (height() - insets.height() - image_size.height()) / 2 + insets.top();
+      break;
     default:       NOTREACHED(); y = 0;                                  break;
   }
 
@@ -127,7 +129,7 @@ void ImageView::OnPaint(gfx::Canvas* canvas) {
 }
 
 void ImageView::GetAccessibleNodeData(ui::AXNodeData* node_data) {
-  node_data->role = ui::AX_ROLE_IMAGE;
+  node_data->role = ax::mojom::Role::kImage;
   node_data->SetName(tooltip_text_);
 }
 

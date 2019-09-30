@@ -14,8 +14,8 @@
 #include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
 #include "mojo/public/cpp/bindings/binding.h"
-#include "services/catalog/public/interfaces/catalog.mojom.h"
-#include "services/catalog/public/interfaces/constants.mojom.h"
+#include "services/catalog/public/mojom/catalog.mojom.h"
+#include "services/catalog/public/mojom/constants.mojom.h"
 #include "services/service_manager/public/cpp/connector.h"
 #include "services/service_manager/public/cpp/service_context.h"
 #include "ui/base/models/table_model.h"
@@ -53,7 +53,8 @@ class CatalogViewerContents : public views::WidgetDelegateView,
     SetBorder(views::CreateEmptyBorder(gfx::Insets(kPadding)));
     SetBackground(views::CreateStandardPanelBackground());
 
-    views::GridLayout* layout = views::GridLayout::CreateAndInstall(this);
+    views::GridLayout* layout =
+        SetLayoutManager(std::make_unique<views::GridLayout>(this));
 
     views::ColumnSet* columns = layout->AddColumnSet(0);
     columns->AddColumn(views::GridLayout::FILL, views::GridLayout::FILL, 0,

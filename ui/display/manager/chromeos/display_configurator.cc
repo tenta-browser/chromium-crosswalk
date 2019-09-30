@@ -11,7 +11,6 @@
 #include "base/command_line.h"
 #include "base/logging.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/time/time.h"
 #include "chromeos/system/devicemode.h"
 #include "ui/display/display.h"
@@ -40,8 +39,6 @@ struct DisplayState {
   // Mode used when displaying the same desktop on multiple displays.
   const DisplayMode* mirror_mode = nullptr;
 };
-
-void DoNothing(bool status) {}
 
 }  // namespace
 
@@ -267,6 +264,12 @@ bool DisplayConfigurator::DisplayLayoutManagerImpl::GetDisplayLayout(
       break;
     }
     case MULTIPLE_DISPLAY_STATE_DUAL_MIRROR: {
+      if (configurator_->mirroring_controller_->IsSoftwareMirroringEnforced()) {
+        LOG(WARNING) << "Ignoring request to enter hardware mirror mode "
+                        "because software mirroring is enforced";
+        return false;
+      }
+
       bool can_set_mirror_mode =
           configurator_->is_multi_mirroring_enabled_
               ? (states.size() > 1 &&
@@ -500,7 +503,6 @@ DisplayConfigurator::DisplayConfigurator()
       current_display_state_(MULTIPLE_DISPLAY_STATE_INVALID),
       current_power_state_(chromeos::DISPLAY_POWER_ALL_ON),
       requested_display_state_(MULTIPLE_DISPLAY_STATE_INVALID),
-      requested_power_state_(chromeos::DISPLAY_POWER_ALL_ON),
       pending_power_state_(chromeos::DISPLAY_POWER_ALL_ON),
       has_pending_power_state_(false),
       pending_power_flags_(kSetDisplayPowerNoFlags),
@@ -511,8 +513,8 @@ DisplayConfigurator::DisplayConfigurator()
       displays_suspended_(false),
       layout_manager_(new DisplayLayoutManagerImpl(this)),
       is_multi_mirroring_enabled_(
-          base::CommandLine::ForCurrentProcess()->HasSwitch(
-              ::switches::kEnableMultiMirroring)),
+          !base::CommandLine::ForCurrentProcess()->HasSwitch(
+              ::switches::kDisableMultiMirroring)),
       weak_ptr_factory_(this) {}
 
 DisplayConfigurator::~DisplayConfigurator() {
@@ -543,9 +545,25 @@ void DisplayConfigurator::SetDelegateForTesting(
 
 void DisplayConfigurator::SetInitialDisplayPower(
     chromeos::DisplayPowerState power_state) {
-  DCHECK_EQ(current_display_state_, MULTIPLE_DISPLAY_STATE_INVALID);
-  requested_power_state_ = current_power_state_ = power_state;
-  NotifyPowerStateObservers();
+  if (requested_power_state_) {
+    // A new power state has alreday been requested so ignore the initial state.
+    return;
+  }
+
+  // Set the initial requested power state.
+  requested_power_state_ = power_state;
+
+  if (current_display_state_ == MULTIPLE_DISPLAY_STATE_INVALID) {
+    // DisplayConfigurator::OnConfigured has not been called yet so just set
+    // the current state and notify observers.
+    current_power_state_ = power_state;
+    NotifyPowerStateObservers();
+    return;
+  }
+
+  // DisplayConfigurator::OnConfigured has been called so update the current
+  // and pending states.
+  UpdatePowerState(power_state);
 }
 
 void DisplayConfigurator::Init(
@@ -587,9 +605,11 @@ void DisplayConfigurator::OnDisplayControlTaken(DisplayControlCallback callback,
   if (success) {
     // Force a configuration since the display configuration may have changed.
     force_configure_ = true;
-    // Restore the last power state used before releasing control.
-    SetDisplayPower(requested_power_state_, kSetDisplayPowerNoFlags,
-                    base::Bind(&DoNothing));
+    if (requested_power_state_) {
+      // Restore the requested power state before releasing control.
+      SetDisplayPower(*requested_power_state_, kSetDisplayPowerNoFlags,
+                      base::DoNothing());
+    }
   }
 
   std::move(callback).Run(success);
@@ -664,8 +684,8 @@ void DisplayConfigurator::ForceInitialConfigure() {
 
   configuration_task_.reset(new UpdateDisplayConfigurationTask(
       native_display_delegate_.get(), layout_manager_.get(),
-      requested_display_state_, requested_power_state_,
-      kSetDisplayPowerForceProbe, true,
+      requested_display_state_, GetRequestedPowerState(),
+      kSetDisplayPowerForceProbe, /*force_configure=*/true,
       base::Bind(&DisplayConfigurator::OnConfigured,
                  weak_ptr_factory_.GetWeakPtr())));
   configuration_task_->Run();
@@ -689,7 +709,7 @@ void DisplayConfigurator::UnregisterContentProtectionClient(
     }
   }
 
-  set_protection_callbacks_.push(base::Bind(&DoNothing));
+  set_protection_callbacks_.push(base::DoNothing());
   ApplyContentProtectionTask* task = new ApplyContentProtectionTask(
       layout_manager_.get(), native_display_delegate_.get(), protections,
       base::Bind(&DisplayConfigurator::OnContentProtectionClientUnregistered,
@@ -845,13 +865,27 @@ bool DisplayConfigurator::SetColorCorrection(
     const std::vector<GammaRampRGBEntry>& degamma_lut,
     const std::vector<GammaRampRGBEntry>& gamma_lut,
     const std::vector<float>& correction_matrix) {
-  for (const DisplaySnapshot* display : cached_displays_) {
-    if (display->display_id() == display_id)
-      return native_display_delegate_->SetColorCorrection(
-          *display, degamma_lut, gamma_lut, correction_matrix);
+  for (DisplaySnapshot* display : cached_displays_) {
+    if (display->display_id() != display_id)
+      continue;
+
+    const bool success = native_display_delegate_->SetColorCorrection(
+        *display, degamma_lut, gamma_lut, correction_matrix);
+    // Nullify the |display|s ColorSpace to avoid correcting colors twice, if
+    // we have successfully configured something.
+    if (success && (!degamma_lut.empty() || !gamma_lut.empty() ||
+                    !correction_matrix.empty())) {
+      display->reset_color_space();
+    }
+    return success;
   }
 
   return false;
+}
+
+chromeos::DisplayPowerState DisplayConfigurator::GetRequestedPowerState()
+    const {
+  return requested_power_state_.value_or(chromeos::DISPLAY_POWER_ALL_ON);
 }
 
 void DisplayConfigurator::PrepareForExit() {
@@ -905,7 +939,7 @@ void DisplayConfigurator::SetDisplayPower(
           << (configure_timer_.IsRunning() ? "Running" : "Stopped");
 
   requested_power_state_ = power_state;
-  SetDisplayPowerInternal(requested_power_state_, flags, callback);
+  SetDisplayPowerInternal(*requested_power_state_, flags, callback);
 }
 
 void DisplayConfigurator::SetDisplayMode(MultipleDisplayState new_state) {
@@ -999,10 +1033,14 @@ void DisplayConfigurator::ResumeDisplays() {
                            this, &DisplayConfigurator::ConfigureDisplays);
   }
 
+  // TODO(crbug.com/794831): Solve the issue of mirror mode on display resume.
+
   // If requested_power_state_ is ALL_OFF due to idle suspend, powerd will turn
   // the display power on when it enables the backlight.
-  SetDisplayPower(requested_power_state_, kSetDisplayPowerNoFlags,
-                  base::Bind(&DoNothing));
+  if (requested_power_state_) {
+    SetDisplayPower(*requested_power_state_, kSetDisplayPowerNoFlags,
+                    base::DoNothing());
+  }
 }
 
 void DisplayConfigurator::ConfigureDisplays() {
@@ -1057,19 +1095,8 @@ void DisplayConfigurator::OnConfigured(
 
   cached_displays_ = displays;
   if (success) {
-    chromeos::DisplayPowerState old_power_state = current_power_state_;
     current_display_state_ = new_display_state;
-    current_power_state_ = new_power_state;
-
-    // If the pending power state hasn't changed then make sure that value
-    // gets updated as well since the last requested value may have been
-    // dependent on certain conditions (ie: if only the internal monitor was
-    // present).
-    if (!has_pending_power_state_)
-      pending_power_state_ = new_power_state;
-
-    if (old_power_state != current_power_state_)
-      NotifyPowerStateObservers();
+    UpdatePowerState(new_power_state);
   }
 
   configuration_task_.reset();
@@ -1087,6 +1114,19 @@ void DisplayConfigurator::OnConfigured(
     if (!configure_timer_.IsRunning())
       CallAndClearQueuedCallbacks(success);
   }
+}
+
+void DisplayConfigurator::UpdatePowerState(
+    chromeos::DisplayPowerState new_power_state) {
+  chromeos::DisplayPowerState old_power_state = current_power_state_;
+  current_power_state_ = new_power_state;
+  // If the pending power state hasn't changed then make sure that value gets
+  // updated as well since the last requested value may have been dependent on
+  // certain conditions (ie: if only the internal monitor was present).
+  if (!has_pending_power_state_)
+    pending_power_state_ = new_power_state;
+  if (old_power_state != current_power_state_)
+    NotifyPowerStateObservers();
 }
 
 bool DisplayConfigurator::ShouldRunConfigurationTask() const {

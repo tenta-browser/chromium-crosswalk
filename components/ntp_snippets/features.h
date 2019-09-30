@@ -40,6 +40,9 @@ extern const base::Feature kForeignSessionsSuggestionsFeature;
 ////////////////////////////////////////////////////////////////////////////////
 // Independent features. Treat as normal
 
+// Feature to allow show/hide article suggestions by clicking the header.
+extern const base::Feature kArticleSuggestionsExpandableHeader;
+
 // TODO(jkrcal): Rename to kRemoteSuggestionsFeature.
 extern const base::Feature kArticleSuggestionsFeature;
 
@@ -78,7 +81,7 @@ CategoryRankerChoice GetSelectedCategoryRanker(bool is_chrome_home_enabled);
 // Builds a CategoryRanker according to kCategoryRanker feature and Chrome Home.
 std::unique_ptr<CategoryRanker> BuildSelectedCategoryRanker(
     PrefService* pref_service,
-    std::unique_ptr<base::Clock> clock,
+    base::Clock* clock,
     bool is_chrome_home_enabled);
 
 // Feature to choose a default category order.

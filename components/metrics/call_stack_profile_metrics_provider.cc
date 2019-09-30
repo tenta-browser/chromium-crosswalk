@@ -56,11 +56,21 @@ const ProcessPhase
         ProcessPhase::SHUTDOWN_START,
 };
 
-// Parameters for browser process sampling. Not const since these may be
-// changed when transitioning from start-up profiling to periodic profiling.
-CallStackProfileParams g_browser_process_sampling_params(
+// Parameters for UI thread of browser process sampling. Not const since these
+// may be changed when transitioning from start-up profiling to periodic
+// profiling.
+CallStackProfileParams g_ui_thread_sampling_params(
     CallStackProfileParams::BROWSER_PROCESS,
-    CallStackProfileParams::UI_THREAD,
+    CallStackProfileParams::MAIN_THREAD,
+    CallStackProfileParams::PROCESS_STARTUP,
+    CallStackProfileParams::MAY_SHUFFLE);
+
+// Parameters for IO thread of browser process sampling. Not const since these
+// may be changed when transitioning from start-up profiling to periodic
+// profiling.
+CallStackProfileParams g_io_thread_sampling_params(
+    CallStackProfileParams::BROWSER_PROCESS,
+    CallStackProfileParams::IO_THREAD,
     CallStackProfileParams::PROCESS_STARTUP,
     CallStackProfileParams::MAY_SHUFFLE);
 
@@ -258,6 +268,10 @@ bool PendingProfiles::TryProfileMerge(const ProfilesState& profile_state,
     // Make a copy of the sample so we can update its module indexes.
     StackSamplingProfiler::Sample sample = base_sample;
     for (StackSamplingProfiler::Frame& frame : sample.frames) {
+      if (frame.module_index ==
+          base::StackSamplingProfiler::Frame::kUnknownModuleIndex) {
+        continue;
+      }
       const auto& module = from_profile.modules[frame.module_index];
       auto it = module_id_to_index.find(module.id);
       if (it == module_id_to_index.end()) {
@@ -296,7 +310,8 @@ ReceiveCompletedProfilesImpl(
   // over this, for example ending sampling after some amount of time.
   if (CallStackProfileMetricsProvider::IsPeriodicSamplingEnabled() &&
       params->process == CallStackProfileParams::BROWSER_PROCESS &&
-      params->thread == CallStackProfileParams::UI_THREAD) {
+      (params->thread == CallStackProfileParams::MAIN_THREAD ||
+       params->thread == CallStackProfileParams::IO_THREAD)) {
     params->trigger = CallStackProfileParams::PERIODIC_COLLECTION;
     params->start_timestamp = base::TimeTicks::Now();
 
@@ -465,26 +480,12 @@ Thread ToExecutionContextThread(CallStackProfileParams::Thread thread) {
   switch (thread) {
     case CallStackProfileParams::UNKNOWN_THREAD:
       return UNKNOWN_THREAD;
-    case CallStackProfileParams::UI_THREAD:
+    case CallStackProfileParams::MAIN_THREAD:
       return UI_THREAD;
-    case CallStackProfileParams::FILE_THREAD:
-      return FILE_THREAD;
-    case CallStackProfileParams::FILE_USER_BLOCKING_THREAD:
-      return FILE_USER_BLOCKING_THREAD;
-    case CallStackProfileParams::PROCESS_LAUNCHER_THREAD:
-      return PROCESS_LAUNCHER_THREAD;
-    case CallStackProfileParams::CACHE_THREAD:
-      return CACHE_THREAD;
     case CallStackProfileParams::IO_THREAD:
       return IO_THREAD;
-    case CallStackProfileParams::DB_THREAD:
-      return DB_THREAD;
-    case CallStackProfileParams::GPU_MAIN_THREAD:
-      return GPU_MAIN_THREAD;
-    case CallStackProfileParams::RENDER_THREAD:
-      return RENDER_THREAD;
-    case CallStackProfileParams::UTILITY_THREAD:
-      return UTILITY_THREAD;
+    case CallStackProfileParams::COMPOSITOR_THREAD:
+      return COMPOSITOR_THREAD;
   }
   NOTREACHED();
   return UNKNOWN_THREAD;
@@ -554,8 +555,19 @@ CallStackProfileMetricsProvider::~CallStackProfileMetricsProvider() {
 }
 
 StackSamplingProfiler::CompletedCallback
-CallStackProfileMetricsProvider::GetProfilerCallbackForBrowserProcessStartup() {
-  return internal::GetProfilerCallback(&g_browser_process_sampling_params);
+CallStackProfileMetricsProvider::GetProfilerCallbackForBrowserProcess(
+    CallStackProfileParams* params) {
+  return internal::GetProfilerCallback(params);
+}
+
+StackSamplingProfiler::CompletedCallback CallStackProfileMetricsProvider::
+    GetProfilerCallbackForBrowserProcessUIThreadStartup() {
+  return internal::GetProfilerCallback(&g_ui_thread_sampling_params);
+}
+
+StackSamplingProfiler::CompletedCallback CallStackProfileMetricsProvider::
+    GetProfilerCallbackForBrowserProcessIOThreadStartup() {
+  return internal::GetProfilerCallback(&g_io_thread_sampling_params);
 }
 
 // static
@@ -608,14 +620,14 @@ void CallStackProfileMetricsProvider::ProvideCurrentSessionData(
 
   for (const ProfilesState& profiles_state : pending_profiles) {
     for (const StackSamplingProfiler::CallStackProfile& profile :
-             profiles_state.profiles) {
+         profiles_state.profiles) {
       SampledProfile* sampled_profile = uma_proto->add_sampled_profile();
-      sampled_profile->set_process(ToExecutionContextProcess(
-          profiles_state.params.process));
-      sampled_profile->set_thread(ToExecutionContextThread(
-          profiles_state.params.thread));
-      sampled_profile->set_trigger_event(ToSampledProfileTriggerEvent(
-          profiles_state.params.trigger));
+      sampled_profile->set_process(
+          ToExecutionContextProcess(profiles_state.params.process));
+      sampled_profile->set_thread(
+          ToExecutionContextThread(profiles_state.params.thread));
+      sampled_profile->set_trigger_event(
+          ToSampledProfileTriggerEvent(profiles_state.params.trigger));
       CopyProfileToProto(profile, profiles_state.params.ordering_spec,
                          sampled_profile->mutable_call_stack_profile());
     }

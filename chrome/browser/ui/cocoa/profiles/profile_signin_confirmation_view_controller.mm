@@ -23,6 +23,7 @@
 #include "chrome/common/url_constants.h"
 #include "chrome/grit/chromium_strings.h"
 #include "chrome/grit/generated_resources.h"
+#include "components/strings/grit/components_strings.h"
 #include "google_apis/gaia/gaia_auth_util.h"
 #include "skia/ext/skia_utils_mac.h"
 #import "third_party/google_toolbox_for_mac/src/AppKit/GTMUILocalizerAndLayoutTweaker.h"
@@ -245,8 +246,7 @@ NSTextView* AddTextView(
   // Explanation text.
   std::vector<size_t> offsets;
   const base::string16 learn_more_text =
-      l10n_util::GetStringUTF16(
-          IDS_ENTERPRISE_SIGNIN_PROFILE_LINK_LEARN_MORE);
+      l10n_util::GetStringUTF16(IDS_LEARN_MORE);
   const base::string16 explanation_text =
       l10n_util::GetStringFUTF16(
           offerProfileCreation_ ?
@@ -363,12 +363,12 @@ NSTextView* AddTextView(
 }
 
 - (void)learnMore {
-  chrome::NavigateParams params(
-      browser_, GURL(chrome::kChromeEnterpriseSignInLearnMoreURL),
-      ui::PAGE_TRANSITION_AUTO_TOPLEVEL);
+  NavigateParams params(browser_,
+                        GURL(chrome::kChromeEnterpriseSignInLearnMoreURL),
+                        ui::PAGE_TRANSITION_AUTO_TOPLEVEL);
   params.disposition = WindowOpenDisposition::NEW_POPUP;
-  params.window_action = chrome::NavigateParams::SHOW_WINDOW;
-  chrome::Navigate(&params);
+  params.window_action = NavigateParams::SHOW_WINDOW;
+  Navigate(&params);
 }
 
 - (BOOL)textView:(NSTextView*)textView

@@ -38,7 +38,7 @@ const char kFormat_Help[] =
 
   The contents of some lists ('sources', 'deps', etc.) will be sorted to a
   canonical order. To suppress this, you can add a comment of the form "#
-  NOSORT" immediately preceeding the assignment. e.g.
+  NOSORT" immediately preceding the assignment. e.g.
 
   # NOSORT
   sources = [
@@ -958,6 +958,11 @@ bool Printer::ListWillBeMultiline(
     if (i->comments() && !i->comments()->before().empty())
       return true;
   }
+
+  // When a scope is used as a list entry, it's too complicated to go one a
+  // single line (the block will always be formatted multiline itself).
+  if (list.size() >= 1 && list[0]->AsBlock())
+    return true;
 
   return false;
 }

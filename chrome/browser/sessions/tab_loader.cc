@@ -10,7 +10,6 @@
 #include "base/memory/memory_coordinator_client_registry.h"
 #include "base/memory/memory_coordinator_proxy.h"
 #include "base/memory/memory_pressure_monitor.h"
-#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "build/build_config.h"
 #include "chrome/browser/sessions/session_restore_stats_collector.h"
@@ -110,7 +109,7 @@ TabLoader::TabLoader(base::TimeTicks restore_started)
       restore_started_(restore_started) {
   stats_collector_ = new SessionRestoreStatsCollector(
       restore_started,
-      base::MakeUnique<
+      std::make_unique<
           SessionRestoreStatsCollector::UmaStatsReportingDelegate>());
   shared_tab_loader_ = this;
   this_retainer_ = this;

@@ -5,10 +5,6 @@
 (async function() {
   TestRunner.addResult(
       `Tests that console warnings are issued for a blocked event listener and that there is no crash when an offending listener is removed by the handler.\n`);
-  await TestRunner.loadHTML(`
-      <p>Tests that console warnings are issued for a blocked event listener and that
-      there is no crash when an offending listener is removed by the handler.</p>
-    `);
   await TestRunner.evaluateInPagePromise(`
       function eventListenerSuicidal(event)
       {
@@ -51,8 +47,6 @@
           }
           var deadline = performance.now() + 100;
           while (performance.now() < deadline) {};
-          if (window.testRunner)
-              window.testRunner.setDumpConsoleMessages(false);
           for (var event of events)
               target.dispatchEvent(event);
 
@@ -68,8 +62,8 @@
       }
   `);
 
-  ConsoleModel.consoleModel.addEventListener(
-      ConsoleModel.ConsoleModel.Events.MessageAdded, TestRunner.safeWrap(onConsoleMessage));
+  SDK.consoleModel.addEventListener(
+      SDK.ConsoleModel.Events.MessageAdded, TestRunner.safeWrap(onConsoleMessage));
   step1();
 
   function step1() {

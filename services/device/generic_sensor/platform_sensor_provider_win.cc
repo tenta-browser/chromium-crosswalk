@@ -4,9 +4,11 @@
 
 #include "services/device/generic_sensor/platform_sensor_provider_win.h"
 
+#include <comdef.h>
 #include <objbase.h>
 
-#include "base/memory/ptr_util.h"
+#include <iomanip>
+
 #include "base/memory/singleton.h"
 #include "base/task_runner_util.h"
 #include "base/threading/thread.h"
@@ -33,8 +35,19 @@ class PlatformSensorProviderWin::SensorThread final : public base::Thread {
   void Init() override {
     if (sensor_manager_)
       return;
-    ::CoCreateInstance(CLSID_SensorManager, nullptr, CLSCTX_ALL,
-                       IID_PPV_ARGS(&sensor_manager_));
+    HRESULT hr = ::CoCreateInstance(CLSID_SensorManager, nullptr, CLSCTX_ALL,
+                                    IID_PPV_ARGS(&sensor_manager_));
+    if (FAILED(hr)) {
+      // Only log this error the first time.
+      static bool logged_failure = false;
+      if (!logged_failure) {
+        LOG(ERROR) << "Unable to create instance of SensorManager: "
+                   << _com_error(hr).ErrorMessage() << " (0x" << std::hex
+                   << std::uppercase << std::setfill('0') << std::setw(8) << hr
+                   << ")";
+        logged_failure = true;
+      }
+    }
   }
 
   void CleanUp() override { sensor_manager_.Reset(); }
@@ -61,7 +74,7 @@ PlatformSensorProviderWin::~PlatformSensorProviderWin() = default;
 
 void PlatformSensorProviderWin::CreateSensorInternal(
     mojom::SensorType type,
-    mojo::ScopedSharedBufferMapping mapping,
+    SensorReadingSharedBuffer* reading_buffer,
     const CreateSensorCallback& callback) {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   if (!StartSensorThread()) {
@@ -77,8 +90,8 @@ void PlatformSensorProviderWin::CreateSensorInternal(
       // If this PlatformSensorFusion object is successfully initialized,
       // |callback| will be run with a reference to this object.
       PlatformSensorFusion::Create(
-          std::move(mapping), this,
-          std::move(linear_acceleration_fusion_algorithm), callback);
+          reading_buffer, this, std::move(linear_acceleration_fusion_algorithm),
+          callback);
       break;
     }
 
@@ -89,8 +102,7 @@ void PlatformSensorProviderWin::CreateSensorInternal(
           base::Bind(&PlatformSensorProviderWin::CreateSensorReader,
                      base::Unretained(this), type),
           base::Bind(&PlatformSensorProviderWin::SensorReaderCreated,
-                     base::Unretained(this), type, base::Passed(&mapping),
-                     callback));
+                     base::Unretained(this), type, reading_buffer, callback));
       break;
     }
   }
@@ -119,7 +131,7 @@ void PlatformSensorProviderWin::StopSensorThread() {
 
 void PlatformSensorProviderWin::SensorReaderCreated(
     mojom::SensorType type,
-    mojo::ScopedSharedBufferMapping mapping,
+    SensorReadingSharedBuffer* reading_buffer,
     const CreateSensorCallback& callback,
     std::unique_ptr<PlatformSensorReaderWin> sensor_reader) {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
@@ -129,7 +141,7 @@ void PlatformSensorProviderWin::SensorReaderCreated(
   }
 
   scoped_refptr<PlatformSensor> sensor = new PlatformSensorWin(
-      type, std::move(mapping), this, sensor_thread_->task_runner(),
+      type, reading_buffer, this, sensor_thread_->task_runner(),
       std::move(sensor_reader));
   callback.Run(sensor);
 }

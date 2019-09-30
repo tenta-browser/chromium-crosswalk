@@ -19,7 +19,6 @@ import org.chromium.base.test.util.Feature;
 import org.chromium.base.test.util.RetryOnFailure;
 import org.chromium.chrome.browser.ChromeSwitches;
 import org.chromium.chrome.browser.tab.Tab;
-import org.chromium.chrome.test.ChromeActivityTestRule;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 import org.chromium.chrome.test.ChromeTabbedActivityTestRule;
 import org.chromium.chrome.test.util.browser.WebappTestPage;
@@ -31,10 +30,7 @@ import java.util.HashMap;
  * Tests the WebApkUpdateDataFetcher.
  */
 @RunWith(ChromeJUnit4ClassRunner.class)
-@CommandLineFlags.Add({
-        ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE,
-        ChromeActivityTestRule.DISABLE_NETWORK_PREDICTION_FLAG,
-})
+@CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
 public class WebApkUpdateDataFetcherTest {
     @Rule
     public ChromeTabbedActivityTestRule mActivityTestRule = new ChromeTabbedActivityTestRule();
@@ -122,7 +118,7 @@ public class WebApkUpdateDataFetcherTest {
     @MediumTest
     @Feature({"WebApk"})
     public void testLaunchWithDesiredManifestUrl() throws Exception {
-        WebappTestPage.navigateToPageWithServiceWorkerAndManifest(
+        WebappTestPage.navigateToServiceWorkerPageWithManifest(
                 mTestServerRule.getServer(), mTab, WEB_MANIFEST_URL1);
 
         CallbackWaiter waiter = new CallbackWaiter();
@@ -144,14 +140,14 @@ public class WebApkUpdateDataFetcherTest {
     @Feature({"Webapps"})
     @RetryOnFailure
     public void testLaunchWithDifferentManifestUrl() throws Exception {
-        WebappTestPage.navigateToPageWithServiceWorkerAndManifest(
+        WebappTestPage.navigateToServiceWorkerPageWithManifest(
                 mTestServerRule.getServer(), mTab, WEB_MANIFEST_URL1);
 
         CallbackWaiter waiter = new CallbackWaiter();
         startWebApkUpdateDataFetcher(mTestServerRule.getServer().getURL(WEB_MANIFEST_SCOPE),
                 mTestServerRule.getServer().getURL(WEB_MANIFEST_URL2), waiter);
 
-        WebappTestPage.navigateToPageWithServiceWorkerAndManifest(
+        WebappTestPage.navigateToServiceWorkerPageWithManifest(
                 mTestServerRule.getServer(), mTab, WEB_MANIFEST_URL2);
         waiter.waitForCallback(0);
         Assert.assertTrue(waiter.isWebApkCompatible());
@@ -166,7 +162,7 @@ public class WebApkUpdateDataFetcherTest {
     @MediumTest
     @Feature({"Webapps"})
     public void testLargeIconMurmur2Hash() throws Exception {
-        WebappTestPage.navigateToPageWithServiceWorkerAndManifest(
+        WebappTestPage.navigateToServiceWorkerPageWithManifest(
                 mTestServerRule.getServer(), mTab, WEB_MANIFEST_WITH_LONG_ICON_MURMUR2_HASH);
 
         CallbackWaiter waiter = new CallbackWaiter();

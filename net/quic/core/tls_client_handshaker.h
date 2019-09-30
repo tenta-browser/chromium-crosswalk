@@ -11,6 +11,7 @@
 #include "net/quic/core/quic_crypto_stream.h"
 #include "net/quic/core/tls_handshaker.h"
 #include "net/quic/platform/api/quic_export.h"
+#include "net/quic/platform/api/quic_string.h"
 #include "third_party/boringssl/src/include/openssl/ssl.h"
 
 namespace net {
@@ -31,13 +32,17 @@ class QUIC_EXPORT_PRIVATE TlsClientHandshaker
 
   ~TlsClientHandshaker() override;
 
+  // Creates and configures an SSL_CTX to be used with a TlsClientHandshaker.
+  // The caller is responsible for ownership of the newly created struct.
+  static bssl::UniquePtr<SSL_CTX> CreateSslCtx();
+
   // From QuicCryptoClientStream::HandshakerDelegate
   bool CryptoConnect() override;
   int num_sent_client_hellos() const override;
   int num_scup_messages_received() const override;
   bool WasChannelIDSent() const override;
   bool WasChannelIDSourceCallbackRun() const override;
-  std::string chlo_hash() const override;
+  QuicString chlo_hash() const override;
 
   // From QuicCryptoClientStream::HandshakerDelegate and TlsHandshaker
   bool encryption_established() const override;
@@ -56,7 +61,7 @@ class QUIC_EXPORT_PRIVATE TlsClientHandshaker
 
     // ProofVerifierCallback interface.
     void Run(bool ok,
-             const std::string& error_details,
+             const QuicString& error_details,
              std::unique_ptr<ProofVerifyDetails>* details) override;
 
     // If called, Cancel causes the pending callback to be a no-op.
@@ -85,6 +90,11 @@ class QUIC_EXPORT_PRIVATE TlsClientHandshaker
   // Static method to supply to SSL_set_custom_verify.
   static enum ssl_verify_result_t VerifyCallback(SSL* ssl, uint8_t* out_alert);
 
+  // Takes an SSL* |ssl| and returns a pointer to the TlsClientHandshaker that
+  // it belongs to. This is a specialization of
+  // TlsHandshaker::HandshakerFromSsl.
+  static TlsClientHandshaker* HandshakerFromSsl(SSL* ssl);
+
   QuicServerId server_id_;
 
   // Objects used for verifying the server's certificate chain.
@@ -98,7 +108,7 @@ class QUIC_EXPORT_PRIVATE TlsClientHandshaker
   ProofVerifierCallbackImpl* proof_verify_callback_ = nullptr;
   std::unique_ptr<ProofVerifyDetails> verify_details_;
   enum ssl_verify_result_t verify_result_ = ssl_verify_retry;
-  std::string cert_verify_error_details_;
+  QuicString cert_verify_error_details_;
 
   bool encryption_established_ = false;
   bool handshake_confirmed_ = false;

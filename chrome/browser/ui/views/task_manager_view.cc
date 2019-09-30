@@ -17,7 +17,6 @@
 #include "chrome/browser/ui/browser_navigator_params.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/task_manager/task_manager_columns.h"
-#include "chrome/browser/ui/user_manager.h"
 #include "chrome/browser/ui/views/harmony/chrome_layout_provider.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/common/url_constants.h"
@@ -35,12 +34,9 @@
 #include "ui/views/window/dialog_client_view.h"
 
 #if defined(OS_CHROMEOS)
-// gn check complains on Linux Ozone.
-#include "ash/public/cpp/shelf_item.h"         // nogncheck
-#include "ash/public/cpp/window_properties.h"  // nogncheck
-#include "ash/resources/grit/ash_resources.h"
-#include "ash/wm/window_util.h"
-#include "chrome/browser/ui/ash/ash_util.h"
+#include "ash/public/cpp/shelf_item.h"
+#include "ash/public/cpp/window_properties.h"
+#include "chrome/grit/theme_resources.h"
 #include "ui/aura/client/aura_constants.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/gfx/image/image_skia.h"
@@ -76,13 +72,10 @@ task_manager::TaskManagerTableModel* TaskManagerView::Show(Browser* browser) {
 
   g_task_manager_view = new TaskManagerView();
 
+  // On Chrome OS, pressing Search-Esc when there are no open browser windows
+  // will open the task manager on the root window for new windows.
   gfx::NativeWindow context =
       browser ? browser->window()->GetNativeWindow() : nullptr;
-#if defined(OS_CHROMEOS)
-  if (!ash_util::IsRunningInMash() && !context)
-    context = ash::wm::GetActiveWindow();
-#endif
-
   DialogDelegate::CreateDialogWidget(g_task_manager_view, context, nullptr);
   g_task_manager_view->InitAlwaysOnTopState();
 
@@ -334,7 +327,7 @@ void TaskManagerView::Init() {
   tab_table_parent_ = tab_table_->CreateParentIfNecessary();
   AddChildView(tab_table_parent_);
 
-  SetLayoutManager(new views::FillLayout());
+  SetLayoutManager(std::make_unique<views::FillLayout>());
 
   const ChromeLayoutProvider* provider = ChromeLayoutProvider::Get();
   const gfx::Insets dialog_insets =

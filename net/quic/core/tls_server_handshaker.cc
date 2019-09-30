@@ -9,10 +9,9 @@
 #include "net/quic/core/crypto/quic_crypto_server_config.h"
 #include "net/quic/platform/api/quic_logging.h"
 #include "net/quic/platform/api/quic_ptr_util.h"
+#include "net/quic/platform/api/quic_string.h"
 #include "third_party/boringssl/src/include/openssl/pool.h"
 #include "third_party/boringssl/src/include/openssl/ssl.h"
-
-using std::string;
 
 namespace net {
 
@@ -20,7 +19,8 @@ TlsServerHandshaker::SignatureCallback::SignatureCallback(
     TlsServerHandshaker* handshaker)
     : handshaker_(handshaker) {}
 
-void TlsServerHandshaker::SignatureCallback::Run(bool ok, string signature) {
+void TlsServerHandshaker::SignatureCallback::Run(bool ok,
+                                                 QuicString signature) {
   if (handshaker_ == nullptr) {
     return;
   }
@@ -45,11 +45,28 @@ const SSL_PRIVATE_KEY_METHOD TlsServerHandshaker::kPrivateKeyMethod{
     &TlsServerHandshaker::PrivateKeyComplete,
 };
 
+// static
+bssl::UniquePtr<SSL_CTX> TlsServerHandshaker::CreateSslCtx() {
+  bssl::UniquePtr<SSL_CTX> ssl_ctx = TlsHandshaker::CreateSslCtx();
+  SSL_CTX_set_tlsext_servername_callback(
+      ssl_ctx.get(), TlsServerHandshaker::SelectCertificateCallback);
+  return ssl_ctx;
+}
+
 TlsServerHandshaker::TlsServerHandshaker(QuicCryptoStream* stream,
                                          QuicSession* session,
                                          SSL_CTX* ssl_ctx,
                                          ProofSource* proof_source)
-    : TlsHandshaker(stream, session, ssl_ctx), proof_source_(proof_source) {
+    : TlsHandshaker(stream, session, ssl_ctx),
+      proof_source_(proof_source),
+      crypto_negotiated_params_(new QuicCryptoNegotiatedParameters) {
+  CrypterPair crypters;
+  CryptoUtils::CreateTlsInitialCrypters(Perspective::IS_SERVER,
+                                        session->connection_id(), &crypters);
+  session->connection()->SetEncrypter(ENCRYPTION_NONE,
+                                      std::move(crypters.encrypter));
+  session->connection()->SetDecrypter(ENCRYPTION_NONE,
+                                      std::move(crypters.decrypter));
   // Set callback to provide SNI.
   // SSL_CTX_set_tlsext_servername_callback(ssl_ctx, SelectCertificateCallback);
 
@@ -68,7 +85,8 @@ void TlsServerHandshaker::CancelOutstandingCallbacks() {
   }
 }
 
-bool TlsServerHandshaker::GetBase64SHA256ClientChannelID(string* output) const {
+bool TlsServerHandshaker::GetBase64SHA256ClientChannelID(
+    QuicString* output) const {
   // Channel ID is not supported when TLS is used in QUIC.
   return false;
 }
@@ -98,21 +116,10 @@ TlsServerHandshaker::PreviousCachedNetworkParams() const {
   return nullptr;
 }
 
-bool TlsServerHandshaker::UseStatelessRejectsIfPeerSupported() const {
-  return false;
-}
-
-bool TlsServerHandshaker::PeerSupportsStatelessRejects() const {
-  return false;
-}
-
 bool TlsServerHandshaker::ZeroRttAttempted() const {
   // TODO(nharper): Support 0-RTT with TLS 1.3 in QUIC.
   return false;
 }
-
-void TlsServerHandshaker::SetPeerSupportsStatelessRejects(
-    bool peer_supports_stateless_rejects) {}
 
 void TlsServerHandshaker::SetPreviousCachedNetworkParams(
     CachedNetworkParameters cached_network_params) {}
@@ -171,6 +178,7 @@ void TlsServerHandshaker::AdvanceHandshake() {
   if (should_close) {
     QUIC_LOG(WARNING) << "SSL_do_handshake failed; SSL_get_error returns "
                       << ssl_error << ", state_ = " << state_;
+    ERR_print_errors_fp(stderr);
     CloseConnection();
   }
 }
@@ -188,14 +196,32 @@ void TlsServerHandshaker::FinishHandshake() {
   QUIC_LOG(INFO) << "Server: handshake finished";
   state_ = STATE_HANDSHAKE_COMPLETE;
   std::vector<uint8_t> client_secret, server_secret;
-  if (!DeriveSecrets(ssl(), &client_secret, &server_secret)) {
+  if (!DeriveSecrets(&client_secret, &server_secret)) {
     CloseConnection();
     return;
   }
 
-  // TODO(nharper): Use |client_secret| and |server_secret| to set the
-  // appropriate crypters on the connection, and set |encryption_established_|
-  // to true. Also call session()->connection()->NeuterUnencryptedPackets().
+  QUIC_LOG(INFO) << "Server: setting crypters";
+  std::unique_ptr<QuicEncrypter> initial_encrypter =
+      CreateEncrypter(server_secret);
+  session()->connection()->SetEncrypter(ENCRYPTION_INITIAL,
+                                        std::move(initial_encrypter));
+  std::unique_ptr<QuicEncrypter> encrypter = CreateEncrypter(server_secret);
+  session()->connection()->SetEncrypter(ENCRYPTION_FORWARD_SECURE,
+                                        std::move(encrypter));
+
+  std::unique_ptr<QuicDecrypter> initial_decrypter =
+      CreateDecrypter(client_secret);
+  session()->connection()->SetDecrypter(ENCRYPTION_INITIAL,
+                                        std::move(initial_decrypter));
+  std::unique_ptr<QuicDecrypter> decrypter = CreateDecrypter(client_secret);
+  session()->connection()->SetAlternativeDecrypter(ENCRYPTION_FORWARD_SECURE,
+                                                   std::move(decrypter), true);
+
+  session()->connection()->SetDefaultEncryptionLevel(ENCRYPTION_FORWARD_SECURE);
+
+  session()->NeuterUnencryptedData();
+  encryption_established_ = true;
   handshake_confirmed_ = true;
 }
 

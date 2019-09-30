@@ -39,7 +39,8 @@ class VpxVideoDecoderTest : public testing::Test {
                                       bool success) {
     decoder_->Initialize(
         config, false, nullptr, NewExpectedBoolCB(success),
-        base::Bind(&VpxVideoDecoderTest::FrameReady, base::Unretained(this)));
+        base::Bind(&VpxVideoDecoderTest::FrameReady, base::Unretained(this)),
+        VideoDecoder::WaitingForDecryptionKeyCB());
     base::RunLoop().RunUntilIdle();
   }
 
@@ -91,6 +92,7 @@ class VpxVideoDecoderTest : public testing::Test {
           break;
         case DecodeStatus::ABORTED:
           NOTREACHED();
+          FALLTHROUGH;
         case DecodeStatus::DECODE_ERROR:
           DCHECK(output_frames_.empty());
           return status;

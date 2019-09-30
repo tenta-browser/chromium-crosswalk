@@ -7,6 +7,7 @@
 #include <utility>
 #include <vector>
 
+#include "base/feature_list.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/metrics/user_metrics.h"
 #include "base/strings/utf_string_conversions.h"
@@ -18,8 +19,8 @@
 #include "chrome/browser/notifications/metrics/notification_metrics_logger.h"
 #include "chrome/browser/notifications/metrics/notification_metrics_logger_factory.h"
 #include "chrome/browser/notifications/notification_common.h"
+#include "chrome/browser/notifications/notification_display_service.h"
 #include "chrome/browser/notifications/notification_display_service_factory.h"
-#include "chrome/browser/notifications/web_notification_delegate.h"
 #include "chrome/browser/permissions/permission_decision_auto_blocker.h"
 #include "chrome/browser/permissions/permission_manager.h"
 #include "chrome/browser/permissions/permission_result.h"
@@ -35,8 +36,8 @@
 #include "chrome/browser/ui/exclusive_access/exclusive_access_context.h"
 #include "chrome/browser/ui/exclusive_access/exclusive_access_manager.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
+#include "chrome/common/buildflags.h"
 #include "chrome/common/chrome_features.h"
-#include "chrome/common/features.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/content_settings/core/browser/host_content_settings_map.h"
@@ -47,16 +48,18 @@
 #include "content/public/browser/notification_event_dispatcher.h"
 #include "content/public/common/notification_resources.h"
 #include "content/public/common/platform_notification_data.h"
-#include "extensions/features/features.h"
+#include "extensions/buildflags/buildflags.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
-#include "ui/message_center/notification.h"
-#include "ui/message_center/notification_types.h"
-#include "ui/message_center/notifier_id.h"
+#include "ui/base/ui_base_features.h"
+#include "ui/message_center/public/cpp/features.h"
+#include "ui/message_center/public/cpp/notification.h"
+#include "ui/message_center/public/cpp/notification_types.h"
+#include "ui/message_center/public/cpp/notifier_id.h"
 #include "url/url_constants.h"
 
-#if BUILDFLAG(ENABLE_BACKGROUND)
+#if BUILDFLAG(ENABLE_BACKGROUND_MODE)
 #include "components/keep_alive_registry/keep_alive_types.h"
 #include "components/keep_alive_registry/scoped_keep_alive.h"
 #endif
@@ -80,18 +83,6 @@ namespace {
 // Invalid id for a renderer process. Used in cases where we need to check for
 // permission without having an associated renderer process yet.
 const int kInvalidRenderProcessId = -1;
-
-void ReportNotificationImageOnIOThread(
-    scoped_refptr<safe_browsing::SafeBrowsingService> safe_browsing_service,
-    Profile* profile,
-    const GURL& origin,
-    const SkBitmap& image) {
-  DCHECK_CURRENTLY_ON(BrowserThread::IO);
-  if (!safe_browsing_service || !safe_browsing_service->enabled())
-    return;
-  safe_browsing_service->ping_manager()->ReportNotificationImage(
-      profile, safe_browsing_service->database_manager(), origin, image);
-}
 
 // Whether a web notification should be displayed when chrome is in full
 // screen mode.
@@ -143,7 +134,7 @@ PlatformNotificationServiceImpl::GetInstance() {
 }
 
 PlatformNotificationServiceImpl::PlatformNotificationServiceImpl() {
-#if BUILDFLAG(ENABLE_BACKGROUND)
+#if BUILDFLAG(ENABLE_BACKGROUND_MODE)
   pending_click_dispatch_events_ = 0;
 #endif
 }
@@ -180,7 +171,7 @@ void PlatformNotificationServiceImpl::OnPersistentNotificationClick(
     metrics_logger->LogPersistentNotificationClick();
   }
 
-#if BUILDFLAG(ENABLE_BACKGROUND)
+#if BUILDFLAG(ENABLE_BACKGROUND_MODE)
   // Ensure the browser stays alive while the event is processed.
   if (pending_click_dispatch_events_++ == 0) {
     click_dispatch_keep_alive_.reset(
@@ -337,6 +328,7 @@ PlatformNotificationServiceImpl::CheckPermissionOnIOThread(
              : blink::mojom::PermissionStatus::DENIED;
 }
 
+// TODO(awdf): Rename to DisplayNonPersistentNotification (Similar for Close)
 void PlatformNotificationServiceImpl::DisplayNotification(
     BrowserContext* browser_context,
     const std::string& notification_id,
@@ -358,9 +350,7 @@ void PlatformNotificationServiceImpl::DisplayNotification(
 
   message_center::Notification notification = CreateNotificationFromData(
       profile, origin, notification_id, notification_data,
-      notification_resources,
-      new WebNotificationDelegate(NotificationHandler::Type::WEB_NON_PERSISTENT,
-                                  profile, notification_id, origin));
+      notification_resources, nullptr /* delegate */);
 
   NotificationDisplayServiceFactory::GetForProfile(profile)->Display(
       NotificationHandler::Type::WEB_NON_PERSISTENT, notification);
@@ -386,9 +376,7 @@ void PlatformNotificationServiceImpl::DisplayPersistentNotification(
 
   message_center::Notification notification = CreateNotificationFromData(
       profile, origin, notification_id, notification_data,
-      notification_resources,
-      new WebNotificationDelegate(NotificationHandler::Type::WEB_PERSISTENT,
-                                  profile, notification_id, origin));
+      notification_resources, nullptr /* delegate */);
   auto metadata = std::make_unique<PersistentNotificationMetadata>();
   metadata->service_worker_scope = service_worker_scope;
 
@@ -449,7 +437,7 @@ void PlatformNotificationServiceImpl::OnClickEventDispatchComplete(
       "Notifications.PersistentWebNotificationClickResult", status,
       content::PersistentNotificationStatus::
           PERSISTENT_NOTIFICATION_STATUS_MAX);
-#if BUILDFLAG(ENABLE_BACKGROUND)
+#if BUILDFLAG(ENABLE_BACKGROUND_MODE)
   DCHECK_GT(pending_click_dispatch_events_, 0);
   if (--pending_click_dispatch_events_ == 0) {
     click_dispatch_keep_alive_.reset();
@@ -482,18 +470,14 @@ PlatformNotificationServiceImpl::CreateNotificationFromData(
             notification_resources.action_icons.size());
 
   message_center::RichNotificationData optional_fields;
-#if defined(OS_CHROMEOS)
+
   optional_fields.settings_button_handler =
-      message_center::SettingsButtonHandler::TRAY;
-#else
-  optional_fields.settings_button_handler =
-      message_center::SettingsButtonHandler::DELEGATE;
-#endif
+      base::FeatureList::IsEnabled(message_center::kNewStyleNotifications)
+          ? message_center::SettingsButtonHandler::INLINE
+          : message_center::SettingsButtonHandler::DELEGATE;
 
   // TODO(peter): Handle different screen densities instead of always using the
   // 1x bitmap - crbug.com/585815.
-  // TODO(estade): The RichNotificationData should set |clickable| if there's a
-  // click handler.
   message_center::Notification notification(
       message_center::NOTIFICATION_TYPE_SIMPLE, notification_id,
       notification_data.title, notification_data.body,
@@ -517,12 +501,15 @@ PlatformNotificationServiceImpl::CreateNotificationFromData(
     notification.set_image(
         gfx::Image::CreateFrom1xBitmap(notification_resources.image));
     // n.b. this should only be posted once per notification.
-    BrowserThread::PostTask(
-        BrowserThread::IO, FROM_HERE,
-        base::BindOnce(
-            &ReportNotificationImageOnIOThread,
-            base::WrapRefCounted(g_browser_process->safe_browsing_service()),
-            profile, origin, notification_resources.image));
+    if (g_browser_process->safe_browsing_service() &&
+        g_browser_process->safe_browsing_service()->enabled_by_prefs()) {
+      g_browser_process->safe_browsing_service()
+          ->ping_manager()
+          ->ReportNotificationImage(
+              profile,
+              g_browser_process->safe_browsing_service()->database_manager(),
+              origin, notification_resources.image);
+    }
   }
 
   // Badges are only supported on Android, primarily because it's the only
@@ -544,17 +531,9 @@ PlatformNotificationServiceImpl::CreateNotificationFromData(
     // the 1x bitmap - crbug.com/585815.
     button.icon =
         gfx::Image::CreateFrom1xBitmap(notification_resources.action_icons[i]);
-    button.placeholder =
-        action.placeholder.is_null()
-            ? l10n_util::GetStringUTF16(IDS_NOTIFICATION_REPLY_PLACEHOLDER)
-            : action.placeholder.string();
-    switch (action.type) {
-      case content::PLATFORM_NOTIFICATION_ACTION_TYPE_BUTTON:
-        button.type = message_center::ButtonType::BUTTON;
-        break;
-      case content::PLATFORM_NOTIFICATION_ACTION_TYPE_TEXT:
-        button.type = message_center::ButtonType::TEXT;
-        break;
+    if (action.type == content::PLATFORM_NOTIFICATION_ACTION_TYPE_TEXT) {
+      button.placeholder = action.placeholder.as_optional_string16().value_or(
+          l10n_util::GetStringUTF16(IDS_NOTIFICATION_REPLY_PLACEHOLDER));
     }
     buttons.push_back(button);
   }

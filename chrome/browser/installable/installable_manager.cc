@@ -5,13 +5,11 @@
 #include "chrome/browser/installable/installable_manager.h"
 
 #include "base/bind.h"
-#include "base/feature_list.h"
 #include "base/stl_util.h"
 #include "base/strings/string_util.h"
 #include "build/build_config.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ssl/security_state_tab_helper.h"
-#include "chrome/common/chrome_features.h"
 #include "components/security_state/core/security_state.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_thread.h"
@@ -21,7 +19,7 @@
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/storage_partition.h"
 #include "net/base/url_util.h"
-#include "third_party/WebKit/public/platform/WebDisplayMode.h"
+#include "third_party/blink/public/platform/web_display_mode.h"
 
 #if defined(OS_ANDROID)
 #include "chrome/browser/android/shortcut_helper.h"
@@ -64,6 +62,23 @@ int GetIdealBadgeIconSizeInPx() {
 #endif
 }
 
+// Returns true if the overall security state of |web_contents| is sufficient to
+// be considered installable.
+bool IsContentSecure(content::WebContents* web_contents) {
+  if (!web_contents)
+    return false;
+
+  // Whitelist localhost. Check the VisibleURL to match what the
+  // SecurityStateTabHelper looks at.
+  if (net::IsLocalhost(web_contents->GetVisibleURL()))
+    return true;
+
+  security_state::SecurityInfo security_info;
+  SecurityStateTabHelper::FromWebContents(web_contents)
+      ->GetSecurityInfo(&security_info);
+  return security_state::IsSslCertificateValid(security_info.security_level);
+}
+
 // Returns true if |manifest| specifies a PNG icon with IconPurpose::ANY and of
 // height and width >= kMinimumPrimaryIconSizeInPx (or size "any").
 bool DoesManifestContainRequiredIcon(const content::Manifest& manifest) {
@@ -100,9 +115,6 @@ bool IsParamsForPwaCheck(const InstallableParams& params) {
          params.valid_primary_icon;
 }
 
-// Used for a no-op call to GetData.
-void DoNothingCallback(const InstallableData& data) {}
-
 }  // namespace
 
 DEFINE_WEB_CONTENTS_USER_DATA_KEY(InstallableManager);
@@ -119,11 +131,11 @@ InstallableManager::IconProperty& InstallableManager::IconProperty::operator=(
 
 InstallableManager::InstallableManager(content::WebContents* web_contents)
     : content::WebContentsObserver(web_contents),
-      metrics_(base::MakeUnique<InstallableMetrics>()),
-      eligibility_(base::MakeUnique<EligiblityProperty>()),
-      manifest_(base::MakeUnique<ManifestProperty>()),
-      valid_manifest_(base::MakeUnique<ValidManifestProperty>()),
-      worker_(base::MakeUnique<ServiceWorkerProperty>()),
+      metrics_(std::make_unique<InstallableMetrics>()),
+      eligibility_(std::make_unique<EligiblityProperty>()),
+      manifest_(std::make_unique<ManifestProperty>()),
+      valid_manifest_(std::make_unique<ValidManifestProperty>()),
+      worker_(std::make_unique<ServiceWorkerProperty>()),
       service_worker_context_(nullptr),
       has_pwa_check_(false),
       weak_factory_(this) {
@@ -144,23 +156,6 @@ InstallableManager::~InstallableManager() {
   // Null in unit tests.
   if (service_worker_context_)
     service_worker_context_->RemoveObserver(this);
-}
-
-// static
-bool InstallableManager::IsContentSecure(content::WebContents* web_contents) {
-  if (!web_contents)
-    return false;
-
-  // Whitelist localhost. Check the VisibleURL to match what the
-  // SecurityStateTabHelper looks at.
-  if (net::IsLocalhost(web_contents->GetVisibleURL().HostNoBracketsPiece()))
-    return true;
-
-  security_state::SecurityInfo security_info;
-  SecurityStateTabHelper::FromWebContents(web_contents)
-      ->GetSecurityInfo(&security_info);
-  return security_info.security_level == security_state::SECURE ||
-         security_info.security_level == security_state::EV_SECURE;
 }
 
 // static
@@ -210,7 +205,7 @@ void InstallableManager::RecordAddToHomescreenManifestAndIconTimeout() {
     params.has_worker = true;
     params.valid_primary_icon = true;
     params.wait_for_worker = true;
-    GetData(params, base::Bind(&DoNothingCallback));
+    GetData(params, base::DoNothing());
   }
 }
 
@@ -335,11 +330,11 @@ void InstallableManager::Reset() {
   task_queue_.Reset();
   has_pwa_check_ = false;
 
-  metrics_ = base::MakeUnique<InstallableMetrics>();
-  eligibility_ = base::MakeUnique<EligiblityProperty>();
-  manifest_ = base::MakeUnique<ManifestProperty>();
-  valid_manifest_ = base::MakeUnique<ValidManifestProperty>();
-  worker_ = base::MakeUnique<ServiceWorkerProperty>();
+  metrics_ = std::make_unique<InstallableMetrics>();
+  eligibility_ = std::make_unique<EligiblityProperty>();
+  manifest_ = std::make_unique<ManifestProperty>();
+  valid_manifest_ = std::make_unique<ValidManifestProperty>();
+  worker_ = std::make_unique<ServiceWorkerProperty>();
 
   OnResetData();
 }
@@ -392,7 +387,7 @@ void InstallableManager::WorkOnTask() {
     // don't cache a missing service worker error to ensure we always check
     // again.
     if (worker_error() == NO_MATCHING_SERVICE_WORKER)
-      worker_ = base::MakeUnique<ServiceWorkerProperty>();
+      worker_ = std::make_unique<ServiceWorkerProperty>();
 
     task_queue_.Next();
 
@@ -495,8 +490,7 @@ bool InstallableManager::IsManifestValidForWebApp(
 
   if (manifest.display != blink::kWebDisplayModeStandalone &&
       manifest.display != blink::kWebDisplayModeFullscreen &&
-      !(manifest.display == blink::kWebDisplayModeMinimalUi &&
-        base::FeatureList::IsEnabled(features::kPwaMinimalUi))) {
+      manifest.display != blink::kWebDisplayModeMinimalUi) {
     valid_manifest_->error = MANIFEST_DISPLAY_NOT_SUPPORTED;
     return false;
   }

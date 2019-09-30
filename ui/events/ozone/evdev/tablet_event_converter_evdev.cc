@@ -42,6 +42,7 @@ TabletEventConverterEvdev::TabletEventConverterEvdev(
                           id,
                           info.device_type(),
                           info.name(),
+                          info.phys(),
                           info.vendor_id(),
                           info.product_id()),
       input_device_fd_(std::move(fd)),
@@ -197,7 +198,7 @@ void TabletEventConverterEvdev::DispatchMouseButton(const input_event& input) {
       false /* allow_remap */,
       PointerDetails(GetToolType(stylus_), /* pointer_id*/ 0,
                      /* radius_x */ 0.0f, /* radius_y */ 0.0f, pressure_,
-                     tilt_x_, tilt_y_),
+                     /* twist */ 0.0f, tilt_x_, tilt_y_),
       TimeTicksFromInputEvent(input)));
 }
 
@@ -220,7 +221,7 @@ void TabletEventConverterEvdev::FlushEvents(const input_event& input) {
       input_device_.id, EF_NONE, cursor_->GetLocation(),
       PointerDetails(GetToolType(stylus_), /* pointer_id*/ 0,
                      /* radius_x */ 0.0f, /* radius_y */ 0.0f, pressure_,
-                     tilt_x_, tilt_y_),
+                     /* twist */ 0.0f, tilt_x_, tilt_y_),
       TimeTicksFromInputEvent(input)));
 
   abs_value_dirty_ = false;

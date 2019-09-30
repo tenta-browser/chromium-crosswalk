@@ -17,8 +17,8 @@
 #include "content/public/browser/browser_associated_interface.h"
 #include "content/public/browser/browser_message_filter.h"
 #include "content/public/common/resource_type.h"
-#include "content/public/common/url_loader_factory.mojom.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
+#include "services/network/public/mojom/url_loader_factory.mojom.h"
 
 namespace storage {
 class FileSystemContext;
@@ -32,6 +32,7 @@ class URLRequestContext;
 namespace content {
 class ChromeAppCacheService;
 class ChromeBlobStorageContext;
+class PrefetchURLLoaderService;
 class ResourceContext;
 class ResourceRequesterInfo;
 class ServiceWorkerContextWrapper;
@@ -43,8 +44,8 @@ class ServiceWorkerContextWrapper;
 // will not interfere with browser UI.
 class CONTENT_EXPORT ResourceMessageFilter
     : public BrowserMessageFilter,
-      public BrowserAssociatedInterface<mojom::URLLoaderFactory>,
-      public mojom::URLLoaderFactory {
+      public BrowserAssociatedInterface<network::mojom::URLLoaderFactory>,
+      public network::mojom::URLLoaderFactory {
  public:
   typedef base::Callback<void(ResourceType resource_type,
                               ResourceContext**,
@@ -60,6 +61,7 @@ class CONTENT_EXPORT ResourceMessageFilter
       ChromeBlobStorageContext* blob_storage_context,
       storage::FileSystemContext* file_system_context,
       ServiceWorkerContextWrapper* service_worker_context,
+      PrefetchURLLoaderService* prefetch_url_loader_service,
       const GetContextsCallback& get_contexts_callback,
       const scoped_refptr<base::SingleThreadTaskRunner>& io_thread_runner);
 
@@ -71,15 +73,15 @@ class CONTENT_EXPORT ResourceMessageFilter
 
   base::WeakPtr<ResourceMessageFilter> GetWeakPtr();
 
-  void CreateLoaderAndStart(mojom::URLLoaderRequest request,
+  void CreateLoaderAndStart(network::mojom::URLLoaderRequest request,
                             int32_t routing_id,
                             int32_t request_id,
                             uint32_t options,
-                            const ResourceRequest& url_request,
-                            mojom::URLLoaderClientPtr client,
+                            const network::ResourceRequest& url_request,
+                            network::mojom::URLLoaderClientPtr client,
                             const net::MutableNetworkTrafficAnnotationTag&
                                 traffic_annotation) override;
-  void Clone(mojom::URLLoaderFactoryRequest request) override;
+  void Clone(network::mojom::URLLoaderFactoryRequest request) override;
 
   int child_id() const;
 
@@ -93,9 +95,11 @@ class CONTENT_EXPORT ResourceMessageFilter
   // When the testing pointer's CreateLoaderAndStart() is being called,
   // |GetCurrentForTesting()| will return the filter that's calling the testing
   // pointer. Also, the testing pointer won't be used for nested
-  // CreateLoaderAndStart's. Must be called on the IO thread.
+  // CreateLoaderAndStart's.
+  // This method must be called either on the IO thread or before threads start.
+  // This callback is run on the IO thread.
   static void SetNetworkFactoryForTesting(
-      mojom::URLLoaderFactory* test_factory);
+      network::mojom::URLLoaderFactory* test_factory);
   static ResourceMessageFilter* GetCurrentForTesting();
 
  protected:
@@ -111,10 +115,9 @@ class CONTENT_EXPORT ResourceMessageFilter
   bool is_channel_closed_;
   scoped_refptr<ResourceRequesterInfo> requester_info_;
 
-  // An additional set of non-associated bindings (beyond those held by the
-  // BrowserAssociatedInterface parent class) of pipes to this object's
-  // URLLoaderFactory interface.
-  mojo::BindingSet<mojom::URLLoaderFactory> bindings_;
+  std::unique_ptr<network::mojom::URLLoaderFactory> url_loader_factory_;
+
+  scoped_refptr<PrefetchURLLoaderService> prefetch_url_loader_service_;
 
   // Task runner for the IO thead.
   scoped_refptr<base::SingleThreadTaskRunner> io_thread_task_runner_;

@@ -4,7 +4,10 @@
 
 #include "chrome/browser/permissions/permission_manager.h"
 
+#include <memory>
+
 #include "base/macros.h"
+#include "base/test/scoped_feature_list.h"
 #include "build/build_config.h"
 #include "chrome/browser/content_settings/host_content_settings_map_factory.h"
 #include "chrome/browser/permissions/permission_manager_factory.h"
@@ -13,16 +16,18 @@
 #include "chrome/browser/search_engines/ui_thread_search_terms_data.h"
 #include "chrome/browser/ui/permission_bubble/mock_permission_prompt_factory.h"
 #include "chrome/browser/vr/vr_tab_helper.h"
+#include "chrome/common/chrome_features.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/test/base/chrome_render_view_host_test_harness.h"
 #include "chrome/test/base/testing_profile.h"
 #include "components/content_settings/core/browser/host_content_settings_map.h"
 #include "content/public/browser/permission_type.h"
 #include "content/public/test/test_browser_thread_bundle.h"
-#include "device/vr/features/features.h"
+#include "device/vr/buildflags/buildflags.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 #if defined(OS_ANDROID)
+#include "chrome/browser/android/chrome_feature_list.h"
 #include "chrome/browser/android/mock_location_settings.h"
 #include "chrome/browser/geolocation/geolocation_permission_context_android.h"
 #endif  // defined(OS_ANDROID)
@@ -32,7 +37,9 @@ using content::PermissionType;
 
 namespace {
 
+#if defined(OS_ANDROID)
 int kNoPendingOperation = -1;
+#endif
 
 class PermissionManagerTestingProfile final : public TestingProfile {
  public:
@@ -415,6 +422,11 @@ TEST_F(PermissionManagerTest, SubscribeMIDIPermission) {
 }
 
 TEST_F(PermissionManagerTest, SuppressPermissionRequests) {
+#if defined(OS_ANDROID)
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitAndDisableFeature(
+      chrome::android::kVrBrowsingNativeAndroidUi);
+
   content::WebContents* contents = web_contents();
   vr::VrTabHelper::CreateForWebContents(contents);
   NavigateAndCommit(url());
@@ -445,6 +457,7 @@ TEST_F(PermissionManagerTest, SuppressPermissionRequests) {
                  base::Unretained(this)));
   EXPECT_TRUE(callback_called());
   EXPECT_EQ(PermissionStatus::GRANTED, callback_result());
+#endif
 }
 
 TEST_F(PermissionManagerTest, PermissionIgnoredCleanup) {
@@ -452,7 +465,7 @@ TEST_F(PermissionManagerTest, PermissionIgnoredCleanup) {
   PermissionRequestManager::CreateForWebContents(contents);
   PermissionRequestManager* manager =
       PermissionRequestManager::FromWebContents(contents);
-  auto prompt_factory = base::MakeUnique<MockPermissionPromptFactory>(manager);
+  auto prompt_factory = std::make_unique<MockPermissionPromptFactory>(manager);
 
   NavigateAndCommit(url());
 
@@ -492,7 +505,7 @@ TEST_F(PermissionManagerTest, InsecureOrigin) {
   EXPECT_EQ(PermissionStatusSource::UNSPECIFIED, result.source);
 }
 
-TEST_F(PermissionManagerTest, GetCanonicalOrigin) {
+TEST_F(PermissionManagerTest, GetCanonicalOriginSearch) {
   const GURL google_com("https://www.google.com");
   const GURL google_de("https://www.google.de");
   const GURL other_url("https://other.url");
@@ -503,17 +516,53 @@ TEST_F(PermissionManagerTest, GetCanonicalOrigin) {
   const GURL other_chrome_search = GURL("chrome-search://not-local-ntp");
 
   // "Normal" URLs are not affected by GetCanonicalOrigin.
-  EXPECT_EQ(google_com, GetPermissionManager()->GetCanonicalOrigin(google_com));
-  EXPECT_EQ(google_de, GetPermissionManager()->GetCanonicalOrigin(google_de));
-  EXPECT_EQ(other_url, GetPermissionManager()->GetCanonicalOrigin(other_url));
-  EXPECT_EQ(google_base,
-            GetPermissionManager()->GetCanonicalOrigin(google_base));
+  EXPECT_EQ(google_com,
+            GetPermissionManager()->GetCanonicalOrigin(google_com, google_com));
+  EXPECT_EQ(google_de,
+            GetPermissionManager()->GetCanonicalOrigin(google_de, google_de));
+  EXPECT_EQ(other_url,
+            GetPermissionManager()->GetCanonicalOrigin(other_url, other_url));
+  EXPECT_EQ(google_base, GetPermissionManager()->GetCanonicalOrigin(
+                             google_base, google_base));
 
   // The local NTP URL gets mapped to the Google base URL.
-  EXPECT_EQ(google_base, GetPermissionManager()->GetCanonicalOrigin(local_ntp));
+  EXPECT_EQ(google_base,
+            GetPermissionManager()->GetCanonicalOrigin(local_ntp, local_ntp));
   // However, other chrome-search:// URLs, including the remote NTP URL, are
   // not affected.
-  EXPECT_EQ(remote_ntp, GetPermissionManager()->GetCanonicalOrigin(remote_ntp));
-  EXPECT_EQ(other_chrome_search,
-            GetPermissionManager()->GetCanonicalOrigin(other_chrome_search));
+  EXPECT_EQ(remote_ntp,
+            GetPermissionManager()->GetCanonicalOrigin(remote_ntp, remote_ntp));
+  EXPECT_EQ(other_chrome_search, GetPermissionManager()->GetCanonicalOrigin(
+                                     other_chrome_search, other_chrome_search));
+}
+
+TEST_F(PermissionManagerTest, GetCanonicalOriginPermissionDelegation) {
+  const GURL requesting_origin("https://www.requesting.com");
+  const GURL embedding_origin("https://www.google.de");
+  const GURL extensions_requesting_origin(
+      "chrome-extension://abcdefghijklmnopqrstuvxyz");
+
+  {
+    base::test::ScopedFeatureList scoped_feature_list;
+    scoped_feature_list.InitAndDisableFeature(features::kPermissionDelegation);
+    // Without permission delegation enabled the requesting origin should always
+    // be returned.
+    EXPECT_EQ(requesting_origin, GetPermissionManager()->GetCanonicalOrigin(
+                                     requesting_origin, embedding_origin));
+    EXPECT_EQ(extensions_requesting_origin,
+              GetPermissionManager()->GetCanonicalOrigin(
+                  extensions_requesting_origin, embedding_origin));
+  }
+
+  {
+    base::test::ScopedFeatureList scoped_feature_list;
+    scoped_feature_list.InitAndEnableFeature(features::kPermissionDelegation);
+    // With permission delegation, the embedding origin should be returned
+    // except in the case of extensions.
+    EXPECT_EQ(embedding_origin, GetPermissionManager()->GetCanonicalOrigin(
+                                    requesting_origin, embedding_origin));
+    EXPECT_EQ(extensions_requesting_origin,
+              GetPermissionManager()->GetCanonicalOrigin(
+                  extensions_requesting_origin, embedding_origin));
+  }
 }

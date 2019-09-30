@@ -29,17 +29,33 @@ const char kArcDataRemoveRequested[] = "arc.data.remove_requested";
 // utility methods (IsArcPlayStoreEnabledForProfile() and
 // SetArcPlayStoreEnabledForProfile()) in chrome/browser/chromeos/arc/arc_util.
 const char kArcEnabled[] = "arc.enabled";
+// A preference that indicates that initial settings need to be applied. Initial
+// settings are applied only once per new OptIn once mojo settings instance is
+// ready. Each OptOut resets this preference. Note, its sense is close to
+// |kArcSignedIn|, however due the asynchronous nature of initializing mojo
+// components, timing of triggering |kArcSignedIn| and
+// |kArcInitialSettingsPending| can be different and
+// |kArcInitialSettingsPending| may even be handled in the next user session.
+const char kArcInitialSettingsPending[] = "arc.initial.settings.pending";
 // A preference that indicated whether Android reported it's compliance status
 // with provided policies. This is used only as a signal to start Android kiosk.
 const char kArcPolicyComplianceReported[] = "arc.policy_compliance_reported";
 // A preference that indicates that user accepted PlayStore terms.
 const char kArcTermsAccepted[] = "arc.terms.accepted";
+// A preference that indicates that ToS was shown in OOBE flow.
+const char kArcTermsShownInOobe[] = "arc.terms.shown_in_oobe";
 // A preference to keep user's consent to use location service.
 const char kArcLocationServiceEnabled[] = "arc.location_service.enabled";
 // A preference to keep list of Android packages and their infomation.
 const char kArcPackages[] = "arc.packages";
 // A preference that indicates that Play Auto Install flow was already started.
 const char kArcPaiStarted[] = "arc.pai.started";
+// A preference that holds the list of apps that the admin requested to be
+// push-installed.
+const char kArcPushInstallAppsRequested[] = "arc.push_install.requested";
+// A preference that holds the list of apps that the admin requested to be
+// push-installed, but which have not been successfully installed yet.
+const char kArcPushInstallAppsPending[] = "arc.push_install.pending";
 // A preference to keep deferred requests of setting notifications enabled flag.
 const char kArcSetNotificationsEnabledDeferred[] =
     "arc.set_notifications_enabled_deferred";
@@ -86,10 +102,12 @@ void RegisterProfilePrefs(PrefRegistrySimple* registry) {
   // Sorted in lexicographical order.
   registry->RegisterBooleanPref(kArcDataRemoveRequested, false);
   registry->RegisterBooleanPref(kArcEnabled, false);
+  registry->RegisterBooleanPref(kArcInitialSettingsPending, false);
   registry->RegisterBooleanPref(kArcPaiStarted, false);
   registry->RegisterBooleanPref(kArcPolicyComplianceReported, false);
   registry->RegisterBooleanPref(kArcSignedIn, false);
   registry->RegisterBooleanPref(kArcTermsAccepted, false);
+  registry->RegisterBooleanPref(kArcTermsShownInOobe, false);
   registry->RegisterBooleanPref(kArcVoiceInteractionValuePropAccepted, false);
   registry->RegisterBooleanPref(kSmsConnectEnabled, true);
   registry->RegisterBooleanPref(kVoiceInteractionContextEnabled, false);

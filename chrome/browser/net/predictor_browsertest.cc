@@ -16,7 +16,6 @@
 #include "base/command_line.h"
 #include "base/json/json_string_value_serializer.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
@@ -30,6 +29,7 @@
 #include "chrome/browser/browsing_data/browsing_data_helper.h"
 #include "chrome/browser/browsing_data/chrome_browsing_data_remover_delegate.h"
 #include "chrome/browser/net/predictor.h"
+#include "chrome/browser/predictors/loading_predictor_config.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
@@ -38,6 +38,7 @@
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "components/prefs/pref_service.h"
+#include "content/public/browser/browser_thread.h"
 #include "content/public/browser/browsing_data_remover.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/test/browser_test_utils.h"
@@ -61,6 +62,7 @@
 #include "net/url_request/url_request_test_job.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "url/gurl.h"
+#include "url/url_constants.h"
 
 using content::BrowserThread;
 using testing::HasSubstr;
@@ -514,7 +516,8 @@ class PredictorBrowserTest : public InProcessBrowserTest {
         Predictor::kMaxSpeculativeResolveQueueDelayMs + 300);
     rule_based_resolver_proc_->AddRuleWithLatency("delay.google.com",
                                                   "127.0.0.1", 1000 * 60);
-    scoped_feature_list_.InitAndEnableFeature(features::kPreconnectMore);
+    scoped_feature_list_.InitAndDisableFeature(
+        predictors::kSpeculativePreconnectFeature);
   }
 
   ~PredictorBrowserTest() override {}
@@ -562,7 +565,7 @@ class PredictorBrowserTest : public InProcessBrowserTest {
     DCHECK_CURRENTLY_ON(BrowserThread::IO);
     net::URLRequestFilter::GetInstance()->AddHostnameInterceptor(
         url.scheme(), url.host(),
-        base::MakeUnique<MatchingPortRequestInterceptor>(url.EffectiveIntPort(),
+        std::make_unique<MatchingPortRequestInterceptor>(url.EffectiveIntPort(),
                                                          callback));
   }
 
@@ -1080,7 +1083,7 @@ IN_PROC_BROWSER_TEST_F(PredictorBrowserTest, PredictBasedOnSubframeRedirect) {
   // TODO(csharrison): Possibly this is a bug in either net or Blink, and it
   // might be worthwhile to investigate.
   std::unique_ptr<net::EmbeddedTestServer> redirector =
-      base::MakeUnique<net::EmbeddedTestServer>();
+      std::make_unique<net::EmbeddedTestServer>();
 
   NavigateToCrossSiteHtmlUrl(1 /* num_cors */, "" /* file_suffix */);
   EXPECT_EQ(1, observer()->CrossSiteLearned());
@@ -1410,9 +1413,14 @@ IN_PROC_BROWSER_TEST_F(PredictorBrowserTest,
   EXPECT_EQ(0u, cross_site_connection_listener_->GetAcceptedSocketCount());
 
   // Now, navigate using a renderer initiated navigation and expect preconnects.
+  // Need to navigate to about:blank first so the referring site is different
+  // from the request site.
+  ui_test_utils::NavigateToURL(browser(), GURL(url::kAboutBlankURL));
   EXPECT_TRUE(content::ExecuteScript(
       browser()->tab_strip_model()->GetActiveWebContents(),
-      "window.location.href='/title1.html'"));
+      base::StringPrintf(
+          "window.location.href='%s'",
+          embedded_test_server()->GetURL("/title1.html").spec().c_str())));
 
   // The renderer initiated navigation is not synchronous, so just wait for the
   // preconnects to go through.

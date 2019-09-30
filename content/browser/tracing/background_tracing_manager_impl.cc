@@ -25,7 +25,7 @@
 #include "content/public/browser/tracing_delegate.h"
 #include "content/public/common/content_client.h"
 #include "content/public/common/content_switches.h"
-#include "services/resource_coordinator/public/cpp/tracing/chrome_trace_event_agent.h"
+#include "services/tracing/public/cpp/chrome_trace_event_agent.h"
 
 namespace content {
 
@@ -113,7 +113,7 @@ void BackgroundTracingManagerImpl::AddMetadataGeneratorFunction() {
 void BackgroundTracingManagerImpl::WhenIdle(
     base::Callback<void()> idle_callback) {
   CHECK(content::BrowserThread::CurrentlyOn(content::BrowserThread::UI));
-  idle_callback_ = idle_callback;
+  idle_callback_ = std::move(idle_callback);
 }
 
 bool BackgroundTracingManagerImpl::SetActiveScenario(
@@ -323,6 +323,9 @@ void BackgroundTracingManagerImpl::OnHistogramTrigger(
     return;
   }
 
+  if (!config_)
+    return;
+
   for (const auto& rule : config_->rules()) {
     if (rule->ShouldTriggerNamedEvent(histogram_name))
       OnRuleTriggered(rule.get(), StartedFinalizingCallback());
@@ -336,7 +339,7 @@ void BackgroundTracingManagerImpl::TriggerNamedEvent(
     content::BrowserThread::PostTask(
         content::BrowserThread::UI, FROM_HERE,
         base::BindOnce(&BackgroundTracingManagerImpl::TriggerNamedEvent,
-                       base::Unretained(this), handle, callback));
+                       base::Unretained(this), handle, std::move(callback)));
     return;
   }
 
@@ -356,12 +359,12 @@ void BackgroundTracingManagerImpl::TriggerNamedEvent(
 
   if (!is_valid_trigger) {
     if (!callback.is_null())
-      callback.Run(false);
+      std::move(callback).Run(false);
     return;
   }
 
   triggered_named_event_handle_ = handle;
-  OnRuleTriggered(triggered_rule, callback);
+  OnRuleTriggered(triggered_rule, std::move(callback));
 }
 
 void BackgroundTracingManagerImpl::OnRuleTriggered(
@@ -372,7 +375,7 @@ void BackgroundTracingManagerImpl::OnRuleTriggered(
   double trigger_chance = triggered_rule->trigger_chance();
   if (trigger_chance < 1.0 && base::RandDouble() > trigger_chance) {
     if (!callback.is_null())
-      callback.Run(false);
+      std::move(callback).Run(false);
     return;
   }
 
@@ -397,7 +400,7 @@ void BackgroundTracingManagerImpl::OnRuleTriggered(
         trace_delay = -1;
       } else {
         if (!callback.is_null())
-          callback.Run(false);
+          std::move(callback).Run(false);
         return;
       }
     }
@@ -407,7 +410,7 @@ void BackgroundTracingManagerImpl::OnRuleTriggered(
     // otherwise we do nothing.
     if (!is_tracing_ || is_gathering_ || tracing_timer_) {
       if (!callback.is_null())
-        callback.Run(false);
+        std::move(callback).Run(false);
       return;
     }
 
@@ -415,9 +418,9 @@ void BackgroundTracingManagerImpl::OnRuleTriggered(
   }
 
   if (trace_delay < 0) {
-    BeginFinalizing(callback);
+    BeginFinalizing(std::move(callback));
   } else {
-    tracing_timer_.reset(new TracingTimer(callback));
+    tracing_timer_.reset(new TracingTimer(std::move(callback)));
     tracing_timer_->StartTimer(trace_delay);
   }
 
@@ -506,7 +509,7 @@ void BackgroundTracingManagerImpl::OnFinalizeStarted(
                    base::Unretained(this)));
   }
   if (!started_finalizing_closure.is_null())
-    started_finalizing_closure.Run();
+    std::move(started_finalizing_closure).Run();
 }
 
 void BackgroundTracingManagerImpl::OnFinalizeComplete() {
@@ -579,19 +582,21 @@ void BackgroundTracingManagerImpl::BeginFinalizing(
   }
   if (is_allowed_finalization) {
     trace_data_endpoint = TracingControllerImpl::CreateCompressedStringEndpoint(
-        TracingControllerImpl::CreateCallbackEndpoint(
-            base::Bind(&BackgroundTracingManagerImpl::OnFinalizeStarted,
-                       base::Unretained(this), started_finalizing_closure)),
+        TracingControllerImpl::CreateCallbackEndpoint(base::Bind(
+            &BackgroundTracingManagerImpl::OnFinalizeStarted,
+            base::Unretained(this), std::move(started_finalizing_closure))),
         true /* compress_with_background_priority */);
     RecordBackgroundTracingMetric(FINALIZATION_ALLOWED);
   } else {
-    if (!callback.is_null()) {
+    if (!std::move(callback).is_null()) {
       trace_data_endpoint =
           TracingControllerImpl::CreateCallbackEndpoint(base::BindRepeating(
               [](base::Closure closure,
                  std::unique_ptr<const base::DictionaryValue> metadata,
-                 base::RefCountedString* file_contents) { closure.Run(); },
-              started_finalizing_closure));
+                 base::RefCountedString* file_contents) {
+                std::move(closure).Run();
+              },
+              std::move(started_finalizing_closure)));
     }
     RecordBackgroundTracingMetric(FINALIZATION_DISALLOWED);
   }

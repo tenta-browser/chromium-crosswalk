@@ -4,12 +4,11 @@
 
 #import "ios/chrome/browser/ui/toolbar/public/toolbar_controller_base_feature.h"
 
+#include "base/command_line.h"
+
 #if !defined(__has_feature) || !__has_feature(objc_arc)
 #error "This file requires ARC support."
 #endif
 
-const base::Feature kPropertyAnimationsToolbar{
-    "PropertyAnimationsToolbar", base::FEATURE_DISABLED_BY_DEFAULT};
-
-const base::Feature kCleanToolbar{"CleanToolbar",
-                                  base::FEATURE_DISABLED_BY_DEFAULT};
+const base::Feature kMemexTabSwitcher{"MemexTabSwitcher",
+                                      base::FEATURE_DISABLED_BY_DEFAULT};

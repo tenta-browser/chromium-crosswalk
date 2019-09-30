@@ -102,6 +102,8 @@ class RemoteSuggestionsProviderImpl final : public RemoteSuggestionsProvider {
   void DismissSuggestion(const ContentSuggestion::ID& suggestion_id) override;
   void FetchSuggestionImage(const ContentSuggestion::ID& suggestion_id,
                             ImageFetchedCallback callback) override;
+  void FetchSuggestionImageData(const ContentSuggestion::ID& suggestion_id,
+                                ImageDataFetchedCallback callback) override;
   void Fetch(const Category& category,
              const std::set<std::string>& known_suggestion_ids,
              FetchDoneCallback callback) override;
@@ -111,7 +113,7 @@ class RemoteSuggestionsProviderImpl final : public RemoteSuggestionsProvider {
       base::Time end,
       const base::Callback<bool(const GURL& url)>& filter) override;
   void ClearCachedSuggestions() override;
-  void OnSignInStateChanged() override;
+  void OnSignInStateChanged(bool has_signed_in) override;
   void GetDismissedSuggestionsForDebugging(
       Category category,
       DismissedSuggestionsCallback callback) override;
@@ -135,9 +137,7 @@ class RemoteSuggestionsProviderImpl final : public RemoteSuggestionsProvider {
   }
 
   // Overrides internal clock for testing purposes.
-  void SetClockForTesting(std::unique_ptr<base::Clock> clock) {
-    clock_ = std::move(clock);
-  }
+  void SetClockForTesting(base::Clock* clock) { clock_ = clock; }
 
   // TODO(tschumann): remove this method as soon as we inject the fetcher into
   // the constructor.
@@ -163,6 +163,10 @@ class RemoteSuggestionsProviderImpl final : public RemoteSuggestionsProvider {
                            CallsSchedulerWhenSignedIn);
   FRIEND_TEST_ALL_PREFIXES(RemoteSuggestionsProviderImplTest,
                            CallsSchedulerWhenSignedOut);
+  FRIEND_TEST_ALL_PREFIXES(RemoteSuggestionsProviderImplTest,
+                           RestartsFetchWhenSignedInWhileFetching);
+  FRIEND_TEST_ALL_PREFIXES(RemoteSuggestionsProviderImplTest,
+                           ShouldHandleCategoryDisabledBeforeTimeout);
   FRIEND_TEST_ALL_PREFIXES(
       RemoteSuggestionsProviderImplTest,
       ShouldNotSetExclusiveCategoryWhenFetchingSuggestions);
@@ -206,6 +210,25 @@ class RemoteSuggestionsProviderImpl final : public RemoteSuggestionsProvider {
     ERROR_OCCURRED,
 
     COUNT
+  };
+
+  // Documents the status of the ongoing request and what action should be taken
+  // on completion.
+  enum class FetchRequestStatus {
+    // There is no request in progress for remote suggestions.
+    NONE,
+
+    // There is a valid request in progress that should be treated normally on
+    // completion.
+    IN_PROGRESS,
+
+    // There is a canceled request in progress. The response should be ignored
+    // when it arrives.
+    IN_PROGRESS_CANCELED,
+
+    // There is an invalidated request in progress. On completion, we should
+    // ignore the response and initiate a new fetch (with updated parameters).
+    IN_PROGRESS_NEEDS_REFETCH
   };
 
   struct CategoryContent {
@@ -335,6 +358,9 @@ class RemoteSuggestionsProviderImpl final : public RemoteSuggestionsProvider {
   // Clears suggestions because any history item has been removed.
   void ClearHistoryDependentState();
 
+  // Clears the cached suggestions
+  void ClearCachedSuggestionsImpl();
+
   // Clears all stored suggestions and updates the observer.
   void NukeAllSuggestions();
 
@@ -393,6 +419,8 @@ class RemoteSuggestionsProviderImpl final : public RemoteSuggestionsProvider {
   void NotifyFetchWithLoadingIndicatorStarted();
   void NotifyFetchWithLoadingIndicatorFailedOrTimeouted();
 
+  GURL GetImageURLToFetch(const ContentSuggestion::ID& suggestion_id) const;
+
   State state_;
 
   PrefService* pref_service_;
@@ -434,7 +462,7 @@ class RemoteSuggestionsProviderImpl final : public RemoteSuggestionsProvider {
   bool clear_cached_suggestions_when_initialized_;
 
   // A clock for getting the time. This allows to inject a clock in tests.
-  std::unique_ptr<base::Clock> clock_;
+  base::Clock* clock_;
 
   // Prefetched pages tracker to query which urls have been prefetched.
   // |nullptr| is handled gracefully and just disables the functionality.
@@ -449,6 +477,12 @@ class RemoteSuggestionsProviderImpl final : public RemoteSuggestionsProvider {
 
   // A Timer for canceling too long fetches.
   std::unique_ptr<base::OneShotTimer> fetch_timeout_timer_;
+
+  // Keeps track of the status of the ongoing request(s) and what action should
+  // be taken on completion. Requests via Fetch() (fetching more) are _not_
+  // tracked by this variable (as they do not need any special actions on
+  // completion).
+  FetchRequestStatus request_status_;
 
   DISALLOW_COPY_AND_ASSIGN(RemoteSuggestionsProviderImpl);
 };

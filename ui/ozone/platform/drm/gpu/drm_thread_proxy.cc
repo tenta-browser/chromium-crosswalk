@@ -5,7 +5,6 @@
 #include "ui/ozone/platform/drm/gpu/drm_thread_proxy.h"
 
 #include "base/bind.h"
-#include "base/memory/ptr_util.h"
 #include "ui/ozone/platform/drm/gpu/drm_thread_message_proxy.h"
 #include "ui/ozone/platform/drm/gpu/drm_window_proxy.h"
 #include "ui/ozone/platform/drm/gpu/gbm_buffer.h"
@@ -17,13 +16,15 @@ DrmThreadProxy::DrmThreadProxy() {}
 
 DrmThreadProxy::~DrmThreadProxy() {}
 
+// Used only with the paramtraits implementation.
 void DrmThreadProxy::BindThreadIntoMessagingProxy(
     InterThreadMessagingProxy* messaging_proxy) {
   messaging_proxy->SetDrmThread(&drm_thread_);
 }
 
-void DrmThreadProxy::StartDrmThread() {
-  drm_thread_.Start();
+// Used only for the mojo implementation.
+void DrmThreadProxy::StartDrmThread(base::OnceClosure binding_drainer) {
+  drm_thread_.Start(std::move(binding_drainer));
 }
 
 std::unique_ptr<DrmWindowProxy> DrmThreadProxy::CreateDrmWindowProxy(
@@ -36,7 +37,10 @@ scoped_refptr<GbmBuffer> DrmThreadProxy::CreateBuffer(
     const gfx::Size& size,
     gfx::BufferFormat format,
     gfx::BufferUsage usage) {
+  DCHECK(drm_thread_.task_runner())
+      << "no task runner! in DrmThreadProxy::CreateBuffer";
   scoped_refptr<GbmBuffer> buffer;
+
   PostSyncTask(
       drm_thread_.task_runner(),
       base::Bind(&DrmThread::CreateBuffer, base::Unretained(&drm_thread_),
@@ -71,16 +75,19 @@ void DrmThreadProxy::AddBindingCursorDevice(
     ozone::mojom::DeviceCursorRequest request) {
   drm_thread_.task_runner()->PostTask(
       FROM_HERE,
-      base::Bind(&DrmThread::AddBindingCursorDevice,
-                 base::Unretained(&drm_thread_), base::Passed(&request)));
+      base::BindOnce(&DrmThread::AddBindingCursorDevice,
+                     base::Unretained(&drm_thread_), std::move(request)));
 }
 
 void DrmThreadProxy::AddBindingDrmDevice(
     ozone::mojom::DrmDeviceRequest request) {
+  DCHECK(drm_thread_.task_runner()) << "DrmThreadProxy::AddBindingDrmDevice "
+                                       "drm_thread_ task runner missing";
+
   drm_thread_.task_runner()->PostTask(
       FROM_HERE,
-      base::Bind(&DrmThread::AddBindingDrmDevice,
-                 base::Unretained(&drm_thread_), base::Passed(&request)));
+      base::BindOnce(&DrmThread::AddBindingDrmDevice,
+                     base::Unretained(&drm_thread_), std::move(request)));
 }
 
 }  // namespace ui

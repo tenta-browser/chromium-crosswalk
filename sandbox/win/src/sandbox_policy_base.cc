@@ -267,6 +267,8 @@ void PolicyBase::DestroyAlternateDesktop() {
 }
 
 ResultCode PolicyBase::SetIntegrityLevel(IntegrityLevel integrity_level) {
+  if (app_container_profile_)
+    return SBOX_ERROR_BAD_PARAMS;
   integrity_level_ = integrity_level;
   return SBOX_ALL_OK;
 }
@@ -282,11 +284,11 @@ ResultCode PolicyBase::SetDelayedIntegrityLevel(
 }
 
 ResultCode PolicyBase::SetLowBox(const wchar_t* sid) {
-  if (base::win::OSInfo::GetInstance()->version() < base::win::VERSION_WIN8)
+  if (base::win::GetVersion() < base::win::VERSION_WIN8)
     return SBOX_ERROR_UNSUPPORTED;
 
   DCHECK(sid);
-  if (lowbox_sid_)
+  if (lowbox_sid_ || app_container_profile_)
     return SBOX_ERROR_BAD_PARAMS;
 
   if (!ConvertStringSidToSid(sid, &lowbox_sid_))
@@ -296,7 +298,7 @@ ResultCode PolicyBase::SetLowBox(const wchar_t* sid) {
 }
 
 ResultCode PolicyBase::SetProcessMitigations(MitigationFlags flags) {
-  if (!CanSetProcessMitigationsPreStartup(flags))
+  if (app_container_profile_ || !CanSetProcessMitigationsPreStartup(flags))
     return SBOX_ERROR_BAD_PARAMS;
   mitigations_ = flags;
   return SBOX_ALL_OK;
@@ -542,8 +544,10 @@ bool PolicyBase::OnJobEmpty(HANDLE job) {
 }
 
 ResultCode PolicyBase::SetDisconnectCsrss() {
-// Does not work on 32-bit.
-#if defined(_WIN64)
+// Does not work on 32-bit, and the ASAN runtime falls over with the
+// CreateThread EAT patch used when this is enabled.
+// See https://crbug.com/783296#c27.
+#if defined(_WIN64) && !defined(ADDRESS_SANITIZER)
   if (base::win::GetVersion() >= base::win::VERSION_WIN10) {
     is_csrss_connected_ = false;
     return AddKernelObjectToClose(L"ALPC Port", nullptr);
@@ -592,6 +596,43 @@ void PolicyBase::SetEnableOPMRedirection() {
 
 bool PolicyBase::GetEnableOPMRedirection() {
   return enable_opm_redirection_;
+}
+
+ResultCode PolicyBase::AddAppContainerProfile(const wchar_t* package_name,
+                                              bool create_profile) {
+  if (base::win::GetVersion() < base::win::VERSION_WIN8)
+    return SBOX_ERROR_UNSUPPORTED;
+
+  DCHECK(package_name);
+  if (lowbox_sid_ || app_container_profile_ ||
+      integrity_level_ != INTEGRITY_LEVEL_LAST)
+    return SBOX_ERROR_BAD_PARAMS;
+
+  if (create_profile) {
+    app_container_profile_ = AppContainerProfileBase::Create(
+        package_name, L"Chrome Sandbox", L"Profile for Chrome Sandbox");
+  } else {
+    app_container_profile_ = AppContainerProfileBase::Open(package_name);
+  }
+  if (!app_container_profile_)
+    return SBOX_ERROR_CREATE_APPCONTAINER_PROFILE;
+  // A bug exists in CreateProcess where enabling an AppContainer profile and
+  // passing a set of mitigation flags will generate ERROR_INVALID_PARAMETER.
+  // Apply best efforts here and convert set mitigations to delayed mitigations.
+  delayed_mitigations_ =
+      mitigations_ & GetAllowedPostStartupProcessMitigations();
+  DCHECK(delayed_mitigations_ == (mitigations_ & ~MITIGATION_SEHOP));
+  mitigations_ = 0;
+  return SBOX_ALL_OK;
+}
+
+scoped_refptr<AppContainerProfile> PolicyBase::GetAppContainerProfile() {
+  return GetAppContainerProfileBase();
+}
+
+scoped_refptr<AppContainerProfileBase>
+PolicyBase::GetAppContainerProfileBase() {
+  return app_container_profile_;
 }
 
 ResultCode PolicyBase::SetupAllInterceptions(TargetProcess* target) {

@@ -3,7 +3,6 @@
 <script src="../resources/testharness.js"></script>
 <script src="../resources/testharnessreport.js"></script>
 <script src="media-controls.js"></script>
-<script src="media-file.js"></script>
 <script>
 internals.settings.setAutoplayPolicy('user-gesture-required');
 </script>
@@ -20,7 +19,7 @@ async_test(function(t) {
 
         // User gesture initiated.
         userGestureInitiated = true;
-        var playCoords = mediaControlsButtonCoordinates(video, "play-button");
+        var playCoords = mediaControlsButtonCoordinates(video, "overlay-play-button");
         eventSender.mouseMoveTo(playCoords[0], playCoords[1]);
         eventSender.mouseDown();
         eventSender.mouseUp();
@@ -35,6 +34,6 @@ async_test(function(t) {
         assert_true(video.paused);
     });
 
-    video.src = findMediaFile("video", "content/test");
+    video.src = "content/test.ogv";
 });
 </script>

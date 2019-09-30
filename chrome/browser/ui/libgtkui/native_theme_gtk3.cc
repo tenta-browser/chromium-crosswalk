@@ -121,7 +121,7 @@ SkColor SkColorFromColorId(ui::NativeTheme::ColorId color_id) {
       return GetFgColor("GtkMenu#menu GtkMenuItem#menuitem:hover GtkLabel");
     case ui::NativeTheme::kColorId_DisabledMenuItemForegroundColor:
       return GetFgColor("GtkMenu#menu GtkMenuItem#menuitem:disabled GtkLabel");
-    case ui::NativeTheme::kColorId_MenuItemSubtitleColor:
+    case ui::NativeTheme::kColorId_MenuItemMinorTextColor:
       if (GtkVersionCheck(3, 20)) {
         return GetFgColor("GtkMenu#menu GtkMenuItem#menuitem #accelerator");
       }
@@ -153,7 +153,7 @@ SkColor SkColorFromColorId(ui::NativeTheme::ColorId color_id) {
     case ui::NativeTheme::kColorId_LinkPressed:
       if (GtkVersionCheck(3, 12))
         return GetFgColor("GtkLabel.link:link:hover:active");
-    // fallthrough
+      FALLTHROUGH;
     case ui::NativeTheme::kColorId_LinkEnabled: {
       if (GtkVersionCheck(3, 12)) {
         return GetFgColor("GtkLabel.link:link");

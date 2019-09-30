@@ -15,6 +15,8 @@ title: test1
 	V8PerContextDatas
 	WorkerGlobalScopes
 	UACSSResources
+	RTCPeerConnections
+	ResourceFetchers
 	LayoutCount
 	RecalcStyleCount
 	LayoutDuration
@@ -42,6 +44,8 @@ title: test1
 	V8PerContextDatas
 	WorkerGlobalScopes
 	UACSSResources
+	RTCPeerConnections
+	ResourceFetchers
 	LayoutCount
 	RecalcStyleCount
 	LayoutDuration
@@ -69,6 +73,8 @@ title:
 	V8PerContextDatas
 	WorkerGlobalScopes
 	UACSSResources
+	RTCPeerConnections
+	ResourceFetchers
 	LayoutCount
 	RecalcStyleCount
 	LayoutDuration

@@ -28,10 +28,10 @@ class VideoDetectorTest;
 // fooled by things like continuous scrolling of a page.
 class VIZ_SERVICE_EXPORT VideoDetector : public SurfaceObserver {
  public:
-  VideoDetector(SurfaceManager* surface_manager,
-                std::unique_ptr<base::TickClock> tick_clock =
-                    std::make_unique<base::DefaultTickClock>(),
-                scoped_refptr<base::SequencedTaskRunner> task_runner = nullptr);
+  VideoDetector(
+      SurfaceManager* surface_manager,
+      const base::TickClock* tick_clock = base::DefaultTickClock::GetInstance(),
+      scoped_refptr<base::SequencedTaskRunner> task_runner = nullptr);
   virtual ~VideoDetector();
 
   // Adds an observer. The observer can be removed by closing the mojo
@@ -71,22 +71,23 @@ class VIZ_SERVICE_EXPORT VideoDetector : public SurfaceObserver {
   void OnVideoActivityEnded();
 
   // SurfaceObserver implementation.
+  void OnSurfaceCreated(const SurfaceId& surface_id) override {}
   void OnFirstSurfaceActivation(const SurfaceInfo& surface_info) override {}
-  void OnSurfaceActivated(const SurfaceId& surface_id) override {}
+  void OnSurfaceActivated(const SurfaceId& surface_id,
+                          base::Optional<base::TimeDelta> duration) override {}
   void OnSurfaceDestroyed(const SurfaceId& surface_id) override {}
   bool OnSurfaceDamaged(const SurfaceId& surface_id,
                         const BeginFrameAck& ack) override;
   void OnSurfaceDiscarded(const SurfaceId& surface_id) override {}
   void OnSurfaceDamageExpected(const SurfaceId& surface_id,
                                const BeginFrameArgs& args) override {}
-  void OnSurfaceSubtreeDamaged(const SurfaceId& surface_id) override {}
   void OnSurfaceWillBeDrawn(Surface* surface) override;
 
   // True if video has been observed in the last |kVideoTimeout|.
   bool video_is_playing_ = false;
 
   // Provides the current time.
-  std::unique_ptr<base::TickClock> tick_clock_;
+  const base::TickClock* tick_clock_;
 
   // Calls OnVideoActivityEnded() after |kVideoTimeout|. Uses |tick_clock_| to
   // measure time.

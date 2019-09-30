@@ -4,9 +4,6 @@
 
 package org.chromium.chrome.browser.ntp.snippets;
 
-import static org.hamcrest.CoreMatchers.is;
-import static org.junit.Assert.assertThat;
-
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Color;
@@ -48,7 +45,6 @@ import org.chromium.chrome.browser.ntp.ContextMenuManager;
 import org.chromium.chrome.browser.ntp.cards.NewTabPageViewHolder;
 import org.chromium.chrome.browser.ntp.cards.SignInPromo;
 import org.chromium.chrome.browser.ntp.cards.SuggestionsCategoryInfo;
-import org.chromium.chrome.browser.preferences.ChromePreferenceManager;
 import org.chromium.chrome.browser.signin.DisplayableProfileData;
 import org.chromium.chrome.browser.signin.SigninAccessPoint;
 import org.chromium.chrome.browser.signin.SigninPromoController;
@@ -62,7 +58,6 @@ import org.chromium.chrome.browser.suggestions.SuggestionsRanker;
 import org.chromium.chrome.browser.suggestions.SuggestionsRecyclerView;
 import org.chromium.chrome.browser.suggestions.SuggestionsUiDelegate;
 import org.chromium.chrome.browser.suggestions.ThumbnailGradient;
-import org.chromium.chrome.browser.util.FeatureUtilities;
 import org.chromium.chrome.browser.widget.ThumbnailProvider;
 import org.chromium.chrome.browser.widget.ThumbnailProvider.ThumbnailRequest;
 import org.chromium.chrome.browser.widget.displaystyle.HorizontalDisplayStyle;
@@ -71,16 +66,17 @@ import org.chromium.chrome.browser.widget.displaystyle.VerticalDisplayStyle;
 import org.chromium.chrome.test.ChromeActivityTestRule;
 import org.chromium.chrome.test.ChromeJUnit4RunnerDelegate;
 import org.chromium.chrome.test.util.RenderTestRule;
+import org.chromium.chrome.test.util.browser.ChromeModernDesign;
 import org.chromium.chrome.test.util.browser.Features;
 import org.chromium.chrome.test.util.browser.compositor.layouts.DisableChromeAnimations;
 import org.chromium.chrome.test.util.browser.suggestions.DummySuggestionsEventReporter;
 import org.chromium.chrome.test.util.browser.suggestions.FakeSuggestionsSource;
 import org.chromium.chrome.test.util.browser.suggestions.SuggestionsDependenciesRule;
 import org.chromium.net.NetworkChangeNotifier;
-import org.chromium.ui.base.DeviceFormFactor;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
 
@@ -89,9 +85,14 @@ import java.util.Locale;
  */
 @RunWith(ParameterizedRunner.class)
 @UseRunnerDelegate(ChromeJUnit4RunnerDelegate.class)
-@CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE,
-        ChromeActivityTestRule.DISABLE_NETWORK_PREDICTION_FLAG})
+@CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
+@ChromeModernDesign.Disable
 public class ArticleSnippetsTest {
+    @ClassParameter
+    private static List<ParameterSet> sClassParams =
+            Arrays.asList(new ParameterSet().value(false).name("DisableNTPModernLayout"),
+                    new ParameterSet().value(true).name("EnableNTPModernLayout"));
+
     @Rule
     public SuggestionsDependenciesRule mSuggestionsDeps = new SuggestionsDependenciesRule();
 
@@ -103,18 +104,13 @@ public class ArticleSnippetsTest {
     public RenderTestRule mRenderTestRule = new RenderTestRule();
 
     @Rule
+    public TestRule mChromeModernDesignStateRule = new ChromeModernDesign.Processor();
+
+    @Rule
+    public TestRule mFeaturesProcessor = new Features.InstrumentationProcessor();
+
+    @Rule
     public TestRule mDisableChromeAnimations = new DisableChromeAnimations();
-
-    private final boolean mChromeHomeEnabled;
-
-    @ClassParameter
-    private static List<ParameterSet> sClassParams = new ArrayList<>();
-    static {
-        sClassParams.add(new ParameterSet().name("ChromeHomeDisabled").value(false));
-        if (!DeviceFormFactor.isTablet()) {
-            sClassParams.add(new ParameterSet().name("ChromeHomeEnabled").value(true));
-        }
-    }
 
     private SuggestionsUiDelegate mUiDelegate;
     private FakeSuggestionsSource mSnippetsSource;
@@ -133,23 +129,22 @@ public class ArticleSnippetsTest {
 
     private long mTimestamp;
 
-    public ArticleSnippetsTest(boolean chromeHomeEnabled) {
-        mChromeHomeEnabled = chromeHomeEnabled;
-        if (chromeHomeEnabled) {
-            mRenderTestRule.setVariantPrefix("modern");
-        }
+    private final boolean mEnableNTPModernLayout;
+
+    public ArticleSnippetsTest(boolean enableNTPModernLayout) {
+        mEnableNTPModernLayout = enableNTPModernLayout;
     }
 
     @Before
     public void setUp() throws Exception {
-        if (mChromeHomeEnabled) {
-            Features.getInstance().enable(ChromeFeatureList.CHROME_HOME);
+        if (mEnableNTPModernLayout) {
+            Features.getInstance().enable(ChromeFeatureList.NTP_MODERN_LAYOUT);
+            mRenderTestRule.setVariantPrefix("modern");
         } else {
-            Features.getInstance().disable(ChromeFeatureList.CHROME_HOME);
+            Features.getInstance().disable(ChromeFeatureList.NTP_MODERN_LAYOUT);
         }
 
         mActivityTestRule.startMainActivityOnBlankPage();
-        ChromePreferenceManager.getInstance().setNewTabPageGenericSigninPromoDismissed(true);
         mThumbnailProvider = new MockThumbnailProvider();
         mSnippetsSource = new FakeSuggestionsSource();
         mSuggestionsDeps.getFactory().thumbnailProvider = mThumbnailProvider;
@@ -167,13 +162,6 @@ public class ArticleSnippetsTest {
         });
 
         ThreadUtils.runOnUiThreadBlocking(() -> {
-            FeatureUtilities.resetChromeHomeEnabledForTests();
-            FeatureUtilities.cacheChromeHomeEnabled();
-        });
-
-        assertThat(FeatureUtilities.isChromeHomeEnabled(), is(mChromeHomeEnabled));
-
-        ThreadUtils.runOnUiThreadBlocking(() -> {
             ChromeActivity activity = mActivityTestRule.getActivity();
             mContentView = new FrameLayout(activity);
             mUiConfig = new UiConfig(mContentView);
@@ -187,8 +175,6 @@ public class ArticleSnippetsTest {
 
             mSuggestion = new SnippetArticleViewHolder(mRecyclerView, mContextMenuManager,
                     mUiDelegate, mUiConfig, /* offlinePageBridge = */ null);
-            mSigninPromo = new SignInPromo.GenericPromoViewHolder(
-                    mRecyclerView, mContextMenuManager, mUiConfig);
         });
     }
 
@@ -364,21 +350,6 @@ public class ArticleSnippetsTest {
         setThumbnail(suggestionWithDarkThumbnail, "chrome/test/data/android/capybara.jpg");
         renderSuggestion(
                 suggestionWithDarkThumbnail, categoryInfo, "video_suggestion_with_dark_thumbnail");
-    }
-
-    @Test
-    @MediumTest
-    @Feature({"ArticleSnippets", "RenderTest"})
-    public void testGenericSigninPromo() throws IOException {
-        ThreadUtils.runOnUiThreadBlocking(() -> {
-            mRecyclerView.init(mUiConfig, null);
-            mRecyclerView.setAdapter(null);
-            mSigninPromo = new SignInPromo.GenericPromoViewHolder(mRecyclerView, null, mUiConfig);
-            ((SignInPromo.GenericPromoViewHolder) mSigninPromo)
-                    .onBindViewHolder(new SignInPromo.GenericSigninPromoData(), null);
-            mContentView.addView(mSigninPromo.itemView);
-        });
-        mRenderTestRule.render(mSigninPromo.itemView, "signin_promo");
     }
 
     @Test

@@ -9,6 +9,7 @@
 #include <stdint.h>
 
 #include "base/cancelable_callback.h"
+#include "base/containers/flat_set.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
@@ -30,6 +31,7 @@ class ImageSkiaRep;
 
 namespace ui {
 class EventHandler;
+class KeyboardHook;
 class XScopedEventSelector;
 }
 
@@ -49,7 +51,8 @@ class VIEWS_EXPORT DesktopWindowTreeHostX11
       DesktopNativeWidgetAura* desktop_native_widget_aura);
   ~DesktopWindowTreeHostX11() override;
 
-  // A way of converting an X11 |xid| host window into a |content_window_|.
+  // A way of converting an X11 |xid| host window into the content_window()
+  // of the associated DesktopNativeWidgetAura.
   static aura::Window* GetContentWindowForXID(XID xid);
 
   // A way of converting an X11 |xid| host window into this object.
@@ -86,8 +89,7 @@ class VIEWS_EXPORT DesktopWindowTreeHostX11
 
  protected:
   // Overridden from DesktopWindowTreeHost:
-  void Init(aura::Window* content_window,
-            const Widget::InitParams& params) override;
+  void Init(const Widget::InitParams& params) override;
   void OnNativeWidgetCreated(const Widget::InitParams& params) override;
   void OnWidgetInitDone() override;
   void OnActiveWindowChanged(bool active) override;
@@ -162,6 +164,10 @@ class VIEWS_EXPORT DesktopWindowTreeHostX11
   gfx::Point GetLocationOnScreenInPixels() const override;
   void SetCapture() override;
   void ReleaseCapture() override;
+  bool CaptureSystemKeyEventsImpl(
+      base::Optional<base::flat_set<int>> keys_codes) override;
+  void ReleaseSystemKeyEventCapture() override;
+  bool IsKeyLocked(int native_key_code) override;
   void SetCursorNative(gfx::NativeCursor cursor) override;
   void MoveCursorToScreenLocationInPixels(
       const gfx::Point& location_in_pixels) override;
@@ -174,13 +180,16 @@ class VIEWS_EXPORT DesktopWindowTreeHostX11
   // Called after the window is maximized or restored.
   virtual void OnMaximizedStateChanged();
 
+  // Called after the window is fullscreened or unfullscreened.
+  virtual void OnFullscreenStateChanged();
+
  private:
   friend class DesktopWindowTreeHostX11HighDPITest;
   // Initializes our X11 surface to draw on. This method performs all
   // initialization related to talking to the X11 server.
   void InitX11Window(const Widget::InitParams& params);
 
-  // Creates an aura::WindowEventDispatcher to contain the |content_window|,
+  // Creates an aura::WindowEventDispatcher to contain the content_window()
   // along with all aura client objects that direct behavior.
   aura::WindowEventDispatcher* InitDispatcher(const Widget::InitParams& params);
 
@@ -221,13 +230,6 @@ class VIEWS_EXPORT DesktopWindowTreeHostX11
 
   // Updates |xwindow_|'s _NET_WM_USER_TIME if |xwindow_| is active.
   void UpdateWMUserTime(const ui::PlatformEvent& event);
-
-  // Sends a message to the x11 window manager, enabling or disabling the
-  // states |state1| and |state2|.
-  void SetWMSpecState(bool enabled, ::Atom state1, ::Atom state2);
-
-  // Checks if the window manager has set a specific state.
-  bool HasWMSpecProperty(const char* property) const;
 
   // Sets whether the window's borders are provided by the window manager.
   void SetUseNativeFrame(bool use_native_frame);
@@ -281,6 +283,12 @@ class VIEWS_EXPORT DesktopWindowTreeHostX11
   // the queue) and adds it back at the end of the queue.
   void RestartDelayedResizeTask();
 
+  // Set visibility and fire OnNativeWidgetVisibilityChanged() if it changed.
+  void SetVisible(bool visible);
+
+  // Accessor for DesktopNativeWidgetAura::content_window().
+  aura::Window* content_window();
+
   // X11 things
   // The display and the native X window hosting the root window.
   XDisplay* xdisplay_;
@@ -323,7 +331,7 @@ class VIEWS_EXPORT DesktopWindowTreeHostX11
   std::string workspace_;
 
   // The window manager state bits.
-  std::set< ::Atom> window_properties_;
+  base::flat_set<::Atom> window_properties_;
 
   // Whether |xwindow_| was requested to be fullscreen via SetFullscreen().
   bool is_fullscreen_;
@@ -350,8 +358,6 @@ class VIEWS_EXPORT DesktopWindowTreeHostX11
   internal::NativeWidgetDelegate* native_widget_delegate_;
 
   DesktopNativeWidgetAura* desktop_native_widget_aura_;
-
-  aura::Window* content_window_;
 
   // We can optionally have a parent which can order us to close, or own
   // children who we're responsible for closing when we CloseNow().
@@ -420,6 +426,9 @@ class VIEWS_EXPORT DesktopWindowTreeHostX11
   bool had_pointer_;
   bool had_pointer_grab_;
   bool had_window_focus_;
+
+  // Captures system key events when keyboard lock is requested.
+  std::unique_ptr<ui::KeyboardHook> keyboard_hook_;
 
   base::CancelableCallback<void()> delayed_resize_task_;
 

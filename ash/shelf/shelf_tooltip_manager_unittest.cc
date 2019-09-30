@@ -36,16 +36,6 @@ class ShelfTooltipManagerTest : public AshTestBase {
   bool IsTimerRunning() { return tooltip_manager_->timer_.IsRunning(); }
   views::Widget* GetTooltip() { return tooltip_manager_->bubble_->GetWidget(); }
 
-  std::unique_ptr<views::Widget> CreateTestWidget() {
-    std::unique_ptr<views::Widget> widget = std::make_unique<views::Widget>();
-    views::Widget::InitParams params;
-    params.ownership = views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
-    params.context = CurrentContext();
-    widget->Init(params);
-    widget->Show();
-    return widget;
-  }
-
  protected:
   ShelfView* shelf_view_;
   ShelfTooltipManager* tooltip_manager_;
@@ -164,10 +154,6 @@ TEST_F(ShelfTooltipManagerTest, HideWhenShelfIsAutoHideHidden) {
 }
 
 TEST_F(ShelfTooltipManagerTest, HideForEvents) {
-  // TODO: investigate failure in mash. http://crbug.com/695563.
-  if (Shell::GetAshConfig() == Config::MASH)
-    return;
-
   ui::test::EventGenerator& generator = GetEventGenerator();
   gfx::Rect shelf_bounds = shelf_view_->GetBoundsInScreen();
 
@@ -200,10 +186,6 @@ TEST_F(ShelfTooltipManagerTest, HideForEvents) {
 }
 
 TEST_F(ShelfTooltipManagerTest, HideForExternalEvents) {
-  // TODO: investigate failure in mash. http://crbug.com/695563.
-  if (Shell::GetAshConfig() == Config::MASH)
-    return;
-
   ui::test::EventGenerator& generator = GetEventGenerator();
 
   // Should hide for touches outside the shelf.

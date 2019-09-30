@@ -4,6 +4,7 @@
 
 // Multiply-included message file, hence no include guard here, but see below
 // for a much smaller-than-usual include guard section.
+// no-include-guard-because-multiply-included
 
 #include <stdint.h>
 
@@ -16,6 +17,7 @@
 #include "ui/display/types/gamma_ramp_rgb_entry.h"
 #include "ui/gfx/geometry/point.h"
 #include "ui/gfx/geometry/rect.h"
+#include "ui/gfx/ipc/buffer_types/gfx_param_traits.h"
 #include "ui/gfx/ipc/color/gfx_param_traits.h"
 #include "ui/gfx/ipc/geometry/gfx_param_traits.h"
 #include "ui/gfx/ipc/gfx_param_traits.h"
@@ -61,7 +63,8 @@ IPC_STRUCT_TRAITS_BEGIN(ui::DisplaySnapshot_Params)
   IPC_STRUCT_TRAITS_MEMBER(current_mode)
   IPC_STRUCT_TRAITS_MEMBER(has_native_mode)
   IPC_STRUCT_TRAITS_MEMBER(native_mode)
-  IPC_STRUCT_TRAITS_MEMBER(product_id)
+  IPC_STRUCT_TRAITS_MEMBER(product_code)
+  IPC_STRUCT_TRAITS_MEMBER(year_of_manufacture)
   IPC_STRUCT_TRAITS_MEMBER(maximum_cursor_size)
 IPC_STRUCT_TRAITS_END()
 

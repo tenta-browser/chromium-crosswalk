@@ -5,20 +5,20 @@
 #include "extensions/renderer/declarative_content_hooks_delegate.h"
 
 #include "base/bind.h"
-#include "base/memory/ptr_util.h"
 #include "extensions/common/api/declarative/declarative_constants.h"
 #include "extensions/renderer/bindings/api_type_reference_map.h"
 #include "extensions/renderer/bindings/argument_spec.h"
 #include "gin/arguments.h"
 #include "gin/converter.h"
-#include "third_party/WebKit/public/platform/WebString.h"
-#include "third_party/WebKit/public/web/WebSelector.h"
+#include "third_party/blink/public/platform/web_string.h"
+#include "third_party/blink/public/web/web_selector.h"
 
 namespace extensions {
 
 namespace {
 
-void CallbackHelper(const v8::FunctionCallbackInfo<v8::Value>& info) {
+void RunDeclarativeContentHooksDelegateHandlerCallback(
+    const v8::FunctionCallbackInfo<v8::Value>& info) {
   CHECK(info.Data()->IsExternal());
   v8::Local<v8::External> external = info.Data().As<v8::External>();
   auto* callback =
@@ -90,7 +90,7 @@ bool CanonicalizeCssSelectors(v8::Local<v8::Context> context,
     v8::Local<v8::Value> val;
     if (!css_array->Get(context, i).ToLocal(&val) || !val->IsString())
       return false;
-    v8::String::Utf8Value selector(val.As<v8::String>());
+    v8::String::Utf8Value selector(isolate, val.As<v8::String>());
     // Note: See the TODO in css_natives_handler.cc.
     std::string parsed =
         blink::CanonicalizeSelector(
@@ -184,7 +184,7 @@ void DeclarativeContentHooksDelegate::InitializeTemplate(
     object_template->Set(
         gin::StringToSymbol(isolate, type.exposed_name),
         v8::FunctionTemplate::New(
-            isolate, &CallbackHelper,
+            isolate, &RunDeclarativeContentHooksDelegateHandlerCallback,
             v8::External::New(isolate, callbacks_.back().get())));
   }
 }

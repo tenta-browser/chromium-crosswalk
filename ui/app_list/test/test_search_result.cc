@@ -12,9 +12,8 @@ TestSearchResult::TestSearchResult() {
 TestSearchResult::~TestSearchResult() {
 }
 
-std::unique_ptr<SearchResult> TestSearchResult::Duplicate() const {
-  NOTREACHED();
-  return nullptr;
+void TestSearchResult::set_result_id(const std::string& id) {
+  set_id(id);
 }
 
 }  // namespace app_list

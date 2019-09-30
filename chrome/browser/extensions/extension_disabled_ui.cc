@@ -10,7 +10,6 @@
 #include "base/bind.h"
 #include "base/location.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/scoped_observer.h"
 #include "base/single_thread_task_runner.h"
@@ -299,11 +298,11 @@ void ExtensionDisabledGlobalError::BubbleViewCancelButtonPressed(
   // Delay showing the uninstall dialog, so that this function returns
   // immediately, to close the bubble properly. See crbug.com/121544.
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE,
-      base::Bind(&ExtensionUninstallDialog::ConfirmUninstall,
-                 uninstall_dialog_->AsWeakPtr(), base::RetainedRef(extension_),
-                 UNINSTALL_REASON_EXTENSION_DISABLED,
-                 UNINSTALL_SOURCE_PERMISSIONS_INCREASE));
+      FROM_HERE, base::BindOnce(&ExtensionUninstallDialog::ConfirmUninstall,
+                                uninstall_dialog_->AsWeakPtr(),
+                                base::RetainedRef(extension_),
+                                UNINSTALL_REASON_EXTENSION_DISABLED,
+                                UNINSTALL_SOURCE_PERMISSIONS_INCREASE));
 }
 
 bool ExtensionDisabledGlobalError::ShouldCloseOnDeactivate() const {
@@ -374,7 +373,7 @@ void AddExtensionDisabledErrorWithIcon(base::WeakPtr<ExtensionService> service,
   const Extension* extension = service->GetInstalledExtension(extension_id);
   if (extension) {
     GlobalErrorServiceFactory::GetForProfile(service->profile())
-        ->AddGlobalError(base::MakeUnique<ExtensionDisabledGlobalError>(
+        ->AddGlobalError(std::make_unique<ExtensionDisabledGlobalError>(
             service.get(), extension, is_remote_install, icon));
   }
 }

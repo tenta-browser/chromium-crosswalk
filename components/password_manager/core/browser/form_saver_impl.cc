@@ -29,6 +29,8 @@ FormSaverImpl::~FormSaverImpl() = default;
 void FormSaverImpl::PermanentlyBlacklist(PasswordForm* observed) {
   observed->preferred = false;
   observed->blacklisted_by_user = true;
+  observed->username_value.clear();
+  observed->password_value.clear();
   observed->other_possible_usernames.clear();
   observed->date_created = base::Time::Now();
 
@@ -37,9 +39,8 @@ void FormSaverImpl::PermanentlyBlacklist(PasswordForm* observed) {
 
 void FormSaverImpl::Save(
     const PasswordForm& pending,
-    const std::map<base::string16, const PasswordForm*>& best_matches,
-    const PasswordForm* old_primary_key) {
-  SaveImpl(pending, true, best_matches, nullptr, old_primary_key);
+    const std::map<base::string16, const PasswordForm*>& best_matches) {
+  SaveImpl(pending, true, best_matches, nullptr, nullptr);
 }
 
 void FormSaverImpl::Update(

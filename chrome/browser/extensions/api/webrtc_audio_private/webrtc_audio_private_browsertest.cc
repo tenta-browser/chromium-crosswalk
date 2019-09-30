@@ -25,18 +25,22 @@
 #include "chrome/browser/media/webrtc/webrtc_log_uploader.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
-#include "chrome/common/features.h"
+#include "chrome/common/buildflags.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/media_device_id.h"
 #include "content/public/browser/web_contents.h"
+#include "content/public/common/service_manager_connection.h"
 #include "content/public/test/browser_test_utils.h"
 #include "extensions/common/permissions/permission_set.h"
 #include "extensions/common/permissions/permissions_data.h"
 #include "media/audio/audio_device_description.h"
 #include "media/audio/audio_system.h"
+#include "media/base/media_switches.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
+#include "services/audio/public/cpp/audio_system_factory.h"
+#include "services/service_manager/public/cpp/connector.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 #if defined(OS_WIN)
@@ -62,8 +66,10 @@ namespace {
 void GetAudioDeviceDescriptions(bool for_input,
                                 AudioDeviceDescriptions* device_descriptions) {
   base::RunLoop run_loop;
-  std::unique_ptr<media::AudioSystem> audio_system =
-      media::AudioSystem::CreateInstance();
+  std::unique_ptr<media::AudioSystem> audio_system = audio::CreateAudioSystem(
+      content::ServiceManagerConnection::GetForProcess()
+          ->GetConnector()
+          ->Clone());
   audio_system->GetDeviceDescriptions(
       for_input,
       base::BindOnce(
@@ -72,7 +78,7 @@ void GetAudioDeviceDescriptions(bool for_input,
             *result = std::move(received);
             finished_callback.Run();
           },
-          base::Passed(run_loop.QuitClosure()), device_descriptions));
+          run_loop.QuitClosure(), device_descriptions));
   run_loop.Run();
 }
 
@@ -232,6 +238,13 @@ class HangoutServicesBrowserTest : public AudioWaitingExtensionTest {
     // Make sure the Hangout Services component extension gets loaded.
     ComponentLoader::EnableBackgroundExtensionsForTesting();
     AudioWaitingExtensionTest::SetUp();
+  }
+
+  void SetUpCommandLine(base::CommandLine* command_line) override {
+    AudioWaitingExtensionTest::SetUpCommandLine(command_line);
+    command_line->AppendSwitchASCII(
+        switches::kAutoplayPolicy,
+        switches::autoplay::kNoUserGestureRequiredPolicy);
   }
 };
 

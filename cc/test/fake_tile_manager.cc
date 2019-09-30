@@ -9,7 +9,6 @@
 
 #include <limits>
 
-#include "base/memory/ptr_util.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "cc/raster/raster_buffer.h"
 #include "cc/raster/synchronous_task_graph_runner.h"
@@ -46,12 +45,11 @@ FakeTileManager::FakeTileManager(TileManagerClient* client,
   SetDecodedImageTracker(&decoded_image_tracker_);
   SetResources(resource_pool, &image_decode_cache_, GetGlobalTaskGraphRunner(),
                GetGlobalRasterBufferProvider(),
-               std::numeric_limits<size_t>::max(),
                false /* use_gpu_rasterization */);
   SetTileTaskManagerForTesting(std::make_unique<FakeTileTaskManagerImpl>());
 }
 
-FakeTileManager::~FakeTileManager() {}
+FakeTileManager::~FakeTileManager() = default;
 
 bool FakeTileManager::HasBeenAssignedMemory(Tile* tile) {
   return std::find(tiles_for_raster.begin(),

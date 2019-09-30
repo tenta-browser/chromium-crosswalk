@@ -23,21 +23,19 @@
 #include "build/build_config.h"
 #include "chrome/browser/net/chrome_network_delegate.h"
 #include "chrome/browser/net/system_network_context_manager.h"
-#include "chrome/common/features.h"
+#include "chrome/common/buildflags.h"
 #include "components/metrics/data_use_tracker.h"
 #include "components/prefs/pref_member.h"
 #include "components/ssl_config/ssl_config_service_manager.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/browser_thread_delegate.h"
-#include "content/public/common/network_service.mojom.h"
-#include "content/public/network/network_service.h"
-#include "extensions/features/features.h"
+#include "extensions/buildflags/buildflags.h"
 #include "net/base/network_change_notifier.h"
-#include "net/nqe/network_quality_estimator.h"
+#include "services/network/public/mojom/network_service.mojom.h"
+#include "services/network/url_request_context_owner.h"
 
-class PrefProxyConfigTracker;
-class PrefService;
 class PrefRegistrySimple;
+class PrefService;
 class SystemNetworkContextManager;
 
 #if defined(OS_ANDROID)
@@ -48,14 +46,11 @@ class ExternalDataUseObserver;
 
 namespace certificate_transparency {
 class TreeStateTracker;
+class STHObserver;
 }
 
 namespace chrome_browser_net {
 class DnsProbeService;
-}
-
-namespace content {
-class URLRequestContextBuilderMojo;
 }
 
 namespace data_usage {
@@ -71,25 +66,24 @@ class EventRouterForwarder;
 }
 
 namespace net {
+class CertVerifier;
 class CTLogVerifier;
 class HostResolver;
 class HttpAuthHandlerFactory;
 class HttpAuthPreferences;
 class NetworkQualityEstimator;
-class ProxyConfigService;
 class RTTAndThroughputEstimatesObserver;
 class SSLConfigService;
 class URLRequestContext;
 class URLRequestContextGetter;
-
-namespace ct {
-class STHObserver;
-}
-
 }  // namespace net
 
 namespace net_log {
 class ChromeNetLog;
+}
+
+namespace network {
+class URLRequestContextBuilderMojo;
 }
 
 namespace policy {
@@ -117,10 +111,7 @@ class IOThread : public content::BrowserThreadDelegate {
     Globals();
     ~Globals();
 
-    // In-process NetworkService for use in URLRequestContext configuration when
-    // the network service created through the ServiceManager is disabled. See
-    // SystemNetworkContextManager's header comment for more details
-    std::unique_ptr<content::NetworkService> network_service;
+    bool quic_disabled = false;
 
     // Ascribes all data use in Chrome to a source, such as page loads.
     std::unique_ptr<data_use_measurement::ChromeDataUseAscriber>
@@ -135,17 +126,28 @@ class IOThread : public content::BrowserThreadDelegate {
 #endif  // defined(OS_ANDROID)
     std::vector<scoped_refptr<const net::CTLogVerifier>> ct_logs;
     std::unique_ptr<net::HttpAuthPreferences> http_auth_preferences;
-    std::unique_ptr<content::mojom::NetworkContext> system_network_context;
+
+    // NetworkQualityEstimator only for use in dummy in-process
+    // URLRequestContext when network service is enabled.
+    // TODO(mmenke): Remove this, once all consumers only access the
+    // NetworkQualityEstimator through network service APIs. Then will no longer
+    // need to create an in-process one.
+    std::unique_ptr<net::NetworkQualityEstimator>
+        deprecated_network_quality_estimator;
+
+    std::unique_ptr<net::RTTAndThroughputEstimatesObserver>
+        network_quality_observer;
+
+    // When the network service is enabled, this holds on to a
+    // content::NetworkContext class that owns |system_request_context|.
+    std::unique_ptr<network::mojom::NetworkContext> system_network_context;
+    // When the network service is disabled, this owns |system_request_context|.
+    network::URLRequestContextOwner system_request_context_owner;
     net::URLRequestContext* system_request_context;
-    SystemRequestContextLeakChecker system_request_context_leak_checker;
 #if BUILDFLAG(ENABLE_EXTENSIONS)
     scoped_refptr<extensions::EventRouterForwarder>
         extension_event_router_forwarder;
 #endif
-    std::unique_ptr<net::NetworkQualityEstimator> network_quality_estimator;
-    std::unique_ptr<net::RTTAndThroughputEstimatesObserver>
-        network_quality_observer;
-
     // NetErrorTabHelper uses |dns_probe_service| to send DNS probes when a
     // main frame load fails with a DNS error in order to provide more useful
     // information to the renderer so it can show a more specific error page.
@@ -162,14 +164,10 @@ class IOThread : public content::BrowserThreadDelegate {
   ~IOThread() override;
 
   static void RegisterPrefs(PrefRegistrySimple* registry);
+  static void SetCertVerifierForTesting(net::CertVerifier* cert_verifier);
 
   // Can only be called on the IO thread.
   Globals* globals();
-
-  // Allows overriding Globals in tests where IOThread::Init() and
-  // IOThread::CleanUp() are not called.  This allows for injecting mocks into
-  // IOThread global objects.
-  void SetGlobalsForTesting(Globals* globals);
 
   net_log::ChromeNetLog* net_log();
 
@@ -196,10 +194,10 @@ class IOThread : public content::BrowserThreadDelegate {
   metrics::UpdateUsagePrefCallbackType GetMetricsDataUseForwarder();
 
   // Registers the |observer| for new STH notifications.
-  void RegisterSTHObserver(net::ct::STHObserver* observer);
+  void RegisterSTHObserver(certificate_transparency::STHObserver* observer);
 
   // Un-registers the |observer|.
-  void UnregisterSTHObserver(net::ct::STHObserver* observer);
+  void UnregisterSTHObserver(certificate_transparency::STHObserver* observer);
 
   // Returns true if the indicated proxy resolution features are
   // enabled. These features are controlled through
@@ -212,19 +210,10 @@ class IOThread : public content::BrowserThreadDelegate {
   bool WpadQuickCheckEnabled() const;
   bool PacHttpsUrlStrippingEnabled() const;
 
-  // Configures |builder|'s ProxyService to use the specified
-  // |proxy_config_service| and sets a number of proxy-related options based on
-  // prefs, policies, and the command line.
-  void SetUpProxyConfigService(
-      content::URLRequestContextBuilderMojo* builder,
-      std::unique_ptr<net::ProxyConfigService> proxy_config_service) const;
+  // Configures |builder|'s ProxyResolutionService based on prefs and policies.
+  void SetUpProxyService(network::URLRequestContextBuilderMojo* builder) const;
 
-  // Gets a pointer to the NetworkService. Can only be called on the UI thread.
-  // When out-of-process NetworkService is enabled, this is a reference to the
-  // NetworkService created through ServiceManager; when out-of-process
-  // NetworkService is not enabld, this is a Mojo interface to the IOThread's
-  // in-process NetworkService that lives on the IO thread.
-  content::mojom::NetworkService* GetNetworkServiceOnUIThread();
+  certificate_transparency::TreeStateTracker* ct_tree_tracker() const;
 
  private:
   // BrowserThreadDelegate implementation, runs on the IO thread.
@@ -290,6 +279,10 @@ class IOThread : public content::BrowserThreadDelegate {
 
   BooleanPrefMember pac_https_url_stripping_enabled_;
 
+  StringListPrefMember dns_over_https_servers_;
+
+  StringListPrefMember dns_over_https_server_methods_;
+
   // Store HTTP Auth-related policies in this thread.
   // TODO(aberent) Make the list of auth schemes a PrefMember, so that the
   // policy can change after startup (https://crbug/549273).
@@ -318,28 +311,19 @@ class IOThread : public content::BrowserThreadDelegate {
 
   // These are set on the UI thread, and then consumed during initialization on
   // the IO thread.
-  content::mojom::NetworkContextRequest network_context_request_;
-  content::mojom::NetworkContextParamsPtr network_context_params_;
+  network::mojom::NetworkContextRequest network_context_request_;
+  network::mojom::NetworkContextParamsPtr network_context_params_;
 
   // This is an instance of the default SSLConfigServiceManager for the current
   // platform and it gets SSL preferences from local_state object.
   std::unique_ptr<ssl_config::SSLConfigServiceManager>
       ssl_config_service_manager_;
 
-  // These member variables are initialized by a task posted to the IO thread,
-  // which gets posted by calling certain member functions of IOThread.
-  std::unique_ptr<net::ProxyConfigService> system_proxy_config_service_;
-
-  std::unique_ptr<PrefProxyConfigTracker> pref_proxy_config_tracker_;
-
   scoped_refptr<net::URLRequestContextGetter>
       system_url_request_context_getter_;
 
   // True if QUIC is initially enabled.
   bool is_quic_allowed_on_init_;
-
-  content::mojom::NetworkServicePtr ui_thread_network_service_;
-  content::mojom::NetworkServiceRequest network_service_request_;
 
   base::WeakPtrFactory<IOThread> weak_factory_;
 

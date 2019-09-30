@@ -6,18 +6,17 @@
 
 #include "ash/display/window_tree_host_manager.h"
 #include "ash/login_status.h"
-#include "ash/public/cpp/config.h"
 #include "ash/public/cpp/shelf_types.h"
 #include "ash/root_window_controller.h"
 #include "ash/rotator/screen_rotation_animator.h"
 #include "ash/session/session_controller.h"
 #include "ash/shell.h"
-#include "ash/shell_port.h"
 #include "ash/system/status_area_widget.h"
 #include "ash/system/status_area_widget_test_helper.h"
 #include "ash/test/ash_test_base.h"
 #include "ash/test/ash_test_helper.h"
 #include "ash/wm/overview/window_selector_controller.h"
+#include "ash/wm/splitview/split_view_controller.h"
 #include "ash/wm/tablet_mode/tablet_mode_controller.h"
 #include "ash/wm/window_state.h"
 #include "ash/wm/window_util.h"
@@ -51,18 +50,17 @@ OverviewButtonTray* GetSecondaryTray() {
       ->overview_button_tray();
 }
 
-// Helper function to perform a double tap on the overview button tray. A double
-// tap consists fot two tap gestures, one with tap count 1 and another with tap
-// count 2.
-void PerformDoubleTap() {
-  ui::GestureEvent first_tap(0, 0, 0, base::TimeTicks(),
-                             ui::GestureEventDetails(ui::ET_GESTURE_TAP));
-  GetTray()->PerformAction(first_tap);
+ui::GestureEvent CreateTapEvent(
+    base::TimeDelta delta_from_start = base::TimeDelta()) {
+  return ui::GestureEvent(0, 0, 0, base::TimeTicks() + delta_from_start,
+                          ui::GestureEventDetails(ui::ET_GESTURE_TAP));
+}
 
-  ui::GestureEventDetails second_tap_details(ui::ET_GESTURE_TAP);
-  second_tap_details.set_tap_count(2);
-  ui::GestureEvent second_tap(0, 0, 0, base::TimeTicks(), second_tap_details);
-  GetTray()->PerformAction(second_tap);
+// Helper function to perform a double tap on the overview button tray.
+void PerformDoubleTap() {
+  ui::GestureEvent tap = CreateTapEvent();
+  GetTray()->PerformAction(tap);
+  GetTray()->PerformAction(tap);
 }
 
 }  // namespace
@@ -98,7 +96,7 @@ void OverviewButtonTrayTest::NotifySessionStateChanged() {
 
 // Ensures that creation doesn't cause any crashes and adds the image icon.
 TEST_F(OverviewButtonTrayTest, BasicConstruction) {
-  EXPECT_TRUE(GetImageView(GetTray()) != NULL);
+  EXPECT_TRUE(GetImageView(GetTray()));
 }
 
 // Test that tablet mode toggle changes visibility.
@@ -120,13 +118,11 @@ TEST_F(OverviewButtonTrayTest, PerformAction) {
   // Overview Mode only works when there is a window
   std::unique_ptr<aura::Window> window(
       CreateTestWindowInShellWithBounds(gfx::Rect(5, 5, 20, 20)));
-  ui::GestureEvent tap(0, 0, 0, base::TimeTicks(),
-                       ui::GestureEventDetails(ui::ET_GESTURE_TAP));
-  GetTray()->PerformAction(tap);
+  GetTray()->PerformAction(CreateTapEvent());
   EXPECT_TRUE(Shell::Get()->window_selector_controller()->IsSelecting());
 
   // Verify tapping on the button again closes overview mode.
-  GetTray()->PerformAction(tap);
+  GetTray()->PerformAction(CreateTapEvent());
   EXPECT_FALSE(Shell::Get()->window_selector_controller()->IsSelecting());
 }
 
@@ -146,55 +142,47 @@ TEST_F(OverviewButtonTrayTest, PerformDoubleTapAction) {
   EXPECT_TRUE(wm::IsActiveWindow(window1.get()));
   EXPECT_FALSE(Shell::Get()->window_selector_controller()->IsSelecting());
 
-  // Verify that if we double tap on the window selection page, we leave the
-  // window selection page, but window 1 remains the active window.
-  ui::GestureEvent tap(0, 0, 0, base::TimeTicks(),
-                       ui::GestureEventDetails(ui::ET_GESTURE_TAP));
+  // Verify that if we double tap on the window selection page, it acts as two
+  // taps, and ends up on the window selection page again.
+  ui::GestureEvent tap = CreateTapEvent();
   ASSERT_TRUE(wm::IsActiveWindow(window1.get()));
   GetTray()->PerformAction(tap);
   ASSERT_TRUE(Shell::Get()->window_selector_controller()->IsSelecting());
   PerformDoubleTap();
-  EXPECT_TRUE(wm::IsActiveWindow(window1.get()));
-  EXPECT_FALSE(Shell::Get()->window_selector_controller()->IsSelecting());
+  EXPECT_TRUE(Shell::Get()->window_selector_controller()->IsSelecting());
 
   // Verify that if we minimize a window, double tapping the overlay tray button
-  // will bring up the window.
+  // will bring up the window, and it should be the active window.
+  GetTray()->PerformAction(tap);
+  ASSERT_TRUE(!Shell::Get()->window_selector_controller()->IsSelecting());
+  ASSERT_TRUE(wm::IsActiveWindow(window1.get()));
   wm::GetWindowState(window2.get())->Minimize();
   ASSERT_EQ(window2->layer()->GetTargetOpacity(), 0.0);
   PerformDoubleTap();
   EXPECT_EQ(window2->layer()->GetTargetOpacity(), 1.0);
+  EXPECT_TRUE(wm::IsActiveWindow(window2.get()));
 }
 
 // Tests that tapping on the control will record the user action Tray_Overview.
 TEST_F(OverviewButtonTrayTest, TrayOverviewUserAction) {
-  // TODO: investigate failure in mash, http://crbug.com/698129.
-  if (Shell::GetAshConfig() == Config::MASH)
-    return;
-
   ASSERT_FALSE(Shell::Get()->window_selector_controller()->IsSelecting());
-
-  // Tapping on the control when there are no windows (and thus the user cannot
-  // enter overview mode) should still record the action.
-  base::UserActionTester user_action_tester;
-  ui::GestureEvent tap(0, 0, 0, base::TimeTicks(),
-                       ui::GestureEventDetails(ui::ET_GESTURE_TAP));
-  GetTray()->PerformAction(tap);
-  ASSERT_FALSE(Shell::Get()->window_selector_controller()->IsSelecting());
-  EXPECT_EQ(1, user_action_tester.GetActionCount(kTrayOverview));
 
   // With one window present, tapping on the control to enter overview mode
   // should record the user action.
+  base::UserActionTester user_action_tester;
   std::unique_ptr<aura::Window> window(
       CreateTestWindowInShellWithBounds(gfx::Rect(5, 5, 20, 20)));
-  GetTray()->PerformAction(tap);
+  GetTray()->PerformAction(
+      CreateTapEvent(OverviewButtonTray::kDoubleTapThresholdMs));
   ASSERT_TRUE(Shell::Get()->window_selector_controller()->IsSelecting());
-  EXPECT_EQ(2, user_action_tester.GetActionCount(kTrayOverview));
+  EXPECT_EQ(1, user_action_tester.GetActionCount(kTrayOverview));
 
   // Tapping on the control to exit overview mode should record the
   // user action.
-  GetTray()->PerformAction(tap);
+  GetTray()->PerformAction(
+      CreateTapEvent(OverviewButtonTray::kDoubleTapThresholdMs * 2));
   ASSERT_FALSE(Shell::Get()->window_selector_controller()->IsSelecting());
-  EXPECT_EQ(3, user_action_tester.GetActionCount(kTrayOverview));
+  EXPECT_EQ(2, user_action_tester.GetActionCount(kTrayOverview));
 }
 
 // Tests that a second OverviewButtonTray has been created, and only shows
@@ -299,11 +287,66 @@ TEST_F(OverviewButtonTrayTest, VisibilityChangesForSystemModalWindow) {
   window->Show();
   ParentWindowInPrimaryRootWindow(window.get());
 
-  ASSERT_TRUE(ShellPort::Get()->IsSystemModalWindowOpen());
+  ASSERT_TRUE(Shell::IsSystemModalWindowOpen());
   Shell::Get()->tablet_mode_controller()->EnableTabletModeWindowManager(true);
   EXPECT_TRUE(GetTray()->visible());
   Shell::Get()->tablet_mode_controller()->EnableTabletModeWindowManager(false);
   EXPECT_FALSE(GetTray()->visible());
+}
+
+// Verify that quick switch works properly when one of the windows has a
+// transient child.
+TEST_F(OverviewButtonTrayTest, TransientChildQuickSwitch) {
+  std::unique_ptr<aura::Window> window1 = CreateTestWindow();
+  std::unique_ptr<aura::Window> window2 =
+      CreateTestWindow(gfx::Rect(), aura::client::WINDOW_TYPE_POPUP);
+  std::unique_ptr<aura::Window> window3 = CreateTestWindow();
+
+  // Add |window2| as a transient child of |window1|, and focus |window1|.
+  ::wm::AddTransientChild(window1.get(), window2.get());
+  ::wm::ActivateWindow(window3.get());
+  ::wm::ActivateWindow(window2.get());
+  ::wm::ActivateWindow(window1.get());
+
+  // Verify that after double tapping, we have switched to |window3|, even
+  // though |window2| is more recently used.
+  PerformDoubleTap();
+  EXPECT_EQ(window3.get(), wm::GetActiveWindow());
+}
+
+// Verify that quick switch works properly when in split view mode.
+TEST_F(OverviewButtonTrayTest, SplitviewModeQuickSwitch) {
+  // Splitview is only available in tablet mode.
+  Shell::Get()->tablet_mode_controller()->EnableTabletModeWindowManager(true);
+
+  std::unique_ptr<aura::Window> window1 = CreateTestWindow();
+  std::unique_ptr<aura::Window> window2 = CreateTestWindow();
+  std::unique_ptr<aura::Window> window3 = CreateTestWindow();
+
+  // Enter splitview mode. Snap |window1| to the left, this will be the default
+  // splitview window.
+  Shell::Get()->window_selector_controller()->ToggleOverview();
+  SplitViewController* split_view_controller =
+      Shell::Get()->split_view_controller();
+  split_view_controller->SnapWindow(window1.get(), SplitViewController::LEFT);
+  split_view_controller->SnapWindow(window2.get(), SplitViewController::RIGHT);
+  ASSERT_EQ(window1.get(), split_view_controller->GetDefaultSnappedWindow());
+  EXPECT_EQ(window2.get(), wm::GetActiveWindow());
+
+  // Verify that after double tapping, we have switched to |window3|, even
+  // though |window1| is more recently used.
+  PerformDoubleTap();
+  EXPECT_EQ(window3.get(), split_view_controller->right_window());
+  EXPECT_EQ(window3.get(), wm::GetActiveWindow());
+
+  // Focus |window1|. Verify that after double tapping, |window2| is the on the
+  // right side for splitview.
+  wm::ActivateWindow(window1.get());
+  PerformDoubleTap();
+  EXPECT_EQ(window2.get(), split_view_controller->right_window());
+  EXPECT_EQ(window2.get(), wm::GetActiveWindow());
+
+  split_view_controller->EndSplitView();
 }
 
 }  // namespace ash

@@ -119,10 +119,10 @@ void WebRtcLogBuffer::Log(const std::string& message) {
   circular_.Write(&eol, 1);
 }
 
-PartialCircularBuffer WebRtcLogBuffer::Read() {
+webrtc_logging::PartialCircularBuffer WebRtcLogBuffer::Read() {
   DCHECK(thread_checker_.CalledOnValidThread());
   DCHECK(read_only_);
-  return PartialCircularBuffer(&buffer_[0], sizeof(buffer_));
+  return webrtc_logging::PartialCircularBuffer(&buffer_[0], sizeof(buffer_));
 }
 
 void WebRtcLogBuffer::SetComplete() {
@@ -403,7 +403,7 @@ void WebRtcTextLogHandler::LogInitialInfoOnIOThread(
 
   // Chrome version
   LogToCircularBuffer("Chrome version: " + version_info::GetVersionNumber() +
-                      " " + chrome::GetChannelString());
+                      " " + chrome::GetChannelName());
 
   // OS
   LogToCircularBuffer(base::SysInfo::OperatingSystemName() + " " +

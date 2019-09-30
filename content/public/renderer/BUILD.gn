@@ -3,8 +3,9 @@
 # found in the LICENSE file.
 
 import("//build/config/features.gni")
+import("//build/config/jumbo.gni")
 import("//media/media_options.gni")
-import("//ppapi/features/features.gni")
+import("//ppapi/buildflags/buildflags.gni")
 
 # See //content/BUILD.gn for how this works.
 group("renderer") {
@@ -20,9 +21,9 @@ group("renderer") {
 }
 
 if (is_component_build) {
-  link_target_type = "source_set"
+  link_target_type = "jumbo_source_set"
 } else {
-  link_target_type = "static_library"
+  link_target_type = "jumbo_static_library"
 }
 target(link_target_type, "renderer_sources") {
   # External code should depend on via ":renderer" above.
@@ -32,7 +33,6 @@ target(link_target_type, "renderer_sources") {
     "associated_resource_fetcher.h",
     "browser_plugin_delegate.cc",
     "browser_plugin_delegate.h",
-    "child_url_loader_factory_getter.h",
     "chrome_object_extensions_utils.cc",
     "chrome_object_extensions_utils.h",
     "content_renderer_client.cc",
@@ -68,6 +68,7 @@ target(link_target_type, "renderer_sources") {
     "resource_dispatcher_delegate.h",
     "resource_fetcher.h",
     "seccomp_sandbox_status_android.h",
+    "url_loader_throttle_provider.h",
     "v8_value_converter.h",
     "video_encode_accelerator.cc",
     "video_encode_accelerator.h",
@@ -90,10 +91,10 @@ target(link_target_type, "renderer_sources") {
     "//media/capture",
     "//media/gpu/ipc/client",
     "//net",
+    "//ppapi/buildflags",
     "//ppapi/c",
-    "//ppapi/features",
     "//skia",
-    "//third_party/WebKit/public:blink_headers",
+    "//third_party/blink/public:blink_headers",
     "//third_party/widevine/cdm:headers",
     "//ui/base",
     "//ui/base/ime",
@@ -127,13 +128,20 @@ target(link_target_type, "renderer_sources") {
       "webrtc_log_message_delegate.h",
     ]
     deps += [
+      "//content/public/common:buildflags",
       "//content/public/common:feature_h264_with_openh264_ffmpeg",
-      "//content/public/common:features",
       "//third_party/webrtc_overrides",
     ]
   }
 
   if (enable_plugins) {
     sources += [ "plugin_instance_throttler.h" ]
+  }
+
+  if (enable_library_cdms) {
+    sources += [
+      "key_system_support.cc",
+      "key_system_support.h",
+    ]
   }
 }

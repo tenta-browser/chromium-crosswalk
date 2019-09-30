@@ -6,7 +6,6 @@
 
 #include "base/command_line.h"
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "base/metrics/field_trial.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
@@ -31,8 +30,8 @@
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/media_stream_request.h"
+#include "extensions/buildflags/buildflags.h"
 #include "extensions/common/constants.h"
-#include "extensions/features/features.h"
 #include "media/base/media_switches.h"
 
 #if defined(OS_CHROMEOS)
@@ -98,26 +97,26 @@ MediaCaptureDevicesDispatcher::MediaCaptureDevicesDispatcher()
 #if BUILDFLAG(ENABLE_EXTENSIONS)
 #if defined(OS_CHROMEOS)
   media_access_handlers_.push_back(
-      base::MakeUnique<ChromeOSLoginMediaAccessHandler>());
+      std::make_unique<ChromeOSLoginMediaAccessHandler>());
   // Wrapper around ExtensionMediaAccessHandler used in Public Sessions.
   media_access_handlers_.push_back(
-      base::MakeUnique<PublicSessionMediaAccessHandler>());
+      std::make_unique<PublicSessionMediaAccessHandler>());
 #else
   media_access_handlers_.push_back(
-      base::MakeUnique<ExtensionMediaAccessHandler>());
+      std::make_unique<ExtensionMediaAccessHandler>());
 #endif
   media_access_handlers_.push_back(
-      base::MakeUnique<DesktopCaptureAccessHandler>());
+      std::make_unique<DesktopCaptureAccessHandler>());
 #if defined(OS_CHROMEOS)
   // Wrapper around TabCaptureAccessHandler used in Public Sessions.
   media_access_handlers_.push_back(
-      base::MakeUnique<PublicSessionTabCaptureAccessHandler>());
+      std::make_unique<PublicSessionTabCaptureAccessHandler>());
 #else
-  media_access_handlers_.push_back(base::MakeUnique<TabCaptureAccessHandler>());
+  media_access_handlers_.push_back(std::make_unique<TabCaptureAccessHandler>());
 #endif
 #endif
   media_access_handlers_.push_back(
-      base::MakeUnique<PermissionBubbleMediaAccessHandler>());
+      std::make_unique<PermissionBubbleMediaAccessHandler>());
 }
 
 MediaCaptureDevicesDispatcher::~MediaCaptureDevicesDispatcher() {}
@@ -189,24 +188,26 @@ void MediaCaptureDevicesDispatcher::ProcessMediaAccessRequest(
 }
 
 bool MediaCaptureDevicesDispatcher::CheckMediaAccessPermission(
-    content::WebContents* web_contents,
+    content::RenderFrameHost* render_frame_host,
     const GURL& security_origin,
     content::MediaStreamType type) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  return CheckMediaAccessPermission(web_contents, security_origin, type,
+  return CheckMediaAccessPermission(render_frame_host, security_origin, type,
                                     nullptr);
 }
 
 bool MediaCaptureDevicesDispatcher::CheckMediaAccessPermission(
-    content::WebContents* web_contents,
+    content::RenderFrameHost* render_frame_host,
     const GURL& security_origin,
     content::MediaStreamType type,
     const extensions::Extension* extension) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   for (const auto& handler : media_access_handlers_) {
-    if (handler->SupportsStreamType(web_contents, type, extension)) {
-      return handler->CheckMediaAccessPermission(web_contents, security_origin,
-                                                 type, extension);
+    if (handler->SupportsStreamType(
+            content::WebContents::FromRenderFrameHost(render_frame_host), type,
+            extension)) {
+      return handler->CheckMediaAccessPermission(
+          render_frame_host, security_origin, type, extension);
     }
   }
   return false;

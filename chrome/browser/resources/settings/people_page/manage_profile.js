@@ -36,7 +36,7 @@ Polymer({
 
     /**
      * The available icons for selection.
-     * @type {!Array<string>}
+     * @type {!Array<!AvatarIcon>}
      */
     availableIcons: {
       type: Array,
@@ -67,7 +67,7 @@ Polymer({
 
   /** @override */
   attached: function() {
-    var setIcons = icons => {
+    const setIcons = icons => {
       this.availableIcons = icons;
     };
 

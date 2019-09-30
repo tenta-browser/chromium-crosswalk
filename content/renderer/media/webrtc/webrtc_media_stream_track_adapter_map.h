@@ -13,7 +13,7 @@
 #include "content/common/content_export.h"
 #include "content/renderer/media/webrtc/two_keys_adapter_map.h"
 #include "content/renderer/media/webrtc/webrtc_media_stream_track_adapter.h"
-#include "third_party/WebKit/public/platform/WebMediaStreamTrack.h"
+#include "third_party/blink/public/platform/web_media_stream_track.h"
 #include "third_party/webrtc/api/mediastreaminterface.h"
 
 namespace content {
@@ -71,7 +71,8 @@ class CONTENT_EXPORT WebRtcMediaStreamTrackAdapterMap
 
   // Must be invoked on the main thread.
   WebRtcMediaStreamTrackAdapterMap(
-      PeerConnectionDependencyFactory* const factory);
+      PeerConnectionDependencyFactory* const factory,
+      scoped_refptr<base::SingleThreadTaskRunner> main_thread);
 
   // Gets a new reference to the local track adapter, or null if no such adapter
   // was found. When all references are destroyed the adapter is disposed and

@@ -8,6 +8,7 @@
 #include <string>
 
 #include "base/macros.h"
+#include "base/memory/weak_ptr.h"
 #include "chromeos/disks/disk_mount_manager.h"
 #include "components/arc/common/volume_mounter.mojom.h"
 #include "components/arc/connection_observer.h"
@@ -27,7 +28,8 @@ class ArcBridgeService;
 class ArcVolumeMounterBridge
     : public KeyedService,
       public chromeos::disks::DiskMountManager::Observer,
-      public ConnectionObserver<mojom::VolumeMounterInstance> {
+      public ConnectionObserver<mojom::VolumeMounterInstance>,
+      public mojom::VolumeMounterHost {
  public:
   // Returns singleton instance for the given BrowserContext,
   // or nullptr if the browser |context| is not allowed to use ARC.
@@ -42,9 +44,12 @@ class ArcVolumeMounterBridge
   void OnConnectionReady() override;
 
   // chromeos::disks::DiskMountManager::Observer overrides:
-  void OnDiskEvent(
+  void OnAutoMountableDiskEvent(
       chromeos::disks::DiskMountManager::DiskEvent event,
-      const chromeos::disks::DiskMountManager::Disk* disk) override;
+      const chromeos::disks::DiskMountManager::Disk& disk) override;
+  void OnBootDeviceDiskEvent(
+      chromeos::disks::DiskMountManager::DiskEvent event,
+      const chromeos::disks::DiskMountManager::Disk& disk) override;
   void OnDeviceEvent(chromeos::disks::DiskMountManager::DeviceEvent event,
                      const std::string& device_path) override;
   void OnMountEvent(chromeos::disks::DiskMountManager::MountEvent event,
@@ -58,8 +63,15 @@ class ArcVolumeMounterBridge
                      chromeos::RenameError error_code,
                      const std::string& device_path) override;
 
+  // mojom::VolumeMounterHost overrides:
+  void RequestAllMountPoints() override;
+
  private:
+  void SendAllMountEvents();
+
   ArcBridgeService* const arc_bridge_service_;  // Owned by ArcServiceManager.
+
+  base::WeakPtrFactory<ArcVolumeMounterBridge> weak_ptr_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(ArcVolumeMounterBridge);
 };

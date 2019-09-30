@@ -30,7 +30,6 @@ class SingleThreadTaskRunner;
 }
 
 namespace cc {
-class ResourceSettings;
 class SingleThreadTaskGraphRunner;
 class SurfaceManager;
 }
@@ -48,6 +47,7 @@ class CompositingModeReporterImpl;
 class OutputDeviceBacking;
 class SoftwareOutputDevice;
 class VulkanInProcessContextProvider;
+class RasterContextProvider;
 }
 
 namespace content {
@@ -72,7 +72,6 @@ class GpuProcessTransportFactory : public ui::ContextFactory,
   double GetRefreshRate() const override;
   gpu::GpuMemoryBufferManager* GetGpuMemoryBufferManager() override;
   cc::TaskGraphRunner* GetTaskGraphRunner() override;
-  const viz::ResourceSettings& GetResourceSettings() const override;
   void AddObserver(ui::ContextFactoryObserver* observer) override;
   void RemoveObserver(ui::ContextFactoryObserver* observer) override;
 
@@ -86,6 +85,8 @@ class GpuProcessTransportFactory : public ui::ContextFactory,
   void SetDisplayVisible(ui::Compositor* compositor, bool visible) override;
   void ResizeDisplay(ui::Compositor* compositor,
                      const gfx::Size& size) override;
+  void SetDisplayColorMatrix(ui::Compositor* compositor,
+                             const SkMatrix44& matrix) override;
   void SetDisplayColorSpace(ui::Compositor* compositor,
                             const gfx::ColorSpace& blending_color_space,
                             const gfx::ColorSpace& output_color_space) override;
@@ -136,7 +137,9 @@ class GpuProcessTransportFactory : public ui::ContextFactory,
       bool need_alpha_channel,
       bool need_stencil_bits,
       bool support_locking,
-      ui::ContextProviderCommandBuffer* shared_context_provider,
+      bool support_gles2_interface,
+      bool support_raster_interface,
+      bool support_grcontext,
       ui::command_buffer_metrics::ContextType type);
 
   viz::FrameSinkIdAllocator frame_sink_id_allocator_;
@@ -157,8 +160,7 @@ class GpuProcessTransportFactory : public ui::ContextFactory,
   base::ObserverList<ui::ContextFactoryObserver> observer_list_;
   scoped_refptr<base::SingleThreadTaskRunner> resize_task_runner_;
   std::unique_ptr<cc::SingleThreadTaskGraphRunner> task_graph_runner_;
-  scoped_refptr<ui::ContextProviderCommandBuffer>
-      shared_worker_context_provider_;
+  scoped_refptr<viz::RasterContextProvider> shared_worker_context_provider_;
 
   bool is_gpu_compositing_disabled_ = false;
   bool disable_display_vsync_ = false;

@@ -11,7 +11,6 @@
 
 #include "base/json/json_writer.h"
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "base/stl_util.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
@@ -263,7 +262,7 @@ std::unique_ptr<MenuItem> MenuItem::Populate(const std::string& extension_id,
   if (!contexts.Populate(*contexts_value))
     return nullptr;
 
-  std::unique_ptr<MenuItem> result = base::MakeUnique<MenuItem>(
+  std::unique_ptr<MenuItem> result = std::make_unique<MenuItem>(
       id, title, checked, visible, enabled, type, contexts);
 
   std::vector<std::string> document_url_patterns;
@@ -282,7 +281,7 @@ std::unique_ptr<MenuItem> MenuItem::Populate(const std::string& extension_id,
   // parent_id is filled in from the value, but it might not be valid. It's left
   // to be validated upon being added (via AddChildItem) to the menu manager.
   std::unique_ptr<Id> parent_id =
-      base::MakeUnique<Id>(incognito, MenuItem::ExtensionKey(extension_id));
+      std::make_unique<Id>(incognito, MenuItem::ExtensionKey(extension_id));
   if (value.HasKey(kParentUIDKey)) {
     if (!value.GetString(kParentUIDKey, &parent_id->string_uid))
       return nullptr;
@@ -674,7 +673,7 @@ void MenuManager::ExecuteCommand(content::BrowserContext* context,
                            webview_guest->view_instance_id());
   }
 
-  auto args = base::MakeUnique<base::ListValue>();
+  auto args = std::make_unique<base::ListValue>();
   args->Reserve(2);
   args->Append(std::move(properties));
   // |properties| is invalidated at this time, which is why |args| needs to be
@@ -692,9 +691,15 @@ void MenuManager::ExecuteCommand(content::BrowserContext* context,
       if (frame_id != ExtensionApiFrameIdMap::kInvalidFrameId)
         raw_properties->SetInteger("frameId", frame_id);
 
-      args->Append(ExtensionTabUtil::CreateTabObject(web_contents)->ToValue());
+      // We intentionally don't scrub the tab data here, since the user chose to
+      // invoke the extension on the page.
+      // NOTE(devlin): We could potentially gate this on whether the extension
+      // has activeTab.
+      args->Append(ExtensionTabUtil::CreateTabObject(
+                       web_contents, ExtensionTabUtil::kDontScrubTab, extension)
+                       ->ToValue());
     } else {
-      args->Append(base::MakeUnique<base::DictionaryValue>());
+      args->Append(std::make_unique<base::DictionaryValue>());
     }
   }
 
@@ -725,7 +730,7 @@ void MenuManager::ExecuteCommand(content::BrowserContext* context,
   {
     // Dispatch to menu item's .onclick handler (this is the legacy API, from
     // before chrome.contextMenus.onClicked existed).
-    auto event = base::MakeUnique<Event>(
+    auto event = std::make_unique<Event>(
         webview_guest ? events::WEB_VIEW_INTERNAL_CONTEXT_MENUS
                       : events::CONTEXT_MENUS,
         webview_guest ? kOnWebviewContextMenus : kOnContextMenus,
@@ -736,7 +741,7 @@ void MenuManager::ExecuteCommand(content::BrowserContext* context,
   }
   {
     // Dispatch to .contextMenus.onClicked handler.
-    auto event = base::MakeUnique<Event>(
+    auto event = std::make_unique<Event>(
         webview_guest ? events::CHROME_WEB_VIEW_INTERNAL_ON_CLICKED
                       : events::CONTEXT_MENUS_ON_CLICKED,
         webview_guest ? api::chrome_web_view_internal::OnClicked::kEventName
@@ -793,16 +798,12 @@ bool MenuManager::ItemUpdated(const MenuItem::Id& id) {
   MenuItem* menu_item = GetItemById(id);
   DCHECK(menu_item);
 
-  const extensions::MenuItem::OwnedList* list;
-  if (menu_item->parent_id()) {
-    list = &(GetItemById(*menu_item->parent_id())->children());
-  } else {
+  if (!menu_item->parent_id()) {
     auto i = context_items_.find(menu_item->id().extension_key);
     if (i == context_items_.end()) {
       NOTREACHED();
       return false;
     }
-    list = &(i->second);
   }
 
   // If we selected a radio item, unselect all other items in its group.

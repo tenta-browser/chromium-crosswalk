@@ -54,7 +54,7 @@ void TabModelList::RemoveObserver(TabModelListObserver* observer) {
   observers_.Get().RemoveObserver(observer);
 }
 
-void TabModelList::HandlePopupNavigation(chrome::NavigateParams* params) {
+void TabModelList::HandlePopupNavigation(NavigateParams* params) {
   TabAndroid* tab = TabAndroid::FromWebContents(params->source_contents);
 
   // NOTE: If this fails contact dtrainor@.
@@ -79,8 +79,7 @@ TabModel* TabModelList::GetTabModelForWebContents(
   return NULL;
 }
 
-TabModel* TabModelList::FindTabModelWithId(
-    SessionID::id_type desired_id) {
+TabModel* TabModelList::FindTabModelWithId(SessionID desired_id) {
   for (TabModelList::const_iterator i = TabModelList::begin();
       i != TabModelList::end(); i++) {
     if ((*i)->GetSessionId() == desired_id)

@@ -8,6 +8,9 @@ include_rules = [
   "+net/http",
   "+net/ssl",
   "+net/traffic_annotation",
+  "+services/network/network_context.h",
+  "+services/network/public",
+  "+services/service_manager/public/cpp",
 ]
 
 specific_include_rules = {

@@ -16,7 +16,9 @@
 #import "ios/chrome/browser/ui/stack_view/card_view.h"
 #import "ios/chrome/browser/ui/stack_view/stack_view_controller.h"
 #import "ios/chrome/browser/ui/stack_view/stack_view_controller_private.h"
-#import "ios/chrome/browser/ui/toolbar/public/toolbar_controller_constants.h"
+#include "ios/chrome/browser/ui/tab_switcher/tab_switcher_mode.h"
+#import "ios/chrome/browser/ui/toolbar/buttons/toolbar_constants.h"
+#import "ios/chrome/browser/ui/toolbar/legacy/toolbar_controller_constants.h"
 #include "ios/chrome/browser/ui/tools_menu/public/tools_menu_constants.h"
 #include "ios/chrome/test/app/chrome_test_util.h"
 #import "ios/chrome/test/app/stack_view_test_util.h"
@@ -186,9 +188,11 @@ void SelectTabUsingStackView(Tab* tab) {
 
 // Switches between three Tabs via the stack view.
 - (void)testSwitchTabs {
-  // The StackViewController is only used on iPhones.
-  if (IsIPadIdiom())
-    EARL_GREY_TEST_SKIPPED(@"Stack view is not used on iPads.");
+  if (GetTabSwitcherMode() != TabSwitcherMode::STACK) {
+    EARL_GREY_TEST_SKIPPED(
+        @"TabSwitcher tests are not applicable in this configuration");
+  }
+
   // Open two additional Tabs.
   const NSUInteger kAdditionalTabCount = 2;
   for (NSUInteger i = 0; i < kAdditionalTabCount; ++i)
@@ -200,9 +204,11 @@ void SelectTabUsingStackView(Tab* tab) {
 
 // Tests closing a tab in the stack view.
 - (void)testCloseTab {
-  // The StackViewController is only used on iPhones.
-  if (IsIPadIdiom())
-    EARL_GREY_TEST_SKIPPED(@"Stack view is not used on iPads.");
+  if (GetTabSwitcherMode() != TabSwitcherMode::STACK) {
+    EARL_GREY_TEST_SKIPPED(
+        @"TabSwitcher tests are not applicable in this configuration");
+  }
+
   // Open the stack view and tap the close button on the current CardView.
   OpenStackView();
   StackViewController* stackViewController =
@@ -222,9 +228,11 @@ void SelectTabUsingStackView(Tab* tab) {
 
 // Tests closing all Tabs in the stack view.
 - (void)testCloseAllTabs {
-  // The StackViewController is only used on iPhones.
-  if (IsIPadIdiom())
-    EARL_GREY_TEST_SKIPPED(@"Stack view is not used on iPads.");
+  if (GetTabSwitcherMode() != TabSwitcherMode::STACK) {
+    EARL_GREY_TEST_SKIPPED(
+        @"TabSwitcher tests are not applicable in this configuration");
+  }
+
   // Open an incognito Tab.
   OpenNewIncognitoTabUsingStackView();
   GREYAssertEqual(chrome_test_util::GetIncognitoTabCount(), 1,
@@ -267,9 +275,11 @@ void SelectTabUsingStackView(Tab* tab) {
 
 // Tests that tapping on the inactive deck region switches modes.
 - (void)testSwitchingModes {
-  // The StackViewController is only used on iPhones.
-  if (IsIPadIdiom())
-    EARL_GREY_TEST_SKIPPED(@"Stack view is not used on iPads.");
+  if (GetTabSwitcherMode() != TabSwitcherMode::STACK) {
+    EARL_GREY_TEST_SKIPPED(
+        @"TabSwitcher tests are not applicable in this configuration");
+  }
+
   // Open an Incognito Tab then switch decks.
   OpenNewIncognitoTabUsingStackView();
   ShowDeckWithType(DeckType::INCOGNITO);
@@ -287,9 +297,10 @@ void SelectTabUsingStackView(Tab* tab) {
 // Tests that closing a Tab that has a queued dialog successfully cancels the
 // dialog.
 - (void)testCloseTabWithDialog {
-  // The StackViewController is only used on iPhones.
-  if (IsIPadIdiom())
-    EARL_GREY_TEST_SKIPPED(@"Stack view is not used on iPads.");
+  if (GetTabSwitcherMode() != TabSwitcherMode::STACK) {
+    EARL_GREY_TEST_SKIPPED(
+        @"TabSwitcher tests are not applicable in this configuration");
+  }
 
   // Load the blank test page so that JavaScript can be executed.
   const GURL kBlankPageURL = HttpServer::MakeUrl("http://blank-page");

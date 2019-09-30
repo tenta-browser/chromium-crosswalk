@@ -3,134 +3,20 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
+      "backgroundColor": "#FFFFFF"
+    },
+    {
+      "name": "Scrolling Layer",
+      "bounds": [800, 600],
+      "drawsContent": false
+    },
+    {
+      "name": "Scrolling Contents Layer",
+      "bounds": [800, 600],
       "contentsOpaque": true,
       "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
-        {
-          "object": "LayoutSVGContainer g",
-          "rect": [0, 0, 100, 100],
-          "reason": "appeared"
-        },
-        {
-          "object": "LayoutSVGContainer g",
-          "rect": [0, 0, 100, 100],
-          "reason": "appeared"
-        },
-        {
-          "object": "LayoutSVGContainer g",
-          "rect": [0, 0, 100, 100],
-          "reason": "appeared"
-        },
-        {
-          "object": "LayoutSVGContainer g",
-          "rect": [0, 0, 100, 100],
-          "reason": "appeared"
-        },
-        {
-          "object": "LayoutSVGContainer g",
-          "rect": [0, 0, 100, 100],
-          "reason": "appeared"
-        },
-        {
-          "object": "LayoutSVGContainer g",
-          "rect": [0, 0, 100, 100],
-          "reason": "disappeared"
-        },
-        {
-          "object": "LayoutSVGContainer g",
-          "rect": [0, 0, 100, 100],
-          "reason": "disappeared"
-        },
-        {
-          "object": "LayoutSVGContainer g",
-          "rect": [0, 0, 100, 100],
-          "reason": "disappeared"
-        },
-        {
-          "object": "LayoutSVGContainer g",
-          "rect": [0, 0, 100, 100],
-          "reason": "disappeared"
-        },
-        {
-          "object": "LayoutSVGContainer g",
-          "rect": [0, 0, 100, 100],
-          "reason": "disappeared"
-        },
-        {
-          "object": "LayoutSVGContainer g id='inneruse'",
-          "rect": [0, 0, 100, 100],
-          "reason": "full"
-        },
-        {
-          "object": "LayoutSVGContainer g id='inneruse'",
-          "rect": [0, 0, 100, 100],
-          "reason": "full"
-        },
-        {
-          "object": "LayoutSVGContainer g id='inneruse'",
-          "rect": [0, 0, 100, 100],
-          "reason": "full"
-        },
-        {
-          "object": "LayoutSVGContainer g id='inneruse'",
-          "rect": [0, 0, 100, 100],
-          "reason": "full"
-        },
-        {
-          "object": "LayoutSVGContainer g id='inneruse'",
-          "rect": [0, 0, 100, 100],
-          "reason": "full"
-        },
-        {
-          "object": "LayoutSVGContainer g id='inneruse'",
-          "rect": [0, 0, 100, 100],
-          "reason": "appeared"
-        },
-        {
-          "object": "LayoutSVGContainer g id='inneruse'",
-          "rect": [0, 0, 100, 100],
-          "reason": "appeared"
-        },
-        {
-          "object": "LayoutSVGContainer g id='inneruse'",
-          "rect": [0, 0, 100, 100],
-          "reason": "appeared"
-        },
-        {
-          "object": "LayoutSVGContainer g id='inneruse'",
-          "rect": [0, 0, 100, 100],
-          "reason": "appeared"
-        },
-        {
-          "object": "LayoutSVGContainer g id='inneruse'",
-          "rect": [0, 0, 100, 100],
-          "reason": "appeared"
-        },
-        {
-          "object": "LayoutSVGContainer g id='inneruse'",
-          "rect": [0, 0, 100, 100],
-          "reason": "disappeared"
-        },
-        {
-          "object": "LayoutSVGContainer g id='inneruse'",
-          "rect": [0, 0, 100, 100],
-          "reason": "disappeared"
-        },
-        {
-          "object": "LayoutSVGContainer g id='inneruse'",
-          "rect": [0, 0, 100, 100],
-          "reason": "disappeared"
-        },
-        {
-          "object": "LayoutSVGContainer g id='inneruse'",
-          "rect": [0, 0, 100, 100],
-          "reason": "disappeared"
-        },
-        {
-          "object": "LayoutSVGContainer g id='inneruse'",
-          "rect": [0, 0, 100, 100],
-          "reason": "disappeared"
-        },
         {
           "object": "LayoutSVGPath path id='hp'",
           "rect": [0, 0, 100, 100],
@@ -211,16 +97,24 @@
   ],
   "objectPaintInvalidations": [
     {
-      "object": "LayoutSVGPath path id='hp'",
-      "reason": "disappeared"
+      "object": "LayoutSVGContainer g id='inneruse'",
+      "reason": "full"
     },
     {
-      "object": "LayoutSVGContainer g",
-      "reason": "disappeared"
+      "object": "LayoutSVGPath path id='hp'",
+      "reason": "SVG resource change"
     },
     {
       "object": "LayoutSVGContainer g id='inneruse'",
-      "reason": "disappeared"
+      "reason": "appeared"
+    },
+    {
+      "object": "LayoutSVGContainer g",
+      "reason": "appeared"
+    },
+    {
+      "object": "LayoutSVGPath path id='hp'",
+      "reason": "appeared"
     },
     {
       "object": "LayoutSVGContainer g id='inneruse'",
@@ -243,18 +137,6 @@
       "reason": "appeared"
     },
     {
-      "object": "LayoutSVGPath path id='hp'",
-      "reason": "disappeared"
-    },
-    {
-      "object": "LayoutSVGContainer g",
-      "reason": "disappeared"
-    },
-    {
-      "object": "LayoutSVGContainer g id='inneruse'",
-      "reason": "disappeared"
-    },
-    {
       "object": "LayoutSVGContainer g id='inneruse'",
       "reason": "full"
     },
@@ -275,18 +157,6 @@
       "reason": "appeared"
     },
     {
-      "object": "LayoutSVGPath path id='hp'",
-      "reason": "disappeared"
-    },
-    {
-      "object": "LayoutSVGContainer g",
-      "reason": "disappeared"
-    },
-    {
-      "object": "LayoutSVGContainer g id='inneruse'",
-      "reason": "disappeared"
-    },
-    {
       "object": "LayoutSVGContainer g id='inneruse'",
       "reason": "full"
     },
@@ -305,50 +175,6 @@
     {
       "object": "LayoutSVGPath path id='hp'",
       "reason": "appeared"
-    },
-    {
-      "object": "LayoutSVGPath path id='hp'",
-      "reason": "disappeared"
-    },
-    {
-      "object": "LayoutSVGContainer g",
-      "reason": "disappeared"
-    },
-    {
-      "object": "LayoutSVGContainer g id='inneruse'",
-      "reason": "disappeared"
-    },
-    {
-      "object": "LayoutSVGContainer g id='inneruse'",
-      "reason": "full"
-    },
-    {
-      "object": "LayoutSVGPath path id='hp'",
-      "reason": "SVG resource change"
-    },
-    {
-      "object": "LayoutSVGContainer g id='inneruse'",
-      "reason": "appeared"
-    },
-    {
-      "object": "LayoutSVGContainer g",
-      "reason": "appeared"
-    },
-    {
-      "object": "LayoutSVGPath path id='hp'",
-      "reason": "appeared"
-    },
-    {
-      "object": "LayoutSVGPath path id='hp'",
-      "reason": "disappeared"
-    },
-    {
-      "object": "LayoutSVGContainer g",
-      "reason": "disappeared"
-    },
-    {
-      "object": "LayoutSVGContainer g id='inneruse'",
-      "reason": "disappeared"
     },
     {
       "object": "LayoutSVGContainer g id='inneruse'",

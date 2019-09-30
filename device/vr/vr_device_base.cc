@@ -46,6 +46,10 @@ void VRDeviceBase::OnExitPresent() {
   SetPresentingDisplay(nullptr);
 }
 
+bool VRDeviceBase::IsFallbackDevice() {
+  return false;
+};
+
 mojom::VRDisplayInfoPtr VRDeviceBase::GetVRDisplayInfo() {
   DCHECK(display_info_);
   return display_info_.Clone();
@@ -55,8 +59,9 @@ void VRDeviceBase::RequestPresent(
     VRDisplayImpl* display,
     mojom::VRSubmitFrameClientPtr submit_client,
     mojom::VRPresentationProviderRequest request,
+    mojom::VRRequestPresentOptionsPtr present_options,
     mojom::VRDisplayHost::RequestPresentCallback callback) {
-  std::move(callback).Run(false);
+  std::move(callback).Run(false, nullptr);
 }
 
 void VRDeviceBase::ExitPresent() {
@@ -89,8 +94,6 @@ void VRDeviceBase::RemoveDisplay(VRDisplayImpl* display) {
     listening_for_activate_diplay_ = nullptr;
     OnListeningForActivate(false);
   }
-  if (last_listening_for_activate_diplay_ == display)
-    last_listening_for_activate_diplay_ = nullptr;
 }
 
 bool VRDeviceBase::IsAccessAllowed(VRDisplayImpl* display) {
@@ -130,10 +133,6 @@ void VRDeviceBase::OnActivate(mojom::VRDisplayEventReason reason,
                               base::Callback<void(bool)> on_handled) {
   if (listening_for_activate_diplay_) {
     listening_for_activate_diplay_->OnActivate(reason, std::move(on_handled));
-  } else if (last_listening_for_activate_diplay_ &&
-             last_listening_for_activate_diplay_->InFocusedFrame()) {
-    last_listening_for_activate_diplay_->OnActivate(reason,
-                                                    std::move(on_handled));
   } else {
     std::move(on_handled).Run(true /* will_not_present */);
   }
@@ -153,7 +152,6 @@ void VRDeviceBase::UpdateListeningForActivate(VRDisplayImpl* display) {
     if (!was_listening)
       OnListeningForActivate(true);
   } else if (listening_for_activate_diplay_ == display) {
-    last_listening_for_activate_diplay_ = listening_for_activate_diplay_;
     listening_for_activate_diplay_ = nullptr;
     OnListeningForActivate(false);
   }

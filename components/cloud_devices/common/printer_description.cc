@@ -13,7 +13,6 @@
 #include "base/json/json_reader.h"
 #include "base/json/json_writer.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/string_util.h"
 #include "base/values.h"
 #include "components/cloud_devices/common/cloud_device_description_consts.h"
@@ -67,6 +66,7 @@ const char kPageRangeInterval[] = "interval";
 const char kPageRangeEnd[] = "end";
 const char kPageRangeStart[] = "start";
 
+const char kPwgRasterDocumentTypeSupported[] = "document_type_supported";
 const char kPwgRasterDocumentSheetBack[] = "document_sheet_back";
 const char kPwgRasterReverseOrderStreaming[] = "reverse_order_streaming";
 const char kPwgRasterRotateAllPages[] = "rotate_all_pages";
@@ -94,6 +94,9 @@ const char kTypeOrientationAuto[] = "AUTO";
 
 const char kTypeOrientationLandscape[] = "LANDSCAPE";
 const char kTypeOrientationPortrait[] = "PORTRAIT";
+
+const char kTypeDocumentSupportedTypeSRGB8[] = "SRGB_8";
+const char kTypeDocumentSupportedTypeSGRAY8[] = "SGRAY_8";
 
 const char kTypeDocumentSheetBackNormal[] = "NORMAL";
 const char kTypeDocumentSheetBackRotated[] = "ROTATED";
@@ -391,6 +394,8 @@ PwgRasterConfig::PwgRasterConfig()
       rotate_all_pages(false) {
 }
 
+PwgRasterConfig::~PwgRasterConfig() {}
+
 Color::Color() : type(AUTO_COLOR) {
 }
 
@@ -564,6 +569,24 @@ class PwgRasterConfigTraits : public NoValueValidation,
       }
     }
 
+    const base::Value* document_types_supported =
+        dict.FindKey(kPwgRasterDocumentTypeSupported);
+    if (document_types_supported) {
+      if (!document_types_supported->is_list())
+        return false;
+
+      for (const auto& type : document_types_supported->GetList()) {
+        if (!type.is_string())
+          return false;
+
+        std::string type_str = type.GetString();
+        if (type_str == kTypeDocumentSupportedTypeSRGB8)
+          option_out.document_types_supported.push_back(SRGB_8);
+        else if (type_str == kTypeDocumentSupportedTypeSGRAY8)
+          option_out.document_types_supported.push_back(SGRAY_8);
+      }
+    }
+
     dict.GetBoolean(kPwgRasterReverseOrderStreaming,
                     &option_out.reverse_order_streaming);
     dict.GetBoolean(kPwgRasterRotateAllPages, &option_out.rotate_all_pages);
@@ -575,6 +598,24 @@ class PwgRasterConfigTraits : public NoValueValidation,
     dict->SetString(
         kPwgRasterDocumentSheetBack,
         TypeToString(kDocumentSheetBackNames, option.document_sheet_back));
+
+    if (!option.document_types_supported.empty()) {
+      base::Value::ListStorage supported_list;
+      for (const auto& type : option.document_types_supported) {
+        switch (type) {
+          case SRGB_8:
+            supported_list.push_back(
+                base::Value(kTypeDocumentSupportedTypeSRGB8));
+            break;
+          case SGRAY_8:
+            supported_list.push_back(
+                base::Value(kTypeDocumentSupportedTypeSGRAY8));
+            break;
+        }
+      }
+      dict->SetKey(kPwgRasterDocumentTypeSupported,
+                   base::Value(supported_list));
+    }
 
     if (option.reverse_order_streaming) {
       dict->SetBoolean(kPwgRasterReverseOrderStreaming,
@@ -733,9 +774,9 @@ class PageRangeTraits : public ItemsTraits<kOptionPageRange> {
 
   static void Save(const PageRange& option, base::DictionaryValue* dict) {
     if (!option.empty()) {
-      auto list = base::MakeUnique<base::ListValue>();
+      auto list = std::make_unique<base::ListValue>();
       for (size_t i = 0; i < option.size(); ++i) {
-        auto interval = base::MakeUnique<base::DictionaryValue>();
+        auto interval = std::make_unique<base::DictionaryValue>();
         interval->SetInteger(kPageRangeStart, option[i].start);
         if (option[i].end < kMaxPageNumber)
           interval->SetInteger(kPageRangeEnd, option[i].end);

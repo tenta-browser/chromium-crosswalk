@@ -4,11 +4,11 @@
 
 #include "chrome/browser/ui/webui/chromeos/network_ui.h"
 
+#include <memory>
 #include <string>
 #include <utility>
 
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/memory/weak_ptr.h"
 #include "base/strings/stringprintf.h"
 #include "base/values.h"
@@ -84,15 +84,18 @@ class NetworkConfigMessageHandler : public content::WebUIMessageHandler {
   void RegisterMessages() override {
     web_ui()->RegisterMessageCallback(
         kGetNetworkProperties,
-        base::Bind(&NetworkConfigMessageHandler::GetShillNetworkProperties,
-                   base::Unretained(this)));
+        base::BindRepeating(
+            &NetworkConfigMessageHandler::GetShillNetworkProperties,
+            base::Unretained(this)));
     web_ui()->RegisterMessageCallback(
         kGetDeviceProperties,
-        base::Bind(&NetworkConfigMessageHandler::GetShillDeviceProperties,
-                   base::Unretained(this)));
+        base::BindRepeating(
+            &NetworkConfigMessageHandler::GetShillDeviceProperties,
+            base::Unretained(this)));
     web_ui()->RegisterMessageCallback(
-        "addNetwork", base::Bind(&NetworkConfigMessageHandler::AddNetwork,
-                                 base::Unretained(this)));
+        "addNetwork",
+        base::BindRepeating(&NetworkConfigMessageHandler::AddNetwork,
+                            base::Unretained(this)));
   }
 
  private:
@@ -266,7 +269,7 @@ void NetworkUI::GetLocalizedStrings(base::DictionaryValue* localized_strings) {
 
 NetworkUI::NetworkUI(content::WebUI* web_ui)
     : content::WebUIController(web_ui) {
-  web_ui->AddMessageHandler(base::MakeUnique<NetworkConfigMessageHandler>());
+  web_ui->AddMessageHandler(std::make_unique<NetworkConfigMessageHandler>());
 
   // Enable extension API calls in the WebUI.
   extensions::TabHelper::CreateForWebContents(web_ui->GetWebContents());

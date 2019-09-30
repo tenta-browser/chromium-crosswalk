@@ -12,8 +12,6 @@
 
 namespace content {
 
-void RenderWidgetHostDelegate::GetScreenInfo(ScreenInfo*) {}
-
 KeyboardEventProcessingResult RenderWidgetHostDelegate::PreHandleKeyboardEvent(
     const NativeWebKeyboardEvent& event) {
   return KeyboardEventProcessingResult::NOT_HANDLED;
@@ -73,6 +71,15 @@ bool RenderWidgetHostDelegate::HasMouseLock(
 }
 
 RenderWidgetHostImpl* RenderWidgetHostDelegate::GetMouseLockWidget() {
+  return nullptr;
+}
+
+bool RenderWidgetHostDelegate::RequestKeyboardLock(RenderWidgetHostImpl* host,
+                                                   bool esc_key_locked) {
+  return false;
+}
+
+RenderWidgetHostImpl* RenderWidgetHostDelegate::GetKeyboardLockWidget() {
   return nullptr;
 }
 

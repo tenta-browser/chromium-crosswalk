@@ -22,13 +22,10 @@ viz::mojom::HitTestRegionPtr CreateHitTestRegion(const aura::Window* window,
   hit_test_region->frame_sink_id = window->GetFrameSinkId();
   // Checking |layer| may not be correct, since the actual layer that embeds
   // the surface may be a descendent of |layer|, instead of |layer| itself.
-  if (window->IsEmbeddingClient()) {
-    DCHECK(window->GetLocalSurfaceId().is_valid());
-    hit_test_region->local_surface_id = window->GetLocalSurfaceId();
+  if (window->IsEmbeddingClient())
     hit_test_region->flags = flags | viz::mojom::kHitTestChildSurface;
-  } else {
+  else
     hit_test_region->flags = flags | viz::mojom::kHitTestMine;
-  }
   hit_test_region->rect = rect;
   hit_test_region->transform = layer->transform();
 
@@ -44,8 +41,8 @@ HitTestDataProviderAura::HitTestDataProviderAura(aura::Window* window)
 
 HitTestDataProviderAura::~HitTestDataProviderAura() {}
 
-viz::mojom::HitTestRegionListPtr HitTestDataProviderAura::GetHitTestData()
-    const {
+viz::mojom::HitTestRegionListPtr HitTestDataProviderAura::GetHitTestData(
+    const viz::CompositorFrame& compositor_frame) const {
   const ui::mojom::EventTargetingPolicy event_targeting_policy =
       window_->event_targeting_policy();
   if (!window_->IsVisible() ||
@@ -58,6 +55,7 @@ viz::mojom::HitTestRegionListPtr HitTestDataProviderAura::GetHitTestData()
               ui::mojom::EventTargetingPolicy::DESCENDANTS_ONLY
           ? viz::mojom::kHitTestIgnore
           : viz::mojom::kHitTestMine;
+  // TODO(crbug.com/805416): Use pixels instead of DIP units for bounds.
   hit_test_region_list->bounds = window_->bounds();
 
   GetHitTestDataRecursively(window_, hit_test_region_list.get());

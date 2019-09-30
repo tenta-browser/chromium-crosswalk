@@ -14,6 +14,7 @@
 #include "base/containers/flat_set.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
+#include "base/optional.h"
 #include "base/task/cancelable_task_tracker.h"
 #include "components/favicon/core/favicon_driver_observer.h"
 #include "components/favicon/core/favicon_url.h"
@@ -76,33 +77,18 @@ class FaviconService;
 
 class FaviconHandler {
  public:
-  // Outcome of a favicon download.
-  // Recorded as Favicons.DownloadOutcome and public for testing.
-  //
-  // These values must stay in sync with the FaviconDownloadStatus enum
-  // in histograms.xml and should be treated as append-only, since it backs an
-  // UMA histogram..
-  enum class DownloadOutcome {
-    SUCCEEDED = 0,
-    FAILED = 1,
-    SKIPPED = 2,
-    DOWNLOAD_OUTCOME_COUNT = 3
-  };
-
   class Delegate {
    public:
     // Mimics WebContents::ImageDownloadCallback.
-    typedef base::Callback<void(
+    using ImageDownloadCallback = base::OnceCallback<void(
         int id,
         int status_code,
         const GURL& image_url,
         const std::vector<SkBitmap>& bitmaps,
-        const std::vector<gfx::Size>& original_bitmap_sizes)>
-        ImageDownloadCallback;
+        const std::vector<gfx::Size>& original_bitmap_sizes)>;
 
-    typedef base::Callback<void(
-        const std::vector<favicon::FaviconURL>& favicons)>
-        ManifestDownloadCallback;
+    using ManifestDownloadCallback = base::OnceCallback<void(
+        const std::vector<favicon::FaviconURL>& favicons)>;
 
     // Starts the download for the given favicon. When finished, the callback
     // is called with the results. Returns the unique id of the download
@@ -290,8 +276,9 @@ class FaviconHandler {
 
   // Return the current candidate if any.
   const FaviconCandidate* current_candidate() const {
-    return current_candidate_index_ < candidates_.size()
-               ? &candidates_[current_candidate_index_]
+    DCHECK(final_candidates_);
+    return current_candidate_index_ < final_candidates_->size()
+               ? &final_candidates_.value()[current_candidate_index_]
                : nullptr;
   }
 
@@ -333,11 +320,11 @@ class FaviconHandler {
   bool redownload_icons_;
 
   // Requests to the renderer to download a manifest.
-  base::CancelableCallback<Delegate::ManifestDownloadCallback::RunType>
+  base::CancelableOnceCallback<Delegate::ManifestDownloadCallback::RunType>
       manifest_download_request_;
 
   // Requests to the renderer to download favicons.
-  base::CancelableCallback<Delegate::ImageDownloadCallback::RunType>
+  base::CancelableOnceCallback<Delegate::ImageDownloadCallback::RunType>
       image_download_request_;
 
   // The combination of the supported icon types.
@@ -363,7 +350,8 @@ class FaviconHandler {
   std::vector<FaviconURL> non_manifest_original_candidates_;
 
   // The prioritized favicon candidates from the page back from the renderer.
-  std::vector<FaviconCandidate> candidates_;
+  // Populated by OnGotFinalIconURLCandidates().
+  base::Optional<std::vector<FaviconCandidate>> final_candidates_;
 
   // The icon URL and the icon type of the favicon in the most recent
   // FaviconDriver::OnFaviconAvailable() notification.
@@ -376,10 +364,6 @@ class FaviconHandler {
 
   // This handler's delegate.
   Delegate* delegate_;
-
-  // Captures the number of download requests that were initiated for the
-  // current url_.
-  int num_image_download_requests_;
 
   // The index of the favicon URL in |image_urls_| which is currently being
   // requested from history or downloaded.

@@ -5,9 +5,15 @@
 #ifndef CHROME_TEST_BASE_INTERACTIVE_TEST_UTILS_H_
 #define CHROME_TEST_BASE_INTERACTIVE_TEST_UTILS_H_
 
+#include "base/macros.h"
+#include "base/run_loop.h"
+#include "build/build_config.h"
+#include "chrome/browser/ui/browser_list_observer.h"
 #include "chrome/browser/ui/view_ids.h"
 #include "chrome/test/base/ui_test_utils.h"
+#include "content/public/test/test_utils.h"
 #include "ui/base/test/ui_controls.h"
+#include "ui/events/event_constants.h"
 
 namespace gfx {
 class Point;
@@ -20,6 +26,53 @@ class View;
 #endif
 
 namespace ui_test_utils {
+
+// Use in browser interactive uitests to wait until a browser is set to active.
+// To use, create and call WaitForActivation().
+class BrowserActivationWaiter : public BrowserListObserver {
+ public:
+  explicit BrowserActivationWaiter(const Browser* browser);
+  ~BrowserActivationWaiter() override;
+
+  // Runs a message loop until the |browser_| supplied to the constructor is
+  // activated, or returns immediately if |browser_| has already become active.
+  // Should only be called once.
+  void WaitForActivation();
+
+ private:
+  // BrowserListObserver:
+  void OnBrowserSetLastActive(Browser* browser) override;
+
+  const Browser* const browser_;
+  bool observed_;
+  base::RunLoop run_loop_;
+
+  DISALLOW_COPY_AND_ASSIGN(BrowserActivationWaiter);
+};
+
+// Use in browser interactive uitests to wait until a browser is deactivated.
+// To use, create and call WaitForDeactivation().
+class BrowserDeactivationWaiter : public BrowserListObserver {
+ public:
+  explicit BrowserDeactivationWaiter(const Browser* browser);
+  ~BrowserDeactivationWaiter() override;
+
+  // Runs a message loop until the |browser_| supplied to the constructor is
+  // deactivated, or returns immediately if |browser_| has already become
+  // inactive.
+  // Should only be called once.
+  void WaitForDeactivation();
+
+ private:
+  // BrowserListObserver:
+  void OnBrowserNoLongerActive(Browser* browser) override;
+
+  const Browser* const browser_;
+  bool observed_;
+  base::RunLoop run_loop_;
+
+  DISALLOW_COPY_AND_ASSIGN(BrowserDeactivationWaiter);
+};
 
 // Brings the native window for |browser| to the foreground and waits until the
 // browser is active.
@@ -137,13 +190,25 @@ void MoveMouseToCenterAndPress(views::View* view,
 gfx::Point GetCenterInScreenCoordinates(const views::View* view);
 #endif
 
+#if defined(OS_MACOSX)
+// Send press and release events for |key_code| with selected modifiers and wait
+// until the last event arrives to our NSApp. Events will be sent as CGEvents
+// through HID event tap. |key_code| must be a virtual key code (reference can
+// be found in HIToolbox/Events.h from macOS SDK). |modifier_flags| must be a
+// bitmask from ui::EventFlags.
+void SendGlobalKeyEventsAndWait(int key_code, int modifier_flags);
+
+// Clear pressed modifier keys and report true if any key modifiers were down.
+bool ClearKeyEventModifiers();
+#endif
+
 namespace internal {
 
 // A utility function to send a mouse click event in a closure. It's shared by
 // ui_controls_linux.cc and ui_controls_mac.cc
 void ClickTask(ui_controls::MouseButton button,
                int state,
-               const base::Closure& followup);
+               base::OnceClosure followup);
 
 }  // namespace internal
 

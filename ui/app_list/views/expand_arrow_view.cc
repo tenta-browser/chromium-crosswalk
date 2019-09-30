@@ -4,11 +4,13 @@
 
 #include "ui/app_list/views/expand_arrow_view.h"
 
+#include <memory>
+#include <utility>
+
 #include "base/bind.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "ui/app_list/app_list_constants.h"
-#include "ui/app_list/app_list_features.h"
 #include "ui/app_list/vector_icons/vector_icons.h"
 #include "ui/app_list/views/app_list_view.h"
 #include "ui/app_list/views/contents_view.h"
@@ -68,8 +70,7 @@ ExpandArrowView::ExpandArrowView(ContentsView* contents_view,
       contents_view_(contents_view),
       app_list_view_(app_list_view),
       weak_ptr_factory_(this) {
-  if (features::IsAppListFocusEnabled())
-    SetFocusBehavior(FocusBehavior::ALWAYS);
+  SetFocusBehavior(FocusBehavior::ALWAYS);
   SetPaintToLayer();
   layer()->SetFillsBoundsOpaquely(false);
 
@@ -94,25 +95,14 @@ ExpandArrowView::ExpandArrowView(ContentsView* contents_view,
 
 ExpandArrowView::~ExpandArrowView() = default;
 
-void ExpandArrowView::SetSelected(bool selected) {
-  if (selected == selected_)
-    return;
-
-  selected_ = selected;
-  SchedulePaint();
-
-  if (selected)
-    NotifyAccessibilityEvent(ui::AX_EVENT_SELECTION, true);
-}
-
 void ExpandArrowView::PaintButtonContents(gfx::Canvas* canvas) {
   gfx::Rect rect(GetContentsBounds());
 
   // Draw focused or unfocused background.
   cc::PaintFlags flags;
   flags.setAntiAlias(true);
-  flags.setColor(selected_ ? kFocusedBackgroundColor
-                           : kUnFocusedBackgroundColor);
+  flags.setColor(HasFocus() ? kFocusedBackgroundColor
+                            : kUnFocusedBackgroundColor);
   flags.setStyle(cc::PaintFlags::kFill_Style);
   canvas->DrawCircle(gfx::PointF(rect.CenterPoint()), kSelectedRadius, flags);
 
@@ -156,11 +146,13 @@ bool ExpandArrowView::OnKeyPressed(const ui::KeyEvent& event) {
 }
 
 void ExpandArrowView::OnFocus() {
-  SetSelected(true);
+  SchedulePaint();
+  Button::OnFocus();
 }
 
 void ExpandArrowView::OnBlur() {
-  SetSelected(false);
+  SchedulePaint();
+  Button::OnBlur();
 }
 
 std::unique_ptr<views::InkDrop> ExpandArrowView::CreateInkDrop() {
@@ -262,11 +254,11 @@ void ExpandArrowView::AnimationEnded(const gfx::Animation* animation) {
 }
 
 void ExpandArrowView::TransitToFullscreenAllAppsState() {
-  UMA_HISTOGRAM_ENUMERATION(kPageOpenedHistogram, AppListModel::STATE_APPS,
-                            AppListModel::STATE_LAST);
+  UMA_HISTOGRAM_ENUMERATION(kPageOpenedHistogram, ash::AppListState::kStateApps,
+                            ash::AppListState::kStateLast);
   UMA_HISTOGRAM_ENUMERATION(kAppListPeekingToFullscreenHistogram, kExpandArrow,
                             kMaxPeekingToFullscreen);
-  contents_view_->SetActiveState(AppListModel::STATE_APPS);
+  contents_view_->SetActiveState(ash::AppListState::kStateApps);
   app_list_view_->SetState(AppListViewState::FULLSCREEN_ALL_APPS);
 }
 
@@ -276,8 +268,8 @@ void ExpandArrowView::ScheduleHintingAnimation(bool is_first_time) {
     delay_in_sec = kAnimationInitialWaitTimeInSec;
   base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
       FROM_HERE,
-      base::Bind(&ExpandArrowView::StartHintingAnimation,
-                 weak_ptr_factory_.GetWeakPtr()),
+      base::BindOnce(&ExpandArrowView::StartHintingAnimation,
+                     weak_ptr_factory_.GetWeakPtr()),
       base::TimeDelta::FromSeconds(delay_in_sec));
 }
 

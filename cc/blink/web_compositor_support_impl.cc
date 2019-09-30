@@ -6,7 +6,6 @@
 
 #include <utility>
 
-#include "base/memory/ptr_util.h"
 #include "cc/blink/web_content_layer_impl.h"
 #include "cc/blink/web_display_item_list_impl.h"
 #include "cc/blink/web_external_texture_layer_impl.h"
@@ -28,11 +27,9 @@ using blink::WebScrollbarThemePainter;
 
 namespace cc_blink {
 
-WebCompositorSupportImpl::WebCompositorSupportImpl() {
-}
+WebCompositorSupportImpl::WebCompositorSupportImpl() = default;
 
-WebCompositorSupportImpl::~WebCompositorSupportImpl() {
-}
+WebCompositorSupportImpl::~WebCompositorSupportImpl() = default;
 
 std::unique_ptr<WebLayer> WebCompositorSupportImpl::CreateLayer() {
   return std::make_unique<WebLayerImpl>();

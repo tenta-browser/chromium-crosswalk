@@ -139,12 +139,11 @@ void HeadlessDevToolsClientImpl::DispatchProtocolMessage(
     content::DevToolsAgentHost* agent_host,
     const std::string& json_message) {
   DCHECK_EQ(agent_host_, agent_host);
-
   std::unique_ptr<base::Value> message =
       base::JSONReader::Read(json_message, base::JSON_PARSE_RFC);
   const base::DictionaryValue* message_dict;
   if (!message || !message->GetAsDictionary(&message_dict)) {
-    NOTREACHED() << "Badly formed reply";
+    NOTREACHED() << "Badly formed reply " << json_message;
     return;
   }
 
@@ -175,17 +174,17 @@ bool HeadlessDevToolsClientImpl::DispatchMessageReply(
   if (!callback.callback_with_result.is_null()) {
     const base::DictionaryValue* result_dict;
     if (message_dict.GetDictionary("result", &result_dict)) {
-      callback.callback_with_result.Run(*result_dict);
+      std::move(callback.callback_with_result).Run(*result_dict);
     } else if (message_dict.GetDictionary("error", &result_dict)) {
-      auto null_value = base::MakeUnique<base::Value>();
+      auto null_value = std::make_unique<base::Value>();
       DLOG(ERROR) << "Error in method call result: " << *result_dict;
-      callback.callback_with_result.Run(*null_value);
+      std::move(callback.callback_with_result).Run(*null_value);
     } else {
       NOTREACHED() << "Reply has neither result nor error";
       return false;
     }
   } else if (!callback.callback.is_null()) {
-    callback.callback.Run();
+    std::move(callback.callback).Run();
   }
   return true;
 }
@@ -201,7 +200,8 @@ bool HeadlessDevToolsClientImpl::DispatchEvent(
     renderer_crashed_ = true;
   EventHandlerMap::const_iterator it = event_handlers_.find(method);
   if (it == event_handlers_.end()) {
-    NOTREACHED() << "Unknown event: " << method;
+    if (method != "Inspector.targetCrashed")
+      NOTREACHED() << "Unknown event: " << method;
     return false;
   }
   if (!it->second.is_null()) {
@@ -213,10 +213,10 @@ bool HeadlessDevToolsClientImpl::DispatchEvent(
     // DevTools assumes event handling is async so we must post a task here or
     // we risk breaking things.
     browser_main_thread_->PostTask(
-        FROM_HERE, base::Bind(&HeadlessDevToolsClientImpl::DispatchEventTask,
-                              weak_ptr_factory_.GetWeakPtr(),
-                              base::Passed(std::move(owning_message)),
-                              &it->second, result_dict));
+        FROM_HERE,
+        base::BindOnce(&HeadlessDevToolsClientImpl::DispatchEventTask,
+                       weak_ptr_factory_.GetWeakPtr(),
+                       std::move(owning_message), &it->second, result_dict));
   }
   return true;
 }
@@ -380,7 +380,7 @@ void HeadlessDevToolsClientImpl::FinalizeAndSendMessage(
   message->SetInteger("id", id);
   std::string json_message;
   base::JSONWriter::Write(*message, &json_message);
-  pending_messages_[id] = Callback(callback);
+  pending_messages_[id] = Callback(std::move(callback));
   agent_host_->DispatchProtocolMessage(this, json_message);
 }
 
@@ -398,34 +398,34 @@ void HeadlessDevToolsClientImpl::SendMessageWithParams(
 void HeadlessDevToolsClientImpl::SendMessage(
     const char* method,
     std::unique_ptr<base::Value> params,
-    base::Callback<void(const base::Value&)> callback) {
+    base::OnceCallback<void(const base::Value&)> callback) {
   SendMessageWithParams(method, std::move(params), std::move(callback));
 }
 
 void HeadlessDevToolsClientImpl::SendMessage(
     const char* method,
     std::unique_ptr<base::Value> params,
-    base::Closure callback) {
+    base::OnceClosure callback) {
   SendMessageWithParams(method, std::move(params), std::move(callback));
 }
 
 void HeadlessDevToolsClientImpl::RegisterEventHandler(
     const char* method,
-    base::Callback<void(const base::Value&)> callback) {
+    base::RepeatingCallback<void(const base::Value&)> callback) {
   DCHECK(event_handlers_.find(method) == event_handlers_.end());
-  event_handlers_[method] = callback;
+  event_handlers_[method] = std::move(callback);
 }
 
 HeadlessDevToolsClientImpl::Callback::Callback() = default;
 
 HeadlessDevToolsClientImpl::Callback::Callback(Callback&& other) = default;
 
-HeadlessDevToolsClientImpl::Callback::Callback(base::Closure callback)
-    : callback(callback) {}
+HeadlessDevToolsClientImpl::Callback::Callback(base::OnceClosure callback)
+    : callback(std::move(callback)) {}
 
 HeadlessDevToolsClientImpl::Callback::Callback(
-    base::Callback<void(const base::Value&)> callback)
-    : callback_with_result(callback) {}
+    base::OnceCallback<void(const base::Value&)> callback)
+    : callback_with_result(std::move(callback)) {}
 
 HeadlessDevToolsClientImpl::Callback::~Callback() = default;
 

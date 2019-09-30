@@ -49,9 +49,8 @@ DecoderStreamTraits<DemuxerStream::AUDIO>::DecoderStreamTraits(
 void DecoderStreamTraits<DemuxerStream::AUDIO>::ReportStatistics(
     const StatisticsCB& statistics_cb,
     int bytes_decoded) {
-  PipelineStatistics statistics;
-  statistics.audio_bytes_decoded = bytes_decoded;
-  statistics_cb.Run(statistics);
+  stats_.audio_bytes_decoded = bytes_decoded;
+  statistics_cb.Run(stats_);
 }
 
 void DecoderStreamTraits<DemuxerStream::AUDIO>::InitializeDecoder(
@@ -60,9 +59,13 @@ void DecoderStreamTraits<DemuxerStream::AUDIO>::InitializeDecoder(
     bool /* low_delay */,
     CdmContext* cdm_context,
     const InitCB& init_cb,
-    const OutputCB& output_cb) {
+    const OutputCB& output_cb,
+    const DecoderType::WaitingForDecryptionKeyCB&
+        waiting_for_decryption_key_cb) {
   DCHECK(config.IsValidConfig());
-  decoder->Initialize(config, cdm_context, init_cb, output_cb);
+  stats_.audio_decoder_name = decoder->GetDisplayName();
+  decoder->Initialize(config, cdm_context, init_cb, output_cb,
+                      waiting_for_decryption_key_cb);
 }
 
 void DecoderStreamTraits<DemuxerStream::AUDIO>::OnStreamReset(
@@ -75,7 +78,7 @@ void DecoderStreamTraits<DemuxerStream::AUDIO>::OnStreamReset(
 }
 
 void DecoderStreamTraits<DemuxerStream::AUDIO>::OnDecode(
-    const scoped_refptr<DecoderBuffer>& buffer) {
+    const DecoderBuffer& buffer) {
   audio_ts_validator_->CheckForTimestampGap(buffer);
 }
 
@@ -126,19 +129,18 @@ DecoderStreamTraits<DemuxerStream::VIDEO>::DecoderStreamTraits(
 void DecoderStreamTraits<DemuxerStream::VIDEO>::ReportStatistics(
     const StatisticsCB& statistics_cb,
     int bytes_decoded) {
-  PipelineStatistics statistics;
-  statistics.video_bytes_decoded = bytes_decoded;
+  stats_.video_bytes_decoded = bytes_decoded;
 
   if (keyframe_distance_average_.count()) {
-    statistics.video_keyframe_distance_average =
+    stats_.video_keyframe_distance_average =
         keyframe_distance_average_.Average();
   } else {
     // Before we have enough keyframes to calculate the average distance, we
     // will assume the average keyframe distance is infinitely large.
-    statistics.video_keyframe_distance_average = base::TimeDelta::Max();
+    stats_.video_keyframe_distance_average = base::TimeDelta::Max();
   }
 
-  statistics_cb.Run(statistics);
+  statistics_cb.Run(stats_);
 }
 
 void DecoderStreamTraits<DemuxerStream::VIDEO>::InitializeDecoder(
@@ -147,9 +149,13 @@ void DecoderStreamTraits<DemuxerStream::VIDEO>::InitializeDecoder(
     bool low_delay,
     CdmContext* cdm_context,
     const InitCB& init_cb,
-    const OutputCB& output_cb) {
+    const OutputCB& output_cb,
+    const DecoderType::WaitingForDecryptionKeyCB&
+        waiting_for_decryption_key_cb) {
   DCHECK(config.IsValidConfig());
-  decoder->Initialize(config, low_delay, cdm_context, init_cb, output_cb);
+  stats_.video_decoder_name = decoder->GetDisplayName();
+  decoder->Initialize(config, low_delay, cdm_context, init_cb, output_cb,
+                      waiting_for_decryption_key_cb);
 }
 
 void DecoderStreamTraits<DemuxerStream::VIDEO>::OnStreamReset(
@@ -160,22 +166,19 @@ void DecoderStreamTraits<DemuxerStream::VIDEO>::OnStreamReset(
 }
 
 void DecoderStreamTraits<DemuxerStream::VIDEO>::OnDecode(
-    const scoped_refptr<DecoderBuffer>& buffer) {
-  if (!buffer)
-    return;
-
-  if (buffer->end_of_stream()) {
+    const DecoderBuffer& buffer) {
+  if (buffer.end_of_stream()) {
     last_keyframe_timestamp_ = base::TimeDelta();
     return;
   }
 
-  if (buffer->discard_padding().first == kInfiniteDuration)
-    frames_to_drop_.insert(buffer->timestamp());
+  if (buffer.discard_padding().first == kInfiniteDuration)
+    frames_to_drop_.insert(buffer.timestamp());
 
-  if (!buffer->is_key_frame())
+  if (!buffer.is_key_frame())
     return;
 
-  base::TimeDelta current_frame_timestamp = buffer->timestamp();
+  base::TimeDelta current_frame_timestamp = buffer.timestamp();
   if (last_keyframe_timestamp_.is_zero()) {
     last_keyframe_timestamp_ = current_frame_timestamp;
     return;

@@ -22,6 +22,9 @@ base::LazyInstance<AXPlatformNode::NativeWindowHandlerCallback>::Leaky
     AXPlatformNode::native_window_handler_ = LAZY_INSTANCE_INITIALIZER;
 
 // static
+bool AXPlatformNode::is_autofill_shown_ = false;
+
+// static
 AXPlatformNode* AXPlatformNode::FromNativeWindow(
     gfx::NativeWindow native_window) {
   if (native_window_handler_.Get())
@@ -51,6 +54,11 @@ AXPlatformNode::~AXPlatformNode() {
 void AXPlatformNode::Destroy() {
 }
 
+int32_t AXPlatformNode::GetUniqueId() const {
+  DCHECK(GetDelegate());  // Must be called after Init()
+  return GetDelegate() ? GetDelegate()->GetUniqueId().Get() : -1;
+}
+
 // static
 void AXPlatformNode::AddAXModeObserver(AXModeObserver* observer) {
   ax_mode_observers_.Get().AddObserver(observer);
@@ -65,6 +73,21 @@ void AXPlatformNode::RemoveAXModeObserver(AXModeObserver* observer) {
 void AXPlatformNode::NotifyAddAXModeFlags(AXMode mode_flags) {
   for (auto& observer : ax_mode_observers_.Get())
     observer.OnAXModeAdded(mode_flags);
+}
+
+// static
+void AXPlatformNode::OnAutofillShown() {
+  is_autofill_shown_ = true;
+}
+
+// static
+void AXPlatformNode::OnAutofillHidden() {
+  is_autofill_shown_ = false;
+}
+
+// static
+bool AXPlatformNode::IsAutofillShown() {
+  return is_autofill_shown_;
 }
 
 }  // namespace ui

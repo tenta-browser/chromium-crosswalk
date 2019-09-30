@@ -11,6 +11,8 @@
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/test/scoped_feature_list.h"
+#include "build/build_config.h"
 #include "cc/base/switches.h"
 #include "components/viz/common/surfaces/surface_info.h"
 #include "mojo/public/cpp/bindings/map.h"
@@ -25,6 +27,8 @@
 #include "ui/aura/client/transient_window_client.h"
 #include "ui/aura/mus/capture_synchronizer.h"
 #include "ui/aura/mus/client_surface_embedder.h"
+#include "ui/aura/mus/embed_root.h"
+#include "ui/aura/mus/embed_root_delegate.h"
 #include "ui/aura/mus/focus_synchronizer.h"
 #include "ui/aura/mus/property_converter.h"
 #include "ui/aura/mus/window_mus.h"
@@ -34,6 +38,7 @@
 #include "ui/aura/mus/window_tree_host_mus.h"
 #include "ui/aura/mus/window_tree_host_mus_init_params.h"
 #include "ui/aura/test/aura_mus_test_base.h"
+#include "ui/aura/test/aura_test_suite.h"
 #include "ui/aura/test/mus/test_window_tree.h"
 #include "ui/aura/test/mus/window_tree_client_private.h"
 #include "ui/aura/test/test_window_delegate.h"
@@ -43,6 +48,7 @@
 #include "ui/aura/window_tracker.h"
 #include "ui/aura/window_tree_host_observer.h"
 #include "ui/base/class_property.h"
+#include "ui/base/ui_base_features.h"
 #include "ui/base/ui_base_switches.h"
 #include "ui/compositor/compositor.h"
 #include "ui/display/display.h"
@@ -50,6 +56,8 @@
 #include "ui/display/screen.h"
 #include "ui/events/event.h"
 #include "ui/events/event_utils.h"
+#include "ui/events/platform/platform_event_observer.h"
+#include "ui/events/platform/platform_event_source.h"
 #include "ui/events/test/test_event_handler.h"
 #include "ui/gfx/geometry/dip_util.h"
 #include "ui/gfx/geometry/rect.h"
@@ -67,13 +75,13 @@ const char kTestPropertyServerKey1[] = "test-property-server1";
 const char kTestPropertyServerKey2[] = "test-property-server2";
 const char kTestPropertyServerKey3[] = "test-property-server3";
 
-Id server_id(Window* window) {
+ui::Id server_id(Window* window) {
   return window ? WindowMus::Get(window)->server_id() : 0;
 }
 
 std::unique_ptr<Window> CreateWindowUsingId(
     WindowTreeClient* window_tree_client,
-    Id server_id,
+    ui::Id server_id,
     Window* parent = nullptr) {
   ui::mojom::WindowData window_data;
   window_data.window_id = server_id;
@@ -193,8 +201,7 @@ class WindowTreeClientWmTestSurfaceSync
 
   // WindowTreeClientWmTest:
   void SetUp() override {
-    base::CommandLine::ForCurrentProcess()->AppendSwitchASCII(
-        switches::kMus, switches::kMusHostVizValue);
+    feature_list_.InitAndEnableFeature(features::kMash);
     if (GetParam()) {
       base::CommandLine::ForCurrentProcess()->AppendSwitchASCII(
           switches::kForceDeviceScaleFactor, "2");
@@ -203,6 +210,8 @@ class WindowTreeClientWmTestSurfaceSync
   }
 
  private:
+  base::test::ScopedFeatureList feature_list_;
+
   DISALLOW_COPY_AND_ASSIGN(WindowTreeClientWmTestSurfaceSync);
 };
 
@@ -483,7 +492,7 @@ TEST_P(WindowTreeClientWmTestSurfaceSync, SetBoundsLocalSurfaceIdChanges) {
 // Verifies a new window from the server doesn't result in attempting to add
 // the window back to the server.
 TEST_F(WindowTreeClientWmTest, AddFromServerDoesntAddAgain) {
-  const Id child_window_id = server_id(root_window()) + 11;
+  const ui::Id child_window_id = server_id(root_window()) + 11;
   ui::mojom::WindowDataPtr data = ui::mojom::WindowData::New();
   data->parent_id = server_id(root_window());
   data->window_id = child_window_id;
@@ -525,7 +534,7 @@ TEST_F(WindowTreeClientWmTest, ReparentFromServerDoesntAddAgain) {
 TEST_F(WindowTreeClientWmTest, OnWindowHierarchyChangedWithProperties) {
   RegisterTestProperties(GetPropertyConverter());
   window_tree()->AckAllChanges();
-  const Id child_window_id = server_id(root_window()) + 11;
+  const ui::Id child_window_id = server_id(root_window()) + 11;
   ui::mojom::WindowDataPtr data = ui::mojom::WindowData::New();
   const uint8_t server_test_property1_value = 91;
   data->properties[kTestPropertyServerKey1] =
@@ -533,6 +542,9 @@ TEST_F(WindowTreeClientWmTest, OnWindowHierarchyChangedWithProperties) {
   data->properties[ui::mojom::WindowManager::kWindowType_InitProperty] =
       mojo::ConvertTo<std::vector<uint8_t>>(
           static_cast<int32_t>(ui::mojom::WindowType::BUBBLE));
+  constexpr int kWindowCornerRadiusValue = 6;
+  data->properties[ui::mojom::WindowManager::kWindowCornerRadius_Property] =
+      ConvertToPropertyTransportValue(kWindowCornerRadiusValue);
   data->parent_id = server_id(root_window());
   data->window_id = child_window_id;
   data->bounds = gfx::Rect(1, 2, 3, 4);
@@ -547,6 +559,8 @@ TEST_F(WindowTreeClientWmTest, OnWindowHierarchyChangedWithProperties) {
   Window* child = root_window()->children()[0];
   EXPECT_FALSE(child->TargetVisibility());
   EXPECT_EQ(server_test_property1_value, child->GetProperty(kTestPropertyKey1));
+  EXPECT_EQ(kWindowCornerRadiusValue,
+            child->GetProperty(client::kWindowCornerRadiusKey));
   EXPECT_EQ(child->type(), client::WINDOW_TYPE_POPUP);
   EXPECT_EQ(ui::mojom::WindowType::BUBBLE,
             child->GetProperty(client::kWindowTypeKey));
@@ -1007,7 +1021,7 @@ TEST_F(WindowTreeClientClientTest, InputEventBasic) {
       new ui::MouseEvent(ui::ET_MOUSE_MOVED, event_location_in_child,
                          gfx::Point(), ui::EventTimeForNow(), ui::EF_NONE, 0));
   window_tree_client()->OnWindowInputEvent(
-      event_id, server_id(&child), window_tree_host.display_id(),
+      event_id, server_id(&child), window_tree_host.display_id(), ui::Id(),
       gfx::PointF(event_location_in_child), ui::Event::Clone(*ui_event.get()),
       0);
   EXPECT_TRUE(window_tree()->WasEventAcked(event_id));
@@ -1043,7 +1057,7 @@ TEST_F(WindowTreeClientClientTest, InputEventPointerEvent) {
       ui::PointerDetails(ui::EventPointerType::POINTER_TYPE_MOUSE, 0),
       base::TimeTicks());
   window_tree_client()->OnWindowInputEvent(
-      event_id, server_id(&child), window_tree_host.display_id(),
+      event_id, server_id(&child), window_tree_host.display_id(), ui::Id(),
       gfx::PointF(event_location), ui::Event::Clone(pointer_event), 0);
   EXPECT_TRUE(window_tree()->WasEventAcked(event_id));
   EXPECT_EQ(ui::mojom::EventResult::HANDLED,
@@ -1079,7 +1093,7 @@ TEST_F(WindowTreeClientClientTest, InputEventPen) {
       ui::PointerDetails(ui::EventPointerType::POINTER_TYPE_PEN, 0),
       ui::EventTimeForNow());
   window_tree_client()->OnWindowInputEvent(
-      event_id, server_id(&child), window_tree_host.display_id(),
+      event_id, server_id(&child), window_tree_host.display_id(), ui::Id(),
       gfx::PointF(event_location), ui::Event::Clone(pointer_event), 0);
 
   // Pen event was handled.
@@ -1127,7 +1141,7 @@ TEST_F(WindowTreeClientClientTest, InputEventFindTargetAndConversion) {
       new ui::MouseEvent(ui::ET_MOUSE_MOVED, event_location, gfx::Point(),
                          ui::EventTimeForNow(), ui::EF_NONE, 0));
   window_tree_client()->OnWindowInputEvent(
-      event_id, server_id(&child1), window_tree_host.display_id(),
+      event_id, server_id(&child1), window_tree_host.display_id(), ui::Id(),
       gfx::PointF(event_location), ui::Event::Clone(*ui_event.get()), 0);
   EXPECT_TRUE(window_tree()->WasEventAcked(event_id));
   EXPECT_EQ(ui::mojom::EventResult::HANDLED,
@@ -1148,7 +1162,7 @@ TEST_F(WindowTreeClientClientTest, InputEventFindTargetAndConversion) {
       new ui::MouseEvent(ui::ET_MOUSE_MOVED, event_location, gfx::Point(),
                          ui::EventTimeForNow(), ui::EF_NONE, 0));
   window_tree_client()->OnWindowInputEvent(
-      event_id, server_id(&child1), window_tree_host.display_id(),
+      event_id, server_id(&child1), window_tree_host.display_id(), ui::Id(),
       gfx::PointF(event_location), ui::Event::Clone(*ui_event1.get()), 0);
   EXPECT_TRUE(window_tree()->WasEventAcked(event_id));
   EXPECT_EQ(ui::mojom::EventResult::HANDLED,
@@ -1196,7 +1210,7 @@ TEST_F(WindowTreeClientClientTest, InputEventCustomWindowTargeter) {
       new ui::MouseEvent(ui::ET_MOUSE_MOVED, event_location, gfx::Point(),
                          ui::EventTimeForNow(), ui::EF_NONE, 0));
   window_tree_client()->OnWindowInputEvent(
-      event_id, server_id(&child1), window_tree_host.display_id(),
+      event_id, server_id(&child1), window_tree_host.display_id(), ui::Id(),
       gfx::PointF(event_location), ui::Event::Clone(*ui_event.get()), 0);
   EXPECT_TRUE(window_tree()->WasEventAcked(event_id));
   EXPECT_EQ(ui::mojom::EventResult::HANDLED,
@@ -1213,7 +1227,7 @@ TEST_F(WindowTreeClientClientTest, InputEventCustomWindowTargeter) {
   window_delegate1.set_event_id(event_id);
   window_delegate2.set_event_id(event_id);
   window_tree_client()->OnWindowInputEvent(
-      event_id, server_id(&child2), window_tree_host.display_id(),
+      event_id, server_id(&child2), window_tree_host.display_id(), ui::Id(),
       gfx::PointF(event_location), ui::Event::Clone(*ui_event.get()), 0);
   EXPECT_TRUE(window_tree()->WasEventAcked(event_id));
   EXPECT_EQ(ui::mojom::EventResult::HANDLED,
@@ -1267,7 +1281,8 @@ TEST_F(WindowTreeClientClientTest, InputEventCaptureWindow) {
                          ui::EventTimeForNow(), ui::EF_NONE, 0));
   window_tree_client()->OnWindowInputEvent(
       event_id, server_id(child1.get()), window_tree_host->display_id(),
-      gfx::PointF(root_location), ui::Event::Clone(*ui_event.get()), 0);
+      ui::Id(), gfx::PointF(root_location), ui::Event::Clone(*ui_event.get()),
+      0);
   EXPECT_TRUE(window_tree()->WasEventAcked(event_id));
   EXPECT_EQ(ui::mojom::EventResult::HANDLED,
             window_tree()->GetEventResult(event_id));
@@ -1290,7 +1305,8 @@ TEST_F(WindowTreeClientClientTest, InputEventCaptureWindow) {
   window_delegate2->set_event_id(event_id);
   window_tree_client()->OnWindowInputEvent(
       event_id, server_id(child1.get()), window_tree_host->display_id(),
-      gfx::PointF(root_location), ui::Event::Clone(*ui_event.get()), 0);
+      ui::Id(), gfx::PointF(root_location), ui::Event::Clone(*ui_event.get()),
+      0);
   EXPECT_TRUE(window_tree()->WasEventAcked(event_id));
   EXPECT_EQ(ui::mojom::EventResult::HANDLED,
             window_tree()->GetEventResult(event_id));
@@ -1336,7 +1352,7 @@ TEST_F(WindowTreeClientClientTest, InputEventRootWindow) {
       new ui::MouseEvent(ui::ET_MOUSE_MOVED, event_location_in_child,
                          gfx::Point(), ui::EventTimeForNow(), ui::EF_NONE, 0));
   window_tree_client()->OnWindowInputEvent(
-      event_id, server_id(top_level), window_tree_host.display_id(),
+      event_id, server_id(top_level), window_tree_host.display_id(), ui::Id(),
       gfx::PointF(), ui::Event::Clone(*ui_event.get()), 0);
 
   EXPECT_TRUE(window_tree()->WasEventAcked(event_id));
@@ -1380,14 +1396,14 @@ TEST_F(WindowTreeClientClientTest, InputMouseEventNoWindow) {
       ui::PointerDetails(ui::EventPointerType::POINTER_TYPE_MOUSE, 0),
       ui::EventTimeForNow());
   window_tree_client()->OnWindowInputEvent(
-      event_id, server_id(&child), window_tree_host.display_id(),
+      event_id, server_id(&child), window_tree_host.display_id(), ui::Id(),
       gfx::PointF(event_location), ui::Event::Clone(pointer_event_down), 0);
   EXPECT_TRUE(window_tree()->WasEventAcked(event_id));
   EXPECT_EQ(ui::mojom::EventResult::HANDLED,
             window_tree()->GetEventResult(event_id));
   EXPECT_EQ(1, window_delegate.press_count());
   EXPECT_TRUE(env->IsMouseButtonDown());
-  EXPECT_EQ(1024, env->mouse_button_flags());  // ui::EF_LEFT_MOUSE_BUTTON
+  EXPECT_EQ(ui::EF_LEFT_MOUSE_BUTTON, env->mouse_button_flags());
   EXPECT_EQ(event_location, env->last_mouse_location());
   window_delegate.reset();
 
@@ -1400,7 +1416,7 @@ TEST_F(WindowTreeClientClientTest, InputMouseEventNoWindow) {
       ui::PointerDetails(ui::EventPointerType::POINTER_TYPE_MOUSE, 0),
       ui::EventTimeForNow());
   window_tree_client()->OnWindowInputEvent(
-      event_id, kInvalidServerId, window_tree_host.display_id(),
+      event_id, kInvalidServerId, window_tree_host.display_id(), ui::Id(),
       gfx::PointF(event_location), ui::Event::Clone(pointer_event_up), 0);
   EXPECT_TRUE(window_tree()->WasEventAcked(event_id));
   // WindowTreeClient::OnWindowInputEvent cannot find a target window with
@@ -1443,8 +1459,8 @@ TEST_F(WindowTreeClientClientTest, InputTouchEventNoWindow) {
       ui::PointerDetails(ui::EventPointerType::POINTER_TYPE_TOUCH, 0),
       ui::EventTimeForNow());
   window_tree_client()->OnWindowInputEvent(
-      event_id, server_id(&child), window_tree_host.display_id(), gfx::PointF(),
-      ui::Event::Clone(pointer_event_down), 0);
+      event_id, server_id(&child), window_tree_host.display_id(), ui::Id(),
+      gfx::PointF(), ui::Event::Clone(pointer_event_down), 0);
   EXPECT_TRUE(window_tree()->WasEventAcked(event_id));
   EXPECT_EQ(ui::mojom::EventResult::HANDLED,
             window_tree()->GetEventResult(event_id));
@@ -1459,8 +1475,8 @@ TEST_F(WindowTreeClientClientTest, InputTouchEventNoWindow) {
       ui::PointerDetails(ui::EventPointerType::POINTER_TYPE_TOUCH, 0),
       ui::EventTimeForNow());
   window_tree_client()->OnWindowInputEvent(
-      event_id, kInvalidServerId, window_tree_host.display_id(), gfx::PointF(),
-      ui::Event::Clone(pointer_event_up), 0);
+      event_id, kInvalidServerId, window_tree_host.display_id(), ui::Id(),
+      gfx::PointF(), ui::Event::Clone(pointer_event_up), 0);
   EXPECT_TRUE(window_tree()->WasEventAcked(event_id));
   // WindowTreeClient::OnWindowInputEvent cannot find a target window with
   // kInvalidServerId but should use the event to update event states kept in
@@ -1555,7 +1571,7 @@ TEST_F(WindowTreeClientPointerObserverTest,
       ui::ET_POINTER_DOWN, gfx::Point(), gfx::Point(), ui::EF_CONTROL_DOWN, 0,
       ui::PointerDetails(ui::EventPointerType::POINTER_TYPE_TOUCH, 1),
       base::TimeTicks::Now()));
-  window_tree_client()->OnWindowInputEvent(1, server_id(top_level), 0,
+  window_tree_client()->OnWindowInputEvent(1, server_id(top_level), 0, ui::Id(),
                                            gfx::PointF(),
                                            std::move(pointer_event_down), true);
 
@@ -2481,7 +2497,7 @@ TEST_F(WindowTreeClientWmTest, OnWindowHierarchyChangedWithExistingWindow) {
   Window* window2 = new Window(nullptr);
   window2->Init(ui::LAYER_NOT_DRAWN);
   window_tree()->AckAllChanges();
-  const Id server_window_id = server_id(root_window()) + 11;
+  const ui::Id server_window_id = server_id(root_window()) + 11;
   ui::mojom::WindowDataPtr data1 = ui::mojom::WindowData::New();
   ui::mojom::WindowDataPtr data2 = ui::mojom::WindowData::New();
   ui::mojom::WindowDataPtr data3 = ui::mojom::WindowData::New();
@@ -2600,8 +2616,56 @@ TEST_F(WindowTreeClientWmTest, FocusInDifferentDisplayThanEvent) {
   std::unique_ptr<ui::KeyEvent> key_event = std::make_unique<ui::KeyEvent>(
       ui::ET_KEY_PRESSED, ui::VKEY_ESCAPE, ui::EF_NONE);
   window_tree_client()->OnWindowInputEvent(1, server_id(&child2), kDisplayId2,
-                                           gfx::PointF(), std::move(key_event),
-                                           false);
+                                           ui::Id(), gfx::PointF(),
+                                           std::move(key_event), false);
+}
+
+// Test accelerated widget values cause compositor crashes without Ozone.
+#if defined(USE_OZONE)
+#define MAYBE_SwapDisplayRoots SwapDisplayRoots
+#else
+#define MAYBE_SwapDisplayRoots DISABLED_SwapDisplayRoots
+#endif
+TEST_F(WindowTreeClientWmTest, MAYBE_SwapDisplayRoots) {
+  display::Display display1(201);
+  ui::mojom::WindowDataPtr root_data1(ui::mojom::WindowData::New());
+  root_data1->window_id = 101;
+
+  display::Display display2(202);
+  ui::mojom::WindowDataPtr root_data2(ui::mojom::WindowData::New());
+  root_data2->window_id = 102;
+
+  const bool parent_drawn = true;
+
+  // AuraTestBase ends up owning WindowTreeHost.
+  WindowTreeHostMus* window_tree_host1 =
+      WindowTreeClientPrivate(window_tree_client_impl())
+          .CallWmNewDisplayAdded(display1, std::move(root_data1), parent_drawn);
+  WindowTreeHostMus* window_tree_host2 =
+      WindowTreeClientPrivate(window_tree_client_impl())
+          .CallWmNewDisplayAdded(display2, std::move(root_data2), parent_drawn);
+
+#if defined(OS_WIN) || defined(OS_ANDROID)
+  gfx::AcceleratedWidget widget1 = reinterpret_cast<gfx::AcceleratedWidget>(1U);
+  gfx::AcceleratedWidget widget2 = reinterpret_cast<gfx::AcceleratedWidget>(2U);
+#else
+  gfx::AcceleratedWidget widget1 = static_cast<gfx::AcceleratedWidget>(1U);
+  gfx::AcceleratedWidget widget2 = static_cast<gfx::AcceleratedWidget>(2U);
+#endif
+
+  window_tree_host1->OverrideAcceleratedWidget(widget1);
+  window_tree_host2->OverrideAcceleratedWidget(widget2);
+  EXPECT_EQ(widget1, window_tree_host1->GetAcceleratedWidget());
+  EXPECT_EQ(widget2, window_tree_host2->GetAcceleratedWidget());
+
+  static_cast<WindowManagerClient*>(window_tree_client_impl())
+      ->SwapDisplayRoots(window_tree_host1, window_tree_host2);
+
+  // SwapDisplayRoots swaps the display ids and accelerated widgets.
+  EXPECT_EQ(display2.id(), window_tree_host1->display_id());
+  EXPECT_EQ(display1.id(), window_tree_host2->display_id());
+  EXPECT_EQ(widget2, window_tree_host1->GetAcceleratedWidget());
+  EXPECT_EQ(widget1, window_tree_host2->GetAcceleratedWidget());
 }
 
 TEST_F(WindowTreeClientWmTestHighDPI, BoundsChangeWhenAdded) {
@@ -2770,7 +2834,7 @@ TEST_F(WindowTreeClientClientTestHighDPI, InputEventsInDip) {
       ui::ET_MOUSE_MOVED, event_location_in_pixels, event_location_in_pixels,
       ui::EventTimeForNow(), ui::EF_NONE, 0));
   window_tree_client()->OnWindowInputEvent(
-      event_id, server_id(&child1), window_tree_host.display_id(),
+      event_id, server_id(&child1), window_tree_host.display_id(), ui::Id(),
       gfx::PointF(event_location_in_pixels), ui::Event::Clone(*ui_event.get()),
       0);
   EXPECT_TRUE(window_tree()->WasEventAcked(event_id));
@@ -2795,7 +2859,7 @@ TEST_F(WindowTreeClientClientTestHighDPI, InputEventsInDip) {
   window_delegate1.set_event_id(event_id);
   window_delegate2.set_event_id(event_id);
   window_tree_client()->OnWindowInputEvent(
-      event_id, server_id(&child2), window_tree_host.display_id(),
+      event_id, server_id(&child2), window_tree_host.display_id(), ui::Id(),
       gfx::PointF(event_location_in_pixels), ui::Event::Clone(*ui_event.get()),
       0);
   EXPECT_TRUE(window_tree()->WasEventAcked(event_id));
@@ -2835,7 +2899,7 @@ TEST_F(WindowTreeClientDestructionTest, WindowsFromOtherConnectionsDeleted) {
   EXPECT_TRUE(window_tracker.windows().empty());
 }
 
-TEST_F(WindowTreeClientWmTest, ObservedPointerEvents) {
+TEST_F(WindowTreeClientWmTestHighDPI, ObservedPointerEvents) {
   const gfx::Rect bounds(1, 2, 101, 102);
   std::unique_ptr<DisplayInitParams> display_params =
       std::make_unique<DisplayInitParams>();
@@ -2858,8 +2922,8 @@ TEST_F(WindowTreeClientWmTest, ObservedPointerEvents) {
   gfx::Transform scale_transform;
   scale_transform.Scale(ui_scale_factor, ui_scale_factor);
   window_tree_host.window()->SetTransform(scale_transform);
-  window_tree_host.compositor()->SetScaleAndSize(device_scale_factor,
-                                                 bounds.size());
+  window_tree_host.compositor()->SetScaleAndSize(
+      device_scale_factor, bounds.size(), viz::LocalSurfaceId());
 
   // Start a pointer watcher for all events excluding move events.
   window_tree_client_impl()->StartPointerWatcher(false /* want_moves */);
@@ -2906,5 +2970,110 @@ TEST_F(WindowTreeClientWmTest, ObservedPointerEvents) {
                                    root_location_pixels),
             last_event->root_location());
 }
+
+class TestEmbedRootDelegate : public EmbedRootDelegate {
+ public:
+  TestEmbedRootDelegate() = default;
+  ~TestEmbedRootDelegate() override = default;
+
+  // EmbedRootDelegate:
+  void OnEmbedTokenAvailable(const base::UnguessableToken& token) override {}
+  void OnEmbed(Window* window) override {}
+  void OnUnembed() override {}
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(TestEmbedRootDelegate);
+};
+
+// Verifies we don't crash when focus changes to a window in an EmbedRoot.
+TEST_F(WindowTreeClientClientTest, ChangeFocusInEmbedRootWindow) {
+  TestEmbedRootDelegate embed_root_delegate;
+  std::unique_ptr<EmbedRoot> embed_root =
+      window_tree_client_impl()->CreateEmbedRoot(&embed_root_delegate);
+  WindowTreeClientPrivate(window_tree_client_impl())
+      .CallOnEmbedFromToken(embed_root.get());
+  ASSERT_TRUE(embed_root->window());
+  window_tree_client()->OnWindowFocused(server_id(embed_root->window()));
+}
+
+#if defined(USE_OZONE)
+
+class TestPlatformEventObserver : public ui::PlatformEventObserver {
+ public:
+  TestPlatformEventObserver() = default;
+  ~TestPlatformEventObserver() override = default;
+
+  int will_process_count() const { return will_process_count_; }
+  int did_process_count() const { return did_process_count_; }
+  ui::EventType will_process_type() const { return will_process_type_; }
+  ui::EventType did_process_type() const { return did_process_type_; }
+
+  // PlatformEventObserver:
+  void WillProcessEvent(const ui::PlatformEvent& event) override {
+    will_process_count_++;
+    will_process_type_ = static_cast<const ui::Event*>(event)->type();
+  }
+  void DidProcessEvent(const ui::PlatformEvent& event) override {
+    did_process_count_++;
+    did_process_type_ = static_cast<const ui::Event*>(event)->type();
+  }
+
+ private:
+  int will_process_count_ = 0;
+  int did_process_count_ = 0;
+  ui::EventType will_process_type_ = ui::ET_UNKNOWN;
+  ui::EventType did_process_type_ = ui::ET_UNKNOWN;
+
+  DISALLOW_COPY_AND_ASSIGN(TestPlatformEventObserver);
+};
+
+// Base class that installs a new version of Env configured for Mus in SetUp()
+// (and installs a new version of Env configured for Local during TearDown()).
+// This is necessary as when Env is created with a Model of Local it installs
+// a PlatformEventSource, not the one that WindowTreeClient installs.
+class WindowTreeClientWmOzoneTest : public test::AuraMusWmTestBase {
+ public:
+  WindowTreeClientWmOzoneTest() = default;
+  ~WindowTreeClientWmOzoneTest() override = default;
+
+  // test::AuraMusWmTestBase:
+  void SetUp() override {
+    env_reinstaller_ = std::make_unique<test::EnvReinstaller>();
+    env_ = Env::CreateInstance(Env::Mode::MUS);
+    AuraMusWmTestBase::SetUp();
+  }
+
+  void TearDown() override {
+    AuraMusWmTestBase::TearDown();
+    env_.reset();
+    env_reinstaller_.reset();
+  }
+
+ private:
+  std::unique_ptr<test::EnvReinstaller> env_reinstaller_;
+  std::unique_ptr<Env> env_;
+
+  DISALLOW_COPY_AND_ASSIGN(WindowTreeClientWmOzoneTest);
+};
+
+// Used to verify PlatformEventSource is correctly wired up in ozone.
+TEST_F(WindowTreeClientWmOzoneTest, PlatformEventSourceInstalled) {
+  ASSERT_TRUE(ui::PlatformEventSource::GetInstance());
+  TestPlatformEventObserver test_observer;
+  ui::PlatformEventSource::GetInstance()->AddPlatformEventObserver(
+      &test_observer);
+  ui::MouseEvent event(ui::ET_MOUSE_MOVED, gfx::Point(), gfx::Point(),
+                       ui::EventTimeForNow(), ui::EF_NONE, 0);
+  window_tree_client()->OnWindowInputEvent(1, server_id(root_window()), 0,
+                                           ui::Id(), gfx::PointF(),
+                                           ui::Event::Clone(event), 0);
+  ui::PlatformEventSource::GetInstance()->RemovePlatformEventObserver(
+      &test_observer);
+  EXPECT_EQ(1, test_observer.will_process_count());
+  EXPECT_EQ(1, test_observer.did_process_count());
+  EXPECT_EQ(ui::ET_MOUSE_MOVED, test_observer.will_process_type());
+  EXPECT_EQ(ui::ET_MOUSE_MOVED, test_observer.did_process_type());
+}
+#endif
 
 }  // namespace aura

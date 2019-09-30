@@ -17,11 +17,9 @@ import org.junit.runner.RunWith;
 
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.CommandLineFlags;
-import org.chromium.base.test.util.RetryOnFailure;
 import org.chromium.chrome.browser.ChromeSwitches;
 import org.chromium.chrome.browser.preferences.website.ContentSetting;
 import org.chromium.chrome.browser.preferences.website.GeolocationInfo;
-import org.chromium.chrome.test.ChromeActivityTestRule;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 import org.chromium.chrome.test.ChromeTabbedActivityTestRule;
 import org.chromium.chrome.test.util.ChromeTabUtils;
@@ -32,7 +30,7 @@ import org.chromium.content.browser.test.util.CriteriaHelper;
 import org.chromium.content_public.browser.WebContents;
 import org.chromium.net.test.EmbeddedTestServer;
 import org.chromium.ui.base.AndroidPermissionDelegate;
-import org.chromium.ui.base.WindowAndroid.PermissionCallback;
+import org.chromium.ui.base.PermissionCallback;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -46,10 +44,7 @@ import java.util.concurrent.TimeoutException;
  * Tests for the permission update infobar.
  */
 @RunWith(ChromeJUnit4ClassRunner.class)
-@CommandLineFlags.Add({
-        ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE,
-        ChromeActivityTestRule.DISABLE_NETWORK_PREDICTION_FLAG,
-})
+@CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
 public class PermissionUpdateInfobarTest {
     @Rule
     public ChromeTabbedActivityTestRule mActivityTestRule = new ChromeTabbedActivityTestRule();
@@ -164,106 +159,6 @@ public class PermissionUpdateInfobarTest {
         }
     }
 
-    // Flaky: http://crbug.com/749369
-    @RetryOnFailure
-    @Test
-    @MediumTest
-    public void testInfobarFrameNavigationForGeolocation()
-            throws IllegalArgumentException, InterruptedException, TimeoutException {
-        ChromeTabUtils.newTabFromMenu(
-                InstrumentationRegistry.getInstrumentation(), mActivityTestRule.getActivity());
-
-        // Register for animation notifications
-        CriteriaHelper.pollInstrumentationThread(new Criteria() {
-            @Override
-            public boolean isSatisfied() {
-                if (mActivityTestRule.getActivity().getActivityTab() == null) return false;
-                if (mActivityTestRule.getActivity().getActivityTab().getInfoBarContainer()
-                        == null) {
-                    return false;
-                }
-                return true;
-            }
-        });
-        InfoBarContainer container =
-                mActivityTestRule.getActivity().getActivityTab().getInfoBarContainer();
-        mListener =  new InfoBarTestAnimationListener();
-        container.addAnimationListener(mListener);
-
-        final String locationUrl = mTestServer.getURL(GEOLOCATION_IFRAME_PAGE);
-        final GeolocationInfo geolocationSettings = ThreadUtils.runOnUiThreadBlockingNoException(
-                new Callable<GeolocationInfo>() {
-                    @Override
-                    public GeolocationInfo call() {
-                        return new GeolocationInfo(locationUrl, null, false);
-                    }
-                });
-
-        mActivityTestRule.getActivity().getWindowAndroid().setAndroidPermissionDelegate(
-                new TestAndroidPermissionDelegate(
-                        null, Arrays.asList(Manifest.permission.ACCESS_FINE_LOCATION), null));
-        LocationSettingsTestUtil.setSystemLocationSettingEnabled(true);
-
-        try {
-            ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-                @Override
-                public void run() {
-                    geolocationSettings.setContentSetting(ContentSetting.ALLOW);
-                }
-            });
-
-            mActivityTestRule.loadUrl(mTestServer.getURL(GEOLOCATION_IFRAME_PAGE));
-            mListener.addInfoBarAnimationFinished("InfoBar not added");
-            Assert.assertEquals(1, mActivityTestRule.getInfoBars().size());
-
-            final WebContents webContents = ThreadUtils.runOnUiThreadBlockingNoException(
-                    new Callable<WebContents>() {
-                        @Override
-                        public WebContents call() throws Exception {
-                            return mActivityTestRule.getActivity()
-                                    .getActivityTab()
-                                    .getWebContents();
-                        }
-                    });
-            Assert.assertFalse(webContents.isDestroyed());
-
-            mActivityTestRule.runJavaScriptCodeInCurrentTab(
-                    "document.querySelector('iframe').src = '';");
-            CriteriaHelper.pollUiThread(Criteria.equals(0, new Callable<Integer>() {
-                @Override
-                public Integer call() {
-                    return mActivityTestRule.getInfoBars().size();
-                }
-            }));
-
-            ChromeTabUtils.closeCurrentTab(
-                    InstrumentationRegistry.getInstrumentation(), mActivityTestRule.getActivity());
-            CriteriaHelper.pollUiThread(new Criteria() {
-                @Override
-                public boolean isSatisfied() {
-                    return webContents.isDestroyed();
-                }
-            });
-
-            CriteriaHelper.pollUiThread(Criteria.equals(1, new Callable<Integer>() {
-                @Override
-                public Integer call() {
-                    return mActivityTestRule.getActivity()
-                            .getTabModelSelector()
-                            .getModel(false)
-                            .getCount();
-                }
-            }));
-        } finally {
-            ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-                @Override
-                public void run() {
-                    geolocationSettings.setContentSetting(ContentSetting.DEFAULT);
-                }
-            });
-        }
-    }
-
     private static class TestAndroidPermissionDelegate implements AndroidPermissionDelegate {
         private final Set<String> mHasPermissions;
         private final Set<String> mRequestablePermissions;
@@ -299,6 +194,10 @@ public class PermissionUpdateInfobarTest {
         @Override
         public void requestPermissions(String[] permissions, PermissionCallback callback) {
         }
+
+        @Override
+        public void onRequestPermissionsResult(
+                int requestCode, String[] permissions, int[] grantResults) {}
     }
 
 }

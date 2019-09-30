@@ -36,10 +36,7 @@ enum TokenBindingParam {
 };
 
 enum TLS13Variant {
-  kTLS13VariantDraft,
-  kTLS13VariantExperiment,
-  kTLS13VariantExperiment2,
-  kTLS13VariantExperiment3,
+  kTLS13VariantDraft23,
 };
 
 // Default minimum protocol version.
@@ -88,11 +85,10 @@ struct NET_EXPORT SSLConfig {
   // local (non-public) trust anchor should be allowed.
   bool sha1_local_anchors_enabled;
 
-  // common_name_fallback_local_anchors_enabled is true if certificates which
-  // only have a commonName in the Subject (i.e. lacking a subjectAltName)
-  // should be checked if the name matches. Only those issued by a local
-  // (non-public) trust anchor will be allowed to match.
-  bool common_name_fallback_local_anchors_enabled;
+  // symantec_enforcement_disabled is true if the policies outlined in
+  // https://security.googleblog.com/2017/09/chromes-plan-to-distrust-symantec.html
+  // should not be enforced.
+  bool symantec_enforcement_disabled;
 
   // The minimum and maximum protocol versions that are enabled.
   // (Use the SSL_PROTOCOL_VERSION_xxx enumerators defined above.)
@@ -128,9 +124,6 @@ struct NET_EXPORT SSLConfig {
   std::vector<TokenBindingParam> token_binding_params;
 
   bool false_start_enabled;  // True if we'll use TLS False Start.
-  // True if the Certificate Transparency signed_certificate_timestamp
-  // TLS extension is enabled.
-  bool signed_cert_timestamps_enabled;
 
   // If true, causes only ECDHE cipher suites to be enabled.
   bool require_ecdhe;
@@ -156,15 +149,6 @@ struct NET_EXPORT SSLConfig {
 
   // True if we should send client_cert to the server.
   bool send_client_cert;
-
-  bool verify_ev_cert;  // True if we should verify the certificate for EV.
-
-  // If cert_io_enabled is false, then certificate verification will not
-  // result in additional HTTP requests. (For example: to fetch missing
-  // intermediates or to perform OCSP/CRL fetches.) It also implies that online
-  // revocation checking is disabled.
-  // NOTE: Only used by NSS.
-  bool cert_io_enabled;
 
   // The list of application level protocols supported with ALPN (Application
   // Layer Protocol Negotation), in decreasing order of preference.  Protocols

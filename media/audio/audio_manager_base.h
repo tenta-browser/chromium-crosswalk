@@ -52,9 +52,8 @@ class MEDIA_EXPORT AudioManagerBase : public AudioManager {
   void RemoveOutputDeviceChangeListener(AudioDeviceListener* listener) override;
 
   std::unique_ptr<AudioLog> CreateAudioLog(
-      AudioLogFactory::AudioComponent component) override;
-  void EnableDebugRecording(const base::FilePath& base_file_name) final;
-  void DisableDebugRecording() final;
+      AudioLogFactory::AudioComponent component,
+      int component_id) override;
 
   void SetMaxStreamCountForTesting(int max_input, int max_output) final;
 
@@ -151,13 +150,15 @@ class MEDIA_EXPORT AudioManagerBase : public AudioManager {
   // which must initially be empty.
   virtual void GetAudioOutputDeviceNames(AudioDeviceNames* device_names);
 
-  // Returns the ID of the default audio output device.
-  // Implementations that don't yet support this should return an empty string.
-  virtual std::string GetDefaultOutputDeviceID();
+  std::string GetDefaultInputDeviceID() override;
+  std::string GetDefaultOutputDeviceID() override;
+  std::string GetCommunicationsInputDeviceID() override;
+  std::string GetCommunicationsOutputDeviceID() override;
 
   virtual std::unique_ptr<AudioDebugRecordingManager>
   CreateAudioDebugRecordingManager(
       scoped_refptr<base::SingleThreadTaskRunner> task_runner);
+  AudioDebugRecordingManager* GetAudioDebugRecordingManager() final;
 
   // These functions assign group ids to devices based on their device ids. The
   // default implementation is an attempt to do this based on
@@ -177,6 +178,13 @@ class MEDIA_EXPORT AudioManagerBase : public AudioManager {
 
   // AudioManager:
   void InitializeDebugRecording() final;
+
+  void GetAudioDeviceDescriptions(
+      AudioDeviceDescriptions* descriptions,
+      void (AudioManagerBase::*get_device_names)(AudioDeviceNames*),
+      std::string (AudioManagerBase::*get_default_device_id)(),
+      std::string (AudioManagerBase::*get_communications_device_id)(),
+      std::string (AudioManagerBase::*get_group_id)(const std::string&));
 
   // Max number of open output streams, modified by
   // SetMaxOutputStreamsAllowed().

@@ -3,6 +3,7 @@
 # found in the LICENSE file.
 
 import ast
+import collections
 import contextlib
 import fnmatch
 import json
@@ -30,10 +31,14 @@ import gn_helpers
 
 COLORAMA_ROOT = os.path.join(host_paths.DIR_SOURCE_ROOT,
                              'third_party', 'colorama', 'src')
-# aapt should ignore OWNERS and python files in addition the default ignore
-# pattern.
-AAPT_IGNORE_PATTERN = ('!OWNERS:!*.py:!*.pyc:!.svn:!.git:!.ds_store:!*.scc:' +
-                       '.*:<dir>_*:!CVS:!thumbs.db::!*~:!*.d.stamp')
+AAPT_IGNORE_PATTERN = ':'.join([
+    'OWNERS',  # Allow OWNERS files within res/
+    '*.py',  # PRESUBMIT.py sometimes exist.
+    '*.pyc',
+    '*~',  # Some editors create these as temp files.
+    '.*',  # Never makes sense to include dot(files/dirs).
+    '*.d.stamp', # Ignore stamp files
+    ])
 HERMETIC_TIMESTAMP = (2001, 1, 1, 0, 0, 0)
 _HERMETIC_FILE_ATTR = (0644 << 16L)
 
@@ -391,37 +396,28 @@ def PrintBigWarning(message):
 def GetSortedTransitiveDependencies(top, deps_func):
   """Gets the list of all transitive dependencies in sorted order.
 
-  There should be no cycles in the dependency graph.
+  There should be no cycles in the dependency graph (crashes if cycles exist).
 
   Args:
-    top: a list of the top level nodes
-    deps_func: A function that takes a node and returns its direct dependencies.
+    top: A list of the top level nodes
+    deps_func: A function that takes a node and returns a list of its direct
+        dependencies.
   Returns:
     A list of all transitive dependencies of nodes in top, in order (a node will
     appear in the list at a higher index than all of its dependencies).
   """
-  def Node(dep):
-    return (dep, deps_func(dep))
+  # Find all deps depth-first, maintaining original order in the case of ties.
+  deps_map = collections.OrderedDict()
+  def discover(nodes):
+    for node in nodes:
+      if node in deps_map:
+        continue
+      deps = deps_func(node)
+      discover(deps)
+      deps_map[node] = deps
 
-  # First: find all deps
-  unchecked_deps = list(top)
-  all_deps = set(top)
-  while unchecked_deps:
-    dep = unchecked_deps.pop()
-    new_deps = deps_func(dep).difference(all_deps)
-    unchecked_deps.extend(new_deps)
-    all_deps = all_deps.union(new_deps)
-
-  # Then: simple, slow topological sort.
-  sorted_deps = []
-  unsorted_deps = dict(map(Node, all_deps))
-  while unsorted_deps:
-    for library, dependencies in unsorted_deps.items():
-      if not dependencies.intersection(unsorted_deps.keys()):
-        sorted_deps.append(library)
-        del unsorted_deps[library]
-
-  return sorted_deps
+  discover(top)
+  return deps_map.keys()
 
 
 def GetPythonDependencies():

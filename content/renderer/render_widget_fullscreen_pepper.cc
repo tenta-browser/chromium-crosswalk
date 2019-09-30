@@ -13,18 +13,20 @@
 #include "build/build_config.h"
 #include "content/common/view_messages.h"
 #include "content/public/common/content_switches.h"
+#include "content/public/common/use_zoom_for_dsf_policy.h"
 #include "content/renderer/gpu/render_widget_compositor.h"
 #include "content/renderer/pepper/pepper_plugin_instance_impl.h"
 #include "content/renderer/render_thread_impl.h"
 #include "gpu/ipc/client/gpu_channel_host.h"
 #include "skia/ext/platform_canvas.h"
-#include "third_party/WebKit/public/platform/WebCanvas.h"
-#include "third_party/WebKit/public/platform/WebCursorInfo.h"
-#include "third_party/WebKit/public/platform/WebGestureEvent.h"
-#include "third_party/WebKit/public/platform/WebLayer.h"
-#include "third_party/WebKit/public/platform/WebMouseWheelEvent.h"
-#include "third_party/WebKit/public/platform/WebSize.h"
-#include "third_party/WebKit/public/web/WebWidget.h"
+#include "third_party/blink/public/platform/web_canvas.h"
+#include "third_party/blink/public/platform/web_cursor_info.h"
+#include "third_party/blink/public/platform/web_gesture_event.h"
+#include "third_party/blink/public/platform/web_layer.h"
+#include "third_party/blink/public/platform/web_mouse_wheel_event.h"
+#include "third_party/blink/public/platform/web_size.h"
+#include "third_party/blink/public/web/web_widget.h"
+#include "ui/gfx/geometry/dip_util.h"
 #include "ui/gfx/geometry/size_conversions.h"
 #include "ui/gl/gpu_preference.h"
 
@@ -69,7 +71,7 @@ WebMouseEvent WebMouseEventFromGestureEvent(const WebGestureEvent& gesture) {
 
   // Only convert touch screen gesture events, do not convert
   // touchpad/mouse wheel gesture events. (crbug.com/620974)
-  if (gesture.source_device != blink::kWebGestureDeviceTouchscreen)
+  if (gesture.SourceDevice() != blink::kWebGestureDeviceTouchscreen)
     return WebMouseEvent();
 
   WebInputEvent::Type type = WebInputEvent::kUndefined;
@@ -101,8 +103,10 @@ WebMouseEvent WebMouseEventFromGestureEvent(const WebGestureEvent& gesture) {
   mouse.click_count = (mouse.GetType() == WebInputEvent::kMouseDown ||
                        mouse.GetType() == WebInputEvent::kMouseUp);
 
-  mouse.SetPositionInWidget(gesture.x, gesture.y);
-  mouse.SetPositionInScreen(gesture.global_x, gesture.global_y);
+  mouse.SetPositionInWidget(gesture.PositionInWidget().x,
+                            gesture.PositionInWidget().y);
+  mouse.SetPositionInScreen(gesture.PositionInScreen().x,
+                            gesture.PositionInScreen().y);
 
   return mouse;
 }
@@ -137,6 +141,8 @@ class PepperWidget : public WebWidget {
   void Close() override { delete this; }
 
   WebSize Size() override { return size_; }
+
+  bool IsPepperWidget() const override { return true; }
 
   void Resize(const WebSize& size) override {
     if (!widget_->plugin() || size_ == size)
@@ -173,9 +179,10 @@ class PepperWidget : public WebWidget {
           WebMouseEvent mouse(WebInputEvent::kMouseMove,
                               gesture_event->GetModifiers(),
                               gesture_event->TimeStampSeconds());
-          mouse.SetPositionInWidget(gesture_event->x, gesture_event->y);
-          mouse.SetPositionInScreen(gesture_event->global_x,
-                                    gesture_event->global_y);
+          mouse.SetPositionInWidget(gesture_event->PositionInWidget().x,
+                                    gesture_event->PositionInWidget().y);
+          mouse.SetPositionInScreen(gesture_event->PositionInScreen().x,
+                                    gesture_event->PositionInScreen().y);
           mouse.movement_x = 0;
           mouse.movement_y = 0;
           result |= widget_->plugin()->HandleInputEvent(mouse, &cursor);
@@ -280,6 +287,7 @@ RenderWidgetFullscreenPepper::RenderWidgetFullscreenPepper(
                    false,
                    false,
                    false,
+                   base::ThreadTaskRunnerHandle::Get(),
                    std::move(widget_request)),
       active_url_(active_url),
       plugin_(plugin),
@@ -302,6 +310,11 @@ void RenderWidgetFullscreenPepper::ScrollRect(
 }
 
 void RenderWidgetFullscreenPepper::Destroy() {
+  // The plugin instance is going away reset any lock target that is set
+  // on the dispatcher since this object can still live and receive IPC
+  // responses and may call a dangling lock_target.
+  mouse_lock_dispatcher_->ClearLockTarget();
+
   // This function is called by the plugin instance as it's going away, so reset
   // plugin_ to NULL to avoid calling into a dangling pointer e.g. on Close().
   plugin_ = nullptr;
@@ -329,9 +342,8 @@ void RenderWidgetFullscreenPepper::SetLayer(blink::WebLayer* layer) {
   }
   if (!compositor())
     InitializeLayerTreeView();
-  layer_->SetBounds(blink::WebSize(size()));
+  UpdateLayerBounds();
   layer_->SetDrawsContent(true);
-  compositor_->SetDeviceScaleFactor(device_scale_factor_);
   compositor_->SetRootLayer(*layer_);
 }
 
@@ -368,18 +380,31 @@ void RenderWidgetFullscreenPepper::Close() {
 }
 
 void RenderWidgetFullscreenPepper::OnResize(const ResizeParams& params) {
-  if (layer_)
-    layer_->SetBounds(blink::WebSize(params.new_size));
   RenderWidget::OnResize(params);
+  UpdateLayerBounds();
 }
 
 GURL RenderWidgetFullscreenPepper::GetURLForGraphicsContext3D() {
   return active_url_;
 }
 
-void RenderWidgetFullscreenPepper::OnDeviceScaleFactorChanged() {
-  if (compositor_)
-    compositor_->SetDeviceScaleFactor(device_scale_factor_);
+void RenderWidgetFullscreenPepper::UpdateLayerBounds() {
+  if (!layer_)
+    return;
+
+  if (IsUseZoomForDSFEnabled()) {
+    // Note that root cc::Layers' bounds are specified in pixels (in contrast
+    // with non-root cc::Layers' bounds, which are specified in DIPs).
+    layer_->SetBounds(blink::WebSize(compositor_viewport_pixel_size()));
+  } else {
+    // For reasons that are unclear, the above comment doesn't appear to apply
+    // when zoom for DSF is not enabled.
+    // https://crbug.com/822252
+    gfx::Size dip_size =
+        gfx::ConvertSizeToDIP(GetOriginalScreenInfo().device_scale_factor,
+                              compositor_viewport_pixel_size());
+    layer_->SetBounds(blink::WebSize(dip_size));
+  }
 }
 
 }  // namespace content

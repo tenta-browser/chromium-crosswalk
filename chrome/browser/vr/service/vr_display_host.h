@@ -9,8 +9,8 @@
 
 #include "base/macros.h"
 
+#include "device/vr/public/mojom/vr_service.mojom.h"
 #include "device/vr/vr_device.h"
-#include "device/vr/vr_service.mojom.h"
 #include "mojo/public/cpp/bindings/binding.h"
 
 namespace content {
@@ -36,12 +36,16 @@ class VRDisplayHost : public device::mojom::VRDisplayHost {
 
   void RequestPresent(device::mojom::VRSubmitFrameClientPtr client,
                       device::mojom::VRPresentationProviderRequest request,
+                      device::mojom::VRRequestPresentOptionsPtr options,
+                      bool triggered_by_displayactive,
                       RequestPresentCallback callback) override;
   void ExitPresent() override;
   void SetListeningForActivate(bool listening);
   void SetInFocusedFrame(bool in_focused_frame);
 
  private:
+  void ReportRequestPresent();
+
   std::unique_ptr<device::VRDisplayImpl> display_;
 
   content::RenderFrameHost* render_frame_host_;

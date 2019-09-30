@@ -184,6 +184,17 @@ void CloudPolicyClientRegistrationHelper::StartRegistration(
                  base::Unretained(this)));
 }
 
+void CloudPolicyClientRegistrationHelper::StartRegistrationWithEnrollmentToken(
+    const std::string& token,
+    const std::string& client_id,
+    const base::Closure& callback) {
+  DVLOG(1) << "Starting registration process with enrollment token";
+  DCHECK(!client_->is_registered());
+  callback_ = callback;
+  client_->AddObserver(this);
+  client_->RegisterWithToken(token, client_id);
+}
+
 #if !defined(OS_ANDROID)
 void CloudPolicyClientRegistrationHelper::StartRegistrationWithLoginToken(
     const std::string& login_refresh_token,
@@ -265,6 +276,7 @@ void CloudPolicyClientRegistrationHelper::OnGetUserInfoSuccess(
   client_->Register(
       registration_type_,
       enterprise_management::DeviceRegisterRequest::FLAVOR_USER_REGISTRATION,
+      enterprise_management::DeviceRegisterRequest::LIFETIME_INDEFINITE,
       enterprise_management::LicenseType::UNDEFINED, oauth_access_token_,
       std::string(), std::string(), std::string());
 }

@@ -126,8 +126,8 @@ class ToastOverlayView : public views::View, public views::ButtonListener {
                    const base::string16& text,
                    const base::Optional<base::string16>& dismiss_text)
       : overlay_(overlay) {
-    auto* layout = new views::BoxLayout(views::BoxLayout::kHorizontal);
-    SetLayoutManager(layout);
+    auto* layout = SetLayoutManager(
+        std::make_unique<views::BoxLayout>(views::BoxLayout::kHorizontal));
 
     if (dismiss_text.has_value()) {
       button_ = new ToastOverlayButton(
@@ -254,7 +254,7 @@ void ToastOverlay::Show(bool visible) {
     overlay_widget_->Show();
 
     // Notify accessibility about the overlay.
-    overlay_view_->NotifyAccessibilityEvent(ui::AX_EVENT_ALERT, false);
+    overlay_view_->NotifyAccessibilityEvent(ax::mojom::Event::kAlert, false);
   } else {
     overlay_widget_->Hide();
   }

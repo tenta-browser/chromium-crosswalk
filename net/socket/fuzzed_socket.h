@@ -14,7 +14,8 @@
 #include "net/base/ip_endpoint.h"
 #include "net/base/net_errors.h"
 #include "net/log/net_log_with_source.h"
-#include "net/socket/stream_socket.h"
+#include "net/socket/transport_client_socket.h"
+#include "net/traffic_annotation/network_traffic_annotation.h"
 
 namespace base {
 class FuzzedDataProvider;
@@ -38,7 +39,7 @@ class NetLog;
 // reads and writes must be done in a deterministic order and for a
 // deterministic number of bytes, every time the fuzzer is run with the same
 // data.
-class FuzzedSocket : public StreamSocket {
+class FuzzedSocket : public TransportClientSocket {
  public:
   // |data_provider| is used as to determine behavior of the FuzzedSocket. It
   // must remain valid until after the FuzzedSocket is destroyed.
@@ -63,11 +64,13 @@ class FuzzedSocket : public StreamSocket {
            const CompletionCallback& callback) override;
   int Write(IOBuffer* buf,
             int buf_len,
-            const CompletionCallback& callback) override;
+            const CompletionCallback& callback,
+            const NetworkTrafficAnnotationTag& traffic_annotation) override;
   int SetReceiveBufferSize(int32_t size) override;
   int SetSendBufferSize(int32_t size) override;
 
-  // StreamSocket implementation:
+  // TransportClientSocket implementation:
+  int Bind(const net::IPEndPoint& local_addr) override;
   int Connect(const CompletionCallback& callback) override;
   void Disconnect() override;
   bool IsConnected() const override;
@@ -86,6 +89,7 @@ class FuzzedSocket : public StreamSocket {
   void ClearConnectionAttempts() override;
   void AddConnectionAttempts(const ConnectionAttempts& attempts) override;
   int64_t GetTotalReceivedBytes() const override;
+  void ApplySocketTag(const net::SocketTag& tag) override;
 
  private:
   // Returns a net::Error that can be returned by a read or a write. Reads and
@@ -95,6 +99,12 @@ class FuzzedSocket : public StreamSocket {
   void OnReadComplete(const CompletionCallback& callback, int result);
   void OnWriteComplete(const CompletionCallback& callback, int result);
   void OnConnectComplete(const CompletionCallback& callback, int result);
+
+  // Returns whether all operations should be synchronous.  Starts returning
+  // true once there have been too many async reads and writes, as spinning the
+  // message loop too often tends to cause fuzzers to time out.
+  // See https://crbug.com/823012
+  bool ForceSync() const;
 
   base::FuzzedDataProvider* data_provider_;
 
@@ -118,6 +128,8 @@ class FuzzedSocket : public StreamSocket {
 
   int64_t total_bytes_read_ = 0;
   int64_t total_bytes_written_ = 0;
+
+  int num_async_reads_and_writes_ = 0;
 
   NetLogWithSource net_log_;
 

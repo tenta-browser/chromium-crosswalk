@@ -4,15 +4,16 @@
 
 #include "components/offline_pages/core/prefetch/generate_page_bundle_reconcile_task.h"
 
+#include <memory>
 #include <string>
 
 #include "base/time/time.h"
 #include "components/offline_pages/core/prefetch/prefetch_item.h"
 #include "components/offline_pages/core/prefetch/prefetch_network_request_factory.h"
+#include "components/offline_pages/core/prefetch/prefetch_task_test_base.h"
 #include "components/offline_pages/core/prefetch/prefetch_types.h"
 #include "components/offline_pages/core/prefetch/store/prefetch_store.h"
 #include "components/offline_pages/core/prefetch/store/prefetch_store_test_util.h"
-#include "components/offline_pages/core/prefetch/task_test_base.h"
 #include "sql/connection.h"
 #include "sql/statement.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -22,7 +23,7 @@ namespace {
 class FakePrefetchNetworkRequestFactory : public PrefetchNetworkRequestFactory {
  public:
   FakePrefetchNetworkRequestFactory() {
-    requested_urls_ = base::MakeUnique<std::set<std::string>>();
+    requested_urls_ = std::make_unique<std::set<std::string>>();
   }
   ~FakePrefetchNetworkRequestFactory() override = default;
 
@@ -33,7 +34,7 @@ class FakePrefetchNetworkRequestFactory : public PrefetchNetworkRequestFactory {
       const std::string& gcm_registration_id,
       const PrefetchRequestFinishedCallback& callback) override {}
   std::unique_ptr<std::set<std::string>> GetAllUrlsRequested() const override {
-    return base::MakeUnique<std::set<std::string>>(*requested_urls_);
+    return std::make_unique<std::set<std::string>>(*requested_urls_);
   }
   void MakeGetOperationRequest(
       const std::string& operation_name,
@@ -54,7 +55,7 @@ class FakePrefetchNetworkRequestFactory : public PrefetchNetworkRequestFactory {
 };
 }  // namespace
 
-class GeneratePageBundleReconcileTaskTest : public TaskTestBase {
+class GeneratePageBundleReconcileTaskTest : public PrefetchTaskTestBase {
  public:
   GeneratePageBundleReconcileTaskTest();
   ~GeneratePageBundleReconcileTaskTest() override = default;
@@ -72,7 +73,7 @@ class GeneratePageBundleReconcileTaskTest : public TaskTestBase {
 };
 
 GeneratePageBundleReconcileTaskTest::GeneratePageBundleReconcileTaskTest()
-    : request_factory_(base::MakeUnique<FakePrefetchNetworkRequestFactory>()) {}
+    : request_factory_(std::make_unique<FakePrefetchNetworkRequestFactory>()) {}
 
 PrefetchItem GeneratePageBundleReconcileTaskTest::InsertItem(
     PrefetchItemState state,
@@ -86,10 +87,8 @@ PrefetchItem GeneratePageBundleReconcileTaskTest::InsertItem(
 TEST_F(GeneratePageBundleReconcileTaskTest, StoreFailure) {
   store_util()->SimulateInitializationError();
 
-  GeneratePageBundleReconcileTask task(store(), request_factory());
-  ExpectTaskCompletes(&task);
-  task.Run();
-  RunUntilIdle();
+  RunTask(std::make_unique<GeneratePageBundleReconcileTask>(store(),
+                                                            request_factory()));
 }
 
 TEST_F(GeneratePageBundleReconcileTaskTest, Retry) {
@@ -99,10 +98,8 @@ TEST_F(GeneratePageBundleReconcileTaskTest, Retry) {
       GeneratePageBundleReconcileTask::kMaxGenerateBundleAttempts - 1;
   ASSERT_TRUE(store_util()->InsertPrefetchItem(item));
 
-  GeneratePageBundleReconcileTask task(store(), request_factory());
-  ExpectTaskCompletes(&task);
-  task.Run();
-  RunUntilIdle();
+  RunTask(std::make_unique<GeneratePageBundleReconcileTask>(store(),
+                                                            request_factory()));
 
   std::unique_ptr<PrefetchItem> store_item =
       store_util()->GetPrefetchItem(item.offline_id);
@@ -121,10 +118,8 @@ TEST_F(GeneratePageBundleReconcileTaskTest, NoRetryForOngoingRequest) {
 
   request_factory()->AddRequestedUrl(item.url.spec());
 
-  GeneratePageBundleReconcileTask task(store(), request_factory());
-  ExpectTaskCompletes(&task);
-  task.Run();
-  RunUntilIdle();
+  RunTask(std::make_unique<GeneratePageBundleReconcileTask>(store(),
+                                                            request_factory()));
 
   std::unique_ptr<PrefetchItem> store_item =
       store_util()->GetPrefetchItem(item.offline_id);
@@ -138,10 +133,8 @@ TEST_F(GeneratePageBundleReconcileTaskTest, ErrorOnMaxAttempts) {
       GeneratePageBundleReconcileTask::kMaxGenerateBundleAttempts;
   ASSERT_TRUE(store_util()->InsertPrefetchItem(item));
 
-  GeneratePageBundleReconcileTask task(store(), request_factory());
-  ExpectTaskCompletes(&task);
-  task.Run();
-  RunUntilIdle();
+  RunTask(std::make_unique<GeneratePageBundleReconcileTask>(store(),
+                                                            request_factory()));
 
   std::unique_ptr<PrefetchItem> store_item =
       store_util()->GetPrefetchItem(item.offline_id);
@@ -164,10 +157,8 @@ TEST_F(GeneratePageBundleReconcileTaskTest,
 
   request_factory()->AddRequestedUrl(item.url.spec());
 
-  GeneratePageBundleReconcileTask task(store(), request_factory());
-  ExpectTaskCompletes(&task);
-  task.Run();
-  RunUntilIdle();
+  RunTask(std::make_unique<GeneratePageBundleReconcileTask>(store(),
+                                                            request_factory()));
 
   std::unique_ptr<PrefetchItem> store_item =
       store_util()->GetPrefetchItem(item.offline_id);
@@ -179,15 +170,12 @@ TEST_F(GeneratePageBundleReconcileTaskTest, NoUpdateForOtherStates) {
   const int attempts_count =
       GeneratePageBundleReconcileTask::kMaxGenerateBundleAttempts;
   std::vector<PrefetchItemState> all_other_states =
-      TaskTestBase::GetAllStatesExcept(
-          PrefetchItemState::SENT_GENERATE_PAGE_BUNDLE);
+      GetAllStatesExcept({PrefetchItemState::SENT_GENERATE_PAGE_BUNDLE});
   for (const auto& state : all_other_states)
     items.insert(InsertItem(state, attempts_count));
 
-  GeneratePageBundleReconcileTask task(store(), request_factory());
-  ExpectTaskCompletes(&task);
-  task.Run();
-  RunUntilIdle();
+  RunTask(std::make_unique<GeneratePageBundleReconcileTask>(store(),
+                                                            request_factory()));
 
   std::set<PrefetchItem> store_items;
   store_util()->GetAllItems(&store_items);

@@ -21,6 +21,7 @@
 #include "components/keyed_service/core/keyed_service.h"
 #include "components/offline_pages/core/background/connection_notifier.h"
 #include "components/offline_pages/core/background/device_conditions.h"
+#include "components/offline_pages/core/background/pending_state_updater.h"
 #include "components/offline_pages/core/background/request_coordinator_event_logger.h"
 #include "components/offline_pages/core/background/request_notifier.h"
 #include "components/offline_pages/core/background/request_queue.h"
@@ -107,6 +108,9 @@ class RequestCoordinator : public KeyedService,
   // Callback for stopping the background offlining.
   typedef base::Callback<void(int64_t request_id)> CancelCallback;
 
+  // Callback for SavePageLater calls.
+  typedef base::Callback<void(AddRequestResult)> SavePageLaterCallback;
+
   RequestCoordinator(std::unique_ptr<OfflinerPolicy> policy,
                      std::unique_ptr<Offliner> offliner,
                      std::unique_ptr<RequestQueue> queue,
@@ -119,7 +123,8 @@ class RequestCoordinator : public KeyedService,
 
   // Queues |request| to later load and save when system conditions allow.
   // Returns an id if the page could be queued successfully, 0L otherwise.
-  int64_t SavePageLater(const SavePageLaterParams& save_page_later_params);
+  int64_t SavePageLater(const SavePageLaterParams& save_page_later_params,
+                        const SavePageLaterCallback& save_page_later_callback);
 
   // Remove a list of requests by |request_id|.  This removes requests from the
   // request queue, and cancels an in-progress offliner.
@@ -274,9 +279,11 @@ class RequestCoordinator : public KeyedService,
       std::vector<std::unique_ptr<SavePageRequest>> requests);
 
   // Receives the result of add requests to the request queue.
-  void AddRequestResultCallback(RequestAvailability availability,
-                                AddRequestResult result,
-                                const SavePageRequest& request);
+  void AddRequestResultCallback(
+      const SavePageLaterCallback& save_page_later_callback,
+      RequestAvailability availability,
+      AddRequestResult result,
+      const SavePageRequest& request);
 
   void UpdateMultipleRequestsCallback(
       std::unique_ptr<UpdateRequestsResult> result);
@@ -326,7 +333,10 @@ class RequestCoordinator : public KeyedService,
   void ScheduleAsNeeded();
 
   // Callback from the request picker when it has chosen our next request.
-  void RequestPicked(const SavePageRequest& request, bool cleanup_needed);
+  void RequestPicked(
+      const SavePageRequest& request,
+      std::unique_ptr<std::vector<SavePageRequest>> available_requests,
+      bool cleanup_needed);
 
   // Callback from the request picker when no more requests are in the queue.
   // The parameter is a signal for what (if any) conditions to schedule future
@@ -485,6 +495,8 @@ class RequestCoordinator : public KeyedService,
   // Currently it's used as LIFO.
   // TODO(romax): see if LIFO is a good idea or change to FIFO. crbug.com/705106
   base::circular_deque<int64_t> prioritized_requests_;
+  // Updates a request's PendingState.
+  PendingStateUpdater pending_state_updater_;
   // Allows us to pass a weak pointer to callbacks.
   base::WeakPtrFactory<RequestCoordinator> weak_ptr_factory_;
 

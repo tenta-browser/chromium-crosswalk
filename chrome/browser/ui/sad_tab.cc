@@ -154,7 +154,7 @@ int SadTab::GetButtonTitle() {
 }
 
 int SadTab::GetHelpLinkTitle() {
-  return IDS_SAD_TAB_LEARN_MORE_LINK;
+  return IDS_LEARN_MORE;
 }
 
 const char* SadTab::GetHelpLinkURL() {
@@ -208,8 +208,8 @@ void SadTab::RecordFirstPaint() {
 #if defined(OS_CHROMEOS)
     case SAD_TAB_KIND_KILLED_BY_OOM:
       UMA_SAD_TAB_COUNTER("Tabs.SadTab.KillDisplayed.OOM");
+      FALLTHROUGH;
 #endif
-    // Fallthrough
     case SAD_TAB_KIND_KILLED:
       UMA_SAD_TAB_COUNTER("Tabs.SadTab.KillDisplayed");
       break;
@@ -228,6 +228,7 @@ void SadTab::PerformAction(SadTab::Action action) {
         ShowFeedbackPage(
             chrome::FindBrowserWithWebContents(web_contents_),
             chrome::kFeedbackSourceSadTabPage,
+            std::string() /* description_template */,
             l10n_util::GetStringUTF8(kind_ == SAD_TAB_KIND_CRASHED
                                          ? IDS_CRASHED_TAB_FEEDBACK_MESSAGE
                                          : IDS_KILLED_TAB_FEEDBACK_MESSAGE),
@@ -268,8 +269,8 @@ SadTab::SadTab(content::WebContents* web_contents, SadTabKind kind)
         memory::OomMemoryDetails::Log(
             "Tab OOM-Killed Memory details: " + spec + ", ", base::Closure());
       }
+      FALLTHROUGH;
 #endif
-    // Fall through
     case SAD_TAB_KIND_KILLED:
       UMA_SAD_TAB_COUNTER("Tabs.SadTab.KillCreated");
       LOG(WARNING) << "Tab Killed: "

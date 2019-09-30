@@ -37,10 +37,11 @@
 #include "content/shell/renderer/shell_content_renderer_client.h"
 #include "content/shell/utility/shell_content_utility_client.h"
 #include "gpu/config/gpu_switches.h"
-#include "ipc/ipc_features.h"
+#include "ipc/ipc_buildflags.h"
 #include "media/base/media_switches.h"
 #include "net/cookies/cookie_monster.h"
-#include "ppapi/features/features.h"
+#include "ppapi/buildflags/buildflags.h"
+#include "services/network/public/cpp/network_switches.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/base/ui_base_paths.h"
 #include "ui/base/ui_base_switches.h"
@@ -81,6 +82,10 @@
 #if defined(OS_POSIX) && !defined(OS_MACOSX)
 #include "components/crash/content/app/breakpad_linux.h"
 #endif
+
+#if defined(OS_FUCHSIA)
+#include "base/base_paths_fuchsia.h"
+#endif  // OS_FUCHSIA
 
 namespace {
 
@@ -129,8 +134,8 @@ void InitLogging(const base::CommandLine& command_line) {
 
 namespace content {
 
-ShellMainDelegate::ShellMainDelegate() {
-}
+ShellMainDelegate::ShellMainDelegate(bool is_browsertest)
+    : is_browsertest_(is_browsertest) {}
 
 ShellMainDelegate::~ShellMainDelegate() {
 }
@@ -180,6 +185,7 @@ bool ShellMainDelegate::BasicStartupComplete(int* exit_code) {
       return true;
     }
 #endif
+    command_line.AppendSwitch(switches::kDisableResizeLock);
     command_line.AppendSwitch(cc::switches::kEnableGpuBenchmarking);
     command_line.AppendSwitch(switches::kEnableLogging);
     command_line.AppendSwitch(switches::kAllowFileAccessFromFiles);
@@ -190,13 +196,17 @@ bool ShellMainDelegate::BasicStartupComplete(int* exit_code) {
           switches::kUseGL,
           gl::GetGLImplementationName(gl::GetSoftwareGLImplementation()));
     }
-    command_line.AppendSwitch(switches::kSkipGpuDataLoading);
     command_line.AppendSwitchASCII(
         switches::kTouchEventFeatureDetection,
         switches::kTouchEventFeatureDetectionEnabled);
     if (!command_line.HasSwitch(switches::kForceDeviceScaleFactor))
       command_line.AppendSwitchASCII(switches::kForceDeviceScaleFactor, "1.0");
-    command_line.AppendSwitch(switches::kIgnoreAutoplayRestrictionsForTests);
+
+    if (!command_line.HasSwitch(switches::kAutoplayPolicy)) {
+      command_line.AppendSwitchASCII(
+          switches::kAutoplayPolicy,
+          switches::autoplay::kNoUserGestureRequiredPolicy);
+    }
 
     if (!command_line.HasSwitch(switches::kStableReleaseMode)) {
       command_line.AppendSwitch(
@@ -208,19 +218,16 @@ bool ShellMainDelegate::BasicStartupComplete(int* exit_code) {
       command_line.AppendSwitch(cc::switches::kDisableThreadedAnimation);
     }
 
-    if (!command_line.HasSwitch(switches::kEnableDisplayList2dCanvas)) {
-      command_line.AppendSwitch(switches::kDisableDisplayList2dCanvas);
-    }
-
     command_line.AppendSwitch(switches::kEnableInbandTextTracks);
     command_line.AppendSwitch(switches::kMuteAudio);
 
     command_line.AppendSwitch(switches::kEnablePreciseMemoryInfo);
 
-    command_line.AppendSwitchASCII(switches::kHostResolverRules,
+    command_line.AppendSwitchASCII(network::switches::kHostResolverRules,
                                    "MAP *.test 127.0.0.1");
 
     command_line.AppendSwitch(switches::kEnablePartialRaster);
+    command_line.AppendSwitch(switches::kEnableWebAuthTestingAPI);
 
     if (!command_line.HasSwitch(switches::kForceGpuRasterization) &&
         !command_line.HasSwitch(switches::kEnableGpuRasterization)) {
@@ -359,17 +366,15 @@ void ShellMainDelegate::InitializeResourceBundle() {
                                                           pak_region);
   ui::ResourceBundle::GetSharedInstance().AddDataPackFromFileRegion(
       base::File(pak_fd), pak_region, ui::SCALE_FACTOR_100P);
-#else  // defined(OS_ANDROID)
-#if defined(OS_MACOSX)
-  base::FilePath pak_file = GetResourcesPakFilePath();
+#elif defined(OS_MACOSX)
+  ui::ResourceBundle::InitSharedInstanceWithPakPath(GetResourcesPakFilePath());
 #else
   base::FilePath pak_file;
-  bool r = PathService::Get(base::DIR_MODULE, &pak_file);
+  bool r = PathService::Get(base::DIR_ASSETS, &pak_file);
   DCHECK(r);
   pak_file = pak_file.Append(FILE_PATH_LITERAL("content_shell.pak"));
-#endif  // defined(OS_MACOSX)
   ui::ResourceBundle::InitSharedInstanceWithPakPath(pak_file);
-#endif  // defined(OS_ANDROID)
+#endif
 }
 
 ContentBrowserClient* ShellMainDelegate::CreateContentBrowserClient() {
@@ -396,7 +401,7 @@ ContentRendererClient* ShellMainDelegate::CreateContentRendererClient() {
 }
 
 ContentUtilityClient* ShellMainDelegate::CreateContentUtilityClient() {
-  utility_client_.reset(new ShellContentUtilityClient);
+  utility_client_.reset(new ShellContentUtilityClient(is_browsertest_));
   return utility_client_.get();
 }
 

@@ -14,7 +14,9 @@
 #include "ash/frame/header_view.h"
 #include "ash/public/cpp/immersive/immersive_fullscreen_controller.h"
 #include "ash/public/cpp/immersive/immersive_fullscreen_controller_delegate.h"
+#include "ash/public/cpp/window_properties.h"
 #include "ash/shell.h"
+#include "ash/wm/overview/window_selector_controller.h"
 #include "ash/wm/resize_handle_window_targeter.h"
 #include "ash/wm/tablet_mode/tablet_mode_controller.h"
 #include "ash/wm/tablet_mode/tablet_mode_observer.h"
@@ -87,8 +89,10 @@ class CustomFrameViewAshWindowStateDelegate : public wm::WindowStateDelegate,
   void OnTabletModeStarted() override {
     if (window_state_->IsFullscreen())
       return;
-
-    if (Shell::Get()->tablet_mode_controller()->ShouldAutoHideTitlebars()) {
+    views::Widget* widget =
+        views::Widget::GetWidgetForNativeWindow(window_state_->window());
+    if (Shell::Get()->tablet_mode_controller()->ShouldAutoHideTitlebars(
+            widget)) {
       immersive_fullscreen_controller_->SetEnabled(
           ImmersiveFullscreenController::WINDOW_TYPE_OTHER, true);
     }
@@ -129,8 +133,11 @@ class CustomFrameViewAshWindowStateDelegate : public wm::WindowStateDelegate,
   // wm::WindowStateObserver:
   void OnPostWindowStateTypeChange(wm::WindowState* window_state,
                                    mojom::WindowStateType old_type) override {
+    views::Widget* widget =
+        views::Widget::GetWidgetForNativeWindow(window_state->window());
     if (Shell::Get()->tablet_mode_controller() &&
-        Shell::Get()->tablet_mode_controller()->ShouldAutoHideTitlebars()) {
+        Shell::Get()->tablet_mode_controller()->ShouldAutoHideTitlebars(
+            widget)) {
       DCHECK(immersive_fullscreen_controller_);
       if (window_state->IsMinimized() &&
           immersive_fullscreen_controller_->IsEnabled()) {
@@ -141,7 +148,6 @@ class CustomFrameViewAshWindowStateDelegate : public wm::WindowStateDelegate,
         immersive_fullscreen_controller_->SetEnabled(
             ImmersiveFullscreenController::WINDOW_TYPE_OTHER, true);
       }
-
       return;
     }
 
@@ -151,6 +157,13 @@ class CustomFrameViewAshWindowStateDelegate : public wm::WindowStateDelegate,
       immersive_fullscreen_controller_->SetEnabled(
           ImmersiveFullscreenController::WINDOW_TYPE_OTHER, false);
     }
+  }
+
+  CustomFrameViewAsh* GetFrameView() {
+    views::Widget* widget =
+        views::Widget::GetWidgetForNativeWindow(window_state_->window());
+    return static_cast<CustomFrameViewAsh*>(
+        widget->non_client_view()->frame_view());
   }
 
   wm::WindowState* window_state_;
@@ -266,7 +279,7 @@ void CustomFrameViewAsh::OverlayView::Layout() {
   int onscreen_height = header_height_
                             ? *header_height_
                             : header_view_->GetPreferredOnScreenHeight();
-  if (onscreen_height == 0 || !enabled()) {
+  if (onscreen_height == 0 || !visible()) {
     header_view_->SetVisible(false);
   } else {
     const int height =
@@ -298,9 +311,10 @@ CustomFrameViewAsh::CustomFrameViewAsh(
     views::Widget* frame,
     ImmersiveFullscreenControllerDelegate* immersive_delegate,
     bool enable_immersive,
-    mojom::WindowStyle window_style)
+    mojom::WindowStyle window_style,
+    std::unique_ptr<CaptionButtonModel> model)
     : frame_(frame),
-      header_view_(new HeaderView(frame, window_style)),
+      header_view_(new HeaderView(frame, window_style, std::move(model))),
       overlay_view_(new OverlayView(header_view_)),
       immersive_delegate_(immersive_delegate ? immersive_delegate
                                              : header_view_),
@@ -312,6 +326,11 @@ CustomFrameViewAsh::CustomFrameViewAsh(
   frame->non_client_view()->SetOverlayView(overlay_view_);
   frame_window->SetProperty(aura::client::kTopViewColor,
                             header_view_->GetInactiveFrameColor());
+  frame_window->SetProperty(ash::kFrameActiveColorKey,
+                            header_view_->GetActiveFrameColor());
+  frame_window->SetProperty(ash::kFrameInactiveColorKey,
+                            header_view_->GetInactiveFrameColor());
+  frame_window->AddObserver(this);
 
   // A delegate for a more complex way of fullscreening the window may already
   // be set. This is the case for packaged apps.
@@ -322,10 +341,17 @@ CustomFrameViewAsh::CustomFrameViewAsh(
                                                   enable_immersive)));
   }
   Shell::Get()->AddShellObserver(this);
+  Shell::Get()->split_view_controller()->AddObserver(this);
 }
 
 CustomFrameViewAsh::~CustomFrameViewAsh() {
   Shell::Get()->RemoveShellObserver(this);
+  if (Shell::Get()->split_view_controller())
+    Shell::Get()->split_view_controller()->RemoveObserver(this);
+  if (frame_ && frame_->GetNativeWindow() &&
+      frame_->GetNativeWindow()->HasObserver(this)) {
+    frame_->GetNativeWindow()->RemoveObserver(this);
+  }
 }
 
 void CustomFrameViewAsh::InitImmersiveFullscreenControllerForView(
@@ -338,12 +364,15 @@ void CustomFrameViewAsh::SetFrameColors(SkColor active_frame_color,
                                         SkColor inactive_frame_color) {
   header_view_->SetFrameColors(active_frame_color, inactive_frame_color);
   aura::Window* frame_window = frame_->GetNativeWindow();
-  frame_window->SetProperty(aura::client::kTopViewColor,
-                            header_view_->GetInactiveFrameColor());
+  frame_window->SetProperty(aura::client::kTopViewColor, inactive_frame_color);
+  frame_window->SetProperty(ash::kFrameActiveColorKey, active_frame_color);
+  frame_window->SetProperty(ash::kFrameInactiveColorKey, inactive_frame_color);
 }
 
-void CustomFrameViewAsh::SetBackButtonState(FrameBackButtonState state) {
-  header_view_->SetBackButtonState(state);
+void CustomFrameViewAsh::SetCaptionButtonModel(
+    std::unique_ptr<CaptionButtonModel> model) {
+  header_view_->caption_button_container()->SetModel(std::move(model));
+  header_view_->UpdateCaptionButtons();
 }
 
 void CustomFrameViewAsh::SetHeaderHeight(base::Optional<int> height) {
@@ -352,6 +381,17 @@ void CustomFrameViewAsh::SetHeaderHeight(base::Optional<int> height) {
 
 views::View* CustomFrameViewAsh::GetHeaderView() {
   return header_view_;
+}
+
+gfx::Rect CustomFrameViewAsh::GetClientBoundsForWindowBounds(
+    const gfx::Rect& window_bounds) const {
+  gfx::Rect client_bounds(window_bounds);
+  client_bounds.Inset(0, NonClientTopBorderHeight(), 0, 0);
+  return client_bounds;
+}
+
+base::string16 CustomFrameViewAsh::GetFrameTitle() const {
+  return frame_->widget_delegate()->GetWindowTitle();
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -371,7 +411,7 @@ gfx::Rect CustomFrameViewAsh::GetWindowBoundsForClientBounds(
 }
 
 int CustomFrameViewAsh::NonClientHitTest(const gfx::Point& point) {
-  return FrameBorderNonClientHitTest(this, header_view_->back_button(),
+  return FrameBorderNonClientHitTest(this, header_view_->GetBackButton(),
                                      header_view_->caption_button_container(),
                                      point);
 }
@@ -388,16 +428,18 @@ void CustomFrameViewAsh::ResetWindowControls() {
 void CustomFrameViewAsh::UpdateWindowIcon() {}
 
 void CustomFrameViewAsh::UpdateWindowTitle() {
+  header_view_->set_title(GetFrameTitle());
   header_view_->SchedulePaintForTitle();
 }
 
 void CustomFrameViewAsh::SizeConstraintsChanged() {
-  header_view_->SizeConstraintsChanged();
+  header_view_->UpdateCaptionButtons();
 }
 
 void CustomFrameViewAsh::ActivationChanged(bool active) {
   // The icons differ between active and inactive.
   header_view_->SchedulePaint();
+  frame_->non_client_view()->Layout();
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -473,8 +515,58 @@ void CustomFrameViewAsh::SetVisible(bool visible) {
   InvalidateLayout();
 }
 
+void CustomFrameViewAsh::OnWindowDestroying(aura::Window* window) {
+  DCHECK_EQ(frame_->GetNativeWindow(), window);
+  window->RemoveObserver(this);
+}
+
+void CustomFrameViewAsh::OnWindowPropertyChanged(aura::Window* window,
+                                                 const void* key,
+                                                 intptr_t old) {
+  DCHECK_EQ(frame_->GetNativeWindow(), window);
+  if (key == aura::client::kShowStateKey) {
+    header_view_->OnShowStateChanged(
+        window->GetProperty(aura::client::kShowStateKey));
+    return;
+  }
+
+  if (key == ash::kFrameActiveColorKey) {
+    header_view_->SetFrameColors(window->GetProperty(ash::kFrameActiveColorKey),
+                                 header_view_->GetInactiveFrameColor());
+    return;
+  }
+
+  if (key == ash::kFrameInactiveColorKey) {
+    header_view_->SetFrameColors(
+        header_view_->GetActiveFrameColor(),
+        window->GetProperty(ash::kFrameInactiveColorKey));
+  }
+}
+
 const views::View* CustomFrameViewAsh::GetAvatarIconViewForTest() const {
   return header_view_->avatar_icon();
+}
+
+SkColor CustomFrameViewAsh::GetActiveFrameColorForTest() const {
+  return header_view_->GetActiveFrameColor();
+}
+
+SkColor CustomFrameViewAsh::GetInactiveFrameColorForTest() const {
+  return header_view_->GetInactiveFrameColor();
+}
+
+void CustomFrameViewAsh::UpdateHeaderView() {
+  SplitViewController* split_view_controller =
+      Shell::Get()->split_view_controller();
+  if (in_overview_mode_ && split_view_controller->IsSplitViewModeActive() &&
+      split_view_controller->GetDefaultSnappedWindow() ==
+          frame_->GetNativeWindow()) {
+    // TODO(sammiequon): This works for now, but we may have to check if
+    // |frame_|'s native window is in the overview list instead.
+    SetShouldPaintHeader(true);
+  } else {
+    SetShouldPaintHeader(!in_overview_mode_);
+  }
 }
 
 void CustomFrameViewAsh::SetShouldPaintHeader(bool paint) {
@@ -482,11 +574,19 @@ void CustomFrameViewAsh::SetShouldPaintHeader(bool paint) {
 }
 
 void CustomFrameViewAsh::OnOverviewModeStarting() {
-  SetShouldPaintHeader(false);
+  in_overview_mode_ = true;
+  UpdateHeaderView();
 }
 
 void CustomFrameViewAsh::OnOverviewModeEnded() {
-  SetShouldPaintHeader(true);
+  in_overview_mode_ = false;
+  UpdateHeaderView();
+}
+
+void CustomFrameViewAsh::OnSplitViewStateChanged(
+    SplitViewController::State /* previous_state */,
+    SplitViewController::State /* current_state */) {
+  UpdateHeaderView();
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -509,17 +609,10 @@ CustomFrameViewAsh::GetFrameCaptionButtonContainerViewForTest() {
 int CustomFrameViewAsh::NonClientTopBorderHeight() const {
   // The frame should not occupy the window area when it's in fullscreen,
   // not visible or disabled.
-  if (frame_->IsFullscreen() || !visible() || !enabled())
+  if (frame_->IsFullscreen() || !visible() || !enabled() ||
+      header_view_->in_immersive_mode()) {
     return 0;
-
-  const bool should_hide_titlebar_in_tablet_mode =
-      Shell::Get()->tablet_mode_controller() &&
-      Shell::Get()->tablet_mode_controller()->ShouldAutoHideTitlebars() &&
-      frame_->IsMaximized();
-
-  if (should_hide_titlebar_in_tablet_mode)
-    return 0;
-
+  }
   return header_view_->GetPreferredHeight();
 }
 

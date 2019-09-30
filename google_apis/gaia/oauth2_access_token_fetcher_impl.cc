@@ -10,6 +10,7 @@
 
 #include "base/json/json_reader.h"
 #include "base/metrics/histogram.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
@@ -201,8 +202,8 @@ void OAuth2AccessTokenFetcherImpl::EndGetAccessToken(
   URLRequestStatus status = source->GetStatus();
   int histogram_value =
       status.is_success() ? source->GetResponseCode() : status.error();
-  UMA_HISTOGRAM_SPARSE_SLOWLY("Gaia.ResponseCodesForOAuth2AccessToken",
-                              histogram_value);
+  base::UmaHistogramSparse("Gaia.ResponseCodesForOAuth2AccessToken",
+                           histogram_value);
   if (!status.is_success()) {
     OnGetTokenFailure(CreateAuthError(status));
     return;
@@ -235,8 +236,9 @@ void OAuth2AccessTokenFetcherImpl::EndGetAccessToken(
 
       OnGetTokenFailure(
           access_error == OAUTH2_ACCESS_ERROR_INVALID_GRANT
-              ? GoogleServiceAuthError(
-                    GoogleServiceAuthError::INVALID_GAIA_CREDENTIALS)
+              ? GoogleServiceAuthError::FromInvalidGaiaCredentialsReason(
+                    GoogleServiceAuthError::InvalidGaiaCredentialsReason::
+                        CREDENTIALS_REJECTED_BY_SERVER)
               : GoogleServiceAuthError(GoogleServiceAuthError::SERVICE_ERROR));
       return;
     }
@@ -249,8 +251,10 @@ void OAuth2AccessTokenFetcherImpl::EndGetAccessToken(
         // The other errors are treated as permanent error.
         DLOG(ERROR) << "Unexpected persistent error: http_status="
                     << source->GetResponseCode();
-        OnGetTokenFailure(GoogleServiceAuthError(
-            GoogleServiceAuthError::INVALID_GAIA_CREDENTIALS));
+        OnGetTokenFailure(
+            GoogleServiceAuthError::FromInvalidGaiaCredentialsReason(
+                GoogleServiceAuthError::InvalidGaiaCredentialsReason::
+                    CREDENTIALS_REJECTED_BY_SERVER));
       }
       return;
     }

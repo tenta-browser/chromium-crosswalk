@@ -5,11 +5,13 @@
 #include "chromeos/components/tether/ble_advertiser_impl.h"
 
 #include "base/bind.h"
+#include "base/memory/ptr_util.h"
 #include "base/threading/thread_task_runner_handle.h"
+#include "chromeos/components/proximity_auth/logging/logging.h"
 #include "chromeos/components/tether/error_tolerant_ble_advertisement_impl.h"
 #include "components/cryptauth/ble/ble_advertisement_generator.h"
 #include "components/cryptauth/proto/cryptauth_api.pb.h"
-#include "components/proximity_auth/logging/logging.h"
+#include "components/cryptauth/remote_device.h"
 #include "device/bluetooth/bluetooth_advertisement.h"
 
 namespace chromeos {
@@ -41,8 +43,9 @@ std::unique_ptr<BleAdvertiser> BleAdvertiserImpl::Factory::BuildInstance(
     cryptauth::LocalDeviceDataProvider* local_device_data_provider,
     cryptauth::RemoteBeaconSeedFetcher* remote_beacon_seed_fetcher,
     BleSynchronizerBase* ble_synchronizer) {
-  return base::MakeUnique<BleAdvertiserImpl>(
-      local_device_data_provider, remote_beacon_seed_fetcher, ble_synchronizer);
+  return base::WrapUnique(new BleAdvertiserImpl(local_device_data_provider,
+                                                remote_beacon_seed_fetcher,
+                                                ble_synchronizer));
 }
 
 BleAdvertiserImpl::AdvertisementMetadata::AdvertisementMetadata(
@@ -64,8 +67,7 @@ BleAdvertiserImpl::BleAdvertiserImpl(
 
 BleAdvertiserImpl::~BleAdvertiserImpl() = default;
 
-bool BleAdvertiserImpl::StartAdvertisingToDevice(
-    const cryptauth::RemoteDevice& remote_device) {
+bool BleAdvertiserImpl::StartAdvertisingToDevice(const std::string& device_id) {
   int index_for_device = -1;
   for (size_t i = 0; i < kMaxConcurrentAdvertisements; ++i) {
     if (!registered_device_metadata_[i]) {
@@ -82,26 +84,25 @@ bool BleAdvertiserImpl::StartAdvertisingToDevice(
 
   std::unique_ptr<cryptauth::DataWithTimestamp> service_data =
       cryptauth::BleAdvertisementGenerator::GenerateBleAdvertisement(
-          remote_device, local_device_data_provider_,
-          remote_beacon_seed_fetcher_);
+          device_id, local_device_data_provider_, remote_beacon_seed_fetcher_);
   if (!service_data) {
     PA_LOG(WARNING) << "Error generating advertisement for device with ID "
-                    << remote_device.GetTruncatedDeviceIdForLogs() << ". "
-                    << "Cannot advertise.";
+                    << cryptauth::RemoteDevice::TruncateDeviceIdForLogs(
+                           device_id)
+                    << ". Cannot advertise.";
     return false;
   }
 
-  registered_device_metadata_[index_for_device].reset(new AdvertisementMetadata(
-      remote_device.GetDeviceId(), std::move(service_data)));
+  registered_device_metadata_[index_for_device].reset(
+      new AdvertisementMetadata(device_id, std::move(service_data)));
   UpdateAdvertisements();
 
   return true;
 }
 
-bool BleAdvertiserImpl::StopAdvertisingToDevice(
-    const cryptauth::RemoteDevice& remote_device) {
+bool BleAdvertiserImpl::StopAdvertisingToDevice(const std::string& device_id) {
   for (auto& metadata : registered_device_metadata_) {
-    if (metadata && metadata->device_id == remote_device.GetDeviceId()) {
+    if (metadata && metadata->device_id == device_id) {
       metadata.reset();
       UpdateAdvertisements();
       return true;
@@ -136,7 +137,7 @@ void BleAdvertiserImpl::UpdateAdvertisements() {
     // the advertisement.
     if (metadata && !advertisement) {
       std::unique_ptr<cryptauth::DataWithTimestamp> service_data_copy =
-          base::MakeUnique<cryptauth::DataWithTimestamp>(
+          std::make_unique<cryptauth::DataWithTimestamp>(
               *metadata->service_data);
       advertisements_[i] =
           ErrorTolerantBleAdvertisementImpl::Factory::NewInstance(
@@ -161,9 +162,9 @@ void BleAdvertiserImpl::OnAdvertisementStopped(size_t index) {
 
   // Update advertisements, but do so as part of a new task in the run loop to
   // prevent the possibility of a crash. See crbug.com/776241.
-  task_runner_->PostTask(FROM_HERE,
-                         base::Bind(&BleAdvertiserImpl::UpdateAdvertisements,
-                                    weak_ptr_factory_.GetWeakPtr()));
+  task_runner_->PostTask(
+      FROM_HERE, base::BindOnce(&BleAdvertiserImpl::UpdateAdvertisements,
+                                weak_ptr_factory_.GetWeakPtr()));
 
   if (!AreAdvertisementsRegistered())
     NotifyAllAdvertisementsUnregistered();

@@ -27,7 +27,7 @@
 #include "media/base/media_switches.h"
 #include "media/base/mock_filters.h"
 #include "media/cdm/cdm_module.h"
-#include "media/media_features.h"
+#include "media/media_buildflags.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest-param-test.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -287,7 +287,8 @@ class AesDecryptorTest : public testing::TestWithParam<TestType> {
       std::unique_ptr<CdmAuxiliaryHelper> cdm_helper(
           new MockCdmAuxiliaryHelper(std::move(allocator)));
       CdmAdapter::Create(
-          helper_->KeySystemName(), cdm_config, std::move(cdm_helper),
+          helper_->KeySystemName(), url::Origin::Create(GURL("http://foo.com")),
+          cdm_config, std::move(cdm_helper),
           base::Bind(&MockCdmClient::OnSessionMessage,
                      base::Unretained(&cdm_client_)),
           base::Bind(&MockCdmClient::OnSessionClosed,
@@ -430,8 +431,8 @@ class AesDecryptorTest : public testing::TestWithParam<TestType> {
     return false;
   }
 
-  MOCK_METHOD2(BufferDecrypted, void(Decryptor::Status,
-                                     const scoped_refptr<DecoderBuffer>&));
+  MOCK_METHOD2(BufferDecrypted,
+               void(Decryptor::Status, scoped_refptr<DecoderBuffer>));
 
   enum DecryptExpectation {
     SUCCESS,
@@ -441,7 +442,7 @@ class AesDecryptorTest : public testing::TestWithParam<TestType> {
     NO_KEY
   };
 
-  void DecryptAndExpect(const scoped_refptr<DecoderBuffer>& encrypted,
+  void DecryptAndExpect(scoped_refptr<DecoderBuffer> encrypted,
                         const std::vector<uint8_t>& plain_text,
                         DecryptExpectation result) {
     scoped_refptr<DecoderBuffer> decrypted;
@@ -591,18 +592,11 @@ TEST_P(AesDecryptorTest, CreateSessionWithCencInitData) {
       0x00, 0x00, 0x00, 0x00  // datasize
   };
 
-#if BUILDFLAG(USE_PROPRIETARY_CODECS)
   EXPECT_CALL(cdm_client_, OnSessionMessage(NotEmpty(), _, IsJSONDictionary()));
   cdm_->CreateSessionAndGenerateRequest(
       CdmSessionType::TEMPORARY_SESSION, EmeInitDataType::CENC,
       std::vector<uint8_t>(init_data, init_data + arraysize(init_data)),
       CreateSessionPromise(RESOLVED));
-#else
-  cdm_->CreateSessionAndGenerateRequest(
-      CdmSessionType::TEMPORARY_SESSION, EmeInitDataType::CENC,
-      std::vector<uint8_t>(init_data, init_data + arraysize(init_data)),
-      CreateSessionPromise(REJECTED));
-#endif
 }
 
 TEST_P(AesDecryptorTest, CreateSessionWithKeyIdsInitData) {

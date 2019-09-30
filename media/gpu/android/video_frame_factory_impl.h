@@ -8,7 +8,7 @@
 #include "base/optional.h"
 #include "gpu/command_buffer/service/gles2_cmd_decoder.h"
 #include "gpu/command_buffer/service/texture_manager.h"
-#include "gpu/ipc/service/gpu_command_buffer_stub.h"
+#include "gpu/ipc/service/command_buffer_stub.h"
 #include "media/base/video_frame.h"
 #include "media/gpu/android/codec_image.h"
 #include "media/gpu/android/codec_wrapper.h"
@@ -21,6 +21,7 @@
 namespace media {
 class CodecImageGroup;
 class GpuVideoFrameFactory;
+class TexturePool;
 
 // VideoFrameFactoryImpl creates CodecOutputBuffer backed VideoFrames and tries
 // to eagerly render them to their surface to release the buffers back to the
@@ -43,7 +44,7 @@ class MEDIA_GPU_EXPORT VideoFrameFactoryImpl : public VideoFrameFactory {
       base::TimeDelta timestamp,
       gfx::Size natural_size,
       PromotionHintAggregator::NotifyPromotionHintCB promotion_hint_cb,
-      OutputWithReleaseMailboxCB output_cb) override;
+      VideoDecoder::OutputCB output_cb) override;
   void RunAfterPendingVideoFrames(base::OnceClosure closure) override;
 
  private:
@@ -62,7 +63,7 @@ class MEDIA_GPU_EXPORT VideoFrameFactoryImpl : public VideoFrameFactory {
 // GpuVideoFrameFactory is an implementation detail of VideoFrameFactoryImpl. It
 // may be created on any thread but only accessed on the gpu thread thereafter.
 class GpuVideoFrameFactory
-    : public gpu::GpuCommandBufferStub::DestructionObserver {
+    : public gpu::CommandBufferStub::DestructionObserver {
  public:
   GpuVideoFrameFactory();
   ~GpuVideoFrameFactory() override;
@@ -78,7 +79,7 @@ class GpuVideoFrameFactory
       base::TimeDelta timestamp,
       gfx::Size natural_size,
       PromotionHintAggregator::NotifyPromotionHintCB promotion_hint_cb,
-      VideoFrameFactory::OutputWithReleaseMailboxCB output_cb,
+      VideoDecoder::OutputCB output_cb,
       scoped_refptr<base::SingleThreadTaskRunner> task_runner);
 
   // Set our image group.  Must be called before the first call to
@@ -98,26 +99,13 @@ class GpuVideoFrameFactory
 
   void OnWillDestroyStub() override;
 
-  // Clears |texture_refs_|. Makes the gl context current.
-  void ClearTextureRefs();
-
-  // Removes |ref| from texture_refs_. Makes the gl context current.
-  // |token| is ignored because MojoVideoDecoderService guarantees that it has
-  // already passed by the time we get the callback.
-  void DropTextureRef(gpu::gles2::TextureRef* ref, const gpu::SyncToken& token);
-
   // Removes |image| from |images_|.
   void OnImageDestructed(CodecImage* image);
 
   // Outstanding images that should be considered for early rendering.
   std::vector<CodecImage*> images_;
 
-  // Outstanding TextureRefs that are still referenced by a mailbox VideoFrame.
-  // They're kept alive until their mailboxes are released (or |this| is
-  // destructed).
-  std::map<gpu::gles2::TextureRef*, scoped_refptr<gpu::gles2::TextureRef>>
-      texture_refs_;
-  gpu::GpuCommandBufferStub* stub_;
+  gpu::CommandBufferStub* stub_;
 
   // Callback to notify us that an image has been destroyed.
   CodecImage::DestructionCb destruction_cb_;
@@ -131,6 +119,9 @@ class GpuVideoFrameFactory
   // Current image group to which new images (frames) will be added.  We'll
   // replace this when SetImageGroup() is called.
   scoped_refptr<CodecImageGroup> image_group_;
+
+  // Pool which owns all the textures that we create.
+  scoped_refptr<TexturePool> texture_pool_;
 
   THREAD_CHECKER(thread_checker_);
   base::WeakPtrFactory<GpuVideoFrameFactory> weak_factory_;

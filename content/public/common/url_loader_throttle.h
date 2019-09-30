@@ -5,8 +5,11 @@
 #ifndef CONTENT_PUBLIC_COMMON_URL_LOADER_THROTTLE_H_
 #define CONTENT_PUBLIC_COMMON_URL_LOADER_THROTTLE_H_
 
+#include "base/strings/string_piece.h"
 #include "content/common/content_export.h"
 #include "content/public/common/resource_type.h"
+#include "content/public/common/transferrable_url_loader.mojom.h"
+#include "net/base/request_priority.h"
 
 class GURL;
 
@@ -14,10 +17,12 @@ namespace net {
 struct RedirectInfo;
 }
 
-namespace content {
-
+namespace network {
 struct ResourceRequest;
 struct ResourceResponseHead;
+}
+
+namespace content {
 
 // A URLLoaderThrottle gets notified at various points during the process of
 // loading a resource. At each stage, it has the opportunity to defer the
@@ -38,17 +43,29 @@ class CONTENT_EXPORT URLLoaderThrottle {
   // synchronously.
   class CONTENT_EXPORT Delegate {
    public:
-    // Cancels the resource load with the specified error code.
-    virtual void CancelWithError(int error_code) = 0;
+    // Cancels the resource load with the specified error code and an optional,
+    // application-defined reason description.
+    virtual void CancelWithError(int error_code,
+                                 base::StringPiece custom_reason = nullptr) = 0;
 
     // Resumes the deferred resource load. It is a no-op if the resource load is
     // not deferred or has already been canceled.
     virtual void Resume() = 0;
 
+    virtual void SetPriority(net::RequestPriority priority);
+
     // Pauses/resumes reading response body if the resource is fetched from
     // network.
     virtual void PauseReadingBodyFromNet();
     virtual void ResumeReadingBodyFromNet();
+
+    // Replaces the URLLoader and URLLoaderClient endpoints held by the
+    // ThrottlingURLLoader instance.
+    virtual void InterceptResponse(
+        network::mojom::URLLoaderPtr new_loader,
+        network::mojom::URLLoaderClientRequest new_client_request,
+        network::mojom::URLLoaderPtr* original_loader,
+        network::mojom::URLLoaderClientRequest* original_client_request);
 
    protected:
     virtual ~Delegate();
@@ -62,20 +79,23 @@ class CONTENT_EXPORT URLLoaderThrottle {
   virtual void DetachFromCurrentSequence();
 
   // Called before the resource request is started.
-  virtual void WillStartRequest(const ResourceRequest& request, bool* defer);
+  virtual void WillStartRequest(network::ResourceRequest* request, bool* defer);
 
   // Called when the request was redirected.  |redirect_info| contains the
   // redirect responses's HTTP status code and some information about the new
   // request that will be sent if the redirect is followed, including the new
   // URL and new method.
-  virtual void WillRedirectRequest(const net::RedirectInfo& redirect_info,
-                                   bool* defer);
+  virtual void WillRedirectRequest(
+      const net::RedirectInfo& redirect_info,
+      const network::ResourceResponseHead& response_head,
+      bool* defer);
 
   // Called when the response headers and meta data are available.
   // TODO(776312): Migrate this URL to ResourceResponseHead.
-  virtual void WillProcessResponse(const GURL& response_url,
-                                   const ResourceResponseHead& response_head,
-                                   bool* defer);
+  virtual void WillProcessResponse(
+      const GURL& response_url,
+      const network::ResourceResponseHead& response_head,
+      bool* defer);
 
   void set_delegate(Delegate* delegate) { delegate_ = delegate; }
 

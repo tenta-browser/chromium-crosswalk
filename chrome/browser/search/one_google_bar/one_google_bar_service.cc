@@ -8,7 +8,6 @@
 
 #include "base/bind.h"
 #include "base/callback.h"
-#include "base/memory/ptr_util.h"
 #include "chrome/browser/search/one_google_bar/one_google_bar_fetcher.h"
 #include "components/signin/core/browser/gaia_cookie_manager_service.h"
 
@@ -41,7 +40,7 @@ OneGoogleBarService::OneGoogleBarService(
     GaiaCookieManagerService* cookie_service,
     std::unique_ptr<OneGoogleBarFetcher> fetcher)
     : fetcher_(std::move(fetcher)),
-      signin_observer_(base::MakeUnique<SigninObserver>(
+      signin_observer_(std::make_unique<SigninObserver>(
           cookie_service,
           base::Bind(&OneGoogleBarService::SigninStatusChanged,
                      base::Unretained(this)))) {}

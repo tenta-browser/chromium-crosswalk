@@ -6,6 +6,7 @@
 
 #include "base/mac/scoped_nsautorelease_pool.h"
 #include "content/browser/renderer_host/render_widget_host_impl.h"
+#import "content/browser/renderer_host/render_widget_host_view_cocoa.h"
 
 // Unlike some event APIs, Apple does not provide a way to programmatically
 // build a zoom event. To work around this, we leverage ObjectiveC's flexible
@@ -92,30 +93,33 @@ void SyntheticGestureTargetMac::DispatchInputEventToPlatform(
 
     switch (event.GetType()) {
       case WebInputEvent::kGesturePinchBegin: {
-        id event = [SyntheticPinchEvent
+        id cocoa_event = [SyntheticPinchEvent
             eventWithMagnification:0.0f
-                  locationInWindow:NSMakePoint(gesture_event->x,
-                                               gesture_event->y)
+                  locationInWindow:NSMakePoint(
+                                       gesture_event->PositionInWidget().x,
+                                       gesture_event->PositionInWidget().y)
                              phase:NSEventPhaseBegan];
-        [cocoa_view_ handleBeginGestureWithEvent:event];
+        [cocoa_view_ handleBeginGestureWithEvent:cocoa_event];
         return;
       }
       case WebInputEvent::kGesturePinchEnd: {
-        id event = [SyntheticPinchEvent
+        id cocoa_event = [SyntheticPinchEvent
             eventWithMagnification:0.0f
-                  locationInWindow:NSMakePoint(gesture_event->x,
-                                               gesture_event->y)
+                  locationInWindow:NSMakePoint(
+                                       gesture_event->PositionInWidget().x,
+                                       gesture_event->PositionInWidget().y)
                              phase:NSEventPhaseEnded];
-        [cocoa_view_ handleEndGestureWithEvent:event];
+        [cocoa_view_ handleEndGestureWithEvent:cocoa_event];
         return;
       }
       case WebInputEvent::kGesturePinchUpdate: {
-        id event = [SyntheticPinchEvent
+        id cocoa_event = [SyntheticPinchEvent
             eventWithMagnification:gesture_event->data.pinch_update.scale - 1.0f
-                  locationInWindow:NSMakePoint(gesture_event->x,
-                                               gesture_event->y)
+                  locationInWindow:NSMakePoint(
+                                       gesture_event->PositionInWidget().x,
+                                       gesture_event->PositionInWidget().y)
                              phase:NSEventPhaseChanged];
-        [cocoa_view_ magnifyWithEvent:event];
+        [cocoa_view_ magnifyWithEvent:cocoa_event];
         return;
       }
       default:

@@ -5,7 +5,6 @@
 #include "cc/trees/layer_tree_impl.h"
 
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "cc/layers/heads_up_display_layer_impl.h"
 #include "cc/test/fake_layer_tree_host_impl.h"
 #include "cc/test/geometry_test_utils.h"
@@ -2222,10 +2221,11 @@ TEST_F(LayerTreeImplTest, DeviceScaleFactorNeedsDrawPropertiesUpdate) {
 TEST_F(LayerTreeImplTest, RasterColorSpaceDoesNotNeedDrawPropertiesUpdate) {
   host_impl().active_tree()->BuildPropertyTreesForTesting();
   host_impl().active_tree()->SetRasterColorSpace(
-      gfx::ColorSpace::CreateXYZD50());
+      1, gfx::ColorSpace::CreateXYZD50());
   host_impl().active_tree()->UpdateDrawProperties();
   EXPECT_FALSE(host_impl().active_tree()->needs_update_draw_properties());
-  host_impl().active_tree()->SetRasterColorSpace(gfx::ColorSpace::CreateSRGB());
+  host_impl().active_tree()->SetRasterColorSpace(1,
+                                                 gfx::ColorSpace::CreateSRGB());
   EXPECT_FALSE(host_impl().active_tree()->needs_update_draw_properties());
 }
 
@@ -2285,7 +2285,9 @@ class PersistentSwapPromise
   ~PersistentSwapPromise() override = default;
 
   void DidActivate() override {}
-  MOCK_METHOD1(WillSwap, void(viz::CompositorFrameMetadata* metadata));
+  MOCK_METHOD2(WillSwap,
+               void(viz::CompositorFrameMetadata* metadata,
+                    FrameTokenAllocator* frame_token_allocator));
   MOCK_METHOD0(DidSwap, void());
 
   DidNotSwapAction DidNotSwap(DidNotSwapReason reason) override {
@@ -2304,7 +2306,8 @@ class NotPersistentSwapPromise
   ~NotPersistentSwapPromise() override = default;
 
   void DidActivate() override {}
-  void WillSwap(viz::CompositorFrameMetadata* metadata) override {}
+  void WillSwap(viz::CompositorFrameMetadata* metadata,
+                FrameTokenAllocator* frame_token_allocator) override {}
   void DidSwap() override {}
 
   DidNotSwapAction DidNotSwap(DidNotSwapReason reason) override {
@@ -2342,9 +2345,9 @@ TEST_F(LayerTreeImplTest, PersistentSwapPromisesAreKeptAlive) {
   for (size_t i = 0; i < persistent_promises.size(); ++i) {
     SCOPED_TRACE(testing::Message() << "While checking case #" << i);
     ASSERT_TRUE(persistent_promises[i]);
-    EXPECT_CALL(*persistent_promises[i], WillSwap(testing::_));
+    EXPECT_CALL(*persistent_promises[i], WillSwap(testing::_, testing::_));
   }
-  host_impl().active_tree()->FinishSwapPromises(nullptr);
+  host_impl().active_tree()->FinishSwapPromises(nullptr, nullptr);
 }
 
 TEST_F(LayerTreeImplTest, NotPersistentSwapPromisesAreDroppedWhenSwapFails) {

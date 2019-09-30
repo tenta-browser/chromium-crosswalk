@@ -7,11 +7,11 @@
 #include "base/logging.h"
 #include "base/test/mock_callback.h"
 #include "components/offline_pages/core/prefetch/prefetch_item.h"
+#include "components/offline_pages/core/prefetch/prefetch_task_test_base.h"
 #include "components/offline_pages/core/prefetch/prefetch_types.h"
 #include "components/offline_pages/core/prefetch/store/prefetch_store.h"
 #include "components/offline_pages/core/prefetch/store/prefetch_store_test_util.h"
 #include "components/offline_pages/core/prefetch/store/prefetch_store_utils.h"
-#include "components/offline_pages/core/prefetch/task_test_base.h"
 #include "components/offline_pages/core/prefetch/test_prefetch_dispatcher.h"
 #include "components/offline_pages/core/task.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -21,7 +21,7 @@ using testing::HasSubstr;
 
 namespace offline_pages {
 
-class PageBundleUpdateTaskTest : public TaskTestBase {
+class PageBundleUpdateTaskTest : public PrefetchTaskTestBase {
  public:
   PageBundleUpdateTaskTest() = default;
   ~PageBundleUpdateTaskTest() override = default;
@@ -63,18 +63,12 @@ class PageBundleUpdateTaskTest : public TaskTestBase {
 TEST_F(PageBundleUpdateTaskTest, StoreFailure) {
   store_util()->SimulateInitializationError();
   PageBundleUpdateTask task(store(), &dispatcher, "operation", {});
-  ExpectTaskCompletes(&task);
-
-  task.Run();
-  RunUntilIdle();
+  RunTask(&task);
 }
 
 TEST_F(PageBundleUpdateTaskTest, EmptyTask) {
   PageBundleUpdateTask task(store(), &dispatcher, "operation", {});
-  ExpectTaskCompletes(&task);
-
-  task.Run();
-  RunUntilIdle();
+  RunTask(&task);
   EXPECT_EQ(0, dispatcher.processing_schedule_count);
 }
 
@@ -99,9 +93,7 @@ TEST_F(PageBundleUpdateTaskTest, UpdatesItemsFromSentGeneratePageBundle) {
                                 RenderedPageInfoForPrefetchItem(item1),
                                 RenderedPageInfoForPrefetchItem(item2),
                             });
-  ExpectTaskCompletes(&task);
-  task.Run();
-  RunUntilIdle();
+  RunTask(&task);
 
   // The matching entry has been updated.
   EXPECT_EQ(PrefetchItemState::RECEIVED_BUNDLE,
@@ -128,9 +120,7 @@ TEST_F(PageBundleUpdateTaskTest, SentGetOperationToReceivedBundle) {
                             {
                                 RenderedPageInfoForPrefetchItem(item1),
                             });
-  ExpectTaskCompletes(&task);
-  task.Run();
-  RunUntilIdle();
+  RunTask(&task);
 
   // The matching entry has been updated.
   EXPECT_EQ(store_util()->GetPrefetchItem(item1.offline_id)->state,
@@ -159,9 +149,7 @@ TEST_F(PageBundleUpdateTaskTest, UrlDoesNotMatch) {
                             {
                                 RenderedPageInfoForPrefetchItem(item2),
                             });
-  ExpectTaskCompletes(&task);
-  task.Run();
-  RunUntilIdle();
+  RunTask(&task);
   EXPECT_EQ(item, *(store_util()->GetPrefetchItem(item.offline_id)));
   EXPECT_EQ(0, dispatcher.processing_schedule_count);
 }
@@ -178,9 +166,7 @@ TEST_F(PageBundleUpdateTaskTest, PendingRenderAwaitsGCM) {
                             {
                                 PendingPageInfoForPrefetchItem(item),
                             });
-  ExpectTaskCompletes(&task);
-  task.Run();
-  RunUntilIdle();
+  RunTask(&task);
 
   EXPECT_EQ(PrefetchItemState::AWAITING_GCM,
             store_util()->GetPrefetchItem(item.offline_id)->state);
@@ -206,9 +192,7 @@ TEST_F(PageBundleUpdateTaskTest, FailedRenderToFinished) {
   item2_render_info.status = RenderStatus::EXCEEDED_LIMIT;
   PageBundleUpdateTask task(store(), &dispatcher, "operation",
                             {item2_render_info, item1_render_info});
-  ExpectTaskCompletes(&task);
-  task.Run();
-  RunUntilIdle();
+  RunTask(&task);
 
   EXPECT_EQ(PrefetchItemState::FINISHED,
             store_util()->GetPrefetchItem(item1.offline_id)->state);
@@ -243,9 +227,7 @@ TEST_F(PageBundleUpdateTaskTest, MixOfResults) {
   PageBundleUpdateTask task(
       store(), &dispatcher, "operation",
       {item3_render_info, item2_render_info, item1_render_info});
-  ExpectTaskCompletes(&task);
-  task.Run();
-  RunUntilIdle();
+  RunTask(&task);
 
   EXPECT_EQ(PrefetchItemState::AWAITING_GCM,
             store_util()->GetPrefetchItem(item1.offline_id)->state);

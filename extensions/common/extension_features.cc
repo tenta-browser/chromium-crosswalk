@@ -11,5 +11,9 @@ namespace features {
 const base::Feature kNativeCrxBindings{"NativeCrxBindings",
                                        base::FEATURE_DISABLED_BY_DEFAULT};
 
+// Enables new extension updater service.
+const base::Feature kNewExtensionUpdaterService{
+    "NewExtensionUpdaterService", base::FEATURE_DISABLED_BY_DEFAULT};
+
 }  // namespace features
 }  // namespace extensions

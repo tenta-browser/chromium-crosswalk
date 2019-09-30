@@ -52,6 +52,7 @@ from webkitpy.common.system.path import abspath_to_uri
 from webkitpy.layout_tests.layout_package.bot_test_expectations import BotTestExpectationsFactory
 from webkitpy.layout_tests.models.test_configuration import TestConfiguration
 from webkitpy.layout_tests.models.test_expectations import TestExpectationParser
+from webkitpy.layout_tests.models.test_run_results import TestRunException
 from webkitpy.layout_tests.port import driver
 from webkitpy.layout_tests.port import server_process
 from webkitpy.layout_tests.port.factory import PortFactory
@@ -61,6 +62,48 @@ from webkitpy.layout_tests.servers import wptserve
 from webkitpy.w3c.wpt_manifest import WPTManifest
 
 _log = logging.getLogger(__name__)
+
+
+# TODO(https://crbug.com/787020): Remove dependency on msttcorefonts.
+MS_TRUETYPE_FONTS_DIR = '/usr/share/fonts/truetype/msttcorefonts/'
+MS_TRUETYPE_FONTS_PACKAGE = 'ttf-mscorefonts-installer'
+
+# Path relative to the build directory.
+CONTENT_SHELL_FONTS_DIR = "test_fonts"
+
+FONT_FILES = [
+    [[MS_TRUETYPE_FONTS_DIR], 'Comic_Sans_MS.ttf', MS_TRUETYPE_FONTS_PACKAGE],
+    [[MS_TRUETYPE_FONTS_DIR], 'Comic_Sans_MS_Bold.ttf', MS_TRUETYPE_FONTS_PACKAGE],
+    [[MS_TRUETYPE_FONTS_DIR], 'Impact.ttf', MS_TRUETYPE_FONTS_PACKAGE],
+    # The Microsoft font EULA
+    [['/usr/share/doc/ttf-mscorefonts-installer/'], 'READ_ME!.gz', MS_TRUETYPE_FONTS_PACKAGE],
+
+    # Other fonts: Arabic, CJK, Indic, Thai, etc.
+    [[CONTENT_SHELL_FONTS_DIR], 'Arimo-Bold.ttf', None],
+    [[CONTENT_SHELL_FONTS_DIR], 'Arimo-BoldItalic.ttf', None],
+    [[CONTENT_SHELL_FONTS_DIR], 'Arimo-Italic.ttf', None],
+    [[CONTENT_SHELL_FONTS_DIR], 'Arimo-Regular.ttf', None],
+    [[CONTENT_SHELL_FONTS_DIR], 'Cousine-Bold.ttf', None],
+    [[CONTENT_SHELL_FONTS_DIR], 'Cousine-BoldItalic.ttf', None],
+    [[CONTENT_SHELL_FONTS_DIR], 'Cousine-Italic.ttf', None],
+    [[CONTENT_SHELL_FONTS_DIR], 'Cousine-Regular.ttf', None],
+    [[CONTENT_SHELL_FONTS_DIR], 'DejaVuSans.ttf', None],
+    [[CONTENT_SHELL_FONTS_DIR], 'Garuda.ttf', None],
+    [[CONTENT_SHELL_FONTS_DIR], 'Gelasio-Bold.ttf', None],
+    [[CONTENT_SHELL_FONTS_DIR], 'Gelasio-BoldItalic.ttf', None],
+    [[CONTENT_SHELL_FONTS_DIR], 'Gelasio-Italic.ttf', None],
+    [[CONTENT_SHELL_FONTS_DIR], 'Gelasio-Regular.ttf', None],
+    [[CONTENT_SHELL_FONTS_DIR], 'Lohit-Devanagari.ttf', None],
+    [[CONTENT_SHELL_FONTS_DIR], 'Lohit-Gurmukhi.ttf', None],
+    [[CONTENT_SHELL_FONTS_DIR], 'Lohit-Tamil.ttf', None],
+    [[CONTENT_SHELL_FONTS_DIR], 'MuktiNarrow.ttf', None],
+    [[CONTENT_SHELL_FONTS_DIR], 'NotoSansKhmer-Regular.ttf', None],
+    [[CONTENT_SHELL_FONTS_DIR], 'NotoSansCJKjp-Regular.otf', None],
+    [[CONTENT_SHELL_FONTS_DIR], 'Tinos-Bold.ttf', None],
+    [[CONTENT_SHELL_FONTS_DIR], 'Tinos-BoldItalic.ttf', None],
+    [[CONTENT_SHELL_FONTS_DIR], 'Tinos-Italic.ttf', None],
+    [[CONTENT_SHELL_FONTS_DIR], 'Tinos-Regular.ttf', None],
+]
 
 
 class Port(object):
@@ -93,6 +136,8 @@ class Port(object):
         ('win10', 'x86'),
         ('trusty', 'x86_64'),
 
+        ('fuchsia', 'x86_64'),
+
         # FIXME: Technically this should be 'arm', but adding a third
         # architecture type breaks TestConfigurationConverter.
         # If we need this to be 'arm' in the future, then we first have to
@@ -107,12 +152,30 @@ class Port(object):
         'android': ['kitkat'],
     }
 
+    # List of ports open on the host that the tests will connect to. When tests
+    # run on a separate machine (Android and Fuchsia) these ports need to be
+    # forwarded back to the host.
+    # 8000, 8080 and 8443 are for http/https tests;
+    # 8880 is for websocket tests (see apache_http.py and pywebsocket.py).
+    # 8001, 8081 and 8444 are for http/https WPT;
+    # 9001 and 9444 are for websocket WPT (see wptserve.py).
+    SERVER_PORTS = [8000, 8001, 8080, 8081, 8443, 8444, 8880, 9001, 9444]
+
     FALLBACK_PATHS = {}
 
     SUPPORTED_VERSIONS = []
 
     # URL to the build requirements page.
     BUILD_REQUIREMENTS_URL = ''
+
+    # The suffixes of baseline files (not extensions).
+    BASELINE_SUFFIX = '-expected'
+    BASELINE_MISMATCH_SUFFIX = '-expected-mismatch'
+
+    # All of the non-reftest baseline extensions we use.
+    BASELINE_EXTENSIONS = ('.wav', '.txt', '.png')
+
+    FLAG_EXPECTATIONS_PREFIX = 'FlagExpectations'
 
     # Because this is an abstract base class, arguments to functions may be
     # unused in this class - pylint: disable=unused-argument
@@ -351,6 +414,10 @@ class Port(object):
         """
         cmd = [self._path_to_driver(), '--check-layout-test-sys-deps']
 
+        additional_flags = self.get_option('additional_driver_flag', [])
+        if additional_flags:
+            cmd.append(additional_flags[0])
+
         local_error = ScriptError()
 
         def error_handler(script_error):
@@ -482,17 +549,46 @@ class Port(object):
             # FIXME: How should this handle more than one type of reftest?
             baseline_dict['.' + reference_files[0][0]] = self.relative_test_filename(reference_files[0][1])
 
-        for extension in self.baseline_extensions():
+        for extension in self.BASELINE_EXTENSIONS:
             path = self.expected_filename(test_name, extension, return_default=False)
             baseline_dict[extension] = self.relative_test_filename(path) if path else path
 
         return baseline_dict
 
-    def baseline_extensions(self):
-        """Returns a tuple of all of the non-reftest baseline extensions we use."""
-        return ('.wav', '.txt', '.png')
+    def output_filename(self, test_name, suffix, extension):
+        """Generates the output filename for a test.
 
-    def expected_baselines(self, test_name, suffix, all_baselines=False):
+        This method gives a proper filename for various outputs of a test,
+        including baselines and actual results. Usually, the output filename
+        follows the pattern: test_name_without_ext+suffix+extension, but when
+        the test name contains query strings, e.g. external/wpt/foo.html?wss,
+        test_name_without_ext is mangled to be external/wpt/foo_wss.
+
+        It is encouraged to use this method instead of writing another mangling.
+
+        Args:
+            test_name: The name of a test.
+            suffix: A suffix string to add before the extension
+                (e.g. "-expected").
+            extension: The extension of the output file (starting with .).
+
+        Returns:
+            A string, the output filename.
+        """
+        test_name_root, test_name_ext = self._filesystem.splitext(test_name)
+
+        # WPT names might contain query strings, e.g. external/wpt/foo.html?wss,
+        # in which case we mangle test_name_root (the part of a path before the
+        # last extension point) to external/wpt/foo_wss, and the output filename
+        # becomes external/wpt/foo_wss-expected.txt.
+        index = test_name_ext.find('?')
+        if index != -1:
+            query_part = test_name_ext[index + 1:]
+            test_name_root += '_' + self._filesystem.sanitize_filename(query_part)
+
+        return test_name_root + suffix + extension
+
+    def expected_baselines(self, test_name, extension, all_baselines=False, match=True):
         """Given a test name, finds where the baseline results are located.
 
         Return values will be in the format appropriate for the current
@@ -505,15 +601,16 @@ class Port(object):
         platform specific.
 
         Args:
-            test_name: name of test file (usually a relative path under LayoutTests/)
-            suffix: file suffix of the expected results, including dot; e.g.
-                '.txt' or '.png'.  This should not be None, but may be an empty
-                string.
+            test_name: Name of test file (usually a relative path under LayoutTests/)
+            extension: File extension of the expected results, including dot;
+                e.g. '.txt' or '.png'.  This should not be None, but may be an
+                empty string.
             all_baselines: If True, return an ordered list of all baseline paths
                 for the given platform. If False, return only the first one.
+            match: Whether the baseline is a match or a mismatch.
 
         Returns:
-            a list of (platform_dir, results_filename) pairs, where
+            A list of (platform_dir, results_filename) pairs, where
                 platform_dir - abs path to the top of the results tree (or test
                     tree)
                 results_filename - relative path from top of tree to the results
@@ -521,7 +618,8 @@ class Port(object):
                 (port.join() of the two gives you the full path to the file,
                     unless None was returned.)
         """
-        baseline_filename = self._filesystem.splitext(test_name)[0] + '-expected' + suffix
+        baseline_filename = self.output_filename(
+            test_name, self.BASELINE_SUFFIX if match else self.BASELINE_MISMATCH_SUFFIX, extension)
         baseline_search_path = self.baseline_search_path()
 
         baselines = []
@@ -543,7 +641,8 @@ class Port(object):
 
         return [(None, baseline_filename)]
 
-    def expected_filename(self, test_name, suffix, return_default=True, fallback_base_for_virtual=True):
+    def expected_filename(self, test_name, extension,
+                          return_default=True, fallback_base_for_virtual=True, match=True):
         """Given a test name, returns an absolute path to its expected results.
 
         If no expected results are found in any of the searched directories,
@@ -555,27 +654,30 @@ class Port(object):
         the other baseline and filename manipulation routines.
 
         Args:
-            test_name: name of test file (usually a relative path under LayoutTests/)
-            suffix: file suffix of the expected results, including dot; e.g. '.txt'
-                or '.png'.  This should not be None, but may be an empty string.
-            platform: the most-specific directory name to use to build the
-                search list of directories, e.g., 'win'.
-            return_default: if True, returns the path to the generic expectation if nothing
-                else is found; if False, returns None.
-            fallback_base_for_virtual: For virtual test only. When no virtual specific
-                baseline is found, if this parameter is True, fallback to find baselines
-                of the base test; if False, depending on |return_default|, returns the
-                generic virtual baseline or None.
+            test_name: Name of test file (usually a relative path under LayoutTests/)
+            extension: File extension of the expected results, including dot;
+                e.g. '.txt' or '.png'.  This should not be None, but may be an
+                empty string.
+            return_default: If True, returns the path to the generic expectation
+                if nothing else is found; if False, returns None.
+            fallback_base_for_virtual: For virtual test only. When no virtual
+                specific baseline is found, if this parameter is True, fallback
+                to find baselines of the base test; if False, depending on
+                |return_default|, returns the generic virtual baseline or None.
+            match: Whether the baseline is a match or a mismatch.
+
+        Returns:
+            An absolute path to its expected results, or None if not found.
         """
         # FIXME: The [0] here is very mysterious, as is the destructured return.
-        platform_dir, baseline_filename = self.expected_baselines(test_name, suffix)[0]
+        platform_dir, baseline_filename = self.expected_baselines(test_name, extension, match=match)[0]
         if platform_dir:
             return self._filesystem.join(platform_dir, baseline_filename)
 
         if fallback_base_for_virtual:
             actual_test_name = self.lookup_virtual_test_base(test_name)
             if actual_test_name:
-                return self.expected_filename(actual_test_name, suffix, return_default)
+                return self.expected_filename(actual_test_name, extension, return_default, match=match)
 
         if return_default:
             return self._filesystem.join(self.layout_tests_dir(), baseline_filename)
@@ -660,9 +762,9 @@ class Port(object):
 
         # Try to find -expected.* or -expected-mismatch.* in the same directory.
         reftest_list = []
-        for expectation, prefix in (('==', ''), ('!=', '-mismatch')):
+        for expectation in ('==', '!='):
             for extension in Port.supported_file_extensions:
-                path = self.expected_filename(test_name, prefix + extension)
+                path = self.expected_filename(test_name, extension, match=(expectation == '=='))
                 if self._filesystem.exists(path):
                     reftest_list.append((expectation, path))
         if reftest_list:
@@ -722,8 +824,10 @@ class Port(object):
         return [self.relative_test_filename(f) for f in files]
 
     @staticmethod
-    # If any changes are made here be sure to update the isUsedInReftest method in old-run-webkit-tests as well.
     def is_reference_html_file(filesystem, dirname, filename):
+        # TODO(robertma): We probably do not need prefixes/suffixes other than
+        # -expected{-mismatch} any more. Or worse, there might be actual tests
+        # with these prefixes/suffixes.
         if filename.startswith('ref-') or filename.startswith('notref-'):
             return True
         filename_without_ext, _ = filesystem.splitext(filename)
@@ -972,34 +1076,6 @@ class Port(object):
     def path_to_never_fix_tests_file(self):
         return self._filesystem.join(self.layout_tests_dir(), 'NeverFixTests')
 
-    def _expectations_from_skipped_files(self, skipped_file_paths):
-        # TODO(qyearsley): Remove this if there are no more "Skipped" files.
-        tests_to_skip = []
-        for search_path in skipped_file_paths:
-            filename = self._filesystem.join(self._absolute_baseline_path(search_path), 'Skipped')
-            if not self._filesystem.exists(filename):
-                _log.debug('Skipped does not exist: %s', filename)
-                continue
-            _log.debug('Using Skipped file: %s', filename)
-            tests_to_skip.extend(self._tests_from_file(filename))
-        return tests_to_skip
-
-    @memoized
-    def skipped_perf_tests(self):
-        tests = self._expectations_from_skipped_files([self._perf_tests_dir()])
-        # Best to normalize directory names to not include the trailing slash.
-        # TODO(qyearsley): Explain why removing trailing slashes is needed here.
-        return sorted(test.rstrip('/') for test in tests)
-
-    def skips_perf_test(self, test_name):
-        for test_or_category in self.skipped_perf_tests():
-            if test_or_category == test_name:
-                return True
-            category = self._filesystem.join(self._perf_tests_dir(), test_or_category)
-            if self._filesystem.isdir(category) and test_name.startswith(test_or_category):
-                return True
-        return False
-
     def name(self):
         """Returns a name that uniquely identifies this particular type of port.
 
@@ -1195,8 +1271,22 @@ class Port(object):
         """Whether a test is considered a web-platform-tests test."""
         return re.match(r'(virtual/[^/]+/)?external/wpt/', test)
 
-    def should_use_wptserve(self, test):
-        return self.is_wpt_test(test)
+    @staticmethod
+    def should_use_wptserve(test):
+        return Port.is_wpt_test(test)
+
+    @staticmethod
+    def should_run_in_wpt_mode(test):
+        """Whether content_shell should run a test in the WPT mode.
+
+        Some tests outside external/wpt should also be run in the WPT mode in
+        content_shell, namely: harness-tests/wpt/ (tests for console log
+        filtering).
+        """
+        # Note: match rules in TestInterfaces::ConfigureForTestWithURL in
+        # //src/content/shell/test_runner/test_interfaces.cc.
+        return (Port.is_wpt_test(test) or
+                re.match(r'harness-tests/wpt/', test))
 
     def start_wptserve(self):
         """Starts a WPT web server.
@@ -1293,7 +1383,7 @@ class Port(object):
         flag = self.primary_driver_flag()
         if flag:
             return self._filesystem.join(
-                self.layout_tests_dir(), 'FlagExpectations', flag.lstrip('-'))
+                self.layout_tests_dir(), self.FLAG_EXPECTATIONS_PREFIX, flag.lstrip('-'))
 
     def _flag_specific_baseline_search_path(self):
         flag = self.primary_driver_flag()
@@ -1483,8 +1573,8 @@ class Port(object):
         if self.host.platform.is_linux():
             distribution = self.host.platform.linux_distribution()
 
-            custom_configuration_distributions = ['arch', 'debian', 'redhat']
-            if distribution in custom_configuration_distributions:
+            custom_configurations = ['arch', 'debian', 'fedora', 'redhat']
+            if distribution in custom_configurations:
                 return '%s-httpd-%s.conf' % (distribution, self._apache_version())
 
         return 'apache2-httpd-' + self._apache_version() + '.conf'
@@ -1626,6 +1716,10 @@ class Port(object):
 
     def _wpt_test_urls_matching_paths(self, paths):
         tests = []
+        # '/' is used throughout this function instead of filesystem.sep as the WPT manifest always
+        # uses '/' for paths (it is not OS dependent).
+        if self._filesystem.sep != '/':
+            paths = [path.replace(self._filesystem.sep, '/') for path in paths]
 
         for test_url_path in self._wpt_manifest().all_urls():
             if test_url_path[0] == '/':
@@ -1646,8 +1740,8 @@ class Port(object):
                 )
 
                 # Get a list of directories for both paths, filter empty strings
-                full_test_url_directories = filter(None, full_test_url_path.split(self._filesystem.sep))
-                path_directories = filter(None, path.split(self._filesystem.sep))
+                full_test_url_directories = filter(None, full_test_url_path.split('/'))
+                path_directories = filter(None, path.split('/'))
 
                 # For all other path matches within WPT
                 if matches_any_js_test or path_directories == full_test_url_directories[0:len(path_directories)]:
@@ -1704,12 +1798,19 @@ class Port(object):
         return []
 
     def should_run_as_pixel_test(self, test_input):
+        """Whether a test should run as pixel test (when there is no reference).
+
+        This provides the *default* value for whether a test should run as
+        pixel test. When reference files exist (checked by layout_test_runner
+        before calling this method), the test always runs as pixel test.
+        """
         if not self._options.pixel_tests:
             return False
         if self._options.pixel_test_directories:
             return any(test_input.test_name.startswith(directory) for directory in self._options.pixel_test_directories)
-        # TODO(burnik): Make sure this is the right way to do it.
-        if self.should_use_wptserve(test_input.test_name):
+        if self.should_run_in_wpt_mode(test_input.test_name):
+            # WPT should not run as pixel test by default, except reftests
+            # (for which reference files would exist).
             return False
         return True
 
@@ -1755,6 +1856,31 @@ class Port(object):
         except OSError:
             pass
         return True
+
+    def _get_font_files(self):
+        """Returns list of font files that should be used by the test."""
+        # TODO(sergeyu): Currently FONT_FILES is valid only on Linux. Make it
+        # usable on other platforms if necessary.
+        result = [self._build_path('AHEM____.TTF')]
+        for (font_dirs, font_file, package) in FONT_FILES:
+            exists = False
+            for font_dir in font_dirs:
+                font_path = os.path.join(font_dir, font_file)
+                if not os.path.isabs(font_path):
+                    font_path = self._build_path(font_path)
+                if self._check_file_exists(font_path, '', more_logging=False):
+                    result.append(font_path)
+                    exists = True
+                    break
+            if not exists:
+                message = 'You are missing %s under %s.' % (font_file, font_dirs)
+                if package:
+                    message += ' Try installing %s. See build instructions.' % package
+
+                _log.error(message)
+                raise TestRunException(exit_codes.SYS_DEPS_EXIT_STATUS, message)
+        return result
+
 
 
 class VirtualTestSuite(object):

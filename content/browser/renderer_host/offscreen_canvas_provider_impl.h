@@ -11,7 +11,7 @@
 #include "components/viz/common/surfaces/frame_sink_id.h"
 #include "content/common/content_export.h"
 #include "mojo/public/cpp/bindings/binding_set.h"
-#include "third_party/WebKit/public/platform/modules/offscreencanvas/offscreen_canvas_surface.mojom.h"
+#include "third_party/blink/public/platform/modules/offscreencanvas/offscreen_canvas_surface.mojom.h"
 
 namespace viz {
 class HostFrameSinkManager;
@@ -36,8 +36,7 @@ class CONTENT_EXPORT OffscreenCanvasProviderImpl
   void CreateOffscreenCanvasSurface(
       const viz::FrameSinkId& parent_frame_sink_id,
       const viz::FrameSinkId& frame_sink_id,
-      blink::mojom::OffscreenCanvasSurfaceClientPtr client,
-      blink::mojom::OffscreenCanvasSurfaceRequest request) override;
+      blink::mojom::OffscreenCanvasSurfaceClientPtr client) override;
   void CreateCompositorFrameSink(
       const viz::FrameSinkId& frame_sink_id,
       viz::mojom::CompositorFrameSinkClientPtr client,

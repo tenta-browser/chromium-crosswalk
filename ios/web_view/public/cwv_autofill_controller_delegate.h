@@ -30,18 +30,21 @@ CWV_EXPORT
 // Called when a form field element receives a "focus" event.
 - (void)autofillController:(CWVAutofillController*)autofillController
     didFocusOnFieldWithName:(NSString*)fieldName
+            fieldIdentifier:(NSString*)fieldIdentifier
                    formName:(NSString*)formName
                       value:(NSString*)value;
 
 // Called when a form field element receives an "input" event.
 - (void)autofillController:(CWVAutofillController*)autofillController
     didInputInFieldWithName:(NSString*)fieldName
+            fieldIdentifier:(NSString*)fieldIdentifier
                    formName:(NSString*)formName
                       value:(NSString*)value;
 
 // Called when a form field element receives a "blur" (un-focused) event.
 - (void)autofillController:(CWVAutofillController*)autofillController
     didBlurOnFieldWithName:(NSString*)fieldName
+           fieldIdentifier:(NSString*)fieldIdentifier
                   formName:(NSString*)formName
                      value:(NSString*)value;
 
@@ -49,7 +52,8 @@ CWV_EXPORT
 // as a result of user interaction.
 - (void)autofillController:(CWVAutofillController*)autofillController
      didSubmitFormWithName:(NSString*)formName
-             userInitiated:(BOOL)userInitiated;
+             userInitiated:(BOOL)userInitiated
+               isMainFrame:(BOOL)isMainFrame;
 
 @end
 

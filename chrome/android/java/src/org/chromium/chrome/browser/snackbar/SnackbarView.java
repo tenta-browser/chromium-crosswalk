@@ -79,7 +79,7 @@ class SnackbarView {
     SnackbarView(Activity activity, OnClickListener listener, Snackbar snackbar,
             @Nullable ViewGroup parentView) {
         mActivity = activity;
-        mIsTablet = DeviceFormFactor.isTablet();
+        mIsTablet = DeviceFormFactor.isNonMultiDisplayContextOnTablet(activity);
 
         if (parentView == null) {
             mOriginalParent = findParentView(activity);
@@ -240,14 +240,13 @@ class SnackbarView {
         int backgroundColor = snackbar.getBackgroundColor();
         if (backgroundColor == 0) {
             backgroundColor = ApiCompatibilityUtils.getColor(mContainerView.getResources(),
-                    FeatureUtilities.isChromeHomeEnabled() ? R.color.modern_primary_color
-                                                           : R.color.snackbar_background_color);
+                    useModernDesign() ? R.color.modern_primary_color
+                                      : R.color.snackbar_background_color);
         }
 
         int textAppearanceResId = snackbar.getTextAppearance();
         if (textAppearanceResId == 0) {
-            textAppearanceResId = FeatureUtilities.isChromeHomeEnabled() ? R.style.BlackBodyDefault
-                                                                         : R.style.WhiteBody;
+            textAppearanceResId = useModernDesign() ? R.style.BlackBodyDefault : R.style.WhiteBody;
         }
         ApiCompatibilityUtils.setTextAppearance(mMessageView, textAppearanceResId);
 
@@ -275,7 +274,7 @@ class SnackbarView {
             mProfileImageView.setVisibility(View.GONE);
         }
 
-        if (FeatureUtilities.isChromeHomeEnabled()) {
+        if (useModernDesign()) {
             mActionButtonView.setTextColor(ApiCompatibilityUtils.getColor(
                     mContainerView.getResources(), R.color.blue_when_enabled));
             mShadowView.setVisibility(View.VISIBLE);
@@ -321,5 +320,9 @@ class SnackbarView {
         } else {
             view.setText(text);
         }
+    }
+
+    private boolean useModernDesign() {
+        return !mIsTablet && FeatureUtilities.isChromeModernDesignEnabled();
     }
 }

@@ -9,7 +9,6 @@
 #include "base/android/jni_array.h"
 #include "base/android/jni_string.h"
 #include "base/bind.h"
-#include "base/memory/ptr_util.h"
 #include "base/sequenced_task_runner.h"
 #include "base/task_scheduler/post_task.h"
 #include "chrome/browser/net/nqe/ui_network_quality_estimator_service.h"
@@ -157,7 +156,7 @@ std::unique_ptr<KeyedService> GetTestingRequestCoordinator(
   std::unique_ptr<OfflinePagesUkmReporter> ukm_reporter(
       new OfflinePagesUkmReporter());
   std::unique_ptr<RequestCoordinator> request_coordinator =
-      base::MakeUnique<RequestCoordinator>(
+      std::make_unique<RequestCoordinator>(
           std::move(policy), std::move(offliner), std::move(queue),
           std::move(scheduler), network_quality_estimator,
           std::move(ukm_reporter));
@@ -167,7 +166,7 @@ std::unique_ptr<KeyedService> GetTestingRequestCoordinator(
 
   DownloadNotifyingObserver::CreateAndStartObserving(
       request_coordinator.get(),
-      base::MakeUnique<android::OfflinePageNotificationBridge>());
+      std::make_unique<android::OfflinePageNotificationBridge>());
 
   return std::move(request_coordinator);
 }

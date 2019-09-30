@@ -174,6 +174,7 @@
         '../../../externs/background/compiled_resources2.gyp:import_runner',
         '../../common/js/compiled_resources2.gyp:importer_common',
         '../../common/js/compiled_resources2.gyp:metrics',
+        'drive_sync_handler',
         'import_history',
         'media_scanner',
         'progress_center',
@@ -208,10 +209,20 @@
 #      'target_name': 'mock_progress_center',
 #      'includes': ['../../../compile_js2.gypi'],
 #    },
-#    {
-#      'target_name': 'mock_volume_manager',
-#      'includes': ['../../../compile_js2.gypi'],
-#    },
+    {
+      'target_name': 'mock_volume_manager',
+      'dependencies': [
+        '../../../externs/compiled_resources2.gyp:entry_location',
+        '../../../externs/compiled_resources2.gyp:volume_info_list',
+        '../../../externs/compiled_resources2.gyp:volume_info',
+        '../../../externs/compiled_resources2.gyp:volume_manager',
+        '../../common/js/compiled_resources2.gyp:mock_entry',
+        'volume_info_impl',
+        'volume_info_list_impl',
+        'volume_manager_factory',
+      ],
+      'includes': ['../../../compile_js2.gypi'],
+    },
     {
       'target_name': 'progress_center',
       'dependencies': [

@@ -79,7 +79,7 @@ class CrashingDelegate : public ExceptionHandlerServer::Delegate {
       : server_ready_(server_ready),
         completed_test_event_(completed_test_event),
         break_near_(0) {}
-  ~CrashingDelegate() override {}
+  ~CrashingDelegate() {}
 
   void set_break_near(WinVMAddress break_near) { break_near_ = break_near; }
 
@@ -103,7 +103,7 @@ class CrashingDelegate : public ExceptionHandlerServer::Delegate {
     // Verify the exception happened at the expected location with a bit of
     // slop space to allow for reading the current PC before the exception
     // happens. See TestCrashingChild().
-    constexpr uint64_t kAllowedOffset = 64;
+    constexpr uint64_t kAllowedOffset = 100;
     EXPECT_GT(snapshot.Exception()->ExceptionAddress(), break_near_);
     EXPECT_LT(snapshot.Exception()->ExceptionAddress(),
               break_near_ + kAllowedOffset);
@@ -183,7 +183,7 @@ class SimulateDelegate : public ExceptionHandlerServer::Delegate {
       : server_ready_(server_ready),
         completed_test_event_(completed_test_event),
         dump_near_(0) {}
-  ~SimulateDelegate() override {}
+  ~SimulateDelegate() {}
 
   void set_dump_near(WinVMAddress dump_near) { dump_near_ = dump_near; }
 
@@ -204,7 +204,7 @@ class SimulateDelegate : public ExceptionHandlerServer::Delegate {
 
     // Verify the dump was captured at the expected location with some slop
     // space.
-    constexpr uint64_t kAllowedOffset = 64;
+    constexpr uint64_t kAllowedOffset = 100;
     EXPECT_GT(snapshot.Exception()->Context()->InstructionPointer(),
               dump_near_);
     EXPECT_LT(snapshot.Exception()->Context()->InstructionPointer(),

@@ -5,10 +5,10 @@
 #include "chrome/browser/chromeos/arc/policy/arc_policy_bridge.h"
 
 #include <utility>
-#include <vector>
 
 #include "base/bind.h"
 #include "base/callback_helpers.h"
+#include "base/guid.h"
 #include "base/json/json_reader.h"
 #include "base/json/json_string_value_serializer.h"
 #include "base/logging.h"
@@ -32,6 +32,7 @@
 #include "components/policy/core/common/policy_namespace.h"
 #include "components/policy/policy_constants.h"
 #include "components/prefs/pref_service.h"
+#include "components/user_manager/user.h"
 #include "content/public/common/service_manager_connection.h"
 #include "crypto/sha2.h"
 #include "services/data_decoder/public/cpp/safe_json_parser.h"
@@ -192,10 +193,14 @@ void AddOncCaCertsToPolicies(const policy::PolicyMap& policy_map,
     data.SetString("X509", x509_data);
     ca_certs->Append(data.CreateDeepCopy());
   }
+  if (!ca_certs->GetList().empty())
+    filtered_policies->SetKey("credentialsConfigDisabled", base::Value(true));
   filtered_policies->Set(kArcCaCerts, std::move(ca_certs));
 }
 
-std::string GetFilteredJSONPolicies(const policy::PolicyMap& policy_map) {
+std::string GetFilteredJSONPolicies(const policy::PolicyMap& policy_map,
+                                    const std::string& guid,
+                                    bool is_affiliated) {
   base::DictionaryValue filtered_policies;
   // Parse ArcPolicy as JSON string before adding other policies to the
   // dictionary.
@@ -237,6 +242,11 @@ std::string GetFilteredJSONPolicies(const policy::PolicyMap& policy_map) {
 
   // Add CA certificates.
   AddOncCaCertsToPolicies(policy_map, &filtered_policies);
+
+  if (!is_affiliated)
+    filtered_policies.RemoveKey("apkCacheEnabled");
+
+  filtered_policies.SetString("guid", guid);
 
   std::string policy_json;
   JSONStringValueSerializer serializer(&policy_json);
@@ -323,6 +333,7 @@ ArcPolicyBridge::ArcPolicyBridge(content::BrowserContext* context,
     : context_(context),
       arc_bridge_service_(bridge_service),
       policy_service_(policy_service),
+      instance_guid_(base::GenerateGUID()),
       weak_ptr_factory_(this) {
   VLOG(2) << "ArcPolicyBridge::ArcPolicyBridge";
   arc_bridge_service_->policy()->SetHost(this);
@@ -333,6 +344,18 @@ ArcPolicyBridge::~ArcPolicyBridge() {
   VLOG(2) << "ArcPolicyBridge::~ArcPolicyBridge";
   arc_bridge_service_->policy()->RemoveObserver(this);
   arc_bridge_service_->policy()->SetHost(nullptr);
+}
+
+const std::string& ArcPolicyBridge::GetInstanceGuidForTesting() {
+  return instance_guid_;
+}
+
+void ArcPolicyBridge::AddObserver(Observer* observer) {
+  observers_.AddObserver(observer);
+}
+
+void ArcPolicyBridge::RemoveObserver(Observer* observer) {
+  observers_.RemoveObserver(observer);
 }
 
 void ArcPolicyBridge::OverrideIsManagedForTesting(bool is_managed) {
@@ -357,7 +380,11 @@ void ArcPolicyBridge::OnConnectionClosed() {
 
 void ArcPolicyBridge::GetPolicies(GetPoliciesCallback callback) {
   VLOG(1) << "ArcPolicyBridge::GetPolicies";
-  std::move(callback).Run(GetCurrentJSONPolicies());
+  const std::string policy = GetCurrentJSONPolicies();
+  for (Observer& observer : observers_) {
+    observer.OnPolicySent(policy);
+  }
+  std::move(callback).Run(policy);
 }
 
 void ArcPolicyBridge::ReportCompliance(const std::string& request,
@@ -373,6 +400,31 @@ void ArcPolicyBridge::ReportCompliance(const std::string& request,
       base::Bind(&ArcPolicyBridge::OnReportComplianceParseSuccess,
                  weak_ptr_factory_.GetWeakPtr(), repeating_callback),
       base::Bind(&OnReportComplianceParseFailure, repeating_callback));
+}
+
+void ArcPolicyBridge::ReportCloudDpsRequested(
+    base::Time time,
+    const std::vector<std::string>& package_names) {
+  const std::set<std::string> packages_set(package_names.begin(),
+                                           package_names.end());
+  for (Observer& observer : observers_)
+    observer.OnCloudDpsRequested(time, packages_set);
+}
+
+void ArcPolicyBridge::ReportCloudDpsSucceeded(
+    base::Time time,
+    const std::vector<std::string>& package_names) {
+  const std::set<std::string> packages_set(package_names.begin(),
+                                           package_names.end());
+  for (Observer& observer : observers_)
+    observer.OnCloudDpsSucceeded(time, packages_set);
+}
+
+void ArcPolicyBridge::ReportCloudDpsFailed(base::Time time,
+                                           const std::string& package_name,
+                                           mojom::InstallErrorReason reason) {
+  for (Observer& observer : observers_)
+    observer.OnCloudDpsFailed(time, package_name, reason);
 }
 
 void ArcPolicyBridge::OnPolicyUpdated(const policy::PolicyNamespace& ns,
@@ -408,7 +460,13 @@ std::string ArcPolicyBridge::GetCurrentJSONPolicies() const {
                                                  std::string());
   const policy::PolicyMap& policy_map =
       policy_service_->GetPolicies(policy_namespace);
-  return GetFilteredJSONPolicies(policy_map);
+
+  const Profile* const profile = Profile::FromBrowserContext(context_);
+  const user_manager::User* const user =
+      chromeos::ProfileHelper::Get()->GetUserByProfile(profile);
+
+  return GetFilteredJSONPolicies(policy_map, instance_guid_,
+                                 user->IsAffiliated());
 }
 
 void ArcPolicyBridge::OnReportComplianceParseSuccess(
@@ -420,8 +478,12 @@ void ArcPolicyBridge::OnReportComplianceParseSuccess(
       prefs::kArcPolicyComplianceReported, true);
 
   const base::DictionaryValue* dict = nullptr;
-  if (parsed_json->GetAsDictionary(&dict))
+  if (parsed_json->GetAsDictionary(&dict)) {
     UpdateComplianceReportMetrics(dict);
+    for (Observer& observer : observers_) {
+      observer.OnComplianceReportReceived(parsed_json.get());
+    }
+  }
 }
 
 void ArcPolicyBridge::UpdateComplianceReportMetrics(

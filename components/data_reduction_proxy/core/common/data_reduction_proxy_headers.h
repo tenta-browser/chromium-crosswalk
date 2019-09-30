@@ -13,7 +13,7 @@
 #include "base/time/time.h"
 #include "net/http/http_request_headers.h"
 #include "net/http/http_response_headers.h"
-#include "net/proxy/proxy_service.h"
+#include "net/proxy_resolution/proxy_resolution_service.h"
 
 class GURL;
 
@@ -111,14 +111,6 @@ const char* compressed_video_directive();
 // Gets the directive used by the data reduction proxy to tell the client to use
 // a specific page policy.
 const char* page_policies_directive();
-
-// Gets the Chrome-Proxy experiment ("exp") value to force a lite page preview
-// for requests that accept lite pages.
-const char* chrome_proxy_experiment_force_lite_page();
-
-// Gets the Chrome-Proxy experiment ("exp") value to force an empty image
-// preview for requests that enable server provided previews.
-const char* chrome_proxy_experiment_force_empty_image();
 
 // Returns true if the Chrome-Proxy-Content-Transform response header indicates
 // that an empty image has been provided.

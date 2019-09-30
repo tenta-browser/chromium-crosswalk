@@ -10,7 +10,6 @@
 
 #include "base/json/json_reader.h"
 #include "base/json/json_writer.h"
-#include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
@@ -19,6 +18,7 @@
 #include "headless/public/util/expedited_dispatcher.h"
 #include "headless/public/util/testing/generic_url_request_mocks.h"
 #include "headless/public/util/url_fetcher.h"
+#include "net/base/completion_once_callback.h"
 #include "net/base/elements_upload_data_stream.h"
 #include "net/base/upload_bytes_element_reader.h"
 #include "net/http/http_response_headers.h"
@@ -28,7 +28,11 @@
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
+using testing::AllOf;
+using testing::ElementsAre;
+using testing::Eq;
 using testing::NotNull;
+using testing::Property;
 using testing::_;
 
 std::ostream& operator<<(std::ostream& os, const base::DictionaryValue& value) {
@@ -57,10 +61,11 @@ class MockDelegate : public MockGenericURLRequestJobDelegate {
 
 class MockFetcher : public URLFetcher {
  public:
-  MockFetcher(base::DictionaryValue* fetch_request,
-              std::string* received_post_data,
-              std::map<std::string, std::string>* json_fetch_reply_map,
-              base::Callback<void(const Request*)>* on_request_callback)
+  MockFetcher(
+      base::DictionaryValue* fetch_request,
+      std::string* received_post_data,
+      std::map<std::string, std::string>* json_fetch_reply_map,
+      base::RepeatingCallback<void(const Request*)>* on_request_callback)
       : json_fetch_reply_map_(json_fetch_reply_map),
         fetch_request_(fetch_request),
         received_post_data_(received_post_data),
@@ -121,16 +126,24 @@ class MockFetcher : public URLFetcher {
     const base::Value* response_data_value = reply_dictionary->FindKey("data");
     ASSERT_THAT(response_data_value, NotNull());
     response_data_ = response_data_value->GetString();
+    const base::Value* total_received_bytes_value =
+        reply_dictionary->FindKey("total_received_bytes");
+    int total_received_bytes = 0;
+    if (total_received_bytes_value)
+      total_received_bytes = total_received_bytes_value->GetInt();
     result_listener->OnFetchComplete(
         GURL(final_url_value->GetString()), std::move(response_headers),
-        response_data_.c_str(), response_data_.size(), load_timing_info);
+        response_data_.c_str(), response_data_.size(),
+        scoped_refptr<net::IOBufferWithSize>(), load_timing_info,
+        total_received_bytes);
   }
 
  private:
   std::map<std::string, std::string>* json_fetch_reply_map_;   // NOT OWNED
   base::DictionaryValue* fetch_request_;                       // NOT OWNED
   std::string* received_post_data_;                            // NOT OWNED
-  base::Callback<void(const Request*)>* on_request_callback_;  // NOT OWNED
+  base::RepeatingCallback<void(const Request*)>*
+      on_request_callback_;    // NOT OWNED
   std::string response_data_;  // Here to ensure the required lifetime.
 };
 
@@ -138,12 +151,13 @@ class MockProtocolHandler : public net::URLRequestJobFactory::ProtocolHandler {
  public:
   // Details of the fetch will be stored in |fetch_request|.
   // The fetch response will be created from parsing |json_fetch_reply_map|.
-  MockProtocolHandler(base::DictionaryValue* fetch_request,
-                      std::string* received_post_data,
-                      std::map<std::string, std::string>* json_fetch_reply_map,
-                      URLRequestDispatcher* dispatcher,
-                      GenericURLRequestJob::Delegate* job_delegate,
-                      base::Callback<void(const Request*)>* on_request_callback)
+  MockProtocolHandler(
+      base::DictionaryValue* fetch_request,
+      std::string* received_post_data,
+      std::map<std::string, std::string>* json_fetch_reply_map,
+      URLRequestDispatcher* dispatcher,
+      GenericURLRequestJob::Delegate* job_delegate,
+      base::RepeatingCallback<void(const Request*)>* on_request_callback)
       : fetch_request_(fetch_request),
         received_post_data_(received_post_data),
         json_fetch_reply_map_(json_fetch_reply_map),
@@ -157,7 +171,7 @@ class MockProtocolHandler : public net::URLRequestJobFactory::ProtocolHandler {
       net::NetworkDelegate* network_delegate) const override {
     return new GenericURLRequestJob(
         request, network_delegate, dispatcher_,
-        base::MakeUnique<MockFetcher>(fetch_request_, received_post_data_,
+        std::make_unique<MockFetcher>(fetch_request_, received_post_data_,
                                       json_fetch_reply_map_,
                                       on_request_callback_),
         job_delegate_, nullptr);
@@ -169,7 +183,8 @@ class MockProtocolHandler : public net::URLRequestJobFactory::ProtocolHandler {
   std::map<std::string, std::string>* json_fetch_reply_map_;   // NOT OWNED
   GenericURLRequestJob::Delegate* job_delegate_;               // NOT OWNED
   URLRequestDispatcher* dispatcher_;                           // NOT OWNED
-  base::Callback<void(const Request*)>* on_request_callback_;  // NOT OWNED
+  base::RepeatingCallback<void(const Request*)>*
+      on_request_callback_;  // NOT OWNED
 };
 
 }  // namespace
@@ -210,7 +225,7 @@ class GenericURLRequestJobTest : public testing::Test {
         TRAFFIC_ANNOTATION_FOR_TESTS));
     request->set_method("POST");
     request->set_upload(net::ElementsUploadDataStream::CreateWithReader(
-        base::MakeUnique<net::UploadBytesElementReader>(post_data.data(),
+        std::make_unique<net::UploadBytesElementReader>(post_data.data(),
                                                         post_data.size()),
         0));
     request->Start();
@@ -232,7 +247,7 @@ class GenericURLRequestJobTest : public testing::Test {
   std::map<std::string, std::string>
       json_fetch_reply_map_;  // Replies to be sent by MockFetcher.
   MockDelegate job_delegate_;
-  base::Callback<void(const Request*)> on_request_callback_;
+  base::RepeatingCallback<void(const Request*)> on_request_callback_;
 };
 
 TEST_F(GenericURLRequestJobTest, BasicGetRequestParams) {
@@ -292,7 +307,7 @@ TEST_F(GenericURLRequestJobTest, BasicPostRequestParams) {
 
   std::string post_data = "lorem ipsom";
   request->set_upload(net::ElementsUploadDataStream::CreateWithReader(
-      base::MakeUnique<net::UploadBytesElementReader>(post_data.data(),
+      std::make_unique<net::UploadBytesElementReader>(post_data.data(),
                                                       post_data.size()),
       0));
   request->Start();
@@ -338,7 +353,7 @@ TEST_F(GenericURLRequestJobTest, LargePostData) {
     post_data[i] = i & 127;
 
   request->set_upload(net::ElementsUploadDataStream::CreateWithReader(
-      base::MakeUnique<net::UploadBytesElementReader>(&post_data[0],
+      std::make_unique<net::UploadBytesElementReader>(&post_data[0],
                                                       post_data.size()),
       0));
   request->Start();
@@ -388,7 +403,8 @@ TEST_F(GenericURLRequestJobTest, BasicRequestContents) {
         "data": "Reply",
         "headers": {
           "Content-Type": "text/html; charset=UTF-8"
-        }
+        },
+        "total_received_bytes": 100
       })";
 
   std::unique_ptr<net::URLRequest> request(
@@ -400,6 +416,7 @@ TEST_F(GenericURLRequestJobTest, BasicRequestContents) {
   EXPECT_TRUE(request->Read(buffer.get(), kBufferSize, &bytes_read));
   EXPECT_EQ(5, bytes_read);
   EXPECT_EQ("Reply", std::string(buffer->data(), 5));
+  EXPECT_EQ(100, request->GetTotalReceivedBytes());
 
   net::LoadTimingInfo load_timing_info;
   request->GetLoadTimingInfo(&load_timing_info);
@@ -520,6 +537,27 @@ TEST_F(GenericURLRequestJobTest, RequestWithCookies) {
   EXPECT_THAT(fetch_request_, MatchesJson(expected_request_json));
 }
 
+TEST_F(GenericURLRequestJobTest, ResponseWithCookies) {
+  std::string reply = R"(
+      {
+        "url": "https://example.com",
+        "data": "Reply",
+        "headers": {
+          "Set-Cookie": "A=foobar; path=/; "
+        }
+      })";
+
+  std::unique_ptr<net::URLRequest> request(
+      CreateAndCompleteGetJob(GURL("https://example.com"), reply));
+
+  EXPECT_THAT(*cookie_store_.cookies(),
+              ElementsAre(AllOf(
+                  Property(&net::CanonicalCookie::Name, Eq("A")),
+                  Property(&net::CanonicalCookie::Value, Eq("foobar")),
+                  Property(&net::CanonicalCookie::Domain, Eq("example.com")),
+                  Property(&net::CanonicalCookie::Path, Eq("/")))));
+}
+
 TEST_F(GenericURLRequestJobTest, OnResourceLoadFailed) {
   EXPECT_CALL(job_delegate_,
               OnResourceLoadFailed(_, net::ERR_ADDRESS_UNREACHABLE));
@@ -591,7 +629,7 @@ class ByteAtATimeUploadElementReader : public net::UploadElementReader {
       : content_(content) {}
 
   // net::UploadElementReader implementation:
-  int Init(const net::CompletionCallback& callback) override {
+  int Init(net::CompletionOnceCallback callback) override {
     offset_ = 0;
     return net::OK;
   }
@@ -604,26 +642,27 @@ class ByteAtATimeUploadElementReader : public net::UploadElementReader {
 
   int Read(net::IOBuffer* buf,
            int buf_length,
-           const net::CompletionCallback& callback) override {
+           net::CompletionOnceCallback callback) override {
     if (!BytesRemaining())
       return net::OK;
 
     base::MessageLoop::current()->task_runner()->PostTask(
-        FROM_HERE, base::Bind(&ByteAtATimeUploadElementReader::ReadImpl,
-                              base::Unretained(this), base::WrapRefCounted(buf),
-                              buf_length, callback));
+        FROM_HERE,
+        base::BindOnce(&ByteAtATimeUploadElementReader::ReadImpl,
+                       base::Unretained(this), base::WrapRefCounted(buf),
+                       buf_length, std::move(callback)));
     return net::ERR_IO_PENDING;
   }
 
  private:
   void ReadImpl(scoped_refptr<net::IOBuffer> buf,
                 int buf_length,
-                const net::CompletionCallback callback) {
+                net::CompletionOnceCallback callback) {
     if (BytesRemaining()) {
       *buf->data() = content_[offset_++];
-      callback.Run(1u);
+      std::move(callback).Run(1u);
     } else {
-      callback.Run(0u);
+      std::move(callback).Run(0u);
     }
   }
 
@@ -662,7 +701,7 @@ TEST_F(GenericURLRequestJobTest, GetPostDataAsync) {
   json_fetch_reply_map_[url.spec()] = json_reply;
 
   request->set_upload(net::ElementsUploadDataStream::CreateWithReader(
-      base::MakeUnique<ByteAtATimeUploadElementReader>("payload"), 0));
+      std::make_unique<ByteAtATimeUploadElementReader>("payload"), 0));
   request->Start();
   base::RunLoop().RunUntilIdle();
 
@@ -695,7 +734,7 @@ TEST_F(GenericURLRequestJobTest, LargePostDataNotByteReader) {
     post_data.at(i) = i & 127;
 
   request->set_upload(net::ElementsUploadDataStream::CreateWithReader(
-      base::MakeUnique<ByteAtATimeUploadElementReader>(post_data), 0));
+      std::make_unique<ByteAtATimeUploadElementReader>(post_data), 0));
   request->Start();
   base::RunLoop().RunUntilIdle();
 
@@ -728,13 +767,13 @@ TEST_F(GenericURLRequestJobTest, PostWithMultipleElements) {
 
   std::vector<std::unique_ptr<net::UploadElementReader>> element_readers;
   element_readers.push_back(
-      base::MakeUnique<ByteAtATimeUploadElementReader>("Does "));
+      std::make_unique<ByteAtATimeUploadElementReader>("Does "));
   element_readers.push_back(
-      base::MakeUnique<ByteAtATimeUploadElementReader>("this "));
+      std::make_unique<ByteAtATimeUploadElementReader>("this "));
   element_readers.push_back(
-      base::MakeUnique<ByteAtATimeUploadElementReader>("work?"));
+      std::make_unique<ByteAtATimeUploadElementReader>("work?"));
 
-  request->set_upload(base::MakeUnique<net::ElementsUploadDataStream>(
+  request->set_upload(std::make_unique<net::ElementsUploadDataStream>(
       std::move(element_readers), 0));
   request->Start();
   base::RunLoop().RunUntilIdle();

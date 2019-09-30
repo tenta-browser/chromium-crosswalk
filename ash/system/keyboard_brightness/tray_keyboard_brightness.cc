@@ -19,11 +19,13 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
+#include "chromeos/dbus/power_manager/backlight.pb.h"
 #include "chromeos/dbus/power_manager_client.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/display/display.h"
 #include "ui/gfx/image/image.h"
 #include "ui/gfx/paint_vector_icon.h"
+#include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/border.h"
 #include "ui/views/controls/image_view.h"
 #include "ui/views/controls/label.h"
@@ -75,7 +77,7 @@ class KeyboardBrightnessView : public TabletModeObserver, public views::View {
 };
 
 KeyboardBrightnessView::KeyboardBrightnessView(double initial_percent) {
-  SetLayoutManager(new views::FillLayout);
+  SetLayoutManager(std::make_unique<views::FillLayout>());
   // Use CreateMultiTargetRowView() instead of CreateDefaultRowView() because
   // that's what the audio row uses and we want the two rows to layout with the
   // same insets.
@@ -92,7 +94,7 @@ KeyboardBrightnessView::KeyboardBrightnessView(double initial_percent) {
   slider_->SetBorder(views::CreateEmptyBorder(
       gfx::Insets(0, kTrayPopupSliderHorizontalPadding)));
   slider_->SetValue(static_cast<float>(initial_percent / 100.0));
-  slider_->SetAccessibleName(
+  slider_->GetViewAccessibility().OverrideName(
       rb.GetLocalizedString(IDS_ASH_STATUS_TRAY_KEYBOARD_BRIGHTNESS));
   tri_view->AddView(TriView::Container::CENTER, slider_);
   tri_view->SetContainerVisible(TriView::Container::END, false);
@@ -145,14 +147,15 @@ bool TrayKeyboardBrightness::ShouldShowShelf() const {
   return false;
 }
 
-void TrayKeyboardBrightness::KeyboardBrightnessChanged(int level,
-                                                       bool user_initiated) {
-  current_percent_ = static_cast<double>(level);
+void TrayKeyboardBrightness::KeyboardBrightnessChanged(
+    const power_manager::BacklightBrightnessChange& change) {
+  current_percent_ = change.percent();
 
   if (brightness_view_)
     brightness_view_->SetKeyboardBrightnessPercent(current_percent_);
 
-  if (!user_initiated)
+  if (change.cause() !=
+      power_manager::BacklightBrightnessChange_Cause_USER_REQUEST)
     return;
 
   if (brightness_view_ && brightness_view_->visible())

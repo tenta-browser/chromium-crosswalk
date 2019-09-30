@@ -31,6 +31,7 @@
 #include "net/log/net_log.h"
 #include "net/log/net_log_event_type.h"
 #include "net/log/net_log_source_type.h"
+#include "net/socket/next_proto.h"
 #include "net/ssl/ssl_cert_request_info.h"
 #include "net/url_request/redirect_info.h"
 #include "net/url_request/redirect_util.h"
@@ -44,7 +45,8 @@
 #include "url/origin.h"
 
 #if BUILDFLAG(ENABLE_REPORTING)
-#include "net/url_request/network_error_logging_delegate.h"
+#include "net/network_error_logging/network_error_logging_service.h"
+#include "net/reporting/reporting_service.h"
 #endif  // BUILDFLAG(ENABLE_REPORTING)
 
 using base::Time;
@@ -191,7 +193,8 @@ URLRequest::~URLRequest() {
   // on UserData associated with |this| and poke at it during teardown.
   job_.reset();
 
-  context_->RemoveURLRequest(this);
+  DCHECK_EQ(1u, context_->url_requests()->count(this));
+  context_->url_requests()->erase(this);
 
   int net_error = OK;
   // Log error only on failure, not cancellation, as even successful requests
@@ -555,6 +558,7 @@ URLRequest::URLRequest(const GURL& url,
       net_log_(NetLogWithSource::Make(context->net_log(),
                                       NetLogSourceType::URL_REQUEST)),
       url_chain_(1, url),
+      attach_same_site_cookies_(false),
       method_("GET"),
       referrer_policy_(CLEAR_REFERRER_ON_TRANSITION_FROM_SECURE_TO_INSECURE),
       first_party_url_policy_(NEVER_CHANGE_FIRST_PARTY_URL),
@@ -574,11 +578,12 @@ URLRequest::URLRequest(const GURL& url,
       received_response_content_length_(0),
       creation_time_(base::TimeTicks::Now()),
       raw_header_size_(0),
+      is_pac_request_(false),
       traffic_annotation_(traffic_annotation) {
   // Sanity check out environment.
   DCHECK(base::ThreadTaskRunnerHandle::IsSet());
 
-  context->InsertURLRequest(this);
+  context->url_requests()->insert(this);
   net_log_.BeginEvent(
       NetLogEventType::REQUEST_ALIVE,
       base::Bind(&NetLogURLRequestConstructorCallback, &url, priority_));
@@ -697,7 +702,7 @@ void URLRequest::CancelWithSSLError(int error, const SSLInfo& ssl_info) {
 }
 
 int URLRequest::DoCancel(int error, const SSLInfo& ssl_info) {
-  DCHECK(error < 0);
+  DCHECK_LT(error, 0);
   // If cancelled while calling a delegate, clear delegate info.
   if (calling_delegate_) {
     LogUnblocked();
@@ -1161,36 +1166,48 @@ void URLRequest::OnCallToDelegateComplete() {
 
 #if BUILDFLAG(ENABLE_REPORTING)
 void URLRequest::MaybeGenerateNetworkErrorLoggingReport() {
-  NetworkErrorLoggingDelegate* delegate =
-      context()->network_error_logging_delegate();
-  if (!delegate)
+  NetworkErrorLoggingService* service =
+      context()->network_error_logging_service();
+  if (!service) {
+    NetworkErrorLoggingService::
+        RecordRequestDiscardedForNoNetworkErrorLoggingService();
     return;
+  }
 
   // TODO(juliatuttle): Figure out whether we should be ignoring errors from
   // non-HTTPS origins.
 
-  // TODO(juliatuttle): Remove this and reconsider interface once there's a
-  // better story for reporting successes.
-  if (status().ToNetError() == OK)
-    return;
-
-  NetworkErrorLoggingDelegate::ErrorDetails details;
+  NetworkErrorLoggingService::RequestDetails details;
 
   details.uri = url();
   details.referrer = GURL(referrer());
   IPEndPoint endpoint;
   if (GetRemoteEndpoint(&endpoint))
     details.server_ip = endpoint.address();
-  // TODO(juliatuttle): Plumb this.
-  details.protocol = kProtoUnknown;
-  details.status_code = GetResponseCode();
-  if (details.status_code == -1)
+  if (response_headers()) {
+    // HttpResponseHeaders::response_code() returns 0 if response code couldn't
+    // be parsed, which is also how NEL represents the same.
+    details.status_code = response_headers()->response_code();
+    // If we got response headers, assume that the connection used HTTP/1.1
+    // unless ALPN negotation tells us otherwise (handled below).
+    details.protocol = "http/1.1";
+  } else {
     details.status_code = 0;
+  }
+  if (response_info().was_alpn_negotiated)
+    details.protocol = response_info().alpn_negotiated_protocol;
   details.elapsed_time =
       base::TimeTicks::Now() - load_timing_info_.request_start;
   details.type = status().ToNetError();
 
-  delegate->OnNetworkError(details);
+  if (context()->reporting_service()) {
+    details.reporting_upload_depth =
+        context()->reporting_service()->GetUploadDepth(*this);
+  } else {
+    details.reporting_upload_depth = 0;
+  }
+
+  service->OnRequest(details);
 }
 #endif  // BUILDFLAG(ENABLE_REPORTING)
 
@@ -1211,6 +1228,12 @@ void URLRequest::SetResponseHeadersCallback(ResponseHeadersCallback callback) {
   DCHECK(!job_.get());
   DCHECK(response_headers_callback_.is_null());
   response_headers_callback_ = std::move(callback);
+}
+
+void URLRequest::set_socket_tag(const SocketTag& socket_tag) {
+  DCHECK(!is_pending_);
+  DCHECK(url().SchemeIsHTTPOrHTTPS());
+  socket_tag_ = socket_tag;
 }
 
 void URLRequest::set_status(URLRequestStatus status) {

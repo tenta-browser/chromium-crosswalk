@@ -24,6 +24,7 @@
 #include "ipc/ipc_sender.h"
 #include "ppapi/proxy/plugin_globals.h"
 #include "ppapi/proxy/proxy_module.h"
+#include "services/service_manager/public/cpp/connector.h"
 #include "ui/base/ui_base_switches.h"
 
 #if defined(OS_WIN)
@@ -31,7 +32,7 @@
 #include "base/win/windows_version.h"
 #include "content/child/dwrite_font_proxy/dwrite_font_proxy_init_impl_win.h"
 #include "sandbox/win/src/sandbox.h"
-#include "third_party/WebKit/public/web/win/WebFontRendering.h"
+#include "third_party/blink/public/web/win/web_font_rendering.h"
 #include "third_party/skia/include/ports/SkTypeface_win.h"
 #include "ui/gfx/font_render_params.h"
 #include "ui/gfx/win/direct_write.h"
@@ -134,7 +135,7 @@ int PpapiPluginMain(const MainFunctionParams& parameters) {
 #if defined(OS_WIN)
   if (!base::win::IsUser32AndGdi32Available())
     gfx::win::MaybeInitializeDirectWrite();
-  InitializeDWriteFontProxy();
+  InitializeDWriteFontProxy(ChildThread::Get()->GetConnector());
 
   double device_scale_factor = 1.0;
   base::StringToDouble(

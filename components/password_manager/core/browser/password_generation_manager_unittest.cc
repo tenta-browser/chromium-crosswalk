@@ -93,7 +93,7 @@ class MockPasswordManagerClient : public StubPasswordManagerClient {
   ~MockPasswordManagerClient() override { store_->ShutdownOnUIThread(); }
 
   PasswordStore* GetPasswordStore() const override { return store_.get(); }
-  PrefService* GetPrefs() override { return prefs_.get(); }
+  PrefService* GetPrefs() const override { return prefs_.get(); }
 
   TestPasswordManagerDriver* test_driver() { return &driver_; }
 
@@ -296,7 +296,7 @@ TEST_F(PasswordGenerationManagerTest, CheckIfFormClassifierShouldRun) {
     scoped_refptr<base::FieldTrial> field_trial;
     if (is_autofill_field_metadata_enabled) {
       field_trial_list.reset(new base::FieldTrialList(
-          std::make_unique<metrics::SHA1EntropyProvider>("foo")));
+          std::make_unique<variations::SHA1EntropyProvider>("foo")));
       field_trial = base::FieldTrialList::CreateFieldTrial(
           "AutofillFieldMetadata", "Enabled");
       EXPECT_CALL(*GetTestDriver(), AllowToRunFormClassifier())

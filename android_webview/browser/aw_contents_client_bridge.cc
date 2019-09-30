@@ -13,7 +13,6 @@
 #include "base/android/jni_array.h"
 #include "base/android/jni_string.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
 #include "base/message_loop/message_loop.h"
 #include "content/public/browser/browser_thread.h"
@@ -24,6 +23,7 @@
 #include "content/public/browser/web_contents.h"
 #include "jni/AwContentsClientBridge_jni.h"
 #include "net/cert/x509_certificate.h"
+#include "net/cert/x509_util.h"
 #include "net/http/http_response_headers.h"
 #include "net/ssl/ssl_cert_request_info.h"
 #include "net/ssl/ssl_client_cert_type.h"
@@ -77,7 +77,7 @@ class UserData : public base::SupportsUserData::Data {
 void AwContentsClientBridge::Associate(WebContents* web_contents,
                                        AwContentsClientBridge* handler) {
   web_contents->SetUserData(kAwContentsClientBridge,
-                            base::MakeUnique<UserData>(handler));
+                            std::make_unique<UserData>(handler));
 }
 
 // static
@@ -125,12 +125,11 @@ AwContentsClientBridge::~AwContentsClientBridge() {
   }
 }
 
-void AwContentsClientBridge::AllowCertificateError(
-    int cert_error,
-    net::X509Certificate* cert,
-    const GURL& request_url,
-    const base::Callback<void(content::CertificateRequestResultType)>& callback,
-    bool* cancel_request) {
+void AwContentsClientBridge::AllowCertificateError(int cert_error,
+                                                   net::X509Certificate* cert,
+                                                   const GURL& request_url,
+                                                   CertErrorCallback callback,
+                                                   bool* cancel_request) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   JNIEnv* env = AttachCurrentThread();
 
@@ -138,8 +137,8 @@ void AwContentsClientBridge::AllowCertificateError(
   if (obj.is_null())
     return;
 
-  std::string der_string;
-  net::X509Certificate::GetDEREncoded(cert->os_cert_handle(), &der_string);
+  base::StringPiece der_string =
+      net::x509_util::CryptoBufferAsStringPiece(cert->cert_buffer());
   ScopedJavaLocalRef<jbyteArray> jcert = base::android::ToJavaByteArray(
       env, reinterpret_cast<const uint8_t*>(der_string.data()),
       der_string.length());
@@ -148,7 +147,7 @@ void AwContentsClientBridge::AllowCertificateError(
   // We need to add the callback before making the call to java side,
   // as it may do a synchronous callback prior to returning.
   int request_id = pending_cert_error_callbacks_.Add(
-      base::MakeUnique<CertErrorCallback>(callback));
+      std::make_unique<CertErrorCallback>(std::move(callback)));
   *cancel_request = !Java_AwContentsClientBridge_allowCertificateError(
       env, obj, cert_error, jcert, jurl, request_id);
   // if the request is cancelled, then cancel the stored callback
@@ -167,8 +166,9 @@ void AwContentsClientBridge::ProceedSslError(JNIEnv* env,
     LOG(WARNING) << "Ignoring unexpected ssl error proceed callback";
     return;
   }
-  callback->Run(proceed ? content::CERTIFICATE_REQUEST_RESULT_TYPE_CONTINUE
-                        : content::CERTIFICATE_REQUEST_RESULT_TYPE_CANCEL);
+  std::move(*callback).Run(
+      proceed ? content::CERTIFICATE_REQUEST_RESULT_TYPE_CONTINUE
+              : content::CERTIFICATE_REQUEST_RESULT_TYPE_CANCEL);
   pending_cert_error_callbacks_.Remove(id);
 }
 
@@ -297,7 +297,7 @@ void AwContentsClientBridge::RunJavaScriptDialog(
   }
 
   int callback_id = pending_js_dialog_callbacks_.Add(
-      base::MakeUnique<content::JavaScriptDialogManager::DialogClosedCallback>(
+      std::make_unique<content::JavaScriptDialogManager::DialogClosedCallback>(
           std::move(callback)));
   ScopedJavaLocalRef<jstring> jurl(
       ConvertUTF8ToJavaString(env, origin_url.spec()));
@@ -346,7 +346,7 @@ void AwContentsClientBridge::RunBeforeUnloadDialog(
       l10n_util::GetStringUTF16(IDS_BEFOREUNLOAD_MESSAGEBOX_MESSAGE);
 
   int callback_id = pending_js_dialog_callbacks_.Add(
-      base::MakeUnique<content::JavaScriptDialogManager::DialogClosedCallback>(
+      std::make_unique<content::JavaScriptDialogManager::DialogClosedCallback>(
           std::move(callback)));
   ScopedJavaLocalRef<jstring> jurl(
       ConvertUTF8ToJavaString(env, origin_url.spec()));
@@ -361,15 +361,17 @@ void AwContentsClientBridge::RunBeforeUnloadDialog(
 bool AwContentsClientBridge::ShouldOverrideUrlLoading(const base::string16& url,
                                                       bool has_user_gesture,
                                                       bool is_redirect,
-                                                      bool is_main_frame) {
+                                                      bool is_main_frame,
+                                                      bool* ignore_navigation) {
+  *ignore_navigation = false;
   JNIEnv* env = AttachCurrentThread();
   ScopedJavaLocalRef<jobject> obj = java_ref_.get(env);
   if (obj.is_null())
-    return false;
+    return true;
   ScopedJavaLocalRef<jstring> jurl = ConvertUTF16ToJavaString(env, url);
   devtools_instrumentation::ScopedEmbedderCallbackTask(
       "shouldOverrideUrlLoading");
-  bool did_override = Java_AwContentsClientBridge_shouldOverrideUrlLoading(
+  *ignore_navigation = Java_AwContentsClientBridge_shouldOverrideUrlLoading(
       env, obj, jurl, has_user_gesture, is_redirect, is_main_frame);
   if (HasException(env)) {
     // Tell the chromium message loop to not perform any tasks after the current
@@ -377,9 +379,10 @@ bool AwContentsClientBridge::ShouldOverrideUrlLoading(const base::string16& url,
     // any new JNI calls.
     base::MessageLoopForUI::current()->Abort();
     // If we crashed we don't want to continue the navigation.
-    return true;
+    *ignore_navigation = true;
+    return false;
   }
-  return did_override;
+  return true;
 }
 
 void AwContentsClientBridge::NewDownload(const GURL& url,
@@ -453,9 +456,9 @@ void AwContentsClientBridge::OnReceivedError(
 void AwContentsClientBridge::OnSafeBrowsingHit(
     const AwWebResourceRequest& request,
     const safe_browsing::SBThreatType& threat_type,
-    const SafeBrowsingActionCallback& callback) {
+    SafeBrowsingActionCallback callback) {
   int request_id = safe_browsing_callbacks_.Add(
-      base::MakeUnique<SafeBrowsingActionCallback>(callback));
+      std::make_unique<SafeBrowsingActionCallback>(std::move(callback)));
 
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   JNIEnv* env = AttachCurrentThread();
@@ -551,7 +554,7 @@ void AwContentsClientBridge::TakeSafeBrowsingAction(JNIEnv*,
     LOG(WARNING) << "Unexpected TakeSafeBrowsingAction. " << request_id;
     return;
   }
-  callback->Run(
+  std::move(*callback).Run(
       static_cast<AwUrlCheckerDelegateImpl::SafeBrowsingAction>(action),
       reporting);
   safe_browsing_callbacks_.Remove(request_id);

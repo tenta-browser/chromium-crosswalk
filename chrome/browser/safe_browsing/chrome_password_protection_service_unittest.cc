@@ -3,6 +3,8 @@
 // found in the LICENSE file.
 #include "chrome/browser/safe_browsing/chrome_password_protection_service.h"
 
+#include <memory>
+
 #include "base/memory/ref_counted.h"
 #include "base/run_loop.h"
 #include "base/test/scoped_feature_list.h"
@@ -60,7 +62,7 @@ const char kRedirectURL[] = "http://redirect.com";
 
 std::unique_ptr<KeyedService> BuildFakeUserEventService(
     content::BrowserContext* context) {
-  return base::MakeUnique<syncer::FakeUserEventService>();
+  return std::make_unique<syncer::FakeUserEventService>();
 }
 
 constexpr struct {
@@ -138,7 +140,7 @@ class ChromePasswordProtectionServiceTest
     content_setting_map_ = new HostContentSettingsMap(
         &test_pref_service_, false /* incognito */, false /* guest_profile */,
         false /* store_last_modified */);
-    service_ = base::MakeUnique<MockChromePasswordProtectionService>(
+    service_ = std::make_unique<MockChromePasswordProtectionService>(
         profile(), content_setting_map_,
         new SafeBrowsingUIManager(
             SafeBrowsingService::CreateSafeBrowsingService()));
@@ -192,14 +194,14 @@ class ChromePasswordProtectionServiceTest
   }
 
   void InitializeVerdict(LoginReputationClientResponse::VerdictType type) {
-    verdict_ = base::MakeUnique<LoginReputationClientResponse>();
+    verdict_ = std::make_unique<LoginReputationClientResponse>();
     verdict_->set_verdict_type(type);
   }
 
   void SimulateRequestFinished(
       LoginReputationClientResponse::VerdictType verdict_type) {
     std::unique_ptr<LoginReputationClientResponse> verdict =
-        base::MakeUnique<LoginReputationClientResponse>();
+        std::make_unique<LoginReputationClientResponse>();
     verdict->set_verdict_type(verdict_type);
     service_->RequestFinished(request_.get(), false, std::move(verdict));
   }
@@ -232,9 +234,7 @@ class ChromePasswordProtectionServiceTest
     if (throttle)
       test_handle->RegisterThrottleForTesting(std::move(throttle));
 
-    return test_handle->CallWillStartRequestForTesting(
-        /*is_post=*/false, content::Referrer(), /*has_user_gesture=*/false,
-        ui::PAGE_TRANSITION_LINK, /*is_external_protocol=*/false);
+    return test_handle->CallWillStartRequestForTesting();
   }
 
   int GetSizeofUnhandledSyncPasswordReuses() {
@@ -303,9 +303,64 @@ TEST_F(ChromePasswordProtectionServiceTest,
       LoginReputationClientRequest::PASSWORD_REUSE_EVENT, &reason));
 }
 
+TEST_F(ChromePasswordProtectionServiceTest,
+       VerifyPingingIsSkippedIfMatchEnterpriseWhitelist) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitAndEnableFeature(
+      safe_browsing::kEnterprisePasswordProtectionV1);
+  PasswordProtectionService::RequestOutcome reason =
+      PasswordProtectionService::UNKNOWN;
+  ASSERT_FALSE(
+      profile()->GetPrefs()->HasPrefPath(prefs::kSafeBrowsingWhitelistDomains));
+
+  // If there's no whitelist, IsURLWhitelistedForPasswordEntry(_,_) should
+  // return false.
+  EXPECT_FALSE(service_->IsURLWhitelistedForPasswordEntry(
+      GURL("https://www.mydomain.com"), &reason));
+  EXPECT_EQ(PasswordProtectionService::UNKNOWN, reason);
+
+  // Verify if match enterprise whitelist.
+  base::ListValue whitelist;
+  whitelist.AppendString("mydomain.com");
+  whitelist.AppendString("mydomain.net");
+  profile()->GetPrefs()->Set(prefs::kSafeBrowsingWhitelistDomains, whitelist);
+  EXPECT_TRUE(service_->IsURLWhitelistedForPasswordEntry(
+      GURL("https://www.mydomain.com"), &reason));
+  EXPECT_EQ(PasswordProtectionService::MATCHED_ENTERPRISE_WHITELIST, reason);
+
+  // Verify if matches enterprise change password url.
+  profile()->GetPrefs()->ClearPref(prefs::kSafeBrowsingWhitelistDomains);
+  reason = PasswordProtectionService::UNKNOWN;
+  EXPECT_FALSE(service_->IsURLWhitelistedForPasswordEntry(
+      GURL("https://www.mydomain.com"), &reason));
+  EXPECT_EQ(PasswordProtectionService::UNKNOWN, reason);
+
+  profile()->GetPrefs()->SetString(prefs::kPasswordProtectionChangePasswordURL,
+                                   "https://mydomain.com/change_password.html");
+  EXPECT_TRUE(service_->IsURLWhitelistedForPasswordEntry(
+      GURL("https://mydomain.com/change_password.html#ref?user_name=alice"),
+      &reason));
+  EXPECT_EQ(PasswordProtectionService::MATCHED_ENTERPRISE_CHANGE_PASSWORD_URL,
+            reason);
+
+  // Verify if matches enterprise login url.
+  profile()->GetPrefs()->ClearPref(prefs::kSafeBrowsingWhitelistDomains);
+  profile()->GetPrefs()->ClearPref(prefs::kPasswordProtectionChangePasswordURL);
+  reason = PasswordProtectionService::UNKNOWN;
+  EXPECT_FALSE(service_->IsURLWhitelistedForPasswordEntry(
+      GURL("https://www.mydomain.com"), &reason));
+  EXPECT_EQ(PasswordProtectionService::UNKNOWN, reason);
+  base::ListValue login_urls;
+  login_urls.AppendString("https://mydomain.com/login.html");
+  profile()->GetPrefs()->Set(prefs::kPasswordProtectionLoginURLs, login_urls);
+  EXPECT_TRUE(service_->IsURLWhitelistedForPasswordEntry(
+      GURL("https://mydomain.com/login.html#ref?user_name=alice"), &reason));
+  EXPECT_EQ(PasswordProtectionService::MATCHED_ENTERPRISE_LOGIN_URL, reason);
+}
+
 TEST_F(ChromePasswordProtectionServiceTest, VerifyGetSyncAccountType) {
-  SigninManagerBase* signin_manager = static_cast<SigninManagerBase*>(
-      SigninManagerFactory::GetForProfile(profile()));
+  SigninManagerBase* signin_manager =
+      SigninManagerFactory::GetForProfile(profile());
   signin_manager->SetAuthenticatedAccountInfo(kTestAccountID, kTestEmail);
   SetUpSyncAccount(std::string(AccountTrackerService::kNoHostedDomainFound),
                    std::string(kTestAccountID), std::string(kTestEmail));
@@ -387,6 +442,15 @@ TEST_F(ChromePasswordProtectionServiceTest,
 TEST_F(ChromePasswordProtectionServiceTest,
        VerifyPasswordReuseDetectedUserEventRecorded) {
   EnableGaiaPasswordReuseReporting();
+  // Configure sync account type to GMAIL.
+  SigninManagerBase* signin_manager =
+      SigninManagerFactory::GetForProfile(profile());
+  signin_manager->SetAuthenticatedAccountInfo(kTestAccountID, kTestEmail);
+  SetUpSyncAccount(std::string(AccountTrackerService::kNoHostedDomainFound),
+                   std::string(kTestAccountID), std::string(kTestEmail));
+  EXPECT_EQ(LoginReputationClientRequest::PasswordReuseEvent::GMAIL,
+            service_->GetSyncAccountType());
+
   NavigateAndCommit(GURL("https://www.example.com/"));
 
   // Case 1: safe_browsing_enabled = true
@@ -414,6 +478,16 @@ TEST_F(ChromePasswordProtectionServiceTest,
 TEST_F(ChromePasswordProtectionServiceTest,
        VerifyPasswordReuseLookupUserEventRecorded) {
   EnableGaiaPasswordReuseReporting();
+
+  // Configure sync account type to GMAIL.
+  SigninManagerBase* signin_manager =
+      SigninManagerFactory::GetForProfile(profile());
+  signin_manager->SetAuthenticatedAccountInfo(kTestAccountID, kTestEmail);
+  SetUpSyncAccount(std::string(AccountTrackerService::kNoHostedDomainFound),
+                   std::string(kTestAccountID), std::string(kTestEmail));
+  EXPECT_EQ(LoginReputationClientRequest::PasswordReuseEvent::GMAIL,
+            service_->GetSyncAccountType());
+
   NavigateAndCommit(GURL("https://www.example.com/"));
 
   unsigned long t = 0;
@@ -431,7 +505,7 @@ TEST_F(ChromePasswordProtectionServiceTest,
   }
 
   {
-    auto response = base::MakeUnique<LoginReputationClientResponse>();
+    auto response = std::make_unique<LoginReputationClientResponse>();
     response->set_verdict_token("token1");
     response->set_verdict_type(LoginReputationClientResponse::LOW_REPUTATION);
     service_->MaybeLogPasswordReuseLookupEvent(
@@ -451,7 +525,7 @@ TEST_F(ChromePasswordProtectionServiceTest,
   }
 
   {
-    auto response = base::MakeUnique<LoginReputationClientResponse>();
+    auto response = std::make_unique<LoginReputationClientResponse>();
     response->set_verdict_token("token2");
     response->set_verdict_type(LoginReputationClientResponse::SAFE);
     service_->MaybeLogPasswordReuseLookupEvent(
@@ -472,8 +546,8 @@ TEST_F(ChromePasswordProtectionServiceTest,
 }
 
 TEST_F(ChromePasswordProtectionServiceTest, VerifyGetChangePasswordURL) {
-  SigninManagerBase* signin_manager = static_cast<SigninManagerBase*>(
-      SigninManagerFactory::GetForProfile(profile()));
+  SigninManagerBase* signin_manager =
+      SigninManagerFactory::GetForProfile(profile());
   signin_manager->SetAuthenticatedAccountInfo(kTestAccountID, kTestEmail);
   SetUpSyncAccount("example.com", std::string(kTestAccountID),
                    std::string(kTestEmail));
@@ -614,7 +688,7 @@ TEST_F(ChromePasswordProtectionServiceTest,
   EXPECT_EQ(2, GetSizeofUnhandledSyncPasswordReuses());
 
   service_->RemoveUnhandledSyncPasswordReuseOnURLsDeleted(
-      /*all_history=*/true, deleted_urls);
+      /*all_history=*/true, {});
   EXPECT_EQ(0, GetSizeofUnhandledSyncPasswordReuses());
 }
 

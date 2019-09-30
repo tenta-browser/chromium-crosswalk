@@ -5,7 +5,6 @@
 #include "content/browser/frame_host/data_url_navigation_throttle.h"
 
 #include "base/feature_list.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/stringprintf.h"
 #include "build/build_config.h"
 #include "content/browser/frame_host/frame_tree.h"
@@ -33,21 +32,14 @@ DataUrlNavigationThrottle::~DataUrlNavigationThrottle() {}
 
 NavigationThrottle::ThrottleCheckResult
 DataUrlNavigationThrottle::WillProcessResponse() {
-#if defined(OS_ANDROID)
-  // This should ideally be done in CreateThrottleForNavigation(), but
-  // NavigationHandleImpl::GetRenderFrameHost() expects to not be run before
-  // WillProcessResponse().
-  // TODO(meacer): Remove this special case when PlzNavigate is enabled.
-  if (!IsBrowserSideNavigationEnabled() &&
-      navigation_handle()
-          ->GetRenderFrameHost()
-          ->IsDataUrlNavigationAllowedForAndroidWebView()) {
-    return PROCEED;
-  }
-#endif
   NavigationHandleImpl* handle =
       static_cast<NavigationHandleImpl*>(navigation_handle());
   if (handle->IsDownload())
+    return PROCEED;
+
+  // We treat <a download href="data:.."> as a navigation, but it will always
+  // result in a download, not a top-level navigation, so not blocking it here.
+  if (handle->GetSuggestedFilename().has_value())
     return PROCEED;
 
   RenderFrameHost* top_frame =

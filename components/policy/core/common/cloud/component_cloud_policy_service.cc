@@ -15,7 +15,6 @@
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/sequenced_task_runner.h"
 #include "base/single_thread_task_runner.h"
 #include "base/threading/thread_task_runner_handle.h"
@@ -28,6 +27,7 @@
 #include "components/policy/core/common/schema.h"
 #include "components/policy/core/common/schema_map.h"
 #include "components/policy/proto/device_management_backend.pb.h"
+#include "components/signin/core/account_id/account_id.h"
 #include "net/url_request/url_request_context_getter.h"
 
 namespace em = enterprise_management;
@@ -82,7 +82,7 @@ class ComponentCloudPolicyService::Backend
   void ClearCache();
 
   // The passed credentials will be used to validate the policies.
-  void SetCredentials(const std::string& username,
+  void SetCredentials(const AccountId& account_id,
                       const std::string& dm_token,
                       const std::string& device_id,
                       const std::string& public_key,
@@ -159,17 +159,17 @@ void ComponentCloudPolicyService::Backend::ClearCache() {
 }
 
 void ComponentCloudPolicyService::Backend::SetCredentials(
-    const std::string& username,
+    const AccountId& account_id,
     const std::string& dm_token,
     const std::string& device_id,
     const std::string& public_key,
     int public_key_version) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  DCHECK(!username.empty());
+  DCHECK(account_id.is_valid());
   DCHECK(!dm_token.empty());
-  DVLOG(1) << "Updating credentials: username = " << username
+  DVLOG(1) << "Updating credentials: account id = " << account_id
            << ", public_key_version = " << public_key_version;
-  store_.SetCredentials(username, dm_token, device_id, public_key,
+  store_.SetCredentials(account_id, dm_token, device_id, public_key,
                         public_key_version);
   has_credentials_set_ = true;
   // Trigger an additional update against the last fetched policies. This helps
@@ -199,11 +199,11 @@ void ComponentCloudPolicyService::Backend::InitIfNeeded() {
   updater_.reset(new ComponentCloudPolicyUpdater(
       task_runner_, std::move(external_policy_data_fetcher_), &store_));
 
-  std::unique_ptr<PolicyBundle> bundle(base::MakeUnique<PolicyBundle>());
+  std::unique_ptr<PolicyBundle> bundle(std::make_unique<PolicyBundle>());
   bundle->CopyFrom(store_.policy());
   service_task_runner_->PostTask(
-      FROM_HERE, base::Bind(&ComponentCloudPolicyService::SetPolicy, service_,
-                            base::Passed(&bundle)));
+      FROM_HERE, base::BindOnce(&ComponentCloudPolicyService::SetPolicy,
+                                service_, std::move(bundle)));
 
   initialized_ = true;
 
@@ -230,11 +230,11 @@ void ComponentCloudPolicyService::Backend::
   }
   DVLOG(2) << "Installing updated policy from the component policy store";
 
-  std::unique_ptr<PolicyBundle> bundle(base::MakeUnique<PolicyBundle>());
+  std::unique_ptr<PolicyBundle> bundle(std::make_unique<PolicyBundle>());
   bundle->CopyFrom(store_.policy());
   service_task_runner_->PostTask(
-      FROM_HERE, base::Bind(&ComponentCloudPolicyService::SetPolicy, service_,
-                            base::Passed(&bundle)));
+      FROM_HERE, base::BindOnce(&ComponentCloudPolicyService::SetPolicy,
+                                service_, std::move(bundle)));
 }
 
 void ComponentCloudPolicyService::Backend::UpdateWithLastFetchedPolicy() {
@@ -261,7 +261,7 @@ void ComponentCloudPolicyService::Backend::UpdateWithLastFetchedPolicy() {
   for (auto it = last_fetched_policy_->begin();
        it != last_fetched_policy_->end(); ++it) {
     updater_->UpdateExternalPolicy(
-        it->first, base::MakeUnique<em::PolicyFetchResponse>(*it->second));
+        it->first, std::make_unique<em::PolicyFetchResponse>(*it->second));
   }
 }
 
@@ -284,6 +284,8 @@ ComponentCloudPolicyService::ComponentCloudPolicyService(
       io_task_runner_(io_task_runner),
       weak_ptr_factory_(this) {
   DCHECK(policy_type == dm_protocol::kChromeExtensionPolicyType ||
+         policy_type ==
+             dm_protocol::kChromeMachineLevelExtensionCloudPolicyType ||
          policy_type == dm_protocol::kChromeSigninExtensionPolicyType);
   CHECK(!core_->client());
 
@@ -419,6 +421,10 @@ void ComponentCloudPolicyService::UpdateFromSuperiorStore() {
     // updates, to handle the case of the user registering for policy after the
     // session starts.
     std::string username = policy->username();
+    std::string gaia_id = policy->gaia_id();
+    AccountId account_id =
+        gaia_id.empty() ? AccountId::FromUserEmail(username)
+                        : AccountId::FromUserEmailGaiaId(username, gaia_id);
     std::string request_token = policy->request_token();
     std::string device_id =
         policy->has_device_id() ? policy->device_id() : std::string();
@@ -428,7 +434,7 @@ void ComponentCloudPolicyService::UpdateFromSuperiorStore() {
     backend_task_runner_->PostTask(
         FROM_HERE,
         base::Bind(&Backend::SetCredentials, base::Unretained(backend_.get()),
-                   username, request_token, device_id, public_key,
+                   account_id, request_token, device_id, public_key,
                    public_key_version));
   }
 
@@ -451,7 +457,7 @@ void ComponentCloudPolicyService::UpdateFromClient() {
   DVLOG(2) << "Obtaining fetched policies from the policy client";
 
   std::unique_ptr<ScopedResponseMap> valid_responses =
-      base::MakeUnique<ScopedResponseMap>();
+      std::make_unique<ScopedResponseMap>();
   for (const auto& response : core_->client()->responses()) {
     PolicyNamespace ns;
     if (!ToPolicyNamespace(response.first, &ns)) {
@@ -459,13 +465,13 @@ void ComponentCloudPolicyService::UpdateFromClient() {
       continue;
     }
     (*valid_responses)[ns] =
-        base::MakeUnique<em::PolicyFetchResponse>(*response.second);
+        std::make_unique<em::PolicyFetchResponse>(*response.second);
   }
 
   backend_task_runner_->PostTask(
-      FROM_HERE,
-      base::Bind(&Backend::SetFetchedPolicy, base::Unretained(backend_.get()),
-                 base::Passed(&valid_responses)));
+      FROM_HERE, base::BindOnce(&Backend::SetFetchedPolicy,
+                                base::Unretained(backend_.get()),
+                                std::move(valid_responses)));
 }
 
 void ComponentCloudPolicyService::UpdateFromSchemaRegistry() {

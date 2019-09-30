@@ -7,13 +7,11 @@
 #include <memory>
 #include <vector>
 
-#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
 #include "base/strings/string16.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
 #include "content/public/browser/gpu_data_manager.h"
-#include "content/public/test/test_browser_thread_bundle.h"
 #include "extensions/browser/extension_system.h"
 #include "extensions/browser/extensions_test.h"
 #include "extensions/browser/preload_check.h"
@@ -36,14 +34,6 @@ const bool kSupportsWindowShape =
     false;
 #endif
 
-// Whether this build supports the plugins.npapi requirement.
-const bool kSupportsNPAPI =
-#if defined(OS_POSIX) && !defined(OS_MACOSX)
-    false;
-#else
-    true;
-#endif
-
 // Returns true if a WebGL check might not fail immediately.
 bool MightSupportWebGL() {
   return content::GpuDataManager::GetInstance()->GpuAccessAllowed(nullptr);
@@ -57,8 +47,7 @@ const char kFeatureCSS3d[] = "css3d";
 
 class RequirementsCheckerTest : public ExtensionsTest {
  public:
-  RequirementsCheckerTest()
-      : ExtensionsTest(std::make_unique<content::TestBrowserThreadBundle>()) {
+  RequirementsCheckerTest() {
     manifest_dict_ = std::make_unique<base::DictionaryValue>();
   }
 
@@ -67,6 +56,7 @@ class RequirementsCheckerTest : public ExtensionsTest {
   void CreateExtension() {
     manifest_dict_->SetString("name", "dummy name");
     manifest_dict_->SetString("version", "1");
+    manifest_dict_->SetInteger("manifest_version", 2);
 
     std::string error;
     extension_ =
@@ -85,10 +75,6 @@ class RequirementsCheckerTest : public ExtensionsTest {
 
   void RequireWindowShape() {
     manifest_dict_->SetBoolean("requirements.window.shape", true);
-  }
-
-  void RequireNPAPI() {
-    manifest_dict_->SetBoolean("requirements.plugins.npapi", true);
   }
 
   void RequireFeature(const char feature[]) {
@@ -120,8 +106,7 @@ TEST_F(RequirementsCheckerTest, RequirementsEmpty) {
 TEST_F(RequirementsCheckerTest, RequirementsSuccess) {
   if (kSupportsWindowShape)
     RequireWindowShape();
-  if (kSupportsNPAPI)
-    RequireNPAPI();
+
   RequireFeature(kFeatureCSS3d);
 
   CreateExtension();
@@ -136,10 +121,6 @@ TEST_F(RequirementsCheckerTest, RequirementsFailMultiple) {
   size_t expected_errors = 0u;
   if (!kSupportsWindowShape) {
     RequireWindowShape();
-    expected_errors++;
-  }
-  if (!kSupportsNPAPI) {
-    RequireNPAPI();
     expected_errors++;
   }
   if (!MightSupportWebGL()) {

@@ -33,16 +33,21 @@ class SurfaceManager;
 class VIZ_SERVICE_EXPORT SurfaceAggregator {
  public:
   using SurfaceIndexMap = base::flat_map<SurfaceId, uint64_t>;
+  using FrameSinkIdMap = base::flat_map<FrameSinkId, LocalSurfaceId>;
 
   SurfaceAggregator(SurfaceManager* manager,
                     cc::DisplayResourceProvider* provider,
                     bool aggregate_only_damaged);
   ~SurfaceAggregator();
 
-  CompositorFrame Aggregate(const SurfaceId& surface_id);
+  CompositorFrame Aggregate(const SurfaceId& surface_id,
+                            base::TimeTicks expected_display_time);
   void ReleaseResources(const SurfaceId& surface_id);
-  SurfaceIndexMap& previous_contained_surfaces() {
+  const SurfaceIndexMap& previous_contained_surfaces() const {
     return previous_contained_surfaces_;
+  }
+  const FrameSinkIdMap& previous_contained_frame_sinks() const {
+    return previous_contained_frame_sinks_;
   }
   void SetFullDamageForSurface(const SurfaceId& surface_id);
   void set_output_is_secure(bool secure) { output_is_secure_ = secure; }
@@ -109,7 +114,6 @@ class VIZ_SERVICE_EXPORT SurfaceAggregator {
 
   void HandleSurfaceQuad(const SurfaceDrawQuad* surface_quad,
                          float parent_device_scale_factor,
-                         const FrameSinkId& parent_frame_sink_id,
                          const gfx::Transform& target_transform,
                          const ClipData& clip_rect,
                          RenderPass* dest_pass,
@@ -156,6 +160,8 @@ class VIZ_SERVICE_EXPORT SurfaceAggregator {
       const SharedQuadState* source_sqs,
       const gfx::Transform& scaled_quad_to_target_transform,
       const gfx::Transform& target_transform,
+      const gfx::Rect& quad_layer_rect,
+      const gfx::Rect& visible_quad_layer_rect,
       const ClipData& clip_rect,
       RenderPass* dest_render_pass,
       float x_scale,
@@ -164,7 +170,6 @@ class VIZ_SERVICE_EXPORT SurfaceAggregator {
   void CopyQuadsToPass(
       const QuadList& source_quad_list,
       const SharedQuadStateList& source_shared_quad_state_list,
-      const FrameSinkId& parent_frame_sink_id,
       float parent_device_scale_factor,
       const std::unordered_map<ResourceId, ResourceId>& resource_to_child_map,
       const gfx::Transform& target_transform,
@@ -233,12 +238,17 @@ class VIZ_SERVICE_EXPORT SurfaceAggregator {
   // that time.
   SurfaceIndexMap previous_contained_surfaces_;
   SurfaceIndexMap contained_surfaces_;
+  FrameSinkIdMap previous_contained_frame_sinks_;
+  FrameSinkIdMap contained_frame_sinks_;
 
   // After surface validation, every Surface in this set is valid.
   base::flat_set<SurfaceId> valid_surfaces_;
 
   // This is the pass list for the aggregated frame.
   RenderPassList* dest_pass_list_;
+
+  // The target display time for the aggregated frame.
+  base::TimeTicks expected_display_time_;
 
   // This is the set of aggregated pass ids that are affected by filters that
   // move pixels.

@@ -6,7 +6,7 @@
 
 #include "base/base64.h"
 #include "base/hash.h"
-#include "base/metrics/histogram_macros.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/rand_util.h"
 #include "base/sha1.h"
 #include "base/strings/string_util.h"
@@ -257,10 +257,10 @@ base::TimeDelta V4ProtocolManagerUtil::GetNextBackOffInterval(
 // static
 void V4ProtocolManagerUtil::RecordHttpResponseOrErrorCode(
     const char* metric_name,
-    const net::URLRequestStatus& status,
+    int net_error,
     int response_code) {
-  UMA_HISTOGRAM_SPARSE_SLOWLY(
-      metric_name, status.is_success() ? response_code : status.error());
+  base::UmaHistogramSparse(metric_name,
+                           net_error == net::OK ? response_code : net_error);
 }
 
 // static

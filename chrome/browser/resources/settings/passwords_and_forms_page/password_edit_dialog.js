@@ -37,9 +37,13 @@ Polymer({
    * @param {!Event} event
    * @private
    */
-  onReadonlyInputTap_: function(event) {
-    /** @type {!PaperInputElement} */ (Polymer.dom(event).localTarget)
-        .inputElement.select();
+  onInputFocus_: function(event) {
+    const inputElement =
+        /** @type {!PaperInputElement} */ (Polymer.dom(event).localTarget)
+            .inputElement;
+    inputElement.setSelectionRange(0, 0);
+    inputElement.focus();
+    inputElement.select();
   }
 });
 })();

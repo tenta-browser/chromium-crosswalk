@@ -10,7 +10,7 @@
 #include "content/shell/common/shell_switches.h"
 #include "media/base/media_switches.h"
 #include "media/base/test_data_util.h"
-#include "media/mojo/features.h"
+#include "media/mojo/buildflags.h"
 
 #if defined(OS_ANDROID)
 #include "base/android/build_info.h"
@@ -66,11 +66,12 @@ class WebRtcCaptureFromElementBrowserTest
         switches::kEnableBlinkFeatures, "MediaCaptureFromVideo");
 
     // Allow <video>/<audio>.play() when not initiated by user gesture.
-    base::CommandLine::ForCurrentProcess()->AppendSwitch(
-        switches::kIgnoreAutoplayRestrictionsForTests);
+    base::CommandLine::ForCurrentProcess()->AppendSwitchASCII(
+        switches::kAutoplayPolicy,
+        switches::autoplay::kNoUserGestureRequiredPolicy);
     // Allow experimental canvas features.
     base::CommandLine::ForCurrentProcess()->AppendSwitch(
-        switches::kEnableExperimentalCanvasFeatures);
+        switches::kEnableExperimentalWebPlatformFeatures);
     // Allow window.internals for simulating context loss.
     base::CommandLine::ForCurrentProcess()->AppendSwitch(
         switches::kExposeInternalsForTesting);
@@ -107,15 +108,8 @@ IN_PROC_BROWSER_TEST_F(WebRtcCaptureFromElementBrowserTest,
   MakeTypicalCall("testCanvasCapture(drawWebGL);", kCanvasCaptureTestHtmlFile);
 }
 
-#if defined(OS_LINUX)
-#define MAYBE_VerifyCanvasCaptureOffscreenCanvasCommitFrames \
-  DISABLED_VerifyCanvasCaptureOffscreenCanvasCommitFrames
-#else
-#define MAYBE_VerifyCanvasCaptureOffscreenCanvasCommitFrames \
-  VerifyCanvasCaptureOffscreenCanvasCommitFrames
-#endif
 IN_PROC_BROWSER_TEST_F(WebRtcCaptureFromElementBrowserTest,
-                       MAYBE_VerifyCanvasCaptureOffscreenCanvasCommitFrames) {
+                       VerifyCanvasCaptureOffscreenCanvasCommitFrames) {
   MakeTypicalCall("testCanvasCapture(drawOffscreenCanvasCommit);",
                   kCanvasCaptureTestHtmlFile);
 }

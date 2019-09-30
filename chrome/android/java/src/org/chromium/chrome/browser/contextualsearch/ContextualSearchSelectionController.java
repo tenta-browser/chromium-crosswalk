@@ -10,12 +10,11 @@ import android.text.TextUtils;
 import org.chromium.base.Log;
 import org.chromium.base.VisibleForTesting;
 import org.chromium.chrome.browser.ChromeActivity;
-import org.chromium.chrome.browser.ChromeFeatureList;
 import org.chromium.chrome.browser.compositor.bottombar.OverlayPanel;
-import org.chromium.chrome.browser.preferences.PrefServiceBridge;
 import org.chromium.chrome.browser.tab.Tab;
-import org.chromium.content.browser.ContentViewCore;
+import org.chromium.content_public.browser.ContentViewCore;
 import org.chromium.content_public.browser.GestureStateListener;
+import org.chromium.content_public.browser.SelectionPopupController;
 import org.chromium.content_public.browser.WebContents;
 import org.chromium.ui.touch_selection.SelectionEventType;
 
@@ -51,6 +50,8 @@ public class ContextualSearchSelectionController {
     private static final int MAX_SELECTION_LENGTH = 100;
 
     private static final int INVALID_DURATION = -1;
+    // A default tap duration value when we can't compute it.
+    private static final int DEFAULT_DURATION = 0;
 
     private final ChromeActivity mActivity;
     private final ContextualSearchSelectionHandler mHandler;
@@ -62,7 +63,6 @@ public class ContextualSearchSelectionController {
     private boolean mWasTapGestureDetected;
     // Reflects whether the last tap was valid and whether we still have a tap-based selection.
     private ContextualSearchTapState mLastTapState;
-    private boolean mIsWaitingForInvalidTapDetection;
     private boolean mShouldHandleSelectionModification;
     // Whether the selection was automatically expanded due to an adjustment (e.g. Resolve).
     private boolean mDidExpandSelection;
@@ -70,6 +70,10 @@ public class ContextualSearchSelectionController {
     // Position of the selection.
     private float mX;
     private float mY;
+
+    // Additional tap info from Mojo.
+    int mFontSizeDips;
+    int mTextRunLength;
 
     // The time of the most last scroll activity, or 0 if none.
     private long mLastScrollTimeNs;
@@ -208,11 +212,17 @@ public class ContextualSearchSelectionController {
      * Clears the selection.
      */
     void clearSelection() {
-        ContentViewCore baseContentView = getBaseContentView();
-        if (baseContentView != null) {
-            baseContentView.clearSelection();
-        }
+        SelectionPopupController controller = getSelectionPopupController();
+        if (controller != null) controller.clearSelection();
         resetSelectionStates();
+    }
+
+    /**
+     * @return The {@link SelectionPopupController} for the base WebContents.
+     */
+    protected SelectionPopupController getSelectionPopupController() {
+        WebContents baseContents = getBaseWebContents();
+        return baseContents != null ? SelectionPopupController.fromWebContents(baseContents) : null;
     }
 
     /**
@@ -262,8 +272,8 @@ public class ContextualSearchSelectionController {
                 mWasTapGestureDetected = false;
                 mSelectionType = SelectionType.LONG_PRESS;
                 shouldHandleSelection = true;
-                ContentViewCore baseContentView = getBaseContentView();
-                if (baseContentView != null) mSelectedText = baseContentView.getSelectedText();
+                SelectionPopupController controller = getSelectionPopupController();
+                if (controller != null) mSelectedText = controller.getSelectedText();
                 break;
             case SelectionEventType.SELECTION_HANDLES_CLEARED:
                 mHandler.handleSelectionDismissal();
@@ -306,6 +316,8 @@ public class ContextualSearchSelectionController {
         mTapTimeNanoseconds = 0;
         mTapDurationMs = INVALID_DURATION;
         mDidExpandSelection = false;
+        mFontSizeDips = 0;
+        mTextRunLength = 0;
     }
 
     /**
@@ -330,18 +342,23 @@ public class ContextualSearchSelectionController {
      * Handles an unhandled tap gesture.
      * @param x The x coordinate in px.
      * @param y The y coordinate in px.
+     * @param fontSizeDips The font size in DPs.
+     * @param textRunLength The run-length of the text of the tapped element.
      */
-    void handleShowUnhandledTapUIIfNeeded(int x, int y) {
+    void handleShowUnhandledTapUIIfNeeded(int x, int y, int fontSizeDips, int textRunLength) {
         mWasTapGestureDetected = false;
         // TODO(donnd): refactor to avoid needing a new handler API method as suggested by Pedro.
         if (mSelectionType != SelectionType.LONG_PRESS) {
-            assert mTapTimeNanoseconds != 0 : "mTapTimeNanoseconds not set!";
-            mTapDurationMs = (int) ((System.nanoTime() - mTapTimeNanoseconds)
-                    / ContextualSearchHeuristic.NANOSECONDS_IN_A_MILLISECOND);
+            if (mTapTimeNanoseconds != 0) {
+                mTapDurationMs = (int) ((System.nanoTime() - mTapTimeNanoseconds)
+                        / ContextualSearchHeuristic.NANOSECONDS_IN_A_MILLISECOND);
+            }
             mWasTapGestureDetected = true;
             mSelectionType = SelectionType.TAP;
             mX = x;
             mY = y;
+            mFontSizeDips = fontSizeDips;
+            mTextRunLength = textRunLength;
             mHandler.handleValidTap();
         } else {
             // Long press; reset last tap state.
@@ -365,9 +382,10 @@ public class ContextualSearchSelectionController {
         int y = (int) mY;
 
         // TODO(donnd): Remove tap counters.
-        assert mTapDurationMs != INVALID_DURATION : "mTapDurationMs not set!";
-        TapSuppressionHeuristics tapHeuristics = new TapSuppressionHeuristics(this, mLastTapState,
-                x, y, contextualSearchContext, mTapDurationMs, mWasSelectionEmptyBeforeTap);
+        if (mTapDurationMs == INVALID_DURATION) mTapDurationMs = DEFAULT_DURATION;
+        TapSuppressionHeuristics tapHeuristics =
+                new TapSuppressionHeuristics(this, mLastTapState, x, y, contextualSearchContext,
+                        mTapDurationMs, mWasSelectionEmptyBeforeTap, mFontSizeDips, mTextRunLength);
         // TODO(donnd): Move to be called when the panel closes to work with states that change.
         tapHeuristics.logConditionState();
 
@@ -380,7 +398,7 @@ public class ContextualSearchSelectionController {
 
         // Make sure Tap Suppression features are consistent.
         assert !ContextualSearchFieldTrial.isContextualSearchMlTapSuppressionEnabled()
-                || ChromeFeatureList.isEnabled(ChromeFeatureList.CONTEXTUAL_SEARCH_RANKER_QUERY)
+                || rankerLogger.isQueryEnabled()
             : "Tap Suppression requires the Ranker Query feature to be enabled!";
 
         // If we're suppressing based on heuristics then Ranker doesn't need to know about it.
@@ -388,8 +406,9 @@ public class ContextualSearchSelectionController {
         int tapPrediction = AssistRankerPrediction.UNDETERMINED;
         if (!shouldSuppressTapBasedOnHeuristics) {
             tapHeuristics.logRankerTapSuppression(rankerLogger);
-            logNonHeuristicFeatures(rankerLogger);
+            mHandler.logNonHeuristicFeatures(rankerLogger);
             tapPrediction = rankerLogger.runPredictionForTapSuppression();
+            ContextualSearchUma.logRankerPrediction(tapPrediction);
         }
 
         // Make the suppression decision and act upon it.
@@ -411,18 +430,6 @@ public class ContextualSearchSelectionController {
         } else {
             mLastTapState = null;
         }
-    }
-
-    /**
-     * Gets the base page ContentViewCore.
-     * Deprecated, use getBaseWebContents instead.
-     * @return The Base Page's {@link ContentViewCore}, or {@code null} if there is no current tab.
-     */
-    @Deprecated
-    @Nullable
-    ContentViewCore getBaseContentView() {
-        Tab currentTab = mActivity.getActivityTab();
-        return currentTab != null ? currentTab.getContentViewCore() : null;
     }
 
     /**
@@ -452,16 +459,6 @@ public class ContextualSearchSelectionController {
             basePageWebContents.adjustSelectionByCharacterOffset(
                     selectionStartAdjust, selectionEndAdjust, /* show_selection_menu = */ false);
         }
-    }
-
-    /**
-     * Logs all the features that we can obtain without accessing heuristics, i.e. from global
-     * state.
-     * @param rankerLogger The {@link ContextualSearchRankerLogger} to log the features to.
-     */
-    private void logNonHeuristicFeatures(ContextualSearchRankerLogger rankerLogger) {
-        boolean didOptIn = !PrefServiceBridge.getInstance().isContextualSearchUninitialized();
-        rankerLogger.logFeature(ContextualSearchRankerLogger.Feature.DID_OPT_IN, didOptIn);
     }
 
     // ============================================================================================
@@ -500,14 +497,6 @@ public class ContextualSearchSelectionController {
     // ============================================================================================
 
     /**
-     * @return whether a tap gesture has been detected, for testing.
-     */
-    @VisibleForTesting
-    boolean wasAnyTapGestureDetected() {
-        return mIsWaitingForInvalidTapDetection;
-    }
-
-    /**
      * @return whether selection is empty, for testing.
      */
     @VisibleForTesting
@@ -543,11 +532,11 @@ public class ContextualSearchSelectionController {
      * @return whether the given selection is considered a valid target for a search.
      */
     private boolean isValidSelection(String selection) {
-        return isValidSelection(selection, getBaseContentView());
+        return isValidSelection(selection, getSelectionPopupController());
     }
 
     @VisibleForTesting
-    boolean isValidSelection(String selection, ContentViewCore baseContentView) {
+    boolean isValidSelection(String selection, SelectionPopupController controller) {
         if (selection.length() > MAX_SELECTION_LENGTH) {
             return false;
         }
@@ -556,7 +545,7 @@ public class ContextualSearchSelectionController {
             return false;
         }
 
-        if (baseContentView != null && baseContentView.isFocusedNodeEditable()) {
+        if (controller != null && controller.isFocusedNodeEditable()) {
             return false;
         }
 

@@ -98,6 +98,20 @@ void QuicConnectionPeer::SetPeerAddress(QuicConnection* connection,
 }
 
 // static
+void QuicConnectionPeer::SetDirectPeerAddress(
+    QuicConnection* connection,
+    const QuicSocketAddress& direct_peer_address) {
+  connection->direct_peer_address_ = direct_peer_address;
+}
+
+// static
+void QuicConnectionPeer::SetEffectivePeerAddress(
+    QuicConnection* connection,
+    const QuicSocketAddress& effective_peer_address) {
+  connection->effective_peer_address_ = effective_peer_address;
+}
+
+// static
 bool QuicConnectionPeer::IsSilentCloseEnabled(QuicConnection* connection) {
   return connection->idle_timeout_connection_close_behavior_ ==
          ConnectionCloseBehavior::SILENT_CLOSE;
@@ -169,6 +183,18 @@ QuicAlarm* QuicConnectionPeer::GetTimeoutAlarm(QuicConnection* connection) {
 QuicAlarm* QuicConnectionPeer::GetMtuDiscoveryAlarm(
     QuicConnection* connection) {
   return connection->mtu_discovery_alarm_.get();
+}
+
+// static
+QuicAlarm* QuicConnectionPeer::GetRetransmittableOnWireAlarm(
+    QuicConnection* connection) {
+  return connection->retransmittable_on_wire_alarm_.get();
+}
+
+// static
+QuicAlarm* QuicConnectionPeer::GetPathDegradingAlarm(
+    QuicConnection* connection) {
+  return connection->path_degrading_alarm_.get();
 }
 
 // static
@@ -256,6 +282,20 @@ bool QuicConnectionPeer::HasRetransmittableFrames(
 void QuicConnectionPeer::SetNoStopWaitingFrames(QuicConnection* connection,
                                                 bool no_stop_waiting_frames) {
   connection->no_stop_waiting_frames_ = no_stop_waiting_frames;
+}
+
+// static
+void QuicConnectionPeer::SetMaxTrackedPackets(
+    QuicConnection* connection,
+    QuicPacketCount max_tracked_packets) {
+  connection->max_tracked_packets_ = max_tracked_packets;
+}
+
+// static
+void QuicConnectionPeer::SetSessionDecidesWhatToWrite(
+    QuicConnection* connection) {
+  connection->sent_packet_manager_.SetSessionDecideWhatToWrite(true);
+  connection->packet_generator_.SetCanSetTransmissionType(true);
 }
 
 }  // namespace test

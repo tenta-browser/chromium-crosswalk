@@ -13,7 +13,7 @@
 #include "chrome/common/pref_names.h"
 #include "chrome/common/url_constants.h"
 #include "components/google/core/browser/google_util.h"
-#include "components/offline_pages/features/features.h"
+#include "components/offline_pages/buildflags/buildflags.h"
 #include "components/omnibox/browser/autocomplete_input.h"
 #include "components/prefs/pref_service.h"
 #include "components/security_state/core/security_state.h"
@@ -27,6 +27,7 @@
 #if !defined(OS_ANDROID)
 #include "components/omnibox/browser/vector_icons.h" // nogncheck
 #include "components/toolbar/vector_icons.h"  // nogncheck
+#include "ui/base/material_design/material_design_controller.h"
 #endif  // !defined(OS_ANDROID)
 
 #if BUILDFLAG(ENABLE_OFFLINE_PAGES)
@@ -47,7 +48,8 @@ base::string16 ChromeToolbarModelDelegate::FormattedStringWithEquivalentMeaning(
     const GURL& url,
     const base::string16& formatted_url) const {
   return AutocompleteInput::FormattedStringWithEquivalentMeaning(
-      url, formatted_url, ChromeAutocompleteSchemeClassifier(GetProfile()));
+      url, formatted_url, ChromeAutocompleteSchemeClassifier(GetProfile()),
+      nullptr);
 }
 
 bool ChromeToolbarModelDelegate::GetURL(GURL* url) const {
@@ -69,23 +71,25 @@ bool ChromeToolbarModelDelegate::ShouldDisplayURL() const {
   //   of view-source:chrome://newtab, which should display its URL despite what
   //   chrome://newtab says.
   content::NavigationEntry* entry = GetNavigationEntry();
-  if (entry) {
-    if (entry->IsViewSourceMode() ||
-        entry->GetPageType() == content::PAGE_TYPE_INTERSTITIAL) {
-      return true;
-    }
+  if (!entry)
+    return true;
 
-    GURL url = entry->GetURL();
-    GURL virtual_url = entry->GetVirtualURL();
-    if (url.SchemeIs(content::kChromeUIScheme) ||
-        virtual_url.SchemeIs(content::kChromeUIScheme)) {
-      if (!url.SchemeIs(content::kChromeUIScheme))
-        url = virtual_url;
-      return url.host() != chrome::kChromeUINewTabHost;
-    }
+  if (entry->IsViewSourceMode() ||
+      entry->GetPageType() == content::PAGE_TYPE_INTERSTITIAL) {
+    return true;
   }
 
-  return !search::IsInstantNTP(GetActiveWebContents());
+  GURL url = entry->GetURL();
+  GURL virtual_url = entry->GetVirtualURL();
+  if (url.SchemeIs(content::kChromeUIScheme) ||
+      virtual_url.SchemeIs(content::kChromeUIScheme)) {
+    if (!url.SchemeIs(content::kChromeUIScheme))
+      url = virtual_url;
+    return url.host() != chrome::kChromeUINewTabHost;
+  }
+
+  Profile* profile = GetProfile();
+  return !profile || !search::IsInstantNTPURL(url, profile);
 }
 
 security_state::SecurityLevel ChromeToolbarModelDelegate::GetSecurityLevel()
@@ -128,11 +132,16 @@ const gfx::VectorIcon* ChromeToolbarModelDelegate::GetVectorIconOverride()
   GURL url;
   GetURL(&url);
 
-  if (url.SchemeIs(content::kChromeUIScheme))
-    return &toolbar::kProductIcon;
+  const bool is_touch_ui =
+      ui::MaterialDesignController::IsTouchOptimizedUiEnabled();
+  if (url.SchemeIs(content::kChromeUIScheme)) {
+    return is_touch_ui ? &toolbar::kProduct20Icon : &toolbar::kProductIcon;
+  }
 
-  if (url.SchemeIs(extensions::kExtensionScheme))
-    return &omnibox::kExtensionAppIcon;
+  if (url.SchemeIs(extensions::kExtensionScheme)) {
+    return is_touch_ui ? &omnibox::kExtensionApp20Icon
+                       : &omnibox::kExtensionAppIcon;
+  }
 #endif
 
   return nullptr;

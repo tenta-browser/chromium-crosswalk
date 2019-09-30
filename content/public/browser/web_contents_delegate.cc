@@ -10,6 +10,7 @@
 #include "base/logging.h"
 #include "base/memory/singleton.h"
 #include "build/build_config.h"
+#include "components/viz/common/surfaces/surface_id.h"
 #include "content/public/browser/keyboard_event_processing_result.h"
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/security_style_explanations.h"
@@ -157,7 +158,7 @@ blink::WebDisplayMode WebContentsDelegate::GetDisplayMode(
 content::ColorChooser* WebContentsDelegate::OpenColorChooser(
     WebContents* web_contents,
     SkColor color,
-    const std::vector<ColorSuggestion>& suggestions) {
+    const std::vector<blink::mojom::ColorSuggestionPtr>& suggestions) {
   return nullptr;
 }
 
@@ -172,7 +173,7 @@ void WebContentsDelegate::RequestMediaAccessPermission(
 }
 
 bool WebContentsDelegate::CheckMediaAccessPermission(
-    WebContents* web_contents,
+    RenderFrameHost* render_frame_host,
     const GURL& security_origin,
     MediaStreamType type) {
   LOG(ERROR) << "WebContentsDelegate::CheckMediaAccessPermission: "
@@ -267,5 +268,11 @@ int WebContentsDelegate::GetBottomControlsHeight() const {
 bool WebContentsDelegate::DoBrowserControlsShrinkBlinkSize() const {
   return false;
 }
+
+void WebContentsDelegate::UpdatePictureInPictureSurfaceId(
+    const viz::SurfaceId& surface_id,
+    const gfx::Size& natural_size) {}
+
+void WebContentsDelegate::ExitPictureInPicture() {}
 
 }  // namespace content

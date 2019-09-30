@@ -32,8 +32,7 @@ BufferedSpdyFramer::BufferedSpdyFramer(uint32_t max_header_list_size,
       max_header_list_size_);
 }
 
-BufferedSpdyFramer::~BufferedSpdyFramer() {
-}
+BufferedSpdyFramer::~BufferedSpdyFramer() = default;
 
 void BufferedSpdyFramer::set_visitor(
     BufferedSpdyFramerVisitorInterface* visitor) {
@@ -90,6 +89,12 @@ void BufferedSpdyFramer::OnStreamEnd(SpdyStreamId stream_id) {
   visitor_->OnStreamEnd(stream_id);
 }
 
+void BufferedSpdyFramer::OnStreamPadLength(SpdyStreamId stream_id,
+                                           size_t value) {
+  // Deliver the stream pad length byte for flow control handling.
+  visitor_->OnStreamPadding(stream_id, 1);
+}
+
 void BufferedSpdyFramer::OnStreamPadding(SpdyStreamId stream_id, size_t len) {
   visitor_->OnStreamPadding(stream_id, len);
 }
@@ -135,7 +140,11 @@ void BufferedSpdyFramer::OnSettings() {
   visitor_->OnSettings();
 }
 
-void BufferedSpdyFramer::OnSetting(SpdySettingsIds id, uint32_t value) {
+void BufferedSpdyFramer::OnSettingOld(SpdyKnownSettingsId id, uint32_t value) {
+  visitor_->OnSetting(id, value);
+}
+
+void BufferedSpdyFramer::OnSetting(SpdySettingsId id, uint32_t value) {
   visitor_->OnSetting(id, value);
 }
 

@@ -95,7 +95,7 @@ class TestObserver : public InputMethodEngineBase::Observer {
   void OnKeyEvent(
       const std::string& engine_id,
       const InputMethodEngineBase::KeyboardEvent& event,
-      ui::IMEEngineHandlerInterface::KeyEventDoneCallback& key_data) override {}
+      ui::IMEEngineHandlerInterface::KeyEventDoneCallback key_data) override {}
   void OnInputContextUpdate(
       const ui::IMEEngineHandlerInterface::InputContext& context) override {}
   void OnCandidateClicked(
@@ -109,7 +109,6 @@ class TestObserver : public InputMethodEngineBase::Observer {
                                 int cursor_pos,
                                 int anchor_pos,
                                 int offset) override {}
-  void OnRequestEngineSwitch() override {}
   void OnCompositionBoundsChanged(
       const std::vector<gfx::Rect>& bounds) override {
     calls_bitmap_ |= ONCOMPOSITIONBOUNDSCHANGED;

@@ -44,7 +44,7 @@
 #error "This file requires ARC support."
 #endif
 
-using chrome_test_util::NavigationBarDoneButton;
+using chrome_test_util::SettingsDoneButton;
 
 namespace {
 
@@ -59,7 +59,7 @@ void SignInIdentity(NSString* userEmail) {
       tapSettingsMenuButton:chrome_test_util::SecondarySignInButton()];
   [ChromeEarlGreyUI signInToIdentityByEmail:userEmail];
   [ChromeEarlGreyUI confirmSigninConfirmationDialog];
-  [[EarlGrey selectElementWithMatcher:NavigationBarDoneButton()]
+  [[EarlGrey selectElementWithMatcher:SettingsDoneButton()]
       performAction:grey_tap()];
 }
 
@@ -131,7 +131,8 @@ void AssertNumberOfEntitiesWithName(int entity_count,
 
 // Tests that a bookmark added on the client (before Sync is enabled) is
 // uploaded to the Sync server once Sync is turned on.
-- (void)testSyncUploadBookmarkOnFirstSync {
+// TODO(crbug.com/821490): Reenable the test.
+- (void)DISABLED_testSyncUploadBookmarkOnFirstSync {
   [self addBookmark:GURL("https://www.foo.com") withTitle:@"foo"];
 
   // Sign in to sync, after a bookmark has been added.
@@ -146,7 +147,8 @@ void AssertNumberOfEntitiesWithName(int entity_count,
 }
 
 // Tests that a bookmark added on the client is uploaded to the Sync server.
-- (void)testSyncUploadBookmark {
+// TODO(crbug.com/821490): Reenable the test.
+- (void)DISABLED_testSyncUploadBookmark {
   ChromeIdentity* identity = [SigninEarlGreyUtils fakeIdentity1];
   ios::FakeChromeIdentityService::GetInstanceFromChromeProvider()->AddIdentity(
       identity);
@@ -160,7 +162,8 @@ void AssertNumberOfEntitiesWithName(int entity_count,
 
 // Tests that a bookmark injected in the FakeServer is synced down to the
 // client.
-- (void)testSyncDownloadBookmark {
+// TODO(crbug.com/821490): Reenable the test.
+- (void)DISABLED_testSyncDownloadBookmark {
   [[self class] assertBookmarksWithTitle:@"hoo" expectedCount:0];
   chrome_test_util::InjectBookmarkOnFakeSyncServer("http://www.hoo.com", "hoo");
 
@@ -197,7 +200,8 @@ void AssertNumberOfEntitiesWithName(int entity_count,
 
 // Tests that the local cache guid changes when the user signs out and then
 // signs back in with the same account.
-- (void)testSyncCheckDifferentCacheGuid_SignOutAndSignIn {
+// TODO(crbug.com/821490): Reenable the test.
+- (void)DISABLED_testSyncCheckDifferentCacheGuid_SignOutAndSignIn {
   // Sign in a fake identity, and store the initial sync guid.
   ChromeIdentity* identity = [SigninEarlGreyUtils fakeIdentity1];
   ios::FakeChromeIdentityService::GetInstanceFromChromeProvider()->AddIdentity(
@@ -227,7 +231,8 @@ void AssertNumberOfEntitiesWithName(int entity_count,
 // Tests that the local cache guid does not change when sync is restarted, if
 // a user previously signed out and back in.
 // Test for http://crbug.com/413611 .
-- (void)testSyncCheckSameCacheGuid_SyncRestartedAfterSignOutAndSignIn {
+// TODO(crbug.com/821490): Reenable the test.
+- (void)DISABLED_testSyncCheckSameCacheGuid_SyncRestartedAfterSignOutAndSignIn {
   // Sign in a fake idenitty.
   ChromeIdentity* identity = [SigninEarlGreyUtils fakeIdentity1];
   ios::FakeChromeIdentityService::GetInstanceFromChromeProvider()->AddIdentity(
@@ -262,7 +267,8 @@ void AssertNumberOfEntitiesWithName(int entity_count,
 }
 
 // Tests that autofill profile injected in FakeServer gets synced to client.
-- (void)testSyncDownloadAutofillProfile {
+// TODO(crbug.com/821490): Reenable the test.
+- (void)DISABLED_testSyncDownloadAutofillProfile {
   const std::string kGuid = "2340E83B-5BEE-4560-8F95-5914EF7F539E";
   const std::string kFullName = "Peter Pan";
   GREYAssertFalse(chrome_test_util::IsAutofillProfilePresent(kGuid, kFullName),
@@ -287,7 +293,8 @@ void AssertNumberOfEntitiesWithName(int entity_count,
 
 // Test that update to autofill profile injected in FakeServer gets synced to
 // client.
-- (void)testSyncUpdateAutofillProfile {
+// TODO(crbug.com/821490): Reenable the test.
+- (void)DISABLED_testSyncUpdateAutofillProfile {
   const std::string kGuid = "2340E83B-5BEE-4560-8F95-5914EF7F539E";
   const std::string kFullName = "Peter Pan";
   const std::string kUpdatedFullName = "Roger Rabbit";
@@ -331,7 +338,8 @@ void AssertNumberOfEntitiesWithName(int entity_count,
 
 // Test that autofill profile deleted from FakeServer gets deleted from client
 // as well.
-- (void)testSyncDeleteAutofillProfile {
+// TODO(crbug.com/821490): Reenable the test.
+- (void)DISABLED_testSyncDeleteAutofillProfile {
   const std::string kGuid = "2340E83B-5BEE-4560-8F95-5914EF7F539E";
   const std::string kFullName = "Peter Pan";
   GREYAssertFalse(chrome_test_util::IsAutofillProfilePresent(kGuid, kFullName),
@@ -365,7 +373,8 @@ void AssertNumberOfEntitiesWithName(int entity_count,
 
 // Tests that tabs opened on this client are committed to the Sync server and
 // that the created sessions entities are correct.
-- (void)testSyncUploadOpenTabs {
+// TODO(crbug.com/821490): Reenable the test.
+- (void)DISABLED_testSyncUploadOpenTabs {
   // Create map of canned responses and set up the test HTML server.
   const GURL URL1 = web::test::HttpServer::MakeUrl("http://page1");
   const GURL URL2 = web::test::HttpServer::MakeUrl("http://page2");
@@ -399,13 +408,16 @@ void AssertNumberOfEntitiesWithName(int entity_count,
 
 // Tests that a typed URL (after Sync is enabled) is uploaded to the Sync
 // server.
-- (void)testSyncTypedURLUpload {
+// TODO(crbug.com/821490): Reenable the test.
+- (void)DISABLED_testSyncTypedURLUpload {
   const GURL mockURL("http://not-a-real-site/");
 
-  chrome_test_util::ClearBrowsingHistory();
+  GREYAssertTrue(chrome_test_util::ClearBrowsingHistory(),
+                 @"Clearing Browsing History timed out");
 
   [self setTearDownHandler:^{
-    chrome_test_util::ClearBrowsingHistory();
+    GREYAssertTrue(chrome_test_util::ClearBrowsingHistory(),
+                   @"Clearing Browsing History timed out");
   }];
   chrome_test_util::AddTypedURLOnClient(mockURL);
 
@@ -436,12 +448,15 @@ void AssertNumberOfEntitiesWithName(int entity_count,
 }
 
 // Tests that typed url is downloaded from sync server.
-- (void)testSyncTypedUrlDownload {
+// TODO(crbug.com/821490): Reenable the test.
+- (void)DISABLED_testSyncTypedUrlDownload {
   const GURL mockURL("http://not-a-real-site/");
 
-  chrome_test_util::ClearBrowsingHistory();
+  GREYAssertTrue(chrome_test_util::ClearBrowsingHistory(),
+                 @"Clearing Browsing History timed out");
   [self setTearDownHandler:^{
-    chrome_test_util::ClearBrowsingHistory();
+    GREYAssertTrue(chrome_test_util::ClearBrowsingHistory(),
+                   @"Clearing Browsing History timed out");
   }];
 
   // Inject typed url on server.
@@ -471,13 +486,16 @@ void AssertNumberOfEntitiesWithName(int entity_count,
 
 // Tests that when typed url is deleted on the client, sync the change gets
 // propagated to server.
-- (void)testSyncTypedURLDeleteFromClient {
+// TODO(crbug.com/821490): Reenable the test.
+- (void)DISABLED_testSyncTypedURLDeleteFromClient {
   const GURL mockURL("http://not-a-real-site/");
 
-  chrome_test_util::ClearBrowsingHistory();
+  GREYAssertTrue(chrome_test_util::ClearBrowsingHistory(),
+                 @"Clearing Browsing History timed out");
 
   [self setTearDownHandler:^{
-    chrome_test_util::ClearBrowsingHistory();
+    GREYAssertTrue(chrome_test_util::ClearBrowsingHistory(),
+                   @"Clearing Browsing History timed out");
   }];
 
   // Inject typed url on server.
@@ -517,13 +535,16 @@ void AssertNumberOfEntitiesWithName(int entity_count,
 
 // Test that typed url is deleted from client after server sends tombstone for
 // that typed url.
-- (void)testSyncTypedURLDeleteFromServer {
+// TODO(crbug.com/821490): Reenable the test.
+- (void)DISABLED_testSyncTypedURLDeleteFromServer {
   const GURL mockURL("http://not-a-real-site/");
 
-  chrome_test_util::ClearBrowsingHistory();
+  GREYAssertTrue(chrome_test_util::ClearBrowsingHistory(),
+                 @"Clearing Browsing History timed out");
 
   [self setTearDownHandler:^{
-    chrome_test_util::ClearBrowsingHistory();
+    GREYAssertTrue(chrome_test_util::ClearBrowsingHistory(),
+                   @"Clearing Browsing History timed out");
   }];
   chrome_test_util::AddTypedURLOnClient(mockURL);
 

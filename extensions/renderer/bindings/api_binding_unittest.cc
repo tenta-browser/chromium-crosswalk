@@ -5,7 +5,7 @@
 #include "extensions/renderer/bindings/api_binding.h"
 
 #include "base/bind.h"
-#include "base/memory/ptr_util.h"
+#include "base/bind_helpers.h"
 #include "base/stl_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/values.h"
@@ -25,7 +25,7 @@
 #include "gin/public/context_holder.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/WebKit/public/web/WebScopedUserGesture.h"
+#include "third_party/blink/public/web/web_scoped_user_gesture.h"
 #include "v8/include/v8.h"
 
 namespace extensions {
@@ -83,11 +83,6 @@ void OnEventListenersChanged(const std::string& event_name,
                              const base::DictionaryValue* filter,
                              bool was_manual,
                              v8::Local<v8::Context> context) {}
-
-void DoNothingWithSilentRequest(
-    v8::Local<v8::Context> context,
-    const std::string& call_name,
-    const std::vector<v8::Local<v8::Value>>& arguments) {}
 
 }  // namespace
 
@@ -173,7 +168,7 @@ class APIBindingUnittest : public APIBindingTest {
     if (binding_hooks_delegate_)
       binding_hooks_->SetDelegate(std::move(binding_hooks_delegate_));
     if (!on_silent_request_)
-      on_silent_request_ = base::Bind(&DoNothingWithSilentRequest);
+      on_silent_request_ = base::DoNothing();
     if (!availability_callback_)
       availability_callback_ = base::Bind(&AllowAllFeatures);
     event_handler_ = std::make_unique<APIEventHandler>(
@@ -318,22 +313,17 @@ TEST_F(APIBindingUnittest, TestBasicAPICalls) {
   ExpectPass(binding_object, "obj.oneString('foo');", "['foo']", false);
   ExpectFailure(
       binding_object, "obj.oneString(1);",
-      InvocationError(
-          "test.oneString", "string str",
-          ArgumentError("str", InvalidType(kTypeString, kTypeInteger))));
+      InvocationError("test.oneString", "string str", NoMatchingSignature()));
   ExpectPass(binding_object, "obj.stringAndInt('foo', 1)", "['foo',1]", false);
-  ExpectFailure(
-      binding_object, "obj.stringAndInt(1)",
-      InvocationError(
-          "test.stringAndInt", "string str, integer int",
-          ArgumentError("str", InvalidType(kTypeString, kTypeInteger))));
+  ExpectFailure(binding_object, "obj.stringAndInt(1)",
+                InvocationError("test.stringAndInt", "string str, integer int",
+                                NoMatchingSignature()));
   ExpectPass(binding_object, "obj.intAndCallback(1, function() {})", "[1]",
              true);
   ExpectFailure(
       binding_object, "obj.intAndCallback(function() {})",
-      InvocationError(
-          "test.intAndCallback", "integer int, function callback",
-          ArgumentError("int", InvalidType(kTypeInteger, kTypeFunction))));
+      InvocationError("test.intAndCallback", "integer int, function callback",
+                      NoMatchingSignature()));
 
   // ...And an interesting case (throwing an error during parsing).
   ExpectThrow(binding_object,
@@ -717,7 +707,10 @@ TEST_F(APIBindingUnittest, TestDisposedContext) {
       FunctionFromString(context, "(function(obj) { obj.oneString('foo'); })");
   v8::Local<v8::Value> argv[] = {binding_object};
   DisposeContext(context);
-  RunFunction(func, context, arraysize(argv), argv);
+
+  RunFunctionAndExpectError(func, context, arraysize(argv), argv,
+                            "Uncaught Error: Extension context invalidated.");
+
   EXPECT_FALSE(HandlerWasInvoked());
   // This test passes if this does not crash, even under AddressSanitizer
   // builds.
@@ -736,7 +729,10 @@ TEST_F(APIBindingUnittest, TestInvalidatedContext) {
       FunctionFromString(context, "(function(obj) { obj.oneString('foo'); })");
   v8::Local<v8::Value> argv[] = {binding_object};
   binding::InvalidateContext(context);
-  RunFunction(func, context, arraysize(argv), argv);
+
+  RunFunctionAndExpectError(func, context, arraysize(argv), argv,
+                            "Uncaught Error: Extension context invalidated.");
+
   EXPECT_FALSE(HandlerWasInvoked());
   // This test passes if this does not crash, even under AddressSanitizer
   // builds.
@@ -757,8 +753,8 @@ TEST_F(APIBindingUnittest, MultipleContexts) {
              false);
   ExpectPass(context_b, binding_object_b, "obj.oneString('foo');", "['foo']",
              false);
-  DisposeContext(context_a);
-  ExpectPass(context_b, binding_object_b, "obj.oneString('foo');", "['foo']",
+  DisposeContext(context_b);
+  ExpectPass(context_a, binding_object_a, "obj.oneString('foo');", "['foo']",
              false);
 }
 
@@ -836,9 +832,7 @@ TEST_F(APIBindingUnittest, TestJSCustomHook) {
   // the hook should never have been called, since the arguments didn't match.
   ExpectFailure(
       binding_object, "obj.oneString(1);",
-      InvocationError(
-          "test.oneString", "string str",
-          ArgumentError("str", InvalidType(kTypeString, kTypeInteger))));
+      InvocationError("test.oneString", "string str", NoMatchingSignature()));
   v8::Local<v8::Value> property =
       GetPropertyFromObject(context->Global(), context, "requestArguments");
   ASSERT_FALSE(property.IsEmpty());
@@ -891,9 +885,7 @@ TEST_F(APIBindingUnittest, TestUpdateArgumentsPreValidate) {
   // have the hook called.
   ExpectFailure(
       binding_object, "obj.oneString(false);",
-      InvocationError(
-          "test.oneString", "string str",
-          ArgumentError("str", InvalidType(kTypeString, kTypeBoolean))));
+      InvocationError("test.oneString", "string str", NoMatchingSignature()));
   EXPECT_EQ("[false]", GetStringPropertyFromObject(
                            context->Global(), context, "requestArguments"));
 
@@ -1124,9 +1116,7 @@ TEST_F(APIBindingUnittest, TestUpdateArgumentsPostValidate) {
   // should never enter the hook.
   ExpectFailure(
       binding_object, "obj.oneString(false);",
-      InvocationError(
-          "test.oneString", "string str",
-          ArgumentError("str", InvalidType(kTypeString, kTypeBoolean))));
+      InvocationError("test.oneString", "string str", NoMatchingSignature()));
   EXPECT_EQ("undefined", GetStringPropertyFromObject(
                              context->Global(), context, "requestArguments"));
 
@@ -1572,6 +1562,24 @@ TEST_F(APIBindingUnittest, TestHooksWithCustomCallback) {
 
   EXPECT_EQ("true", GetStringPropertyFromObject(context->Global(), context,
                                                 "calledCustomCallback"));
+}
+
+TEST_F(APIBindingUnittest, AccessAPIMethodsAndEventsAfterInvalidation) {
+  SetEvents(R"([{"name": "onFoo"}])");
+  InitializeBinding();
+
+  v8::HandleScope handle_scope(isolate());
+  v8::Local<v8::Context> context = MainContext();
+
+  v8::Local<v8::Object> binding_object = binding()->CreateInstance(context);
+
+  v8::Local<v8::Function> function = FunctionFromString(
+      context, "(function(obj) { obj.onFoo.addListener(function() {}); })");
+  binding::InvalidateContext(context);
+
+  v8::Local<v8::Value> argv[] = {binding_object};
+  RunFunctionAndExpectError(function, context, arraysize(argv), argv,
+                            "Uncaught Error: Extension context invalidated.");
 }
 
 }  // namespace extensions

@@ -22,17 +22,18 @@
 #include "content/public/renderer/document_state.h"
 #include "content/public/renderer/render_frame.h"
 #include "content/public/renderer/render_view.h"
-#include "extensions/features/features.h"
-#include "third_party/WebKit/common/associated_interfaces/associated_interface_provider.h"
-#include "third_party/WebKit/public/platform/URLConversion.h"
-#include "third_party/WebKit/public/platform/WebClientHintsType.h"
-#include "third_party/WebKit/public/platform/WebContentSettingCallbacks.h"
-#include "third_party/WebKit/public/platform/WebSecurityOrigin.h"
-#include "third_party/WebKit/public/platform/WebURL.h"
-#include "third_party/WebKit/public/web/WebDocument.h"
-#include "third_party/WebKit/public/web/WebFrameClient.h"
-#include "third_party/WebKit/public/web/WebLocalFrame.h"
-#include "third_party/WebKit/public/web/WebView.h"
+#include "extensions/buildflags/buildflags.h"
+#include "third_party/blink/public/common/associated_interfaces/associated_interface_provider.h"
+#include "third_party/blink/public/common/associated_interfaces/associated_interface_registry.h"
+#include "third_party/blink/public/platform/url_conversion.h"
+#include "third_party/blink/public/platform/web_client_hints_type.h"
+#include "third_party/blink/public/platform/web_content_setting_callbacks.h"
+#include "third_party/blink/public/platform/web_security_origin.h"
+#include "third_party/blink/public/platform/web_url.h"
+#include "third_party/blink/public/web/web_document.h"
+#include "third_party/blink/public/web/web_frame_client.h"
+#include "third_party/blink/public/web/web_local_frame.h"
+#include "third_party/blink/public/web/web_view.h"
 #include "url/gurl.h"
 #include "url/origin.h"
 #include "url/url_constants.h"
@@ -126,8 +127,8 @@ ContentSettingsObserver::ContentSettingsObserver(
   ClearBlockedContentSettings();
   render_frame->GetWebFrame()->SetContentSettingsClient(this);
 
-  registry->AddInterface(
-      base::Bind(&ContentSettingsObserver::OnInsecureContentRendererRequest,
+  render_frame->GetAssociatedInterfaceRegistry()->AddInterface(
+      base::Bind(&ContentSettingsObserver::OnContentSettingsRendererRequest,
                  base::Unretained(this)));
 
   content::RenderFrame* main_frame =
@@ -182,7 +183,6 @@ void ContentSettingsObserver::DidBlockContentType(
 bool ContentSettingsObserver::OnMessageReceived(const IPC::Message& message) {
   bool handled = true;
   IPC_BEGIN_MESSAGE_MAP(ContentSettingsObserver, message)
-    IPC_MESSAGE_HANDLER(ChromeViewMsg_SetAsInterstitial, OnSetAsInterstitial)
     IPC_MESSAGE_HANDLER(ChromeViewMsg_RequestFileSystemAccessAsyncResponse,
                         OnRequestFileSystemAccessAsyncResponse)
     IPC_MESSAGE_UNHANDLED(handled = false)
@@ -236,9 +236,13 @@ void ContentSettingsObserver::SetAllowRunningInsecureContent() {
     frame->Reload(blink::WebFrameLoadType::kReload);
 }
 
-void ContentSettingsObserver::OnInsecureContentRendererRequest(
-    chrome::mojom::InsecureContentRendererRequest request) {
-  insecure_content_renderer_bindings_.AddBinding(this, std::move(request));
+void ContentSettingsObserver::SetAsInterstitial() {
+  is_interstitial_page_ = true;
+}
+
+void ContentSettingsObserver::OnContentSettingsRendererRequest(
+    chrome::mojom::ContentSettingsRendererAssociatedRequest request) {
+  bindings_.AddBinding(this, std::move(request));
 }
 
 bool ContentSettingsObserver::AllowDatabase(const WebString& name,
@@ -471,7 +475,7 @@ void ContentSettingsObserver::PersistClientHints(
   // this method should not return early if |update_count| is 0.
   std::vector<::blink::mojom::WebClientHintsType> client_hints;
   static constexpr size_t kWebClientHintsCount =
-      static_cast<size_t>(blink::mojom::WebClientHintsType::kLast) + 1;
+      static_cast<size_t>(blink::mojom::WebClientHintsType::kMaxValue) + 1;
   client_hints.reserve(kWebClientHintsCount);
 
   for (size_t i = 0; i < kWebClientHintsCount; ++i) {
@@ -507,7 +511,8 @@ void ContentSettingsObserver::GetAllowedClientHintsFromSource(
     return;
 
   client_hints::GetAllowedClientHintsFromSource(
-      url, content_setting_rules_->client_hints_rules, client_hints);
+      url,
+      content_setting_rules_->client_hints_rules, client_hints);
 }
 
 void ContentSettingsObserver::DidNotAllowPlugins() {
@@ -521,10 +526,6 @@ void ContentSettingsObserver::DidNotAllowScript() {
 void ContentSettingsObserver::OnLoadBlockedPlugins(
     const std::string& identifier) {
   temporarily_allowed_plugins_.insert(identifier);
-}
-
-void ContentSettingsObserver::OnSetAsInterstitial() {
-  is_interstitial_page_ = true;
 }
 
 void ContentSettingsObserver::OnRequestFileSystemAccessAsyncResponse(

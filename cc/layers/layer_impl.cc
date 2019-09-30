@@ -11,7 +11,6 @@
 #include <utility>
 
 #include "base/json/json_reader.h"
-#include "base/memory/ptr_util.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "base/trace_event/trace_event.h"
@@ -494,10 +493,6 @@ void LayerImpl::ResetChangeTracking() {
   damage_rect_.SetRect(0, 0, 0, 0);
 }
 
-bool LayerImpl::has_copy_requests_in_target_subtree() {
-  return GetEffectTree().Node(effect_tree_index())->subtree_has_copy_request;
-}
-
 bool LayerImpl::IsActive() const {
   return layer_tree_impl_->IsActiveTree();
 }
@@ -638,10 +633,6 @@ float LayerImpl::Opacity() const {
     return 1.f;
 }
 
-const gfx::Transform& LayerImpl::Transform() const {
-  return GetTransformTree().Node(transform_tree_index())->local;
-}
-
 void LayerImpl::SetElementId(ElementId element_id) {
   if (element_id == element_id_)
     return;
@@ -779,7 +770,7 @@ void LayerImpl::AsValueInto(base::trace_event::TracedValue* state) const {
     base::JSONReader json_reader;
     std::unique_ptr<base::Value> debug_info_value(json_reader.ReadToValue(str));
 
-    if (debug_info_value->IsType(base::Value::Type::DICTIONARY)) {
+    if (debug_info_value->is_dict()) {
       base::DictionaryValue* dictionary_value = nullptr;
       bool converted_to_dictionary =
           debug_info_value->GetAsDictionary(&dictionary_value);
@@ -945,6 +936,10 @@ void LayerImpl::EnsureValidPropertyTreeIndices() const {
   DCHECK(GetEffectTree().Node(effect_tree_index()));
   DCHECK(GetClipTree().Node(clip_tree_index()));
   DCHECK(GetScrollTree().Node(scroll_tree_index()));
+}
+
+bool LayerImpl::is_surface_layer() const {
+  return false;
 }
 
 }  // namespace cc

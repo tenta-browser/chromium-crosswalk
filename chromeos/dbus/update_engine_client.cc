@@ -75,11 +75,6 @@ UpdateEngineClient::UpdateStatusOperation UpdateStatusFromString(
   return UpdateEngineClient::UPDATE_STATUS_ERROR;
 }
 
-// Used in UpdateEngineClient::EmptyUpdateCheckCallback().
-void EmptyUpdateCheckCallbackBody(
-    UpdateEngineClient::UpdateCheckResult unused_result) {
-}
-
 bool IsValidChannel(const std::string& channel) {
   return channel == kReleaseChannelDev || channel == kReleaseChannelBeta ||
          channel == kReleaseChannelStable;
@@ -211,7 +206,7 @@ class UpdateEngineClientImpl : public UpdateEngineClient {
                        weak_ptr_factory_.GetWeakPtr(), callback));
   }
 
-  void GetEolStatus(const GetEolStatusCallback& callback) override {
+  void GetEolStatus(GetEolStatusCallback callback) override {
     dbus::MethodCall method_call(update_engine::kUpdateEngineInterface,
                                  update_engine::kGetEolStatus);
 
@@ -219,7 +214,7 @@ class UpdateEngineClientImpl : public UpdateEngineClient {
     update_engine_proxy_->CallMethod(
         &method_call, dbus::ObjectProxy::TIMEOUT_USE_DEFAULT,
         base::BindOnce(&UpdateEngineClientImpl::OnGetEolStatus,
-                       weak_ptr_factory_.GetWeakPtr(), callback));
+                       weak_ptr_factory_.GetWeakPtr(), std::move(callback)));
   }
 
   void SetUpdateOverCellularPermission(bool allowed,
@@ -269,15 +264,14 @@ class UpdateEngineClientImpl : public UpdateEngineClient {
         update_engine::kUpdateEngineServiceName,
         dbus::ObjectPath(update_engine::kUpdateEngineServicePath));
     update_engine_proxy_->ConnectToSignal(
-        update_engine::kUpdateEngineInterface,
-        update_engine::kStatusUpdate,
+        update_engine::kUpdateEngineInterface, update_engine::kStatusUpdate,
         base::Bind(&UpdateEngineClientImpl::StatusUpdateReceived,
                    weak_ptr_factory_.GetWeakPtr()),
-        base::Bind(&UpdateEngineClientImpl::StatusUpdateConnected,
-                   weak_ptr_factory_.GetWeakPtr()));
+        base::BindOnce(&UpdateEngineClientImpl::StatusUpdateConnected,
+                       weak_ptr_factory_.GetWeakPtr()));
     update_engine_proxy_->WaitForServiceToBeAvailable(
-        base::Bind(&UpdateEngineClientImpl::OnServiceInitiallyAvailable,
-                   weak_ptr_factory_.GetWeakPtr()));
+        base::BindOnce(&UpdateEngineClientImpl::OnServiceInitiallyAvailable,
+                       weak_ptr_factory_.GetWeakPtr()));
   }
 
  private:
@@ -419,18 +413,17 @@ class UpdateEngineClientImpl : public UpdateEngineClient {
   }
 
   // Called when a response for GetEolStatus() is received.
-  void OnGetEolStatus(const GetEolStatusCallback& callback,
-                      dbus::Response* response) {
+  void OnGetEolStatus(GetEolStatusCallback callback, dbus::Response* response) {
     if (!response) {
       LOG(ERROR) << "Failed to request getting eol status";
-      callback.Run(update_engine::EndOfLifeStatus::kSupported);
+      std::move(callback).Run(update_engine::EndOfLifeStatus::kSupported);
       return;
     }
     dbus::MessageReader reader(response);
     int status;
     if (!reader.PopInt32(&status)) {
       LOG(ERROR) << "Incorrect response: " << response->ToString();
-      callback.Run(update_engine::EndOfLifeStatus::kSupported);
+      std::move(callback).Run(update_engine::EndOfLifeStatus::kSupported);
       return;
     }
 
@@ -438,12 +431,13 @@ class UpdateEngineClientImpl : public UpdateEngineClient {
     if (status > update_engine::EndOfLifeStatus::kEol ||
         status < update_engine::EndOfLifeStatus::kSupported) {
       LOG(ERROR) << "Incorrect status value: " << status;
-      callback.Run(update_engine::EndOfLifeStatus::kSupported);
+      std::move(callback).Run(update_engine::EndOfLifeStatus::kSupported);
       return;
     }
 
     VLOG(1) << "Eol status received: " << status;
-    callback.Run(static_cast<update_engine::EndOfLifeStatus>(status));
+    std::move(callback).Run(
+        static_cast<update_engine::EndOfLifeStatus>(status));
   }
 
   // Called when a response for SetUpdateOverCellularPermission() is received.
@@ -542,76 +536,18 @@ class UpdateEngineClientStubImpl : public UpdateEngineClient {
  public:
   UpdateEngineClientStubImpl()
       : current_channel_(kReleaseChannelBeta),
-        target_channel_(kReleaseChannelBeta) {}
+        target_channel_(kReleaseChannelBeta),
+        weak_factory_(this) {}
 
   // UpdateEngineClient implementation:
   void Init(dbus::Bus* bus) override {}
-  void AddObserver(Observer* observer) override {}
-  void RemoveObserver(Observer* observer) override {}
-  bool HasObserver(const Observer* observer) const override { return false; }
 
-  void RequestUpdateCheck(const UpdateCheckCallback& callback) override {
-    callback.Run(UPDATE_RESULT_NOTIMPLEMENTED);
-  }
-  void RebootAfterUpdate() override {}
-  void Rollback() override {}
-  void CanRollbackCheck(const RollbackCheckCallback& callback) override {
-    callback.Run(true);
-  }
-  Status GetLastStatus() override { return Status(); }
-  void SetChannel(const std::string& target_channel,
-                  bool is_powerwash_allowed) override {
-    VLOG(1) << "Requesting to set channel: "
-            << "target_channel=" << target_channel << ", "
-            << "is_powerwash_allowed=" << is_powerwash_allowed;
-    target_channel_ = target_channel;
-  }
-  void GetChannel(bool get_current_channel,
-                  const GetChannelCallback& callback) override {
-    VLOG(1) << "Requesting to get channel, get_current_channel="
-            << get_current_channel;
-    if (get_current_channel)
-      callback.Run(current_channel_);
-    else
-      callback.Run(target_channel_);
-  }
-
-  void GetEolStatus(const GetEolStatusCallback& callback) override {
-    callback.Run(update_engine::EndOfLifeStatus::kSupported);
-  }
-
-  void SetUpdateOverCellularPermission(bool allowed,
-                                       const base::Closure& callback) override {
-    callback.Run();
-  }
-
-  void SetUpdateOverCellularOneTimePermission(
-      const std::string& update_version,
-      int64_t update_size,
-      const UpdateOverCellularOneTimePermissionCallback& callback) override {}
-
-  std::string current_channel_;
-  std::string target_channel_;
-};
-
-// The UpdateEngineClient implementation used on Linux desktop, which
-// tries to emulate real update engine client.
-class UpdateEngineClientFakeImpl : public UpdateEngineClientStubImpl {
- public:
-  UpdateEngineClientFakeImpl() : weak_factory_(this) {
-  }
-
-  ~UpdateEngineClientFakeImpl() override = default;
-
-  // UpdateEngineClient implementation:
   void AddObserver(Observer* observer) override {
-    if (observer)
-      observers_.AddObserver(observer);
+    observers_.AddObserver(observer);
   }
 
   void RemoveObserver(Observer* observer) override {
-    if (observer)
-      observers_.RemoveObserver(observer);
+    observers_.RemoveObserver(observer);
   }
 
   bool HasObserver(const Observer* observer) const override {
@@ -629,12 +565,52 @@ class UpdateEngineClientFakeImpl : public UpdateEngineClientStubImpl {
     last_status_.last_checked_time = 0;
     last_status_.new_size = 0;
     base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
-        FROM_HERE, base::Bind(&UpdateEngineClientFakeImpl::StateTransition,
-                              weak_factory_.GetWeakPtr()),
+        FROM_HERE,
+        base::BindOnce(&UpdateEngineClientStubImpl::StateTransition,
+                       weak_factory_.GetWeakPtr()),
         base::TimeDelta::FromMilliseconds(kStateTransitionDefaultDelayMs));
   }
 
+  void RebootAfterUpdate() override {}
+
+  void Rollback() override {}
+
+  void CanRollbackCheck(const RollbackCheckCallback& callback) override {
+    callback.Run(true);
+  }
+
   Status GetLastStatus() override { return last_status_; }
+
+  void SetChannel(const std::string& target_channel,
+                  bool is_powerwash_allowed) override {
+    VLOG(1) << "Requesting to set channel: "
+            << "target_channel=" << target_channel << ", "
+            << "is_powerwash_allowed=" << is_powerwash_allowed;
+    target_channel_ = target_channel;
+  }
+  void GetChannel(bool get_current_channel,
+                  const GetChannelCallback& callback) override {
+    VLOG(1) << "Requesting to get channel, get_current_channel="
+            << get_current_channel;
+    if (get_current_channel)
+      callback.Run(current_channel_);
+    else
+      callback.Run(target_channel_);
+  }
+
+  void GetEolStatus(GetEolStatusCallback callback) override {
+    std::move(callback).Run(update_engine::EndOfLifeStatus::kSupported);
+  }
+
+  void SetUpdateOverCellularPermission(bool allowed,
+                                       const base::Closure& callback) override {
+    callback.Run();
+  }
+
+  void SetUpdateOverCellularOneTimePermission(
+      const std::string& update_version,
+      int64_t update_size,
+      const UpdateOverCellularOneTimePermissionCallback& callback) override {}
 
  private:
   void StateTransition() {
@@ -676,18 +652,23 @@ class UpdateEngineClientFakeImpl : public UpdateEngineClientStubImpl {
       observer.UpdateStatusChanged(last_status_);
     if (last_status_.status != UPDATE_STATUS_IDLE) {
       base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
-          FROM_HERE, base::Bind(&UpdateEngineClientFakeImpl::StateTransition,
-                                weak_factory_.GetWeakPtr()),
+          FROM_HERE,
+          base::BindOnce(&UpdateEngineClientStubImpl::StateTransition,
+                         weak_factory_.GetWeakPtr()),
           base::TimeDelta::FromMilliseconds(delay_ms));
     }
   }
 
   base::ObserverList<Observer> observers_;
+
+  std::string current_channel_;
+  std::string target_channel_;
+
   Status last_status_;
 
-  base::WeakPtrFactory<UpdateEngineClientFakeImpl> weak_factory_;
+  base::WeakPtrFactory<UpdateEngineClientStubImpl> weak_factory_;
 
-  DISALLOW_COPY_AND_ASSIGN(UpdateEngineClientFakeImpl);
+  DISALLOW_COPY_AND_ASSIGN(UpdateEngineClientStubImpl);
 };
 
 UpdateEngineClient::UpdateEngineClient() = default;
@@ -695,22 +676,12 @@ UpdateEngineClient::UpdateEngineClient() = default;
 UpdateEngineClient::~UpdateEngineClient() = default;
 
 // static
-UpdateEngineClient::UpdateCheckCallback
-UpdateEngineClient::EmptyUpdateCheckCallback() {
-  return base::Bind(&EmptyUpdateCheckCallbackBody);
-}
-
-// static
 UpdateEngineClient* UpdateEngineClient::Create(
     DBusClientImplementationType type) {
   if (type == REAL_DBUS_CLIENT_IMPLEMENTATION)
     return new UpdateEngineClientImpl();
   DCHECK_EQ(FAKE_DBUS_CLIENT_IMPLEMENTATION, type);
-  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kTestAutoUpdateUI))
-    return new UpdateEngineClientFakeImpl();
-  else
-    return new UpdateEngineClientStubImpl();
+  return new UpdateEngineClientStubImpl();
 }
 
 // static

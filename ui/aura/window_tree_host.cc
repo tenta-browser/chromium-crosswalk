@@ -12,6 +12,7 @@
 #include "ui/aura/client/capture_client.h"
 #include "ui/aura/client/cursor_client.h"
 #include "ui/aura/env.h"
+#include "ui/aura/scoped_keyboard_hook.h"
 #include "ui/aura/window.h"
 #include "ui/aura/window_event_dispatcher.h"
 #include "ui/aura/window_port.h"
@@ -60,8 +61,12 @@ WindowTreeHost* WindowTreeHost::GetForAcceleratedWidget(
 }
 
 void WindowTreeHost::InitHost() {
+  display::Display display =
+      display::Screen::GetScreen()->GetDisplayNearestWindow(window());
+  device_scale_factor_ = display.device_scale_factor();
+
   InitCompositor();
-  UpdateRootWindowSizeInPixels(GetBoundsInPixels().size());
+  UpdateRootWindowSizeInPixels();
   Env::GetInstance()->NotifyHostInitialized(this);
 }
 
@@ -78,16 +83,15 @@ ui::EventSink* WindowTreeHost::event_sink() {
 }
 
 gfx::Transform WindowTreeHost::GetRootTransform() const {
-  float scale = ui::GetDeviceScaleFactor(window()->layer());
   gfx::Transform transform;
-  transform.Scale(scale, scale);
+  transform.Scale(device_scale_factor_, device_scale_factor_);
   transform *= window()->layer()->transform();
   return transform;
 }
 
 void WindowTreeHost::SetRootTransform(const gfx::Transform& transform) {
   window()->SetTransform(transform);
-  UpdateRootWindowSizeInPixels(GetBoundsInPixels().size());
+  UpdateRootWindowSizeInPixels();
 }
 
 gfx::Transform WindowTreeHost::GetInverseRootTransform() const {
@@ -112,25 +116,11 @@ gfx::Transform WindowTreeHost::GetInverseRootTransformForLocalEventCoordinates()
   return invert;
 }
 
-void WindowTreeHost::SetOutputSurfacePaddingInPixels(
-    const gfx::Insets& padding_in_pixels) {
-  if (output_surface_padding_in_pixels_ == padding_in_pixels)
-    return;
-
-  output_surface_padding_in_pixels_ = padding_in_pixels;
-  OnHostResizedInPixels(GetBoundsInPixels().size());
-}
-
-void WindowTreeHost::UpdateRootWindowSizeInPixels(
-    const gfx::Size& host_size_in_pixels) {
-  gfx::Rect bounds(output_surface_padding_in_pixels_.left(),
-                   output_surface_padding_in_pixels_.top(),
-                   host_size_in_pixels.width(), host_size_in_pixels.height());
-  float scale_factor = ui::GetDeviceScaleFactor(window()->layer());
-  gfx::RectF new_bounds =
-      gfx::ScaleRect(gfx::RectF(bounds), 1.0f / scale_factor);
-  window()->layer()->transform().TransformRect(&new_bounds);
-  window()->SetBounds(gfx::ToEnclosingRect(new_bounds));
+void WindowTreeHost::UpdateRootWindowSizeInPixels() {
+  gfx::Rect transformed_bounds_in_pixels =
+      GetTransformedRootWindowBoundsInPixels(GetBoundsInPixels().size());
+  window()->SetBounds(transformed_bounds_in_pixels);
+  window()->SetDeviceScaleFactor(device_scale_factor_);
 }
 
 void WindowTreeHost::ConvertDIPToScreenInPixels(gfx::Point* point) const {
@@ -222,6 +212,10 @@ ui::EventDispatchDetails WindowTreeHost::DispatchKeyEventPostIME(
   return dispatch_details;
 }
 
+int64_t WindowTreeHost::GetDisplayId() {
+  return display::Screen::GetScreen()->GetDisplayNearestWindow(window()).id();
+}
+
 void WindowTreeHost::Show() {
   // Ensure that compositor has been properly initialized, see InitCompositor()
   // and InitHost().
@@ -238,6 +232,13 @@ void WindowTreeHost::Hide() {
     compositor()->SetVisible(false);
 }
 
+std::unique_ptr<ScopedKeyboardHook> WindowTreeHost::CaptureSystemKeyEvents(
+    base::Optional<base::flat_set<int>> keys) {
+  if (CaptureSystemKeyEventsImpl(std::move(keys)))
+    return std::make_unique<ScopedKeyboardHook>(weak_factory_.GetWeakPtr());
+  return nullptr;
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 // WindowTreeHost, protected:
 
@@ -248,7 +249,8 @@ WindowTreeHost::WindowTreeHost(std::unique_ptr<WindowPort> window_port)
     : window_(new Window(nullptr, std::move(window_port))),
       last_cursor_(ui::CursorType::kNull),
       input_method_(nullptr),
-      owned_input_method_(false) {
+      owned_input_method_(false),
+      weak_factory_(this) {
   display::Screen::GetScreen()->AddObserver(this);
 }
 
@@ -293,7 +295,9 @@ void WindowTreeHost::CreateCompositor(const viz::FrameSinkId& frame_sink_id,
       base::ThreadTaskRunnerHandle::Get(), enable_surface_synchronization,
       ui::IsPixelCanvasRecordingEnabled(), external_begin_frames_enabled,
       force_software_compositor));
+#if defined(OS_CHROMEOS)
   compositor_->AddObserver(this);
+#endif
   if (!dispatcher()) {
     window()->Init(ui::LAYER_NOT_DRAWN);
     window()->set_host(this);
@@ -304,12 +308,12 @@ void WindowTreeHost::CreateCompositor(const viz::FrameSinkId& frame_sink_id,
 
 void WindowTreeHost::InitCompositor() {
   DCHECK(!compositor_->root_layer());
-  display::Display display =
-      display::Screen::GetScreen()->GetDisplayNearestWindow(window());
-  compositor_->SetScaleAndSize(display.device_scale_factor(),
-                               GetBoundsInPixels().size(),
+  compositor_->SetScaleAndSize(device_scale_factor_, GetBoundsInPixels().size(),
                                window()->GetLocalSurfaceId());
   compositor_->SetRootLayer(window()->layer());
+
+  display::Display display =
+      display::Screen::GetScreen()->GetDisplayNearestWindow(window());
   compositor_->SetDisplayColorSpace(display.color_space());
 }
 
@@ -330,19 +334,19 @@ void WindowTreeHost::OnHostMovedInPixels(
 
 void WindowTreeHost::OnHostResizedInPixels(
     const gfx::Size& new_size_in_pixels) {
-  gfx::Size adjusted_size(new_size_in_pixels);
-  adjusted_size.Enlarge(output_surface_padding_in_pixels_.width(),
-                        output_surface_padding_in_pixels_.height());
+  display::Display display =
+      display::Screen::GetScreen()->GetDisplayNearestWindow(window());
+  device_scale_factor_ = display.device_scale_factor();
+
+  // The layer, and the observers should be notified of the
+  // transformed size of the root window.
+  UpdateRootWindowSizeInPixels();
 
   // The compositor should have the same size as the native root window host.
   // Get the latest scale from display because it might have been changed.
-  compositor_->SetScaleAndSize(ui::GetScaleFactorForNativeView(window()),
-                               adjusted_size, window()->GetLocalSurfaceId());
+  compositor_->SetScaleAndSize(device_scale_factor_, new_size_in_pixels,
+                               window()->GetLocalSurfaceId());
 
-  gfx::Size layer_size = GetBoundsInPixels().size();
-  // The layer, and the observers should be notified of the
-  // transformed size of the root window.
-  UpdateRootWindowSizeInPixels(layer_size);
   for (WindowTreeHostObserver& observer : observers_)
     observer.OnHostResized(this);
 }
@@ -400,6 +404,15 @@ void WindowTreeHost::OnDisplayMetricsChanged(const display::Display& display,
   }
 }
 
+gfx::Rect WindowTreeHost::GetTransformedRootWindowBoundsInPixels(
+    const gfx::Size& size_in_pixels) const {
+  gfx::Rect bounds(size_in_pixels);
+  gfx::RectF new_bounds =
+      gfx::ScaleRect(gfx::RectF(bounds), 1.0f / device_scale_factor_);
+  window()->layer()->transform().TransformRect(&new_bounds);
+  return gfx::ToEnclosingRect(new_bounds);
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 // WindowTreeHost, private:
 
@@ -416,21 +429,10 @@ void WindowTreeHost::MoveCursorToInternal(const gfx::Point& root_location,
   dispatcher()->OnCursorMovedToRootLocation(root_location);
 }
 
-void WindowTreeHost::OnCompositingDidCommit(ui::Compositor* compositor) {}
-
-void WindowTreeHost::OnCompositingStarted(ui::Compositor* compositor,
-                                          base::TimeTicks start_time) {
-  if (!synchronizing_with_child_on_next_frame_)
-    return;
-  synchronizing_with_child_on_next_frame_ = false;
-  synchronization_start_time_ = base::TimeTicks::Now();
-  dispatcher_->HoldPointerMoves();
-  holding_pointer_moves_ = true;
-}
-
-void WindowTreeHost::OnCompositingEnded(ui::Compositor* compositor) {
+void WindowTreeHost::OnCompositingDidCommit(ui::Compositor* compositor) {
   if (!holding_pointer_moves_)
     return;
+
   dispatcher_->ReleasePointerMoves();
   holding_pointer_moves_ = false;
   DCHECK(!synchronization_start_time_.is_null());
@@ -438,11 +440,20 @@ void WindowTreeHost::OnCompositingEnded(ui::Compositor* compositor) {
                       base::TimeTicks::Now() - synchronization_start_time_);
 }
 
+void WindowTreeHost::OnCompositingStarted(ui::Compositor* compositor,
+                                          base::TimeTicks start_time) {}
+
+void WindowTreeHost::OnCompositingEnded(ui::Compositor* compositor) {}
+
 void WindowTreeHost::OnCompositingLockStateChanged(ui::Compositor* compositor) {
 }
 
 void WindowTreeHost::OnCompositingChildResizing(ui::Compositor* compositor) {
-  synchronizing_with_child_on_next_frame_ = true;
+  if (!Env::GetInstance()->throttle_input_on_resize() || holding_pointer_moves_)
+    return;
+  synchronization_start_time_ = base::TimeTicks::Now();
+  dispatcher_->HoldPointerMoves();
+  holding_pointer_moves_ = true;
 }
 
 void WindowTreeHost::OnCompositingShuttingDown(ui::Compositor* compositor) {

@@ -33,12 +33,12 @@ std::unique_ptr<net::ProofSource> CreateProofSource(
 }
 
 int main(int argc, char* argv[]) {
-  base::TaskScheduler::CreateAndStartWithDefaultParams("quic_server");
   base::AtExitManager exit_manager;
-  base::MessageLoopForIO message_loop;
-
   base::CommandLine::Init(argc, argv);
   base::CommandLine* line = base::CommandLine::ForCurrentProcess();
+
+  base::MessageLoopForIO message_loop;
+  base::TaskScheduler::CreateAndStartWithDefaultParams("quic_server");
 
   logging::LoggingSettings settings;
   settings.logging_dest = logging::LOG_TO_SYSTEM_DEBUG_LOG;
@@ -87,7 +87,7 @@ int main(int argc, char* argv[]) {
       CreateProofSource(line->GetSwitchValuePath("certificate_file"),
                         line->GetSwitchValuePath("key_file")),
       config, net::QuicCryptoServerConfig::ConfigOptions(),
-      net::AllSupportedTransportVersions(), &response_cache);
+      net::AllSupportedVersions(), &response_cache);
 
   int rc = server.CreateUDPSocketAndListen(
       net::QuicSocketAddress(net::QuicIpAddress::Any6(), FLAGS_port));
@@ -95,7 +95,7 @@ int main(int argc, char* argv[]) {
     return 1;
   }
 
-  while (1) {
+  while (true) {
     server.WaitForEvents();
   }
 }

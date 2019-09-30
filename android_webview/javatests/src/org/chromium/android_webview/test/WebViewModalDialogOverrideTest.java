@@ -22,6 +22,7 @@ import org.chromium.android_webview.JsResultReceiver;
 import org.chromium.android_webview.test.util.AwTestTouchUtils;
 import org.chromium.base.test.util.CallbackHelper;
 import org.chromium.base.test.util.Feature;
+import org.chromium.content_public.browser.GestureListenerManager;
 import org.chromium.content_public.browser.GestureStateListener;
 
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -65,7 +66,7 @@ public class WebViewModalDialogOverrideTest {
         AwTestContainerView view = mActivityTestRule.createAwTestContainerViewOnMainSync(client);
         final AwContents awContents = view.getAwContents();
 
-        mActivityTestRule.enableJavaScriptOnUiThread(awContents);
+        AwActivityTestRule.enableJavaScriptOnUiThread(awContents);
         mActivityTestRule.loadDataSync(
                 awContents, client.getOnPageFinishedHelper(), EMPTY_PAGE, "text/html", false);
         mActivityTestRule.executeJavaScriptAndWaitForResult(
@@ -99,7 +100,7 @@ public class WebViewModalDialogOverrideTest {
         AwTestContainerView view = mActivityTestRule.createAwTestContainerViewOnMainSync(client);
         final AwContents awContents = view.getAwContents();
 
-        mActivityTestRule.enableJavaScriptOnUiThread(awContents);
+        AwActivityTestRule.enableJavaScriptOnUiThread(awContents);
         mActivityTestRule.loadDataSync(
                 awContents, client.getOnPageFinishedHelper(), EMPTY_PAGE, "text/html", false);
         String result = mActivityTestRule.executeJavaScriptAndWaitForResult(
@@ -129,7 +130,7 @@ public class WebViewModalDialogOverrideTest {
         };
         AwTestContainerView view = mActivityTestRule.createAwTestContainerViewOnMainSync(client);
         final AwContents awContents = view.getAwContents();
-        mActivityTestRule.enableJavaScriptOnUiThread(awContents);
+        AwActivityTestRule.enableJavaScriptOnUiThread(awContents);
 
         mActivityTestRule.loadDataSync(
                 awContents, client.getOnPageFinishedHelper(), EMPTY_PAGE, "text/html", false);
@@ -160,7 +161,7 @@ public class WebViewModalDialogOverrideTest {
         };
         AwTestContainerView view = mActivityTestRule.createAwTestContainerViewOnMainSync(client);
         final AwContents awContents = view.getAwContents();
-        mActivityTestRule.enableJavaScriptOnUiThread(awContents);
+        AwActivityTestRule.enableJavaScriptOnUiThread(awContents);
 
         mActivityTestRule.loadDataSync(
                 awContents, client.getOnPageFinishedHelper(), EMPTY_PAGE, "text/html", false);
@@ -193,7 +194,8 @@ public class WebViewModalDialogOverrideTest {
     private void tapViewAndWait(AwTestContainerView view) throws Throwable {
         final TapGestureStateListener tapGestureStateListener = new TapGestureStateListener();
         int callCount = tapGestureStateListener.getCallCount();
-        view.getContentViewCore().addGestureStateListener(tapGestureStateListener);
+        GestureListenerManager.fromWebContents(view.getWebContents())
+                .addListener(tapGestureStateListener);
 
         AwTestTouchUtils.simulateTouchCenterOfView(view);
         tapGestureStateListener.waitForTap(callCount);
@@ -216,11 +218,11 @@ public class WebViewModalDialogOverrideTest {
         };
         AwTestContainerView view = mActivityTestRule.createAwTestContainerViewOnMainSync(client);
         final AwContents awContents = view.getAwContents();
-        mActivityTestRule.enableJavaScriptOnUiThread(awContents);
+        AwActivityTestRule.enableJavaScriptOnUiThread(awContents);
 
         mActivityTestRule.loadDataSync(awContents, client.getOnPageFinishedHelper(),
                 BEFORE_UNLOAD_URL, "text/html", false);
-        mActivityTestRule.enableJavaScriptOnUiThread(awContents);
+        AwActivityTestRule.enableJavaScriptOnUiThread(awContents);
         // JavaScript onbeforeunload dialogs require a user gesture.
         tapViewAndWait(view);
 

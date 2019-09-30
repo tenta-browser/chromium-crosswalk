@@ -4,11 +4,12 @@
 
 #include "chromeos/components/tether/keep_alive_operation.h"
 
+#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/time/default_clock.h"
+#include "chromeos/components/proximity_auth/logging/logging.h"
 #include "chromeos/components/tether/message_wrapper.h"
 #include "chromeos/components/tether/proto/tether.pb.h"
-#include "components/proximity_auth/logging/logging.h"
 
 namespace chromeos {
 
@@ -37,8 +38,8 @@ void KeepAliveOperation::Factory::SetInstanceForTesting(Factory* factory) {
 std::unique_ptr<KeepAliveOperation> KeepAliveOperation::Factory::BuildInstance(
     const cryptauth::RemoteDevice& device_to_connect,
     BleConnectionManager* connection_manager) {
-  return base::MakeUnique<KeepAliveOperation>(device_to_connect,
-                                              connection_manager);
+  return base::WrapUnique(
+      new KeepAliveOperation(device_to_connect, connection_manager));
 }
 
 KeepAliveOperation::KeepAliveOperation(
@@ -48,7 +49,7 @@ KeepAliveOperation::KeepAliveOperation(
           std::vector<cryptauth::RemoteDevice>{device_to_connect},
           connection_manager),
       remote_device_(device_to_connect),
-      clock_(base::MakeUnique<base::DefaultClock>()) {}
+      clock_(base::DefaultClock::GetInstance()) {}
 
 KeepAliveOperation::~KeepAliveOperation() = default;
 
@@ -65,7 +66,7 @@ void KeepAliveOperation::OnDeviceAuthenticated(
   DCHECK(remote_devices().size() == 1u && remote_devices()[0] == remote_device);
   keep_alive_tickle_request_start_time_ = clock_->Now();
   SendMessageToDevice(remote_device,
-                      base::MakeUnique<MessageWrapper>(KeepAliveTickle()));
+                      std::make_unique<MessageWrapper>(KeepAliveTickle()));
 }
 
 void KeepAliveOperation::OnMessageReceived(
@@ -84,7 +85,7 @@ void KeepAliveOperation::OnMessageReceived(
 
   KeepAliveTickleResponse* response =
       static_cast<KeepAliveTickleResponse*>(message_wrapper->GetProto().get());
-  device_status_ = base::MakeUnique<DeviceStatus>(response->device_status());
+  device_status_ = std::make_unique<DeviceStatus>(response->device_status());
 
   DCHECK(!keep_alive_tickle_request_start_time_.is_null());
   UMA_HISTOGRAM_TIMES(
@@ -101,7 +102,7 @@ void KeepAliveOperation::OnOperationFinished() {
     // will still be null.
     observer.OnOperationFinished(
         remote_device_, device_status_
-                            ? base::MakeUnique<DeviceStatus>(*device_status_)
+                            ? std::make_unique<DeviceStatus>(*device_status_)
                             : nullptr);
   }
 }
@@ -110,9 +111,8 @@ MessageType KeepAliveOperation::GetMessageTypeForConnection() {
   return MessageType::KEEP_ALIVE_TICKLE;
 }
 
-void KeepAliveOperation::SetClockForTest(
-    std::unique_ptr<base::Clock> clock_for_test) {
-  clock_ = std::move(clock_for_test);
+void KeepAliveOperation::SetClockForTest(base::Clock* clock_for_test) {
+  clock_ = clock_for_test;
 }
 
 }  // namespace tether

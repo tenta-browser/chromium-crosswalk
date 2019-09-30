@@ -5,6 +5,8 @@
 #ifndef COMPONENTS_CHROME_CLEANER_PUBLIC_CONSTANTS_CONSTANTS_H_
 #define COMPONENTS_CHROME_CLEANER_PUBLIC_CONSTANTS_CONSTANTS_H_
 
+#include "components/chrome_cleaner/public/constants/result_codes.h"
+
 // Constants shared by the Chromium and the Chrome Cleanaup tool repos.
 
 namespace chrome_cleaner {
@@ -33,6 +35,11 @@ extern const char kChromeSystemInstallSwitch[];
 // The Chrome version string.
 extern const char kChromeVersionSwitch[];
 
+// Identify that the cleaner process in scanning mode is allowed to collect
+// logs. This should only be set if |kExecutionModeSwitch| is
+// ExecutionMode::kScanning.
+extern const char kWithScanningModeLogsSwitch[];
+
 // Indicates that crash reporting is enabled for the current user.
 extern const char kEnableCrashReportingSwitch[];
 
@@ -57,6 +64,9 @@ extern const char kSessionIdSwitch[];
 
 // Indicates the group name for the SRTPrompt field trial.
 extern const char kSRTPromptFieldTrialGroupNameSwitch[];
+
+// Indicates the method Chrome will use to prompt the user to reboot if needed.
+extern const char kRebootPromptMethodSwitch[];
 
 // Indicates that metrics reporting is enabled for the current user.
 extern const char kUmaUserSwitch[];
@@ -88,22 +98,34 @@ extern const wchar_t kUploadResultsValueName[];
 extern const wchar_t kVersionValueName[];
 
 // Exit codes from the Software Reporter process identified by Chrome.
-constexpr int kSwReporterCleanupNeeded = 0;
-constexpr int kSwReporterNothingFound = 2;
-constexpr int kSwReporterPostRebootCleanupNeeded = 4;
-constexpr int kSwReporterNonRemovableOnly = 10;
-constexpr int kSwReporterDelayedPostRebootCleanupNeeded = 15;
-constexpr int kSwReporterSuspiciousOnly = 32;
-constexpr int kSwReporterTimeoutWithoutUwS = 34;
-constexpr int kSwReporterTimeoutWithUwS = 35;
+constexpr int kSwReporterCleanupNeeded = RESULT_CODE_SUCCESS;
+constexpr int kSwReporterNothingFound = RESULT_CODE_NO_PUPS_FOUND;
+constexpr int kSwReporterPostRebootCleanupNeeded =
+    DEPRECATED_RESULT_CODE_ABOUT_TO_REBOOT;
+constexpr int kSwReporterNonRemovableOnly =
+    RESULT_CODE_EXAMINED_FOR_REMOVAL_ONLY;
+constexpr int kSwReporterDelayedPostRebootCleanupNeeded =
+    RESULT_CODE_PENDING_REBOOT;
+constexpr int kSwReporterSuspiciousOnly = RESULT_CODE_REPORT_ONLY_PUPS_FOUND;
+constexpr int kSwReporterTimeoutWithoutUwS =
+    RESULT_CODE_WATCHDOG_TIMEOUT_WITHOUT_REMOVABLE_UWS;
+constexpr int kSwReporterTimeoutWithUwS =
+    RESULT_CODE_WATCHDOG_TIMEOUT_WITH_REMOVABLE_UWS;
 
 // Values to be passed to the kChromePromptSwitch of the Chrome Cleanup Tool to
 // indicate how the user interacted with the accept button.
 enum class ChromePromptValue {
+  // Value not set.
+  kUnspecified = 0,
   // The user accepted the prompt when the prompt was first shown.
   kPrompted = 3,
-  // The user accepted the prompt after navigating to it from the menu.
-  kShownFromMenu = 4
+  // The user started the cleanup from the Settings page.
+  kUserInitiated = 5,
+
+  // Legacy values that shouldn't be used in Chromium code.
+  kLegacyNotPrompted = 1,
+  kLegacyUnknown = 2,
+  kLegacyShownFromMenu = 4,
 };
 
 // Values to be passed to the kExecutionModeSwitch for the Chrome Cleanup Tool

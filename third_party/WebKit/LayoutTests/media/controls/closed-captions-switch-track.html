@@ -2,7 +2,6 @@
 <title>Test that we can add multiple tracks and select between them from the track selection menu.</title>
 <script src='../../resources/testharness.js'></script>
 <script src='../../resources/testharnessreport.js'></script>
-<script src='../media-file.js'></script>
 <script src='../media-controls.js'></script>
 <!-- Width should be large enough to display closed captions button. -->
 <video controls style='width: 500px'></video>
@@ -20,24 +19,34 @@ async_test(t => {
     }
 
     // The controls are updated asynchronously.
-    assert_false(isClosedCaptionsButtonVisible(video));
+    assert_false(isClosedCaptionsButtonEnabled(video));
 
-    setTimeout(t.step_func_done(_ => {
-      assert_true(isClosedCaptionsButtonVisible(video));
+    setTimeout(t.step_func(_ => {
+      assert_true(isClosedCaptionsButtonEnabled(video));
       assert_equals(video.textTracks.length, trackLanguages.length);
-
-      for (var i = 0; i < trackLanguages.length; i++) {
-        clickTextTrackAtIndex(video, i);
-        assert_equals(video.textTracks[i].mode, 'showing');
-        assert_equals(textTrackDisplayElement(video).innerText, trackCueText[i]);
-        for (var j = 0; j < trackLanguages.length; j++) {
-          if (j != i)
-            assert_equals(video.textTracks[j].mode, 'disabled');
-        }
-      }
+      checkTrack(0);
     }));
   });
 
-  video.src = findMediaFile('video', '../content/test');
+  video.src = '../content/test.ogv';
+
+  function checkTrack(i) {
+    // If we've reached the end, the test is complete.
+    if (i == trackLanguages.length) {
+      t.done();
+      return;
+    }
+
+    clickTextTrackAtIndex(video, i, t.step_func(() => {
+      assert_equals(video.textTracks[i].mode, 'showing');
+      assert_equals(textTrackDisplayElement(video).innerText, trackCueText[i]);
+      for (var j = 0; j < trackLanguages.length; j++) {
+        if (j != i)
+          assert_equals(video.textTracks[j].mode, 'disabled');
+      }
+      // Check the next track.
+      checkTrack(i + 1);
+    }));
+  }
 });
 </script>

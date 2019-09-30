@@ -22,7 +22,8 @@ chrome.automation.RoleType = {
   ROOT_WEB_AREA: 'rootWebArea',
   STATIC_TEXT: 'staticText',
   INLINE_TEXT_BOX: 'inlineTextBox',
-  PARAGRAPH: 'paragraph'
+  PARAGRAPH: 'paragraph',
+  TEXT_FIELD: 'textField',
 };
 
 chrome.automation.StateType = {
@@ -30,5 +31,11 @@ chrome.automation.StateType = {
 };
 
 chrome.metricsPrivate = {
-  recordUserAction: function() {}
+  recordUserAction: function() {},
+  recordValue: function() {},
+  MetricTypeType: {HISTOGRAM_LINEAR: 1}
+};
+
+chrome.commandLinePrivate = {
+  hasSwitch: function() {}
 };

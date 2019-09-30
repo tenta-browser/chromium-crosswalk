@@ -5,14 +5,16 @@
 #ifndef CHROME_BROWSER_UI_WEBUI_MEDIA_ROUTER_MEDIA_ROUTER_WEBUI_MESSAGE_HANDLER_H_
 #define CHROME_BROWSER_UI_WEBUI_MEDIA_ROUTER_MEDIA_ROUTER_WEBUI_MESSAGE_HANDLER_H_
 
+#include <memory>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
 #include "base/files/file_path.h"
 #include "base/macros.h"
 #include "base/optional.h"
-#include "chrome/browser/ui/webui/media_router/media_cast_mode.h"
-#include "chrome/browser/ui/webui/media_router/media_sink_with_cast_modes.h"
+#include "chrome/browser/ui/media_router/media_cast_mode.h"
+#include "chrome/browser/ui/media_router/media_sink_with_cast_modes.h"
 #include "chrome/common/media_router/issue.h"
 #include "chrome/common/media_router/media_status.h"
 #include "components/signin/core/browser/account_info.h"
@@ -41,7 +43,7 @@ class MediaRouterWebUIMessageHandler : public content::WebUIMessageHandler {
   ~MediaRouterWebUIMessageHandler() override;
 
   // Methods to update the status displayed by the dialog.
-  void UpdateSinks(const std::vector<MediaSinkWithCastModes>& sinks);
+  virtual void UpdateSinks(const std::vector<MediaSinkWithCastModes>& sinks);
   void UpdateRoutes(const std::vector<MediaRoute>& routes,
                     const std::vector<MediaRoute::Id>& joinable_route_ids,
                     const std::unordered_map<MediaRoute::Id, MediaCastMode>&
@@ -165,9 +167,6 @@ class MediaRouterWebUIMessageHandler : public content::WebUIMessageHandler {
 
   // Keeps track of whether a command to close the dialog has been issued.
   bool dialog_closing_;
-
-  // Whether the WebUI version of route controller is available for use.
-  const bool is_web_ui_route_controller_available_;
 
   // The media status currently shown in the UI.
   base::Optional<MediaStatus> current_media_status_;

@@ -5,9 +5,8 @@
 #include "net/quic/core/quic_utils.h"
 
 #include "net/quic/core/crypto/crypto_protocol.h"
+#include "net/quic/platform/api/quic_string.h"
 #include "net/quic/platform/api/quic_test.h"
-
-using std::string;
 
 namespace net {
 namespace test {
@@ -16,11 +15,11 @@ namespace {
 class QuicUtilsTest : public QuicTest {};
 
 TEST_F(QuicUtilsTest, DetermineAddressChangeType) {
-  const string kIPv4String1 = "1.2.3.4";
-  const string kIPv4String2 = "1.2.3.5";
-  const string kIPv4String3 = "1.1.3.5";
-  const string kIPv6String1 = "2001:700:300:1800::f";
-  const string kIPv6String2 = "2001:700:300:1800:1:1:1:f";
+  const QuicString kIPv4String1 = "1.2.3.4";
+  const QuicString kIPv4String2 = "1.2.3.5";
+  const QuicString kIPv4String3 = "1.1.3.5";
+  const QuicString kIPv6String1 = "2001:700:300:1800::f";
+  const QuicString kIPv6String2 = "2001:700:300:1800:1:1:1:f";
   QuicSocketAddress old_address;
   QuicSocketAddress new_address;
   QuicIpAddress address;
@@ -74,17 +73,17 @@ TEST_F(QuicUtilsTest, DetermineAddressChangeType) {
             QuicUtils::DetermineAddressChangeType(old_address, new_address));
 }
 
-uint128 IncrementalHashReference(const void* data, size_t len) {
+QuicUint128 IncrementalHashReference(const void* data, size_t len) {
   // The two constants are defined as part of the hash algorithm.
   // see http://www.isthe.com/chongo/tech/comp/fnv/
   // hash = 144066263297769815596495629667062367629
-  uint128 hash =
-      MakeUint128(UINT64_C(7809847782465536322), UINT64_C(7113472399480571277));
+  QuicUint128 hash = MakeQuicUint128(UINT64_C(7809847782465536322),
+                                     UINT64_C(7113472399480571277));
   // kPrime = 309485009821345068724781371
-  const uint128 kPrime = MakeUint128(16777216, 315);
+  const QuicUint128 kPrime = MakeQuicUint128(16777216, 315);
   const uint8_t* octets = reinterpret_cast<const uint8_t*>(data);
   for (size_t i = 0; i < len; ++i) {
-    hash = hash ^ MakeUint128(0, octets[i]);
+    hash = hash ^ MakeQuicUint128(0, octets[i]);
     hash = hash * kPrime;
   }
   return hash;
@@ -98,6 +97,44 @@ TEST_F(QuicUtilsTest, ReferenceTest) {
   EXPECT_EQ(IncrementalHashReference(data.data(), data.size()),
             QuicUtils::FNV1a_128_Hash(QuicStringPiece(
                 reinterpret_cast<const char*>(data.data()), data.size())));
+}
+
+TEST_F(QuicUtilsTest, IsUnackable) {
+  for (size_t i = FIRST_PACKET_STATE; i <= LAST_PACKET_STATE; ++i) {
+    if (i == NEVER_SENT || i == ACKED || i == UNACKABLE) {
+      EXPECT_FALSE(QuicUtils::IsAckable(static_cast<SentPacketState>(i)));
+    } else {
+      EXPECT_TRUE(QuicUtils::IsAckable(static_cast<SentPacketState>(i)));
+    }
+  }
+}
+
+TEST_F(QuicUtilsTest, RetransmissionTypeToPacketState) {
+  for (size_t i = FIRST_TRANSMISSION_TYPE; i <= LAST_TRANSMISSION_TYPE; ++i) {
+    if (i == NOT_RETRANSMISSION) {
+      continue;
+    }
+    SentPacketState state = QuicUtils::RetransmissionTypeToPacketState(
+        static_cast<TransmissionType>(i));
+    if (i == HANDSHAKE_RETRANSMISSION) {
+      EXPECT_EQ(HANDSHAKE_RETRANSMITTED, state);
+    } else if (i == LOSS_RETRANSMISSION) {
+      EXPECT_EQ(LOST, state);
+    } else if (i == ALL_UNACKED_RETRANSMISSION ||
+               i == ALL_INITIAL_RETRANSMISSION) {
+      EXPECT_EQ(UNACKABLE, state);
+    } else if (i == TLP_RETRANSMISSION) {
+      EXPECT_EQ(TLP_RETRANSMITTED, state);
+    } else if (i == RTO_RETRANSMISSION) {
+      EXPECT_EQ(RTO_RETRANSMITTED, state);
+    } else if (i == PROBING_RETRANSMISSION) {
+      EXPECT_EQ(PROBE_RETRANSMITTED, state);
+    } else {
+      DCHECK(false)
+          << "No corresponding packet state according to transmission type: "
+          << i;
+    }
+  }
 }
 
 }  // namespace

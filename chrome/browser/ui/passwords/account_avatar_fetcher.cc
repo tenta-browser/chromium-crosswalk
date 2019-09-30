@@ -12,7 +12,7 @@
 
 namespace {
 
-constexpr net::NetworkTrafficAnnotationTag kTrafficAnnotation =
+constexpr net::NetworkTrafficAnnotationTag kAccountAvatarTrafficAnnotation =
     net::DefineNetworkTrafficAnnotation("credenential_avatar", R"(
         semantics {
           sender: "Chrome Password Manager"
@@ -48,17 +48,18 @@ constexpr net::NetworkTrafficAnnotationTag kTrafficAnnotation =
 AccountAvatarFetcher::AccountAvatarFetcher(
     const GURL& url,
     const base::WeakPtr<AccountAvatarFetcherDelegate>& delegate)
-    : fetcher_(url, this, kTrafficAnnotation), delegate_(delegate) {}
+    : fetcher_(url, this, kAccountAvatarTrafficAnnotation),
+      delegate_(delegate) {}
 
 AccountAvatarFetcher::~AccountAvatarFetcher() = default;
 
 void AccountAvatarFetcher::Start(
-    net::URLRequestContextGetter* request_context) {
-  fetcher_.Init(request_context, std::string(),
-                net::URLRequest::NEVER_CLEAR_REFERRER,
+    network::mojom::URLLoaderFactory* loader_factory) {
+  fetcher_.Init(std::string(), net::URLRequest::NEVER_CLEAR_REFERRER,
                 net::LOAD_DO_NOT_SEND_COOKIES | net::LOAD_DO_NOT_SAVE_COOKIES |
-                net::LOAD_DO_NOT_SEND_AUTH_DATA | net::LOAD_MAYBE_USER_GESTURE);
-  fetcher_.Start();
+                    net::LOAD_DO_NOT_SEND_AUTH_DATA |
+                    net::LOAD_MAYBE_USER_GESTURE);
+  fetcher_.Start(loader_factory);
 }
 
 void AccountAvatarFetcher::OnFetchComplete(const GURL& /*url*/,

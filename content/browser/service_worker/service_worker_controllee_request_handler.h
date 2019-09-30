@@ -12,16 +12,15 @@
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
+#include "content/browser/service_worker/service_worker_navigation_loader.h"
 #include "content/browser/service_worker/service_worker_request_handler.h"
 #include "content/browser/service_worker/service_worker_url_job_wrapper.h"
-#include "content/browser/service_worker/service_worker_url_loader_job.h"
 #include "content/browser/service_worker/service_worker_url_request_job.h"
 #include "content/common/service_worker/service_worker_types.h"
-#include "content/public/common/request_context_frame_type.h"
 #include "content/public/common/request_context_type.h"
 #include "content/public/common/resource_type.h"
-#include "content/public/common/service_worker_modes.h"
-#include "services/network/public/interfaces/fetch_api.mojom.h"
+#include "services/network/public/mojom/fetch_api.mojom.h"
+#include "services/network/public/mojom/request_context_frame_type.mojom.h"
 #include "url/gurl.h"
 
 namespace net {
@@ -29,9 +28,12 @@ class NetworkDelegate;
 class URLRequest;
 }
 
+namespace network {
+class ResourceRequestBody;
+}
+
 namespace content {
 
-class ResourceRequestBody;
 class ServiceWorkerRegistration;
 class ServiceWorkerVersion;
 
@@ -49,15 +51,16 @@ class CONTENT_EXPORT ServiceWorkerControlleeRequestHandler
       base::WeakPtr<storage::BlobStorageContext> blob_storage_context,
       network::mojom::FetchRequestMode request_mode,
       network::mojom::FetchCredentialsMode credentials_mode,
-      FetchRedirectMode redirect_mode,
+      network::mojom::FetchRedirectMode redirect_mode,
       const std::string& integrity,
       bool keepalive,
       ResourceType resource_type,
       RequestContextType request_context_type,
-      RequestContextFrameType frame_type,
-      scoped_refptr<ResourceRequestBody> body);
+      network::mojom::RequestContextFrameType frame_type,
+      scoped_refptr<network::ResourceRequestBody> body);
   ~ServiceWorkerControlleeRequestHandler() override;
 
+  // Non-S13nServiceWorker:
   // Called via custom URLRequestJobFactory.
   // Returning a nullptr indicates that the request is not handled by
   // this handler.
@@ -73,10 +76,15 @@ class CONTENT_EXPORT ServiceWorkerControlleeRequestHandler
   // This could get called multiple times during the lifetime in redirect
   // cases. (In fallback-to-network cases we basically forward the request
   // to the request to the next request handler)
-  // URLLoaderRequestHandler overrides:
-  void MaybeCreateLoader(const ResourceRequest& request,
+  // NavigationLoaderInterceptor overrides:
+  void MaybeCreateLoader(const network::ResourceRequest& request,
                          ResourceContext* resource_context,
                          LoaderCallback callback) override;
+  // Returns params with the ControllerServiceWorkerPtr if we have found
+  // a matching controller service worker for the |request| that is given
+  // to MaybeCreateLoader(). Otherwise this returns base::nullopt.
+  base::Optional<SubresourceLoaderParams> MaybeCreateSubresourceLoaderParams()
+      override;
 
  private:
   FRIEND_TEST_ALL_PREFIXES(ServiceWorkerControlleeRequestHandlerTest,
@@ -127,12 +135,12 @@ class CONTENT_EXPORT ServiceWorkerControlleeRequestHandler
   std::unique_ptr<ServiceWorkerURLJobWrapper> url_job_;
   network::mojom::FetchRequestMode request_mode_;
   network::mojom::FetchCredentialsMode credentials_mode_;
-  FetchRedirectMode redirect_mode_;
+  network::mojom::FetchRedirectMode redirect_mode_;
   std::string integrity_;
   const bool keepalive_;
   RequestContextType request_context_type_;
-  RequestContextFrameType frame_type_;
-  scoped_refptr<ResourceRequestBody> body_;
+  network::mojom::RequestContextFrameType frame_type_;
+  scoped_refptr<network::ResourceRequestBody> body_;
   ResourceContext* resource_context_;
   GURL stripped_url_;
   bool force_update_started_;

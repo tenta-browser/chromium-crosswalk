@@ -10,7 +10,6 @@
 #include "base/bind.h"
 #include "base/command_line.h"
 #include "base/location.h"
-#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
@@ -20,7 +19,7 @@
 #include "gpu/command_buffer/common/sync_token.h"
 #include "gpu/command_buffer/service/feature_info.h"
 #include "gpu/command_buffer/service/gpu_tracer.h"
-#include "gpu/command_buffer/service/mailbox_manager.h"
+#include "gpu/command_buffer/service/mailbox_manager_factory.h"
 #include "gpu/command_buffer/service/memory_program_cache.h"
 #include "gpu/command_buffer/service/passthrough_program_cache.h"
 #include "gpu/command_buffer/service/scheduler.h"
@@ -66,29 +65,19 @@ GpuChannelManager::GpuChannelManager(
       delegate_(delegate),
       watchdog_(watchdog),
       share_group_(new gl::GLShareGroup()),
-      mailbox_manager_(gles2::MailboxManager::Create(gpu_preferences)),
+      mailbox_manager_(gles2::CreateMailboxManager(gpu_preferences)),
       gpu_memory_manager_(this),
       scheduler_(scheduler),
       sync_point_manager_(sync_point_manager),
       shader_translator_cache_(gpu_preferences_),
       gpu_memory_buffer_factory_(gpu_memory_buffer_factory),
       gpu_feature_info_(gpu_feature_info),
-#if defined(OS_ANDROID)
-      // Runs on GPU main thread and unregisters when the listener is destroyed,
-      // So, Unretained is fine here.
-      application_status_listener_(
-          base::Bind(&GpuChannelManager::OnApplicationStateChange,
-                     base::Unretained(this))),
-      is_running_on_low_end_mode_(base::SysInfo::IsLowEndDevice()),
-      is_backgrounded_for_testing_(false),
-#endif
       exiting_for_lost_context_(false),
       activity_flags_(std::move(activity_flags)),
       memory_pressure_listener_(
           base::Bind(&GpuChannelManager::HandleMemoryPressure,
                      base::Unretained(this))),
       weak_factory_(this) {
-  // |application_status_listener_| must be created on the right task runner.
   DCHECK(task_runner->BelongsToCurrentThread());
   DCHECK(io_task_runner);
   DCHECK(scheduler);
@@ -249,62 +238,22 @@ void GpuChannelManager::ScheduleWakeUpGpu() {
 }
 
 void GpuChannelManager::DoWakeUpGpu() {
-  const GpuCommandBufferStub* stub = nullptr;
+  const CommandBufferStub* stub = nullptr;
   for (const auto& kv : gpu_channels_) {
     const GpuChannel* channel = kv.second.get();
     stub = channel->GetOneStub();
     if (stub) {
-      DCHECK(stub->decoder());
+      DCHECK(stub->decoder_context());
       break;
     }
   }
-  if (!stub || !stub->decoder()->MakeCurrent())
+  if (!stub || !stub->decoder_context()->MakeCurrent())
     return;
   glFinish();
   DidAccessGpu();
 }
 
-void GpuChannelManager::OnApplicationStateChange(
-    base::android::ApplicationState state) {
-  // TODO(ericrk): Temporarily disable the context release logic due to
-  // https://crbug.com/792120. Re-enable when the fix lands.
-  return;
-
-  if (state != base::android::APPLICATION_STATE_HAS_STOPPED_ACTIVITIES ||
-      !is_running_on_low_end_mode_) {
-    return;
-  }
-
-  // Clear the GL context on low-end devices after a 5 second delay, so that we
-  // don't clear in case the user pressed the home or recents button by mistake
-  // and got back to Chrome quickly.
-  const int64_t kDelayToClearContextMs = 5000;
-
-  task_runner_->PostDelayedTask(
-      FROM_HERE,
-      base::Bind(&GpuChannelManager::OnApplicationBackgrounded,
-                 weak_factory_.GetWeakPtr()),
-      base::TimeDelta::FromMilliseconds(kDelayToClearContextMs));
-  return;
-}
-
-void GpuChannelManager::OnApplicationBackgroundedForTesting() {
-  is_backgrounded_for_testing_ = true;
-  OnApplicationBackgrounded();
-}
-
 void GpuChannelManager::OnApplicationBackgrounded() {
-  // Check if the app is still in background after the delay.
-  auto state = base::android::ApplicationStatusListener::GetState();
-  if (state != base::android::APPLICATION_STATE_HAS_STOPPED_ACTIVITIES &&
-      state != base::android::APPLICATION_STATE_HAS_DESTROYED_ACTIVITIES &&
-      !is_backgrounded_for_testing_) {
-    return;
-  }
-
-  if (!is_running_on_low_end_mode_)
-    return;
-
   // Delete all the GL contexts when the channel does not use WebGL and Chrome
   // goes to background on low-end devices.
   std::vector<int> channels_to_clear;

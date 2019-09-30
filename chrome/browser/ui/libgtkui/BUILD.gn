@@ -6,7 +6,7 @@ assert(is_linux, "This file should only be referenced on Linux")
 
 import("//build/config/features.gni")
 import("//build/config/linux/gtk/gtk.gni")
-import("//printing/features/features.gni")
+import("//printing/buildflags/buildflags.gni")
 
 # Automatically depends on the GTK version associated with the current build
 # flags.
@@ -47,7 +47,7 @@ template("libgtkui") {
                 "libgtkui_export.h",
                 "menu_util.cc",
                 "menu_util.h",
-                "nav_button_layout_manager.h",
+                "settings_provider.h",
                 "print_dialog_gtk.cc",
                 "print_dialog_gtk.h",
                 "printing_gtk_util.cc",
@@ -70,12 +70,12 @@ template("libgtkui") {
       "//build/config/linux:x11",
     ]
 
-    if (use_gconf) {
+    if (use_gio) {
       sources += [
-        "nav_button_layout_manager_gconf.cc",
-        "nav_button_layout_manager_gconf.h",
+        "settings_provider_gsettings.cc",
+        "settings_provider_gsettings.h",
       ]
-      configs += [ "//build/config/linux/gconf" ]
+      configs += [ "//build/linux:gio_config" ]
     }
 
     if (use_cups) {
@@ -90,7 +90,7 @@ template("libgtkui") {
              "//base:i18n",
              "//base/third_party/dynamic_annotations",
              "//cc/paint",
-             "//chrome/common:features",
+             "//chrome/common:buildflags",
              "//chrome:extra_resources",
              "//chrome:resources",
              "//chrome:strings",
@@ -134,10 +134,10 @@ if (use_gtk3) {
       "gtk3_background_painter.h",
       "native_theme_gtk3.cc",
       "native_theme_gtk3.h",
-      "nav_button_layout_manager_gtk3.cc",
-      "nav_button_layout_manager_gtk3.h",
       "nav_button_provider_gtk3.cc",
       "nav_button_provider_gtk3.h",
+      "settings_provider_gtk3.cc",
+      "settings_provider_gtk3.h",
     ]
     deps = [
       "//build/config/linux/gtk3",

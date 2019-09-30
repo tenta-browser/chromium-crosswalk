@@ -116,7 +116,7 @@ class TestDispatcherHostDelegate : public ChromeResourceDispatcherHostDelegate {
   void OnRequestRedirected(const GURL& redirect_url,
                            net::URLRequest* request,
                            content::ResourceContext* resource_context,
-                           content::ResourceResponse* response) override {
+                           network::ResourceResponse* response) override {
     ChromeResourceDispatcherHostDelegate::OnRequestRedirected(
         redirect_url,
         request,
@@ -235,11 +235,6 @@ class ChromeResourceDispatcherHostDelegateBrowserTest :
       (*it)->SetServerURLForTest(dm_url_.spec());
       (*it)->UpdateHeader(kTestPolicyHeader);
     }
-
-    // Set up temp directory for downloads.
-    ASSERT_TRUE(downloads_directory_.CreateUniqueTempDir());
-    browser()->profile()->GetPrefs()->SetFilePath(
-        prefs::kDownloadDefaultDirectory, downloads_directory_.GetPath());
   }
 
   void TearDownOnMainThread() override {
@@ -271,9 +266,6 @@ class ChromeResourceDispatcherHostDelegateBrowserTest :
   std::unique_ptr<TestDispatcherHostDelegate> dispatcher_host_delegate_;
 
  private:
-  // Location of the downloads directory for tests that use one.
-  base::ScopedTempDir downloads_directory_;
-
   DISALLOW_COPY_AND_ASSIGN(ChromeResourceDispatcherHostDelegateBrowserTest);
 };
 
@@ -519,7 +511,7 @@ IN_PROC_BROWSER_TEST_F(ChromeResourceDispatcherHostDelegateBrowserTest,
     std::unique_ptr<HeaderTestDispatcherHostDelegate> dispatcher_host_delegate;
     if (test_case.inject_header) {
       dispatcher_host_delegate =
-          base::MakeUnique<HeaderTestDispatcherHostDelegate>(
+          std::make_unique<HeaderTestDispatcherHostDelegate>(
               test_case.original_url);
       content::BrowserThread::PostTask(
           content::BrowserThread::IO, FROM_HERE,
@@ -566,7 +558,7 @@ IN_PROC_BROWSER_TEST_F(ChromeResourceDispatcherHostDelegateBrowserTest,
     content::BrowserThread::PostTaskAndReply(content::BrowserThread::IO,
                                              FROM_HERE,
                                              // Flush IO thread...
-                                             base::BindOnce(&base::DoNothing),
+                                             base::DoNothing(),
                                              // ... and UI thread.
                                              run_loop.QuitClosure());
     run_loop.Run();

@@ -53,9 +53,6 @@ enum class MemoryDumpLevelOfDetail : uint32_t {
   // Few entries, typically a fixed number, per dump.
   LIGHT,
 
-  // Retrieve only memory maps. Used only for the heap profiler.
-  VM_REGIONS_ONLY_FOR_HEAP_PROFILER,
-
   // Unrestricted amount of entries per dump.
   DETAILED,
 
@@ -70,15 +67,6 @@ struct BASE_EXPORT MemoryDumpRequestArgs {
   // reconstruct the global dump.
   uint64_t dump_guid;
 
-  MemoryDumpType dump_type;
-  MemoryDumpLevelOfDetail level_of_detail;
-};
-
-// Initial request arguments for a global memory dump. (see
-// MemoryDumpManager::RequestGlobalMemoryDump()). Keep this consistent with
-// memory_instrumentation.mojo and memory_instrumentation_struct_traits.{h,cc}
-// TODO(hjd): Move this to memory_instrumentation, crbug.com/776726
-struct BASE_EXPORT GlobalMemoryDumpRequestArgs {
   MemoryDumpType dump_type;
   MemoryDumpLevelOfDetail level_of_detail;
 };

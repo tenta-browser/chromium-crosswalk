@@ -35,8 +35,7 @@ import org.chromium.content.browser.test.util.CriteriaHelper;
  */
 @RunWith(ChromeJUnit4ClassRunner.class)
 @RetryOnFailure
-@CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE,
-        ChromeActivityTestRule.DISABLE_NETWORK_PREDICTION_FLAG})
+@CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
 public class TabTest {
     @Rule
     public ChromeActivityTestRule<ChromeActivity> mActivityTestRule =
@@ -65,9 +64,9 @@ public class TabTest {
     @Feature({"Tab"})
     public void testTabContext() throws Throwable {
         Assert.assertFalse("The tab context cannot be an activity",
-                mTab.getContentViewCore().getContext() instanceof Activity);
+                mTab.getContentView().getContext() instanceof Activity);
         Assert.assertNotSame("The tab context's theme should have been updated",
-                mTab.getContentViewCore().getContext().getTheme(),
+                mTab.getContentView().getContext().getTheme(),
                 mActivityTestRule.getActivity().getApplication().getTheme());
     }
 

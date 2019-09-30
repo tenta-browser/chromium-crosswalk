@@ -7,7 +7,6 @@
 #include <vector>
 
 #include "base/bind.h"
-#include "base/memory/ptr_util.h"
 #include "base/values.h"
 #include "build/build_config.h"
 #include "content/public/browser/browser_thread.h"
@@ -15,7 +14,7 @@
 #include "content/public/common/service_manager_connection.h"
 #include "services/resource_coordinator/public/cpp/process_resource_coordinator.h"
 #include "services/resource_coordinator/public/cpp/resource_coordinator_features.h"
-#include "services/resource_coordinator/public/interfaces/coordination_unit.mojom.h"
+#include "services/resource_coordinator/public/mojom/coordination_unit.mojom.h"
 
 #if defined(OS_MACOSX)
 #include "content/public/browser/browser_child_process_host.h"
@@ -54,8 +53,15 @@ class ResourceCoordinatorRenderProcessMetricsHandler
       auto& render_process_info = render_process_info_map_entry.second;
       // TODO(oysteine): Move the multiplier used to avoid precision loss
       // into a shared location, when this property gets used.
-      render_process_info.host->GetProcessResourceCoordinator()->SetCPUUsage(
-          render_process_info.cpu_usage);
+
+      // Note that the RPH may have been deleted while the CPU metrics were
+      // acquired on a blocking thread.
+      content::RenderProcessHost* host = content::RenderProcessHost::FromID(
+          render_process_info.render_process_host_id);
+      if (host) {
+        host->GetProcessResourceCoordinator()->SetCPUUsage(
+            render_process_info.cpu_usage);
+      }
     }
 
     return true;
@@ -64,7 +70,7 @@ class ResourceCoordinatorRenderProcessMetricsHandler
 
 ResourceCoordinatorRenderProcessProbe::ResourceCoordinatorRenderProcessProbe()
     : metrics_handler_(
-          base::MakeUnique<ResourceCoordinatorRenderProcessMetricsHandler>()),
+          std::make_unique<ResourceCoordinatorRenderProcessMetricsHandler>()),
       interval_ms_(
           base::TimeDelta::FromSeconds(kDefaultMeasurementIntervalInSeconds)) {
   UpdateWithFieldTrialParams();
@@ -126,7 +132,7 @@ void ResourceCoordinatorRenderProcessProbe::
       render_process_info.metrics =
           base::ProcessMetrics::CreateProcessMetrics(handle);
 #endif
-      render_process_info.host = host;
+      render_process_info.render_process_host_id = host->GetID();
     }
   }
 

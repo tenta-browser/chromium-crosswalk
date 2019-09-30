@@ -8,7 +8,6 @@ source_set("fakes") {
 
   deps = [
     "//base",
-    "//ios/web/public",
     "//ios/web/public/download",
     "//ios/web/test:test_constants",
     "//ios/web/web_state:navigation_context",
@@ -20,6 +19,10 @@ source_set("fakes") {
     "//ui/base",
   ]
 
+  public_deps = [
+    "//ios/web/public",
+  ]
+
   sources = [
     "crw_test_js_injection_receiver.h",
     "crw_test_js_injection_receiver.mm",
@@ -27,6 +30,8 @@ source_set("fakes") {
     "crw_test_web_state_observer.mm",
     "fake_download_controller_delegate.h",
     "fake_download_controller_delegate.mm",
+    "fake_download_task.h",
+    "fake_download_task.mm",
     "fake_navigation_context.h",
     "fake_navigation_context.mm",
     "test_browser_state.cc",

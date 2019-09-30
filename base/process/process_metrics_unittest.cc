@@ -57,44 +57,6 @@ class SystemMetricsTest : public testing::Test {
   DISALLOW_COPY_AND_ASSIGN(SystemMetricsTest);
 };
 
-/////////////////////////////////////////////////////////////////////////////
-
-#if defined(OS_MACOSX) && !defined(OS_IOS) && !defined(ADDRESS_SANITIZER)
-TEST_F(SystemMetricsTest, LockedBytes) {
-  ProcessHandle handle = GetCurrentProcessHandle();
-  std::unique_ptr<ProcessMetrics> metrics(
-      ProcessMetrics::CreateProcessMetrics(handle, nullptr));
-
-  size_t initial_locked_bytes;
-  bool result =
-      metrics->GetMemoryBytes(nullptr, nullptr, nullptr, &initial_locked_bytes);
-  ASSERT_TRUE(result);
-
-  size_t size = 8 * 1024 * 1024;
-  std::unique_ptr<char[]> memory(new char[size]);
-  int r = mlock(memory.get(), size);
-  ASSERT_EQ(0, r);
-
-  size_t new_locked_bytes;
-  result =
-      metrics->GetMemoryBytes(nullptr, nullptr, nullptr, &new_locked_bytes);
-  ASSERT_TRUE(result);
-
-  // There should be around |size| more locked bytes, but multi-threading might
-  // cause noise.
-  EXPECT_LT(initial_locked_bytes + size / 2, new_locked_bytes);
-  EXPECT_GT(initial_locked_bytes + size * 1.5, new_locked_bytes);
-
-  r = munlock(memory.get(), size);
-  ASSERT_EQ(0, r);
-
-  result =
-      metrics->GetMemoryBytes(nullptr, nullptr, nullptr, &new_locked_bytes);
-  ASSERT_TRUE(result);
-  EXPECT_EQ(initial_locked_bytes, new_locked_bytes);
-}
-#endif  // defined(OS_MACOSX) && !defined(OS_IOS) && !defined(ADDRESS_SANITIZER)
-
 #if defined(OS_LINUX) || defined(OS_ANDROID)
 TEST_F(SystemMetricsTest, IsValidDiskName) {
   const char invalid_input1[] = "";
@@ -550,7 +512,8 @@ TEST(ProcessMetricsTest, DISABLED_GetNumberOfThreads) {
 #if defined(OS_LINUX)
 namespace {
 
-// Keep these in sync so the GetOpenFdCount test can refer to correct test main.
+// Keep these in sync so the GetChildOpenFdCount test can refer to correct test
+// main.
 #define ChildMain ChildFdCount
 #define ChildMainString "ChildFdCount"
 
@@ -596,7 +559,7 @@ MULTIPROCESS_TEST_MAIN(ChildMain) {
 
 }  // namespace
 
-TEST(ProcessMetricsTest, GetOpenFdCount) {
+TEST(ProcessMetricsTest, GetChildOpenFdCount) {
   ScopedTempDir temp_dir;
   ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
   const FilePath temp_path = temp_dir.GetPath();
@@ -615,6 +578,20 @@ TEST(ProcessMetricsTest, GetOpenFdCount) {
 #endif  // defined(OS_LINUX)
 
 #if defined(OS_ANDROID) || defined(OS_LINUX)
+
+TEST(ProcessMetricsTest, GetOpenFdCount) {
+  std::unique_ptr<base::ProcessMetrics> metrics(
+      base::ProcessMetrics::CreateProcessMetrics(
+          base::GetCurrentProcessHandle()));
+  int fd_count = metrics->GetOpenFdCount();
+  EXPECT_GT(fd_count, 0);
+  ScopedFILE file(fopen("/proc/self/statm", "r"));
+  EXPECT_TRUE(file);
+  int new_fd_count = metrics->GetOpenFdCount();
+  EXPECT_GT(new_fd_count, 0);
+  EXPECT_EQ(new_fd_count, fd_count + 1);
+}
+
 TEST(ProcessMetricsTestLinux, GetPageFaultCounts) {
   std::unique_ptr<base::ProcessMetrics> process_metrics(
       base::ProcessMetrics::CreateProcessMetrics(

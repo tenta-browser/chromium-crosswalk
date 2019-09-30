@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "base/metrics/field_trial_params.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/time/time.h"
@@ -16,14 +17,14 @@
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_headers.h"
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_params.h"
 #include "net/base/load_flags.h"
+#include "net/base/proxy_server.h"
 #include "net/http/http_response_headers.h"
 #include "net/http/http_util.h"
-#include "net/proxy/proxy_config.h"
-#include "net/proxy/proxy_info.h"
-#include "net/proxy/proxy_list.h"
-#include "net/proxy/proxy_retry_info.h"
-#include "net/proxy/proxy_server.h"
-#include "net/proxy/proxy_service.h"
+#include "net/proxy_resolution/proxy_config.h"
+#include "net/proxy_resolution/proxy_info.h"
+#include "net/proxy_resolution/proxy_list.h"
+#include "net/proxy_resolution/proxy_resolution_service.h"
+#include "net/proxy_resolution/proxy_retry_info.h"
 #include "net/url_request/url_request.h"
 #include "net/url_request/url_request_context.h"
 #include "net/url_request/url_request_status.h"
@@ -59,10 +60,11 @@ void MarkProxiesAsBadUntil(
   net::ProxyInfo proxy_info;
   proxy_info.UseProxyList(proxy_list);
   DCHECK(request->context());
-  net::ProxyService* proxy_service = request->context()->proxy_service();
-  DCHECK(proxy_service);
+  net::ProxyResolutionService* proxy_resolution_service =
+      request->context()->proxy_resolution_service();
+  DCHECK(proxy_resolution_service);
 
-  proxy_service->MarkProxiesAsBadUntil(
+  proxy_resolution_service->MarkProxiesAsBadUntil(
       proxy_info, bypass_duration, additional_bad_proxies, request->net_log());
 }
 
@@ -168,7 +170,7 @@ bool DataReductionProxyBypassProtocol::HandleInValidResponseHeadersCase(
       net::ERR_CONNECTION_RESET > -400 && net::ERR_SSL_PROTOCOL_ERROR > -400,
       "net error is not handled");
 
-  UMA_HISTOGRAM_SPARSE_SLOWLY(
+  base::UmaHistogramSparse(
       "DataReductionProxy.InvalidResponseHeadersReceived.NetError",
       -status.error());
 
@@ -249,13 +251,13 @@ bool DataReductionProxyBypassProtocol::HandleValidResponseHeadersCase(
     return false;
 
   DCHECK(request.context());
-  DCHECK(request.context()->proxy_service());
+  DCHECK(request.context()->proxy_resolution_service());
   net::ProxyServer proxy_server =
       data_reduction_proxy_type_info->proxy_servers.front();
 
   // Only record UMA if the proxy isn't already on the retry list.
   if (!config_->IsProxyBypassed(
-          request.context()->proxy_service()->proxy_retry_info(), proxy_server,
+          request.context()->proxy_resolution_service()->proxy_retry_info(), proxy_server,
           nullptr)) {
     DataReductionProxyBypassStats::RecordDataReductionProxyBypassInfo(
         data_reduction_proxy_type_info->proxy_index == 0,

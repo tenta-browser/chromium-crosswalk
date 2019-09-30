@@ -16,7 +16,6 @@
 #include "base/environment.h"
 #include "base/i18n/time_formatting.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringize_macros.h"
@@ -26,6 +25,7 @@
 #include "build/build_config.h"
 #include "content/browser/gpu/compositor_util.h"
 #include "content/browser/gpu/gpu_data_manager_impl.h"
+#include "content/browser/gpu/gpu_process_host.h"
 #include "content/grit/content_resources.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/gpu_data_manager_observer.h"
@@ -39,12 +39,14 @@
 #include "gpu/config/gpu_feature_type.h"
 #include "gpu/config/gpu_info.h"
 #include "gpu/config/gpu_lists_version.h"
+#include "gpu/ipc/common/gpu_memory_buffer_support.h"
 #include "gpu/ipc/host/gpu_memory_buffer_support.h"
 #include "skia/ext/skia_commit_hash.h"
 #include "third_party/angle/src/common/version.h"
 #include "third_party/skia/include/core/SkMilestone.h"
 #include "ui/display/display.h"
 #include "ui/display/screen.h"
+#include "ui/gfx/buffer_format_util.h"
 #include "ui/gl/gpu_switching_manager.h"
 
 #if defined(OS_WIN)
@@ -134,6 +136,9 @@ std::unique_ptr<base::DictionaryValue> GpuInfoAsDictionaryValue() {
       "Passthrough Command Decoder",
       std::make_unique<base::Value>(gpu_info.passthrough_cmd_decoder)));
   basic_info->Append(NewDescriptionValuePair(
+      "Direct Composition",
+      std::make_unique<base::Value>(gpu_info.direct_composition)));
+  basic_info->Append(NewDescriptionValuePair(
       "Supports overlays",
       std::make_unique<base::Value>(gpu_info.supports_overlays)));
   basic_info->Append(NewDescriptionValuePair(
@@ -145,8 +150,6 @@ std::unique_ptr<base::DictionaryValue> GpuInfoAsDictionaryValue() {
         base::StringPrintf("GPU%d", static_cast<int>(i + 1)),
         GPUDeviceToString(gpu_info.secondary_gpus[i])));
   }
-  basic_info->Append(NewDescriptionValuePair(
-      "Optimus", std::make_unique<base::Value>(gpu_info.optimus)));
   basic_info->Append(NewDescriptionValuePair(
       "Optimus", std::make_unique<base::Value>(gpu_info.optimus)));
   basic_info->Append(NewDescriptionValuePair(
@@ -172,11 +175,22 @@ std::unique_ptr<base::DictionaryValue> GpuInfoAsDictionaryValue() {
     basic_info->Append(
         NewDescriptionValuePair(description_string, size_string));
   }
+
+  basic_info->Append(NewDescriptionValuePair(
+      "DX12", std::make_unique<base::Value>(gpu_info.supports_dx12)));
+
+  basic_info->Append(NewDescriptionValuePair(
+      "Vulkan", std::make_unique<base::Value>(gpu_info.supports_vulkan)));
+
 #endif
 
   std::string disabled_extensions;
   GpuDataManagerImpl::GetInstance()->GetDisabledExtensions(
       &disabled_extensions);
+
+  std::string disabled_webgl_extensions;
+  GpuDataManagerImpl::GetInstance()->GetDisabledWebGLExtensions(
+      &disabled_webgl_extensions);
 
   basic_info->Append(
       NewDescriptionValuePair("Driver vendor", gpu_info.driver_vendor));
@@ -204,6 +218,8 @@ std::unique_ptr<base::DictionaryValue> GpuInfoAsDictionaryValue() {
                                              gpu_info.gl_extensions));
   basic_info->Append(NewDescriptionValuePair("Disabled Extensions",
                                              disabled_extensions));
+  basic_info->Append(NewDescriptionValuePair("Disabled WebGL Extensions",
+                                             disabled_webgl_extensions));
   basic_info->Append(NewDescriptionValuePair("Window system binding vendor",
                                              gpu_info.gl_ws_vendor));
   basic_info->Append(NewDescriptionValuePair("Window system binding version",
@@ -238,7 +254,7 @@ std::unique_ptr<base::DictionaryValue> GpuInfoAsDictionaryValue() {
 
   basic_info->Append(NewDescriptionValuePair(
       "GPU process crash count",
-      std::make_unique<base::Value>(gpu_info.process_crash_count)));
+      std::make_unique<base::Value>(GpuProcessHost::GetGpuCrashCount())));
 
   auto info = std::make_unique<base::DictionaryValue>();
 
@@ -251,58 +267,13 @@ std::unique_ptr<base::DictionaryValue> GpuInfoAsDictionaryValue() {
 
 #if defined(USE_X11)
   basic_info->Append(NewDescriptionValuePair(
-      "System visual ID", base::Uint64ToString(gpu_info.system_visual)));
+      "System visual ID", base::NumberToString(gpu_info.system_visual)));
   basic_info->Append(NewDescriptionValuePair(
-      "RGBA visual ID", base::Uint64ToString(gpu_info.rgba_visual)));
+      "RGBA visual ID", base::NumberToString(gpu_info.rgba_visual)));
 #endif
 
   info->Set("basic_info", std::move(basic_info));
   return info;
-}
-
-const char* BufferFormatToString(gfx::BufferFormat format) {
-  switch (format) {
-    case gfx::BufferFormat::ATC:
-      return "ATC";
-    case gfx::BufferFormat::ATCIA:
-      return "ATCIA";
-    case gfx::BufferFormat::DXT1:
-      return "DXT1";
-    case gfx::BufferFormat::DXT5:
-      return "DXT5";
-    case gfx::BufferFormat::ETC1:
-      return "ETC1";
-    case gfx::BufferFormat::R_8:
-      return "R_8";
-    case gfx::BufferFormat::R_16:
-      return "R_16";
-    case gfx::BufferFormat::RG_88:
-      return "RG_88";
-    case gfx::BufferFormat::BGR_565:
-      return "BGR_565";
-    case gfx::BufferFormat::RGBA_4444:
-      return "RGBA_4444";
-    case gfx::BufferFormat::RGBX_8888:
-      return "RGBX_8888";
-    case gfx::BufferFormat::RGBA_8888:
-      return "RGBA_8888";
-    case gfx::BufferFormat::BGRX_8888:
-      return "BGRX_8888";
-    case gfx::BufferFormat::BGRX_1010102:
-      return "BGRX_1010102";
-    case gfx::BufferFormat::BGRA_8888:
-      return "BGRA_8888";
-    case gfx::BufferFormat::RGBA_F16:
-      return "RGBA_F16";
-    case gfx::BufferFormat::YVU_420:
-      return "YVU_420";
-    case gfx::BufferFormat::YUV_420_BIPLANAR:
-      return "YUV_420_BIPLANAR";
-    case gfx::BufferFormat::UYVY_422:
-      return "UYVY_422";
-  }
-  NOTREACHED();
-  return nullptr;
 }
 
 const char* BufferUsageToString(gfx::BufferUsage usage) {
@@ -341,8 +312,10 @@ std::unique_ptr<base::ListValue> CompositorInfo() {
 std::unique_ptr<base::ListValue> GpuMemoryBufferInfo() {
   auto gpu_memory_buffer_info = std::make_unique<base::ListValue>();
 
+  gpu::GpuMemoryBufferSupport gpu_memory_buffer_support;
+
   const auto native_configurations =
-      gpu::GetNativeGpuMemoryBufferConfigurations();
+      gpu::GetNativeGpuMemoryBufferConfigurations(&gpu_memory_buffer_support);
   for (size_t format = 0;
        format < static_cast<size_t>(gfx::BufferFormat::LAST) + 1; format++) {
     std::string native_usage_support;
@@ -362,7 +335,7 @@ std::unique_ptr<base::ListValue> GpuMemoryBufferInfo() {
       native_usage_support = base::StringPrintf("Software only");
 
     gpu_memory_buffer_info->Append(NewDescriptionValuePair(
-        BufferFormatToString(static_cast<gfx::BufferFormat>(format)),
+        gfx::BufferFormatToString(static_cast<gfx::BufferFormat>(format)),
         native_usage_support));
   }
   return gpu_memory_buffer_info;
@@ -378,9 +351,9 @@ std::unique_ptr<base::ListValue> getDisplayInfo() {
         "Color space information", display.color_space().ToString()));
     display_info->Append(NewDescriptionValuePair(
         "Bits per color component",
-        base::Uint64ToString(display.depth_per_component())));
+        base::NumberToString(display.depth_per_component())));
     display_info->Append(NewDescriptionValuePair(
-        "Bits per pixel", base::Uint64ToString(display.color_depth())));
+        "Bits per pixel", base::NumberToString(display.color_depth())));
   }
   return display_info;
 }
@@ -529,12 +502,13 @@ GpuMessageHandler::~GpuMessageHandler() {
 void GpuMessageHandler::RegisterMessages() {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
-  web_ui()->RegisterMessageCallback("browserBridgeInitialized",
-      base::Bind(&GpuMessageHandler::OnBrowserBridgeInitialized,
-                 base::Unretained(this)));
-  web_ui()->RegisterMessageCallback("callAsync",
-      base::Bind(&GpuMessageHandler::OnCallAsync,
-                 base::Unretained(this)));
+  web_ui()->RegisterMessageCallback(
+      "browserBridgeInitialized",
+      base::BindRepeating(&GpuMessageHandler::OnBrowserBridgeInitialized,
+                          base::Unretained(this)));
+  web_ui()->RegisterMessageCallback(
+      "callAsync", base::BindRepeating(&GpuMessageHandler::OnCallAsync,
+                                       base::Unretained(this)));
 }
 
 void GpuMessageHandler::OnCallAsync(const base::ListValue* args) {

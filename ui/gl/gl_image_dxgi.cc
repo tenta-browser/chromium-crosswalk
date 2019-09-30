@@ -6,6 +6,7 @@
 
 #include <d3d11_1.h>
 
+#include "base/debug/alias.h"
 #include "third_party/khronos/EGL/egl.h"
 #include "third_party/khronos/EGL/eglext.h"
 #include "ui/gl/gl_angle_util_win.h"
@@ -174,7 +175,8 @@ bool GLImageDXGIBase::ScheduleOverlayPlane(gfx::AcceleratedWidget widget,
                                            int z_order,
                                            gfx::OverlayTransform transform,
                                            const gfx::Rect& bounds_rect,
-                                           const gfx::RectF& crop_rect) {
+                                           const gfx::RectF& crop_rect,
+                                           bool enable_blend) {
   return false;
 }
 
@@ -235,6 +237,12 @@ bool CopyingGLImageDXGI::Initialize() {
 
   HRESULT hr = d3d11_device_->CreateTexture2D(
       &desc, nullptr, decoder_copy_texture_.GetAddressOf());
+  // TODO(sunnyps): Remove after fixing https://crbug.com/794735
+  base::debug::Alias(&hr);
+  HRESULT reason_hr = S_OK;
+  base::debug::Alias(&reason_hr);
+  if (hr == DXGI_ERROR_DEVICE_REMOVED)
+    reason_hr = d3d11_device_->GetDeviceRemovedReason();
   CHECK(SUCCEEDED(hr));
   EGLDisplay egl_display = gl::GLSurfaceEGL::GetHardwareDisplay();
 
@@ -242,7 +250,7 @@ bool CopyingGLImageDXGI::Initialize() {
       EGL_D3D_TEXTURE_SUBRESOURCE_ID_ANGLE, 0, EGL_NONE,
   };
 
-  EGLBoolean result = eglStreamPostD3DTextureNV12ANGLE(
+  EGLBoolean result = eglStreamPostD3DTextureANGLE(
       egl_display, stream_, static_cast<void*>(decoder_copy_texture_.Get()),
       frame_attributes);
   if (!result)

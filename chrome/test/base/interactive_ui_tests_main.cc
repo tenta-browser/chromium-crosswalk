@@ -4,6 +4,7 @@
 
 #include "chrome/test/base/chrome_test_launcher.h"
 
+#include "base/command_line.h"
 #include "build/build_config.h"
 #include "chrome/test/base/chrome_test_suite.h"
 #include "chrome/test/base/in_process_browser_test.h"
@@ -61,7 +62,6 @@ class InteractiveUITestSuite : public ChromeTestSuite {
         views::test::CreateUIControlsDesktopAura());
 #endif  // defined(USE_OZONE)
 #else
-    // TODO(win_ash): when running interactive_ui_tests for Win Ash, use above.
     ui_controls::InstallUIControlsAura(aura::test::CreateUIControlsAura(NULL));
 #endif  // defined(OS_LINUX)
 #endif  // defined(USE_AURA)
@@ -106,6 +106,29 @@ class InteractiveUITestLauncherDelegate : public ChromeTestLauncherDelegate {
     ChromeTestLauncherDelegate::OnTestTimedOut(command_line);
   }
 
+#if defined(OS_MACOSX)
+  std::unique_ptr<content::TestState> PreRunTest(
+      base::CommandLine* command_line,
+      base::TestLauncher::LaunchOptions* test_launch_options) override {
+    auto test_state = ChromeTestLauncherDelegate::PreRunTest(
+        command_line, test_launch_options);
+    // Clear currently pressed modifier keys (if any) before the test starts.
+    ui_test_utils::ClearKeyEventModifiers();
+    return test_state;
+  }
+
+  void PostRunTest(base::TestResult* test_result) override {
+    // Clear currently pressed modifier keys (if any) after the test finishes
+    // and report an error if there were some.
+    bool had_hanging_modifiers = ui_test_utils::ClearKeyEventModifiers();
+    if (had_hanging_modifiers &&
+        test_result->status == base::TestResult::TEST_SUCCESS) {
+      test_result->status = base::TestResult::TEST_FAILURE_ON_EXIT;
+    }
+    ChromeTestLauncherDelegate::PostRunTest(test_result);
+  }
+#endif  // defined(OS_MACOSX)
+
  private:
   DISALLOW_COPY_AND_ASSIGN(InteractiveUITestLauncherDelegate);
 };
@@ -118,6 +141,7 @@ class InteractiveUITestSuiteRunner : public ChromeTestSuiteRunner {
 };
 
 int main(int argc, char** argv) {
+  base::CommandLine::Init(argc, argv);
   // TODO(sky): this causes a crash in an autofill test on macosx, figure out
   // why: http://crbug.com/641969.
 #if !defined(OS_MACOSX)

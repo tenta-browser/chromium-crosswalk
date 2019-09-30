@@ -10,8 +10,9 @@
 #import "ios/chrome/browser/ui/commands/browser_commands.h"
 #import "ios/chrome/browser/ui/content_suggestions/ntp_home_constant.h"
 #import "ios/chrome/browser/ui/ntp/new_tab_page_controller.h"
-#import "ios/chrome/browser/ui/omnibox/omnibox_popup_row.h"
-#import "ios/chrome/browser/ui/toolbar/toolbar_controller.h"
+#import "ios/chrome/browser/ui/omnibox/popup/omnibox_popup_row.h"
+#import "ios/chrome/browser/ui/toolbar/clean/toolbar_view.h"
+#import "ios/chrome/browser/ui/toolbar/legacy/toolbar_controller.h"
 #include "ios/chrome/browser/ui/tools_menu/public/tools_menu_constants.h"
 #include "ios/chrome/browser/ui/ui_util.h"
 #include "ios/chrome/grit/ios_strings.h"
@@ -31,30 +32,12 @@
 
 using chrome_test_util::ButtonWithAccessibilityLabelId;
 using chrome_test_util::OmniboxText;
+using chrome_test_util::SystemSelectionCallout;
+using chrome_test_util::SystemSelectionCalloutCopyButton;
 
 // Toolbar integration tests for Chrome.
 @interface ToolbarTestCase : ChromeTestCase
 @end
-
-namespace {
-
-// Displays the |panel_type| new tab page.  On a phone this will send a command
-// to display a dialog, on tablet this calls -selectPanel to slide the NTP.
-void SelectNewTabPagePanel(ntp_home::PanelIdentifier panel_type) {
-  NewTabPageController* ntp_controller =
-      chrome_test_util::GetCurrentNewTabPageController();
-  if (IsIPadIdiom()) {
-    [ntp_controller selectPanel:panel_type];
-  } else if (panel_type == ntp_home::BOOKMARKS_PANEL) {
-    [chrome_test_util::BrowserCommandDispatcherForMainBVC()
-        showBookmarksManager];
-  } else if (panel_type == ntp_home::RECENT_TABS_PANEL) {
-    [chrome_test_util::BrowserCommandDispatcherForMainBVC() showRecentTabs];
-  }
-  [[GREYUIThreadExecutor sharedInstance] drainUntilIdle];
-}
-
-}  // namespace
 
 @implementation ToolbarTestCase
 
@@ -188,7 +171,12 @@ void SelectNewTabPagePanel(ntp_home::PanelIdentifier panel_type) {
 }
 
 // Verifies the existence and state of toolbar UI elements.
-- (void)testToolbarUI {
+- (void)testPreRefreshToolbarUI {
+  if (IsUIRefreshPhase1Enabled()) {
+    EARL_GREY_TEST_SKIPPED(
+        @"This test is specific to the pre-refresh toolbar layout");
+  }
+
   id<GREYMatcher> reloadButton =
       chrome_test_util::ButtonWithAccessibilityLabelId(IDS_IOS_ACCNAME_RELOAD);
   id<GREYMatcher> bookmarkButton =
@@ -240,13 +228,25 @@ void SelectNewTabPagePanel(ntp_home::PanelIdentifier panel_type) {
     EARL_GREY_TEST_SKIPPED(@"Test not supported on iPhone");
   }
 
-  // Load some page so that the "Back" button is tappable.
+  // Load a webpage so that the "Back" button is tappable. Then load a second
+  // page so that the test can go back once without ending up on the NTP.
+  // (Subsequent steps in this test require the omnibox to be tappable, but in
+  // some configurations the NTP only has a fakebox and does not display the
+  // omnibox.)
+  [ChromeEarlGrey loadURL:GURL("about:blank")];
   [ChromeEarlGrey loadURL:GURL("chrome://version")];
 
   // First test: check that the keyboard is opened when tapping the omnibox,
   // and that it is dismissed when the "Back" button is tapped.
-  [[EarlGrey selectElementWithMatcher:chrome_test_util::Omnibox()]
-      performAction:grey_tap()];
+  if (IsRefreshLocationBarEnabled()) {
+    [[EarlGrey
+        selectElementWithMatcher:chrome_test_util::DefocusedLocationView()]
+        performAction:grey_tap()];
+  } else {
+    [[EarlGrey selectElementWithMatcher:chrome_test_util::Omnibox()]
+        performAction:grey_tap()];
+  }
+
   [[EarlGrey selectElementWithMatcher:grey_accessibilityID(@"Typing Shield")]
       assertWithMatcher:grey_notNil()];
 
@@ -257,8 +257,14 @@ void SelectNewTabPagePanel(ntp_home::PanelIdentifier panel_type) {
 
   // Second test: check that the keyboard is opened when tapping the omnibox,
   // and that it is dismissed when the tools menu button is tapped.
-  [[EarlGrey selectElementWithMatcher:chrome_test_util::Omnibox()]
-      performAction:grey_tap()];
+  if (IsRefreshLocationBarEnabled()) {
+    [[EarlGrey
+        selectElementWithMatcher:chrome_test_util::DefocusedLocationView()]
+        performAction:grey_tap()];
+  } else {
+    [[EarlGrey selectElementWithMatcher:chrome_test_util::Omnibox()]
+        performAction:grey_tap()];
+  }
   [[EarlGrey selectElementWithMatcher:grey_accessibilityID(@"Typing Shield")]
       assertWithMatcher:grey_notNil()];
 
@@ -289,8 +295,14 @@ void SelectNewTabPagePanel(ntp_home::PanelIdentifier panel_type) {
   if (base::ios::IsRunningOnIOS11OrLater()) {
     // Can't access share menu from xctest on iOS 11+, so use the text field
     // callout bar instead.
-    [[EarlGrey selectElementWithMatcher:chrome_test_util::Omnibox()]
-        performAction:grey_tap()];
+    if (IsRefreshLocationBarEnabled()) {
+      [[EarlGrey
+          selectElementWithMatcher:chrome_test_util::DefocusedLocationView()]
+          performAction:grey_tap()];
+    } else {
+      [[EarlGrey selectElementWithMatcher:chrome_test_util::Omnibox()]
+          performAction:grey_tap()];
+    }
     // Tap twice to get the pre-edit label callout bar copy button.
     [[EarlGrey
         selectElementWithMatcher:grey_allOf(
@@ -298,9 +310,8 @@ void SelectNewTabPagePanel(ntp_home::PanelIdentifier panel_type) {
                                      grey_kindOfClass([UILabel class]), nil)]
         performAction:grey_tap()];
 
-    [[[EarlGrey selectElementWithMatcher:grey_accessibilityLabel(@"Copy")]
-        inRoot:grey_kindOfClass(NSClassFromString(@"UICalloutBarButton"))]
-        performAction:grey_tap()];
+    [[[EarlGrey selectElementWithMatcher:SystemSelectionCalloutCopyButton()]
+        inRoot:SystemSelectionCallout()] performAction:grey_tap()];
     [[EarlGrey selectElementWithMatcher:grey_accessibilityID(@"Typing Shield")]
         performAction:grey_tap()];
   } else {
@@ -312,6 +323,12 @@ void SelectNewTabPagePanel(ntp_home::PanelIdentifier panel_type) {
 
   [ChromeEarlGrey loadURL:secondURL];
 
+  if (IsRefreshLocationBarEnabled()) {
+    // Tap on the steady location view to expose omnibox for pasting.
+    [[EarlGrey
+        selectElementWithMatcher:chrome_test_util::DefocusedLocationView()]
+        performAction:grey_tap()];
+  }
   [[EarlGrey selectElementWithMatcher:chrome_test_util::Omnibox()]
       performAction:grey_longPress()];
 
@@ -336,6 +353,11 @@ void SelectNewTabPagePanel(ntp_home::PanelIdentifier panel_type) {
   const GURL URL = web::test::HttpServer::MakeUrl("http://origin");
 
   [ChromeEarlGrey loadURL:URL];
+  if (IsRefreshLocationBarEnabled()) {
+    [[EarlGrey
+        selectElementWithMatcher:chrome_test_util::DefocusedLocationView()]
+        performAction:grey_tap()];
+  }
 
   [[EarlGrey selectElementWithMatcher:chrome_test_util::Omnibox()]
       performAction:grey_typeText(@"foo")];
@@ -353,8 +375,8 @@ void SelectNewTabPagePanel(ntp_home::PanelIdentifier panel_type) {
 // Types JavaScript into Omnibox and verify that an alert is displayed.
 - (void)testTypeJavaScriptIntoOmnibox {
   // TODO(crbug.com/642544): Enable the test for iPad when typing bug is fixed.
-  if (IsIPadIdiom() && base::ios::IsRunningOnIOS10OrLater()) {
-    EARL_GREY_TEST_DISABLED(@"Disabled for iOS10 iPad due to a typing bug.");
+  if (IsIPadIdiom()) {
+    EARL_GREY_TEST_DISABLED(@"Disabled for iPad due to a typing bug.");
   }
 
   std::map<GURL, std::string> responses;
@@ -378,8 +400,8 @@ void SelectNewTabPagePanel(ntp_home::PanelIdentifier panel_type) {
 // script execution.
 - (void)testTypeJavaScriptIntoOmniboxWithWebUIPage {
   // TODO(crbug.com/642544): Enable the test for iPad when typing bug is fixed.
-  if (IsIPadIdiom() && base::ios::IsRunningOnIOS10OrLater()) {
-    EARL_GREY_TEST_DISABLED(@"Disabled for iOS10 iPad due to a typing bug.");
+  if (IsIPadIdiom()) {
+    EARL_GREY_TEST_DISABLED(@"Disabled for iPad due to a typing bug.");
   }
   [ChromeEarlGrey loadURL:GURL("chrome://version")];
   [[EarlGrey selectElementWithMatcher:chrome_test_util::Omnibox()]
@@ -398,7 +420,6 @@ void SelectNewTabPagePanel(ntp_home::PanelIdentifier panel_type) {
   if (IsIPadIdiom()) {
     EARL_GREY_TEST_DISABLED(@"Disabled for iPad due to a simulator bug.");
   }
-  SelectNewTabPagePanel(ntp_home::HOME_PANEL);
 
   id<GREYMatcher> locationbarButton = grey_allOf(
       grey_accessibilityLabel(l10n_util::GetNSString(IDS_OMNIBOX_EMPTY_HINT)),
@@ -482,8 +503,6 @@ void SelectNewTabPagePanel(ntp_home::PanelIdentifier panel_type) {
       performAction:grey_tap()];
   [[EarlGrey selectElementWithMatcher:chrome_test_util::Omnibox()]
       assertWithMatcher:chrome_test_util::OmniboxText("")];
-
-  SelectNewTabPagePanel(ntp_home::HOME_PANEL);
 }
 
 // Tests typing in the omnibox using the keyboard accessory view.

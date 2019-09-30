@@ -15,17 +15,19 @@ import android.util.Pair;
 import org.chromium.base.ApiCompatibilityUtils;
 import org.chromium.base.Callback;
 import org.chromium.chrome.R;
+import org.chromium.chrome.browser.ChromeActivity;
 import org.chromium.chrome.browser.autofill.CardType;
 import org.chromium.chrome.browser.autofill.CreditCardScanner;
 import org.chromium.chrome.browser.autofill.PersonalDataManager;
 import org.chromium.chrome.browser.autofill.PersonalDataManager.AutofillProfile;
 import org.chromium.chrome.browser.autofill.PersonalDataManager.CreditCard;
 import org.chromium.chrome.browser.payments.PaymentRequestImpl.PaymentRequestServiceObserverForTest;
-import org.chromium.chrome.browser.payments.ui.EditorFieldModel;
-import org.chromium.chrome.browser.payments.ui.EditorFieldModel.EditorFieldValidator;
-import org.chromium.chrome.browser.payments.ui.EditorFieldModel.EditorValueIconGenerator;
-import org.chromium.chrome.browser.payments.ui.EditorModel;
 import org.chromium.chrome.browser.preferences.autofill.AutofillProfileBridge.DropdownKeyValue;
+import org.chromium.chrome.browser.widget.prefeditor.EditorBase;
+import org.chromium.chrome.browser.widget.prefeditor.EditorFieldModel;
+import org.chromium.chrome.browser.widget.prefeditor.EditorFieldModel.EditorFieldValidator;
+import org.chromium.chrome.browser.widget.prefeditor.EditorFieldModel.EditorValueIconGenerator;
+import org.chromium.chrome.browser.widget.prefeditor.EditorModel;
 import org.chromium.content_public.browser.WebContents;
 import org.chromium.payments.mojom.PaymentMethodData;
 
@@ -161,6 +163,7 @@ public class CardEditor extends EditorBase<AutofillPaymentInstrument>
     private boolean mIsScanning;
     private int mCurrentMonth;
     private int mCurrentYear;
+    private boolean mIsIncognito;
 
     /**
      * Builds a credit card editor.
@@ -266,6 +269,10 @@ public class CardEditor extends EditorBase<AutofillPaymentInstrument>
             }
         };
         mCalendar.execute();
+
+        ChromeActivity activity = ChromeActivity.fromWebContents(mWebContents);
+        mIsIncognito = activity != null && activity.getCurrentTabModel() != null
+                && activity.getCurrentTabModel().isIncognito();
     }
 
     private boolean isCardNumberLengthMaximum(@Nullable CharSequence value) {
@@ -337,7 +344,8 @@ public class CardEditor extends EditorBase<AutofillPaymentInstrument>
      * [ name on card                        ]
      * [ expiration month ][ expiration year ]
      * [ billing address dropdown            ]
-     * [ save this card checkbox             ] <-- Shown only for new cards.
+     * [ save this card checkbox             ] <-- Shown only for new cards when not in incognito
+     *                                             mode.
      *
      * Server cards have the following fields instead.
      *
@@ -386,8 +394,8 @@ public class CardEditor extends EditorBase<AutofillPaymentInstrument>
         // Always show the billing address dropdown.
         addBillingAddressDropdown(editor, card);
 
-        // Allow saving new cards on disk.
-        if (isNewCard) addSaveCardCheckbox(editor);
+        // Allow saving new cards on disk unless in incognito mode.
+        if (isNewCard && !mIsIncognito) addSaveCardCheckbox(editor);
 
         // If the user clicks [Cancel], send |toEdit| card back to the caller (will return original
         // state, which could be null, a full card, or a partial card).
@@ -474,7 +482,7 @@ public class CardEditor extends EditorBase<AutofillPaymentInstrument>
                     mContext.getString(R.string.autofill_credit_card_editor_number),
                     null /* suggestions */, null /* formatter */, mCardNumberValidator,
                     mCardIconGenerator,
-                    mContext.getString(R.string.payments_field_required_validation_message),
+                    mContext.getString(R.string.pref_edit_dialog_field_required_validation_message),
                     mContext.getString(R.string.payments_card_number_invalid_validation_message),
                     null /* value */);
             if (mCanScan) {
@@ -491,13 +499,13 @@ public class CardEditor extends EditorBase<AutofillPaymentInstrument>
 
         // Name on card is required.
         if (mNameField == null) {
-            mNameField =
-                    EditorFieldModel.createTextInput(EditorFieldModel.INPUT_TYPE_HINT_PERSON_NAME,
-                            mContext.getString(R.string.autofill_credit_card_editor_name),
-                            null /* suggestions */, null /* formatter */, null /* validator */,
-                            null /* valueIconGenerator */,
-                            mContext.getString(R.string.payments_field_required_validation_message),
-                            null /* invalidErrorMessage */, null /* value */);
+            mNameField = EditorFieldModel.createTextInput(
+                    EditorFieldModel.INPUT_TYPE_HINT_PERSON_NAME,
+                    mContext.getString(R.string.autofill_credit_card_editor_name),
+                    null /* suggestions */, null /* formatter */, null /* validator */,
+                    null /* valueIconGenerator */,
+                    mContext.getString(R.string.pref_edit_dialog_field_required_validation_message),
+                    null /* invalidErrorMessage */, null /* value */);
         }
         mNameField.setValue(card.getName());
         editor.addField(mNameField);
@@ -671,10 +679,11 @@ public class CardEditor extends EditorBase<AutofillPaymentInstrument>
         mBillingAddressField = EditorFieldModel.createDropdown(
                 mContext.getString(R.string.autofill_credit_card_editor_billing_address),
                 billingAddresses, mContext.getString(R.string.select));
+        mBillingAddressField.setDisplayPlusIcon(true);
 
         // The billing address is required.
         mBillingAddressField.setRequiredErrorMessage(
-                mContext.getString(R.string.payments_field_required_validation_message));
+                mContext.getString(R.string.pref_edit_dialog_field_required_validation_message));
 
         mBillingAddressField.setDropdownCallback(new Callback<Pair<String, Runnable>>() {
             @Override
@@ -777,7 +786,7 @@ public class CardEditor extends EditorBase<AutofillPaymentInstrument>
     }
 
     /**
-     * Saves the edited credit card.
+     * Saves the edited credit card. Note that we do not save changes to disk in incognito mode.
      *
      * If this is a server card, then only its billing address identifier is updated.
      *
@@ -789,7 +798,7 @@ public class CardEditor extends EditorBase<AutofillPaymentInstrument>
 
         PersonalDataManager pdm = PersonalDataManager.getInstance();
         if (!card.getIsLocal()) {
-            pdm.updateServerCardBillingAddress(card);
+            if (!mIsIncognito) pdm.updateServerCardBillingAddress(card);
             return;
         }
 
@@ -807,11 +816,12 @@ public class CardEditor extends EditorBase<AutofillPaymentInstrument>
         card.setIssuerIconDrawableId(displayableCard.getIssuerIconDrawableId());
 
         if (!isNewCard) {
-            pdm.setCreditCard(card);
+            if (!mIsIncognito) pdm.setCreditCard(card);
             return;
         }
 
         if (mSaveCardCheckbox != null && mSaveCardCheckbox.isChecked()) {
+            assert !mIsIncognito;
             card.setGUID(pdm.setCreditCard(card));
         }
     }

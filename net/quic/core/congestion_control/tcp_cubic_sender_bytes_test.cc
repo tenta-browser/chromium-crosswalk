@@ -11,10 +11,10 @@
 #include "net/quic/core/congestion_control/rtt_stats.h"
 #include "net/quic/core/congestion_control/send_algorithm_interface.h"
 #include "net/quic/core/crypto/crypto_protocol.h"
-#include "net/quic/core/proto/cached_network_parameters.pb.h"
 #include "net/quic/core/quic_packets.h"
 #include "net/quic/core/quic_utils.h"
 #include "net/quic/platform/api/quic_logging.h"
+#include "net/quic/platform/api/quic_ptr_util.h"
 #include "net/quic/platform/api/quic_test.h"
 #include "net/quic/test_tools/mock_clock.h"
 #include "net/quic/test_tools/quic_config_peer.h"
@@ -544,6 +544,7 @@ TEST_F(TcpCubicSenderBytesTest, MultipleLossesInOneWindow) {
 }
 
 TEST_F(TcpCubicSenderBytesTest, ConfigureMaxInitialWindow) {
+  SetQuicReloadableFlag(quic_unified_iw_options, false);
   QuicConfig config;
 
   // Verify that kCOPT: kIW10 forces the congestion window to the default of 10.
@@ -552,6 +553,12 @@ TEST_F(TcpCubicSenderBytesTest, ConfigureMaxInitialWindow) {
   QuicConfigPeer::SetReceivedConnectionOptions(&config, options);
   sender_->SetFromConfig(config, Perspective::IS_SERVER);
   EXPECT_EQ(10u * kDefaultTCPMSS, sender_->GetCongestionWindow());
+}
+
+TEST_F(TcpCubicSenderBytesTest, SetInitialCongestionWindow) {
+  EXPECT_NE(3u * kDefaultTCPMSS, sender_->GetCongestionWindow());
+  sender_->SetInitialCongestionWindowInPackets(3);
+  EXPECT_EQ(3u * kDefaultTCPMSS, sender_->GetCongestionWindow());
 }
 
 TEST_F(TcpCubicSenderBytesTest, 2ConnectionCongestionAvoidanceAtEndOfRecovery) {
@@ -782,7 +789,7 @@ TEST_F(TcpCubicSenderBytesTest, DefaultMaxCwnd) {
 
 TEST_F(TcpCubicSenderBytesTest, LimitCwndIncreaseInCongestionAvoidance) {
   // Enable Cubic.
-  sender_.reset(new TcpCubicSenderBytesPeer(&clock_, false));
+  sender_ = QuicMakeUnique<TcpCubicSenderBytesPeer>(&clock_, false);
 
   int num_sent = SendAvailableSendWindow();
 
@@ -805,13 +812,9 @@ TEST_F(TcpCubicSenderBytesTest, LimitCwndIncreaseInCongestionAvoidance) {
     AckNPackets(1);
     SendAvailableSendWindow();
   }
-  if (FLAGS_quic_reloadable_flag_quic_enable_cubic_fixes) {
-    // Bytes in flight may be larger than the CWND if the CWND isn't an exact
-    // multiple of the packet sizes being sent.
-    EXPECT_GE(bytes_in_flight_, sender_->GetCongestionWindow());
-  } else {
-    EXPECT_EQ(bytes_in_flight_, sender_->GetCongestionWindow());
-  }
+  // Bytes in flight may be larger than the CWND if the CWND isn't an exact
+  // multiple of the packet sizes being sent.
+  EXPECT_GE(bytes_in_flight_, sender_->GetCongestionWindow());
   saved_cwnd = sender_->GetCongestionWindow();
 
   // Advance time 2 seconds waiting for an ack.

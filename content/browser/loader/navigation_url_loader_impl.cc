@@ -60,7 +60,7 @@ NavigationURLLoaderImpl::NavigationURLLoaderImpl(
           base::Unretained(storage_partition->GetURLRequestContext()),
           base::Unretained(storage_partition->GetFileSystemContext()),
           service_worker_handle_core, appcache_handle_core,
-          base::Passed(&request_info), base::Passed(&navigation_ui_data)));
+          std::move(request_info), std::move(navigation_ui_data)));
 }
 
 NavigationURLLoaderImpl::~NavigationURLLoaderImpl() {
@@ -87,41 +87,36 @@ void NavigationURLLoaderImpl::ProceedWithResponse() {
       base::BindOnce(&NavigationURLLoaderImplCore::ProceedWithResponse, core_));
 }
 
-void NavigationURLLoaderImpl::InterceptNavigation(
-    NavigationURLLoader::NavigationInterceptionCB callback) {}
-
 void NavigationURLLoaderImpl::NotifyRequestRedirected(
     const net::RedirectInfo& redirect_info,
-    const scoped_refptr<ResourceResponse>& response) {
+    const scoped_refptr<network::ResourceResponse>& response) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
   delegate_->OnRequestRedirected(redirect_info, response);
 }
 
 void NavigationURLLoaderImpl::NotifyResponseStarted(
-    const scoped_refptr<ResourceResponse>& response,
+    const scoped_refptr<network::ResourceResponse>& response,
     std::unique_ptr<StreamHandle> body,
-    const net::SSLInfo& ssl_info,
     std::unique_ptr<NavigationData> navigation_data,
     const GlobalRequestID& request_id,
     bool is_download,
     bool is_stream) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
-  delegate_->OnResponseStarted(response, std::move(body),
-                               mojo::ScopedDataPipeConsumerHandle(), ssl_info,
-                               std::move(navigation_data), request_id,
-                               is_download, is_stream, base::nullopt);
+  delegate_->OnResponseStarted(
+      response, network::mojom::URLLoaderClientEndpointsPtr(), std::move(body),
+      std::move(navigation_data), request_id, is_download, is_stream,
+      base::nullopt);
 }
+
 void NavigationURLLoaderImpl::NotifyRequestFailed(
     bool in_cache,
     int net_error,
-    base::Optional<net::SSLInfo> ssl_info,
-    bool should_ssl_errors_be_fatal) {
+    base::Optional<net::SSLInfo> ssl_info) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
-  delegate_->OnRequestFailed(in_cache, net_error, ssl_info,
-                             should_ssl_errors_be_fatal);
+  delegate_->OnRequestFailed(in_cache, net_error, ssl_info);
 }
 
 void NavigationURLLoaderImpl::NotifyRequestStarted(base::TimeTicks timestamp) {

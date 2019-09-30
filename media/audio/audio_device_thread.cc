@@ -9,28 +9,13 @@
 #include "base/logging.h"
 #include "base/sys_info.h"
 
-namespace {
-
-base::ThreadPriority GetAudioThreadPriority() {
-#if defined(OS_CHROMEOS)
-  // On Chrome OS, there are priority inversion issues with having realtime
-  // threads on systems with only two cores, see crbug.com/710245.
-  return base::SysInfo::NumberOfProcessors() > 2
-             ? base::ThreadPriority::REALTIME_AUDIO
-             : base::ThreadPriority::NORMAL;
-#else
-  return base::ThreadPriority::REALTIME_AUDIO;
-#endif
-}
-
-}  // namespace
-
 namespace media {
 
 // AudioDeviceThread::Callback implementation
 
 AudioDeviceThread::Callback::Callback(const AudioParameters& audio_parameters,
                                       base::SharedMemoryHandle memory,
+                                      bool read_only_memory,
                                       uint32_t segment_length,
                                       uint32_t total_segments)
     : audio_parameters_(audio_parameters),
@@ -41,7 +26,7 @@ AudioDeviceThread::Callback::Callback(const AudioParameters& audio_parameters,
       // CHECK that the shared memory is large enough. The memory allocated
       // must be at least as large as expected.
       shared_memory_((CHECK(memory_length_ <= memory.GetSize()), memory),
-                     false) {
+                     read_only_memory) {
   CHECK_GT(total_segments_, 0u);
   thread_checker_.DetachFromThread();
 }
@@ -65,8 +50,9 @@ AudioDeviceThread::AudioDeviceThread(Callback* callback,
                                      base::SyncSocket::Handle socket,
                                      const char* thread_name)
     : callback_(callback), thread_name_(thread_name), socket_(socket) {
-  CHECK(base::PlatformThread::CreateWithPriority(0, this, &thread_handle_,
-                                                 GetAudioThreadPriority()));
+  CHECK(base::PlatformThread::CreateWithPriority(
+      0, this, &thread_handle_, base::ThreadPriority::REALTIME_AUDIO));
+
   DCHECK(!thread_handle_.is_null());
 }
 

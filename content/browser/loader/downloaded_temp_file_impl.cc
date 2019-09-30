@@ -4,16 +4,16 @@
 
 #include "content/browser/loader/downloaded_temp_file_impl.h"
 
-#include "base/memory/ptr_util.h"
 #include "content/browser/loader/resource_dispatcher_host_impl.h"
 #include "mojo/public/cpp/bindings/strong_binding.h"
 
 namespace content {
 
 // static
-mojom::DownloadedTempFilePtr DownloadedTempFileImpl::Create(int child_id,
-                                                            int request_id) {
-  mojo::InterfacePtr<mojom::DownloadedTempFile> ptr;
+network::mojom::DownloadedTempFilePtr DownloadedTempFileImpl::Create(
+    int child_id,
+    int request_id) {
+  mojo::InterfacePtr<network::mojom::DownloadedTempFile> ptr;
   mojo::MakeStrongBinding(
       std::make_unique<DownloadedTempFileImpl>(child_id, request_id),
       mojo::MakeRequest(&ptr));

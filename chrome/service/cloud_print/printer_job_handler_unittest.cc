@@ -9,7 +9,6 @@
 #include "base/files/file_path.h"
 #include "base/location.h"
 #include "base/md5.h"
-#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
@@ -603,7 +602,7 @@ void PrinterJobHandlerTest::BeginTest(int timeout_seconds) {
 
   job_handler_->Initialize();
 
-  active_run_loop_ = base::MakeUnique<base::RunLoop>();
+  active_run_loop_ = std::make_unique<base::RunLoop>();
 
   base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
       FROM_HERE, active_run_loop_->QuitWhenIdleClosure(),

@@ -9,6 +9,7 @@
 #include <string>
 #include <utility>
 
+#include "base/barrier_closure.h"
 #include "base/bind.h"
 #include "base/i18n/number_formatting.h"
 #include "base/macros.h"
@@ -45,7 +46,7 @@
 #include "extensions/common/permissions/api_permission.h"
 #include "extensions/common/permissions/permissions_data.h"
 #include "storage/browser/quota/quota_manager.h"
-#include "storage/common/quota/quota_status_code.h"
+#include "third_party/blink/public/mojom/quota/quota_types.mojom.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/text/bytes_formatting.h"
 
@@ -92,7 +93,7 @@ void AddExceptionsGrantedByHostedApps(content::BrowserContext* context,
         !(*extension)->permissions_data()->HasAPIPermission(permission))
       continue;
 
-    extensions::URLPatternSet web_extent = (*extension)->web_extent();
+    const extensions::URLPatternSet& web_extent = (*extension)->web_extent();
     // Add patterns from web extent.
     for (extensions::URLPatternSet::const_iterator pattern = web_extent.begin();
          pattern != web_extent.end(); ++pattern) {
@@ -124,67 +125,75 @@ SiteSettingsHandler::~SiteSettingsHandler() {
 void SiteSettingsHandler::RegisterMessages() {
   web_ui()->RegisterMessageCallback(
       "fetchUsageTotal",
-      base::Bind(&SiteSettingsHandler::HandleFetchUsageTotal,
-                 base::Unretained(this)));
+      base::BindRepeating(&SiteSettingsHandler::HandleFetchUsageTotal,
+                          base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
-      "clearUsage",
-      base::Bind(&SiteSettingsHandler::HandleClearUsage,
-                 base::Unretained(this)));
+      "clearUsage", base::BindRepeating(&SiteSettingsHandler::HandleClearUsage,
+                                        base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
       "fetchUsbDevices",
-      base::Bind(&SiteSettingsHandler::HandleFetchUsbDevices,
-                 base::Unretained(this)));
+      base::BindRepeating(&SiteSettingsHandler::HandleFetchUsbDevices,
+                          base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
       "removeUsbDevice",
-      base::Bind(&SiteSettingsHandler::HandleRemoveUsbDevice,
-                 base::Unretained(this)));
+      base::BindRepeating(&SiteSettingsHandler::HandleRemoveUsbDevice,
+                          base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
       "setDefaultValueForContentType",
-      base::Bind(&SiteSettingsHandler::HandleSetDefaultValueForContentType,
-                 base::Unretained(this)));
+      base::BindRepeating(
+          &SiteSettingsHandler::HandleSetDefaultValueForContentType,
+          base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
       "getDefaultValueForContentType",
-      base::Bind(&SiteSettingsHandler::HandleGetDefaultValueForContentType,
-                 base::Unretained(this)));
+      base::BindRepeating(
+          &SiteSettingsHandler::HandleGetDefaultValueForContentType,
+          base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
       "getExceptionList",
-      base::Bind(&SiteSettingsHandler::HandleGetExceptionList,
-                 base::Unretained(this)));
+      base::BindRepeating(&SiteSettingsHandler::HandleGetExceptionList,
+                          base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
       "getOriginPermissions",
-      base::Bind(&SiteSettingsHandler::HandleGetOriginPermissions,
-                 base::Unretained(this)));
+      base::BindRepeating(&SiteSettingsHandler::HandleGetOriginPermissions,
+                          base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
       "setOriginPermissions",
-      base::Bind(&SiteSettingsHandler::HandleSetOriginPermissions,
-                 base::Unretained(this)));
+      base::BindRepeating(&SiteSettingsHandler::HandleSetOriginPermissions,
+                          base::Unretained(this)));
+  web_ui()->RegisterMessageCallback(
+      "clearFlashPref",
+      base::BindRepeating(&SiteSettingsHandler::HandleClearFlashPref,
+                          base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
       "resetCategoryPermissionForPattern",
-      base::Bind(&SiteSettingsHandler::HandleResetCategoryPermissionForPattern,
-                 base::Unretained(this)));
+      base::BindRepeating(
+          &SiteSettingsHandler::HandleResetCategoryPermissionForPattern,
+          base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
       "setCategoryPermissionForPattern",
-      base::Bind(&SiteSettingsHandler::HandleSetCategoryPermissionForPattern,
-                 base::Unretained(this)));
+      base::BindRepeating(
+          &SiteSettingsHandler::HandleSetCategoryPermissionForPattern,
+          base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
-      "isOriginValid", base::Bind(&SiteSettingsHandler::HandleIsOriginValid,
-                                  base::Unretained(this)));
+      "isOriginValid",
+      base::BindRepeating(&SiteSettingsHandler::HandleIsOriginValid,
+                          base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
       "isPatternValid",
-      base::Bind(&SiteSettingsHandler::HandleIsPatternValid,
-                 base::Unretained(this)));
+      base::BindRepeating(&SiteSettingsHandler::HandleIsPatternValid,
+                          base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
       "updateIncognitoStatus",
-      base::Bind(&SiteSettingsHandler::HandleUpdateIncognitoStatus,
-                 base::Unretained(this)));
+      base::BindRepeating(&SiteSettingsHandler::HandleUpdateIncognitoStatus,
+                          base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
       "fetchZoomLevels",
-      base::Bind(&SiteSettingsHandler::HandleFetchZoomLevels,
-                 base::Unretained(this)));
+      base::BindRepeating(&SiteSettingsHandler::HandleFetchZoomLevels,
+                          base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
       "removeZoomLevel",
-      base::Bind(&SiteSettingsHandler::HandleRemoveZoomLevel,
-                 base::Unretained(this)));
+      base::BindRepeating(&SiteSettingsHandler::HandleRemoveZoomLevel,
+                          base::Unretained(this)));
 }
 
 void SiteSettingsHandler::OnJavascriptAllowed() {
@@ -214,7 +223,7 @@ void SiteSettingsHandler::OnJavascriptAllowed() {
                          base::Unretained(this)));
 
 #if defined(OS_CHROMEOS)
-  pref_change_registrar_ = base::MakeUnique<PrefChangeRegistrar>();
+  pref_change_registrar_ = std::make_unique<PrefChangeRegistrar>();
   pref_change_registrar_->Init(profile_->GetPrefs());
   pref_change_registrar_->Add(
       prefs::kEnableDRM,
@@ -242,17 +251,22 @@ void SiteSettingsHandler::OnGetUsageInfo(
       CallJavascriptFunction("settings.WebsiteUsagePrivateApi.returnUsageTotal",
                              base::Value(entry.host),
                              base::Value(ui::FormatBytes(entry.usage)),
-                             base::Value(entry.type));
+                             base::Value(static_cast<int>(entry.type)));
       return;
     }
   }
 }
 
-void SiteSettingsHandler::OnUsageInfoCleared(storage::QuotaStatusCode code) {
-  if (code == storage::kQuotaStatusOk) {
-    CallJavascriptFunction("settings.WebsiteUsagePrivateApi.onUsageCleared",
-                           base::Value(clearing_origin_));
+void SiteSettingsHandler::OnStorageCleared(base::OnceClosure callback,
+                                           blink::mojom::QuotaStatusCode code) {
+  if (code == blink::mojom::QuotaStatusCode::kOk) {
+    std::move(callback).Run();
   }
+}
+
+void SiteSettingsHandler::OnUsageCleared() {
+  CallJavascriptFunction("settings.WebsiteUsagePrivateApi.onUsageCleared",
+                         base::Value(clearing_origin_));
 }
 
 #if defined(OS_CHROMEOS)
@@ -354,19 +368,25 @@ void SiteSettingsHandler::HandleClearUsage(
   if (url.is_valid()) {
     clearing_origin_ = origin;
 
+    // Call OnUsageCleared when StorageInfoFetcher::ClearStorage and
+    // BrowsingDataLocalStorageHelper::DeleteOrigin are done.
+    base::RepeatingClosure barrier = base::BarrierClosure(
+        2, base::BindOnce(&SiteSettingsHandler::OnUsageCleared,
+                          base::Unretained(this)));
+
     // Start by clearing the storage data asynchronously.
     scoped_refptr<StorageInfoFetcher> storage_info_fetcher
         = new StorageInfoFetcher(profile_);
     storage_info_fetcher->ClearStorage(
         url.host(),
-        static_cast<storage::StorageType>(static_cast<int>(storage_type)),
-        base::Bind(&SiteSettingsHandler::OnUsageInfoCleared,
-            base::Unretained(this)));
+        static_cast<blink::mojom::StorageType>(static_cast<int>(storage_type)),
+        base::BindRepeating(&SiteSettingsHandler::OnStorageCleared,
+                            base::Unretained(this), barrier));
 
     // Also clear the *local* storage data.
     scoped_refptr<BrowsingDataLocalStorageHelper> local_storage_helper =
         new BrowsingDataLocalStorageHelper(profile_);
-    local_storage_helper->DeleteOrigin(url);
+    local_storage_helper->DeleteOrigin(url, barrier);
   }
 }
 
@@ -518,7 +538,7 @@ void SiteSettingsHandler::HandleGetOriginPermissions(
 
   // Note: Invalid URLs will just result in default settings being shown.
   const GURL origin_url(origin);
-  auto exceptions = base::MakeUnique<base::ListValue>();
+  auto exceptions = std::make_unique<base::ListValue>();
   for (size_t i = 0; i < types->GetSize(); ++i) {
     std::string type;
     types->GetString(i, &type);
@@ -536,7 +556,7 @@ void SiteSettingsHandler::HandleGetOriginPermissions(
     std::string content_setting_string =
         content_settings::ContentSettingToString(content_setting);
 
-    auto raw_site_exception = base::MakeUnique<base::DictionaryValue>();
+    auto raw_site_exception = std::make_unique<base::DictionaryValue>();
     raw_site_exception->SetString(site_settings::kEmbeddingOrigin, origin);
     raw_site_exception->SetBoolean(site_settings::kIncognito,
                                    profile_->IsOffTheRecord());
@@ -618,6 +638,19 @@ void SiteSettingsHandler::HandleSetOriginPermissions(
       }
     }
   }
+}
+
+void SiteSettingsHandler::HandleClearFlashPref(const base::ListValue* args) {
+  CHECK_EQ(1U, args->GetSize());
+  std::string origin_string;
+  CHECK(args->GetString(0, &origin_string));
+
+  HostContentSettingsMap* map =
+      HostContentSettingsMapFactory::GetForProfile(profile_);
+  const GURL origin(origin_string);
+  map->SetWebsiteSettingDefaultScope(origin, origin,
+                                     CONTENT_SETTINGS_TYPE_PLUGINS_DATA,
+                                     std::string(), nullptr);
 }
 
 void SiteSettingsHandler::HandleResetCategoryPermissionForPattern(
@@ -752,6 +785,7 @@ void SiteSettingsHandler::HandleIsOriginValid(const base::ListValue* args) {
 
 void SiteSettingsHandler::HandleIsPatternValid(
     const base::ListValue* args) {
+  AllowJavascript();
   CHECK_EQ(2U, args->GetSize());
   const base::Value* callback_id;
   CHECK(args->Get(0, &callback_id));

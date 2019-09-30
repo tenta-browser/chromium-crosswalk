@@ -13,15 +13,16 @@
 #include "base/files/file_util.h"
 #include "base/json/json_reader.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/path_service.h"
 #include "base/strings/pattern.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
 #include "content/public/browser/client_certificate_delegate.h"
+#include "content/public/browser/login_delegate.h"
 #include "content/public/browser/page_navigator.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/resource_dispatcher_host.h"
+#include "content/public/browser/resource_dispatcher_host_delegate.h"
 #include "content/public/browser/storage_partition.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/common/service_names.mojom.h"
@@ -32,17 +33,18 @@
 #include "content/shell/browser/shell_browser_context.h"
 #include "content/shell/browser/shell_browser_main_parts.h"
 #include "content/shell/browser/shell_devtools_manager_delegate.h"
+#include "content/shell/browser/shell_login_dialog.h"
 #include "content/shell/browser/shell_net_log.h"
 #include "content/shell/browser/shell_quota_permission_context.h"
-#include "content/shell/browser/shell_resource_dispatcher_host_delegate.h"
 #include "content/shell/browser/shell_web_contents_view_delegate_creator.h"
 #include "content/shell/common/shell_messages.h"
 #include "content/shell/common/shell_switches.h"
 #include "content/shell/grit/shell_resources.h"
-#include "media/mojo/features.h"
+#include "media/mojo/buildflags.h"
 #include "net/ssl/client_cert_identity.h"
+#include "net/url_request/url_request.h"
 #include "net/url_request/url_request_context_getter.h"
-#include "services/test/echo/echo_service.h"
+#include "services/test/echo/public/mojom/echo.mojom.h"
 #include "storage/browser/quota/quota_settings.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "url/gurl.h"
@@ -77,7 +79,6 @@ namespace content {
 namespace {
 
 ShellContentBrowserClient* g_browser_client;
-bool g_swap_processes_for_redirect = false;
 
 #if defined(OS_LINUX)
 breakpad::CrashHandlerHostLinux* CreateCrashHandlerHost(
@@ -131,10 +132,6 @@ int GetCrashSignalFD(const base::CommandLine& command_line) {
 
 ShellContentBrowserClient* ShellContentBrowserClient::Get() {
   return g_browser_client;
-}
-
-void ShellContentBrowserClient::SetSwapProcessesForRedirect(bool swap) {
-  g_swap_processes_for_redirect = swap;
 }
 
 ShellContentBrowserClient::ShellContentBrowserClient()
@@ -194,7 +191,7 @@ bool ShellContentBrowserClient::IsHandledURL(const GURL& url) {
     if (url.scheme() == kProtocolList[i])
       return true;
   }
-  return false;
+  return net::URLRequest::IsHandledProtocol(url.scheme());
 }
 
 void ShellContentBrowserClient::BindInterfaceRequestFromFrame(
@@ -220,16 +217,12 @@ void ShellContentBrowserClient::RegisterInProcessServices(
     services->insert(std::make_pair(media::mojom::kMediaServiceName, info));
   }
 #endif
-  {
-    service_manager::EmbeddedServiceInfo info;
-    info.factory = base::Bind(&echo::CreateEchoService);
-    services->insert(std::make_pair(echo::mojom::kServiceName, info));
-  }
 }
 
 void ShellContentBrowserClient::RegisterOutOfProcessServices(
     OutOfProcessServiceMap* services) {
   (*services)[kTestServiceUrl] = base::UTF8ToUTF16("Test Service");
+  (*services)[echo::mojom::kServiceName] = base::UTF8ToUTF16("Echo Service");
 }
 
 bool ShellContentBrowserClient::ShouldTerminateOnServiceQuit(
@@ -297,7 +290,7 @@ void ShellContentBrowserClient::AppendExtraCommandLineSwitches(
 
 void ShellContentBrowserClient::ResourceDispatcherHostCreated() {
   resource_dispatcher_host_delegate_.reset(
-      new ShellResourceDispatcherHostDelegate);
+      new ResourceDispatcherHostDelegate());
   ResourceDispatcherHost::Get()->SetDelegate(
       resource_dispatcher_host_delegate_.get());
 }
@@ -341,13 +334,6 @@ net::NetLog* ShellContentBrowserClient::GetNetLog() {
   return shell_browser_main_parts_->net_log();
 }
 
-bool ShellContentBrowserClient::ShouldSwapProcessesForRedirect(
-    BrowserContext* browser_context,
-    const GURL& current_url,
-    const GURL& new_url) {
-  return g_swap_processes_for_redirect;
-}
-
 DevToolsManagerDelegate*
 ShellContentBrowserClient::GetDevToolsManagerDelegate() {
   return new ShellDevToolsManagerDelegate(browser_context());
@@ -361,6 +347,28 @@ void ShellContentBrowserClient::OpenURL(
                                       params.url,
                                       nullptr,
                                       gfx::Size())->web_contents());
+}
+
+scoped_refptr<LoginDelegate> ShellContentBrowserClient::CreateLoginDelegate(
+    net::AuthChallengeInfo* auth_info,
+    content::ResourceRequestInfo::WebContentsGetter web_contents_getter,
+    bool is_main_frame,
+    const GURL& url,
+    bool first_auth_attempt,
+    const base::Callback<void(const base::Optional<net::AuthCredentials>&)>&
+        auth_required_callback) {
+  if (!login_request_callback_.is_null()) {
+    std::move(login_request_callback_).Run();
+    return nullptr;
+  }
+
+#if !defined(OS_MACOSX)
+  // TODO: implement ShellLoginDialog for other platforms, drop this #if
+  return nullptr;
+#else
+  return base::MakeRefCounted<ShellLoginDialog>(auth_info,
+                                                auth_required_callback);
+#endif
 }
 
 #if defined(OS_LINUX) || defined(OS_ANDROID)

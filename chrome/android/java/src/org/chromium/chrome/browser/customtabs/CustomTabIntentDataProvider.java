@@ -50,6 +50,7 @@ public class CustomTabIntentDataProvider extends BrowserSessionDataProvider {
             CUSTOM_TABS_UI_TYPE_DEFAULT, CUSTOM_TABS_UI_TYPE_MEDIA_VIEWER,
             CUSTOM_TABS_UI_TYPE_PAYMENT_REQUEST, CUSTOM_TABS_UI_TYPE_INFO_PAGE,
             CUSTOM_TABS_UI_TYPE_READER_MODE, CUSTOM_TABS_UI_TYPE_MINIMAL_UI_WEBAPP,
+            CUSTOM_TABS_UI_TYPE_OFFLINE_PAGE,
     })
     public @interface CustomTabsUiType {}
     public static final int CUSTOM_TABS_UI_TYPE_DEFAULT = 0;
@@ -58,10 +59,11 @@ public class CustomTabIntentDataProvider extends BrowserSessionDataProvider {
     public static final int CUSTOM_TABS_UI_TYPE_INFO_PAGE = 3;
     public static final int CUSTOM_TABS_UI_TYPE_READER_MODE = 4;
     public static final int CUSTOM_TABS_UI_TYPE_MINIMAL_UI_WEBAPP = 5;
+    public static final int CUSTOM_TABS_UI_TYPE_OFFLINE_PAGE = 6;
 
     /**
-     * Herb: Extra that indicates whether or not the Custom Tab is being launched by an Intent fired
-     * by Chrome itself.
+     * Extra that indicates whether or not the Custom Tab is being launched by an Intent fired by
+     * Chrome itself.
      */
     public static final String EXTRA_IS_OPENED_BY_CHROME =
             "org.chromium.chrome.browser.customtabs.IS_OPENED_BY_CHROME";
@@ -92,8 +94,8 @@ public class CustomTabIntentDataProvider extends BrowserSessionDataProvider {
 
     /**
      * Indicates the source where the Custom Tab is launched. This is only used for
-     * WebApp/WebAPK/TrustedWebActivity. The value is defined as {@link
-     * ActivityType#WebappActivity}.
+     * WebApp/WebAPK/TrustedWebActivity. The value is defined as
+     * {@link WebappActivity.ActivityType#WebappActivity}.
      */
     public static final String EXTRA_BROWSER_LAUNCH_SOURCE =
             "org.chromium.chrome.browser.customtabs.EXTRA_BROWSER_LAUNCH_SOURCE";
@@ -104,6 +106,8 @@ public class CustomTabIntentDataProvider extends BrowserSessionDataProvider {
             "android.support.customtabs.extra.SEND_TO_EXTERNAL_HANDLER";
 
     private static final int MAX_CUSTOM_MENU_ITEMS = 5;
+
+    private static final int MAX_CUSTOM_TOOLBAR_ITEMS = 2;
 
     private static final String FIRST_PARTY_PITFALL_MSG =
             "The intent contains a non-default UI type, but it is not from a first-party app. "
@@ -125,7 +129,7 @@ public class CustomTabIntentDataProvider extends BrowserSessionDataProvider {
     private Drawable mCloseButtonIcon;
     private List<Pair<String, PendingIntent>> mMenuEntries = new ArrayList<>();
     private boolean mShowShareItem;
-    private CustomButtonParams mToolbarButton;
+    private List<CustomButtonParams> mToolbarButtons = new ArrayList<>(1);
     private List<CustomButtonParams> mBottombarButtons = new ArrayList<>(2);
     private RemoteViews mRemoteViews;
     private int[] mClickableViewIds;
@@ -133,9 +137,8 @@ public class CustomTabIntentDataProvider extends BrowserSessionDataProvider {
     // OnFinished listener for PendingIntents. Used for testing only.
     private PendingIntent.OnFinished mOnFinished;
 
-    /** Herb: Whether this CustomTabActivity was explicitly started by another Chrome Activity. */
+    /** Whether this CustomTabActivity was explicitly started by another Chrome Activity. */
     private boolean mIsOpenedByChrome;
-
     /**
      * Add extras to customize menu items for opening payment request UI custom tab from Chrome.
      */
@@ -247,19 +250,26 @@ public class CustomTabIntentDataProvider extends BrowserSessionDataProvider {
 
     /**
      * Gets custom buttons from the intent and updates {@link #mCustomButtonParams},
-     * {@link #mBottombarButtons} and {@link #mToolbarButton}.
+     * {@link #mBottombarButtons} and {@link #mToolbarButtons}.
      */
     private void retrieveCustomButtons(Intent intent, Context context) {
+        assert mCustomButtonParams == null;
         mCustomButtonParams = CustomButtonParams.fromIntent(context, intent);
-        if (mCustomButtonParams != null) {
-            for (CustomButtonParams params : mCustomButtonParams) {
-                if (params.showOnToolbar()) {
-                    mToolbarButton = params;
-                } else {
-                    mBottombarButtons.add(params);
-                }
+        for (CustomButtonParams params : mCustomButtonParams) {
+            if (!params.showOnToolbar()) {
+                mBottombarButtons.add(params);
+            } else if (mToolbarButtons.size() < getMaxCustomToolbarItems()) {
+                mToolbarButtons.add(params);
+            } else {
+                Log.w(TAG, "Only %d items are allowed in the toolbar", getMaxCustomToolbarItems());
             }
         }
+    }
+
+    private int getMaxCustomToolbarItems() {
+        if (!isTrustedIntent()) return 1;
+
+        return MAX_CUSTOM_TOOLBAR_ITEMS;
     }
 
     /**
@@ -341,11 +351,10 @@ public class CustomTabIntentDataProvider extends BrowserSessionDataProvider {
     }
 
     /**
-     * @return The params for the custom button that shows on the toolbar. If there is no applicable
-     *         buttons, returns null.
+     * @return The params for the custom buttons that show on the toolbar.
      */
-    public CustomButtonParams getCustomButtonOnToolbar() {
-        return mToolbarButton;
+    public List<CustomButtonParams> getCustomButtonsOnToolbar() {
+        return mToolbarButtons;
     }
 
     /**
@@ -394,15 +403,28 @@ public class CustomTabIntentDataProvider extends BrowserSessionDataProvider {
 
     /**
      * Gets params for all custom buttons, which is the combination of
-     * {@link #getCustomButtonsOnBottombar()} and {@link #getCustomButtonOnToolbar()}.
+     * {@link #getCustomButtonsOnBottombar()} and {@link #getCustomButtonsOnToolbar()}.
      */
     public List<CustomButtonParams> getAllCustomButtons() {
         return mCustomButtonParams;
     }
 
     /**
-     * @return The {@link CustomButtonParams} having the given id. Returns null if no such params
+     * Searches for the toolbar button with the given {@code id} and returns its index.
+     * @param id The ID of a toolbar button to search for.
+     * @return The index of the toolbar button with the given {@code id}, or -1 if no such button
      *         can be found.
+     */
+    public int getCustomToolbarButtonIndexForId(int id) {
+        for (int i = 0; i < mToolbarButtons.size(); i++) {
+            if (mToolbarButtons.get(i).getId() == id) return i;
+        }
+        return -1;
+    }
+
+    /**
+     * @return The {@link CustomButtonParams} (either on the toolbar or bottom bar) with the given
+     *         {@code id}, or null if no such button can be found.
      */
     public CustomButtonParams getButtonParamsForId(int id) {
         for (CustomButtonParams params : mCustomButtonParams) {
@@ -426,22 +448,27 @@ public class CustomTabIntentDataProvider extends BrowserSessionDataProvider {
 
     /**
      * Triggers the client-defined action when the user clicks a custom menu item.
+     * @param activity The {@link ChromeActivity} to use for sending the {@link PendingIntent}.
      * @param menuIndex The index that the menu item is shown in the result of
-     *                  {@link #getMenuTitles()}
+     *                  {@link #getMenuTitles()}.
+     * @param url The URL to attach as additional data to the {@link PendingIntent}.
+     * @param title The title to attach as additional data to the {@link PendingIntent}.
      */
-    public void clickMenuItemWithUrl(ChromeActivity activity, int menuIndex, String url) {
+    public void clickMenuItemWithUrlAndTitle(
+            ChromeActivity activity, int menuIndex, String url, String title) {
         Intent addedIntent = new Intent();
         addedIntent.setData(Uri.parse(url));
+        addedIntent.putExtra(Intent.EXTRA_SUBJECT, title);
         try {
             // Media viewers pass in PendingIntents that contain CHOOSER Intents.  Setting the data
             // in these cases prevents the Intent from firing correctly.
-            String title = mMenuEntries.get(menuIndex).first;
+            String menuTitle = mMenuEntries.get(menuIndex).first;
             PendingIntent pendingIntent = mMenuEntries.get(menuIndex).second;
             pendingIntent.send(
                     activity, 0, isMediaViewer() ? null : addedIntent, mOnFinished, null);
             if (shouldEnableEmbeddedMediaExperience()
-                    && TextUtils.equals(
-                               title, activity.getString(R.string.download_manager_open_with))) {
+                    && TextUtils.equals(menuTitle,
+                               activity.getString(R.string.download_manager_open_with))) {
                 RecordUserAction.record("CustomTabsMenuCustomMenuItem.DownloadsUI.OpenWith");
             }
         } catch (CanceledException e) {
@@ -450,16 +477,20 @@ public class CustomTabIntentDataProvider extends BrowserSessionDataProvider {
     }
 
     /**
-     * Sends the pending intent for the custom button on toolbar with the given url as data.
+     * Sends the pending intent for the custom button on the toolbar with the given {@code params},
+     *         with the given {@code url} as data.
      * @param context The context to use for sending the {@link PendingIntent}.
-     * @param url The url to attach as additional data to the {@link PendingIntent}.
+     * @param params The parameters for the custom button.
+     * @param url The URL to attach as additional data to the {@link PendingIntent}.
+     * @param title The title to attach as additional data to the {@link PendingIntent}.
      */
-    public void sendButtonPendingIntentWithUrl(Context context, String url) {
+    public void sendButtonPendingIntentWithUrlAndTitle(
+            Context context, CustomButtonParams params, String url, String title) {
         Intent addedIntent = new Intent();
         addedIntent.setData(Uri.parse(url));
+        addedIntent.putExtra(Intent.EXTRA_SUBJECT, title);
         try {
-            getCustomButtonOnToolbar().getPendingIntent().send(
-                    context, 0, addedIntent, mOnFinished, null);
+            params.getPendingIntent().send(context, 0, addedIntent, mOnFinished, null);
         } catch (CanceledException e) {
             Log.e(TAG, "CanceledException while sending pending intent in custom tab");
         }

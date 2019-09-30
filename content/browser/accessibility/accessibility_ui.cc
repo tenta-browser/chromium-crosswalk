@@ -26,6 +26,7 @@
 #include "content/browser/webui/web_ui_data_source_impl.h"
 #include "content/common/view_message_enums.h"
 #include "content/grit/content_resources.h"
+#include "content/public/browser/browser_thread.h"
 #include "content/public/browser/favicon_status.h"
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/render_process_host.h"
@@ -214,7 +215,7 @@ AccessibilityUI::AccessibilityUI(WebUI* web_ui) : WebUIController(web_ui) {
       web_ui->GetWebContents()->GetBrowserContext();
   WebUIDataSource::Add(browser_context, html_source);
 
-  web_ui->AddMessageHandler(base::MakeUnique<AccessibilityUIMessageHandler>());
+  web_ui->AddMessageHandler(std::make_unique<AccessibilityUIMessageHandler>());
 }
 
 AccessibilityUI::~AccessibilityUI() {}
@@ -228,19 +229,21 @@ void AccessibilityUIMessageHandler::RegisterMessages() {
 
   web_ui()->RegisterMessageCallback(
       "toggleAccessibility",
-      base::Bind(&AccessibilityUIMessageHandler::ToggleAccessibility,
-                 base::Unretained(this)));
+      base::BindRepeating(&AccessibilityUIMessageHandler::ToggleAccessibility,
+                          base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
-      "setGlobalFlag", base::Bind(&AccessibilityUIMessageHandler::SetGlobalFlag,
-                                  base::Unretained(this)));
+      "setGlobalFlag",
+      base::BindRepeating(&AccessibilityUIMessageHandler::SetGlobalFlag,
+                          base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
       "requestWebContentsTree",
-      base::Bind(&AccessibilityUIMessageHandler::RequestWebContentsTree,
-                 base::Unretained(this)));
+      base::BindRepeating(
+          &AccessibilityUIMessageHandler::RequestWebContentsTree,
+          base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
       "requestNativeUITree",
-      base::Bind(&AccessibilityUIMessageHandler::RequestNativeUITree,
-                 base::Unretained(this)));
+      base::BindRepeating(&AccessibilityUIMessageHandler::RequestNativeUITree,
+                          base::Unretained(this)));
 }
 
 void AccessibilityUIMessageHandler::ToggleAccessibility(

@@ -6,6 +6,7 @@ import("//base/android/jni_generator/jni_exception_list.gni")
 import("//build/config/android/config.gni")
 import("//build/config/android/rules.gni")
 import("//third_party/icu/config.gni")
+import("//tools/v8_context_snapshot/v8_context_snapshot.gni")
 
 content_shell_manifest =
     "$target_gen_dir/content_shell_manifest/AndroidManifest.xml"
@@ -14,7 +15,6 @@ generate_jni("content_shell_jni_headers") {
   jni_package = "content/shell"
   sources = [
     "java/src/org/chromium/content_shell/Shell.java",
-    "java/src/org/chromium/content_shell/ShellLayoutTestUtils.java",
     "java/src/org/chromium/content_shell/ShellManager.java",
   ]
 }
@@ -44,7 +44,6 @@ shared_library("libcontent_shell_content_view") {
   if (is_component_build) {
     deps += [
       "//device/gamepad",
-      "//device/sensors",
       "//media/midi",
     ]
   }
@@ -65,7 +64,7 @@ android_library("content_shell_java") {
     ":content_shell_java_resources",
     ":content_shell_manifest",
     "//base:base_java",
-    "//base:base_java_test_support",
+    "//components/content_view:content_view_java",
     "//content/public/android:content_java",
     "//device/geolocation:geolocation_java",
     "//media/base/android:media_java",
@@ -76,13 +75,11 @@ android_library("content_shell_java") {
   ]
   java_files = [
     "java/src/org/chromium/content_shell/Shell.java",
-    "java/src/org/chromium/content_shell/ShellLayoutTestUtils.java",
     "java/src/org/chromium/content_shell/ShellManager.java",
     "java/src/org/chromium/content_shell/ShellViewAndroidDelegate.java",
   ]
 
-  # Manifest used for linting (determining unused resources).
-  android_manifest = content_shell_manifest
+  android_manifest_for_lint = content_shell_manifest
 }
 
 jinja_template("content_shell_manifest") {
@@ -118,8 +115,7 @@ android_library("content_shell_apk_java") {
     "//ui/android:ui_java",
   ]
 
-  # Supply manifest for linting.
-  android_manifest = content_shell_manifest
+  android_manifest_for_lint = content_shell_manifest
 
   java_files = [
     "shell_apk/src/org/chromium/content_shell_apk/ChildProcessLauncherTestHelperService.java",
@@ -147,12 +143,17 @@ android_assets("content_shell_assets") {
   deps = [
     "//content/shell:pak",
     "//third_party/icu:icu_assets",
-    "//v8:v8_external_startup_data_assets",
   ]
+  if (use_v8_context_snapshot) {
+    deps += [ "//tools/v8_context_snapshot:v8_context_snapshot_assets" ]
+  } else {
+    deps += [ "//v8:v8_external_startup_data_assets" ]
+  }
 }
 
 android_apk("content_shell_apk") {
   testonly = true
+  enable_multidex = true
   deps = [
     ":content_shell_apk_java",
     ":content_shell_assets",
@@ -191,8 +192,6 @@ android_library("content_shell_test_java") {
   java_files = [
     "javatests/src/org/chromium/content_shell_apk/ContentShellPreconditionsTest.java",
     "javatests/src/org/chromium/content_shell_apk/ContentShellShellManagementTest.java",
-    "javatests/src/org/chromium/content_shell_apk/ContentShellTestBase.java",
-    "javatests/src/org/chromium/content_shell_apk/ContentShellTestCommon.java",
     "javatests/src/org/chromium/content_shell_apk/ContentShellActivityTestRule.java",
     "javatests/src/org/chromium/content_shell_apk/ContentShellUrlTest.java",
   ]
@@ -200,9 +199,9 @@ android_library("content_shell_test_java") {
 
 instrumentation_test_apk("content_shell_test_apk") {
   deps = [
+    "//base:base_java_test_support",
     "//base:base_javatests",
     "//content/public/android:content_javatests",
-    "//device/sensors:javatests",
     "//net/android:net_javatests",
     "//third_party/android_support_test_runner:runner_java",
   ]
@@ -234,6 +233,7 @@ if (current_cpu != "x64") {
 
   android_apk(_linker_test_apk_target_name) {
     testonly = true
+    enable_multidex = true
     deps = [
       ":content_shell_assets",
       ":content_shell_java",
@@ -294,7 +294,6 @@ if (current_cpu != "x64") {
     if (is_component_build) {
       deps += [
         "//device/gamepad",
-        "//device/sensors",
         "//media/midi",
       ]
     }

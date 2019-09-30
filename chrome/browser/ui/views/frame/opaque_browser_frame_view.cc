@@ -65,7 +65,6 @@ OpaqueBrowserFrameView::OpaqueBrowserFrameView(
     BrowserView* browser_view,
     OpaqueBrowserFrameViewLayout* layout)
     : BrowserNonClientFrameView(frame, browser_view),
-      profile_switcher_(this),
       layout_(layout),
       minimize_button_(nullptr),
       maximize_button_(nullptr),
@@ -75,7 +74,7 @@ OpaqueBrowserFrameView::OpaqueBrowserFrameView(
       window_title_(nullptr),
       frame_background_(new views::FrameBackground()) {
   layout_->set_delegate(this);
-  SetLayoutManager(layout_);
+  SetLayoutManager(std::unique_ptr<views::LayoutManager>(layout_));
 
   minimize_button_ = InitWindowCaptionButton(IDR_MINIMIZE,
                                              IDR_MINIMIZE_H,
@@ -142,6 +141,11 @@ void OpaqueBrowserFrameView::OnMaximizedStateChanged() {
   MaybeRedrawFrameButtons();
 }
 
+void OpaqueBrowserFrameView::OnFullscreenStateChanged() {
+  // The top area height is 0 when the window is fullscreened.
+  MaybeRedrawFrameButtons();
+}
+
 gfx::Rect OpaqueBrowserFrameView::GetBoundsForTabStrip(
     views::View* tabstrip) const {
   if (!tabstrip)
@@ -169,8 +173,8 @@ gfx::Size OpaqueBrowserFrameView::GetMinimumSize() const {
   return layout_->GetMinimumSize(width());
 }
 
-views::View* OpaqueBrowserFrameView::GetProfileSwitcherView() const {
-  return profile_switcher_.view();
+int OpaqueBrowserFrameView::GetTabStripLeftInset() const {
+  return layout_->GetTabStripLeftInset();
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -191,8 +195,9 @@ bool OpaqueBrowserFrameView::IsWithinAvatarMenuButtons(
       profile_indicator_icon()->GetMirroredBounds().Contains(point)) {
     return true;
   }
-  if (profile_switcher_.view() &&
-      profile_switcher_.view()->GetMirroredBounds().Contains(point)) {
+  views::View* profile_switcher_view = GetProfileSwitcherButton();
+  if (profile_switcher_view &&
+      profile_switcher_view->GetMirroredBounds().Contains(point)) {
     return true;
   }
 
@@ -288,7 +293,7 @@ void OpaqueBrowserFrameView::ActivationChanged(bool active) {
 // OpaqueBrowserFrameView, views::View overrides:
 
 void OpaqueBrowserFrameView::GetAccessibleNodeData(ui::AXNodeData* node_data) {
-  node_data->role = ui::AX_ROLE_TITLE_BAR;
+  node_data->role = ax::mojom::Role::kTitleBar;
 }
 
 void OpaqueBrowserFrameView::OnNativeThemeChanged(
@@ -346,6 +351,10 @@ gfx::ImageSkia OpaqueBrowserFrameView::GetFaviconForTabIconView() {
 
 ///////////////////////////////////////////////////////////////////////////////
 // OpaqueBrowserFrameView, OpaqueBrowserFrameViewLayoutDelegate implementation:
+
+bool OpaqueBrowserFrameView::IsIncognito() const {
+  return browser_view()->tabstrip()->IsIncognito();
+}
 
 bool OpaqueBrowserFrameView::ShouldShowWindowIcon() const {
   views::WidgetDelegate* delegate = frame()->widget_delegate();
@@ -437,11 +446,16 @@ int OpaqueBrowserFrameView::GetTopAreaHeight() const {
   return top_area_height;
 }
 
+bool OpaqueBrowserFrameView::UseCustomFrame() const {
+  return frame()->UseCustomFrame();
+}
+
 ///////////////////////////////////////////////////////////////////////////////
 // OpaqueBrowserFrameView, protected:
 
 // views::View:
 void OpaqueBrowserFrameView::OnPaint(gfx::Canvas* canvas) {
+  TRACE_EVENT0("views.frame", "OpaqueBrowserFrameView::OnPaint");
   if (frame()->IsFullscreen())
     return;  // Nothing is visible, so don't bother to paint.
 
@@ -478,11 +492,8 @@ bool OpaqueBrowserFrameView::ShouldPaintAsThemed() const {
          platform_observer_->IsUsingSystemTheme();
 }
 
-void OpaqueBrowserFrameView::UpdateProfileIcons() {
-  if (browser_view()->IsRegularOrGuestSession())
-    profile_switcher_.Update(AvatarButtonStyle::THEMED);
-  else
-    UpdateProfileIndicatorIcon();
+AvatarButtonStyle OpaqueBrowserFrameView::GetAvatarButtonStyle() const {
+  return AvatarButtonStyle::THEMED;
 }
 
 void OpaqueBrowserFrameView::MaybeRedrawFrameButtons() {}

@@ -8,7 +8,7 @@
 #include "base/macros.h"
 #include "chrome/browser/vr/content_input_delegate.h"
 #include "testing/gmock/include/gmock/gmock.h"
-#include "third_party/WebKit/public/platform/WebGestureEvent.h"
+#include "third_party/blink/public/platform/web_gesture_event.h"
 
 namespace vr {
 
@@ -25,9 +25,6 @@ class MockContentInputDelegate : public ContentInputDelegate {
 
   // As move-only parameters aren't supported by mock methods, we will override
   // the functions explicitly and fwd the calls to the mocked functions.
-  MOCK_METHOD2(FwdContentFlingStart,
-               void(std::unique_ptr<blink::WebGestureEvent>& gesture,
-                    const gfx::PointF& normalized_hit_point));
   MOCK_METHOD2(FwdContentFlingCancel,
                void(std::unique_ptr<blink::WebGestureEvent>& gesture,
                     const gfx::PointF& normalized_hit_point));
@@ -41,10 +38,6 @@ class MockContentInputDelegate : public ContentInputDelegate {
                void(std::unique_ptr<blink::WebGestureEvent>& gesture,
                     const gfx::PointF& normalized_hit_point));
 
-  void OnContentFlingStart(std::unique_ptr<blink::WebGestureEvent> gesture,
-                           const gfx::PointF& normalized_hit_point) override {
-    FwdContentFlingStart(gesture, normalized_hit_point);
-  }
   void OnContentFlingCancel(std::unique_ptr<blink::WebGestureEvent> gesture,
                             const gfx::PointF& normalized_hit_point) override {
     FwdContentFlingCancel(gesture, normalized_hit_point);

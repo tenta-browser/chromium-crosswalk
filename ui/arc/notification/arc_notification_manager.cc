@@ -7,14 +7,13 @@
 #include <memory>
 #include <utility>
 
-#include "ash/shell.h"
-#include "ash/system/toast/toast_manager.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/singleton.h"
 #include "base/stl_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "components/arc/arc_bridge_service.h"
 #include "components/arc/arc_browser_context_keyed_service_factory_base.h"
+#include "components/arc/arc_util.h"
 #include "ui/arc/notification/arc_notification_delegate.h"
 #include "ui/arc/notification/arc_notification_item_impl.h"
 #include "ui/arc/notification/arc_notification_view.h"
@@ -23,14 +22,15 @@
 namespace arc {
 namespace {
 
+constexpr char kPlayStorePackageName[] = "com.android.vending";
+
 std::unique_ptr<message_center::MessageView> CreateCustomMessageView(
-    message_center::MessageViewDelegate* controller,
     const message_center::Notification& notification) {
   DCHECK_EQ(notification.notifier_id().type,
             message_center::NotifierId::ARC_APPLICATION);
   auto* arc_delegate =
       static_cast<ArcNotificationDelegate*>(notification.delegate());
-  return arc_delegate->CreateCustomMessageView(controller, notification);
+  return arc_delegate->CreateCustomMessageView(notification);
 }
 
 // Singleton factory for ArcNotificationManager.
@@ -120,10 +120,16 @@ void ArcNotificationManager::OnConnectionClosed() {
 
 void ArcNotificationManager::OnNotificationPosted(
     mojom::ArcNotificationDataPtr data) {
+  if (ShouldIgnoreNotification(data.get())) {
+    VLOG(3) << "Posted notification was ignored.";
+    return;
+  }
+
   const std::string& key = data->key;
   auto it = items_.find(key);
   if (it == items_.end()) {
-    // Show a notification on the primary logged-in user's desktop.
+    // Show a notification on the primary logged-in user's desktop and badge the
+    // app icon in the shelf if the icon exists.
     // TODO(yoshiki): Reconsider when ARC supports multi-user.
     auto item = std::make_unique<ArcNotificationItemImpl>(
         this, message_center_, key, main_profile_id_);
@@ -132,17 +138,25 @@ void ArcNotificationManager::OnNotificationPosted(
     DCHECK(result.second);
     it = result.first;
   }
-  it->second->OnUpdatedFromAndroid(std::move(data));
+  const std::string app_id =
+      data->package_name ? GetAppId(data->package_name.value()) : std::string();
+  it->second->OnUpdatedFromAndroid(std::move(data), app_id);
 }
 
 void ArcNotificationManager::OnNotificationUpdated(
     mojom::ArcNotificationDataPtr data) {
+  if (ShouldIgnoreNotification(data.get())) {
+    VLOG(3) << "Updated notification was ignored.";
+    return;
+  }
+
   const std::string& key = data->key;
   auto it = items_.find(key);
   if (it == items_.end())
     return;
 
-  it->second->OnUpdatedFromAndroid(std::move(data));
+  const std::string app_id = GetAppId(data->package_name.value());
+  it->second->OnUpdatedFromAndroid(std::move(data), app_id);
 }
 
 void ArcNotificationManager::OnNotificationRemoved(const std::string& key) {
@@ -328,17 +342,24 @@ void ArcNotificationManager::SendNotificationToggleExpansionOnChrome(
       key, mojom::ArcNotificationEvent::TOGGLE_EXPANSION);
 }
 
-void ArcNotificationManager::OnToastPosted(mojom::ArcToastDataPtr data) {
-  const base::string16 text16(
-      base::UTF8ToUTF16(data->text.has_value() ? *data->text : std::string()));
-  const base::string16 dismiss_text16(base::UTF8ToUTF16(
-      data->dismiss_text.has_value() ? *data->dismiss_text : std::string()));
-  ash::Shell::Get()->toast_manager()->Show(
-      ash::ToastData(data->id, text16, data->duration, dismiss_text16));
+void ArcNotificationManager::Shutdown() {
+  get_app_id_callback_.Reset();
 }
 
-void ArcNotificationManager::OnToastCancelled(mojom::ArcToastDataPtr data) {
-  ash::Shell::Get()->toast_manager()->Cancel(data->id);
+bool ArcNotificationManager::ShouldIgnoreNotification(
+    arc::mojom::ArcNotificationData* data) {
+  // Notifications from Play Store are ignored in Public Session and Kiosk mode.
+  // TODO: Use centralized const for Play Store package.
+  return data->package_name.has_value() &&
+         *data->package_name == kPlayStorePackageName && IsRobotAccountMode();
+}
+
+std::string ArcNotificationManager::GetAppId(
+    const std::string& package_name) const {
+  if (get_app_id_callback_.is_null())
+    return std::string();
+
+  return get_app_id_callback_.Run(package_name);
 }
 
 }  // namespace arc

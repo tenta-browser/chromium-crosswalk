@@ -23,7 +23,7 @@
 #include "gpu/ipc/common/mailbox_struct_traits.h"
 #include "gpu/ipc/common/sync_token_struct_traits.h"
 #include "ipc/ipc_message_utils.h"
-#include "mojo/common/time_struct_traits.h"
+#include "mojo/public/cpp/base/time_mojom_traits.h"
 #include "mojo/public/cpp/bindings/binding_set.h"
 #include "services/viz/public/cpp/compositing/begin_frame_args_struct_traits.h"
 #include "services/viz/public/cpp/compositing/compositor_frame_metadata_struct_traits.h"
@@ -41,7 +41,6 @@
 #include "services/viz/public/cpp/compositing/shared_quad_state_struct_traits.h"
 #include "services/viz/public/cpp/compositing/surface_id_struct_traits.h"
 #include "services/viz/public/cpp/compositing/surface_info_struct_traits.h"
-#include "services/viz/public/cpp/compositing/surface_sequence_struct_traits.h"
 #include "services/viz/public/cpp/compositing/transferable_resource_struct_traits.h"
 #include "services/viz/public/interfaces/compositing/begin_frame_args.mojom.h"
 #include "services/viz/public/interfaces/compositing/compositor_frame.mojom.h"
@@ -49,11 +48,9 @@
 #include "services/viz/public/interfaces/compositing/filter_operations.mojom.h"
 #include "services/viz/public/interfaces/compositing/returned_resource.mojom.h"
 #include "services/viz/public/interfaces/compositing/surface_info.mojom.h"
-#include "services/viz/public/interfaces/compositing/surface_sequence.mojom.h"
 #include "services/viz/public/interfaces/compositing/transferable_resource.mojom.h"
 #include "skia/public/interfaces/bitmap_skbitmap_struct_traits.h"
 #include "skia/public/interfaces/blur_image_filter_tile_mode_struct_traits.h"
-#include "skia/public/interfaces/image_filter_struct_traits.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/skia/include/core/SkString.h"
 #include "ui/gfx/geometry/mojo/geometry_struct_traits.h"
@@ -97,6 +94,7 @@ TEST_F(StructTraitsTest, BeginFrameArgs) {
   const bool on_critical_path = true;
   const uint64_t source_id = 5;
   const uint64_t sequence_number = 10;
+  const bool animate_only = true;
   BeginFrameArgs input;
   input.source_id = source_id;
   input.sequence_number = sequence_number;
@@ -105,6 +103,7 @@ TEST_F(StructTraitsTest, BeginFrameArgs) {
   input.interval = interval;
   input.type = type;
   input.on_critical_path = on_critical_path;
+  input.animate_only = animate_only;
 
   BeginFrameArgs output;
   SerializeAndDeserialize<mojom::BeginFrameArgs>(input, &output);
@@ -116,6 +115,7 @@ TEST_F(StructTraitsTest, BeginFrameArgs) {
   EXPECT_EQ(interval, output.interval);
   EXPECT_EQ(type, output.type);
   EXPECT_EQ(on_critical_path, output.on_critical_path);
+  EXPECT_EQ(animate_only, output.animate_only);
 }
 
 TEST_F(StructTraitsTest, BeginFrameAck) {
@@ -132,8 +132,7 @@ TEST_F(StructTraitsTest, BeginFrameAck) {
 
   EXPECT_EQ(source_id, output.source_id);
   EXPECT_EQ(sequence_number, output.sequence_number);
-  // |has_damage| is not transmitted.
-  EXPECT_FALSE(output.has_damage);
+  EXPECT_TRUE(output.has_damage);
 }
 
 namespace {
@@ -260,6 +259,7 @@ TEST_F(StructTraitsTest, CopyOutputRequest_BitmapRequest) {
   EXPECT_EQ(scale_from, input->scale_from());
   EXPECT_EQ(scale_to, input->scale_to());
   input->set_area(area);
+  input->set_result_selection(result_rect);
   input->set_source(source);
   EXPECT_TRUE(input->is_scaled());
   std::unique_ptr<CopyOutputRequest> output;
@@ -273,6 +273,8 @@ TEST_F(StructTraitsTest, CopyOutputRequest_BitmapRequest) {
   EXPECT_EQ(source, output->source());
   EXPECT_TRUE(output->has_area());
   EXPECT_EQ(area, output->area());
+  EXPECT_TRUE(output->has_result_selection());
+  EXPECT_EQ(result_rect, output->result_selection());
 
   SkBitmap bitmap;
   bitmap.allocN32Pixels(result_rect.width(), result_rect.height());
@@ -385,23 +387,15 @@ TEST_F(StructTraitsTest, CopyOutputRequest_CallbackRunsOnce) {
 }
 
 TEST_F(StructTraitsTest, ResourceSettings) {
-  constexpr size_t kArbitrarySize = 32;
   constexpr bool kArbitraryBool = true;
   ResourceSettings input;
-  input.texture_id_allocation_chunk_size = kArbitrarySize;
   input.use_gpu_memory_buffer_resources = kArbitraryBool;
-  input.buffer_to_texture_target_map =
-      DefaultBufferToTextureTargetMapForTesting();
 
   ResourceSettings output;
   SerializeAndDeserialize<mojom::ResourceSettings>(input, &output);
 
-  EXPECT_EQ(input.texture_id_allocation_chunk_size,
-            output.texture_id_allocation_chunk_size);
   EXPECT_EQ(input.use_gpu_memory_buffer_resources,
             output.use_gpu_memory_buffer_resources);
-  EXPECT_EQ(input.buffer_to_texture_target_map,
-            output.buffer_to_texture_target_map);
 }
 
 TEST_F(StructTraitsTest, Selection) {
@@ -448,19 +442,6 @@ TEST_F(StructTraitsTest, SharedQuadState) {
   EXPECT_EQ(opacity, output_sqs.opacity);
   EXPECT_EQ(blend_mode, output_sqs.blend_mode);
   EXPECT_EQ(sorting_context_id, output_sqs.sorting_context_id);
-}
-
-TEST_F(StructTraitsTest, SurfaceSequence) {
-  const FrameSinkId frame_sink_id(2016, 1234);
-  const uint32_t sequence = 0xfbadbeef;
-
-  SurfaceSequence input(frame_sink_id, sequence);
-  SurfaceSequence output;
-  mojom::SurfaceSequence::Deserialize(mojom::SurfaceSequence::Serialize(&input),
-                                      &output);
-
-  EXPECT_EQ(frame_sink_id, output.frame_sink_id);
-  EXPECT_EQ(sequence, output.sequence);
 }
 
 // Note that this is a fairly trivial test of CompositorFrame serialization as
@@ -607,12 +588,11 @@ TEST_F(StructTraitsTest, SurfaceInfo) {
 TEST_F(StructTraitsTest, ReturnedResource) {
   const RenderPassId id = 1337u;
   const gpu::CommandBufferNamespace command_buffer_namespace = gpu::IN_PROCESS;
-  const int32_t extra_data_field = 0xbeefbeef;
   const gpu::CommandBufferId command_buffer_id(
       gpu::CommandBufferId::FromUnsafeValue(0xdeadbeef));
   const uint64_t release_count = 0xdeadbeefdead;
-  gpu::SyncToken sync_token(command_buffer_namespace, extra_data_field,
-                            command_buffer_id, release_count);
+  gpu::SyncToken sync_token(command_buffer_namespace, command_buffer_id,
+                            release_count);
   sync_token.SetVerifyFlush();
   const int count = 1234;
   const bool lost = true;
@@ -640,7 +620,6 @@ TEST_F(StructTraitsTest, CompositorFrameMetadata) {
   const gfx::SizeF root_layer_size(1234.5f, 5432.1f);
   const float min_page_scale_factor = 3.5f;
   const float max_page_scale_factor = 4.6f;
-  const bool root_overflow_x_hidden = true;
   const bool root_overflow_y_hidden = true;
   const bool may_contain_video = true;
   const bool is_resourceless_software_draw_with_scroll_or_animation = true;
@@ -673,6 +652,7 @@ TEST_F(StructTraitsTest, CompositorFrameMetadata) {
   activation_dependencies.push_back(id2);
   uint32_t frame_token = 0xdeadbeef;
   uint64_t begin_frame_ack_sequence_number = 0xdeadbeef;
+  FrameDeadline frame_deadline(base::TimeTicks(), 4u, base::TimeDelta(), true);
 
   CompositorFrameMetadata input;
   input.device_scale_factor = device_scale_factor;
@@ -682,7 +662,6 @@ TEST_F(StructTraitsTest, CompositorFrameMetadata) {
   input.root_layer_size = root_layer_size;
   input.min_page_scale_factor = min_page_scale_factor;
   input.max_page_scale_factor = max_page_scale_factor;
-  input.root_overflow_x_hidden = root_overflow_x_hidden;
   input.root_overflow_y_hidden = root_overflow_y_hidden;
   input.may_contain_video = may_contain_video;
   input.is_resourceless_software_draw_with_scroll_or_animation =
@@ -696,6 +675,7 @@ TEST_F(StructTraitsTest, CompositorFrameMetadata) {
   input.latency_info = latency_infos;
   input.referenced_surfaces = referenced_surfaces;
   input.activation_dependencies = activation_dependencies;
+  input.deadline = frame_deadline;
   input.frame_token = frame_token;
   input.begin_frame_ack.sequence_number = begin_frame_ack_sequence_number;
 
@@ -708,7 +688,6 @@ TEST_F(StructTraitsTest, CompositorFrameMetadata) {
   EXPECT_EQ(root_layer_size, output.root_layer_size);
   EXPECT_EQ(min_page_scale_factor, output.min_page_scale_factor);
   EXPECT_EQ(max_page_scale_factor, output.max_page_scale_factor);
-  EXPECT_EQ(root_overflow_x_hidden, output.root_overflow_x_hidden);
   EXPECT_EQ(root_overflow_y_hidden, output.root_overflow_y_hidden);
   EXPECT_EQ(may_contain_video, output.may_contain_video);
   EXPECT_EQ(is_resourceless_software_draw_with_scroll_or_animation,
@@ -732,12 +711,16 @@ TEST_F(StructTraitsTest, CompositorFrameMetadata) {
             output.activation_dependencies.size());
   for (uint32_t i = 0; i < activation_dependencies.size(); ++i)
     EXPECT_EQ(activation_dependencies[i], output.activation_dependencies[i]);
+  EXPECT_EQ(frame_deadline, output.deadline);
   EXPECT_EQ(frame_token, output.frame_token);
   EXPECT_EQ(begin_frame_ack_sequence_number,
             output.begin_frame_ack.sequence_number);
 }
 
 TEST_F(StructTraitsTest, RenderPass) {
+  // The CopyOutputRequest struct traits require a TaskRunner.
+  base::test::ScopedTaskEnvironment scoped_task_environment;
+
   const RenderPassId render_pass_id = 3u;
   const gfx::Rect output_rect(45, 22, 120, 13);
   const gfx::Transform transform_to_root =
@@ -760,6 +743,9 @@ TEST_F(StructTraitsTest, RenderPass) {
                 filters, background_filters, color_space,
                 has_transparent_background, cache_render_pass,
                 has_damage_from_contributing_content, generate_mipmap);
+  input->copy_requests.push_back(CopyOutputRequest::CreateStubForTesting());
+  const gfx::Rect copy_output_area(24, 42, 75, 57);
+  input->copy_requests.back()->set_area(copy_output_area);
 
   SharedQuadState* shared_state_1 = input->CreateAndAppendSharedQuadState();
   shared_state_1->SetAll(
@@ -818,6 +804,8 @@ TEST_F(StructTraitsTest, RenderPass) {
   EXPECT_EQ(has_damage_from_contributing_content,
             output->has_damage_from_contributing_content);
   EXPECT_EQ(generate_mipmap, output->generate_mipmap);
+  ASSERT_EQ(1u, output->copy_requests.size());
+  EXPECT_EQ(copy_output_area, output->copy_requests.front()->area());
 
   SharedQuadState* out_sqs1 = output->shared_quad_state_list.ElementAt(0);
   EXPECT_EQ(shared_state_1->quad_to_target_transform,
@@ -1085,7 +1073,6 @@ TEST_F(StructTraitsTest, TransferableResource) {
   const int8_t mailbox_name[GL_MAILBOX_SIZE_CHROMIUM] = {
       0, 9, 8, 7, 6, 5, 4, 3, 2, 1, 9, 7, 5, 3, 1, 2};
   const gpu::CommandBufferNamespace command_buffer_namespace = gpu::IN_PROCESS;
-  const int32_t extra_data_field = 0xbeefbeef;
   const gpu::CommandBufferId command_buffer_id(
       gpu::CommandBufferId::FromUnsafeValue(0xdeadbeef));
   const uint64_t release_count = 0xdeadbeefdeadL;
@@ -1097,9 +1084,8 @@ TEST_F(StructTraitsTest, TransferableResource) {
 
   gpu::MailboxHolder mailbox_holder;
   mailbox_holder.mailbox.SetName(mailbox_name);
-  mailbox_holder.sync_token =
-      gpu::SyncToken(command_buffer_namespace, extra_data_field,
-                     command_buffer_id, release_count);
+  mailbox_holder.sync_token = gpu::SyncToken(command_buffer_namespace,
+                                             command_buffer_id, release_count);
   mailbox_holder.sync_token.SetVerifyFlush();
   mailbox_holder.texture_target = texture_target;
   TransferableResource input;
@@ -1243,7 +1229,7 @@ TEST_F(StructTraitsTest, CopyOutputResult_Texture) {
       gfx::ColorSpace::CreateDisplayP3D65();
   const int8_t mailbox_name[GL_MAILBOX_SIZE_CHROMIUM] = {
       0, 9, 8, 7, 6, 5, 4, 3, 2, 1, 9, 7, 5, 3, 1, 3};
-  gpu::SyncToken sync_token(gpu::CommandBufferNamespace::GPU_IO, 0,
+  gpu::SyncToken sync_token(gpu::CommandBufferNamespace::GPU_IO,
                             gpu::CommandBufferId::FromUnsafeValue(0x123),
                             71234838);
   sync_token.SetVerifyFlush();

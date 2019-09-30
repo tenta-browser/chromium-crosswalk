@@ -14,13 +14,14 @@
 #include <vector>
 
 #include "base/containers/hash_tables.h"
+#include "base/debug/stack_trace.h"
 #include "base/logging.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "gpu/command_buffer/common/buffer.h"
 #include "gpu/command_buffer/service/gl_utils.h"
 #include "gpu/command_buffer/service/memory_tracking.h"
-#include "gpu/gpu_export.h"
+#include "gpu/gpu_gles2_export.h"
 
 namespace gpu {
 namespace gles2 {
@@ -33,7 +34,7 @@ class IndexedBufferBindingHost;
 class TestHelper;
 
 // Info about Buffers currently in the system.
-class GPU_EXPORT Buffer : public base::RefCounted<Buffer> {
+class GPU_GLES2_EXPORT Buffer : public base::RefCounted<Buffer> {
  public:
   struct MappedRange {
     GLintptr offset;
@@ -50,6 +51,8 @@ class GPU_EXPORT Buffer : public base::RefCounted<Buffer> {
   };
 
   Buffer(BufferManager* manager, GLuint service_id);
+
+  GLenum initial_target() const { return initial_target_; }
 
   GLuint service_id() const {
     return service_id_;
@@ -103,6 +106,27 @@ class GPU_EXPORT Buffer : public base::RefCounted<Buffer> {
     return mapped_range_.get();
   }
 
+  void OnBind(GLenum target) {
+    ++binding_count_;
+    if (target == GL_TRANSFORM_FEEDBACK_BUFFER) {
+      ++transform_feedback_binding_count_;
+    }
+  }
+
+  void OnUnbind(GLenum target) {
+    --binding_count_;
+    if (target == GL_TRANSFORM_FEEDBACK_BUFFER) {
+      --transform_feedback_binding_count_;
+    }
+    DCHECK(binding_count_ >= 0);
+    DCHECK(transform_feedback_binding_count_ >= 0);
+  }
+
+  bool IsBoundForTransformFeedbackAndOther() const {
+    return transform_feedback_binding_count_ > 0 &&
+           transform_feedback_binding_count_ != binding_count_;
+  }
+
  private:
   friend class BufferManager;
   friend class BufferManagerTestBase;
@@ -143,10 +167,6 @@ class GPU_EXPORT Buffer : public base::RefCounted<Buffer> {
   };
 
   ~Buffer();
-
-  GLenum initial_target() const {
-    return initial_target_;
-  }
 
   void set_initial_target(GLenum target) {
     DCHECK_EQ(0u, initial_target_);
@@ -192,6 +212,13 @@ class GPU_EXPORT Buffer : public base::RefCounted<Buffer> {
   // sitting in local memory.
   bool is_client_side_array_;
 
+  // Keeps track of whether this buffer is currently bound for transform
+  // feedback in a WebGL context. Used as an optimization when validating WebGL
+  // draw calls for compliance with binding restrictions.
+  // http://crbug.com/696345
+  int binding_count_;
+  int transform_feedback_binding_count_;
+
   // Service side buffer id.
   GLuint service_id_;
 
@@ -215,7 +242,8 @@ class GPU_EXPORT Buffer : public base::RefCounted<Buffer> {
 //
 // NOTE: To support shared resources an instance of this class will need to be
 // shared by multiple GLES2Decoders.
-class GPU_EXPORT BufferManager : public base::trace_event::MemoryDumpProvider {
+class GPU_GLES2_EXPORT BufferManager
+    : public base::trace_event::MemoryDumpProvider {
  public:
   BufferManager(MemoryTracker* memory_tracker, FeatureInfo* feature_info);
   ~BufferManager() override;
@@ -319,7 +347,8 @@ class GPU_EXPORT BufferManager : public base::trace_event::MemoryDumpProvider {
   bool RequestBufferAccess(ErrorState* error_state,
                            Buffer* buffer,
                            const char* func_name,
-                           const char* error_message_format, ...);
+                           const char* error_message_format,
+                           ...);
   // Generates INVALID_OPERATION if offset + size is out of range.
   bool RequestBufferAccess(ErrorState* error_state,
                            Buffer* buffer,
@@ -330,13 +359,12 @@ class GPU_EXPORT BufferManager : public base::trace_event::MemoryDumpProvider {
   // Returns false and generates INVALID_OPERATION if buffer at binding |ii|
   // doesn't exist, is mapped, or smaller than |variable_sizes[ii]| * |count|.
   // Return true otherwise.
-  bool RequestBuffersAccess(
-      ErrorState* error_state,
-      const IndexedBufferBindingHost* bindings,
-      const std::vector<GLsizeiptr>& variable_sizes,
-      GLsizei count,
-      const char* func_name,
-      const char* message_tag);
+  bool RequestBuffersAccess(ErrorState* error_state,
+                            const IndexedBufferBindingHost* bindings,
+                            const std::vector<GLsizeiptr>& variable_sizes,
+                            GLsizei count,
+                            const char* func_name,
+                            const char* message_tag);
 
  private:
   friend class Buffer;

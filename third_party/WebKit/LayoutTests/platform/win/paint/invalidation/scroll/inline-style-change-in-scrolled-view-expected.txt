@@ -2,13 +2,24 @@
   "layers": [
     {
       "name": "LayoutView #document",
+      "bounds": [800, 600],
+      "drawsContent": false,
+      "backgroundColor": "#FFFFFF"
+    },
+    {
+      "name": "Scrolling Layer",
+      "bounds": [785, 585],
+      "drawsContent": false
+    },
+    {
+      "name": "Scrolling Contents Layer",
       "bounds": [2000, 2000],
       "contentsOpaque": true,
       "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
         {
-          "object": "LayoutText #text",
-          "rect": [0, 320, 385, 19],
+          "object": "InlineTextBox 'Text Text Text Text Text Text Text Text Text Text Text Text Text'",
+          "rect": [0, 320, 386, 19],
           "reason": "style change"
         }
       ],
@@ -23,7 +34,8 @@
         [0, 1, 0, 0],
         [0, 0, 1, 0],
         [-200, -200, 0, 1]
-      ]
+      ],
+      "flattenInheritedTransform": false
     }
   ],
   "objectPaintInvalidations": [

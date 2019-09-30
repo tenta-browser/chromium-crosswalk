@@ -11,6 +11,7 @@ import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
 import android.content.Intent;
+import android.support.v4.app.NotificationCompat;
 
 import org.chromium.base.metrics.RecordUserAction;
 import org.chromium.blink_public.platform.WebDisplayMode;
@@ -52,7 +53,7 @@ class WebappActionsNotificationManager {
         if (!isEnabled() || mWebappActivity.getActivityTab() == null) return;
 
         // All features provided by the notification are also available in the minimal-ui toolbar.
-        if (mWebappActivity.mWebappInfo.displayMode() == WebDisplayMode.MINIMAL_UI) {
+        if (mWebappActivity.getWebappInfo().displayMode() == WebDisplayMode.MINIMAL_UI) {
             return;
         }
 
@@ -82,12 +83,12 @@ class WebappActionsNotificationManager {
                 .createChromeNotificationBuilder(
                         true /* prefer compat */, ChannelDefinitions.CHANNEL_ID_WEBAPP_ACTIONS)
                 .setSmallIcon(R.drawable.ic_chrome)
-                .setContentTitle(mWebappActivity.mWebappInfo.shortName())
+                .setContentTitle(mWebappActivity.getWebappInfo().shortName())
                 .setContentText(mWebappActivity.getString(R.string.webapp_tap_to_copy_url))
                 .setShowWhen(false)
                 .setAutoCancel(false)
                 .setOngoing(true)
-                .setPriority(Notification.PRIORITY_MIN)
+                .setPriorityBeforeO(NotificationCompat.PRIORITY_MIN)
                 .setContentIntent(focusIntent)
                 .addAction(R.drawable.ic_share_white_24dp,
                         mWebappActivity.getResources().getString(R.string.share), shareIntent)

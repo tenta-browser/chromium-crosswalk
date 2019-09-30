@@ -17,24 +17,25 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.robolectric.annotation.Config;
 
+import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.base.test.util.Feature;
 import org.chromium.chrome.browser.media.router.ChromeMediaRouter;
 import org.chromium.chrome.browser.media.router.MediaRoute;
 import org.chromium.chrome.browser.media.router.MediaRouteManager;
-import org.chromium.testing.local.LocalRobolectricTestRunner;
+import org.chromium.chrome.browser.media.router.MediaSink;
 
 import java.util.ArrayList;
 
 /**
  * Robolectric tests for {@link CastMediaRouteProvider}.
  */
-@RunWith(LocalRobolectricTestRunner.class)
+@RunWith(BaseRobolectricTestRunner.class)
 @Config(manifest = Config.NONE)
 public class CastMediaRouteProviderTest {
     private static final String SUPPORTED_SOURCE = "cast:DEADBEEF";
 
     private static final String SUPPORTED_AUTOJOIN_SOURCE = "cast:DEADBEEF"
-            + "?clientId=12345&autoJoinPolicy=" + MediaSource.AUTOJOIN_TAB_AND_ORIGIN_SCOPED;
+            + "?clientId=12345&autoJoinPolicy=" + CastMediaSource.AUTOJOIN_TAB_AND_ORIGIN_SCOPED;
 
     // TODO(crbug.com/672704): Android does not currently support 1-UA mode.
     private static final String UNSUPPORTED_SOURCE = "https://example.com";
@@ -78,11 +79,11 @@ public class CastMediaRouteProviderTest {
         setUpMediaRouter(mock(MediaRouter.class));
 
         CastSession mockSession = mock(CastSession.class);
-        mProvider.onSessionCreated(mockSession);
+        mProvider.onSessionStarted(mockSession);
 
         MediaRoute route = new MediaRoute("sink", SUPPORTED_SOURCE, "");
         mProvider.addRoute(route, "", -1);
-        mProvider.onSessionClosed();
+        mProvider.onSessionEnded();
 
         verify(mMockManager).onRouteClosed(route.id);
     }
@@ -110,7 +111,7 @@ public class CastMediaRouteProviderTest {
 
         MediaRoute route = new MediaRoute("sinkId", SUPPORTED_AUTOJOIN_SOURCE, "presentationId");
         mProvider.addRoute(route, "https://example.com", 1);
-        mProvider.onSessionCreated(mockSession);
+        mProvider.onSessionStarted(mockSession);
         mProvider.joinRoute(SUPPORTED_AUTOJOIN_SOURCE, "auto-join", "https://example.com", 1, -1);
 
         verify(mMockManager)
@@ -129,7 +130,7 @@ public class CastMediaRouteProviderTest {
 
         MediaRoute route = new MediaRoute("sinkId", SUPPORTED_AUTOJOIN_SOURCE, "presentationId");
         mProvider.addRoute(route, "https://example.com", 1);
-        mProvider.onSessionCreated(mockSession);
+        mProvider.onSessionStarted(mockSession);
         mProvider.joinRoute(SUPPORTED_AUTOJOIN_SOURCE, "auto-join", "", 1, -1);
 
         verify(mMockManager).onRouteRequestError("No matching route", -1);
@@ -146,7 +147,7 @@ public class CastMediaRouteProviderTest {
 
         MediaRoute route = new MediaRoute("sinkId", SUPPORTED_AUTOJOIN_SOURCE, "presentationId");
         mProvider.addRoute(route, "", 1);
-        mProvider.onSessionCreated(mockSession);
+        mProvider.onSessionStarted(mockSession);
         mProvider.joinRoute(SUPPORTED_AUTOJOIN_SOURCE, "auto-join", "", 1, -1);
 
         verify(mMockManager).onRouteRequestError("No matching route", -1);

@@ -9,6 +9,9 @@
 // object. Handles interactions between Cocoa and the cross-platform
 // code. Each window has a single toolbar and, by virtue of being a
 // TabWindowController, a tab strip along the top.
+// Note that under the hood the BrowserWindowController is neither an
+// NSWindowController nor its window's delegate, though it receives all
+// NSWindowDelegate methods as if it were.
 
 #import <Cocoa/Cocoa.h>
 
@@ -47,7 +50,6 @@ class ExclusiveAccessContext;
 @class FullscreenToolbarController;
 @class FullscreenToolbarVisibilityLockController;
 @class FullscreenWindow;
-class FullscreenLowPowerCoordinatorCocoa;
 @class InfoBarContainerController;
 class LocationBarViewMac;
 @class OverlayableContentsController;
@@ -63,10 +65,6 @@ class WebContents;
 
 namespace extensions {
 class Command;
-}
-
-namespace {
-class OmniboxPopupModelObserverBridge;
 }
 
 constexpr const gfx::Size kMinCocoaTabbedWindowSize(400, 272);
@@ -98,8 +96,6 @@ constexpr const gfx::Size kMinCocoaPopupWindowSize(100, 122);
   std::unique_ptr<ExclusiveAccessController> exclusiveAccessController_;
   base::scoped_nsobject<BrowserWindowFullscreenTransition>
       fullscreenTransition_;
-  std::unique_ptr<FullscreenLowPowerCoordinatorCocoa>
-      fullscreenLowPowerCoordinator_;
   base::scoped_nsobject<BrowserWindowTouchBar> touchBar_;
 
   // Strong. StatusBubble is a special case of a strong reference that
@@ -201,14 +197,11 @@ constexpr const gfx::Size kMinCocoaPopupWindowSize(100, 122);
   // handle.
   std::unique_ptr<ExtensionKeybindingRegistryCocoa>
       extensionKeybindingRegistry_;
-
-  // Observes whether the omnibox popup is shown or hidden.
-  std::unique_ptr<OmniboxPopupModelObserverBridge>
-      omniboxPopupModelObserverBridge_;
 }
 
-// A convenience class method which gets the |BrowserWindowController| for a
-// given window. This method returns nil if no window in the chain has a BWC.
+// A convenience class method which returns the |BrowserWindowController| for
+// |window|, or nil if neither |window| nor its parent or any other ancestor
+// has one.
 + (BrowserWindowController*)browserWindowControllerForWindow:(NSWindow*)window;
 
 // A convenience class method which gets the |BrowserWindowController| for a
@@ -640,6 +633,5 @@ constexpr const gfx::Size kMinCocoaPopupWindowSize(100, 122);
 - (void)setBrowserWindowTouchBar:(BrowserWindowTouchBar*)touchBar;
 
 @end  // @interface BrowserWindowController (TestingAPI)
-
 
 #endif  // CHROME_BROWSER_UI_COCOA_BROWSER_WINDOW_CONTROLLER_H_

@@ -104,7 +104,9 @@ const FieldTranslationEntry openvpn_fields[] = {
     {::onc::openvpn::kStaticChallenge, shill::kOpenVPNStaticChallengeProperty},
     {::onc::openvpn::kTLSAuthContents, shill::kOpenVPNTLSAuthContentsProperty},
     {::onc::openvpn::kTLSRemote, shill::kOpenVPNTLSRemoteProperty},
+    {::onc::openvpn::kTLSVersionMin, shill::kOpenVPNTLSVersionMinProperty},
     {::onc::vpn::kUsername, shill::kOpenVPNUserProperty},
+    {::onc::openvpn::kVerb, shill::kOpenVPNVerbProperty},
     {::onc::openvpn::kVerifyHash, shill::kOpenVPNVerifyHashProperty},
     {NULL}};
 
@@ -138,6 +140,7 @@ const FieldTranslationEntry wifi_fields[] = {
     // { ::onc::wifi::kEAP, shill::kEap*},
     {::onc::wifi::kFrequency, shill::kWifiFrequency},
     {::onc::wifi::kFrequencyList, shill::kWifiFrequencyListProperty},
+    {::onc::wifi::kFTEnabled, shill::kWifiFTEnabled},
     {::onc::wifi::kHexSSID, shill::kWifiHexSsid},
     {::onc::wifi::kHiddenSSID, shill::kWifiHiddenSsid},
     {::onc::wifi::kPassphrase, shill::kPassphraseProperty},
@@ -401,7 +404,7 @@ const FieldTranslationEntry kCellularDeviceTable[] = {
     {::onc::cellular::kMDN, shill::kMdnProperty},
     {::onc::cellular::kMEID, shill::kMeidProperty},
     {::onc::cellular::kMIN, shill::kMinProperty},
-    {::onc::cellular::kModelID, shill::kModelIDProperty},
+    {::onc::cellular::kModelID, shill::kModelIdProperty},
     {::onc::cellular::kPRLVersion, shill::kPRLVersionProperty},
     {::onc::cellular::kScanning, shill::kScanningProperty},
     // This field is converted during translation, see onc_translator_*.

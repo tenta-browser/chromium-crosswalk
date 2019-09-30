@@ -14,6 +14,7 @@
 
 #include "base/bind.h"
 #include "base/callback.h"
+#include "base/command_line.h"
 #include "base/i18n/rtl.h"
 #include "base/json/json_reader.h"
 #include "base/json/json_value_converter.h"
@@ -21,8 +22,8 @@
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/macros.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
-#include "base/metrics/sparse_histogram.h"
 #include "base/strings/string16.h"
 #include "base/strings/string_util.h"
 #include "base/values.h"
@@ -30,10 +31,11 @@
 #include "components/error_page/common/error_page_params.h"
 #include "components/strings/grit/components_strings.h"
 #include "components/url_formatter/url_formatter.h"
+#include "content/public/common/content_switches.h"
 #include "content/public/common/url_constants.h"
 #include "net/base/escape.h"
 #include "net/base/net_errors.h"
-#include "third_party/WebKit/public/platform/WebString.h"
+#include "third_party/blink/public/platform/web_string.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "url/gurl.h"
 #include "url/url_constants.h"
@@ -364,19 +366,19 @@ std::unique_ptr<error_page::ErrorPageParams> CreateErrorPageParams(
 void ReportAutoReloadSuccess(const error_page::Error& error, size_t count) {
   if (error.domain() != net::kErrorDomain)
     return;
-  UMA_HISTOGRAM_SPARSE_SLOWLY("Net.AutoReload.ErrorAtSuccess", -error.reason());
+  base::UmaHistogramSparse("Net.AutoReload.ErrorAtSuccess", -error.reason());
   UMA_HISTOGRAM_COUNTS("Net.AutoReload.CountAtSuccess",
                        static_cast<base::HistogramBase::Sample>(count));
   if (count == 1) {
-    UMA_HISTOGRAM_SPARSE_SLOWLY("Net.AutoReload.ErrorAtFirstSuccess",
-                                -error.reason());
+    base::UmaHistogramSparse("Net.AutoReload.ErrorAtFirstSuccess",
+                             -error.reason());
   }
 }
 
 void ReportAutoReloadFailure(const error_page::Error& error, size_t count) {
   if (error.domain() != net::kErrorDomain)
     return;
-  UMA_HISTOGRAM_SPARSE_SLOWLY("Net.AutoReload.ErrorAtStop", -error.reason());
+  base::UmaHistogramSparse("Net.AutoReload.ErrorAtStop", -error.reason());
   UMA_HISTOGRAM_COUNTS("Net.AutoReload.CountAtStop",
                        static_cast<base::HistogramBase::Sample>(count));
 }
@@ -489,6 +491,9 @@ bool NetErrorHelperCore::IsReloadableError(
          info.error.reason() != net::ERR_SSL_PROTOCOL_ERROR &&
          // Do not trigger for XSS Auditor violations.
          info.error.reason() != net::ERR_BLOCKED_BY_XSS_AUDITOR &&
+         // Do not trigger for blacklisted URLs.
+         // https://crbug.com/803839
+         info.error.reason() != net::ERR_BLOCKED_BY_ADMINISTRATOR &&
          !info.was_failed_post &&
          // Don't auto-reload non-http/https schemas.
          // https://crbug.com/471713
@@ -651,7 +656,8 @@ void NetErrorHelperCore::OnFinishLoad(FrameType frame_type) {
   delegate_->SetIsShowingDownloadButton(
       committed_error_page_info_->download_button_in_page);
 
-  delegate_->EnablePageHelperFunctions();
+  delegate_->EnablePageHelperFunctions(
+      static_cast<net::Error>(committed_error_page_info_->error.reason()));
 
   if (committed_error_page_info_->needs_load_navigation_corrections) {
     // If there is another pending error page load, |fix_url| should have been
@@ -676,11 +682,11 @@ void NetErrorHelperCore::OnFinishLoad(FrameType frame_type) {
   UpdateErrorPage();
 }
 
-void NetErrorHelperCore::GetErrorHTML(FrameType frame_type,
-                                      const error_page::Error& error,
-                                      bool is_failed_post,
-                                      bool is_ignoring_cache,
-                                      std::string* error_html) {
+void NetErrorHelperCore::PrepareErrorPage(FrameType frame_type,
+                                          const error_page::Error& error,
+                                          bool is_failed_post,
+                                          bool is_ignoring_cache,
+                                          std::string* error_html) {
   if (frame_type == MAIN_FRAME) {
     // If navigation corrections were needed before, that should have been
     // cancelled earlier by starting a new page load (Which has now failed).
@@ -691,19 +697,21 @@ void NetErrorHelperCore::GetErrorHTML(FrameType frame_type,
         new ErrorPageInfo(error, is_failed_post, is_ignoring_cache));
     pending_error_page_info_->navigation_correction_params.reset(
         new NavigationCorrectionParams(navigation_correction_params_));
-    GetErrorHtmlForMainFrame(pending_error_page_info_.get(), error_html);
+    PrepareErrorPageForMainFrame(pending_error_page_info_.get(), error_html);
   } else {
     // These values do not matter, as error pages in iframes hide the buttons.
     bool reload_button_in_page;
     bool show_saved_copy_button_in_page;
     bool show_cached_copy_button_in_page;
     bool download_button_in_page;
-
-    delegate_->GenerateLocalizedErrorPage(
-        error, is_failed_post,
-        false /* No diagnostics dialogs allowed for subframes. */, nullptr,
-        &reload_button_in_page, &show_saved_copy_button_in_page,
-        &show_cached_copy_button_in_page, &download_button_in_page, error_html);
+    if (error_html) {
+      delegate_->GenerateLocalizedErrorPage(
+          error, is_failed_post,
+          false /* No diagnostics dialogs allowed for subframes. */, nullptr,
+          &reload_button_in_page, &show_saved_copy_button_in_page,
+          &show_cached_copy_button_in_page, &download_button_in_page,
+          error_html);
+    }
   }
 }
 
@@ -739,7 +747,7 @@ void NetErrorHelperCore::OnSetNavigationCorrectionInfo(
   navigation_correction_params_.search_url = search_url;
 }
 
-void NetErrorHelperCore::GetErrorHtmlForMainFrame(
+void NetErrorHelperCore::PrepareErrorPageForMainFrame(
     ErrorPageInfo* pending_error_page_info,
     std::string* error_html) {
   std::string error_param;
@@ -762,14 +770,15 @@ void NetErrorHelperCore::GetErrorHtmlForMainFrame(
     pending_error_page_info->needs_dns_updates = true;
     error = GetUpdatedError(error);
   }
-
-  delegate_->GenerateLocalizedErrorPage(
-      error, pending_error_page_info->was_failed_post,
-      can_show_network_diagnostics_dialog_, nullptr,
-      &pending_error_page_info->reload_button_in_page,
-      &pending_error_page_info->show_saved_copy_button_in_page,
-      &pending_error_page_info->show_cached_copy_button_in_page,
-      &pending_error_page_info->download_button_in_page, error_html);
+  if (error_html) {
+    delegate_->GenerateLocalizedErrorPage(
+        error, pending_error_page_info->was_failed_post,
+        can_show_network_diagnostics_dialog_, nullptr,
+        &pending_error_page_info->reload_button_in_page,
+        &pending_error_page_info->show_saved_copy_button_in_page,
+        &pending_error_page_info->show_cached_copy_button_in_page,
+        &pending_error_page_info->download_button_in_page, error_html);
+  }
 }
 
 void NetErrorHelperCore::UpdateErrorPage() {
@@ -833,7 +842,7 @@ void NetErrorHelperCore::OnNavigationCorrectionsFetched(
   } else {
     // Since |navigation_correction_params| in |pending_error_page_info_| is
     // NULL, this won't trigger another attempt to load corrections.
-    GetErrorHtmlForMainFrame(pending_error_page_info_.get(), &error_html);
+    PrepareErrorPageForMainFrame(pending_error_page_info_.get(), &error_html);
   }
 
   // TODO(mmenke):  Once the new API is in place, look into replacing this
@@ -862,6 +871,12 @@ void NetErrorHelperCore::Reload(bool bypass_cache) {
 }
 
 bool NetErrorHelperCore::MaybeStartAutoReloadTimer() {
+  // Automation tools expect to be in control of reloads.
+  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
+          switches::kEnableAutomation)) {
+    return false;
+  }
+
   if (!committed_error_page_info_ ||
       !committed_error_page_info_->is_finished_loading ||
       pending_error_page_info_ || uncommitted_load_started_) {

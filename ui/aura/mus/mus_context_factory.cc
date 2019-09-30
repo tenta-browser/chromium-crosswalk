@@ -5,7 +5,6 @@
 #include "ui/aura/mus/mus_context_factory.h"
 
 #include "base/command_line.h"
-#include "base/memory/ptr_util.h"
 #include "cc/base/switches.h"
 #include "components/viz/common/gpu/context_provider.h"
 #include "components/viz/host/renderer_settings_creation.h"
@@ -19,28 +18,8 @@
 
 namespace aura {
 
-namespace {
-viz::BufferToTextureTargetMap CreateBufferToTextureTargetMap() {
-  viz::BufferToTextureTargetMap image_targets;
-  for (int usage_idx = 0; usage_idx <= static_cast<int>(gfx::BufferUsage::LAST);
-       ++usage_idx) {
-    gfx::BufferUsage usage = static_cast<gfx::BufferUsage>(usage_idx);
-    for (int format_idx = 0;
-         format_idx <= static_cast<int>(gfx::BufferFormat::LAST);
-         ++format_idx) {
-      gfx::BufferFormat format = static_cast<gfx::BufferFormat>(format_idx);
-      // TODO(sad): http://crbug.com/675431
-      image_targets[std::make_pair(usage, format)] = GL_TEXTURE_2D;
-    }
-  }
-  return image_targets;
-}
-}  // namespace
-
 MusContextFactory::MusContextFactory(ui::Gpu* gpu)
     : gpu_(gpu),
-      resource_settings_(
-          viz::CreateResourceSettings(CreateBufferToTextureTargetMap())),
       weak_ptr_factory_(this) {}
 
 MusContextFactory::~MusContextFactory() {}
@@ -72,15 +51,15 @@ void MusContextFactory::OnEstablishedGpuChannel(
 void MusContextFactory::CreateLayerTreeFrameSink(
     base::WeakPtr<ui::Compositor> compositor) {
   gpu_->EstablishGpuChannel(
-      base::Bind(&MusContextFactory::OnEstablishedGpuChannel,
-                 weak_ptr_factory_.GetWeakPtr(), compositor));
+      base::BindOnce(&MusContextFactory::OnEstablishedGpuChannel,
+                     weak_ptr_factory_.GetWeakPtr(), compositor));
 }
 
 scoped_refptr<viz::ContextProvider>
 MusContextFactory::SharedMainThreadContextProvider() {
   if (!shared_main_thread_context_provider_) {
     scoped_refptr<gpu::GpuChannelHost> gpu_channel =
-        gpu_->EstablishGpuChannelSync(nullptr);
+        gpu_->EstablishGpuChannelSync();
     shared_main_thread_context_provider_ =
         gpu_->CreateContextProvider(std::move(gpu_channel));
     if (shared_main_thread_context_provider_->BindToCurrentThread() !=
@@ -104,10 +83,6 @@ gpu::GpuMemoryBufferManager* MusContextFactory::GetGpuMemoryBufferManager() {
 
 cc::TaskGraphRunner* MusContextFactory::GetTaskGraphRunner() {
   return raster_thread_helper_.task_graph_runner();
-}
-
-const viz::ResourceSettings& MusContextFactory::GetResourceSettings() const {
-  return resource_settings_;
 }
 
 }  // namespace aura

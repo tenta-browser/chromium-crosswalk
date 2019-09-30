@@ -12,6 +12,7 @@
 #include "base/timer/elapsed_timer.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/browser_process_platform_part.h"
+#include "chrome/browser/browser_shutdown.h"
 #include "chrome/browser/chromeos/login/enrollment/enrollment_uma.h"
 #include "chrome/browser/chromeos/login/screen_manager.h"
 #include "chrome/browser/chromeos/login/screens/base_screen_delegate.h"
@@ -109,7 +110,8 @@ EnrollmentScreen::EnrollmentScreen(BaseScreenDelegate* base_screen_delegate,
 }
 
 EnrollmentScreen::~EnrollmentScreen() {
-  DCHECK(!enrollment_helper_ || g_browser_process->IsShuttingDown());
+  DCHECK(!enrollment_helper_ || g_browser_process->IsShuttingDown() ||
+         browser_shutdown::IsTryingToQuit());
 }
 
 void EnrollmentScreen::SetParameters(
@@ -141,8 +143,12 @@ void EnrollmentScreen::SetParameters(
 
 void EnrollmentScreen::SetConfig() {
   config_ = enrollment_config_;
-  if (current_auth_ == AUTH_ATTESTATION) {
-    // TODO(crbugs.com/778535): Don't lose server forced attestation.
+  if (current_auth_ == AUTH_OAUTH &&
+      enrollment_config_.mode ==
+          policy::EnrollmentConfig::MODE_ATTESTATION_SERVER_FORCED) {
+    config_.mode = policy::EnrollmentConfig::MODE_ATTESTATION_MANUAL_FALLBACK;
+  } else if (current_auth_ == AUTH_ATTESTATION &&
+             !enrollment_config_.is_mode_attestation()) {
     config_.mode = enrollment_config_.is_attestation_forced()
                        ? policy::EnrollmentConfig::MODE_ATTESTATION_LOCAL_FORCED
                        : policy::EnrollmentConfig::MODE_ATTESTATION;
@@ -153,7 +159,7 @@ void EnrollmentScreen::SetConfig() {
 
 bool EnrollmentScreen::AdvanceToNextAuth() {
   if (current_auth_ != last_auth_ && current_auth_ == AUTH_ATTESTATION) {
-    current_auth_ = AUTH_OAUTH;
+    current_auth_ = last_auth_;
     SetConfig();
     return true;
   }

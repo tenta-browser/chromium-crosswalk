@@ -21,7 +21,8 @@
 #include "ios/chrome/browser/ui/omnibox/omnibox_util.h"
 #import "ios/chrome/browser/ui/reversed_animation.h"
 #include "ios/chrome/browser/ui/rtl_geometry.h"
-#import "ios/chrome/browser/ui/toolbar/public/web_toolbar_controller_constants.h"
+#import "ios/chrome/browser/ui/toolbar/buttons/toolbar_constants.h"
+#import "ios/chrome/browser/ui/toolbar/public/toolbar_controller_base_feature.h"
 #include "ios/chrome/browser/ui/ui_util.h"
 #import "ios/chrome/browser/ui/uikit_ui_util.h"
 #import "ios/chrome/common/material_timing.h"
@@ -44,9 +45,7 @@ namespace {
 const CGFloat kFontSize = 16;
 const CGFloat kEditingRectWidthInset = 12;
 const CGFloat kClearButtonRightMarginIphone = 7;
-const CGFloat kClearButtonRightMarginIpad = 12;
 
-const CGFloat kStarButtonWidth = 36;
 const CGFloat kVoiceSearchButtonWidth = 36.0;
 
 // The default omnibox text color (used while editing).
@@ -94,7 +93,9 @@ NSString* const kOmniboxFadeAnimationKey = @"OmniboxFadeAnimation";
 @synthesize selectedTextBackgroundColor = _selectedTextBackgroundColor;
 @synthesize placeholderTextColor = _placeholderTextColor;
 @synthesize incognito = _incognito;
+@synthesize suggestionCommandsEndpoint = _suggestionCommandsEndpoint;
 
+#pragma mark - Public methods
 // Overload to allow for code-based initialization.
 - (instancetype)initWithFrame:(CGRect)frame {
   return [self initWithFrame:frame
@@ -119,8 +120,6 @@ NSString* const kOmniboxFadeAnimationKey = @"OmniboxFadeAnimation";
     }
     [self setFont:_font];
     [self setTextColor:_displayedTextColor];
-    [self setClearButtonMode:UITextFieldViewModeNever];
-    [self setRightViewMode:UITextFieldViewModeAlways];
     [self setAutocorrectionType:UITextAutocorrectionTypeNo];
     [self setAutocapitalizationType:UITextAutocapitalizationTypeNone];
     [self setEnablesReturnKeyAutomatically:YES];
@@ -129,6 +128,15 @@ NSString* const kOmniboxFadeAnimationKey = @"OmniboxFadeAnimation";
     [self setSpellCheckingType:UITextSpellCheckingTypeNo];
     [self setTextAlignment:NSTextAlignmentNatural];
     [self setKeyboardType:(UIKeyboardType)UIKeyboardTypeWebSearch];
+
+    if (IsRefreshLocationBarEnabled()) {
+      [self setClearButtonMode:UITextFieldViewModeWhileEditing];
+      [self setRightViewMode:UITextFieldViewModeNever];
+    } else {
+      [self setClearButtonMode:UITextFieldViewModeNever];
+      [self setRightViewMode:UITextFieldViewModeAlways];
+    }
+
 #if defined(__IPHONE_11_0) && (__IPHONE_OS_VERSION_MAX_ALLOWED >= __IPHONE_11_0)
     if (@available(iOS 11.0, *)) {
       [self setSmartQuotesType:UITextSmartQuotesTypeNo];
@@ -150,59 +158,12 @@ NSString* const kOmniboxFadeAnimationKey = @"OmniboxFadeAnimation";
   return nil;
 }
 
-- (void)addExpandOmniboxAnimations:(UIViewPropertyAnimator*)animator
-    API_AVAILABLE(ios(10.0)) {
-  __weak OmniboxTextFieldIOS* weakSelf = self;
-  [self rightView].alpha = 0;
-  [animator addCompletion:^(UIViewAnimatingPosition finalPosition) {
-    UIView* trailingView = [weakSelf rightView];
-    CGRect finalTrailingViewFrame = trailingView.frame;
-    trailingView.frame =
-        CGRectLayoutOffset(trailingView.frame, kPositionAnimationLeadingOffset);
-    [UIViewPropertyAnimator
-        runningPropertyAnimatorWithDuration:0.2
-                                      delay:0.1
-                                    options:UIViewAnimationOptionCurveEaseOut
-                                 animations:^{
-                                   trailingView.alpha = 1.0;
-                                   trailingView.frame = finalTrailingViewFrame;
-                                 }
-                                 completion:nil];
-  }];
-}
+- (void)setText:(NSAttributedString*)text
+    userTextLength:(size_t)userTextLength {
+  DCHECK_LE(userTextLength, [text length]);
 
-- (void)addContractOmniboxAnimations:(UIViewPropertyAnimator*)animator
-    API_AVAILABLE(ios(10.0)) {
-  UIView* trailingView = [self rightView];
-  [animator addAnimations:^{
-    trailingView.alpha = 0;
-    trailingView.frame.origin = CGPointMake(
-        trailingView.frame.origin.x + kPositionAnimationLeadingOffset,
-        trailingView.frame.origin.y);
-  }];
-
-  [animator addCompletion:^(UIViewAnimatingPosition finalPosition) {
-    self.rightView = nil;
-  }];
-}
-
-// Enforces that the delegate is an OmniboxTextFieldDelegate.
-- (id<OmniboxTextFieldDelegate>)delegate {
-  id delegate = [super delegate];
-  DCHECK(delegate == nil ||
-         [[delegate class]
-             conformsToProtocol:@protocol(OmniboxTextFieldDelegate)]);
-  return delegate;
-}
-
-// Overridden to require an OmniboxTextFieldDelegate.
-- (void)setDelegate:(id<OmniboxTextFieldDelegate>)delegate {
-  [super setDelegate:delegate];
-}
-
-// Exposed for testing.
-- (UILabel*)preEditStaticLabel {
-  return _preEditStaticLabel;
+  NSUInteger autocompleteLength = [text length] - userTextLength;
+  [self setTextInternal:text autocompleteLength:autocompleteLength];
 }
 
 - (void)insertTextWhileEditing:(NSString*)text {
@@ -220,34 +181,161 @@ NSString* const kOmniboxFadeAnimationKey = @"OmniboxFadeAnimation";
   }
 }
 
-// Method called when the users touches the text input. This will accept the
-// autocompleted text.
-- (void)touchesBegan:(NSSet*)touches withEvent:(UIEvent*)event {
-  if ([self isPreEditing]) {
-    [self exitPreEditState];
-    [super selectAll:nil];
-  }
+- (base::string16)displayedText {
+  return base::SysNSStringToUTF16([self nsDisplayedText]);
+}
 
-  if (!_selection) {
-    [super touchesBegan:touches withEvent:event];
+- (base::string16)autocompleteText {
+  DCHECK_LT([[self text] length], [[_selection text] length])
+      << "[_selection text] and [self text] are out of sync. "
+      << "Please email justincohen@ and rohitrao@ if you see this.";
+  if (_selection && [[_selection text] length] > [[self text] length]) {
+    return base::SysNSStringToUTF16(
+        [[_selection text] substringFromIndex:[[self text] length]]);
+  }
+  return base::string16();
+}
+
+- (BOOL)hasAutocompleteText {
+  return !!_selection;
+}
+
+- (void)clearAutocompleteText {
+  if (_selection) {
+    [_selection removeFromSuperview];
+    _selection = nil;
+    [self showTextAndCursor];
+  }
+}
+
+- (NSString*)markedText {
+  DCHECK([self conformsToProtocol:@protocol(UITextInput)]);
+  return [self textInRange:[self markedTextRange]];
+}
+
+- (NSRange)selectedNSRange {
+  DCHECK([self isFirstResponder]);
+  UITextPosition* beginning = [self beginningOfDocument];
+  UITextRange* selectedRange = [self selectedTextRange];
+  NSInteger start =
+      [self offsetFromPosition:beginning toPosition:[selectedRange start]];
+  NSInteger length = [self offsetFromPosition:[selectedRange start]
+                                   toPosition:[selectedRange end]];
+  return NSMakeRange(start, length);
+}
+
+- (NSTextAlignment)bestTextAlignment {
+  if ([self isFirstResponder]) {
+    return [self bestAlignmentForText:[self text]];
+  }
+  return NSTextAlignmentNatural;
+}
+
+// Normally NSTextAlignmentNatural would handle text alignment automatically,
+// but there are numerous edge case issues with it, so it's simpler to just
+// manually update the text alignment and writing direction of the UITextField.
+- (void)updateTextDirection {
+  // Setting the empty field to Natural seems to let iOS update the cursor
+  // position when the keyboard language is changed.
+  if (![self text].length) {
+    [self setTextAlignment:NSTextAlignmentNatural];
     return;
   }
 
-  // Only consider a single touch.
-  UITouch* touch = [touches anyObject];
-  if (!touch)
-    return;
-
-  // Accept selection.
-  NSString* newText = [[self nsDisplayedText] copy];
-  [self clearAutocompleteText];
-  [self setText:newText];
+  NSTextAlignment alignment = [self bestTextAlignment];
+  [self setTextAlignment:alignment];
+  if (!base::ios::IsRunningOnIOS11OrLater()) {
+    // TODO(crbug.com/730461): Remove this entire block once it's been tested
+    // on trunk.
+    UITextWritingDirection writingDirection =
+        alignment == NSTextAlignmentLeft ? UITextWritingDirectionLeftToRight
+                                         : UITextWritingDirectionRightToLeft;
+    [self
+        setBaseWritingDirection:writingDirection
+                       forRange:
+                           [self
+                               textRangeFromPosition:[self beginningOfDocument]
+                                          toPosition:[self endOfDocument]]];
+  }
 }
 
-// Gets the bounds of the rect covering the URL.
-- (CGRect)preEditLabelRectForBounds:(CGRect)bounds {
-  return [self editingRectForBounds:self.bounds];
+- (UIColor*)displayedTextColor {
+  return _displayedTextColor;
 }
+
+#pragma mark animations
+
+- (void)animateFadeWithStyle:(OmniboxTextFieldFadeStyle)style {
+  // Animation values
+  BOOL isFadingIn = (style == OMNIBOX_TEXT_FIELD_FADE_STYLE_IN);
+  CGFloat beginOpacity = isFadingIn ? 0.0 : 1.0;
+  CGFloat endOpacity = isFadingIn ? 1.0 : 0.0;
+  CAMediaTimingFunction* opacityTiming = ios::material::TimingFunction(
+      isFadingIn ? ios::material::CurveEaseOut : ios::material::CurveEaseIn);
+  CFTimeInterval delay = isFadingIn ? ios::material::kDuration8 : 0.0;
+
+  CAAnimation* labelAnimation = OpacityAnimationMake(beginOpacity, endOpacity);
+  labelAnimation.duration =
+      isFadingIn ? ios::material::kDuration6 : ios::material::kDuration8;
+  labelAnimation.timingFunction = opacityTiming;
+  labelAnimation = DelayedAnimationMake(labelAnimation, delay);
+  CAAnimation* auxillaryViewAnimation =
+      OpacityAnimationMake(beginOpacity, endOpacity);
+  auxillaryViewAnimation.duration = ios::material::kDuration8;
+  auxillaryViewAnimation.timingFunction = opacityTiming;
+  auxillaryViewAnimation = DelayedAnimationMake(auxillaryViewAnimation, delay);
+
+  for (UIView* subview in self.subviews) {
+    if ([subview isKindOfClass:[UILabel class]]) {
+      [subview.layer addAnimation:labelAnimation
+                           forKey:kOmniboxFadeAnimationKey];
+    } else {
+      [subview.layer addAnimation:auxillaryViewAnimation
+                           forKey:kOmniboxFadeAnimationKey];
+    }
+  }
+}
+
+- (void)cleanUpFadeAnimations {
+  RemoveAnimationForKeyFromLayers(kOmniboxFadeAnimationKey,
+                                  [self fadeAnimationLayers]);
+}
+
+- (void)addExpandOmniboxAnimations:(UIViewPropertyAnimator*)animator
+                completionAnimator:(UIViewPropertyAnimator*)completionAnimator {
+  DCHECK(!IsRefreshLocationBarEnabled());
+
+  // Hide the rightView button so its not visibile on its initial layout
+  // while the expan animation is happening.
+  self.clearButtonView.hidden = YES;
+  self.clearButtonView.alpha = 0;
+  self.clearButtonView.frame =
+      CGRectLayoutOffset([self rightViewRectForBounds:self.bounds],
+                         [self clearButtonAnimationOffset]);
+
+  [completionAnimator addAnimations:^{
+    self.clearButtonView.hidden = NO;
+    self.clearButtonView.alpha = 1.0;
+
+    self.clearButtonView.frame = CGRectLayoutOffset(
+        self.clearButtonView.frame, -[self clearButtonAnimationOffset]);
+  }];
+}
+
+- (void)addContractOmniboxAnimations:(UIViewPropertyAnimator*)animator {
+  DCHECK(!IsRefreshLocationBarEnabled());
+
+  [animator addAnimations:^{
+    self.clearButtonView.alpha = 0;
+    self.clearButtonView.frame = CGRectLayoutOffset(
+        self.clearButtonView.frame, kToolbarButtonAnimationOffset);
+  }];
+  [animator addCompletion:^(UIViewAnimatingPosition finalPosition) {
+    [self resetClearButton];
+  }];
+}
+
+#pragma mark pre-edit
 
 // Creates a UILabel based on the current dimension of the text field and
 // displays the URL in the UILabel so it appears properly aligned to the URL.
@@ -289,36 +377,197 @@ NSString* const kOmniboxFadeAnimationKey = @"OmniboxFadeAnimation";
   [self addSubview:_preEditStaticLabel];
 }
 
-- (NSTextAlignment)bestAlignmentForText:(NSString*)text {
-  if (text.length) {
-    NSString* lang = CFBridgingRelease(CFStringTokenizerCopyBestStringLanguage(
-        (CFStringRef)text, CFRangeMake(0, text.length)));
+// Finishes pre-edit state by removing the UILabel with the URL.
+- (void)exitPreEditState {
+  [self setPreEditText:nil];
+  if (_preEditStaticLabel) {
+    [_preEditStaticLabel removeFromSuperview];
+    _preEditStaticLabel = nil;
+    [self showTextAndCursor];
+  }
+}
 
-    if ([NSLocale characterDirectionForLanguage:lang] ==
-        NSLocaleLanguageDirectionRightToLeft) {
-      return NSTextAlignmentRight;
+// Returns whether we are processing the first touch event on the text field.
+- (BOOL)isPreEditing {
+  return !![self preEditText];
+}
+
+#pragma mark - TestingUtilities category
+
+// Exposed for testing.
+- (UILabel*)preEditStaticLabel {
+  return _preEditStaticLabel;
+}
+
+#pragma mark - Properties
+
+// Enforces that the delegate is an OmniboxTextFieldDelegate.
+- (id<OmniboxTextFieldDelegate>)delegate {
+  id delegate = [super delegate];
+  DCHECK(delegate == nil ||
+         [[delegate class]
+             conformsToProtocol:@protocol(OmniboxTextFieldDelegate)]);
+  return delegate;
+}
+
+// Overridden to require an OmniboxTextFieldDelegate.
+- (void)setDelegate:(id<OmniboxTextFieldDelegate>)delegate {
+  [super setDelegate:delegate];
+}
+
+#pragma mark - Private methods
+
+#pragma mark - UITextField
+
+// Ensures that attributedText always uses the proper style attributes.
+- (void)setAttributedText:(NSAttributedString*)attributedText {
+  NSMutableAttributedString* mutableText = [attributedText mutableCopy];
+  NSRange entireString = NSMakeRange(0, [mutableText length]);
+
+  // Set the font.
+  [mutableText addAttribute:NSFontAttributeName value:_font range:entireString];
+
+  // When editing, use the default text color for all text.
+  if (self.editing) {
+    // Hide the text when the |_selection| label is displayed.
+    UIColor* textColor =
+        _selection ? [UIColor clearColor] : _displayedTextColor;
+    [mutableText addAttribute:NSForegroundColorAttributeName
+                        value:textColor
+                        range:entireString];
+  } else {
+    NSMutableParagraphStyle* style = [[NSMutableParagraphStyle alloc] init];
+    // URLs have their text direction set to to LTR (avoids RTL characters
+    // making the URL render from right to left, as per the URL rendering
+    // standard described here: https://url.spec.whatwg.org/#url-rendering
+    [style setBaseWritingDirection:NSWritingDirectionLeftToRight];
+
+    // Set linebreak mode to 'clipping' to ensure the text is never elided.
+    // This is a workaround for iOS 6, where it appears that
+    // [self.attributedText size] is not wide enough for the string (e.g. a URL
+    // else ending with '.com' will be elided to end with '.c...'). It appears
+    // to be off by one point so clipping is acceptable as it doesn't actually
+    // cut off any of the text.
+    [style setLineBreakMode:NSLineBreakByClipping];
+
+    [mutableText addAttribute:NSParagraphStyleAttributeName
+                        value:style
+                        range:entireString];
+  }
+
+  [super setAttributedText:mutableText];
+}
+
+- (void)setPlaceholder:(NSString*)placeholder {
+  if (placeholder && _placeholderTextColor) {
+    NSDictionary* attributes =
+        @{NSForegroundColorAttributeName : _placeholderTextColor};
+    self.attributedPlaceholder =
+        [[NSAttributedString alloc] initWithString:placeholder
+                                        attributes:attributes];
+  } else {
+    [super setPlaceholder:placeholder];
+  }
+}
+
+- (void)setText:(NSString*)text {
+  NSAttributedString* as = [[NSAttributedString alloc] initWithString:text];
+  if (self.text.length > 0 && as.length == 0) {
+    // Remove the fade animations before the subviews are removed.
+    [self cleanUpFadeAnimations];
+  }
+  [self setTextInternal:as autocompleteLength:0];
+}
+
+- (CGRect)textRectForBounds:(CGRect)bounds {
+  CGRect newBounds = [super textRectForBounds:bounds];
+
+  LayoutRect textRectLayout =
+      LayoutRectForRectInBoundingRect(newBounds, bounds);
+
+  return LayoutRectGetRect(textRectLayout);
+}
+
+- (CGRect)editingRectForBounds:(CGRect)bounds {
+  CGRect newBounds = [super editingRectForBounds:bounds];
+
+  if (!IsRefreshLocationBarEnabled()) {
+    // -editingRectForBounds doesn't account for rightViews that aren't flush
+    // with the right edge, it just looks at the rightView's width.  Account for
+    // the offset here.
+    CGFloat rightViewMaxX = CGRectGetMaxX([self rightViewRectForBounds:bounds]);
+    if (rightViewMaxX)
+      newBounds.size.width -= bounds.size.width - rightViewMaxX;
+
+    LayoutRect editingRectLayout =
+        LayoutRectForRectInBoundingRect(newBounds, bounds);
+    editingRectLayout.size.width -= kEditingRectWidthInset;
+    if (IsIPadIdiom()) {
+      if (!IsCompactTablet() && !self.rightView) {
+        // Normally the clear button shrinks the edit box, but if the rightView
+        // isn't set, shrink behind the mic icons.
+        editingRectLayout.size.width -= kVoiceSearchButtonWidth;
+      }
     }
+    // Don't let the edit rect extend over the clear button.  The right view
+    // is hidden during animations, so fake its width here.
+    if (self.rightViewMode == UITextFieldViewModeNever)
+      editingRectLayout.size.width -= self.rightView.bounds.size.width;
+
+    newBounds = LayoutRectGetRect(editingRectLayout);
   }
-  return NSTextAlignmentLeft;
+
+  // Position the selection view appropriately.
+  [_selection setFrame:newBounds];
+
+  return newBounds;
 }
 
-- (NSTextAlignment)bestTextAlignment {
-  if ([self isFirstResponder]) {
-    return [self bestAlignmentForText:[self text]];
+// Overriding this method to offset the rightView property
+// (containing a clear text button).
+- (CGRect)rightViewRectForBounds:(CGRect)bounds {
+  if (IsRefreshLocationBarEnabled()) {
+    return [super rightViewRectForBounds:bounds];
   }
-  return NSTextAlignmentNatural;
+
+  // iOS9 added updated RTL support, but only half implemented it for
+  // UITextField. leftView and rightView were not renamed, but are are correctly
+  // swapped and treated as leadingView / trailingView.  However,
+  // -leftViewRectForBounds and -rightViewRectForBounds are *not* treated as
+  // leading and trailing.  Hence the swapping below.
+  if ([self isTextFieldLTR]) {
+    return [self layoutRightViewForBounds:bounds];
+  }
+  return [self layoutLeftViewForBounds:bounds];
 }
 
-- (NSTextAlignment)preEditTextAlignment {
-  // If the pre-edit text is wider than the omnibox, right-align the text so it
-  // ends at the same x coord as the blue selection box.
-  CGSize textSize =
-      [_preEditStaticLabel.text cr_pixelAlignedSizeWithFont:_font];
-  // Note, this does not need to support RTL, as URLs are always LTR.
-  return textSize.width < _preEditStaticLabel.frame.size.width
-             ? NSTextAlignmentLeft
-             : NSTextAlignmentRight;
+// Overriding this method to offset the leftView property
+// (containing a placeholder image) consistently with omnibox text padding.
+- (CGRect)leftViewRectForBounds:(CGRect)bounds {
+  if (IsRefreshLocationBarEnabled()) {
+    return [super leftViewRectForBounds:bounds];
+  }
+
+  // iOS9 added updated RTL support, but only half implemented it for
+  // UITextField. leftView and rightView were not renamed, but are are correctly
+  // swapped and treated as leadingView / trailingView.  However,
+  // -leftViewRectForBounds and -rightViewRectForBounds are *not* treated as
+  // leading and trailing.  Hence the swapping below.
+  if ([self isTextFieldLTR]) {
+    return [self layoutLeftViewForBounds:bounds];
+  }
+  return [self layoutRightViewForBounds:bounds];
 }
+
+#pragma mark - UITextInput
+
+- (void)beginFloatingCursorAtPoint:(CGPoint)point {
+  // Exit preedit because it blocks the view of the textfield.
+  [self exitPreEditState];
+  [super beginFloatingCursorAtPoint:point];
+}
+
+#pragma mark - UIView
 
 - (void)layoutSubviews {
   [super layoutSubviews];
@@ -334,44 +583,38 @@ NSString* const kOmniboxFadeAnimationKey = @"OmniboxFadeAnimation";
   }
 }
 
-// Finishes pre-edit state by removing the UILabel with the URL.
-- (void)exitPreEditState {
-  [self setPreEditText:nil];
-  if (_preEditStaticLabel) {
-    [_preEditStaticLabel removeFromSuperview];
-    _preEditStaticLabel = nil;
-    [self showTextAndCursor];
+- (UIView*)hitTest:(CGPoint)point withEvent:(UIEvent*)event {
+  // Anything in the narrow bar above OmniboxTextFieldIOS view
+  // will also activate the text field.
+  if (point.y < 0)
+    point.y = 0;
+  return [super hitTest:point withEvent:event];
+}
+
+#pragma mark - UIResponder
+
+// Method called when the users touches the text input. This will accept the
+// autocompleted text.
+- (void)touchesBegan:(NSSet*)touches withEvent:(UIEvent*)event {
+  if ([self isPreEditing]) {
+    [self exitPreEditState];
+    [super selectAll:nil];
   }
-}
 
-- (UIColor*)displayedTextColor {
-  return _displayedTextColor;
-}
-
-// Returns whether we are processing the first touch event on the text field.
-- (BOOL)isPreEditing {
-  return !![self preEditText];
-}
-
-- (NSString*)nsDisplayedText {
-  if (_selection)
-    return [_selection text];
-  return [self text];
-}
-
-- (base::string16)displayedText {
-  return base::SysNSStringToUTF16([self nsDisplayedText]);
-}
-
-- (base::string16)autocompleteText {
-  DCHECK_LT([[self text] length], [[_selection text] length])
-      << "[_selection text] and [self text] are out of sync. "
-      << "Please email justincohen@ and rohitrao@ if you see this.";
-  if (_selection && [[_selection text] length] > [[self text] length]) {
-    return base::SysNSStringToUTF16(
-        [[_selection text] substringFromIndex:[[self text] length]]);
+  if (!_selection) {
+    [super touchesBegan:touches withEvent:event];
+    return;
   }
-  return base::string16();
+
+  // Only consider a single touch.
+  UITouch* touch = [touches anyObject];
+  if (!touch)
+    return;
+
+  // Accept selection.
+  NSString* newText = [[self nsDisplayedText] copy];
+  [self clearAutocompleteText];
+  [self setText:newText];
 }
 
 - (void)select:(id)sender {
@@ -393,6 +636,218 @@ NSString* const kOmniboxFadeAnimationKey = @"OmniboxFadeAnimation";
   [super selectAll:sender];
 }
 
+- (BOOL)canPerformAction:(SEL)action withSender:(id)sender {
+  // Disable the "Define" menu item.  iOS7 implements this with a private
+  // selector.  Avoid using private APIs by instead doing a string comparison.
+  if ([NSStringFromSelector(action) hasSuffix:@"define:"]) {
+    return NO;
+  }
+
+  // Disable the RTL arrow menu item. The omnibox sets alignment based on the
+  // text in the field, and should not be overridden.
+  if ([NSStringFromSelector(action) hasPrefix:@"makeTextWritingDirection"]) {
+    return NO;
+  }
+
+  if ([self isPreEditing]) {
+    // Allow cut/copy/paste in preedit.
+    if ((action == @selector(copy:)) || (action == @selector(cut:))) {
+      return YES;
+    }
+  }
+
+  return [super canPerformAction:action withSender:sender];
+}
+
+#pragma mark Copy/Paste
+
+// Overridden to allow for custom omnibox copy behavior.  This includes
+// preprending http:// to the copied URL if needed.
+- (void)copy:(id)sender {
+  id<OmniboxTextFieldDelegate> delegate = [self delegate];
+  BOOL handled = NO;
+
+  // Must test for the onCopy method, since it's optional.
+  if ([delegate respondsToSelector:@selector(onCopy)])
+    handled = [delegate onCopy];
+
+  // iOS 4 doesn't expose an API that allows the delegate to handle the copy
+  // operation, so let the superclass perform the copy if the delegate couldn't.
+  if (!handled)
+    [super copy:sender];
+}
+
+- (void)cut:(id)sender {
+  if ([self isPreEditing]) {
+    [self copy:sender];
+    [self exitPreEditState];
+    NSAttributedString* emptyString = [[NSAttributedString alloc] init];
+    [self setText:emptyString userTextLength:0];
+  } else {
+    [super cut:sender];
+  }
+}
+
+// Overridden to notify the delegate that a paste is in progress.
+- (void)paste:(id)sender {
+  id delegate = [self delegate];
+  if ([delegate respondsToSelector:@selector(willPaste)])
+    [delegate willPaste];
+  [super paste:sender];
+}
+
+#pragma mark UIKeyInput
+
+- (void)deleteBackward {
+  // Must test for the onDeleteBackward method, since it's optional.
+  if ([[self delegate] respondsToSelector:@selector(onDeleteBackward)])
+    [[self delegate] onDeleteBackward];
+  [super deleteBackward];
+}
+
+#pragma mark Key Commands
+
+- (NSArray<UIKeyCommand*>*)upDownCommands {
+  // These up/down arrow key commands override the standard UITextInput handling
+  // of up/down arrow key. The standard behavior is to go to the beginning/end
+  // of the text. Instead, the omnibox popup needs to highlight suggestions.
+  UIKeyCommand* commandUp =
+      [UIKeyCommand keyCommandWithInput:UIKeyInputUpArrow
+                          modifierFlags:0
+                                 action:@selector(keyCommandUp)];
+  UIKeyCommand* commandDown =
+      [UIKeyCommand keyCommandWithInput:UIKeyInputDownArrow
+                          modifierFlags:0
+                                 action:@selector(keyCommandDown)];
+
+  return @[ commandUp, commandDown ];
+}
+
+- (NSArray<UIKeyCommand*>*)keyCommands {
+  NSMutableArray<UIKeyCommand*>* commands = [[self upDownCommands] mutableCopy];
+  if ([self isPreEditing] || [self hasAutocompleteText]) {
+    [commands addObjectsFromArray:[self leftRightCommands]];
+  }
+
+  return commands;
+}
+
+- (void)keyCommandUp {
+  [self.suggestionCommandsEndpoint highlightNextSuggestion];
+}
+
+- (void)keyCommandDown {
+  [self.suggestionCommandsEndpoint highlightPreviousSuggestion];
+}
+
+#pragma mark preedit and inline autocomplete key commands
+
+// React to left and right keys when in preedit state to exit preedit and put
+// cursor to the beginning/end of the textfield; or if there is inline
+// suggestion displayed, accept it and put the cursor before/after the
+// suggested text.
+- (NSArray<UIKeyCommand*>*)leftRightCommands {
+  UIKeyCommand* commandLeft =
+      [UIKeyCommand keyCommandWithInput:UIKeyInputLeftArrow
+                          modifierFlags:0
+                                 action:@selector(keyCommandLeft)];
+  UIKeyCommand* commandRight =
+      [UIKeyCommand keyCommandWithInput:UIKeyInputRightArrow
+                          modifierFlags:0
+                                 action:@selector(keyCommandRight)];
+
+  return @[ commandLeft, commandRight ];
+}
+
+- (void)keyCommandLeft {
+  DCHECK([self isPreEditing] || [self hasAutocompleteText]);
+
+  // Cursor offset.
+  NSInteger offset = 0;
+  if ([self isPreEditing]) {
+    [self exitPreEditState];
+  }
+
+  if ([self hasAutocompleteText]) {
+    // The cursor should stay in the end of the user input.
+    offset = self.text.length;
+
+    // Accept autocomplete suggestion.
+    [self acceptAutocompleteText];
+  }
+
+  UITextPosition* beginning = self.beginningOfDocument;
+  UITextPosition* cursorPosition =
+      [self positionFromPosition:beginning offset:offset];
+  UITextRange* textRange =
+      [self textRangeFromPosition:cursorPosition toPosition:cursorPosition];
+  self.selectedTextRange = textRange;
+}
+
+- (void)keyCommandRight {
+  DCHECK([self isPreEditing] || [self hasAutocompleteText]);
+
+  if ([self isPreEditing]) {
+    [self exitPreEditState];
+  }
+
+  if ([self hasAutocompleteText]) {
+    [self acceptAutocompleteText];
+  }
+
+  // Put the cursor to the end of the input.
+  UITextPosition* end = self.endOfDocument;
+  UITextRange* textRange = [self textRangeFromPosition:end toPosition:end];
+
+  self.selectedTextRange = textRange;
+}
+
+// A helper to accept the current autocomplete text.
+- (void)acceptAutocompleteText {
+  DCHECK([self hasAutocompleteText]);
+  // Strip attributes and set text as if the user typed it.
+  NSAttributedString* string =
+      [[NSAttributedString alloc] initWithString:_selection.text];
+  [self setText:string userTextLength:string.length];
+}
+
+#pragma mark - helpers
+
+// Gets the bounds of the rect covering the URL.
+- (CGRect)preEditLabelRectForBounds:(CGRect)bounds {
+  return [self editingRectForBounds:self.bounds];
+}
+
+- (NSTextAlignment)bestAlignmentForText:(NSString*)text {
+  if (text.length) {
+    NSString* lang = CFBridgingRelease(CFStringTokenizerCopyBestStringLanguage(
+        (CFStringRef)text, CFRangeMake(0, text.length)));
+
+    if ([NSLocale characterDirectionForLanguage:lang] ==
+        NSLocaleLanguageDirectionRightToLeft) {
+      return NSTextAlignmentRight;
+    }
+  }
+  return NSTextAlignmentLeft;
+}
+
+- (NSTextAlignment)preEditTextAlignment {
+  // If the pre-edit text is wider than the omnibox, right-align the text so it
+  // ends at the same x coord as the blue selection box.
+  CGSize textSize =
+      [_preEditStaticLabel.text cr_pixelAlignedSizeWithFont:_font];
+  // Note, this does not need to support RTL, as URLs are always LTR.
+  return textSize.width < _preEditStaticLabel.frame.size.width
+             ? NSTextAlignmentLeft
+             : NSTextAlignmentRight;
+}
+
+- (NSString*)nsDisplayedText {
+  if (_selection)
+    return [_selection text];
+  return [self text];
+}
+
 // Creates the SelectedTextLabel if it doesn't already exist and adds it as a
 // subview.
 - (void)createSelectionViewIfNecessary {
@@ -406,13 +861,6 @@ NSString* const kOmniboxFadeAnimationKey = @"OmniboxFadeAnimation";
   [_selection setBackgroundColor:[UIColor clearColor]];
   [self addSubview:_selection];
   [self hideTextAndCursor];
-}
-
-- (void)deleteBackward {
-  // Must test for the onDeleteBackward method, since it's optional.
-  if ([[self delegate] respondsToSelector:@selector(onDeleteBackward)])
-    [[self delegate] onDeleteBackward];
-  [super deleteBackward];
 }
 
 // Helper method used to set the text of this field.  Updates the selection view
@@ -484,114 +932,6 @@ NSString* const kOmniboxFadeAnimationKey = @"OmniboxFadeAnimation";
                                                         alpha:1.0];
 }
 
-// Ensures that attributedText always uses the proper style attributes.
-- (void)setAttributedText:(NSAttributedString*)attributedText {
-  NSMutableAttributedString* mutableText = [attributedText mutableCopy];
-  NSRange entireString = NSMakeRange(0, [mutableText length]);
-
-  // Set the font.
-  [mutableText addAttribute:NSFontAttributeName value:_font range:entireString];
-
-  // When editing, use the default text color for all text.
-  if (self.editing) {
-    // Hide the text when the |_selection| label is displayed.
-    UIColor* textColor =
-        _selection ? [UIColor clearColor] : _displayedTextColor;
-    [mutableText addAttribute:NSForegroundColorAttributeName
-                        value:textColor
-                        range:entireString];
-  } else {
-    NSMutableParagraphStyle* style = [[NSMutableParagraphStyle alloc] init];
-    // URLs have their text direction set to to LTR (avoids RTL characters
-    // making the URL render from right to left, as per the URL rendering
-    // standard described here: https://url.spec.whatwg.org/#url-rendering
-    [style setBaseWritingDirection:NSWritingDirectionLeftToRight];
-
-    // Set linebreak mode to 'clipping' to ensure the text is never elided.
-    // This is a workaround for iOS 6, where it appears that
-    // [self.attributedText size] is not wide enough for the string (e.g. a URL
-    // else ending with '.com' will be elided to end with '.c...'). It appears
-    // to be off by one point so clipping is acceptable as it doesn't actually
-    // cut off any of the text.
-    [style setLineBreakMode:NSLineBreakByClipping];
-
-    [mutableText addAttribute:NSParagraphStyleAttributeName
-                        value:style
-                        range:entireString];
-  }
-
-  [super setAttributedText:mutableText];
-}
-
-// Normally NSTextAlignmentNatural would handle text alignment automatically,
-// but there are numerous edge case issues with it, so it's simpler to just
-// manually update the text alignment and writing direction of the UITextField.
-- (void)updateTextDirection {
-  // Setting the empty field to Natural seems to let iOS update the cursor
-  // position when the keyboard language is changed.
-  if (![self text].length) {
-    [self setTextAlignment:NSTextAlignmentNatural];
-    return;
-  }
-
-  NSTextAlignment alignment = [self bestTextAlignment];
-  [self setTextAlignment:alignment];
-  if (!base::ios::IsRunningOnIOS11OrLater()) {
-    // TODO(crbug.com/730461): Remove this entire block once it's been tested
-    // on trunk.
-    UITextWritingDirection writingDirection =
-        alignment == NSTextAlignmentLeft ? UITextWritingDirectionLeftToRight
-                                         : UITextWritingDirectionRightToLeft;
-    [self
-        setBaseWritingDirection:writingDirection
-                       forRange:
-                           [self
-                               textRangeFromPosition:[self beginningOfDocument]
-                                          toPosition:[self endOfDocument]]];
-  }
-}
-
-- (void)setPlaceholder:(NSString*)placeholder {
-  if (placeholder && _placeholderTextColor) {
-    NSDictionary* attributes =
-        @{NSForegroundColorAttributeName : _placeholderTextColor};
-    self.attributedPlaceholder =
-        [[NSAttributedString alloc] initWithString:placeholder
-                                        attributes:attributes];
-  } else {
-    [super setPlaceholder:placeholder];
-  }
-}
-
-- (void)setText:(NSString*)text {
-  NSAttributedString* as = [[NSAttributedString alloc] initWithString:text];
-  if (self.text.length > 0 && as.length == 0) {
-    // Remove the fade animations before the subviews are removed.
-    [self cleanUpFadeAnimations];
-  }
-  [self setTextInternal:as autocompleteLength:0];
-}
-
-- (void)setText:(NSAttributedString*)text
-    userTextLength:(size_t)userTextLength {
-  DCHECK_LE(userTextLength, [text length]);
-
-  NSUInteger autocompleteLength = [text length] - userTextLength;
-  [self setTextInternal:text autocompleteLength:autocompleteLength];
-}
-
-- (BOOL)hasAutocompleteText {
-  return !!_selection;
-}
-
-- (void)clearAutocompleteText {
-  if (_selection) {
-    [_selection removeFromSuperview];
-    _selection = nil;
-    [self showTextAndCursor];
-  }
-}
-
 - (BOOL)isColorHidden:(UIColor*)color {
   return ([color isEqual:[UIColor clearColor]] ||
           CGColorGetAlpha(color.CGColor) < 0.05);
@@ -615,146 +955,11 @@ NSString* const kOmniboxFadeAnimationKey = @"OmniboxFadeAnimation";
   [self setTextColor:[UIColor clearColor]];
 }
 
-- (NSString*)markedText {
-  DCHECK([self conformsToProtocol:@protocol(UITextInput)]);
-  return [self textInRange:[self markedTextRange]];
-}
-
-- (CGRect)textRectForBounds:(CGRect)bounds {
-  CGRect newBounds = [super textRectForBounds:bounds];
-
-  LayoutRect textRectLayout =
-      LayoutRectForRectInBoundingRect(newBounds, bounds);
-
-  if (IsIPadIdiom()) {
-    if (!IsCompactTablet()) {
-      // Adjust the width so that the text doesn't overlap with the bookmark and
-      // voice search buttons which are displayed inside the omnibox.
-      textRectLayout.size.width += self.rightView.bounds.size.width -
-                                   kVoiceSearchButtonWidth - kStarButtonWidth;
-    }
-  }
-
-  return LayoutRectGetRect(textRectLayout);
-}
-
-- (CGRect)editingRectForBounds:(CGRect)bounds {
-  CGRect newBounds = [super editingRectForBounds:bounds];
-
-  // -editingRectForBounds doesn't account for rightViews that aren't flush
-  // with the right edge, it just looks at the rightView's width.  Account for
-  // the offset here.
-  CGFloat rightViewMaxX = CGRectGetMaxX([self rightViewRectForBounds:bounds]);
-  if (rightViewMaxX)
-    newBounds.size.width -= bounds.size.width - rightViewMaxX;
-
-  LayoutRect editingRectLayout =
-      LayoutRectForRectInBoundingRect(newBounds, bounds);
-  editingRectLayout.size.width -= kEditingRectWidthInset;
-  if (IsIPadIdiom()) {
-    if (!IsCompactTablet() && !self.rightView) {
-      // Normally the clear button shrinks the edit box, but if the rightView
-      // isn't set, shrink behind the mic icons.
-      editingRectLayout.size.width -= kVoiceSearchButtonWidth;
-    }
-  }
-  // Don't let the edit rect extend over the clear button.  The right view
-  // is hidden during animations, so fake its width here.
-  if (self.rightViewMode == UITextFieldViewModeNever)
-    editingRectLayout.size.width -= self.rightView.bounds.size.width;
-
-  newBounds = LayoutRectGetRect(editingRectLayout);
-
-  // Position the selection view appropriately.
-  [_selection setFrame:newBounds];
-
-  return newBounds;
-}
-
-- (CGRect)rectForDrawTextInRect:(CGRect)rect {
-  // The goal is to always show the most significant part of the hostname
-  // (i.e. the end of the TLD).
-  //
-  //                     --------------------
-  // www.somereallyreally|longdomainname.com|/path/gets/clipped
-  //                     --------------------
-  // {  clipped prefix  } {  visible text  } { clipped suffix }
-
-  // First find how much (if any) of the scheme/host needs to be clipped so that
-  // the end of the TLD fits in |rect|. Note that if the omnibox is currently
-  // displaying a search query the prefix is not clipped.
-
-  CGFloat widthOfClippedPrefix = 0;
-  url::Component scheme, host;
-  AutocompleteInput::ParseForEmphasizeComponents(
-      base::SysNSStringToUTF16(self.text), AutocompleteSchemeClassifierImpl(),
-      &scheme, &host);
-  if (host.len < 0) {
-    return rect;
-  }
-  NSRange hostRange = NSMakeRange(0, host.begin + host.len);
-  NSAttributedString* hostString =
-      [self.attributedText attributedSubstringFromRange:hostRange];
-  CGFloat widthOfHost = ceil([hostString size].width);
-  widthOfClippedPrefix = MAX(widthOfHost - rect.size.width, 0);
-
-  // Now determine if there is any text that will need to be truncated because
-  // there's not enough room.
-  int textWidth = ceil([self.attributedText size].width);
-  CGFloat widthOfClippedSuffix =
-      MAX(textWidth - rect.size.width - widthOfClippedPrefix, 0);
-  BOOL suffixClipped = widthOfClippedSuffix > 0;
-
-  // Fade the beginning and/or end of the visible string to indicate to the user
-  // that the URL has been clipped.
-  BOOL prefixClipped = widthOfClippedPrefix > 0;
-  if (prefixClipped || suffixClipped) {
-    UIImage* fade = nil;
-    if ([self textAlignment] == NSTextAlignmentRight) {
-      // Swap prefix and suffix for RTL.
-      fade = [GTMFadeTruncatingLabel getLinearGradient:rect
-                                              fadeHead:suffixClipped
-                                              fadeTail:prefixClipped];
-    } else {
-      fade = [GTMFadeTruncatingLabel getLinearGradient:rect
-                                              fadeHead:prefixClipped
-                                              fadeTail:suffixClipped];
-    }
-    CGContextClipToMask(UIGraphicsGetCurrentContext(), rect, fade.CGImage);
-  }
-
-  // If necessary, expand the rect so the entire string fits and shift it to the
-  // left (right for RTL) so the clipped prefix is not shown.
-  if ([self textAlignment] == NSTextAlignmentRight) {
-    rect.origin.x -= widthOfClippedSuffix;
-  } else {
-    rect.origin.x -= widthOfClippedPrefix;
-  }
-  rect.size.width = MAX(rect.size.width, textWidth);
-  return rect;
-}
-
-// Enumerate url components (host, path) and draw each one in different rect.
-- (void)drawTextInRect:(CGRect)rect {
-  if (base::ios::IsRunningOnOrLater(11, 1, 0)) {
-    // -[UITextField drawTextInRect:] ignores the argument, so we can't do
-    // anything on 11.1 and up.
-    [super drawTextInRect:rect];
-    return;
-  }
-
-  // Save and restore the graphics state because rectForDrawTextInRect may
-  // apply an image mask to fade out beginning and/or end of the URL.
-  gfx::ScopedCGContextSaveGState saver(UIGraphicsGetCurrentContext());
-  [super drawTextInRect:[self rectForDrawTextInRect:rect]];
-}
-
-- (UIView*)hitTest:(CGPoint)point withEvent:(UIEvent*)event {
-  // Anything in the narrow bar above OmniboxTextFieldIOS view
-  // will also activate the text field.
-  if (point.y < 0)
-    point.y = 0;
-  return [super hitTest:point withEvent:event];
+- (NSArray*)fadeAnimationLayers {
+  NSMutableArray* layers = [NSMutableArray array];
+  for (UIView* subview in self.subviews)
+    [layers addObject:subview.layer];
+  return layers;
 }
 
 - (BOOL)isTextFieldLTR {
@@ -763,31 +968,14 @@ NSString* const kOmniboxFadeAnimationKey = @"OmniboxFadeAnimation";
          UIUserInterfaceLayoutDirectionLeftToRight;
 }
 
-// Overriding this method to offset the rightView property
-// (containing a clear text button).
-- (CGRect)rightViewRectForBounds:(CGRect)bounds {
-  // iOS9 added updated RTL support, but only half implemented it for
-  // UITextField. leftView and rightView were not renamed, but are are correctly
-  // swapped and treated as leadingView / trailingView.  However,
-  // -leftViewRectForBounds and -rightViewRectForBounds are *not* treated as
-  // leading and trailing.  Hence the swapping below.
-  if ([self isTextFieldLTR]) {
-    return [self layoutRightViewForBounds:bounds];
-  }
-  return [self layoutLeftViewForBounds:bounds];
-}
-
 - (CGRect)layoutRightViewForBounds:(CGRect)bounds {
+  DCHECK(!IsRefreshLocationBarEnabled());
+
   if ([self rightView]) {
     CGSize rightViewSize = self.rightView.bounds.size;
     CGFloat leadingOffset = 0;
-    if (IsIPadIdiom() && !IsCompactTablet()) {
-      leadingOffset = bounds.size.width - kVoiceSearchButtonWidth -
-                      rightViewSize.width - kClearButtonRightMarginIpad;
-    } else {
-      leadingOffset = bounds.size.width - rightViewSize.width -
-                      kClearButtonRightMarginIphone;
-    }
+    leadingOffset =
+        bounds.size.width - rightViewSize.width - kClearButtonRightMarginIphone;
     LayoutRect rightViewLayout;
     rightViewLayout.position.leading = leadingOffset;
     rightViewLayout.boundingWidth = CGRectGetWidth(bounds);
@@ -799,118 +987,40 @@ NSString* const kOmniboxFadeAnimationKey = @"OmniboxFadeAnimation";
   return CGRectZero;
 }
 
-// Overriding this method to offset the leftView property
-// (containing a placeholder image) consistently with omnibox text padding.
-- (CGRect)leftViewRectForBounds:(CGRect)bounds {
-  // iOS9 added updated RTL support, but only half implemented it for
-  // UITextField. leftView and rightView were not renamed, but are are correctly
-  // swapped and treated as leadingView / trailingView.  However,
-  // -leftViewRectForBounds and -rightViewRectForBounds are *not* treated as
-  // leading and trailing.  Hence the swapping below.
-  if ([self isTextFieldLTR]) {
-    return [self layoutLeftViewForBounds:bounds];
-  }
-  return [self layoutRightViewForBounds:bounds];
-}
-
 - (CGRect)layoutLeftViewForBounds:(CGRect)bounds {
   return CGRectZero;
 }
 
-- (void)animateFadeWithStyle:(OmniboxTextFieldFadeStyle)style {
-  // Animation values
-  BOOL isFadingIn = (style == OMNIBOX_TEXT_FIELD_FADE_STYLE_IN);
-  CGFloat beginOpacity = isFadingIn ? 0.0 : 1.0;
-  CGFloat endOpacity = isFadingIn ? 1.0 : 0.0;
-  CAMediaTimingFunction* opacityTiming = ios::material::TimingFunction(
-      isFadingIn ? ios::material::CurveEaseOut : ios::material::CurveEaseIn);
-  CFTimeInterval delay = isFadingIn ? ios::material::kDuration8 : 0.0;
-
-  CAAnimation* labelAnimation = OpacityAnimationMake(beginOpacity, endOpacity);
-  labelAnimation.duration =
-      isFadingIn ? ios::material::kDuration6 : ios::material::kDuration8;
-  labelAnimation.timingFunction = opacityTiming;
-  labelAnimation = DelayedAnimationMake(labelAnimation, delay);
-  CAAnimation* auxillaryViewAnimation =
-      OpacityAnimationMake(beginOpacity, endOpacity);
-  auxillaryViewAnimation.duration = ios::material::kDuration8;
-  auxillaryViewAnimation.timingFunction = opacityTiming;
-  auxillaryViewAnimation = DelayedAnimationMake(auxillaryViewAnimation, delay);
-
-  for (UIView* subview in self.subviews) {
-    if ([subview isKindOfClass:[UILabel class]]) {
-      [subview.layer addAnimation:labelAnimation
-                           forKey:kOmniboxFadeAnimationKey];
-    } else {
-      [subview.layer addAnimation:auxillaryViewAnimation
-                           forKey:kOmniboxFadeAnimationKey];
-    }
+// Accesses the clear button view when it's available; correctly resolves RTL.
+// This method must not be named -clearButton, because that conflicts with an
+// internal UITextField method.
+- (UIView*)clearButtonView {
+  DCHECK(!IsRefreshLocationBarEnabled());
+  if ([self isTextFieldLTR]) {
+    return self.rightView;
+  } else {
+    return self.leftView;
   }
 }
 
-- (NSArray*)fadeAnimationLayers {
-  NSMutableArray* layers = [NSMutableArray array];
-  for (UIView* subview in self.subviews)
-    [layers addObject:subview.layer];
-  return layers;
-}
+- (void)resetClearButton {
+  DCHECK(!IsRefreshLocationBarEnabled());
 
-- (void)cleanUpFadeAnimations {
-  RemoveAnimationForKeyFromLayers(kOmniboxFadeAnimationKey,
-                                  [self fadeAnimationLayers]);
-}
-
-#pragma mark - Copy/Paste
-
-// Overridden to allow for custom omnibox copy behavior.  This includes
-// preprending http:// to the copied URL if needed.
-- (void)copy:(id)sender {
-  id<OmniboxTextFieldDelegate> delegate = [self delegate];
-  BOOL handled = NO;
-
-  // Must test for the onCopy method, since it's optional.
-  if ([delegate respondsToSelector:@selector(onCopy)])
-    handled = [delegate onCopy];
-
-  // iOS 4 doesn't expose an API that allows the delegate to handle the copy
-  // operation, so let the superclass perform the copy if the delegate couldn't.
-  if (!handled)
-    [super copy:sender];
-}
-
-// Overridden to notify the delegate that a paste is in progress.
-- (void)paste:(id)sender {
-  id delegate = [self delegate];
-  if ([delegate respondsToSelector:@selector(willPaste)])
-    [delegate willPaste];
-  [super paste:sender];
-}
-
-- (NSRange)selectedNSRange {
-  DCHECK([self isFirstResponder]);
-  UITextPosition* beginning = [self beginningOfDocument];
-  UITextRange* selectedRange = [self selectedTextRange];
-  NSInteger start =
-      [self offsetFromPosition:beginning toPosition:[selectedRange start]];
-  NSInteger length = [self offsetFromPosition:[selectedRange start]
-                                   toPosition:[selectedRange end]];
-  return NSMakeRange(start, length);
-}
-
-- (BOOL)canPerformAction:(SEL)action withSender:(id)sender {
-  // Disable the "Define" menu item.  iOS7 implements this with a private
-  // selector.  Avoid using private APIs by instead doing a string comparison.
-  if ([NSStringFromSelector(action) hasSuffix:@"define:"]) {
-    return NO;
+  if ([self isTextFieldLTR]) {
+    self.rightView = nil;
+  } else {
+    self.rightView = nil;
   }
+}
 
-  // Disable the RTL arrow menu item. The omnibox sets alignment based on the
-  // text in the field, and should not be overridden.
-  if ([NSStringFromSelector(action) hasPrefix:@"makeTextWritingDirection"]) {
-    return NO;
+- (CGFloat)clearButtonAnimationOffset {
+  DCHECK(!IsRefreshLocationBarEnabled());
+
+  if ([self isTextFieldLTR]) {
+    return kToolbarButtonAnimationOffset;
+  } else {
+    return -kToolbarButtonAnimationOffset;
   }
-
-  return [super canPerformAction:action withSender:sender];
 }
 
 @end

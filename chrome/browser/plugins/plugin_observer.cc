@@ -9,9 +9,7 @@
 #include "base/auto_reset.h"
 #include "base/bind.h"
 #include "base/debug/crash_logging.h"
-#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
-#include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
 #include "chrome/app/vector_icons/vector_icons.h"
 #include "chrome/browser/browser_process.h"
@@ -22,17 +20,15 @@
 #include "chrome/browser/plugins/plugin_infobar_delegates.h"
 #include "chrome/browser/plugins/plugin_installer.h"
 #include "chrome/browser/plugins/plugin_installer_observer.h"
+#include "chrome/browser/plugins/reload_plugin_infobar_delegate.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/tab_modal_confirm_dialog.h"
 #include "chrome/browser/ui/tab_modal_confirm_dialog_delegate.h"
-#include "chrome/common/features.h"
+#include "chrome/common/buildflags.h"
 #include "chrome/common/render_messages.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/component_updater/component_updater_service.h"
 #include "components/content_settings/core/browser/host_content_settings_map.h"
-#include "components/infobars/core/confirm_infobar_delegate.h"
-#include "components/infobars/core/infobar.h"
-#include "components/infobars/core/infobar_delegate.h"
 #include "components/infobars/core/simple_alert_infobar_delegate.h"
 #include "components/metrics_services_manager/metrics_services_manager.h"
 #include "content/public/browser/browser_thread.h"
@@ -48,81 +44,6 @@
 using content::PluginService;
 
 DEFINE_WEB_CONTENTS_USER_DATA_KEY(PluginObserver);
-
-namespace {
-
-// ReloadPluginInfoBarDelegate -------------------------------------------------
-
-class ReloadPluginInfoBarDelegate : public ConfirmInfoBarDelegate {
- public:
-  static void Create(InfoBarService* infobar_service,
-                     content::NavigationController* controller,
-                     const base::string16& message);
-
- private:
-  ReloadPluginInfoBarDelegate(content::NavigationController* controller,
-                              const base::string16& message);
-  ~ReloadPluginInfoBarDelegate() override;
-
-  // ConfirmInfobarDelegate:
-  infobars::InfoBarDelegate::InfoBarIdentifier GetIdentifier() const override;
-  const gfx::VectorIcon& GetVectorIcon() const override;
-  base::string16 GetMessageText() const override;
-  int GetButtons() const override;
-  base::string16 GetButtonLabel(InfoBarButton button) const override;
-  bool Accept() override;
-
-  content::NavigationController* controller_;
-  base::string16 message_;
-};
-
-// static
-void ReloadPluginInfoBarDelegate::Create(
-    InfoBarService* infobar_service,
-    content::NavigationController* controller,
-    const base::string16& message) {
-  infobar_service->AddInfoBar(infobar_service->CreateConfirmInfoBar(
-      std::unique_ptr<ConfirmInfoBarDelegate>(
-          new ReloadPluginInfoBarDelegate(controller, message))));
-}
-
-ReloadPluginInfoBarDelegate::ReloadPluginInfoBarDelegate(
-    content::NavigationController* controller,
-    const base::string16& message)
-    : controller_(controller),
-      message_(message) {}
-
-ReloadPluginInfoBarDelegate::~ReloadPluginInfoBarDelegate() {}
-
-infobars::InfoBarDelegate::InfoBarIdentifier
-ReloadPluginInfoBarDelegate::GetIdentifier() const {
-  return RELOAD_PLUGIN_INFOBAR_DELEGATE;
-}
-
-const gfx::VectorIcon& ReloadPluginInfoBarDelegate::GetVectorIcon() const {
-  return kExtensionCrashedIcon;
-}
-
-base::string16 ReloadPluginInfoBarDelegate::GetMessageText() const {
-  return message_;
-}
-
-int ReloadPluginInfoBarDelegate::GetButtons() const {
-  return BUTTON_OK;
-}
-
-base::string16 ReloadPluginInfoBarDelegate::GetButtonLabel(
-    InfoBarButton button) const {
-  DCHECK_EQ(BUTTON_OK, button);
-  return l10n_util::GetStringUTF16(IDS_RELOAD_PAGE_WITH_PLUGIN);
-}
-
-bool ReloadPluginInfoBarDelegate::Accept() {
-  controller_->Reload(content::ReloadType::NORMAL, true);
-  return true;
-}
-
-}  // namespace
 
 // PluginObserver -------------------------------------------------------------
 
@@ -187,6 +108,7 @@ class PluginObserver::ComponentObserver
         plugin_renderer_interface_->UpdateDownloading();
         break;
       case Events::COMPONENT_NOT_UPDATED:
+      case Events::COMPONENT_UPDATE_ERROR:
         plugin_renderer_interface_->UpdateFailure();
         observer_->RemoveComponentObserver(this);
         break;
@@ -261,6 +183,19 @@ void PluginObserver::PluginCrashed(const base::FilePath& plugin_path,
       infobar_text);
 }
 
+// static
+void PluginObserver::CreatePluginObserverInfoBar(
+    InfoBarService* infobar_service,
+    const base::string16& plugin_name) {
+  SimpleAlertInfoBarDelegate::Create(
+      infobar_service,
+      infobars::InfoBarDelegate::PLUGIN_OBSERVER_INFOBAR_DELEGATE,
+      &kExtensionCrashedIcon,
+      l10n_util::GetStringFUTF16(IDS_PLUGIN_INITIALIZATION_ERROR_PROMPT,
+                                 plugin_name),
+      true);
+}
+
 void PluginObserver::BlockedOutdatedPlugin(
     chrome::mojom::PluginRendererPtr plugin_renderer,
     const std::string& identifier) {
@@ -269,7 +204,7 @@ void PluginObserver::BlockedOutdatedPlugin(
   PluginInstaller* installer = NULL;
   std::unique_ptr<PluginMetadata> plugin;
   if (finder->FindPluginWithIdentifier(identifier, &installer, &plugin)) {
-    auto plugin_placeholder = base::MakeUnique<PluginPlaceholderHost>(
+    auto plugin_placeholder = std::make_unique<PluginPlaceholderHost>(
         this, plugin->name(), installer, std::move(plugin_renderer));
     plugin_placeholders_[plugin_placeholder.get()] =
         std::move(plugin_placeholder);
@@ -285,7 +220,7 @@ void PluginObserver::BlockedOutdatedPlugin(
 void PluginObserver::BlockedComponentUpdatedPlugin(
     chrome::mojom::PluginRendererPtr plugin_renderer,
     const std::string& identifier) {
-  auto component_observer = base::MakeUnique<ComponentObserver>(
+  auto component_observer = std::make_unique<ComponentObserver>(
       this, identifier, std::move(plugin_renderer));
   component_observers_[component_observer.get()] =
       std::move(component_observer);
@@ -315,10 +250,6 @@ void PluginObserver::CouldNotLoadPlugin(const base::FilePath& plugin_path) {
       plugin_path);
   base::string16 plugin_name =
       PluginService::GetInstance()->GetPluginDisplayNameByPath(plugin_path);
-  SimpleAlertInfoBarDelegate::Create(
-      InfoBarService::FromWebContents(web_contents()),
-      infobars::InfoBarDelegate::PLUGIN_OBSERVER, &kExtensionCrashedIcon,
-      l10n_util::GetStringFUTF16(IDS_PLUGIN_INITIALIZATION_ERROR_PROMPT,
-                                 plugin_name),
-      true);
+  CreatePluginObserverInfoBar(InfoBarService::FromWebContents(web_contents()),
+                              plugin_name);
 }

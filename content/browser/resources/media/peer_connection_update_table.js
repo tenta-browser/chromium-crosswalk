@@ -103,9 +103,9 @@ var PeerConnectionUpdateTable = (function() {
           update.type === 'addIceCandidate') {
         // extract ICE candidate type from the field following typ.
         var candidateType = update.value.match(
-          /(?: typ )(host|srflx|relay)/)[1];
+          /(?: typ )(host|srflx|relay)/);
         if (candidateType) {
-          type += ' (' + candidateType + ')';
+          type += ' (' + candidateType[1] + ')';
         }
       }
       row.innerHTML += '<td><details><summary>' + type +
@@ -121,6 +121,14 @@ var PeerConnectionUpdateTable = (function() {
           update.type.indexOf('OnFailure') !== -1 ||
           update.type === 'addIceCandidateFailed') {
         valueContainer.parentElement.classList.add('update-log-failure');
+      }
+      // Highlight legacy streams API usage.
+      if (update.type === 'addStream' || update.type === 'removeStream') {
+        valueContainer.parentElement.classList.add(
+            'update-log-legacy-api-usage');
+        valueContainer.parentElement.title = update.type + ' is no longer ' +
+            'part of the WebRTC API and may be removed in future versions. ' +
+            'Use the addTrack/removeTrack APIs instead.'
       }
 
       var value = update.value;

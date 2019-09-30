@@ -14,8 +14,6 @@
 #include "ui/gfx/animation/animation_delegate.h"
 #include "ui/message_center/message_center_observer.h"
 #include "ui/message_center/notification_list.h"
-#include "ui/message_center/views/message_view_context_menu_controller.h"
-#include "ui/message_center/views/message_view_delegate.h"
 #include "ui/views/focus/focus_manager.h"
 #include "ui/views/view.h"
 
@@ -23,10 +21,13 @@ namespace gfx {
 class SlideAnimation;
 }  // namespace gfx
 
+namespace arc {
+class ArcNotificationContentViewTest;
+}  // namespace arc
+
 namespace message_center {
 
 class MessageCenter;
-class UiController;
 class MessageView;
 
 }  // namespace message_center
@@ -43,14 +44,13 @@ class NotifierSettingsView;
 class ASH_EXPORT MessageCenterView
     : public views::View,
       public message_center::MessageCenterObserver,
-      public message_center::MessageViewDelegate,
       public SessionObserver,
       public MessageListView::Observer,
       public gfx::AnimationDelegate,
-      public views::FocusChangeListener {
+      public views::FocusChangeListener,
+      public views::ViewObserver {
  public:
   MessageCenterView(message_center::MessageCenter* message_center,
-                    message_center::UiController* ui_controller,
                     int max_height,
                     bool initially_settings_visible);
   ~MessageCenterView() override;
@@ -67,22 +67,22 @@ class ASH_EXPORT MessageCenterView
   void SetSettingsVisible(bool visible);
   void OnSettingsChanged();
   bool settings_visible() const { return settings_visible_; }
-  message_center::UiController* ui_controller() { return ui_controller_; }
 
   void SetIsClosing(bool is_closing);
+
+  void SetMaxHeight(int max_height) { max_height_ = max_height; }
 
   // Overridden from views::FocusChangeListener
   void OnWillChangeFocus(views::View* before, views::View* now) override {}
   void OnDidChangeFocus(views::View* before, views::View* now) override;
 
-  // Fallback background color when the device does not support blur.
-  static const SkColor kBackgroundColor;
+  void UpdateScrollerShadowVisibility();
 
   static const size_t kMaxVisibleNotifications;
 
  protected:
   // Potentially sets the reposition target, and then returns whether or not it
-  // was was set.
+  // was set.
   virtual bool SetRepositionTarget();
 
   // Overridden from views::View:
@@ -91,25 +91,12 @@ class ASH_EXPORT MessageCenterView
   int GetHeightForWidth(int width) const override;
   bool OnMouseWheel(const ui::MouseWheelEvent& event) override;
   void OnMouseExited(const ui::MouseEvent& event) override;
-  void GetAccessibleNodeData(ui::AXNodeData* node_data) override;
 
   // Overridden from MessageCenterObserver:
   void OnNotificationAdded(const std::string& id) override;
   void OnNotificationRemoved(const std::string& id, bool by_user) override;
   void OnNotificationUpdated(const std::string& id) override;
   void OnQuietModeChanged(bool is_quiet_mode) override;
-
-  // Overridden from MessageViewDelegate:
-  void ClickOnNotification(const std::string& notification_id) override;
-  void RemoveNotification(const std::string& notification_id,
-                          bool by_user) override;
-  void ClickOnNotificationButton(const std::string& notification_id,
-                                 int button_index) override;
-  void ClickOnNotificationButtonWithReply(const std::string& notification_id,
-                                          int button_index,
-                                          const base::string16& reply) override;
-  void ClickOnSettingsButton(const std::string& notification_id) override;
-  void UpdateNotificationSize(const std::string& notification_id) override;
 
   // Overridden from SessionObserver:
   void OnLockStateChanged(bool locked) override;
@@ -122,7 +109,11 @@ class ASH_EXPORT MessageCenterView
   void AnimationProgressed(const gfx::Animation* animation) override;
   void AnimationCanceled(const gfx::Animation* animation) override;
 
+  // Overridden from views::ViewObserver:
+  void OnViewPreferredSizeChanged(views::View* observed_view) override;
+
  private:
+  friend class arc::ArcNotificationContentViewTest;
   friend class MessageCenterViewTest;
 
   // NOTIFICATIONS: Normal notification list (MessageListView) is shown.
@@ -137,7 +128,6 @@ class ASH_EXPORT MessageCenterView
 
   void AddNotificationAt(const message_center::Notification& notification,
                          int index);
-  base::string16 GetButtonBarTitle() const;
   void Update(bool animate);
   void SetVisibilityMode(Mode mode, bool animate);
   void UpdateButtonBarStatus();
@@ -152,14 +142,18 @@ class ASH_EXPORT MessageCenterView
   // - Only NotifierSettingsView moves.
   // Thus, these two methods are needed.
   int GetSettingsHeightForWidth(int width) const;
-  int GetContentHeightDuringAnimation(int width) const;
+  int GetContentHeightDuringAnimation() const;
+
+  // Returns the height for the given |width| of the view correspond to |mode|
+  // e.g. |settings_view_|.
+  int GetContentHeightForMode(Mode mode, int width) const;
 
   message_center::MessageCenter* message_center_;
-  message_center::UiController* ui_controller_;
 
   // Child views.
   views::ScrollView* scroller_ = nullptr;
   std::unique_ptr<MessageListView> message_list_view_;
+  views::View* scroller_shadow_ = nullptr;
   NotifierSettingsView* settings_view_ = nullptr;
   views::View* no_notifications_view_ = nullptr;
   MessageCenterButtonBar* button_bar_ = nullptr;
@@ -178,6 +172,9 @@ class ASH_EXPORT MessageCenterView
   views::View* target_view_ = nullptr;
   int target_height_ = 0;
 
+  // Maximum height set for the MessageCenterBubble by SetMaxHeight.
+  int max_height_ = 0;
+
   // True when the widget is closing so that further operations should be
   // ignored.
   bool is_closing_ = false;
@@ -187,8 +184,6 @@ class ASH_EXPORT MessageCenterView
 
   // Current view mode. During animation, it is the target mode.
   Mode mode_ = Mode::NO_NOTIFICATIONS;
-
-  message_center::MessageViewContextMenuController context_menu_controller_;
 
   views::FocusManager* focus_manager_ = nullptr;
 

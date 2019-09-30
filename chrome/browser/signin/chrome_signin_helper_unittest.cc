@@ -11,7 +11,7 @@
 #include "base/strings/stringprintf.h"
 #include "components/signin/core/browser/profile_management_switches.h"
 #include "components/signin/core/browser/scoped_account_consistency.h"
-#include "components/signin/core/browser/signin_features.h"
+#include "components/signin/core/browser/signin_buildflags.h"
 #include "content/public/browser/resource_request_info.h"
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "net/http/http_response_headers.h"
@@ -71,7 +71,7 @@ TEST_F(ChromeSigninHelperTest, RemoveDiceSigninHeader) {
   signin::ScopedAccountConsistencyDiceFixAuthErrors scoped_dice_fix_auth_errors;
 
   // Create a response with the Dice header.
-  test_request_delegate_ = base::MakeUnique<net::TestDelegate>();
+  test_request_delegate_ = std::make_unique<net::TestDelegate>();
   request_ = url_request_context_.CreateRequest(kGaiaUrl, net::DEFAULT_PRIORITY,
                                                 test_request_delegate_.get(),
                                                 TRAFFIC_ANNOTATION_FOR_TESTS);
@@ -79,7 +79,7 @@ TEST_F(ChromeSigninHelperTest, RemoveDiceSigninHeader) {
       request_.get(), content::RESOURCE_TYPE_MAIN_FRAME, nullptr, -1, -1, -1,
       true, false, true, content::PREVIEWS_OFF, nullptr);
   net::URLRequestFilter::GetInstance()->AddUrlInterceptor(
-      kGaiaUrl, base::MakeUnique<TestRequestInterceptor>());
+      kGaiaUrl, std::make_unique<TestRequestInterceptor>());
   request_->Start();
   base::RunLoop().RunUntilIdle();
   net::URLRequestFilter::GetInstance()->RemoveUrlHandler(kGaiaUrl);

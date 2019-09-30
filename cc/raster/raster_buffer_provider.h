@@ -11,6 +11,7 @@
 #include "cc/raster/raster_source.h"
 #include "cc/raster/task_graph_runner.h"
 #include "cc/raster/tile_task.h"
+#include "cc/resources/resource_pool.h"
 #include "cc/resources/resource_provider.h"
 #include "components/viz/common/resources/resource_format.h"
 #include "ui/gfx/geometry/rect.h"
@@ -44,15 +45,14 @@ class CC_EXPORT RasterBufferProvider {
 
   // Acquire raster buffer.
   virtual std::unique_ptr<RasterBuffer> AcquireBufferForRaster(
-      const Resource* resource,
+      const ResourcePool::InUsePoolResource& resource,
       uint64_t resource_content_id,
       uint64_t previous_content_id) = 0;
 
-  // Used for syncing resources to the worker context.
-  virtual void OrderingBarrier() = 0;
-
-  // In addition to above, also ensures that pending work is sent to the GPU
-  // process.
+  // Flush pending work from writing the content of the RasterBuffer, so that
+  // queries to tell if the backing is ready to draw from will get the right
+  // answer. This should be done before calling IsResourceReadyToDraw() or
+  // SetReadyToDrawCallback().
   virtual void Flush() = 0;
 
   // Returns the format to use for the tiles.
@@ -62,12 +62,16 @@ class CC_EXPORT RasterBufferProvider {
   // Determine if the resource requires swizzling.
   virtual bool IsResourceSwizzleRequired(bool must_support_alpha) const = 0;
 
+  // Determines if the resource is premultiplied.
+  virtual bool IsResourcePremultiplied(bool must_support_alpha) const = 0;
+
   // Determine if the RasterBufferProvider can handle partial raster into
   // the Resource provided in AcquireBufferForRaster.
   virtual bool CanPartialRasterIntoProvidedResource() const = 0;
 
   // Returns true if the indicated resource is ready to draw.
-  virtual bool IsResourceReadyToDraw(viz::ResourceId id) const = 0;
+  virtual bool IsResourceReadyToDraw(
+      const ResourcePool::InUsePoolResource& resource) const = 0;
 
   // Calls the provided |callback| when the provided |resources| are ready to
   // draw. Returns a callback ID which can be used to track this callback.
@@ -76,7 +80,7 @@ class CC_EXPORT RasterBufferProvider {
   // avoid creating a new callback unnecessarily. If the caller does not
   // have a pending callback, 0 should be passed for |pending_callback_id|.
   virtual uint64_t SetReadyToDrawCallback(
-      const ResourceProvider::ResourceIdArray& resource_ids,
+      const std::vector<const ResourcePool::InUsePoolResource*>& resources,
       const base::Callback<void()>& callback,
       uint64_t pending_callback_id) const = 0;
 

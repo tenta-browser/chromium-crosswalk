@@ -6,9 +6,9 @@
 #define NET_QUIC_CORE_CRYPTO_CRYPTO_PROTOCOL_H_
 
 #include <cstddef>
-#include <string>
 
 #include "net/quic/core/quic_tag.h"
+#include "net/quic/platform/api/quic_string.h"
 
 // Version and Crypto tags are written to the wire with a big-endian
 // representation of the name of the tag.  For example
@@ -24,7 +24,7 @@
 
 namespace net {
 
-typedef std::string ServerConfigID;
+typedef QuicString ServerConfigID;
 
 // clang-format off
 const QuicTag kCHLO = TAG('C', 'H', 'L', 'O');   // Client hello
@@ -113,6 +113,7 @@ const QuicTag kIW20 = TAG('I', 'W', '2', '0');   // Force ICWND to 20
 const QuicTag kIW50 = TAG('I', 'W', '5', '0');   // Force ICWND to 50
 const QuicTag k1CON = TAG('1', 'C', 'O', 'N');   // Emulate a single connection
 const QuicTag kNTLP = TAG('N', 'T', 'L', 'P');   // No tail loss probe
+const QuicTag k1TLP = TAG('1', 'T', 'L', 'P');   // 1 tail loss probe
 const QuicTag kNCON = TAG('N', 'C', 'O', 'N');   // N Connection Congestion Ctrl
 const QuicTag kNRTO = TAG('N', 'R', 'T', 'O');   // CWND reduction on loss
 const QuicTag kTIME = TAG('T', 'I', 'M', 'E');   // Time based loss detection
@@ -122,6 +123,12 @@ const QuicTag kMIN4 = TAG('M', 'I', 'N', '4');   // Min CWND of 4 packets,
                                                  // with a min rate of 1 BDP.
 const QuicTag kTLPR = TAG('T', 'L', 'P', 'R');   // Tail loss probe delay of
                                                  // 0.5RTT.
+const QuicTag kMAD0 = TAG('M', 'A', 'D', '0');   // Ignore ack delay
+const QuicTag kMAD1 = TAG('M', 'A', 'D', '1');   // 25ms initial max ack delay
+const QuicTag kMAD2 = TAG('M', 'A', 'D', '2');   // No min TLP
+const QuicTag kMAD3 = TAG('M', 'A', 'D', '3');   // No min RTO
+const QuicTag kMAD4 = TAG('M', 'A', 'D', '4');   // IETF style TLP
+const QuicTag kMAD5 = TAG('M', 'A', 'D', '5');   // IETF style TLP with 2x mult
 const QuicTag kACKD = TAG('A', 'C', 'K', 'D');   // Ack decimation style acking.
 const QuicTag kAKD2 = TAG('A', 'K', 'D', '2');   // Ack decimation tolerating
                                                  // out of order packets.
@@ -146,10 +153,6 @@ const QuicTag kLFAK = TAG('L', 'F', 'A', 'K');   // Don't invoke FACK on the
 // MAX_HEADER_LIST_SIZE settings frame should be supported.
 const QuicTag kSMHL = TAG('S', 'M', 'H', 'L');   // Support MAX_HEADER_LIST_SIZE
                                                  // settings frame.
-const QuicTag kCCVX = TAG('C', 'C', 'V', 'X');   // Fix Cubic convex bug.
-const QuicTag kCBQT = TAG('C', 'B', 'Q', 'T');   // Fix CubicBytes quantization.
-const QuicTag kBLMX = TAG('B', 'L', 'M', 'X');   // Fix Cubic BetaLastMax bug.
-const QuicTag kCPAU = TAG('C', 'P', 'A', 'U');   // Allow Cubic per-ack-updates.
 const QuicTag kNSTP = TAG('N', 'S', 'T', 'P');   // No stop waiting frames.
 
 // Optional support of truncated Connection IDs.  If sent by a peer, the value

@@ -27,8 +27,7 @@ class FakeMessageCenter : public MessageCenter {
   size_t NotificationCount() const override;
   bool HasPopupNotifications() const override;
   bool IsQuietMode() const override;
-  message_center::Notification* FindVisibleNotificationById(
-      const std::string& id) override;
+  Notification* FindVisibleNotificationById(const std::string& id) override;
   const NotificationList::Notifications& GetVisibleNotifications() override;
   NotificationList::PopupNotifications GetPopupNotifications() override;
   void AddNotification(std::unique_ptr<Notification> notification) override;
@@ -55,6 +54,7 @@ class FakeMessageCenter : public MessageCenter {
                                           int button_index,
                                           const base::string16& reply) override;
   void ClickOnSettingsButton(const std::string& id) override;
+  void DisableNotification(const std::string& id) override;
   void MarkSinglePopupAsShown(const std::string& id,
                               bool mark_notification_as_read) override;
   void DisplayedNotification(const std::string& id,
@@ -65,8 +65,8 @@ class FakeMessageCenter : public MessageCenter {
   bool IsMessageCenterVisible() const override;
   void RestartPopupTimers() override;
   void PausePopupTimers() override;
-  const base::string16& GetProductOSName() const override;
-  void SetProductOSName(const base::string16& product_os_name) override;
+  const base::string16& GetSystemNotificationAppName() const override;
+  void SetSystemNotificationAppName(const base::string16& name) override;
 
  protected:
   void DisableTimersForTest() override;

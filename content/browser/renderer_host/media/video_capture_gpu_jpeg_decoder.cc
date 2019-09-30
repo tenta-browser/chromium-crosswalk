@@ -4,6 +4,7 @@
 
 #include "content/browser/renderer_host/media/video_capture_gpu_jpeg_decoder.h"
 
+#include <memory>
 #include <utility>
 
 #include "base/bind.h"
@@ -51,8 +52,8 @@ VideoCaptureGpuJpegDecoder::~VideoCaptureGpuJpegDecoder() {
     // is signaled.
     BrowserThread::PostTask(
         BrowserThread::IO, FROM_HERE,
-        base::Bind(&VideoCaptureGpuJpegDecoder::DestroyDecoderOnIOThread,
-                   base::Unretained(this), &event));
+        base::BindOnce(&VideoCaptureGpuJpegDecoder::DestroyDecoderOnIOThread,
+                       base::Unretained(this), &event));
     event.Wait();
   }
 }
@@ -78,10 +79,10 @@ void VideoCaptureGpuJpegDecoder::Initialize() {
     return;
   }
 
-  BrowserThread::PostTask(
-      BrowserThread::IO, FROM_HERE,
-      base::Bind(&RequestGPUInfoOnIOThread, base::ThreadTaskRunnerHandle::Get(),
-                 weak_ptr_factory_.GetWeakPtr()));
+  BrowserThread::PostTask(BrowserThread::IO, FROM_HERE,
+                          base::BindOnce(&RequestGPUInfoOnIOThread,
+                                         base::ThreadTaskRunnerHandle::Get(),
+                                         weak_ptr_factory_.GetWeakPtr()));
 }
 
 VideoCaptureGpuJpegDecoder::STATUS VideoCaptureGpuJpegDecoder::GetStatus()
@@ -164,7 +165,7 @@ void VideoCaptureGpuJpegDecoder::DecodeCapturedData(
   // ensure the data pointers remain valid.
   out_frame->AddDestructionObserver(base::BindOnce(
       [](std::unique_ptr<media::VideoCaptureBufferHandle> handle) {},
-      base::Passed(&out_buffer_access)));
+      std::move(out_buffer_access)));
   out_frame->metadata()->SetDouble(media::VideoFrameMetadata::FRAME_RATE,
                                    frame_format.frame_rate);
 
@@ -175,10 +176,10 @@ void VideoCaptureGpuJpegDecoder::DecodeCapturedData(
       media::mojom::VideoFrameInfo::New();
   out_frame_info->timestamp = timestamp;
   out_frame_info->pixel_format = media::PIXEL_FORMAT_I420;
-  out_frame_info->storage_type = media::PIXEL_STORAGE_CPU;
+  out_frame_info->storage_type = media::VideoPixelStorage::CPU;
   out_frame_info->coded_size = dimensions;
   out_frame_info->visible_rect = gfx::Rect(dimensions);
-  out_frame_info->metadata = out_frame->metadata()->CopyInternalValues();
+  out_frame_info->metadata = out_frame->metadata()->GetInternalValues().Clone();
 
   {
     base::AutoLock lock(lock_);
@@ -190,9 +191,9 @@ void VideoCaptureGpuJpegDecoder::DecodeCapturedData(
 
   // base::Unretained is safe because |decoder_| is deleted on the IO thread.
   BrowserThread::PostTask(BrowserThread::IO, FROM_HERE,
-                          base::Bind(&media::JpegDecodeAccelerator::Decode,
-                                     base::Unretained(decoder_.get()),
-                                     in_buffer, std::move(out_frame)));
+                          base::BindOnce(&media::JpegDecodeAccelerator::Decode,
+                                         base::Unretained(decoder_.get()),
+                                         in_buffer, std::move(out_frame)));
 }
 
 void VideoCaptureGpuJpegDecoder::VideoFrameReady(int32_t bitstream_buffer_id) {
@@ -273,8 +274,8 @@ void VideoCaptureGpuJpegDecoder::DidReceiveGPUInfoOnIOThread(
 
   task_runner->PostTask(
       FROM_HERE,
-      base::Bind(&VideoCaptureGpuJpegDecoder::FinishInitialization, weak_this,
-                 base::Passed(remote_decoder.PassInterface())));
+      base::BindOnce(&VideoCaptureGpuJpegDecoder::FinishInitialization,
+                     weak_this, remote_decoder.PassInterface()));
 }
 
 void VideoCaptureGpuJpegDecoder::FinishInitialization(
@@ -284,18 +285,18 @@ void VideoCaptureGpuJpegDecoder::FinishInitialization(
 
   if (unbound_remote_decoder.is_valid()) {
     base::AutoLock lock(lock_);
-    decoder_ = base::MakeUnique<media::MojoJpegDecodeAccelerator>(
+    decoder_ = std::make_unique<media::MojoJpegDecodeAccelerator>(
         BrowserThread::GetTaskRunnerForThread(BrowserThread::IO),
         std::move(unbound_remote_decoder));
 
     // base::Unretained is safe because |decoder_| is deleted on the IO thread.
     BrowserThread::PostTask(
         BrowserThread::IO, FROM_HERE,
-        base::Bind(&media::JpegDecodeAccelerator::InitializeAsync,
-                   base::Unretained(decoder_.get()), this,
-                   media::BindToCurrentLoop(base::Bind(
-                       &VideoCaptureGpuJpegDecoder::OnInitializationDone,
-                       weak_ptr_factory_.GetWeakPtr()))));
+        base::BindOnce(&media::JpegDecodeAccelerator::InitializeAsync,
+                       base::Unretained(decoder_.get()), this,
+                       media::BindToCurrentLoop(base::Bind(
+                           &VideoCaptureGpuJpegDecoder::OnInitializationDone,
+                           weak_ptr_factory_.GetWeakPtr()))));
   } else {
     OnInitializationDone(false);
   }

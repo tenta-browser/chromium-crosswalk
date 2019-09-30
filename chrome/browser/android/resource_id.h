@@ -21,11 +21,14 @@ LINK_RESOURCE_ID(0, 0)
 LINK_RESOURCE_ID(IDR_INFOBAR_3D_BLOCKED, R.drawable.infobar_3d_blocked)
 LINK_RESOURCE_ID(IDR_INFOBAR_AUTOFILL_CC, R.drawable.infobar_autofill_cc)
 LINK_RESOURCE_ID(IDR_INFOBAR_TRANSLATE, R.drawable.infobar_translate)
-LINK_RESOURCE_ID(IDR_BLOCKED_POPUPS, R.drawable.infobar_blocked_popups)
 
 // Android only infobars.
 DECLARE_RESOURCE_ID(IDR_ANDROID_INFOBAR_ACCESSIBILITY_EVENTS,
                     R.drawable.infobar_accessibility_events)
+DECLARE_RESOURCE_ID(IDR_ANDROID_INFOBAR_BLOCKED_POPUPS,
+                    R.drawable.infobar_blocked_popups)
+DECLARE_RESOURCE_ID(IDR_ANDROID_INFOBAR_CLIPBOARD,
+                    R.drawable.infobar_clipboard)
 DECLARE_RESOURCE_ID(IDR_ANDROID_INFOBAR_FOLDER, R.drawable.ic_folder_blue_24dp)
 DECLARE_RESOURCE_ID(IDR_ANDROID_INFOBAR_FROZEN_TAB, R.drawable.infobar_restore)
 DECLARE_RESOURCE_ID(IDR_ANDROID_INFOBAR_GEOLOCATION,
@@ -47,11 +50,9 @@ DECLARE_RESOURCE_ID(IDR_ANDROID_INFOBAR_PROTECTED_MEDIA_IDENTIFIER,
                     R.drawable.infobar_protected_media_identifier)
 DECLARE_RESOURCE_ID(IDR_ANDROID_INFOBAR_SAVE_PASSWORD,
                     R.drawable.infobar_savepassword)
-DECLARE_RESOURCE_ID(IDR_ANDROID_INFOBAR_SUBRESOURCE_FILTERING,
-                    R.drawable.infobar_chrome)
 DECLARE_RESOURCE_ID(IDR_ANDROID_INFOBAR_WARNING, R.drawable.infobar_warning)
-DECLARE_RESOURCE_ID(IDR_ANDROID_INFOBAR_FRAMEBUST,
-                    R.drawable.infobar_redirect_blocked)
+DECLARE_RESOURCE_ID(IDR_AUTOFILL_GOOGLE_PAY_WITH_DIVIDER,
+                    R.drawable.google_pay_with_divider)
 
 // PageInfoUI images, used in ConnectionInfoPopup
 // Good:
@@ -85,6 +86,7 @@ LINK_RESOURCE_ID(IDR_AUTOFILL_CC_MIR, R.drawable.mir_card)
 LINK_RESOURCE_ID(IDR_AUTOFILL_CC_UNIONPAY, R.drawable.unionpay_card)
 LINK_RESOURCE_ID(IDR_AUTOFILL_CC_VISA, R.drawable.visa_card)
 LINK_RESOURCE_ID(IDR_AUTOFILL_CC_SCAN_NEW, R.drawable.ic_photo_camera_black)
+LINK_RESOURCE_ID(IDR_AUTOFILL_GOOGLE_PAY, R.drawable.google_pay)
 LINK_RESOURCE_ID(IDR_AUTOFILL_HTTP_WARNING, R.drawable.ic_info_outline_grey)
 LINK_RESOURCE_ID(IDR_AUTOFILL_HTTPS_INVALID_WARNING, R.drawable.ic_warning_red)
 

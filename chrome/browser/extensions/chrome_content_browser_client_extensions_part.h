@@ -35,6 +35,8 @@ class ChromeContentBrowserClientExtensionsPart
   static GURL GetEffectiveURL(Profile* profile, const GURL& url);
   static bool ShouldUseProcessPerSite(Profile* profile,
                                       const GURL& effective_url);
+  static bool ShouldUseSpareRenderProcessHost(Profile* profile,
+                                              const GURL& site_url);
   static bool DoesSiteRequireDedicatedProcess(
       content::BrowserContext* browser_context,
       const GURL& effective_site_url);
@@ -50,10 +52,6 @@ class ChromeContentBrowserClientExtensionsPart
                                                 const GURL& url);
   static bool ShouldSwapBrowsingInstancesForNavigation(
       content::SiteInstance* site_instance,
-      const GURL& current_url,
-      const GURL& new_url);
-  static bool ShouldSwapProcessesForRedirect(
-      content::BrowserContext* browser_context,
       const GURL& current_url,
       const GURL& new_url);
   static bool AllowServiceWorker(const GURL& scope,

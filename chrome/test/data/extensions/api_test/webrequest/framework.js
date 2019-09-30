@@ -8,12 +8,12 @@ var expectedEventData;
 var capturedEventData;
 var capturedUnexpectedData;
 var expectedEventOrder;
+var networkServiceState = "unknown";
 var tabId;
 var tabIdMap;
 var frameIdMap;
 var testWebSocketPort;
 var testServerPort;
-var usingBrowserSideNavigation = false;
 var testServer = "www.a.com";
 var defaultScheme = "http";
 var eventsCaptured;
@@ -53,21 +53,28 @@ function runTestsForTab(tests, tab) {
   chrome.test.getConfig(function(config) {
     testServerPort = config.testServer.port;
     testWebSocketPort = config.testWebSocketPort;
-    usingBrowserSideNavigation = config.browserSideNavigationEnabled;
     chrome.test.runTests(tests);
   });
 }
 
 // Creates an "about:blank" tab and runs |tests| with this tab as default.
 function runTests(tests) {
-  var waitForAboutBlank = function(_, info, tab) {
-    if (info.status == "complete" && tab.url == "about:blank") {
-      chrome.tabs.onUpdated.removeListener(waitForAboutBlank);
-      runTestsForTab(tests, tab);
-    }
-  };
-  chrome.tabs.onUpdated.addListener(waitForAboutBlank);
-  chrome.tabs.create({url: "about:blank"});
+  chrome.test.getConfig(function(config) {
+    var waitForAboutBlank = function(_, info, tab) {
+      if (info.status == "complete" && tab.url == "about:blank") {
+        chrome.tabs.onUpdated.removeListener(waitForAboutBlank);
+        runTestsForTab(tests, tab);
+      }
+    };
+
+    if (config.customArg === "NetworkServiceEnabled")
+      networkServiceState = "enabled";
+    else if (config.customArg === "NetworkServiceDisabled")
+      networkServiceState = "disabled";
+
+    chrome.tabs.onUpdated.addListener(waitForAboutBlank);
+    chrome.tabs.create({url: "about:blank"});
+  });
 }
 
 // Returns an URL from the test server, fixing up the port. Must be called
@@ -89,27 +96,23 @@ function validateNavigationType(navigationType) {
     throw new Error("Unknown navigation type.");
 }
 
-// Similar to getURL without the path. If tests are run with
-// --enable-browser-side-navigation (PlzNavigate) browser initiated navigation
-// will have no initiator. The |navigationType| specifies if the navigation was
-// performed by the browser or the renderer.
+// Similar to getURL without the path. The |navigationType| specifies if the
+// navigation was performed by the browser or the renderer. A browser initiated
+// navigation doesn't have an initiator.
 function getDomain(navigationType) {
   validateNavigationType(navigationType);
-  if (navigationType == initiators.BROWSER_INITIATED &&
-      usingBrowserSideNavigation)
+  if (navigationType == initiators.BROWSER_INITIATED)
     return undefined;
   else
     return getURL('').slice(0,-1);
 }
 
-// Similar to getServerURL without the path. If tests are run with
-// --enable-browser-side-navigation (PlzNavigate) browser initiated navigation
-// will have no initiator. The |navigationType| specifies if the navigation was
-// performed by the browser or the renderer.
+// Similar to getServerURL without the path. The |navigationType| specifies if
+// the navigation was performed by the browser or the renderer. A browser
+// initiated navigation doesn't have an initiator.
 function getServerDomain(navigationType, opt_host, opt_scheme) {
   validateNavigationType(navigationType);
-  if (navigationType == initiators.BROWSER_INITIATED &&
-      usingBrowserSideNavigation)
+  if (navigationType == initiators.BROWSER_INITIATED)
     return undefined;
   else
     return getServerURL(undefined, opt_host, opt_scheme).slice(0, -1);
@@ -146,6 +149,24 @@ function expect(data, order, filter, extraInfoSpec) {
   capturedEventData = [];
   capturedUnexpectedData = [];
   expectedEventOrder = order || [];
+
+  expectedEventData = expectedEventData.filter(function(event) {
+    if (!event.details.requiredNetworkServiceState)
+      return true;
+
+    if (networkServiceState == "unknown") {
+      chrome.test.fail("Test expectations specify a Network Service " +
+          "requirement, but the Network Service was neither explicitly set " +
+          "as enabled or disabled by the test runner. This test should be " +
+          "run with the custom argument NetworkServiceEnabled or " +
+          "NetworkServiceDisabled.");
+    }
+
+    var requiredState = event.details.requiredNetworkServiceState;
+    delete event.details.requiredNetworkServiceState;
+    return networkServiceState === requiredState;
+  });
+
   if (expectedEventData.length > 0) {
     eventsCaptured = chrome.test.callbackAdded();
   }

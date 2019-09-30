@@ -9,7 +9,6 @@
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/callback.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/string_util.h"
 #include "components/onc/onc_constants.h"
 #include "extensions/browser/api/extensions_api_client.h"
@@ -606,17 +605,6 @@ void NetworkingPrivateStartConnectFunction::Success() {
 
 void NetworkingPrivateStartConnectFunction::Failure(const std::string& guid,
                                                     const std::string& error) {
-  // TODO(stevenjb): Temporary workaround to show the configuration UI.
-  // Eventually the caller (e.g. Settings) should handle any failures and
-  // show its own configuration UI. crbug.com/380937.
-  if (source_context_type() == Feature::WEBUI_CONTEXT) {
-    const NetworkingPrivateDelegate::UIDelegate* ui_delegate =
-        GetDelegate(browser_context())->ui_delegate();
-    if (ui_delegate && ui_delegate->HandleConnectFailed(guid, error)) {
-      Success();
-      return;
-    }
-  }
   Respond(Error(error));
 }
 

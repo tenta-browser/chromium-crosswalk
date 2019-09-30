@@ -1,6 +1,7 @@
 <html>
     <head>
         <script src=media-file.js></script>
+        <script src="media-controls.js"></script>
         <script>
             function toggleDisplay()
             {
@@ -16,8 +17,9 @@
             {
                 if (window.testRunner)
                     testRunner.waitUntilDone();
-                setSrcById('vid', findMediaFile('video', 'content/test'));
+                setSrcById('vid', 'content/test.ogv');
                 var video = document.getElementById('vid');
+                enableTestMode(video);
                 video.addEventListener("canplaythrough", test2);
                 video.load();
             }

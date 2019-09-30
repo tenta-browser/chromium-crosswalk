@@ -13,6 +13,7 @@
 #import "ios/third_party/material_components_ios/src/components/Buttons/src/MaterialButtons.h"
 #import "ios/third_party/material_components_ios/src/components/NavigationBar/src/MaterialNavigationBar.h"
 #import "ios/third_party/material_components_ios/src/components/Snackbar/src/MaterialSnackbar.h"
+#import "remoting/ios/app/help_and_feedback.h"
 #import "remoting/ios/app/host_view_controller.h"
 #import "remoting/ios/app/pin_entry_view.h"
 #import "remoting/ios/app/remoting_theme.h"
@@ -42,9 +43,10 @@ static const CGFloat kReconnectViewHeight = 90.f;
 static const CGFloat kPadding = 20.f;
 static const CGFloat kMargin = 20.f;
 
-static const CGFloat kBarHeight = 58.f;
-
 static const CGFloat kKeyboardAnimationTime = 0.3;
+
+static NSString* const kConnectionErrorFeedbackContext =
+    @"ConnectionErrorFeedbackContext";
 
 @interface ClientConnectionViewController ()<PinEntryDelegate,
                                              SessionReconnectViewDelegate> {
@@ -104,13 +106,13 @@ static const CGFloat kKeyboardAnimationTime = 0.3;
     _navBar.translatesAutoresizingMaskIntoConstraints = NO;
 
     // Attach navBar to the top of the view.
+    UILayoutGuide* layoutGuide =
+        remoting::SafeAreaLayoutGuideForView(self.view);
     [NSLayoutConstraint activateConstraints:@[
-      [[_navBar topAnchor] constraintEqualToAnchor:[self.view topAnchor]],
-      [[_navBar leadingAnchor]
-          constraintEqualToAnchor:[self.view leadingAnchor]],
-      [[_navBar trailingAnchor]
-          constraintEqualToAnchor:[self.view trailingAnchor]],
-      [[_navBar heightAnchor] constraintEqualToConstant:kBarHeight],
+      [_navBar.topAnchor constraintEqualToAnchor:layoutGuide.topAnchor],
+      [_navBar.leadingAnchor constraintEqualToAnchor:layoutGuide.leadingAnchor],
+      [_navBar.trailingAnchor
+          constraintEqualToAnchor:layoutGuide.trailingAnchor],
     ]];
   }
   return self;
@@ -384,6 +386,15 @@ static const CGFloat kKeyboardAnimationTime = 0.3;
   [self attemptConnectionToHost];
 }
 
+- (void)didTapReport {
+  [_client createFeedbackDataWithCallback:^(
+               const remoting::FeedbackData& feedbackData) {
+    [HelpAndFeedback.instance
+        presentFeedbackFlowWithContext:kConnectionErrorFeedbackContext
+                          feedbackData:feedbackData];
+  }];
+}
+
 #pragma mark - Private
 
 - (void)attemptConnectionToHost {
@@ -557,6 +568,9 @@ static const CGFloat kKeyboardAnimationTime = 0.3;
     case SessionErrorOAuthTokenInvalid:
       message = l10n_util::GetNSString(IDS_ERROR_OAUTH_TOKEN_INVALID);
       break;
+    case SessionErrorThirdPartyAuthNotSupported:
+      message = l10n_util::GetNSString(IDS_THIRD_PARTY_AUTH_NOT_SUPPORTED);
+      break;
   }
   if (message) {
     _reconnectView.errorText = message;
@@ -613,9 +627,6 @@ static const CGFloat kKeyboardAnimationTime = 0.3;
           showMessage:[MDCSnackbarMessage
                           messageWithText:l10n_util::GetNSString(
                                               IDS_MESSAGE_SESSION_FINISHED)]];
-      break;
-    case SessionCancelled:
-      state = ClientViewClosed;
       break;
     default:
       LOG(ERROR) << "Unknown State for Session, " << sessionDetails.state;

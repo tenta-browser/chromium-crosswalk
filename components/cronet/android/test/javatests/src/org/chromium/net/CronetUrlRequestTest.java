@@ -16,6 +16,7 @@ import static org.chromium.net.CronetTestRule.getContext;
 
 import android.os.Build;
 import android.os.ConditionVariable;
+import android.os.Process;
 import android.os.StrictMode;
 import android.support.test.filters.SmallTest;
 
@@ -175,9 +176,8 @@ public class CronetUrlRequestTest {
             headersList.add(new AbstractMap.SimpleImmutableEntry<String, String>(
                     headers[i], headers[i + 1]));
         }
-        UrlResponseInfoImpl unknown = new UrlResponseInfoImpl(
-                Arrays.asList(urls), statusCode, message, headersList, false, "unknown", ":0");
-        unknown.setReceivedByteCount(receivedBytes);
+        UrlResponseInfoImpl unknown = new UrlResponseInfoImpl(Arrays.asList(urls), statusCode,
+                message, headersList, false, "unknown", ":0", receivedBytes);
         return unknown;
     }
 
@@ -210,6 +210,7 @@ public class CronetUrlRequestTest {
     /**
      * Tests that disabling connection migration sets the URLRequest load flag correctly.
      */
+    @DisabledTest(message = "crbug.com/830707")
     @Test
     @SmallTest
     @Feature({"Cronet"})
@@ -2262,5 +2263,56 @@ public class CronetUrlRequestTest {
                 NativeTestServer.getFileURL("/notfound.html"), callback, callback.getExecutor());
         builder.setHttpMethod("HEAD").build().start();
         callback.blockForDone();
+    }
+
+    @Test
+    @SmallTest
+    @Feature({"Cronet"})
+    @RequiresMinApi(9) // Tagging support added in API level 9: crrev.com/c/chromium/src/+/930086
+    public void testTagging() throws Exception {
+        String url = NativeTestServer.getEchoMethodURL();
+
+        // Test untagged requests are given tag 0.
+        int tag = 0;
+        long priorBytes = CronetTestUtil.nativeGetTaggedBytes(tag);
+        TestUrlRequestCallback callback = new TestUrlRequestCallback();
+        ExperimentalUrlRequest.Builder builder = mTestFramework.mCronetEngine.newUrlRequestBuilder(
+                url, callback, callback.getExecutor());
+        builder.build().start();
+        callback.blockForDone();
+        assertTrue(CronetTestUtil.nativeGetTaggedBytes(tag) > priorBytes);
+
+        // Test explicit tagging.
+        tag = 0x12345678;
+        priorBytes = CronetTestUtil.nativeGetTaggedBytes(tag);
+        callback = new TestUrlRequestCallback();
+        builder = mTestFramework.mCronetEngine.newUrlRequestBuilder(
+                url, callback, callback.getExecutor());
+        assertEquals(builder.setTrafficStatsTag(tag), builder);
+        builder.build().start();
+        callback.blockForDone();
+        assertTrue(CronetTestUtil.nativeGetTaggedBytes(tag) > priorBytes);
+
+        // Test a different tag value to make sure reused connections are retagged.
+        tag = 0x87654321;
+        priorBytes = CronetTestUtil.nativeGetTaggedBytes(tag);
+        callback = new TestUrlRequestCallback();
+        builder = mTestFramework.mCronetEngine.newUrlRequestBuilder(
+                url, callback, callback.getExecutor());
+        assertEquals(builder.setTrafficStatsTag(tag), builder);
+        builder.build().start();
+        callback.blockForDone();
+        assertTrue(CronetTestUtil.nativeGetTaggedBytes(tag) > priorBytes);
+
+        // Test tagging with our UID.
+        tag = 0;
+        priorBytes = CronetTestUtil.nativeGetTaggedBytes(tag);
+        callback = new TestUrlRequestCallback();
+        builder = mTestFramework.mCronetEngine.newUrlRequestBuilder(
+                url, callback, callback.getExecutor());
+        assertEquals(builder.setTrafficStatsUid(Process.myUid()), builder);
+        builder.build().start();
+        callback.blockForDone();
+        assertTrue(CronetTestUtil.nativeGetTaggedBytes(tag) > priorBytes);
     }
 }

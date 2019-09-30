@@ -13,6 +13,7 @@ import logging
 import os
 import sys
 import time
+import urlparse
 
 from pylib.constants import host_paths
 from pylib.utils import decorators
@@ -29,7 +30,8 @@ _AUTHENTICATED_URL = 'https://storage.cloud.google.com/%s/'
 
 
 @decorators.NoRaiseException(default_return_value='')
-def upload(name, filepath, bucket, content_type=None, authenticated_link=True):
+def upload(name, filepath, bucket, gs_args=None, command_args=None,
+           content_type=None, authenticated_link=True):
   """Uploads data to Google Storage.
 
   Args:
@@ -51,13 +53,23 @@ def upload(name, filepath, bucket, content_type=None, authenticated_link=True):
   logging.info('Uploading %s to %s', filepath, gs_path)
 
   cmd = [_GSUTIL_PATH, '-q']
+  cmd.extend(gs_args or [])
   if content_type:
     cmd.extend(['-h', 'Content-Type:%s' % content_type])
-  cmd.extend(['cp', filepath, gs_path])
+  cmd.extend(['cp'] + (command_args or []) + [filepath, gs_path])
 
   cmd_helper.RunCmd(cmd)
 
   return get_url_link(name, bucket, authenticated_link)
+
+
+@decorators.NoRaiseException(default_return_value='')
+def read_from_link(link):
+  # Note that urlparse returns the path with an initial '/', so we only need to
+  # add one more after the 'gs;'
+  gs_path = 'gs:/%s' % urlparse.urlparse(link).path
+  cmd = [_GSUTIL_PATH, '-q', 'cat', gs_path]
+  return cmd_helper.GetCmdOutput(cmd)
 
 
 @decorators.NoRaiseException(default_return_value=False)

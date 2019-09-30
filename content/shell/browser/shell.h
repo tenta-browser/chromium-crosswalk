@@ -62,7 +62,9 @@ class Shell : public WebContentsDelegate,
   ~Shell() override;
 
   void LoadURL(const GURL& url);
-  void LoadURLForFrame(const GURL& url, const std::string& frame_name);
+  void LoadURLForFrame(const GURL& url,
+                       const std::string& frame_name,
+                       ui::PageTransition);
   void LoadDataWithBaseURL(const GURL& url,
                            const std::string& data,
                            const GURL& base_url);
@@ -82,7 +84,7 @@ class Shell : public WebContentsDelegate,
   void ShowDevTools();
   void CloseDevTools();
   bool hide_toolbar() { return hide_toolbar_; }
-#if defined(OS_MACOSX)
+#if defined(OS_MACOSX) || defined(OS_ANDROID)
   // Resizes the web content view to the given dimensions.
   void SizeTo(const gfx::Size& content_size);
 #endif
@@ -162,9 +164,8 @@ class Shell : public WebContentsDelegate,
                               const base::string16& message,
                               int32_t line_no,
                               const base::string16& source_id) override;
-  void RendererUnresponsive(
-      WebContents* source,
-      const WebContentsUnresponsiveState& unresponsive_state) override;
+  void RendererUnresponsive(WebContents* source,
+                            RenderWidgetHost* render_widget_host) override;
   void ActivateContents(WebContents* contents) override;
   bool ShouldAllowRunningInsecureContent(content::WebContents* web_contents,
                                          bool allowed_per_prefs,

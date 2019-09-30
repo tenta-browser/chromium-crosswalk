@@ -85,7 +85,7 @@ LogoTracker::LogoTracker(
     scoped_refptr<net::URLRequestContextGetter> request_context_getter,
     std::unique_ptr<LogoDelegate> delegate,
     std::unique_ptr<LogoCache> logo_cache,
-    std::unique_ptr<base::Clock> clock)
+    base::Clock* clock)
     : is_idle_(true),
       is_cached_logo_valid_(false),
       logo_delegate_(std::move(delegate)),
@@ -94,7 +94,7 @@ LogoTracker::LogoTracker(
            base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN})),
       logo_cache_(logo_cache.release(),
                   base::OnTaskRunnerDeleter(cache_task_runner_)),
-      clock_(std::move(clock)),
+      clock_(clock),
       request_context_getter_(request_context_getter),
       weak_ptr_factory_(this) {}
 
@@ -154,6 +154,13 @@ void LogoTracker::GetLogo(LogoCallbacks callbacks) {
                    LogoCallbackReason::DETERMINED, cached_encoded_logo_.get(),
                    cached_logo_.get());
   }
+}
+
+void LogoTracker::ClearCachedLogo() {
+  // First cancel any fetch that might be ongoing.
+  ReturnToIdle(kDownloadOutcomeNotTracked);
+  // Then clear any cached logo.
+  SetCachedLogo(nullptr);
 }
 
 void LogoTracker::ReturnToIdle(int outcome) {
@@ -442,11 +449,11 @@ void LogoTracker::OnURLFetchComplete(const net::URLFetcher* source) {
       FROM_HERE,
       {base::MayBlock(), base::TaskPriority::USER_VISIBLE,
        base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN},
-      base::Bind(parse_logo_response_func_, base::Passed(&response),
-                 response_time, parsing_failed),
-      base::Bind(&LogoTracker::OnFreshLogoParsed,
-                 weak_ptr_factory_.GetWeakPtr(), base::Owned(parsing_failed),
-                 from_http_cache));
+      base::BindOnce(parse_logo_response_func_, std::move(response),
+                     response_time, parsing_failed),
+      base::BindOnce(&LogoTracker::OnFreshLogoParsed,
+                     weak_ptr_factory_.GetWeakPtr(),
+                     base::Owned(parsing_failed), from_http_cache));
 }
 
 void LogoTracker::OnURLFetchDownloadProgress(const net::URLFetcher* source,

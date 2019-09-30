@@ -4,6 +4,8 @@
 
 #include "media/video/mock_gpu_video_accelerator_factories.h"
 
+#include <memory>
+
 #include "base/memory/ptr_util.h"
 #include "ui/gfx/buffer_format_util.h"
 #include "ui/gfx/gpu_memory_buffer.h"
@@ -25,7 +27,9 @@ class GpuMemoryBufferImpl : public gfx::GpuMemoryBuffer {
     DCHECK(gfx::BufferFormat::R_8 == format_ ||
            gfx::BufferFormat::RG_88 == format_ ||
            gfx::BufferFormat::YUV_420_BIPLANAR == format_ ||
-           gfx::BufferFormat::UYVY_422 == format_);
+           gfx::BufferFormat::UYVY_422 == format_ ||
+           gfx::BufferFormat::BGRX_1010102 == format_ ||
+           gfx::BufferFormat::RGBX_1010102 == format_);
     DCHECK(num_planes_ <= kMaxPlanes);
     for (int i = 0; i < static_cast<int>(num_planes_); ++i) {
       bytes_[i].resize(gfx::RowSizeForBufferFormat(size_.width(), format_, i) *
@@ -95,7 +99,7 @@ MockGpuVideoAcceleratorFactories::CreateGpuMemoryBuffer(
     gfx::BufferUsage /* usage */) {
   if (fail_to_allocate_gpu_memory_buffer_)
     return nullptr;
-  return base::MakeUnique<GpuMemoryBufferImpl>(size, format);
+  return std::make_unique<GpuMemoryBufferImpl>(size, format);
 }
 
 std::unique_ptr<base::SharedMemory>
@@ -124,27 +128,6 @@ bool MockGpuVideoAcceleratorFactories::ShouldUseGpuMemoryBuffersForVideoFrames()
 unsigned MockGpuVideoAcceleratorFactories::ImageTextureTarget(
     gfx::BufferFormat format) {
   return GL_TEXTURE_2D;
-}
-
-namespace {
-class ScopedGLContextLockImpl
-    : public GpuVideoAcceleratorFactories::ScopedGLContextLock {
- public:
-  ScopedGLContextLockImpl(MockGpuVideoAcceleratorFactories* gpu_factories)
-      : gpu_factories_(gpu_factories) {}
-  gpu::gles2::GLES2Interface* ContextGL() override {
-    return gpu_factories_->GetGLES2Interface();
-  }
-
- private:
-  MockGpuVideoAcceleratorFactories* gpu_factories_;
-};
-}  // namespace
-
-std::unique_ptr<GpuVideoAcceleratorFactories::ScopedGLContextLock>
-MockGpuVideoAcceleratorFactories::GetGLContextLock() {
-  DCHECK(gles2_);
-  return base::MakeUnique<ScopedGLContextLockImpl>(this);
 }
 
 }  // namespace media

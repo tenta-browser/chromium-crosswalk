@@ -7,8 +7,10 @@
 #include <utility>
 
 #include "base/files/file_path.h"
+#include "base/logging.h"
 #include "base/single_thread_task_runner.h"
 #include "base/test/null_task_runner.h"
+#include "content/public/browser/browser_thread.h"
 #include "content/public/browser/permission_manager.h"
 #include "content/public/test/mock_resource_context.h"
 #include "content/test/mock_background_sync_controller.h"
@@ -45,12 +47,28 @@ class TestContextURLRequestContextGetter : public net::URLRequestContextGetter {
 
 namespace content {
 
-TestBrowserContext::TestBrowserContext() {
-  EXPECT_TRUE(browser_context_dir_.CreateUniqueTempDir());
+TestBrowserContext::TestBrowserContext(
+    base::FilePath browser_context_dir_path) {
+  DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI))
+      << "Please construct content::TestBrowserTheadBundle before constructing "
+      << "TestBrowserContext instances.  "
+      << BrowserThread::GetDCheckCurrentlyOnErrorMessage(BrowserThread::UI);
+
+  if (browser_context_dir_path.empty()) {
+    EXPECT_TRUE(browser_context_dir_.CreateUniqueTempDir());
+  } else {
+    EXPECT_TRUE(browser_context_dir_.Set(browser_context_dir_path));
+  }
   BrowserContext::Initialize(this, browser_context_dir_.GetPath());
 }
 
 TestBrowserContext::~TestBrowserContext() {
+  DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI))
+      << "Please destruct content::TestBrowserContext before destructing "
+      << "the TestBrowserThreadBundle instance.  "
+      << BrowserThread::GetDCheckCurrentlyOnErrorMessage(BrowserThread::UI);
+
+  NotifyWillBeDestroyed(this);
   ShutdownStoragePartitions();
 }
 

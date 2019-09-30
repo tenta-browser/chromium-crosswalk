@@ -16,7 +16,7 @@
 #include "media/base/timestamp_constants.h"
 #include "media/formats/mp4/rcheck.h"
 #include "media/formats/mp4/sample_to_group_iterator.h"
-#include "media/media_features.h"
+#include "media/media_buildflags.h"
 
 namespace media {
 namespace mp4 {
@@ -396,7 +396,7 @@ bool TrackRunIterator::Init(const MovieFragment& moof) {
 
       // Avoid allocating insane sample counts for invalid media.
       const size_t max_sample_count =
-          kDemuxerMemoryLimit / sizeof(decltype(tri.samples)::value_type);
+          GetDemuxerMemoryLimit() / sizeof(decltype(tri.samples)::value_type);
       RCHECK_MEDIA_LOGGED(
           base::strict_cast<size_t>(trun.sample_count) <= max_sample_count,
           media_log_, "Metadata overhead exceeds storage limit.");

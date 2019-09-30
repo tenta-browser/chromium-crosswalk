@@ -2,44 +2,75 @@
   "layers": [
     {
       "name": "LayoutView #document",
+      "bounds": [800, 600],
+      "drawsContent": false,
+      "backgroundColor": "#FFFFFF"
+    },
+    {
+      "name": "Scrolling Layer",
+      "bounds": [785, 585],
+      "drawsContent": false
+    },
+    {
+      "name": "Scrolling Contents Layer",
       "bounds": [1026, 1016],
       "contentsOpaque": true,
       "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
         {
-          "object": "LayoutBlockFlow P",
-          "rect": [24, 991, 737, 21],
-          "reason": "geometry"
-        },
-        {
-          "object": "LayoutText #text",
+          "object": "InlineTextBox 'pservers-pattern-01-b \u2190'",
           "rect": [177, 991, 202, 22],
-          "reason": "geometry"
+          "reason": "appeared"
         },
         {
-          "object": "LayoutText #text",
+          "object": "InlineTextBox 'pservers-pattern-01-b \u2190'",
+          "rect": [177, 991, 202, 22],
+          "reason": "disappeared"
+        },
+        {
+          "object": "InlineTextBox '\u2192 script-handle-01-b'",
           "rect": [432, 991, 176, 22],
-          "reason": "geometry"
+          "reason": "appeared"
         },
         {
-          "object": "LayoutInline A",
+          "object": "InlineTextBox '\u2192 script-handle-01-b'",
+          "rect": [432, 991, 176, 22],
+          "reason": "disappeared"
+        },
+        {
+          "object": "LayoutBlockFlow HTML",
           "rect": [378, 987, 55, 29],
-          "reason": "style change"
+          "reason": "appeared"
         },
         {
-          "object": "LayoutText #text",
+          "object": "InlineTextBox 'index'",
           "rect": [383, 991, 45, 21],
-          "reason": "geometry"
+          "reason": "appeared"
         },
         {
-          "object": "LayoutText #text",
+          "object": "InlineTextBox 'index'",
+          "rect": [383, 991, 45, 21],
+          "reason": "disappeared"
+        },
+        {
+          "object": "InlineTextBox '\n'",
           "rect": [427, 991, 6, 21],
-          "reason": "geometry"
+          "reason": "appeared"
         },
         {
-          "object": "LayoutText #text",
+          "object": "InlineTextBox '\n'",
+          "rect": [427, 991, 6, 21],
+          "reason": "disappeared"
+        },
+        {
+          "object": "InlineTextBox '\n'",
           "rect": [378, 991, 6, 21],
-          "reason": "geometry"
+          "reason": "appeared"
+        },
+        {
+          "object": "InlineTextBox '\n'",
+          "rect": [378, 991, 6, 21],
+          "reason": "disappeared"
         }
       ],
       "transform": 1
@@ -53,7 +84,8 @@
         [0, 1, 0, 0],
         [0, 0, 1, 0],
         [0, -431, 0, 1]
-      ]
+      ],
+      "flattenInheritedTransform": false
     }
   ],
   "objectPaintInvalidations": [

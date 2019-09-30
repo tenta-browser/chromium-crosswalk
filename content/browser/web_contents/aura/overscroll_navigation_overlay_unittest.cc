@@ -179,10 +179,7 @@ class OverscrollNavigationOverlayTest : public RenderViewHostImplTestHarness {
       histogram_tester()->ExpectTotalCount(kUmaStarted, 0);
     }
     GetOverlay()->owa_->SetOverscrollSourceForTesting(OverscrollSource::NONE);
-    if (IsBrowserSideNavigationEnabled())
-      main_test_rfh()->PrepareForCommit();
-    else
-      contents()->GetPendingMainFrame()->PrepareForCommit();
+    main_test_rfh()->PrepareForCommit();
     if (window_created)
       EXPECT_TRUE(contents()->CrossProcessNavigationPending());
     else
@@ -251,7 +248,6 @@ class OverscrollNavigationOverlayTest : public RenderViewHostImplTestHarness {
     // Receive a paint update. This is necessary to make sure the size is set
     // correctly in RenderWidgetHostImpl.
     ViewHostMsg_ResizeOrRepaint_ACK_Params params;
-    memset(&params, 0, sizeof(params));
     params.view_size = gfx::Size(10, 10);
     ViewHostMsg_ResizeOrRepaint_ACK rect(test_rvh()->GetRoutingID(), params);
     RenderViewHostTester::TestOnMessageReceived(test_rvh(), rect);
@@ -448,7 +444,8 @@ TEST_F(OverscrollNavigationOverlayTest, CloseDuringAnimation) {
   ui::ScopedAnimationDurationScaleMode normal_duration_(
       ui::ScopedAnimationDurationScaleMode::NORMAL_DURATION);
   GetOverlay()->owa_->OnOverscrollModeChange(OVERSCROLL_NONE, OVERSCROLL_EAST,
-                                             OverscrollSource::TOUCHSCREEN);
+                                             OverscrollSource::TOUCHSCREEN,
+                                             cc::OverscrollBehavior());
   GetOverlay()->owa_->OnOverscrollComplete(OVERSCROLL_EAST);
   EXPECT_EQ(GetOverlay()->direction_, NavigationDirection::BACK);
   OverscrollTestWebContents* test_web_contents =
@@ -467,7 +464,8 @@ TEST_F(OverscrollNavigationOverlayTest, ImmediateLoadOnNavigate) {
   // navigation starts.
   ImmediateLoadObserver immediate_nav(contents());
   GetOverlay()->owa_->OnOverscrollModeChange(OVERSCROLL_NONE, OVERSCROLL_EAST,
-                                             OverscrollSource::TOUCHPAD);
+                                             OverscrollSource::TOUCHPAD,
+                                             cc::OverscrollBehavior());
   // This will start and immediately complete the navigation.
   GetOverlay()->owa_->OnOverscrollComplete(OVERSCROLL_EAST);
   EXPECT_FALSE(GetOverlay()->window_.get());
@@ -495,8 +493,8 @@ TEST_F(OverscrollNavigationOverlayTest, OverlayWindowSwap) {
 
   int overscroll_complete_distance =
       root_window()->bounds().size().width() *
-          content::GetOverscrollConfig(
-              content::OverscrollConfig::THRESHOLD_COMPLETE_TOUCHSCREEN) +
+          OverscrollConfig::GetThreshold(
+              OverscrollConfig::Threshold::kCompleteTouchscreen) +
       ui::GestureConfiguration::GetInstance()
           ->max_touch_move_in_pixels_for_click() +
       1;

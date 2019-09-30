@@ -4,8 +4,9 @@
 
 #include "chrome/browser/ui/webui/print_preview/pdf_printer_handler.h"
 
+#include <windows.h>  // Must be in front of other Windows header files.
+
 #include <commdlg.h>
-#include <windows.h>
 
 #include "base/memory/ref_counted.h"
 #include "base/memory/ref_counted_memory.h"
@@ -24,8 +25,6 @@ namespace {
 class FakePdfPrinterHandler;
 bool GetOpenFileNameImpl(OPENFILENAME* ofn);
 bool GetSaveFileNameImpl(FakePdfPrinterHandler* handler, OPENFILENAME* ofn);
-
-void EmptyPrintCallback(const base::Value& error) {}
 
 class FakePdfPrinterHandler : public PdfPrinterHandler {
  public:
@@ -50,8 +49,7 @@ class FakePdfPrinterHandler : public PdfPrinterHandler {
   }
 
   void StartPrintToPdf(const base::string16& job_title) {
-    StartPrint("", "", job_title, "", gfx::Size(), nullptr,
-               base::Bind(&EmptyPrintCallback));
+    StartPrint("", "", job_title, "", gfx::Size(), nullptr, base::DoNothing());
     run_loop_.Run();
   }
 
@@ -127,7 +125,7 @@ class PdfPrinterHandlerWinTest : public BrowserWithTestWindowTest {
     AddTab(browser(), GURL("chrome://print"));
 
     // Create the PDF printer
-    pdf_printer_ = base::MakeUnique<FakePdfPrinterHandler>(
+    pdf_printer_ = std::make_unique<FakePdfPrinterHandler>(
         profile(), browser()->tab_strip_model()->GetWebContentsAt(0), nullptr);
   }
 

@@ -31,8 +31,8 @@ namespace {
 // Buffer up to 150ms (15 x 10ms per frame).
 const uint32_t kDefaultNumberOfAudioBuffers = 15;
 
-bool PP_HardwareAccelerationCompatible(bool accelerated,
-                                       PP_HardwareAcceleration requested) {
+bool PP_HardwareAccelerationCompatibleAudio(bool accelerated,
+                                            PP_HardwareAcceleration requested) {
   switch (requested) {
     case PP_HARDWAREACCELERATION_ONLY:
       return accelerated;
@@ -326,7 +326,7 @@ bool PepperAudioEncoderHost::IsInitializationValid(
         parameters.input_sample_size == profile.sample_size &&
         parameters.input_sample_rate == profile.sample_rate &&
         parameters.channels <= profile.max_channels &&
-        PP_HardwareAccelerationCompatible(
+        PP_HardwareAccelerationCompatibleAudio(
             profile.hardware_accelerated == PP_TRUE, parameters.acceleration))
       return true;
   }
@@ -489,10 +489,9 @@ void PepperAudioEncoderHost::Close() {
   // Destroy the encoder and the audio/bitstream buffers on the media thread
   // to avoid freeing memory the encoder might still be working on.
   media_task_runner_->PostTask(
-      FROM_HERE,
-      base::BindOnce(&StopAudioEncoder, base::Passed(std::move(encoder_)),
-                     base::Passed(std::move(audio_buffer_manager_)),
-                     base::Passed(std::move(bitstream_buffer_manager_))));
+      FROM_HERE, base::BindOnce(&StopAudioEncoder, std::move(encoder_),
+                                std::move(audio_buffer_manager_),
+                                std::move(bitstream_buffer_manager_)));
 }
 
 // static

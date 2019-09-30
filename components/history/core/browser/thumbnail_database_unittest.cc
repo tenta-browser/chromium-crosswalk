@@ -290,6 +290,49 @@ TEST_F(ThumbnailDatabaseTest, AddFaviconBitmapCreatesCorrectTimestamps) {
   EXPECT_EQ(base::Time(), last_requested);
 }
 
+TEST_F(ThumbnailDatabaseTest,
+       GetFaviconLastUpdatedTimeReturnsFalseForNoBitmaps) {
+  ThumbnailDatabase db(nullptr);
+  ASSERT_EQ(sql::INIT_OK, db.Init(file_name_));
+  db.BeginTransaction();
+
+  GURL url("http://google.com");
+  favicon_base::FaviconID icon =
+      db.AddFavicon(url, favicon_base::IconType::kFavicon);
+  ASSERT_NE(0, icon);
+
+  base::Time last_updated;
+  ASSERT_FALSE(db.GetFaviconLastUpdatedTime(icon, &last_updated));
+}
+
+TEST_F(ThumbnailDatabaseTest, GetFaviconLastUpdatedTimeReturnsMaxTime) {
+  ThumbnailDatabase db(nullptr);
+  ASSERT_EQ(sql::INIT_OK, db.Init(file_name_));
+  db.BeginTransaction();
+
+  base::Time add_time1;
+  ASSERT_TRUE(
+      base::Time::FromUTCExploded({2017, 5, 0, 1, 0, 0, 0, 0}, &add_time1));
+  base::Time add_time2 = add_time1 - base::TimeDelta::FromSeconds(1);
+  std::vector<unsigned char> data(kBlob1, kBlob1 + sizeof(kBlob1));
+  scoped_refptr<base::RefCountedBytes> favicon(new base::RefCountedBytes(data));
+
+  GURL url("http://google.com");
+  favicon_base::FaviconID icon =
+      db.AddFavicon(url, favicon_base::IconType::kFavicon);
+  ASSERT_NE(0, icon);
+  FaviconBitmapID bitmap1 = db.AddFaviconBitmap(
+      icon, favicon, FaviconBitmapType::ON_VISIT, add_time1, gfx::Size());
+  ASSERT_NE(0, bitmap1);
+  FaviconBitmapID bitmap2 = db.AddFaviconBitmap(
+      icon, favicon, FaviconBitmapType::ON_VISIT, add_time2, gfx::Size());
+  ASSERT_NE(0, bitmap2);
+
+  base::Time last_updated;
+  ASSERT_TRUE(db.GetFaviconLastUpdatedTime(icon, &last_updated));
+  EXPECT_EQ(add_time1, last_updated);
+}
+
 TEST_F(ThumbnailDatabaseTest, TouchUpdatesOnDemandFavicons) {
   ThumbnailDatabase db(nullptr);
   ASSERT_EQ(sql::INIT_OK, db.Init(file_name_));
@@ -785,6 +828,58 @@ TEST_F(ThumbnailDatabaseTest, GetIconMappingsForPageURLWithIconTypes) {
   EXPECT_EQ(kIconUrl2, icon_mappings[2].icon_url);
 }
 
+TEST_F(ThumbnailDatabaseTest, FindFirstPageURLForHost) {
+  ThumbnailDatabase db(nullptr);
+  ASSERT_EQ(sql::INIT_OK, db.Init(file_name_));
+  db.BeginTransaction();
+
+  const GURL kPageUrlHttp("http://www.google.com");
+  const GURL kPageUrlHttps("https://www.google.com");
+  const GURL kPageUrlHttpsSamePrefix("https://www.google.com.au");
+  const GURL kPageUrlHttpsSameSuffix("https://m.www.google.com");
+  const GURL kPageUrlInPath("https://www.example.com/www.google.com/");
+
+  EXPECT_FALSE(db.FindFirstPageURLForHost(
+      kPageUrlHttps,
+      {favicon_base::IconType::kFavicon, favicon_base::IconType::kTouchIcon}));
+
+  AddAndMapFaviconSimple(&db, kPageUrlHttpsSamePrefix, kIconUrl1,
+                         favicon_base::IconType::kFavicon);
+  AddAndMapFaviconSimple(&db, kPageUrlHttpsSameSuffix, kIconUrl2,
+                         favicon_base::IconType::kFavicon);
+  AddAndMapFaviconSimple(&db, kPageUrlInPath, kIconUrl3,
+                         favicon_base::IconType::kTouchIcon);
+
+  // There should be no matching host for www.google.com when no matching host
+  // exists with the required icon types.
+  EXPECT_FALSE(db.FindFirstPageURLForHost(kPageUrlHttps,
+                                          {favicon_base::IconType::kFavicon}));
+
+  // Register the HTTP url in the database as a touch icon.
+  AddAndMapFaviconSimple(&db, kPageUrlHttp, kIconUrl5,
+                         favicon_base::IconType::kTouchIcon);
+
+  EXPECT_FALSE(db.FindFirstPageURLForHost(kPageUrlHttps,
+                                          {favicon_base::IconType::kFavicon}));
+
+  // Expect a match when we search for a TouchIcon.
+  base::Optional<GURL> result = db.FindFirstPageURLForHost(
+      kPageUrlHttps,
+      {favicon_base::IconType::kFavicon, favicon_base::IconType::kTouchIcon});
+
+  EXPECT_EQ(kPageUrlHttp, result.value());
+
+  // Expect that when we query for icon mappings with the result, we retrieve
+  // the correct icon URL.
+  std::vector<IconMapping> icon_mappings;
+  EXPECT_TRUE(db.GetIconMappingsForPageURL(
+      result.value(),
+      {favicon_base::IconType::kFavicon, favicon_base::IconType::kTouchIcon},
+      &icon_mappings));
+  ASSERT_EQ(1u, icon_mappings.size());
+  EXPECT_EQ(kIconUrl5, icon_mappings[0].icon_url);
+}
+
 TEST_F(ThumbnailDatabaseTest, HasMappingFor) {
   ThumbnailDatabase db(nullptr);
   ASSERT_EQ(sql::INIT_OK, db.Init(file_name_));
@@ -911,15 +1006,6 @@ TEST_F(ThumbnailDatabaseTest, Version8) {
 }
 
 TEST_F(ThumbnailDatabaseTest, Recovery) {
-  // This code tests the recovery module in concert with Chromium's
-  // custom recover virtual table.  Under USE_SYSTEM_SQLITE, this is
-  // not available.  This is detected dynamically because corrupt
-  // databases still need to be handled, perhaps by Raze(), and the
-  // recovery module is an obvious layer to abstract that to.
-  // TODO(shess): Handle that case for real!
-  if (!sql::Recovery::FullRecoverySupported())
-    return;
-
   // Create an example database.
   {
     EXPECT_TRUE(CreateDatabaseFromSQL(file_name_, "Favicons.v8.sql"));
@@ -1032,15 +1118,6 @@ TEST_F(ThumbnailDatabaseTest, Recovery) {
 }
 
 TEST_F(ThumbnailDatabaseTest, Recovery7) {
-  // This code tests the recovery module in concert with Chromium's
-  // custom recover virtual table.  Under USE_SYSTEM_SQLITE, this is
-  // not available.  This is detected dynamically because corrupt
-  // databases still need to be handled, perhaps by Raze(), and the
-  // recovery module is an obvious layer to abstract that to.
-  // TODO(shess): Handle that case for real!
-  if (!sql::Recovery::FullRecoverySupported())
-    return;
-
   // Create an example database without loading into ThumbnailDatabase
   // (which would upgrade it).
   EXPECT_TRUE(CreateDatabaseFromSQL(file_name_, "Favicons.v7.sql"));
@@ -1136,10 +1213,6 @@ TEST_F(ThumbnailDatabaseTest, Recovery7) {
 }
 
 TEST_F(ThumbnailDatabaseTest, Recovery6) {
-  // TODO(shess): See comment at top of Recovery test.
-  if (!sql::Recovery::FullRecoverySupported())
-    return;
-
   // Create an example database without loading into ThumbnailDatabase
   // (which would upgrade it).
   EXPECT_TRUE(CreateDatabaseFromSQL(file_name_, "Favicons.v6.sql"));
@@ -1184,10 +1257,6 @@ TEST_F(ThumbnailDatabaseTest, Recovery6) {
 }
 
 TEST_F(ThumbnailDatabaseTest, Recovery5) {
-  // TODO(shess): See comment at top of Recovery test.
-  if (!sql::Recovery::FullRecoverySupported())
-    return;
-
   // Create an example database without loading into ThumbnailDatabase
   // (which would upgrade it).
   EXPECT_TRUE(CreateDatabaseFromSQL(file_name_, "Favicons.v5.sql"));

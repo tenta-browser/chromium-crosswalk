@@ -10,12 +10,12 @@
 #include "base/memory/ref_counted.h"
 #include "base/synchronization/waitable_event.h"
 #include "content/common/content_export.h"
-#include "content/renderer/media/remote_media_stream_track_adapter.h"
+#include "content/renderer/media/stream/remote_media_stream_track_adapter.h"
 #include "content/renderer/media/webrtc/media_stream_video_webrtc_sink.h"
 #include "content/renderer/media/webrtc/webrtc_audio_sink.h"
 #include "content/renderer/media/webrtc/webrtc_media_stream_track_adapter.h"
-#include "third_party/WebKit/public/platform/WebMediaStream.h"
-#include "third_party/WebKit/public/platform/WebMediaStreamTrack.h"
+#include "third_party/blink/public/platform/web_media_stream.h"
+#include "third_party/blink/public/platform/web_media_stream_track.h"
 #include "third_party/webrtc/api/mediastreaminterface.h"
 
 namespace content {

@@ -27,18 +27,18 @@ const gfx::Size kTestFrameSize = {640 /* width */, 480 /* height */};
 const media::VideoPixelFormat kTestPixelFormat =
     media::VideoPixelFormat::PIXEL_FORMAT_I420;
 const media::VideoPixelStorage kTestPixelStorage =
-    media::VideoPixelStorage::PIXEL_STORAGE_CPU;
+    media::VideoPixelStorage::CPU;
 
 }  // anonymous namespace
 
 class VirtualDeviceTest : public ::testing::Test {
  public:
-  VirtualDeviceTest() : ref_factory_(base::Bind(&base::DoNothing)) {}
+  VirtualDeviceTest() : ref_factory_(base::DoNothing()) {}
   ~VirtualDeviceTest() override {}
 
   void SetUp() override {
     device_info_.descriptor.device_id = kTestDeviceId;
-    device_info_.descriptor.display_name = kTestDeviceName;
+    device_info_.descriptor.set_display_name(kTestDeviceName);
     mojom::ProducerPtr producer_proxy;
     producer_ =
         std::make_unique<MockProducer>(mojo::MakeRequest(&producer_proxy));
@@ -101,7 +101,7 @@ class VirtualDeviceTest : public ::testing::Test {
 TEST_F(VirtualDeviceTest, VerifyDeviceInfo) {
   EXPECT_EQ(kTestDeviceId, device_adapter_->device_info().descriptor.device_id);
   EXPECT_EQ(kTestDeviceName,
-            device_adapter_->device_info().descriptor.display_name);
+            device_adapter_->device_info().descriptor.display_name());
 }
 
 TEST_F(VirtualDeviceTest, OnFrameReadyInBufferWithoutReceiver) {
@@ -144,8 +144,7 @@ TEST_F(VirtualDeviceTest, OnFrameReadyInBufferWithReceiver) {
                          std::move(receiver_proxy));
   for (auto buffer_id : received_buffer_ids_) {
     media::mojom::VideoFrameInfoPtr info = media::mojom::VideoFrameInfo::New();
-    // |info->metadata| cannot be a nullptr when going over mojo boundary.
-    info->metadata = std::make_unique<base::DictionaryValue>();
+    info->metadata = base::Value(base::Value::Type::DICTIONARY);
     device_adapter_->OnFrameReadyInBuffer(buffer_id, std::move(info));
   }
   wait_loop.RunUntilIdle();

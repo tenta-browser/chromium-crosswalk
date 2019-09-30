@@ -6,7 +6,7 @@
 #define SERVICES_RESOURCE_COORDINATOR_COORDINATION_UNIT_COORDINATION_UNIT_INTROSPECTOR_IMPL_H_
 
 #include "mojo/public/cpp/bindings/binding_set.h"
-#include "services/resource_coordinator/public/interfaces/coordination_unit_introspector.mojom.h"
+#include "services/resource_coordinator/public/mojom/coordination_unit_introspector.mojom.h"
 #include "services/service_manager/public/cpp/bind_source_info.h"
 
 namespace service_manager {
@@ -26,7 +26,7 @@ class CoordinationUnitIntrospectorImpl
       const service_manager::BindSourceInfo& source_info);
 
   // Overridden from mojom::CoordinationUnitIntrospector:
-  void GetProcessToURLMap(const GetProcessToURLMapCallback& callback) override;
+  void GetProcessToURLMap(GetProcessToURLMapCallback callback) override;
 
  private:
   mojo::BindingSet<mojom::CoordinationUnitIntrospector> bindings_;

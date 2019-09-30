@@ -43,7 +43,6 @@ class CompositorFrame;
 namespace exo {
 class Buffer;
 class LayerTreeFrameSinkHolder;
-class Pointer;
 class SurfaceObserver;
 class Surface;
 
@@ -53,10 +52,6 @@ class PropertyHelper;
 
 // Counter-clockwise rotations.
 enum class Transform { NORMAL, ROTATE_90, ROTATE_180, ROTATE_270 };
-
-// The pointer class is currently the only cursor provider class but this can
-// change in the future when better hardware cursor support is added.
-using CursorProvider = Pointer;
 
 // This class represents a rectangular area that is displayed on the screen.
 // It has a location, size and pixel contents.
@@ -101,6 +96,10 @@ class Surface final : public ui::PropertyHandler {
   // events. The region is clipped to the surface bounds.
   void SetInputRegion(const cc::Region& region);
 
+  // This resets the region of the surface that can receive pointer and touch
+  // events to be wide-open. This will be clipped to the surface bounds.
+  void ResetInputRegion();
+
   // This overrides the input region to the surface bounds with an outset.
   // TODO(domlaskowski): Remove this once client-driven resizing is removed.
   void SetInputOutset(int outset);
@@ -143,6 +142,15 @@ class Surface final : public ui::PropertyHandler {
   // Request that surface should have the specified frame type.
   void SetFrame(SurfaceFrameType type);
 
+  // Request that surface should use a specific set of frame colors.
+  void SetFrameColors(SkColor active_color, SkColor inactive_color);
+
+  // Request that surface should have a specific startup ID string.
+  void SetStartupId(const char* startup_id);
+
+  // Request that surface should have a specific application ID string.
+  void SetApplicationId(const char* application_id);
+
   // Request "parent" for surface.
   void SetParent(Surface* parent, const gfx::Point& position);
 
@@ -174,8 +182,8 @@ class Surface final : public ui::PropertyHandler {
   // Returns true if surface is in synchronized mode.
   bool IsSynchronized() const;
 
-  // Returns true if surface should receive touch events.
-  bool IsTouchEnabled(Surface* surface) const;
+  // Returns true if surface should receive input events.
+  bool IsInputEnabled(Surface* surface) const;
 
   // Returns false if the hit test region is empty.
   bool HasHitTestRegion() const;
@@ -190,15 +198,6 @@ class Surface final : public ui::PropertyHandler {
   // hit-test rects.
   std::unique_ptr<aura::WindowTargeter::HitTestRects> GetHitTestShapeRects()
       const;
-
-  // Surface does not own cursor providers. It is the responsibility of the
-  // caller to remove the cursor provider before it is destroyed.
-  void RegisterCursorProvider(CursorProvider* provider);
-  void UnregisterCursorProvider(CursorProvider* provider);
-
-  // Returns the cursor for the surface. If no cursor provider is registered
-  // then CursorType::kNull is returned.
-  gfx::NativeCursor GetCursor();
 
   // Set the surface delegate.
   void SetSurfaceDelegate(SurfaceDelegate* delegate);
@@ -253,7 +252,7 @@ class Surface final : public ui::PropertyHandler {
     bool operator!=(const State& other) { return !(*this == other); }
 
     cc::Region opaque_region;
-    cc::Region input_region;
+    base::Optional<cc::Region> input_region;
     int input_outset = 0;
     float buffer_scale = 1.0f;
     Transform buffer_transform = Transform::NORMAL;
@@ -389,9 +388,6 @@ class Surface final : public ui::PropertyHandler {
   // This is set when the compositing starts and passed to active frame
   // callbacks when compositing successfully ends.
   base::TimeTicks last_compositing_start_time_;
-
-  // Cursor providers. Surface does not own the cursor providers.
-  std::set<CursorProvider*> cursor_providers_;
 
   // This can be set to have some functions delegated. E.g. ShellSurface class
   // can set this to handle Commit() and apply any double buffered state it

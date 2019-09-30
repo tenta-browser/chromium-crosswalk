@@ -18,6 +18,10 @@ CompositorFrameSinkClientBinding::CompositorFrameSinkClientBinding(
 
 CompositorFrameSinkClientBinding::~CompositorFrameSinkClientBinding() = default;
 
+void CompositorFrameSinkClientBinding::SetWantsAnimateOnlyBeginFrames() {
+  compositor_frame_sink_->SetWantsAnimateOnlyBeginFrames();
+}
+
 void CompositorFrameSinkClientBinding::SetNeedsBeginFrame(
     bool needs_begin_frame) {
   compositor_frame_sink_->SetNeedsBeginFrame(needs_begin_frame);
@@ -36,6 +40,17 @@ void CompositorFrameSinkClientBinding::SubmitCompositorFrame(
 void CompositorFrameSinkClientBinding::DidNotProduceFrame(
     const viz::BeginFrameAck& ack) {
   compositor_frame_sink_->DidNotProduceFrame(ack);
+}
+
+void CompositorFrameSinkClientBinding::DidAllocateSharedBitmap(
+    mojo::ScopedSharedBufferHandle buffer,
+    const viz::SharedBitmapId& id) {
+  compositor_frame_sink_->DidAllocateSharedBitmap(std::move(buffer), id);
+}
+
+void CompositorFrameSinkClientBinding::DidDeleteSharedBitmap(
+    const viz::SharedBitmapId& id) {
+  compositor_frame_sink_->DidDeleteSharedBitmap(id);
 }
 
 }  // namespace ws

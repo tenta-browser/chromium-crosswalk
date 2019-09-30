@@ -64,9 +64,7 @@ static constexpr int kLaserDataHeight = 1;
 }  // namespace
 
 Laser::Laser(Model* model) : model_(model) {
-  set_name(kLaser);
-  set_hit_testable(false);
-  SetVisible(true);
+  SetName(kLaser);
 }
 
 Laser::~Laser() = default;

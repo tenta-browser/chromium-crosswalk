@@ -6,7 +6,6 @@
 
 #include <vector>
 
-#include "base/memory/ptr_util.h"
 #include "base/strings/string16.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
@@ -193,7 +192,7 @@ void ChildPanel::ContentsChanged(Textfield* sender,
 
 Textfield* ChildPanel::CreateTextfield() {
   Textfield* textfield = new Textfield();
-  textfield->set_default_width_in_chars(3);
+  textfield->SetDefaultWidthInChars(3);
   textfield->SizeToPreferredSize();
   textfield->SetText(base::ASCIIToUTF16("0"));
   textfield->set_controller(this);
@@ -242,7 +241,7 @@ Textfield* BoxLayoutExample::CreateRawTextfield(int& horizontal_pos,
                                                 bool add) {
   Textfield* text_field = new Textfield();
   text_field->SetPosition(gfx::Point(horizontal_pos, vertical_pos));
-  text_field->set_default_width_in_chars(3);
+  text_field->SetDefaultWidthInChars(3);
   text_field->SetTextInputType(ui::TEXT_INPUT_TYPE_NUMBER);
   text_field->SizeToPreferredSize();
   text_field->SetText(base::ASCIIToUTF16("0"));
@@ -279,7 +278,7 @@ gfx::Size BoxLayoutExample::GetChildPanelSize() const {
 }
 
 void BoxLayoutExample::CreateExampleView(View* container) {
-  container->SetLayoutManager(new FillLayout());
+  container->SetLayoutManager(std::make_unique<FillLayout>());
   full_panel_ = new FullPanel();
   container->AddChildView(full_panel_);
 
@@ -412,18 +411,18 @@ void BoxLayoutExample::UpdateLayoutManager() {
   base::StringToInt(between_child_spacing_->text(), &child_spacing);
   base::StringToInt(default_flex_->text(), &default_flex);
   base::StringToInt(min_cross_axis_size_->text(), &min_cross_size);
-  layout_ = new BoxLayout(
+  auto layout = std::make_unique<BoxLayout>(
       orientation_->selected_index() == 0 ? BoxLayout::Orientation::kHorizontal
                                           : BoxLayout::Orientation::kVertical,
       gfx::Insets(0, 0), child_spacing, collapse_margins_->checked());
-  layout_->set_cross_axis_alignment(static_cast<BoxLayout::CrossAxisAlignment>(
+  layout->set_cross_axis_alignment(static_cast<BoxLayout::CrossAxisAlignment>(
       cross_axis_alignment_->selected_index()));
-  layout_->set_main_axis_alignment(static_cast<BoxLayout::MainAxisAlignment>(
+  layout->set_main_axis_alignment(static_cast<BoxLayout::MainAxisAlignment>(
       main_axis_alignment_->selected_index()));
-  layout_->SetDefaultFlex(default_flex);
-  layout_->set_minimum_cross_axis_size(min_cross_size);
+  layout->SetDefaultFlex(default_flex);
+  layout->set_minimum_cross_axis_size(min_cross_size);
+  layout_ = box_layout_panel_->SetLayoutManager(std::move(layout));
   UpdateBorderInsets();
-  box_layout_panel_->SetLayoutManager(layout_);
   for (int i = 0; i < box_layout_panel_->child_count(); ++i) {
     ChildPanel* panel =
         static_cast<ChildPanel*>(box_layout_panel_->child_at(i));

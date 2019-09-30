@@ -13,10 +13,13 @@
 #include "base/threading/thread_task_runner_handle.h"
 #include "net/base/io_buffer.h"
 #include "net/log/net_log_source_type.h"
+#include "net/traffic_annotation/network_traffic_annotation.h"
 
 namespace net {
 
 namespace {
+
+const int kMaxAsyncReadsAndWrites = 1000;
 
 // Some of the socket errors that can be returned by normal socket connection
 // attempts.
@@ -56,8 +59,12 @@ int FuzzedSocket::Read(IOBuffer* buf,
     result = net_error_;
     sync = !error_pending_;
   } else {
-    // Otherwise, use |data_provider_|.
-    sync = data_provider_->ConsumeBool();
+    // Otherwise, use |data_provider_|. Always consume a bool, even when
+    // ForceSync() is true, to behave more consistently against input mutations.
+    sync = data_provider_->ConsumeBool() || ForceSync();
+
+    num_async_reads_and_writes_ += static_cast<int>(!sync);
+
     std::string data = data_provider_->ConsumeRandomLengthString(buf_len);
     result = data.size();
 
@@ -89,9 +96,11 @@ int FuzzedSocket::Read(IOBuffer* buf,
   return ERR_IO_PENDING;
 }
 
-int FuzzedSocket::Write(IOBuffer* buf,
-                        int buf_len,
-                        const CompletionCallback& callback) {
+int FuzzedSocket::Write(
+    IOBuffer* buf,
+    int buf_len,
+    const CompletionCallback& callback,
+    const NetworkTrafficAnnotationTag& /* traffic_annotation */) {
   DCHECK(!connect_pending_);
   DCHECK(!write_pending_);
 
@@ -103,8 +112,12 @@ int FuzzedSocket::Write(IOBuffer* buf,
     result = net_error_;
     sync = !error_pending_;
   } else {
-    // Otherwise, use |data_|.
-    sync = data_provider_->ConsumeBool();
+    // Otherwise, use |data_provider_|. Always consume a bool, even when
+    // ForceSync() is true, to behave more consistently against input mutations.
+    sync = data_provider_->ConsumeBool() || ForceSync();
+
+    num_async_reads_and_writes_ += static_cast<int>(!sync);
+
     result = data_provider_->ConsumeUint8();
     if (result > buf_len)
       result = buf_len;
@@ -135,6 +148,11 @@ int FuzzedSocket::SetReceiveBufferSize(int32_t size) {
 
 int FuzzedSocket::SetSendBufferSize(int32_t size) {
   return OK;
+}
+
+int FuzzedSocket::Bind(const net::IPEndPoint& local_addr) {
+  NOTREACHED();
+  return ERR_NOT_IMPLEMENTED;
 }
 
 int FuzzedSocket::Connect(const CompletionCallback& callback) {
@@ -240,6 +258,8 @@ int64_t FuzzedSocket::GetTotalReceivedBytes() const {
   return total_bytes_read_;
 }
 
+void FuzzedSocket::ApplySocketTag(const net::SocketTag& tag) {}
+
 Error FuzzedSocket::ConsumeReadWriteErrorFromData() {
   return data_provider_->PickValueInArray(kReadWriteErrors);
 }
@@ -276,6 +296,10 @@ void FuzzedSocket::OnConnectComplete(const CompletionCallback& callback,
     error_pending_ = false;
   net_error_ = result;
   callback.Run(result);
+}
+
+bool FuzzedSocket::ForceSync() const {
+  return (num_async_reads_and_writes_ >= kMaxAsyncReadsAndWrites);
 }
 
 }  // namespace net

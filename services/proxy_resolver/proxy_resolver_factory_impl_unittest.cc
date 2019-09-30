@@ -6,15 +6,14 @@
 
 #include <utility>
 
-#include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/scoped_task_environment.h"
 #include "mojo/public/cpp/bindings/binding.h"
 #include "mojo/public/cpp/bindings/strong_binding.h"
 #include "net/base/test_completion_callback.h"
-#include "net/proxy/mock_proxy_resolver.h"
-#include "net/proxy/proxy_resolver_v8_tracing.h"
+#include "net/proxy_resolution/mock_proxy_resolver.h"
+#include "net/proxy_resolution/proxy_resolver_v8_tracing.h"
 #include "net/test/event_waiter.h"
 #include "net/test/gtest_util.h"
 #include "services/service_manager/public/cpp/service_context_ref.h"
@@ -67,7 +66,7 @@ class TestProxyResolverFactory : public net::ProxyResolverV8TracingFactory {
   ~TestProxyResolverFactory() override {}
 
   void CreateProxyResolverV8Tracing(
-      const scoped_refptr<net::ProxyResolverScriptData>& pac_script,
+      const scoped_refptr<net::PacFileData>& pac_script,
       std::unique_ptr<net::ProxyResolverV8Tracing::Bindings> bindings,
       std::unique_ptr<net::ProxyResolverV8Tracing>* resolver,
       const net::CompletionCallback& callback,

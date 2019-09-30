@@ -139,6 +139,7 @@ developer::RuntimeError ConstructRuntimeError(const RuntimeError& error) {
     default:
       NOTREACHED();
   }
+  result.context_url = error.context_url().spec();
   result.occurrences = error.occurrences();
   // NOTE(devlin): This is called "render_view_id" in the api for legacy
   // reasons, but it's not a high priority to change.
@@ -261,7 +262,7 @@ void ExtensionInfoGenerator::CreateExtensionInfo(
   if (pending_image_loads_ == 0) {
     // Don't call the callback re-entrantly.
     base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE, base::BindOnce(callback, base::Passed(&list_)));
+        FROM_HERE, base::BindOnce(callback, std::move(list_)));
     list_.clear();
   } else {
     callback_ = callback;
@@ -299,7 +300,7 @@ void ExtensionInfoGenerator::CreateExtensionsInfo(
   if (pending_image_loads_ == 0) {
     // Don't call the callback re-entrantly.
     base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE, base::BindOnce(callback, base::Passed(&list_)));
+        FROM_HERE, base::BindOnce(callback, std::move(list_)));
     list_.clear();
   } else {
     callback_ = callback;

@@ -112,6 +112,7 @@ class URLRequestQuicPerfTest : public ::testing::Test {
         new HttpNetworkSession::Params);
     params->enable_quic = true;
     params->enable_user_alternate_protocol_ports = true;
+    params->quic_allow_remote_alt_svc = true;
     context_->set_host_resolver(host_resolver_.get());
     context_->set_http_network_session_params(std::move(params));
     context_->set_cert_verifier(&cert_verifier_);
@@ -146,15 +147,15 @@ class URLRequestQuicPerfTest : public ::testing::Test {
                                       kHelloAltSvcResponse);
     quic_server_.reset(new QuicSimpleServer(
         test::crypto_test_utils::ProofSourceForTesting(), config,
-        net::QuicCryptoServerConfig::ConfigOptions(),
-        AllSupportedTransportVersions(), &response_cache_));
+        net::QuicCryptoServerConfig::ConfigOptions(), AllSupportedVersions(),
+        &response_cache_));
     int rv = quic_server_->Listen(
         net::IPEndPoint(net::IPAddress::IPv4AllZeros(), kAltSvcPort));
     ASSERT_GE(rv, 0) << "Quic server fails to start";
 
     CertVerifyResult verify_result;
     verify_result.verified_cert = ImportCertFromFile(
-        GetTestCertsDirectory(), "quic_test.example.com.crt");
+        GetTestCertsDirectory(), "quic-chain.pem");
     cert_verifier_.AddResultForCert(verify_result.verified_cert.get(),
                                     verify_result, OK);
   }
@@ -162,7 +163,7 @@ class URLRequestQuicPerfTest : public ::testing::Test {
   void StartTcpServer() {
     tcp_server_ = std::make_unique<EmbeddedTestServer>(
         net::EmbeddedTestServer::TYPE_HTTPS);
-    tcp_server_->RegisterRequestHandler(base::Bind(&HandleRequest));
+    tcp_server_->RegisterRequestHandler(base::BindRepeating(&HandleRequest));
     ASSERT_TRUE(tcp_server_->Start()) << "HTTP/1.1 server fails to start";
 
     CertVerifyResult verify_result;

@@ -26,15 +26,15 @@
 #import "chrome/browser/ui/cocoa/nsview_additions.h"
 #include "chrome/common/chrome_features.h"
 #include "chrome/grit/generated_resources.h"
+#include "components/download/public/common/download_item.h"
 #include "components/strings/grit/components_strings.h"
 #include "components/vector_icons/vector_icons.h"
-#include "content/public/browser/download_item.h"
 #include "content/public/browser/download_manager.h"
 #import "third_party/google_toolbox_for_mac/src/AppKit/GTMNSAnimation+Duration.h"
 #import "ui/base/cocoa/nsview_additions.h"
 #include "ui/base/l10n/l10n_util_mac.h"
 
-using content::DownloadItem;
+using download::DownloadItem;
 
 // Download shelf autoclose behavior:
 //
@@ -397,7 +397,10 @@ const CGFloat kMDCloseButtonSize = 24;
     frame.size.width = [itemController preferredSize].width;
     if (!skipFirst)
       [[[itemController view] animator]
-          setFrame:[itemContainerView_ cr_localizedRect:frame]];
+          setFrame:base::FeatureList::IsEnabled(
+                       features::kMacMaterialDesignDownloadShelf)
+                       ? [itemContainerView_ cr_localizedRect:frame]
+                       : frame];
     currentX += frame.size.width + kDownloadItemPadding;
     skipFirst = NO;
   }
@@ -421,13 +424,23 @@ const CGFloat kMDCloseButtonSize = 24;
   [self cancelAutoClose];
   shouldCloseOnMouseExit_ = NO;
 
+  // Announce the new download.
+  NSAccessibilityPostNotificationWithUserInfo(
+      self.view.window, NSAccessibilityAnnouncementRequestedNotification, @{
+        NSAccessibilityAnnouncementKey :
+            l10n_util::GetNSString(IDS_DOWNLOAD_STARTED),
+        NSAccessibilityPriorityKey : @(NSAccessibilityPriorityMedium),
+      });
+
   // Insert new item at the left.
   // Adding at index 0 in NSMutableArrays is O(1).
   [downloadItemControllers_ insertObject:controller atIndex:0];
 
   [itemContainerView_ addSubview:[controller view]];
   [controller view].autoresizingMask =
-      [NSView cr_localizedAutoresizingMask:NSViewMaxXMargin];
+      base::FeatureList::IsEnabled(features::kMacMaterialDesignDownloadShelf)
+          ? [NSView cr_localizedAutoresizingMask:NSViewMaxXMargin]
+          : NSViewMaxXMargin;
 
   // The controller is in charge of removing itself as an observer in its
   // dealloc.
@@ -457,7 +470,10 @@ const CGFloat kMDCloseButtonSize = 24;
   NSSize size = [controller preferredSize];
   NSRect frame = NSMakeRect(0, 0, 0, size.height);
   NSView* view = [controller view];
-  [view setFrame:[itemContainerView_ cr_localizedRect:frame]];
+  [view setFrame:base::FeatureList::IsEnabled(
+                     features::kMacMaterialDesignDownloadShelf)
+                     ? [itemContainerView_ cr_localizedRect:frame]
+                     : frame];
 
   // ...then, in MD, animate everything together.
   if (base::FeatureList::IsEnabled(features::kMacMaterialDesignDownloadShelf)) {

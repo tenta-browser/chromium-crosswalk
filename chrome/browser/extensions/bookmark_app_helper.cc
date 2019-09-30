@@ -12,7 +12,6 @@
 #include "base/command_line.h"
 #include "base/feature_list.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
@@ -34,9 +33,11 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/app_list/app_list_service.h"
 #include "chrome/browser/ui/app_list/app_list_util.h"
+#include "chrome/browser/ui/browser_commands.h"
 #include "chrome/browser/ui/browser_dialogs.h"
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/browser_window.h"
+#include "chrome/browser/ui/extensions/application_launch.h"
 #include "chrome/browser/web_applications/web_app.h"
 #include "chrome/browser/webshare/share_target_pref_helper.h"
 #include "chrome/common/chrome_features.h"
@@ -64,7 +65,7 @@
 #include "net/url_request/url_request.h"
 #include "skia/ext/image_operations.h"
 #include "skia/ext/platform_canvas.h"
-#include "third_party/WebKit/public/platform/WebDisplayMode.h"
+#include "third_party/blink/public/platform/web_display_mode.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/gfx/canvas.h"
@@ -88,7 +89,7 @@
 #if defined(OS_CHROMEOS)
 // gn check complains on Linux Ozone.
 #include "ash/public/cpp/shelf_model.h"  // nogncheck
-#include "ash/shell.h"
+#include "chrome/browser/ui/ash/launcher/chrome_launcher_controller.h"
 #endif
 
 namespace {
@@ -338,7 +339,8 @@ namespace extensions {
 // static
 void BookmarkAppHelper::UpdateWebAppInfoFromManifest(
     const content::Manifest& manifest,
-    WebApplicationInfo* web_app_info) {
+    WebApplicationInfo* web_app_info,
+    ForInstallableSite for_installable_site) {
   if (!manifest.short_name.is_null())
     web_app_info->title = manifest.short_name.string();
 
@@ -350,13 +352,15 @@ void BookmarkAppHelper::UpdateWebAppInfoFromManifest(
   if (manifest.start_url.is_valid())
     web_app_info->app_url = manifest.start_url;
 
-  // If there is no scope present, use 'start_url' without the filename as the
-  // scope. This does not match the spec but it matches what we do on Android.
-  // See: https://github.com/w3c/manifest/issues/550
-  if (!manifest.scope.is_empty())
-    web_app_info->scope = manifest.scope;
-  else if (manifest.start_url.is_valid())
-    web_app_info->scope = manifest.start_url.Resolve(".");
+  if (for_installable_site == ForInstallableSite::kYes) {
+    // If there is no scope present, use 'start_url' without the filename as the
+    // scope. This does not match the spec but it matches what we do on Android.
+    // See: https://github.com/w3c/manifest/issues/550
+    if (!manifest.scope.is_empty())
+      web_app_info->scope = manifest.scope;
+    else if (manifest.start_url.is_valid())
+      web_app_info->scope = manifest.start_url.Resolve(".");
+  }
 
   if (manifest.theme_color != content::Manifest::kInvalidOrMissingColor)
     web_app_info->theme_color = static_cast<SkColor>(manifest.theme_color);
@@ -420,7 +424,7 @@ void BookmarkAppHelper::GenerateIcon(
     return;
 
   gfx::ImageSkia icon_image(
-      base::MakeUnique<GeneratedIconImageSource>(letter, color, output_size),
+      std::make_unique<GeneratedIconImageSource>(letter, color, output_size),
       gfx::Size(output_size, output_size));
   SkBitmap& dst = (*bitmaps)[output_size].bitmap;
   if (dst.tryAllocPixels(icon_image.bitmap()->info())) {
@@ -531,12 +535,14 @@ BookmarkAppHelper::BitmapAndSource::~BitmapAndSource() {
 
 BookmarkAppHelper::BookmarkAppHelper(Profile* profile,
                                      WebApplicationInfo web_app_info,
-                                     content::WebContents* contents)
+                                     content::WebContents* contents,
+                                     WebappInstallSource install_source)
     : profile_(profile),
       contents_(contents),
       web_app_info_(web_app_info),
       crx_installer_(extensions::CrxInstaller::CreateSilent(
           ExtensionSystem::Get(profile)->extension_service())),
+      install_source_(install_source),
       weak_factory_(this) {
   if (contents)
     installable_manager_ = InstallableManager::FromWebContents(contents);
@@ -578,8 +584,11 @@ void BookmarkAppHelper::Create(const CreateBookmarkAppCallback& callback) {
   if (contents_ &&
       !contents_->GetVisibleURL().SchemeIs(extensions::kExtensionScheme)) {
     // Null in tests. OnDidPerformInstallableCheck is called via a testing API.
+    // TODO(crbug.com/829232) ensure this is consistent with other calls to
+    // GetData.
     if (installable_manager_) {
       InstallableParams params;
+      params.check_eligibility = true;
       params.valid_primary_icon = true;
       params.valid_manifest = true;
       // Do not wait for a service worker if it doesn't exist.
@@ -589,6 +598,7 @@ void BookmarkAppHelper::Create(const CreateBookmarkAppCallback& callback) {
                              weak_factory_.GetWeakPtr()));
     }
   } else {
+    for_installable_site_ = ForInstallableSite::kNo;
     OnIconsDownloaded(true, std::map<GURL, std::vector<SkBitmap>>());
   }
 }
@@ -600,10 +610,12 @@ void BookmarkAppHelper::OnDidPerformInstallableCheck(
   if (contents_->IsBeingDestroyed())
     return;
 
-  installable_ =
-      data.error_code == NO_ERROR_DETECTED ? INSTALLABLE_YES : INSTALLABLE_NO;
+  for_installable_site_ = data.error_code == NO_ERROR_DETECTED
+                              ? ForInstallableSite::kYes
+                              : ForInstallableSite::kNo;
 
-  UpdateWebAppInfoFromManifest(*data.manifest, &web_app_info_);
+  UpdateWebAppInfoFromManifest(*data.manifest, &web_app_info_,
+                               for_installable_site_);
 
   // TODO(mgiuca): Web Share Target should have its own flag, rather than using
   // the experimental-web-platform-features flag. https://crbug.com/736178.
@@ -709,17 +721,17 @@ void BookmarkAppHelper::OnIconsDownloaded(
   }
 
   if (base::FeatureList::IsEnabled(features::kDesktopPWAWindowing) &&
-      installable_ == INSTALLABLE_YES) {
+      for_installable_site_ == ForInstallableSite::kYes) {
     web_app_info_.open_as_window = true;
     chrome::ShowPWAInstallDialog(
         contents_, web_app_info_,
-        base::Bind(&BookmarkAppHelper::OnBubbleCompleted,
-                   weak_factory_.GetWeakPtr()));
+        base::BindOnce(&BookmarkAppHelper::OnBubbleCompleted,
+                       weak_factory_.GetWeakPtr()));
   } else {
     chrome::ShowBookmarkAppDialog(
         contents_, web_app_info_,
-        base::Bind(&BookmarkAppHelper::OnBubbleCompleted,
-                   weak_factory_.GetWeakPtr()));
+        base::BindOnce(&BookmarkAppHelper::OnBubbleCompleted,
+                       weak_factory_.GetWeakPtr()));
   }
 }
 
@@ -729,6 +741,11 @@ void BookmarkAppHelper::OnBubbleCompleted(
   if (user_accepted) {
     web_app_info_ = web_app_info;
     crx_installer_->InstallWebApp(web_app_info_);
+
+    if (InstallableMetrics::IsReportableInstallSource(install_source_) &&
+        for_installable_site_ == ForInstallableSite::kYes) {
+      InstallableMetrics::TrackInstallEvent(install_source_);
+    }
   } else {
     callback_.Run(nullptr, web_app_info_);
   }
@@ -742,8 +759,8 @@ void BookmarkAppHelper::FinishInstallation(const Extension* extension) {
                                            : extensions::LAUNCH_TYPE_REGULAR;
 
   if (base::FeatureList::IsEnabled(features::kDesktopPWAWindowing)) {
-    DCHECK_NE(INSTALLABLE_UNKNOWN, installable_);
-    launch_type = installable_ == INSTALLABLE_YES
+    DCHECK_NE(ForInstallableSite::kUnknown, for_installable_site_);
+    launch_type = for_installable_site_ == ForInstallableSite::kYes
                       ? extensions::LAUNCH_TYPE_WINDOW
                       : extensions::LAUNCH_TYPE_REGULAR;
   }
@@ -773,7 +790,7 @@ void BookmarkAppHelper::FinishInstallation(const Extension* extension) {
     return;
   }
 
-  if (banners::AppBannerManager::IsExperimentalAppBannersEnabled() &&
+  if (banners::AppBannerManagerDesktop::IsEnabled() &&
       web_app_info_.open_as_window) {
     banners::AppBannerManagerDesktop::FromWebContents(contents_)->OnInstall(
         false /* is_native app */, blink::kWebDisplayModeStandalone);
@@ -800,8 +817,16 @@ void BookmarkAppHelper::FinishInstallation(const Extension* extension) {
   web_app::CreateShortcuts(web_app::SHORTCUT_CREATION_BY_USER,
                            creation_locations, current_profile, extension);
 #else
-  ash::Shell::Get()->shelf_model()->PinAppWithID(extension->id());
+  ChromeLauncherController::instance()->shelf_model()->PinAppWithID(
+      extension->id());
 #endif  // !defined(OS_CHROMEOS)
+
+  // Reparent the tab into an app window immediately when opening as a window.
+  if (base::FeatureList::IsEnabled(features::kDesktopPWAWindowing) &&
+      launch_type == extensions::LAUNCH_TYPE_WINDOW &&
+      !profile_->IsOffTheRecord()) {
+    ReparentWebContentsIntoAppBrowser(contents_, extension);
+  }
 #endif  // !defined(OS_MACOSX)
 
 #if defined(OS_MACOSX)

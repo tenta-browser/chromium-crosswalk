@@ -30,13 +30,10 @@ import android.webkit.JsPromptResult;
 import android.webkit.JsResult;
 import android.webkit.PermissionRequest;
 import android.webkit.RenderProcessGoneDetail;
-import android.webkit.SafeBrowsingResponse;
 import android.webkit.SslErrorHandler;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
 import android.webkit.WebChromeClient.CustomViewCallback;
-import android.webkit.WebResourceError;
-import android.webkit.WebResourceRequest;
 import android.webkit.WebResourceResponse;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
@@ -61,6 +58,8 @@ import org.chromium.base.Callback;
 import org.chromium.base.Log;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.TraceEvent;
+import org.chromium.support_lib_boundary.util.Features;
+import org.chromium.support_lib_callback_glue.SupportLibWebViewContentsClientAdapter;
 
 import java.lang.ref.WeakReference;
 import java.security.Principal;
@@ -89,8 +88,6 @@ import java.util.WeakHashMap;
  * choose the latter, because it makes for a cleaner design.
  */
 @SuppressWarnings("deprecation")
-// You shouldn't change TargetApi, please see how Android M API was added.
-@TargetApi(Build.VERSION_CODES.LOLLIPOP)
 class WebViewContentsClientAdapter extends AwContentsClient {
     // TAG is chosen for consistency with classic webview tracing.
     private static final String TAG = "WebViewCallback";
@@ -104,6 +101,8 @@ class WebViewContentsClientAdapter extends AwContentsClient {
     private final Context mContext;
     // The WebViewClient instance that was passed to WebView.setWebViewClient().
     protected WebViewClient mWebViewClient = sNullWebViewClient;
+    // Some callbacks will be forwarded to this client for apps using the support library.
+    private SupportLibWebViewContentsClientAdapter mSupportLibClient;
     // The WebChromeClient instance that was passed to WebView.setContentViewClient().
     private WebChromeClient mWebChromeClient;
     // The listener receiving find-in-page API results.
@@ -143,6 +142,7 @@ class WebViewContentsClientAdapter extends AwContentsClient {
         mContext = context;
         mWebView = webView;
         mWebViewDelegate = webViewDelegate;
+        mSupportLibClient = new SupportLibWebViewContentsClientAdapter();
         setWebViewClient(null);
 
         mUiThreadHandler = new Handler() {
@@ -179,6 +179,9 @@ class WebViewContentsClientAdapter extends AwContentsClient {
         } else {
             mWebViewClient = sNullWebViewClient;
         }
+        // Always reset mSupportLibClient, since the WebViewClient may no longer be a
+        // WebViewClientCompat, or may support a different set of Features.
+        mSupportLibClient.setWebViewClient(mWebViewClient);
     }
 
     WebViewClient getWebViewClient() {
@@ -265,63 +268,6 @@ class WebViewContentsClientAdapter extends AwContentsClient {
         }
     }
 
-    protected static class WebResourceRequestImpl implements WebResourceRequest {
-        private final AwWebResourceRequest mRequest;
-
-        public WebResourceRequestImpl(AwWebResourceRequest request) {
-            mRequest = request;
-        }
-
-        @Override
-        public Uri getUrl() {
-            return Uri.parse(mRequest.url);
-        }
-
-        @Override
-        public boolean isForMainFrame() {
-            return mRequest.isMainFrame;
-        }
-
-        @Override
-        public boolean hasGesture() {
-            return mRequest.hasUserGesture;
-        }
-
-        @Override
-        public String getMethod() {
-            return mRequest.method;
-        }
-
-        @Override
-        public Map<String, String> getRequestHeaders() {
-            return mRequest.requestHeaders;
-        }
-
-        @Override
-        public boolean isRedirect() {
-            return mRequest.isRedirect;
-        }
-    }
-
-    @TargetApi(Build.VERSION_CODES.M)
-    private static class WebResourceErrorImpl extends WebResourceError {
-        private final AwWebResourceError mError;
-
-        public WebResourceErrorImpl(AwWebResourceError error) {
-            mError = error;
-        }
-
-        @Override
-        public int getErrorCode() {
-            return mError.errorCode;
-        }
-
-        @Override
-        public CharSequence getDescription() {
-            return mError.description;
-        }
-    }
-
     /**
      * @see AwContentsClient#shouldInterceptRequest(java.lang.String)
      */
@@ -330,8 +276,8 @@ class WebViewContentsClientAdapter extends AwContentsClient {
         try {
             TraceEvent.begin("WebViewContentsClientAdapter.shouldInterceptRequest");
             if (TRACE) Log.i(TAG, "shouldInterceptRequest=" + request.url);
-            WebResourceResponse response = mWebViewClient.shouldInterceptRequest(mWebView,
-                    new WebResourceRequestImpl(request));
+            WebResourceResponse response = mWebViewClient.shouldInterceptRequest(
+                    mWebView, new WebResourceRequestAdapter(request));
             if (response == null) return null;
 
             // AwWebResourceResponse should support null headers. b/16332774.
@@ -360,9 +306,12 @@ class WebViewContentsClientAdapter extends AwContentsClient {
             TraceEvent.begin("WebViewContentsClientAdapter.shouldOverrideUrlLoading");
             if (TRACE) Log.i(TAG, "shouldOverrideUrlLoading=" + request.url);
             boolean result;
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            if (mSupportLibClient.isFeatureAvailable(Features.SHOULD_OVERRIDE_WITH_REDIRECTS)) {
+                result = mSupportLibClient.shouldOverrideUrlLoading(
+                        mWebView, new WebResourceRequestAdapter(request));
+            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
                 result = mWebViewClient.shouldOverrideUrlLoading(
-                        mWebView, new WebResourceRequestImpl(request));
+                        mWebView, new WebResourceRequestAdapter(request));
             } else {
                 result = mWebViewClient.shouldOverrideUrlLoading(mWebView, request.url);
             }
@@ -588,11 +537,15 @@ class WebViewContentsClientAdapter extends AwContentsClient {
      */
     @Override
     public void onPageCommitVisible(String url) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return;
         try {
             TraceEvent.begin("WebViewContentsClientAdapter.onPageCommitVisible");
             if (TRACE) Log.i(TAG, "onPageCommitVisible=" + url);
-            mWebViewClient.onPageCommitVisible(mWebView, url);
+            if (mSupportLibClient.isFeatureAvailable(Features.VISUAL_STATE_CALLBACK)) {
+                mSupportLibClient.onPageCommitVisible(mWebView, url);
+            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                mWebViewClient.onPageCommitVisible(mWebView, url);
+            }
+            // Otherwise, the API does not exist, so do nothing.
         } finally {
             TraceEvent.end("WebViewContentsClientAdapter.onPageCommitVisible");
         }
@@ -604,6 +557,10 @@ class WebViewContentsClientAdapter extends AwContentsClient {
     @Override
     public void onReceivedError(int errorCode, String description, String failingUrl) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) return;
+
+        // This event is handled by the support lib in {@link #onReceivedError2}.
+        if (mSupportLibClient.isFeatureAvailable(Features.RECEIVE_WEB_RESOURCE_ERROR)) return;
+
         try {
             TraceEvent.begin("WebViewContentsClientAdapter.onReceivedError");
             if (description == null || description.isEmpty()) {
@@ -625,7 +582,6 @@ class WebViewContentsClientAdapter extends AwContentsClient {
      */
     @Override
     public void onReceivedError2(AwWebResourceRequest request, AwWebResourceError error) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return;
         try {
             TraceEvent.begin("WebViewContentsClientAdapter.onReceivedError");
             if (error.description == null || error.description.isEmpty()) {
@@ -635,53 +591,61 @@ class WebViewContentsClientAdapter extends AwContentsClient {
                 error.description = mWebViewDelegate.getErrorString(mContext, error.errorCode);
             }
             if (TRACE) Log.i(TAG, "onReceivedError=" + request.url);
-            mWebViewClient.onReceivedError(mWebView, new WebResourceRequestImpl(request),
-                    new WebResourceErrorImpl(error));
+            if (mSupportLibClient.isFeatureAvailable(Features.RECEIVE_WEB_RESOURCE_ERROR)) {
+                // Note: we must pass AwWebResourceError, since this class was introduced after L.
+                mSupportLibClient.onReceivedError(
+                        mWebView, new WebResourceRequestAdapter(request), error);
+            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                mWebViewClient.onReceivedError(mWebView, new WebResourceRequestAdapter(request),
+                        new WebResourceErrorAdapter(error));
+            }
+            // Otherwise, this is handled by {@link #onReceivedError}.
         } finally {
             TraceEvent.end("WebViewContentsClientAdapter.onReceivedError");
         }
     }
 
     @Override
+    @TargetApi(Build.VERSION_CODES.O_MR1)
     public void onSafeBrowsingHit(AwWebResourceRequest request, int threatType,
             final Callback<AwSafeBrowsingResponse> callback) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O_MR1) {
-            callback.onResult(new AwSafeBrowsingResponse(SafeBrowsingAction.SHOW_INTERSTITIAL,
-                    /* reporting */ true));
-            return;
+        try {
+            TraceEvent.begin("WebViewContentsClientAdapter.onSafeBrowsingHit");
+            if (mSupportLibClient.isFeatureAvailable(Features.SAFE_BROWSING_HIT)) {
+                mSupportLibClient.onSafeBrowsingHit(
+                        mWebView, new WebResourceRequestAdapter(request), threatType, callback);
+            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+                mWebViewClient.onSafeBrowsingHit(mWebView, new WebResourceRequestAdapter(request),
+                        threatType, new SafeBrowsingResponseAdapter(callback));
+            } else {
+                callback.onResult(new AwSafeBrowsingResponse(SafeBrowsingAction.SHOW_INTERSTITIAL,
+                        /* reporting */ true));
+            }
+        } finally {
+            TraceEvent.end("WebViewContentsClientAdapter.onRenderProcessGone");
         }
-        mWebViewClient.onSafeBrowsingHit(mWebView, new WebResourceRequestImpl(request), threatType,
-                new SafeBrowsingResponse() {
-                    @Override
-                    public void showInterstitial(boolean allowReporting) {
-                        callback.onResult(new AwSafeBrowsingResponse(
-                                SafeBrowsingAction.SHOW_INTERSTITIAL, allowReporting));
-                    }
-
-                    @Override
-                    public void proceed(boolean report) {
-                        callback.onResult(
-                                new AwSafeBrowsingResponse(SafeBrowsingAction.PROCEED, report));
-                    }
-
-                    @Override
-                    public void backToSafety(boolean report) {
-                        callback.onResult(new AwSafeBrowsingResponse(
-                                SafeBrowsingAction.BACK_TO_SAFETY, report));
-                    }
-                });
     }
 
     @Override
     public void onReceivedHttpError(AwWebResourceRequest request, AwWebResourceResponse response) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return;
         try {
             TraceEvent.begin("WebViewContentsClientAdapter.onReceivedHttpError");
             if (TRACE) Log.i(TAG, "onReceivedHttpError=" + request.url);
-            mWebViewClient.onReceivedHttpError(mWebView, new WebResourceRequestImpl(request),
-                    new WebResourceResponse(true, response.getMimeType(), response.getCharset(),
-                            response.getStatusCode(), response.getReasonPhrase(),
-                            response.getResponseHeaders(), response.getData()));
+            if (mSupportLibClient.isFeatureAvailable(Features.RECEIVE_HTTP_ERROR)) {
+                // Note: we do not create an immutable instance here, because that constructor is
+                // not available on L.
+                mSupportLibClient.onReceivedHttpError(mWebView,
+                        new WebResourceRequestAdapter(request),
+                        new WebResourceResponse(response.getMimeType(), response.getCharset(),
+                                response.getStatusCode(), response.getReasonPhrase(),
+                                response.getResponseHeaders(), response.getData()));
+            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                mWebViewClient.onReceivedHttpError(mWebView, new WebResourceRequestAdapter(request),
+                        new WebResourceResponse(true, response.getMimeType(), response.getCharset(),
+                                response.getStatusCode(), response.getReasonPhrase(),
+                                response.getResponseHeaders(), response.getData()));
+            }
+            // Otherwise, the API does not exist, so do nothing.
         } finally {
             TraceEvent.end("WebViewContentsClientAdapter.onReceivedHttpError");
         }
@@ -1280,7 +1244,6 @@ class WebViewContentsClientAdapter extends AwContentsClient {
         }
     }
 
-    // TODO: Move to upstream.
     private static class AwHttpAuthHandlerAdapter extends android.webkit.HttpAuthHandler {
         private AwHttpAuthHandler mAwHandler;
 
@@ -1313,7 +1276,6 @@ class WebViewContentsClientAdapter extends AwContentsClient {
 
     /**
      * Type adaptation class for PermissionRequest.
-     * TODO: Move to the upstream once the PermissionRequest is part of SDK.
      */
     public static class PermissionRequestAdapter extends PermissionRequest {
 

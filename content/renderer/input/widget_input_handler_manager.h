@@ -5,6 +5,7 @@
 #ifndef CONTENT_RENDERER_INPUT_WIDGET_INPUT_HANDLER_MANAGER_H_
 #define CONTENT_RENDERER_INPUT_WIDGET_INPUT_HANDLER_MANAGER_H_
 
+#include "build/build_config.h"
 #include "content/common/content_export.h"
 #include "content/common/input/input_handler.mojom.h"
 #include "content/renderer/render_frame_impl.h"
@@ -15,12 +16,14 @@
 
 namespace blink {
 namespace scheduler {
-class RendererScheduler;
+class WebMainThreadScheduler;
 };  // namespace scheduler
 };  // namespace blink
 
 namespace content {
 class MainThreadEventQueue;
+class SynchronousCompositorRegistry;
+class SynchronousCompositorProxyRegistry;
 
 // This class maintains the compositor InputHandlerProxy and is
 // responsible for passing input events on the compositor and main threads.
@@ -32,7 +35,7 @@ class CONTENT_EXPORT WidgetInputHandlerManager
   static scoped_refptr<WidgetInputHandlerManager> Create(
       base::WeakPtr<RenderWidget> render_widget,
       scoped_refptr<base::SingleThreadTaskRunner> compositor_task_runner,
-      blink::scheduler::RendererScheduler* renderer_scheduler);
+      blink::scheduler::WebMainThreadScheduler* main_thread_scheduler);
   void AddAssociatedInterface(
       mojom::WidgetInputHandlerAssociatedRequest interface_request,
       mojom::WidgetInputHandlerHostPtr host);
@@ -42,8 +45,6 @@ class CONTENT_EXPORT WidgetInputHandlerManager
 
   // InputHandlerProxyClient overrides.
   void WillShutdown() override;
-  void TransferActiveWheelFlingAnimation(
-      const blink::WebActiveWheelFlingParameters& params) override;
   void DispatchNonBlockingEventToMainThread(
       ui::WebScopedInputEvent event,
       const ui::LatencyInfo& latency_info) override;
@@ -60,6 +61,7 @@ class CONTENT_EXPORT WidgetInputHandlerManager
       const cc::OverscrollBehavior& overscroll_behavior) override;
   void DidStopFlinging() override;
   void DidAnimateForInput() override;
+  void DidStartScrollingViewport() override;
   void GenerateScrollBeginAndSendToMainThread(
       const blink::WebGestureEvent& update_event) override;
   void SetWhiteListedTouchAction(
@@ -78,6 +80,15 @@ class CONTENT_EXPORT WidgetInputHandlerManager
 
   mojom::WidgetInputHandlerHost* GetWidgetInputHandlerHost();
 
+  void AttachSynchronousCompositor(
+      mojom::SynchronousCompositorControlHostPtr control_host,
+      mojom::SynchronousCompositorHostAssociatedPtrInfo host,
+      mojom::SynchronousCompositorAssociatedRequest compositor_request);
+
+#if defined(OS_ANDROID)
+  content::SynchronousCompositorRegistry* GetSynchronousCompositorRegistry();
+#endif
+
  protected:
   friend class base::RefCountedThreadSafe<WidgetInputHandlerManager>;
   ~WidgetInputHandlerManager() override;
@@ -86,11 +97,12 @@ class CONTENT_EXPORT WidgetInputHandlerManager
   WidgetInputHandlerManager(
       base::WeakPtr<RenderWidget> render_widget,
       scoped_refptr<base::SingleThreadTaskRunner> compositor_task_runner,
-      blink::scheduler::RendererScheduler* renderer_scheduler);
+      blink::scheduler::WebMainThreadScheduler* main_thread_scheduler);
   void Init();
   void InitOnCompositorThread(
       const base::WeakPtr<cc::InputHandler>& input_handler,
-      bool smooth_scroll_enabled);
+      bool smooth_scroll_enabled,
+      bool sync_compositing);
   void BindAssociatedChannel(
       mojom::WidgetInputHandlerAssociatedRequest request);
   void BindChannel(mojom::WidgetInputHandlerRequest request);
@@ -116,7 +128,7 @@ class CONTENT_EXPORT WidgetInputHandlerManager
 
   // Only valid to be called on the main thread.
   base::WeakPtr<RenderWidget> render_widget_;
-  blink::scheduler::RendererScheduler* renderer_scheduler_;
+  blink::scheduler::WebMainThreadScheduler* main_thread_scheduler_;
 
   // InputHandlerProxy is only interacted with on the compositor
   // thread.
@@ -137,6 +149,11 @@ class CONTENT_EXPORT WidgetInputHandlerManager
   scoped_refptr<MainThreadEventQueue> input_event_queue_;
   scoped_refptr<base::SingleThreadTaskRunner> main_thread_task_runner_;
   scoped_refptr<base::SingleThreadTaskRunner> compositor_task_runner_;
+
+#if defined(OS_ANDROID)
+  std::unique_ptr<SynchronousCompositorProxyRegistry>
+      synchronous_compositor_registry_;
+#endif
 
   DISALLOW_COPY_AND_ASSIGN(WidgetInputHandlerManager);
 };

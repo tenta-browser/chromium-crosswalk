@@ -10,8 +10,6 @@
 #include "chrome/services/wifi_util_win/wifi_credentials_getter.h"
 #include "mojo/public/cpp/bindings/strong_binding.h"
 
-namespace chrome {
-
 namespace {
 
 void OnWifiCredentialsGetterRequest(
@@ -34,8 +32,7 @@ std::unique_ptr<service_manager::Service> WifiUtilWinService::CreateService() {
 
 void WifiUtilWinService::OnStart() {
   ref_factory_ = std::make_unique<service_manager::ServiceContextRefFactory>(
-      base::Bind(&service_manager::ServiceContext::RequestQuit,
-                 base::Unretained(context())));
+      context()->CreateQuitClosure());
   registry_.AddInterface(
       base::Bind(&OnWifiCredentialsGetterRequest, ref_factory_.get()));
 }
@@ -46,5 +43,3 @@ void WifiUtilWinService::OnBindInterface(
     mojo::ScopedMessagePipeHandle interface_pipe) {
   registry_.BindInterface(interface_name, std::move(interface_pipe));
 }
-
-}  //  namespace chrome

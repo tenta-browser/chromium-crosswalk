@@ -16,7 +16,6 @@
 #include "base/macros.h"
 #include "base/memory/singleton.h"
 #include "chrome/browser/chrome_notification_types.h"
-#include "chrome/browser/chromeos/accessibility/accessibility_manager.h"
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
@@ -43,12 +42,9 @@ class MagnificationManagerImpl
  public:
   MagnificationManagerImpl()
       : profile_(NULL),
-        magnifier_enabled_pref_handler_(
-            ash::prefs::kAccessibilityScreenMagnifierEnabled),
-        magnifier_scale_pref_handler_(
-            ash::prefs::kAccessibilityScreenMagnifierScale),
         enabled_(false),
         keep_focus_centered_(false),
+        scale_(0.0),
         observing_focus_change_in_page_(false) {
     registrar_.Add(this, chrome::NOTIFICATION_LOGIN_OR_LOCK_WEBUI_VISIBLE,
                    content::NotificationService::AllSources());
@@ -109,16 +105,20 @@ class MagnificationManagerImpl
       pref_change_registrar_->Init(profile->GetPrefs());
       pref_change_registrar_->Add(
           ash::prefs::kAccessibilityScreenMagnifierEnabled,
-          base::Bind(&MagnificationManagerImpl::UpdateMagnifierFromPrefs,
-                     base::Unretained(this)));
+          base::BindRepeating(
+              &MagnificationManagerImpl::UpdateMagnifierFromPrefs,
+              base::Unretained(this)));
       pref_change_registrar_->Add(
           ash::prefs::kAccessibilityScreenMagnifierCenterFocus,
-          base::Bind(&MagnificationManagerImpl::UpdateMagnifierFromPrefs,
-                     base::Unretained(this)));
+          base::BindRepeating(
+              &MagnificationManagerImpl::UpdateMagnifierFromPrefs,
+              base::Unretained(this)));
+      pref_change_registrar_->Add(
+          ash::prefs::kAccessibilityScreenMagnifierScale,
+          base::BindRepeating(
+              &MagnificationManagerImpl::UpdateMagnifierFromPrefs,
+              base::Unretained(this)));
     }
-
-    magnifier_enabled_pref_handler_.HandleProfileChanged(profile_, profile);
-    magnifier_scale_pref_handler_.HandleProfileChanged(profile_, profile);
 
     profile_ = profile;
     UpdateMagnifierFromPrefs();
@@ -139,7 +139,7 @@ class MagnificationManagerImpl
     MonitorFocusInPageChange();
   }
 
-  virtual void SetMagniferKeepFocusCenteredInternal(bool keep_focus_centered) {
+  virtual void SetMagnifierKeepFocusCenteredInternal(bool keep_focus_centered) {
     if (keep_focus_centered_ == keep_focus_centered)
       return;
 
@@ -147,6 +147,16 @@ class MagnificationManagerImpl
 
     ash::Shell::Get()->magnification_controller()->SetKeepFocusCentered(
         keep_focus_centered_);
+  }
+
+  virtual void SetMagnifierScaleInternal(double scale) {
+    if (scale_ == scale)
+      return;
+
+    scale_ = scale;
+
+    ash::Shell::Get()->magnification_controller()->SetScale(
+        scale_, false /* animate */);
   }
 
   void UpdateMagnifierFromPrefs() {
@@ -158,18 +168,21 @@ class MagnificationManagerImpl
         prefs->GetBoolean(ash::prefs::kAccessibilityScreenMagnifierEnabled);
     const bool keep_focus_centered =
         prefs->GetBoolean(ash::prefs::kAccessibilityScreenMagnifierCenterFocus);
+    const double scale =
+        prefs->GetDouble(ash::prefs::kAccessibilityScreenMagnifierScale);
 
     if (!enabled) {
       SetMagnifierEnabledInternal(enabled);
-      SetMagniferKeepFocusCenteredInternal(keep_focus_centered);
+      SetMagnifierKeepFocusCenteredInternal(keep_focus_centered);
+      SetMagnifierScaleInternal(scale);
     } else {
-      SetMagniferKeepFocusCenteredInternal(keep_focus_centered);
+      SetMagnifierScaleInternal(scale);
+      SetMagnifierKeepFocusCenteredInternal(keep_focus_centered);
       SetMagnifierEnabledInternal(enabled);
     }
 
     AccessibilityStatusEventDetails details(
-        ACCESSIBILITY_TOGGLE_SCREEN_MAGNIFIER, enabled_,
-        ash::A11Y_NOTIFICATION_NONE);
+        ACCESSIBILITY_TOGGLE_SCREEN_MAGNIFIER, enabled_);
 
     if (!AccessibilityManager::Get())
       return;
@@ -231,11 +244,9 @@ class MagnificationManagerImpl
 
   Profile* profile_;
 
-  AccessibilityManager::PrefHandler magnifier_enabled_pref_handler_;
-  AccessibilityManager::PrefHandler magnifier_scale_pref_handler_;
-
   bool enabled_;
   bool keep_focus_centered_;
+  double scale_;
   bool observing_focus_change_in_page_;
 
   content::NotificationRegistrar registrar_;

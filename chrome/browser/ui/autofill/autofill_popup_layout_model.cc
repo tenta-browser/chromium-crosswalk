@@ -60,6 +60,7 @@ const struct {
     {autofill::kMirCard, IDR_AUTOFILL_CC_MIR},
     {autofill::kUnionPay, IDR_AUTOFILL_CC_UNIONPAY},
     {autofill::kVisaCard, IDR_AUTOFILL_CC_VISA},
+    {"googlePay", IDR_AUTOFILL_GOOGLE_PAY},
 #if defined(OS_ANDROID)
     {"httpWarning", IDR_AUTOFILL_HTTP_WARNING},
     {"httpsInvalid", IDR_AUTOFILL_HTTPS_INVALID_WARNING},
@@ -210,6 +211,9 @@ ui::NativeTheme::ColorId AutofillPopupLayoutModel::GetValueFontColorIDForRow(
 gfx::ImageSkia AutofillPopupLayoutModel::GetIconImage(size_t index) const {
   std::vector<autofill::Suggestion> suggestions = delegate_->GetSuggestions();
   const base::string16& icon_str = suggestions[index].icon;
+  if (icon_str.empty())
+    return gfx::ImageSkia();
+
   constexpr int kIconSize = 16;
 
   // For http warning message, get icon images from VectorIcon, which is the

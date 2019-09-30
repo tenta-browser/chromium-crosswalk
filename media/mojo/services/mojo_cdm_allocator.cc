@@ -5,11 +5,11 @@
 #include "media/mojo/services/mojo_cdm_allocator.h"
 
 #include <limits>
+#include <memory>
 
 #include "base/bind.h"
 #include "base/callback.h"
 #include "base/compiler_specific.h"
-#include "base/memory/ptr_util.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/numerics/safe_math.h"
 #include "media/cdm/api/content_decryption_module.h"
@@ -148,6 +148,13 @@ class MojoCdmVideoFrame : public VideoFrameImpl {
             PlaneOffset(kYPlane), PlaneOffset(kUPlane), PlaneOffset(kVPlane),
             Stride(kYPlane), Stride(kUPlane), Stride(kVPlane),
             base::TimeDelta::FromMicroseconds(Timestamp()));
+
+    // If |frame| is not created something is wrong with the video frame data
+    // returned by the CDM. Catch it here rather than returning a null frame
+    // to the renderer.
+    // TODO(crbug.com/829443). Monitor crashes to see if this happens.
+    CHECK(frame);
+
     frame->SetMojoSharedBufferDoneCB(mojo_shared_buffer_done_cb_);
     return frame;
   }
@@ -199,7 +206,7 @@ cdm::Buffer* MojoCdmAllocator::CreateCdmBuffer(size_t capacity) {
 // Creates a new MojoCdmVideoFrame on every request.
 std::unique_ptr<VideoFrameImpl> MojoCdmAllocator::CreateCdmVideoFrame() {
   DCHECK(thread_checker_.CalledOnValidThread());
-  return base::MakeUnique<MojoCdmVideoFrame>(
+  return std::make_unique<MojoCdmVideoFrame>(
       base::Bind(&MojoCdmAllocator::AddBufferToAvailableMap,
                  weak_ptr_factory_.GetWeakPtr()));
 }

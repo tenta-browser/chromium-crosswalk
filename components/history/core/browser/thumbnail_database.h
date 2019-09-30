@@ -10,6 +10,7 @@
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
+#include "base/optional.h"
 #include "components/history/core/browser/history_types.h"
 #include "sql/connection.h"
 #include "sql/init_status.h"
@@ -136,6 +137,11 @@ class ThumbnailDatabase {
   // of the bitmaps for |icon_id| to be out of date.
   bool SetFaviconOutOfDate(favicon_base::FaviconID icon_id);
 
+  // Retrieves the newest |last_updated| time across all bitmaps for |icon_id|.
+  // Returns true if successful and if there is at least one bitmap.
+  bool GetFaviconLastUpdatedTime(favicon_base::FaviconID icon_id,
+                                 base::Time* last_updated);
+
   // Mark all bitmaps of type ON_DEMAND at |icon_url| as requested at |time|.
   // This postpones their automatic eviction from the database. Not all calls
   // end up in a write into the DB:
@@ -196,6 +202,16 @@ class ThumbnailDatabase {
   // mapping_data is not NULL.
   bool GetIconMappingsForPageURL(const GURL& page_url,
                                  std::vector<IconMapping>* mapping_data);
+
+  // Given |url|, returns the |page_url| page mapped to an icon with
+  // |required_icon_types|, where |page_url| has host = url.host(). This allows
+  // for icons to be retrieved when a full URL is not available. For example,
+  // |url| = http://www.google.com would match
+  // |page_url| = https://www.google.com/search. The returned optional will be
+  // empty if no such |page_url| exists.
+  base::Optional<GURL> FindFirstPageURLForHost(
+      const GURL& url,
+      const favicon_base::IconTypeSet& required_icon_types);
 
   // Adds a mapping between the given page_url and icon_id.
   // Returns the new mapping id if the adding succeeds, otherwise 0 is returned.

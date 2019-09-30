@@ -2,18 +2,18 @@ This test validates initial set of loaded modules.
 
 Loaded modules:
     bindings
+    browser_components
+    browser_sdk
     common
     components
     console_counters
-    console_model
     dom_extension
     emulation
     extensions
-    help
     host
+    inspector_main
     main
     mobile_throttling
-    network_log
     persistence
     platform
     product_registry

@@ -4,7 +4,8 @@
 
 #include "headless/public/util/testing/test_in_memory_protocol_handler.h"
 
-#include "base/memory/ptr_util.h"
+#include <memory>
+
 #include "headless/public/util/expedited_dispatcher.h"
 #include "headless/public/util/generic_url_request_job.h"
 #include "headless/public/util/url_fetcher.h"
@@ -21,10 +22,20 @@ class TestInMemoryProtocolHandler::MockURLFetcher : public URLFetcher {
   void StartFetch(const Request* request,
                   ResultListener* result_listener) override {
     GURL url = request->GetURLRequest()->url();
-    DCHECK_EQ("GET", request->GetURLRequest()->method());
+    const std::string& method = request->GetURLRequest()->method();
+    if (method == "POST" || method == "PUT") {
+      request->GetPostData();
+    } else if (method == "GET") {
+      // Do nothing.
+    } else {
+      DCHECK(false) << "Method " << method << " is not supported. Probably.";
+    }
 
     std::string devtools_frame_id = request->GetDevToolsFrameId();
-    DCHECK_NE(devtools_frame_id, "") << " For url " << url;
+    // Note |devtools_frame_id| can sometimes be empty if called during context
+    // shutdown. This isn't a big deal because code should avoid performing net
+    // operations during shutdown.
+    protocol_handler_->methods_requested_.push_back(method);
     protocol_handler_->RegisterUrl(url.spec(), devtools_frame_id);
 
     if (protocol_handler_->request_deferrer()) {
@@ -43,7 +54,8 @@ class TestInMemoryProtocolHandler::MockURLFetcher : public URLFetcher {
       net::LoadTimingInfo load_timing_info;
       load_timing_info.receive_headers_end = base::TimeTicks::Now();
       result_listener->OnFetchCompleteExtractHeaders(
-          url, response->data.c_str(), response->data.size(), load_timing_info);
+          url, response->data.c_str(), response->data.size(),
+          response->metadata, load_timing_info, 0);
     } else {
       result_listener->OnFetchStartError(net::ERR_FILE_NOT_FOUND);
     }
@@ -96,16 +108,21 @@ void TestInMemoryProtocolHandler::SetHeadlessBrowserContext(
 
 void TestInMemoryProtocolHandler::InsertResponse(const std::string& url,
                                                  const Response& response) {
-  response_map_[url] = response;
+  response_map_[url].reset(new Response(response));
+}
+
+void TestInMemoryProtocolHandler::SetResponseMetadata(
+    const std::string& url,
+    scoped_refptr<net::IOBufferWithSize> metadata) {
+  response_map_[url]->metadata = metadata;
 }
 
 const TestInMemoryProtocolHandler::Response*
 TestInMemoryProtocolHandler::GetResponse(const std::string& url) const {
-  std::map<std::string, Response>::const_iterator find_it =
-      response_map_.find(url);
+  const auto find_it = response_map_.find(url);
   if (find_it == response_map_.end())
     return nullptr;
-  return &find_it->second;
+  return find_it->second.get();
 }
 
 net::URLRequestJob* TestInMemoryProtocolHandler::MaybeCreateJob(
@@ -113,7 +130,7 @@ net::URLRequestJob* TestInMemoryProtocolHandler::MaybeCreateJob(
     net::NetworkDelegate* network_delegate) const {
   return new GenericURLRequestJob(
       request, network_delegate, dispatcher_.get(),
-      base::MakeUnique<MockURLFetcher>(
+      std::make_unique<MockURLFetcher>(
           const_cast<TestInMemoryProtocolHandler*>(this)),
       test_delegate_.get(), headless_browser_context_);
 }

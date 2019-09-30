@@ -4,7 +4,7 @@
 
 #include "ash/system/rotation/tray_rotation_lock.h"
 
-#include "ash/display/screen_orientation_controller_chromeos.h"
+#include "ash/display/screen_orientation_controller.h"
 #include "ash/resources/vector_icons/vector_icons.h"
 #include "ash/shell.h"
 #include "ash/strings/grit/ash_strings.h"
@@ -78,7 +78,7 @@ RotationLockDefaultView::RotationLockDefaultView(SystemTrayItem* owner)
     : ActionableView(owner, TrayPopupInkDropStyle::FILL_BOUNDS),
       icon_(TrayPopupUtils::CreateMainImageView()),
       label_(TrayPopupUtils::CreateDefaultLabel()) {
-  SetLayoutManager(new views::FillLayout);
+  SetLayoutManager(std::make_unique<views::FillLayout>());
 
   TriView* tri_view = TrayPopupUtils::CreateDefaultRowView();
   AddChildView(tri_view);

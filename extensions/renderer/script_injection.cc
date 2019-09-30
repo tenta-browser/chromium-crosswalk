@@ -7,16 +7,16 @@
 #include <map>
 #include <utility>
 
+#include "base/feature_list.h"
 #include "base/lazy_instance.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/timer/elapsed_timer.h"
 #include "base/values.h"
 #include "content/public/renderer/render_frame.h"
 #include "content/public/renderer/v8_value_converter.h"
+#include "extensions/common/extension_features.h"
 #include "extensions/common/extension_messages.h"
-#include "extensions/common/feature_switch.h"
 #include "extensions/common/host_id.h"
 #include "extensions/renderer/async_scripts_run_info.h"
 #include "extensions/renderer/dom_activity_logger.h"
@@ -24,11 +24,11 @@
 #include "extensions/renderer/extensions_renderer_client.h"
 #include "extensions/renderer/script_injection_callback.h"
 #include "extensions/renderer/scripts_run_info.h"
-#include "third_party/WebKit/public/platform/WebSecurityOrigin.h"
-#include "third_party/WebKit/public/platform/WebString.h"
-#include "third_party/WebKit/public/web/WebDocument.h"
-#include "third_party/WebKit/public/web/WebLocalFrame.h"
-#include "third_party/WebKit/public/web/WebScriptSource.h"
+#include "third_party/blink/public/platform/web_security_origin.h"
+#include "third_party/blink/public/platform/web_string.h"
+#include "third_party/blink/public/web/web_document.h"
+#include "third_party/blink/public/web/web_local_frame.h"
+#include "third_party/blink/public/web/web_script_source.h"
 #include "url/gurl.h"
 
 namespace extensions {
@@ -321,8 +321,7 @@ void ScriptInjection::InjectJs(
         sources.front(), is_user_gesture, callback.release());
   } else {
     blink::WebLocalFrame::ScriptExecutionType option;
-    if (injector_->script_type() == UserScript::CONTENT_SCRIPT &&
-        FeatureSwitch::yield_between_content_script_runs()->IsEnabled()) {
+    if (injector_->script_type() == UserScript::CONTENT_SCRIPT) {
       switch (run_location_) {
         case UserScript::DOCUMENT_END:
         case UserScript::DOCUMENT_IDLE:
@@ -400,8 +399,19 @@ void ScriptInjection::InjectCss(std::set<std::string>* injected_stylesheets,
   std::vector<blink::WebString> css_sources = injector_->GetCssSources(
       run_location_, injected_stylesheets, num_injected_stylesheets);
   blink::WebLocalFrame* web_frame = render_frame_->GetWebFrame();
+  // Default CSS origin is "author", but can be overridden to "user" by scripts.
+  base::Optional<CSSOrigin> css_origin = injector_->GetCssOrigin();
+  blink::WebDocument::CSSOrigin blink_css_origin =
+      css_origin && *css_origin == CSS_ORIGIN_USER
+          ? blink::WebDocument::kUserOrigin
+          : blink::WebDocument::kAuthorOrigin;
+  blink::WebStyleSheetKey style_sheet_key;
+  if (const base::Optional<std::string>& injection_key =
+          injector_->GetInjectionKey())
+    style_sheet_key = blink::WebString::FromASCII(*injection_key);
   for (const blink::WebString& css : css_sources)
-    web_frame->GetDocument().InsertStyleSheet(css);
+    web_frame->GetDocument().InsertStyleSheet(css, &style_sheet_key,
+                                              blink_css_origin);
 }
 
 }  // namespace extensions

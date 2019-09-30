@@ -6,11 +6,11 @@
     },
     {
       "object": "LayoutView #document",
-      "reason": "geometry"
+      "reason": "style change"
     },
     {
       "object": "LayoutView #document",
-      "reason": "style change"
+      "reason": "geometry"
     },
     {
       "object": "LayoutBlockFlow BODY class='noScroll'",
@@ -18,7 +18,7 @@
     },
     {
       "object": "LayoutBlockFlow DIV id='container'",
-      "reason": "geometry"
+      "reason": "incremental"
     },
     {
       "object": "LayoutBlockFlow (positioned) DIV id='overlay'",

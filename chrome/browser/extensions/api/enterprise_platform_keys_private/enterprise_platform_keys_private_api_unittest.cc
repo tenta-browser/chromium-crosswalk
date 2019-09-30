@@ -111,10 +111,12 @@ void GetCertificateCallbackTrue(
     const chromeos::attestation::AttestationFlow::CertificateCallback&
         callback) {
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::BindOnce(callback, true, "certificate"));
+      FROM_HERE,
+      base::BindRepeating(callback, chromeos::attestation::ATTESTATION_SUCCESS,
+                          "certificate"));
 }
 
-void GetCertificateCallbackFalse(
+void GetCertificateCallbackUnspecifiedFailure(
     chromeos::attestation::AttestationCertificateProfile certificate_profile,
     const AccountId& account_id,
     const std::string& request_origin,
@@ -122,7 +124,24 @@ void GetCertificateCallbackFalse(
     const chromeos::attestation::AttestationFlow::CertificateCallback&
         callback) {
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::BindOnce(callback, false, ""));
+      FROM_HERE,
+      base::BindRepeating(
+          callback, chromeos::attestation::ATTESTATION_UNSPECIFIED_FAILURE,
+          ""));
+}
+
+void GetCertificateCallbackBadRequestFailure(
+    chromeos::attestation::AttestationCertificateProfile certificate_profile,
+    const AccountId& account_id,
+    const std::string& request_origin,
+    bool force_new_key,
+    const chromeos::attestation::AttestationFlow::CertificateCallback&
+        callback) {
+  base::ThreadTaskRunnerHandle::Get()->PostTask(
+      FROM_HERE,
+      base::BindRepeating(
+          callback,
+          chromeos::attestation::ATTESTATION_SERVER_BAD_REQUEST_FAILURE, ""));
 }
 
 class EPKPChallengeKeyTestBase : public BrowserWithTestWindowTest {
@@ -279,7 +298,7 @@ TEST_F(EPKPChallengeMachineKeyTest, DoesKeyExistDbusFailed) {
 
 TEST_F(EPKPChallengeMachineKeyTest, GetCertificateFailed) {
   EXPECT_CALL(mock_attestation_flow_, GetCertificate(_, _, _, _, _))
-      .WillRepeatedly(Invoke(GetCertificateCallbackFalse));
+      .WillRepeatedly(Invoke(GetCertificateCallbackUnspecifiedFailure));
 
   EXPECT_EQ(GetCertificateError(kGetCertificateFailed),
             utils::RunFunctionAndReturnError(func_.get(), kArgs, browser()));
@@ -301,7 +320,8 @@ TEST_F(EPKPChallengeMachineKeyTest, KeyExists) {
   EXPECT_CALL(mock_attestation_flow_, GetCertificate(_, _, _, _, _))
       .Times(0);
 
-  EXPECT_TRUE(utils::RunFunction(func_.get(), kArgs, browser(), utils::NONE));
+  EXPECT_TRUE(utils::RunFunction(func_.get(), kArgs, browser(),
+                                 extensions::api_test_utils::NONE));
 }
 
 TEST_F(EPKPChallengeMachineKeyTest, AttestationNotPrepared) {
@@ -344,7 +364,7 @@ TEST_P(EPKPChallengeMachineKeyAllProfilesTest, Success) {
       .Times(1);
 
   std::unique_ptr<base::Value> value(utils::RunFunctionAndReturnSingleResult(
-      func_.get(), kArgs, browser(), utils::NONE));
+      func_.get(), kArgs, browser(), extensions::api_test_utils::NONE));
 
   std::string response;
   value->GetAsString(&response);
@@ -430,9 +450,17 @@ TEST_F(EPKPChallengeUserKeyTest, DoesKeyExistDbusFailed) {
             utils::RunFunctionAndReturnError(func_.get(), kArgs, browser()));
 }
 
-TEST_F(EPKPChallengeUserKeyTest, GetCertificateFailed) {
+TEST_F(EPKPChallengeUserKeyTest, GetCertificateFailedWithUnspecifiedFailure) {
   EXPECT_CALL(mock_attestation_flow_, GetCertificate(_, _, _, _, _))
-      .WillRepeatedly(Invoke(GetCertificateCallbackFalse));
+      .WillRepeatedly(Invoke(GetCertificateCallbackUnspecifiedFailure));
+
+  EXPECT_EQ(GetCertificateError(kGetCertificateFailed),
+            utils::RunFunctionAndReturnError(func_.get(), kArgs, browser()));
+}
+
+TEST_F(EPKPChallengeUserKeyTest, GetCertificateFailedWithBadRequestFailure) {
+  EXPECT_CALL(mock_attestation_flow_, GetCertificate(_, _, _, _, _))
+      .WillRepeatedly(Invoke(GetCertificateCallbackBadRequestFailure));
 
   EXPECT_EQ(GetCertificateError(kGetCertificateFailed),
             utils::RunFunctionAndReturnError(func_.get(), kArgs, browser()));
@@ -463,15 +491,16 @@ TEST_F(EPKPChallengeUserKeyTest, KeyExists) {
   EXPECT_CALL(mock_attestation_flow_, GetCertificate(_, _, _, _, _))
       .Times(0);
 
-  EXPECT_TRUE(utils::RunFunction(func_.get(), kArgs, browser(), utils::NONE));
+  EXPECT_TRUE(utils::RunFunction(func_.get(), kArgs, browser(),
+                                 extensions::api_test_utils::NONE));
 }
 
 TEST_F(EPKPChallengeUserKeyTest, KeyNotRegistered) {
   EXPECT_CALL(mock_async_method_caller_, TpmAttestationRegisterKey(_, _, _, _))
       .Times(0);
 
-  EXPECT_TRUE(utils::RunFunction(
-      func_.get(), "[\"Y2hhbGxlbmdl\", false]", browser(), utils::NONE));
+  EXPECT_TRUE(utils::RunFunction(func_.get(), "[\"Y2hhbGxlbmdl\", false]",
+                                 browser(), extensions::api_test_utils::NONE));
 }
 
 TEST_F(EPKPChallengeUserKeyTest, PersonalDevice) {
@@ -506,7 +535,7 @@ TEST_F(EPKPChallengeUserKeyTest, Success) {
       .Times(1);
 
   std::unique_ptr<base::Value> value(utils::RunFunctionAndReturnSingleResult(
-      func_.get(), kArgs, browser(), utils::NONE));
+      func_.get(), kArgs, browser(), extensions::api_test_utils::NONE));
 
   std::string response;
   value->GetAsString(&response);

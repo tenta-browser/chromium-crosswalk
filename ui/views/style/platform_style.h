@@ -11,6 +11,10 @@
 #include "ui/views/controls/button/button.h"
 #include "ui/views/views_export.h"
 
+namespace gfx {
+class Range;
+}  // namespace gfx
+
 namespace views {
 
 class Border;
@@ -23,6 +27,10 @@ class VIEWS_EXPORT PlatformStyle {
  public:
   // Type used by LabelButton to map button states to text colors.
   using ButtonColorByState = SkColor[Button::STATE_COUNT];
+
+  // Whether the ok button is in the leading position (left in LTR) in a
+  // typical Cancel/OK button group.
+  static const bool kIsOkButtonLeading;
 
   // Minimum size for platform-styled buttons (Button::STYLE_BUTTON).
   static const int kMinLabelButtonWidth;
@@ -54,13 +62,17 @@ class VIEWS_EXPORT PlatformStyle {
   // Whether ripples should be used for visual feedback on control activation.
   static const bool kUseRipples;
 
-  // Whether to mirror the arrow of bubble dialogs in RTL, such that the bubble
-  // opens in the opposite direction.
-  static const bool kMirrorBubbleArrowInRTLByDefault;
-
   // Whether to scroll text fields to the beginning when they gain or lose
   // focus.
   static const bool kTextfieldScrollsToStartOnFocusChange;
+
+  // Whether text fields should use a "drag" cursor when not actually
+  // dragging but available to do so.
+  static const bool kTextfieldUsesDragCursorWhenDraggable;
+
+  // Whether bookmarks in the bookmarks bar are elided [and show elipses at the
+  // tail] or fade out.
+  static const bool kShouldElideBookmarksInBookmarksBar;
 
   // Creates the default scrollbar for the given orientation.
   static std::unique_ptr<ScrollBar> CreateScrollBar(bool is_horizontal);
@@ -78,6 +90,14 @@ class VIEWS_EXPORT PlatformStyle {
   // Called whenever a textfield edit fails. Gives visual/audio feedback about
   // the failed edit if platform-appropriate.
   static void OnTextfieldEditFailed();
+
+  // When deleting backwards in |string| with the cursor at index
+  // |cursor_position|, return the range of UTF-16 words to be deleted.
+  // This is to support deleting entire graphemes instead of individual
+  // characters when necessary on Mac, and code points made from surrogate
+  // pairs on other platforms.
+  static gfx::Range RangeToDeleteBackwards(const base::string16& text,
+                                           size_t cursor_position);
 
  private:
   DISALLOW_IMPLICIT_CONSTRUCTORS(PlatformStyle);

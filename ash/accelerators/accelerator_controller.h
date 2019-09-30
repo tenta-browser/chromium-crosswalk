@@ -31,7 +31,6 @@ class AcceleratorManagerDelegate;
 namespace ash {
 
 struct AcceleratorData;
-class AcceleratorControllerDelegate;
 class ExitWarningHandler;
 
 // Identifier for the high contrast toggle accelerator notification.
@@ -43,8 +42,8 @@ ASH_EXPORT extern const char kHighContrastToggleAccelNotificationId[];
 class ASH_EXPORT AcceleratorController : public ui::AcceleratorTarget,
                                          public mojom::AcceleratorController {
  public:
-  AcceleratorController(AcceleratorControllerDelegate* delegate,
-                        ui::AcceleratorManagerDelegate* manager_delegate);
+  explicit AcceleratorController(
+      ui::AcceleratorManagerDelegate* manager_delegate);
   ~AcceleratorController() override;
 
   // A list of possible ways in which an accelerator should be restricted before
@@ -178,8 +177,6 @@ class ASH_EXPORT AcceleratorController : public ui::AcceleratorTarget,
       AcceleratorAction action,
       const ui::Accelerator& accelerator) const;
 
-  AcceleratorControllerDelegate* delegate_;
-
   std::unique_ptr<ui::AcceleratorManager> accelerator_manager_;
 
   // A tracker for the current and previous accelerators.
@@ -208,6 +205,8 @@ class ASH_EXPORT AcceleratorController : public ui::AcceleratorTarget,
   std::set<int> actions_allowed_at_login_screen_;
   // Actions allowed when the screen is locked.
   std::set<int> actions_allowed_at_lock_screen_;
+  // Actions allowed when the power menu is opened.
+  std::set<int> actions_allowed_at_power_menu_;
   // Actions allowed when a modal window is up.
   std::set<int> actions_allowed_at_modal_window_;
   // Preferred actions. See accelerator_table.h for details.

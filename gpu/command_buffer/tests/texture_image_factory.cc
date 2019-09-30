@@ -35,7 +35,8 @@ class TextureImage : public gl::GLImage {
                             int z_order,
                             gfx::OverlayTransform transform,
                             const gfx::Rect& bounds_rect,
-                            const gfx::RectF& crop_rect) override {
+                            const gfx::RectF& crop_rect,
+                            bool enable_blend) override {
     return false;
   }
   void SetColorSpace(const gfx::ColorSpace& color_space) override {}
@@ -45,7 +46,7 @@ class TextureImage : public gl::GLImage {
                     const std::string& dump_name) override {}
 
  private:
-  ~TextureImage() override {}
+  ~TextureImage() override = default;
   gfx::Size size_;
 };
 
@@ -63,7 +64,9 @@ scoped_refptr<gl::GLImage> TextureImageFactory::CreateAnonymousImage(
     const gfx::Size& size,
     gfx::BufferFormat format,
     gfx::BufferUsage usage,
-    unsigned internalformat) {
+    unsigned internalformat,
+    bool* is_cleared) {
+  *is_cleared = true;
   return new TextureImage(size);
 }
 

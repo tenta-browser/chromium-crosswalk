@@ -26,6 +26,7 @@ PACKAGE_FILTER = [
     "libXrender.so",
     "libXss.so",
     "libXtst.so",
+    "libappindicator3.so",
     "libasound.so",
     "libatk-1.0.so",
     "libatk-bridge-2.0.so",
@@ -33,12 +34,9 @@ PACKAGE_FILTER = [
     "libcairo.so",
     "libcups.so",
     "libdbus-1.so",
-    "libdconf.so",
     "libdl.so",
     "libexpat.so",
-    "libfontconfig.so",
     "libgcc_s.so",
-    "libgconf-2.so",
     "libgdk-3.so",
     "libgdk_pixbuf-2.0.so",
     "libgio-2.0.so",
@@ -57,6 +55,7 @@ PACKAGE_FILTER = [
     "libsmime3.so",
     "libstdc++.so",
     "libxcb.so",
+    "rtld(GNU_HASH)",
 ]
 
 SUPPORTED_FEDORA_RELEASES = ['25', '26', '27']

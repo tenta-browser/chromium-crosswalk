@@ -14,6 +14,7 @@
 #include "base/cancelable_callback.h"
 #include "base/files/file_path.h"
 #include "base/macros.h"
+#include "base/memory/weak_ptr.h"
 #include "base/scoped_observer.h"
 #include "base/sequence_checker.h"
 #include "base/synchronization/lock.h"
@@ -92,12 +93,14 @@ class BlinkTestResultPrinter {
   void AddErrorMessage(const std::string& message);
 
   void CloseStderr();
+  void StartStateDump();
 
  private:
   void PrintEncodedBinaryData(const std::vector<unsigned char>& data);
 
   enum State {
     DURING_TEST,
+    DURING_STATE_DUMP,
     IN_TEXT_BLOCK,
     IN_AUDIO_BLOCK,
     IN_IMAGE_BLOCK,
@@ -137,6 +140,8 @@ class BlinkTestController : public WebContentsObserver,
       int sender_process_host_id,
       const base::DictionaryValue& changed_layout_test_runtime_flags);
   void OnTestFinishedInSecondaryRenderer();
+  void OnInitiateCaptureDump(bool capture_navigation_history);
+  void OnInspectSecondaryWindow();
 
   // Makes sure that the potentially new renderer associated with |frame| is 1)
   // initialized for the test, 2) kept up to date wrt test flags and 3)
@@ -200,7 +205,7 @@ class BlinkTestController : public WebContentsObserver,
   // Message handlers.
   void OnAudioDump(const std::vector<unsigned char>& audio_dump);
   void OnImageDump(const std::string& actual_pixel_hash, const SkBitmap& image);
-  void OnTextDump(const std::string& dump, bool should_dump_history);
+  void OnTextDump(const std::string& dump);
   void OnInitiateLayoutDump();
   void OnDumpFrameLayoutResponse(int frame_tree_node_id,
                                  const std::string& dump);
@@ -209,11 +214,7 @@ class BlinkTestController : public WebContentsObserver,
   void OnOverridePreferences(const WebPreferences& prefs);
   void OnSetPopupBlockingEnabled(bool block_popups);
   void OnTestFinished();
-  void OnClearDevToolsLocalStorage();
-  void OnShowDevTools(const std::string& settings,
-                      const std::string& frontend_url);
-  void OnEvaluateInDevTools(int call_id, const std::string& script);
-  void OnCloseDevTools();
+  void OnNavigateSecondaryWindow(const GURL& url);
   void OnGoToOffset(int offset);
   void OnReload();
   void OnLoadURLForFrame(const GURL& url, const std::string& frame_name);
@@ -228,8 +229,8 @@ class BlinkTestController : public WebContentsObserver,
   mojom::LayoutTestControl* GetLayoutTestControlPtr(RenderFrameHost* frame);
   void HandleLayoutTestControlError(RenderFrameHost* frame);
 
-  void OnAllServiceWorkersCleared();
-  void OnAllSharedWorkersDestroyed();
+  void OnCleanupFinished();
+  void OnCaptureDumpCompleted(mojom::LayoutTestDumpPtr dump);
 
   std::unique_ptr<BlinkTestResultPrinter> printer_;
 
@@ -297,6 +298,8 @@ class BlinkTestController : public WebContentsObserver,
   // renderer created while test is in progress).
   base::DictionaryValue accumulated_layout_test_runtime_flags_changes_;
 
+  std::string navigation_history_dump_;
+
   // Map from one frame to one mojo pipe.
   std::map<RenderFrameHost*, mojom::LayoutTestControlAssociatedPtr>
       layout_test_control_map_;
@@ -307,6 +310,8 @@ class BlinkTestController : public WebContentsObserver,
 #endif
 
   SEQUENCE_CHECKER(sequence_checker_);
+
+  base::WeakPtrFactory<BlinkTestController> weak_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(BlinkTestController);
 };

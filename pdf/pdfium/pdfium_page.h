@@ -15,6 +15,7 @@
 #include "third_party/pdfium/public/fpdf_doc.h"
 #include "third_party/pdfium/public/fpdf_formfill.h"
 #include "third_party/pdfium/public/fpdf_text.h"
+#include "ui/gfx/geometry/point_f.h"
 
 namespace chrome_pdf {
 
@@ -73,12 +74,14 @@ class PDFiumPage {
     // Valid for DOCLINK_AREA only.
     int page;
     // Valid for DOCLINK_AREA only. From the top of the page.
-    base::Optional<int> y_in_pixels;
+    base::Optional<float> y_in_pixels;
   };
 
-  // Fills |y_in_pixels| of a destination into |target|.
-  // |target| is required.
-  void GetPageYTarget(FPDF_DEST destination, LinkTarget* target);
+  // Returns the (x, y) position of a destination in page coordinates.
+  base::Optional<gfx::PointF> GetPageXYTarget(FPDF_DEST destination);
+
+  // Transforms an (x, y) position in page coordinates to screen coordinates.
+  gfx::PointF TransformPageToScreenXY(const gfx::PointF& xy);
 
   // Given a point in the document that's in this page, returns its character
   // index if it's near a character, and also the type of text.

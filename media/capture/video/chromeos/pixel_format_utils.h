@@ -7,7 +7,7 @@
 
 #include <vector>
 
-#include "media/capture/video/chromeos/mojo/arc_camera3.mojom.h"
+#include "media/capture/video/chromeos/mojo/camera3.mojom.h"
 #include "media/capture/video_capture_types.h"
 #include "ui/gfx/buffer_types.h"
 
@@ -24,7 +24,7 @@ struct ChromiumPixelFormat {
 // Converts the HAL pixel format |from| to Chromium pixel format.  Returns
 // empty vector if |from| is not supported.
 std::vector<ChromiumPixelFormat> PixFormatHalToChromium(
-    arc::mojom::HalPixelFormat from);
+    cros::mojom::HalPixelFormat from);
 
 // Converts the video pixel format |from| to DRM pixel format.  Returns 0
 // if |from| is not supported.

@@ -12,12 +12,13 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/themes/theme_service.h"
 #include "chrome/browser/themes/theme_service_factory.h"
+#include "chrome/browser/ui/layout_constants.h"
+#include "chrome/browser/ui/views/toolbar/toolbar_ink_drop_util.h"
 #include "ui/accessibility/ax_node_data.h"
+#include "ui/base/material_design/material_design_controller.h"
 #include "ui/base/models/menu_model.h"
 #include "ui/display/display.h"
 #include "ui/display/screen.h"
-#include "ui/views/animation/ink_drop_highlight.h"
-#include "ui/views/animation/ink_drop_ripple.h"
 #include "ui/views/controls/button/label_button_border.h"
 #include "ui/views/controls/menu/menu_item_view.h"
 #include "ui/views/controls/menu/menu_model_adapter.h"
@@ -26,18 +27,19 @@
 
 ToolbarButton::ToolbarButton(Profile* profile,
                              views::ButtonListener* listener,
-                             ui::MenuModel* model)
+                             std::unique_ptr<ui::MenuModel> model)
     : views::ImageButton(listener),
       profile_(profile),
-      model_(model),
-      menu_showing_(false),
-      y_position_on_lbuttondown_(0),
+      model_(std::move(model)),
       show_menu_factory_(this) {
   set_has_ink_drop_action_on_click(true);
   set_context_menu_controller(this);
   SetInkDropMode(InkDropMode::ON);
   SetFocusPainter(nullptr);
   SetLeadingMargin(0);
+
+  if (ui::MaterialDesignController::IsTouchOptimizedUiEnabled())
+    set_ink_drop_visible_opacity(kTouchToolbarInkDropVisibleOpacity);
 }
 
 ToolbarButton::~ToolbarButton() {}
@@ -47,8 +49,9 @@ void ToolbarButton::Init() {
 }
 
 void ToolbarButton::SetLeadingMargin(int margin) {
-  SetBorder(views::CreateEmptyBorder(gfx::Insets(kInteriorPadding) +
-                                     gfx::Insets(0, margin, 0, 0)));
+  const gfx::Insets insets =
+      GetLayoutInsets(TOOLBAR_BUTTON) + gfx::Insets(0, margin, 0, 0);
+  SetBorder(views::CreateEmptyBorder(insets));
 }
 
 void ToolbarButton::ClearPendingMenu() {
@@ -129,12 +132,30 @@ void ToolbarButton::OnGestureEvent(ui::GestureEvent* event) {
 
 void ToolbarButton::GetAccessibleNodeData(ui::AXNodeData* node_data) {
   Button::GetAccessibleNodeData(node_data);
-  node_data->role = ui::AX_ROLE_BUTTON_DROP_DOWN;
-  node_data->AddState(ui::AX_STATE_HASPOPUP);
-  if (enabled()) {
-    node_data->AddIntAttribute(ui::AX_ATTR_DEFAULT_ACTION_VERB,
-                               ui::AX_DEFAULT_ACTION_VERB_PRESS);
-  }
+  node_data->role = ax::mojom::Role::kButton;
+  node_data->AddState(ax::mojom::State::kHaspopup);
+  if (enabled())
+    node_data->SetDefaultActionVerb(ax::mojom::DefaultActionVerb::kPress);
+}
+
+std::unique_ptr<views::InkDrop> ToolbarButton::CreateInkDrop() {
+  return CreateToolbarInkDrop<ImageButton>(this);
+}
+
+std::unique_ptr<views::InkDropRipple> ToolbarButton::CreateInkDropRipple()
+    const {
+  return CreateToolbarInkDropRipple<ImageButton>(
+      this, GetInkDropCenterBasedOnLastEvent());
+}
+
+std::unique_ptr<views::InkDropHighlight> ToolbarButton::CreateInkDropHighlight()
+    const {
+  return CreateToolbarInkDropHighlight<ImageButton>(
+      this, GetMirroredRect(GetContentsBounds()).CenterPoint());
+}
+
+std::unique_ptr<views::InkDropMask> ToolbarButton::CreateInkDropMask() const {
+  return CreateToolbarInkDropMask<ImageButton>(this);
 }
 
 void ToolbarButton::ShowContextMenuForView(View* source,

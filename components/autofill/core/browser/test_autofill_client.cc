@@ -12,8 +12,7 @@
 namespace autofill {
 
 TestAutofillClient::TestAutofillClient()
-    : token_service_(new FakeOAuth2TokenService()),
-      identity_provider_(new FakeIdentityProvider(token_service_.get())),
+    :
 #if !defined(OS_ANDROID)
       save_card_bubble_controller_(new MockSaveCardBubbleController()),
 #endif
@@ -35,11 +34,11 @@ PrefService* TestAutofillClient::GetPrefs() {
 }
 
 syncer::SyncService* TestAutofillClient::GetSyncService() {
-  return nullptr;
+  return test_sync_service_;
 }
 
-IdentityProvider* TestAutofillClient::GetIdentityProvider() {
-  return identity_provider_.get();
+identity::IdentityManager* TestAutofillClient::GetIdentityManager() {
+  return identity_test_env_.identity_manager();
 }
 
 ukm::UkmRecorder* TestAutofillClient::GetUkmRecorder() {
@@ -146,6 +145,10 @@ bool TestAutofillClient::ShouldShowSigninPromo() {
 void TestAutofillClient::ExecuteCommand(int id) {}
 
 bool TestAutofillClient::IsAutofillSupported() {
+  return true;
+}
+
+bool TestAutofillClient::AreServerCardsSupported() {
   return true;
 }
 

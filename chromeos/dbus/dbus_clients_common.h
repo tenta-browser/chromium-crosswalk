@@ -20,6 +20,7 @@ class BiodClient;
 class CrasAudioClient;
 class CryptohomeClient;
 class GsmSMSClient;
+class HammerdClient;
 class ModemMessagingClient;
 class PermissionBrokerClient;
 class PowerManagerClient;
@@ -33,6 +34,7 @@ class ShillThirdPartyVpnDriverClient;
 class SMSClient;
 class SystemClockClient;
 class UpdateEngineClient;
+class UpstartClient;
 
 // D-Bus clients used in multiple processes (e.g. ash, browser, mus).
 class CHROMEOS_EXPORT DBusClientsCommon {
@@ -53,6 +55,7 @@ class CHROMEOS_EXPORT DBusClientsCommon {
   std::unique_ptr<CrasAudioClient> cras_audio_client_;
   std::unique_ptr<CryptohomeClient> cryptohome_client_;
   std::unique_ptr<GsmSMSClient> gsm_sms_client_;
+  std::unique_ptr<HammerdClient> hammerd_client_;
   std::unique_ptr<ModemMessagingClient> modem_messaging_client_;
   std::unique_ptr<ShillDeviceClient> shill_device_client_;
   std::unique_ptr<ShillIPConfigClient> shill_ipconfig_client_;
@@ -67,6 +70,7 @@ class CHROMEOS_EXPORT DBusClientsCommon {
   std::unique_ptr<PowerManagerClient> power_manager_client_;
   std::unique_ptr<SessionManagerClient> session_manager_client_;
   std::unique_ptr<UpdateEngineClient> update_engine_client_;
+  std::unique_ptr<UpstartClient> upstart_client_;
 
   DISALLOW_COPY_AND_ASSIGN(DBusClientsCommon);
 };

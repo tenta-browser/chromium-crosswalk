@@ -29,7 +29,7 @@
 #include "media/base/pipeline_status.h"
 #include "media/base/surface_manager.h"
 #include "media/base/video_decoder_config.h"
-#include "media/media_features.h"
+#include "media/media_buildflags.h"
 #include "media/video/gpu_video_accelerator_factories.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 
@@ -51,11 +51,9 @@ enum { kBufferCountBeforeGC = 1024 };
 
 struct GpuVideoDecoder::PendingDecoderBuffer {
   PendingDecoderBuffer(std::unique_ptr<base::SharedMemory> s,
-                       const scoped_refptr<DecoderBuffer>& b,
                        const DecodeCB& done_cb)
-      : shared_memory(std::move(s)), buffer(b), done_cb(done_cb) {}
+      : shared_memory(std::move(s)), done_cb(done_cb) {}
   std::unique_ptr<base::SharedMemory> shared_memory;
-  scoped_refptr<DecoderBuffer> buffer;
   DecodeCB done_cb;
 };
 
@@ -151,11 +149,13 @@ std::string GpuVideoDecoder::GetDisplayName() const {
   return kDecoderName;
 }
 
-void GpuVideoDecoder::Initialize(const VideoDecoderConfig& config,
-                                 bool /* low_delay */,
-                                 CdmContext* cdm_context,
-                                 const InitCB& init_cb,
-                                 const OutputCB& output_cb) {
+void GpuVideoDecoder::Initialize(
+    const VideoDecoderConfig& config,
+    bool /* low_delay */,
+    CdmContext* cdm_context,
+    const InitCB& init_cb,
+    const OutputCB& output_cb,
+    const WaitingForDecryptionKeyCB& /* waiting_for_decryption_key_cb */) {
   DVLOG(3) << "Initialize()";
   DCheckGpuVideoAcceleratorFactoriesTaskRunnerIsCurrent();
   DCHECK(config.IsValidConfig());
@@ -177,7 +177,7 @@ void GpuVideoDecoder::Initialize(const VideoDecoderConfig& config,
 
   // TODO(sandersd): This should be moved to capabilities if we ever have a
   // hardware decoder which supports alpha formats.
-  if (config.format() == PIXEL_FORMAT_YV12A) {
+  if (config.format() == PIXEL_FORMAT_I420A) {
     DVLOG(1) << "Alpha transparency formats are not supported.";
     bound_init_cb.Run(false);
     return;
@@ -185,9 +185,11 @@ void GpuVideoDecoder::Initialize(const VideoDecoderConfig& config,
 
   VideoDecodeAccelerator::Capabilities capabilities =
       factories_->GetVideoDecodeAcceleratorCapabilities();
-  if (config.is_encrypted() &&
-      !(capabilities.flags &
-        VideoDecodeAccelerator::Capabilities::SUPPORTS_ENCRYPTED_STREAMS)) {
+
+  const bool supports_encrypted_streams =
+      capabilities.flags &
+      VideoDecodeAccelerator::Capabilities::SUPPORTS_ENCRYPTED_STREAMS;
+  if (config.is_encrypted() && (!cdm_context || !supports_encrypted_streams)) {
     DVLOG(1) << "Encrypted stream not supported.";
     bound_init_cb.Run(false);
     return;
@@ -334,6 +336,7 @@ void GpuVideoDecoder::CompleteInitialization(const OverlayInfo& overlay_info) {
   vda_config.initial_expected_coded_size = config_.coded_size();
   vda_config.container_color_space = config_.color_space_info();
   vda_config.target_color_space = target_color_space_;
+  vda_config.hdr_metadata = config_.hdr_metadata();
 
 #if defined(OS_ANDROID) && BUILDFLAG(USE_PROPRIETARY_CODECS)
   // We pass the SPS and PPS on Android because it lets us initialize
@@ -389,7 +392,7 @@ void GpuVideoDecoder::DestroyVDA() {
   DestroyPictureBuffers(&assigned_picture_buffers_);
 }
 
-void GpuVideoDecoder::Decode(const scoped_refptr<DecoderBuffer>& buffer,
+void GpuVideoDecoder::Decode(scoped_refptr<DecoderBuffer> buffer,
                              const DecodeCB& decode_cb) {
   DCheckGpuVideoAcceleratorFactoriesTaskRunnerIsCurrent();
   DCHECK(pending_reset_cb_.is_null());
@@ -406,7 +409,7 @@ void GpuVideoDecoder::Decode(const scoped_refptr<DecoderBuffer>& buffer,
   switch (state_) {
     case kDecoderDrained:
       state_ = kNormal;
-      // Fall-through.
+      FALLTHROUGH;
     case kNormal:
       break;
     case kDrainingDecoder:
@@ -446,12 +449,13 @@ void GpuVideoDecoder::Decode(const scoped_refptr<DecoderBuffer>& buffer,
   next_bitstream_buffer_id_ = (next_bitstream_buffer_id_ + 1) & 0x3FFFFFFF;
   DCHECK(
       !base::ContainsKey(bitstream_buffers_in_decoder_, bitstream_buffer.id()));
+  RecordBufferData(bitstream_buffer, *buffer);
+
   bitstream_buffers_in_decoder_.emplace(
       bitstream_buffer.id(),
-      PendingDecoderBuffer(std::move(shared_memory), buffer, decode_cb));
+      PendingDecoderBuffer(std::move(shared_memory), decode_cb));
   DCHECK_LE(static_cast<int>(bitstream_buffers_in_decoder_.size()),
             kMaxInFlightDecodes);
-  RecordBufferData(bitstream_buffer, *buffer.get());
 
   vda_->Decode(bitstream_buffer);
 }

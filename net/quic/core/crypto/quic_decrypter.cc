@@ -6,24 +6,47 @@
 
 #include "crypto/hkdf.h"
 #include "net/quic/core/crypto/aes_128_gcm_12_decrypter.h"
+#include "net/quic/core/crypto/aes_128_gcm_decrypter.h"
+#include "net/quic/core/crypto/aes_256_gcm_decrypter.h"
 #include "net/quic/core/crypto/chacha20_poly1305_decrypter.h"
+#include "net/quic/core/crypto/chacha20_poly1305_tls_decrypter.h"
 #include "net/quic/core/crypto/crypto_protocol.h"
 #include "net/quic/core/crypto/null_decrypter.h"
+#include "net/quic/platform/api/quic_bug_tracker.h"
 #include "net/quic/platform/api/quic_logging.h"
+#include "net/quic/platform/api/quic_ptr_util.h"
+#include "net/quic/platform/api/quic_string.h"
+#include "third_party/boringssl/src/include/openssl/tls1.h"
 
 using std::string;
 
 namespace net {
 
 // static
-QuicDecrypter* QuicDecrypter::Create(QuicTag algorithm) {
+std::unique_ptr<QuicDecrypter> QuicDecrypter::Create(QuicTag algorithm) {
   switch (algorithm) {
     case kAESG:
-      return new Aes128Gcm12Decrypter();
+      return QuicMakeUnique<Aes128Gcm12Decrypter>();
     case kCC20:
-      return new ChaCha20Poly1305Decrypter();
+      return QuicMakeUnique<ChaCha20Poly1305Decrypter>();
     default:
       QUIC_LOG(FATAL) << "Unsupported algorithm: " << algorithm;
+      return nullptr;
+  }
+}
+
+// static
+std::unique_ptr<QuicDecrypter> QuicDecrypter::CreateFromCipherSuite(
+    uint32_t cipher_suite) {
+  switch (cipher_suite) {
+    case TLS1_CK_AES_128_GCM_SHA256:
+      return QuicMakeUnique<Aes128GcmDecrypter>();
+    case TLS1_CK_AES_256_GCM_SHA384:
+      return QuicMakeUnique<Aes256GcmDecrypter>();
+    case TLS1_CK_CHACHA20_POLY1305_SHA256:
+      return QuicMakeUnique<ChaCha20Poly1305TlsDecrypter>();
+    default:
+      QUIC_BUG << "TLS cipher suite is unknown to QUIC";
       return nullptr;
   }
 }
@@ -34,14 +57,14 @@ void QuicDecrypter::DiversifyPreliminaryKey(QuicStringPiece preliminary_key,
                                             const DiversificationNonce& nonce,
                                             size_t key_size,
                                             size_t nonce_prefix_size,
-                                            string* out_key,
-                                            string* out_nonce_prefix) {
-  crypto::HKDF hkdf(preliminary_key.as_string() + nonce_prefix.as_string(),
+                                            QuicString* out_key,
+                                            QuicString* out_nonce_prefix) {
+  crypto::HKDF hkdf((string(preliminary_key)) + (string(nonce_prefix)),
                     QuicStringPiece(nonce.data(), nonce.size()),
                     "QUIC key diversification", 0, key_size, 0,
                     nonce_prefix_size, 0);
-  *out_key = hkdf.server_write_key().as_string();
-  *out_nonce_prefix = hkdf.server_write_iv().as_string();
+  *out_key = string(hkdf.server_write_key());
+  *out_nonce_prefix = string(hkdf.server_write_iv());
 }
 
 }  // namespace net

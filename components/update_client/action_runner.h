@@ -7,6 +7,7 @@
 
 #include <stdint.h>
 
+#include <memory>
 #include <utility>
 #include <vector>
 
@@ -32,14 +33,13 @@ class ActionRunner {
   using Callback =
       base::OnceCallback<void(bool succeeded, int error_code, int extra_code1)>;
 
-  ActionRunner(const Component& component,
-               const std::vector<uint8_t>& key_hash);
+  explicit ActionRunner(const Component& component);
   ~ActionRunner();
 
   void Run(Callback run_complete);
 
  private:
-  void Unpack();
+  void Unpack(std::unique_ptr<service_manager::Connector> connector);
   void UnpackComplete(const ComponentUnpacker::Result& result);
 
   void RunCommand(const base::CommandLine& cmdline);
@@ -49,10 +49,6 @@ class ActionRunner {
   void WaitForCommand(base::Process process);
 
   const Component& component_;
-
-  // Contains the key hash of the CRX this object is allowed to run. This value
-  // is using during the unpacking of the CRX to verify its integrity.
-  const std::vector<uint8_t> key_hash_;
 
   // Used to post callbacks to the main thread.
   scoped_refptr<base::SingleThreadTaskRunner> main_task_runner_;

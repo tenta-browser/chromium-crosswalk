@@ -19,6 +19,7 @@
 #include "base/macros.h"
 #include "base/process/kill.h"
 #include "base/rand_util.h"
+#include "base/run_loop.h"
 #include "base/stl_util.h"
 #include "base/strings/pattern.h"
 #include "base/strings/string_number_conversions.h"
@@ -44,6 +45,7 @@
 #include "content/browser/renderer_host/render_widget_host_impl.h"
 #include "content/browser/renderer_host/render_widget_host_input_event_router.h"
 #include "content/browser/renderer_host/render_widget_host_view_child_frame.h"
+#include "content/browser/service_manager/service_manager_context.h"
 #include "content/browser/web_contents/web_contents_impl.h"
 #include "content/browser/web_contents/web_contents_view.h"
 #include "content/common/fileapi/file_system_messages.h"
@@ -60,6 +62,7 @@
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/navigation_throttle.h"
+#include "content/public/browser/network_service_instance.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/notification_types.h"
 #include "content/public/browser/render_frame_host.h"
@@ -67,7 +70,10 @@
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/storage_partition.h"
 #include "content/public/browser/web_contents.h"
-#include "content/public/common/network_service.mojom.h"
+#include "content/public/common/content_features.h"
+#include "content/public/common/content_switches.h"
+#include "content/public/common/service_names.mojom.h"
+#include "content/public/test/simple_url_loader_test_helper.h"
 #include "content/public/test/test_fileapi_operation_waiter.h"
 #include "content/public/test/test_navigation_observer.h"
 #include "content/public/test/test_utils.h"
@@ -83,7 +89,15 @@
 #include "net/test/embedded_test_server/http_request.h"
 #include "net/test/embedded_test_server/http_response.h"
 #include "net/test/python_utils.h"
-#include "services/network/public/interfaces/cookie_manager.mojom.h"
+#include "net/traffic_annotation/network_traffic_annotation_test_helper.h"
+#include "net/url_request/url_request_context.h"
+#include "net/url_request/url_request_context_getter.h"
+#include "services/network/public/cpp/features.h"
+#include "services/network/public/cpp/simple_url_loader.h"
+#include "services/network/public/mojom/cookie_manager.mojom.h"
+#include "services/network/public/mojom/network_service.mojom.h"
+#include "services/network/public/mojom/network_service_test.mojom.h"
+#include "services/service_manager/public/cpp/connector.h"
 #include "storage/browser/fileapi/file_system_context.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/base/clipboard/clipboard.h"
@@ -606,11 +620,17 @@ bool IsLastCommittedEntryOfPageType(WebContents* web_contents,
   return last_entry->GetPageType() == page_type;
 }
 
+void OverrideLastCommittedOrigin(RenderFrameHost* render_frame_host,
+                                 const url::Origin& origin) {
+  static_cast<RenderFrameHostImpl*>(render_frame_host)
+      ->SetLastCommittedOriginForTesting(origin);
+}
+
 void CrashTab(WebContents* web_contents) {
   RenderProcessHost* rph = web_contents->GetMainFrame()->GetProcess();
   RenderProcessHostWatcher watcher(
       rph, RenderProcessHostWatcher::WATCH_FOR_PROCESS_EXIT);
-  rph->Shutdown(0, false);
+  rph->Shutdown(0);
   watcher.Wait();
 }
 
@@ -623,8 +643,9 @@ void SimulateUnresponsiveRenderer(WebContents* web_contents,
 #if defined(USE_AURA)
 bool IsResizeComplete(aura::test::WindowEventDispatcherTestApi* dispatcher_test,
                       RenderWidgetHostImpl* widget_host) {
-  return !dispatcher_test->HoldingPointerMoves() &&
-      !widget_host->resize_ack_pending_for_testing();
+  dispatcher_test->WaitUntilPointerMovesDispatched();
+  widget_host->WasResized();
+  return !widget_host->resize_ack_pending_for_testing();
 }
 
 void WaitForResizeComplete(WebContents* web_contents) {
@@ -775,12 +796,9 @@ void SimulateGesturePinchSequence(WebContents* web_contents,
   blink::WebGestureEvent pinch_begin(
       blink::WebInputEvent::kGesturePinchBegin,
       blink::WebInputEvent::kNoModifiers,
-      ui::EventTimeStampToSeconds(ui::EventTimeForNow()));
-  pinch_begin.source_device = source_device;
-  pinch_begin.x = point.x();
-  pinch_begin.y = point.y();
-  pinch_begin.global_x = point.x();
-  pinch_begin.global_y = point.y();
+      ui::EventTimeStampToSeconds(ui::EventTimeForNow()), source_device);
+  pinch_begin.SetPositionInWidget(gfx::PointF(point));
+  pinch_begin.SetPositionInScreen(gfx::PointF(point));
   widget_host->ForwardGestureEvent(pinch_begin);
 
   blink::WebGestureEvent pinch_update(pinch_begin);
@@ -802,10 +820,9 @@ void SimulateGestureScrollSequence(WebContents* web_contents,
   blink::WebGestureEvent scroll_begin(
       blink::WebGestureEvent::kGestureScrollBegin,
       blink::WebInputEvent::kNoModifiers,
-      ui::EventTimeStampToSeconds(ui::EventTimeForNow()));
-  scroll_begin.source_device = blink::kWebGestureDeviceTouchpad;
-  scroll_begin.x = point.x();
-  scroll_begin.y = point.y();
+      ui::EventTimeStampToSeconds(ui::EventTimeForNow()),
+      blink::kWebGestureDeviceTouchpad);
+  scroll_begin.SetPositionInWidget(gfx::PointF(point));
   scroll_begin.data.scroll_begin.delta_x_hint = delta.x();
   scroll_begin.data.scroll_begin.delta_y_hint = delta.y();
   widget_host->ForwardGestureEvent(scroll_begin);
@@ -813,10 +830,9 @@ void SimulateGestureScrollSequence(WebContents* web_contents,
   blink::WebGestureEvent scroll_update(
       blink::WebGestureEvent::kGestureScrollUpdate,
       blink::WebInputEvent::kNoModifiers,
-      ui::EventTimeStampToSeconds(ui::EventTimeForNow()));
-  scroll_update.source_device = blink::kWebGestureDeviceTouchpad;
-  scroll_update.x = point.x();
-  scroll_update.y = point.y();
+      ui::EventTimeStampToSeconds(ui::EventTimeForNow()),
+      blink::kWebGestureDeviceTouchpad);
+  scroll_update.SetPositionInWidget(gfx::PointF(point));
   scroll_update.data.scroll_update.delta_x = delta.x();
   scroll_update.data.scroll_update.delta_y = delta.y();
   scroll_update.data.scroll_update.velocity_x = 0;
@@ -826,10 +842,9 @@ void SimulateGestureScrollSequence(WebContents* web_contents,
   blink::WebGestureEvent scroll_end(
       blink::WebGestureEvent::kGestureScrollEnd,
       blink::WebInputEvent::kNoModifiers,
-      ui::EventTimeStampToSeconds(ui::EventTimeForNow()));
-  scroll_end.source_device = blink::kWebGestureDeviceTouchpad;
-  scroll_end.x = point.x() + delta.x();
-  scroll_end.y = point.y() + delta.y();
+      ui::EventTimeStampToSeconds(ui::EventTimeForNow()),
+      blink::kWebGestureDeviceTouchpad);
+  scroll_end.SetPositionInWidget(gfx::PointF(point));
   widget_host->ForwardGestureEvent(scroll_end);
 }
 
@@ -842,28 +857,25 @@ void SimulateGestureFlingSequence(WebContents* web_contents,
   blink::WebGestureEvent scroll_begin(
       blink::WebGestureEvent::kGestureScrollBegin,
       blink::WebInputEvent::kNoModifiers,
-      ui::EventTimeStampToSeconds(ui::EventTimeForNow()));
-  scroll_begin.source_device = blink::kWebGestureDeviceTouchpad;
-  scroll_begin.x = point.x();
-  scroll_begin.y = point.y();
+      ui::EventTimeStampToSeconds(ui::EventTimeForNow()),
+      blink::kWebGestureDeviceTouchpad);
+  scroll_begin.SetPositionInWidget(gfx::PointF(point));
   widget_host->ForwardGestureEvent(scroll_begin);
 
   blink::WebGestureEvent scroll_end(
       blink::WebGestureEvent::kGestureScrollEnd,
       blink::WebInputEvent::kNoModifiers,
-      ui::EventTimeStampToSeconds(ui::EventTimeForNow()));
-  scroll_end.source_device = blink::kWebGestureDeviceTouchpad;
-  scroll_end.x = point.x();
-  scroll_end.y = point.y();
+      ui::EventTimeStampToSeconds(ui::EventTimeForNow()),
+      blink::kWebGestureDeviceTouchpad);
+  scroll_end.SetPositionInWidget(gfx::PointF(point));
   widget_host->ForwardGestureEvent(scroll_end);
 
   blink::WebGestureEvent fling_start(
       blink::WebGestureEvent::kGestureFlingStart,
       blink::WebInputEvent::kNoModifiers,
-      ui::EventTimeStampToSeconds(ui::EventTimeForNow()));
-  fling_start.source_device = blink::kWebGestureDeviceTouchpad;
-  fling_start.x = point.x();
-  fling_start.y = point.y();
+      ui::EventTimeStampToSeconds(ui::EventTimeForNow()),
+      blink::kWebGestureDeviceTouchpad);
+  fling_start.SetPositionInWidget(gfx::PointF(point));
   fling_start.data.fling_start.target_viewport = false;
   fling_start.data.fling_start.velocity_x = velocity.x();
   fling_start.data.fling_start.velocity_y = velocity.y();
@@ -879,12 +891,10 @@ void SimulateGestureEvent(WebContents* web_contents,
 }
 
 void SimulateTapAt(WebContents* web_contents, const gfx::Point& point) {
-  blink::WebGestureEvent tap(
-      blink::WebGestureEvent::kGestureTap, 0,
-      ui::EventTimeStampToSeconds(ui::EventTimeForNow()));
-  tap.source_device = blink::kWebGestureDeviceTouchpad;
-  tap.x = point.x();
-  tap.y = point.y();
+  blink::WebGestureEvent tap(blink::WebGestureEvent::kGestureTap, 0,
+                             ui::EventTimeStampToSeconds(ui::EventTimeForNow()),
+                             blink::kWebGestureDeviceTouchscreen);
+  tap.SetPositionInWidget(gfx::PointF(point));
   RenderWidgetHostImpl* widget_host = RenderWidgetHostImpl::From(
       web_contents->GetRenderViewHost()->GetWidget());
   widget_host->ForwardGestureEvent(tap);
@@ -893,12 +903,10 @@ void SimulateTapAt(WebContents* web_contents, const gfx::Point& point) {
 void SimulateTapWithModifiersAt(WebContents* web_contents,
                                 unsigned modifiers,
                                 const gfx::Point& point) {
-  blink::WebGestureEvent tap(
-      blink::WebGestureEvent::kGestureTap, modifiers,
-      ui::EventTimeStampToSeconds(ui::EventTimeForNow()));
-  tap.source_device = blink::kWebGestureDeviceTouchpad;
-  tap.x = point.x();
-  tap.y = point.y();
+  blink::WebGestureEvent tap(blink::WebGestureEvent::kGestureTap, modifiers,
+                             ui::EventTimeStampToSeconds(ui::EventTimeForNow()),
+                             blink::kWebGestureDeviceTouchpad);
+  tap.SetPositionInWidget(gfx::PointF(point));
   RenderWidgetHostImpl* widget_host = RenderWidgetHostImpl::From(
       web_contents->GetRenderViewHost()->GetWidget());
   widget_host->ForwardGestureEvent(tap);
@@ -912,6 +920,40 @@ void SimulateTouchPressAt(WebContents* web_contents, const gfx::Point& point) {
   static_cast<RenderWidgetHostViewAura*>(
       web_contents->GetRenderWidgetHostView())
       ->OnTouchEvent(&touch);
+}
+
+void SimulateLongTapAt(WebContents* web_contents, const gfx::Point& point) {
+  RenderWidgetHostViewAura* rwhva = static_cast<RenderWidgetHostViewAura*>(
+      web_contents->GetRenderWidgetHostView());
+
+  ui::TouchEvent touch_start(
+      ui::ET_TOUCH_PRESSED, point, base::TimeTicks(),
+      ui::PointerDetails(ui::EventPointerType::POINTER_TYPE_TOUCH, 0));
+  rwhva->OnTouchEvent(&touch_start);
+
+  ui::GestureEventDetails tap_down_details(ui::ET_GESTURE_TAP_DOWN);
+  tap_down_details.set_device_type(ui::GestureDeviceType::DEVICE_TOUCHSCREEN);
+  ui::GestureEvent tap_down(point.x(), point.y(), 0, ui::EventTimeForNow(),
+                            tap_down_details, touch_start.unique_event_id());
+  rwhva->OnGestureEvent(&tap_down);
+
+  ui::GestureEventDetails long_press_details(ui::ET_GESTURE_LONG_PRESS);
+  long_press_details.set_device_type(ui::GestureDeviceType::DEVICE_TOUCHSCREEN);
+  ui::GestureEvent long_press(point.x(), point.y(), 0, ui::EventTimeForNow(),
+                              long_press_details,
+                              touch_start.unique_event_id());
+  rwhva->OnGestureEvent(&long_press);
+
+  ui::TouchEvent touch_end(
+      ui::ET_TOUCH_RELEASED, point, base::TimeTicks(),
+      ui::PointerDetails(ui::EventPointerType::POINTER_TYPE_TOUCH, 0));
+  rwhva->OnTouchEvent(&touch_end);
+
+  ui::GestureEventDetails long_tap_details(ui::ET_GESTURE_LONG_TAP);
+  long_tap_details.set_device_type(ui::GestureDeviceType::DEVICE_TOUCHSCREEN);
+  ui::GestureEvent long_tap(point.x(), point.y(), 0, ui::EventTimeForNow(),
+                            long_tap_details, touch_end.unique_event_id());
+  rwhva->OnGestureEvent(&long_tap);
 }
 #endif
 
@@ -1144,8 +1186,8 @@ RenderFrameHost* FrameMatchingPredicate(
     WebContents* web_contents,
     const base::Callback<bool(RenderFrameHost*)>& predicate) {
   std::set<RenderFrameHost*> frame_set;
-  web_contents->ForEachFrame(
-      base::Bind(&AddToSetIfFrameMatchesPredicate, &frame_set, predicate));
+  web_contents->ForEachFrame(base::BindRepeating(
+      &AddToSetIfFrameMatchesPredicate, &frame_set, predicate));
   EXPECT_EQ(1U, frame_set.size());
   return frame_set.size() == 1 ? *frame_set.begin() : nullptr;
 }
@@ -1334,7 +1376,7 @@ ui::AXNodeData GetFocusedAccessibilityNodeInfo(WebContents* web_contents) {
 
 bool AccessibilityTreeContainsNodeWithName(BrowserAccessibility* node,
                                            const std::string& name) {
-  if (node->GetStringAttribute(ui::AX_ATTR_NAME) == name)
+  if (node->GetStringAttribute(ax::mojom::StringAttribute::kName) == name)
     return true;
   for (unsigned i = 0; i < node->PlatformChildCount(); i++) {
     if (AccessibilityTreeContainsNodeWithName(node->PlatformGetChild(i), name))
@@ -1362,8 +1404,8 @@ void WaitForAccessibilityTreeToContainNodeWithName(WebContents* web_contents,
   FrameTree* frame_tree = web_contents_impl->GetFrameTree();
   while (!main_frame_manager || !AccessibilityTreeContainsNodeWithName(
              main_frame_manager->GetRoot(), name)) {
-    AccessibilityNotificationWaiter accessibility_waiter(main_frame,
-                                                         ui::AX_EVENT_NONE);
+    AccessibilityNotificationWaiter accessibility_waiter(
+        main_frame, ax::mojom::Event::kNone);
     for (FrameTreeNode* node : frame_tree->Nodes()) {
       accessibility_waiter.ListenToAdditionalFrame(
           node->current_frame_host());
@@ -1373,8 +1415,8 @@ void WaitForAccessibilityTreeToContainNodeWithName(WebContents* web_contents,
         web_contents_impl->GetBrowserContext()->GetGuestManager();
     if (guest_manager) {
       guest_manager->ForEachGuest(web_contents_impl,
-                                  base::Bind(&ListenToGuestWebContents,
-                                             &accessibility_waiter));
+                                  base::BindRepeating(&ListenToGuestWebContents,
+                                                      &accessibility_waiter));
     }
 
     accessibility_waiter.WaitForNotification();
@@ -1519,7 +1561,7 @@ SurfaceHitTestReadyNotifier::SurfaceHitTestReadyNotifier(
 
 void SurfaceHitTestReadyNotifier::WaitForSurfaceReady(
     RenderWidgetHostViewBase* root_view) {
-  viz::SurfaceId root_surface_id = root_view->SurfaceIdForTesting();
+  viz::SurfaceId root_surface_id = root_view->GetCurrentSurfaceId();
   while (!ContainsSurfaceId(root_surface_id)) {
     // TODO(kenrb): Need a better way to do this. Needs investigation on
     // whether we can add a callback through RenderWidgetHostViewBaseObserver
@@ -1545,10 +1587,22 @@ bool SurfaceHitTestReadyNotifier::ContainsSurfaceId(
 
   for (const viz::SurfaceId& id :
        *container_surface->active_referenced_surfaces()) {
-    if (id == target_view_->SurfaceIdForTesting() || ContainsSurfaceId(id))
+    if (id == target_view_->GetCurrentSurfaceId() || ContainsSurfaceId(id))
       return true;
   }
   return false;
+}
+
+RenderFrameMetadataProvider* RenderFrameMetadataProviderFromWebContents(
+    WebContents* web_contents) {
+  DCHECK(web_contents);
+  DCHECK(web_contents->GetRenderViewHost());
+  DCHECK(
+      RenderWidgetHostImpl::From(web_contents->GetRenderViewHost()->GetWidget())
+          ->render_frame_metadata_provider());
+  return RenderWidgetHostImpl::From(
+             web_contents->GetRenderViewHost()->GetWidget())
+      ->render_frame_metadata_provider();
 }
 
 }  // namespace
@@ -1811,33 +1865,73 @@ bool RequestFrame(WebContents* web_contents) {
       ->ScheduleComposite();
 }
 
-FrameWatcher::FrameWatcher() = default;
-
-FrameWatcher::FrameWatcher(WebContents* web_contents)
-    : WebContentsObserver(web_contents) {}
-
-FrameWatcher::~FrameWatcher() = default;
-
-void FrameWatcher::WaitFrames(int frames_to_wait) {
-  DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  if (frames_to_wait <= 0)
-    return;
-  base::RunLoop run_loop;
-  base::AutoReset<base::Closure> reset_quit(&quit_, run_loop.QuitClosure());
-  base::AutoReset<int> reset_frames_to_wait(&frames_to_wait_, frames_to_wait);
-  run_loop.Run();
+RenderFrameSubmissionObserver::RenderFrameSubmissionObserver(
+    RenderFrameMetadataProvider* render_frame_metadata_provider)
+    : render_frame_metadata_provider_(render_frame_metadata_provider) {
+  render_frame_metadata_provider_->AddObserver(this);
+  render_frame_metadata_provider_->ReportAllFrameSubmissionsForTesting(true);
 }
 
-const viz::CompositorFrameMetadata& FrameWatcher::LastMetadata() {
-  return RenderWidgetHostImpl::From(
-             web_contents()->GetRenderViewHost()->GetWidget())
-      ->last_frame_metadata();
+RenderFrameSubmissionObserver::RenderFrameSubmissionObserver(
+    WebContents* web_contents)
+    : RenderFrameSubmissionObserver(
+          RenderFrameMetadataProviderFromWebContents(web_contents)) {}
+
+RenderFrameSubmissionObserver::~RenderFrameSubmissionObserver() {
+  render_frame_metadata_provider_->RemoveObserver(this);
+  render_frame_metadata_provider_->ReportAllFrameSubmissionsForTesting(false);
 }
 
-void FrameWatcher::DidReceiveCompositorFrame() {
-  --frames_to_wait_;
-  if (frames_to_wait_ == 0)
-    quit_.Run();
+void RenderFrameSubmissionObserver::WaitForAnyFrameSubmission() {
+  break_on_any_frame_ = true;
+  Wait();
+  break_on_any_frame_ = false;
+}
+
+void RenderFrameSubmissionObserver::WaitForMetadataChange() {
+  Wait();
+}
+
+void RenderFrameSubmissionObserver::WaitForScrollOffset(
+    const gfx::Vector2dF& expected_offset) {
+  while (render_frame_metadata_provider_->LastRenderFrameMetadata()
+             .root_scroll_offset != expected_offset) {
+    WaitForMetadataChange();
+  }
+}
+
+void RenderFrameSubmissionObserver::WaitForScrollOffsetAtTop(
+    bool expected_scroll_offset_at_top) {
+  while (render_frame_metadata_provider_->LastRenderFrameMetadata()
+             .is_scroll_offset_at_top != expected_scroll_offset_at_top) {
+    WaitForMetadataChange();
+  }
+}
+
+const cc::RenderFrameMetadata&
+RenderFrameSubmissionObserver::LastRenderFrameMetadata() const {
+  return render_frame_metadata_provider_->LastRenderFrameMetadata();
+}
+
+void RenderFrameSubmissionObserver::Quit() {
+  if (run_loop_)
+    run_loop_->Quit();
+}
+
+void RenderFrameSubmissionObserver::Wait() {
+  run_loop_ = std::make_unique<base::RunLoop>();
+  run_loop_->Run();
+  run_loop_.reset();
+}
+
+void RenderFrameSubmissionObserver::OnRenderFrameMetadataChanged() {
+  Quit();
+}
+
+void RenderFrameSubmissionObserver::OnRenderFrameSubmission() {
+  render_frame_count_++;
+  if (break_on_any_frame_)
+    Quit();
 }
 
 MainThreadFrameObserver::MainThreadFrameObserver(
@@ -2028,6 +2122,37 @@ void FrameFocusedObserver::Wait() {
   impl_->Run();
 }
 
+class FrameDeletedObserver::FrameTreeNodeObserverImpl
+    : public FrameTreeNode::Observer {
+ public:
+  explicit FrameTreeNodeObserverImpl(FrameTreeNode* owner) : owner_(owner) {
+    owner->AddObserver(this);
+  }
+  ~FrameTreeNodeObserverImpl() override = default;
+
+  void Run() { run_loop_.Run(); }
+
+ private:
+  // FrameTreeNode::Observer
+  void OnFrameTreeNodeDestroyed(FrameTreeNode* node) override {
+    if (node == owner_)
+      run_loop_.Quit();
+  }
+
+  FrameTreeNode* owner_;
+  base::RunLoop run_loop_;
+};
+
+FrameDeletedObserver::FrameDeletedObserver(RenderFrameHost* owner_host)
+    : impl_(new FrameTreeNodeObserverImpl(
+          static_cast<RenderFrameHostImpl*>(owner_host)->frame_tree_node())) {}
+
+FrameDeletedObserver::~FrameDeletedObserver() = default;
+
+void FrameDeletedObserver::Wait() {
+  impl_->Run();
+}
+
 TestNavigationManager::TestNavigationManager(WebContents* web_contents,
                                              const GURL& url)
     : WebContentsObserver(web_contents),
@@ -2061,6 +2186,10 @@ void TestNavigationManager::ResumeNavigation() {
   handle_->CallResumeForTesting();
 }
 
+NavigationHandle* TestNavigationManager::GetNavigationHandle() {
+  return handle_;
+}
+
 bool TestNavigationManager::WaitForResponse() {
   desired_state_ = NavigationState::RESPONSE;
   return WaitForDesiredState();
@@ -2088,6 +2217,7 @@ void TestNavigationManager::DidStartNavigation(NavigationHandle* handle) {
 void TestNavigationManager::DidFinishNavigation(NavigationHandle* handle) {
   if (handle != handle_)
     return;
+  was_successful_ = handle->HasCommitted() && !handle->IsErrorPage();
   current_state_ = NavigationState::FINISHED;
   navigation_paused_ = false;
   handle_ = nullptr;
@@ -2345,6 +2475,74 @@ void ContextMenuFilter::OnContextMenu(
 WebContents* GetEmbedderForGuest(content::WebContents* guest) {
   CHECK(guest);
   return static_cast<content::WebContentsImpl*>(guest)->GetOuterWebContents();
+}
+
+bool IsNetworkServiceRunningInProcess() {
+  return base::FeatureList::IsEnabled(network::features::kNetworkService) &&
+         (base::CommandLine::ForCurrentProcess()->HasSwitch(
+              switches::kSingleProcess) ||
+          base::FeatureList::IsEnabled(features::kNetworkServiceInProcess));
+}
+
+void SimulateNetworkServiceCrash() {
+  CHECK(base::FeatureList::IsEnabled(network::features::kNetworkService));
+  CHECK(!IsNetworkServiceRunningInProcess())
+      << "Can't crash the network service if it's running in-process!";
+  network::mojom::NetworkServiceTestPtr network_service_test;
+  ServiceManagerConnection::GetForProcess()->GetConnector()->BindInterface(
+      mojom::kNetworkServiceName, &network_service_test);
+
+  base::RunLoop run_loop(base::RunLoop::Type::kNestableTasksAllowed);
+  network_service_test.set_connection_error_handler(run_loop.QuitClosure());
+
+  network_service_test->SimulateCrash();
+  run_loop.Run();
+
+  // Make sure the cached NetworkServicePtr receives error notification.
+  FlushNetworkServiceInstanceForTesting();
+}
+
+int LoadBasicRequest(network::mojom::NetworkContext* network_context,
+                     const GURL& url,
+                     int process_id,
+                     int render_frame_id) {
+  network::mojom::URLLoaderFactoryPtr url_loader_factory;
+  network_context->CreateURLLoaderFactory(MakeRequest(&url_loader_factory),
+                                          process_id);
+  // |url_loader_factory| will receive error notification asynchronously if
+  // |network_context| has already encountered error. However it's still false
+  // at this point.
+  EXPECT_FALSE(url_loader_factory.encountered_error());
+
+  auto request = std::make_unique<network::ResourceRequest>();
+  request->url = url;
+  request->render_frame_id = render_frame_id;
+
+  content::SimpleURLLoaderTestHelper simple_loader_helper;
+  std::unique_ptr<network::SimpleURLLoader> simple_loader =
+      network::SimpleURLLoader::Create(std::move(request),
+                                       TRAFFIC_ANNOTATION_FOR_TESTS);
+
+  simple_loader->DownloadToStringOfUnboundedSizeUntilCrashAndDie(
+      url_loader_factory.get(), simple_loader_helper.GetCallback());
+  simple_loader_helper.WaitForCallback();
+
+  return simple_loader->NetError();
+}
+
+void EnsureCookiesFlushed(BrowserContext* browser_context) {
+  BrowserContext::ForEachStoragePartition(
+      browser_context, base::BindRepeating([](StoragePartition* partition) {
+        base::RunLoop run_loop;
+        partition->GetCookieManagerForBrowserProcess()->FlushCookieStore(
+            run_loop.QuitClosure());
+        run_loop.Run();
+      }));
+}
+
+bool HasValidProcessForProcessGroup(const std::string& process_group_name) {
+  return ServiceManagerContext::HasValidProcessForProcessGroup(
+      process_group_name);
 }
 
 }  // namespace content

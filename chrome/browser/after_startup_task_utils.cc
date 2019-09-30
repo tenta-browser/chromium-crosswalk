@@ -25,7 +25,7 @@
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_observer.h"
-#include "third_party/WebKit/common/page/page_visibility_state.mojom.h"
+#include "third_party/blink/public/mojom/page/page_visibility_state.mojom.h"
 
 using content::BrowserThread;
 using content::WebContents;
@@ -55,7 +55,7 @@ base::LazyInstance<base::circular_deque<AfterStartupTask*>>::Leaky
 bool IsBrowserStartupComplete() {
   // Be sure to initialize the LazyInstance on the main thread since the flag
   // may only be set on it's initializing thread.
-  if (g_startup_complete_flag == nullptr)
+  if (!g_startup_complete_flag.IsCreated())
     return false;
   return g_startup_complete_flag.Get().IsSet();
 }
@@ -73,7 +73,7 @@ void ScheduleTask(std::unique_ptr<AfterStartupTask> queued_task) {
   scoped_refptr<base::TaskRunner> target_runner = queued_task->task_runner;
   base::Location from_here = queued_task->from_here;
   target_runner->PostDelayedTask(
-      from_here, base::BindOnce(&RunTask, base::Passed(std::move(queued_task))),
+      from_here, base::BindOnce(&RunTask, std::move(queued_task)),
       base::TimeDelta::FromSeconds(base::RandInt(kMinDelaySec, kMaxDelaySec)));
 }
 
@@ -85,9 +85,8 @@ void QueueTask(std::unique_ptr<AfterStartupTask> queued_task) {
   CHECK(queued_task->task);
 
   if (!BrowserThread::CurrentlyOn(BrowserThread::UI)) {
-    BrowserThread::PostTask(
-        BrowserThread::UI, FROM_HERE,
-        base::BindOnce(QueueTask, base::Passed(std::move(queued_task))));
+    BrowserThread::PostTask(BrowserThread::UI, FROM_HERE,
+                            base::BindOnce(QueueTask, std::move(queued_task)));
     return;
   }
 

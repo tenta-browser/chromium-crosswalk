@@ -10,12 +10,13 @@
 #include "base/containers/hash_tables.h"
 #include "base/macros.h"
 #include "cc/input/input_handler.h"
-#include "third_party/WebKit/public/platform/WebGestureCurve.h"
-#include "third_party/WebKit/public/platform/WebGestureCurveTarget.h"
-#include "third_party/WebKit/public/platform/WebGestureEvent.h"
-#include "third_party/WebKit/public/web/WebActiveWheelFlingParameters.h"
+#include "third_party/blink/public/platform/web_gesture_curve.h"
+#include "third_party/blink/public/platform/web_gesture_curve_target.h"
+#include "third_party/blink/public/platform/web_gesture_event.h"
+#include "third_party/blink/public/web/web_active_fling_parameters.h"
 #include "ui/events/blink/blink_features.h"
 #include "ui/events/blink/input_scroll_elasticity_controller.h"
+#include "ui/events/blink/snap_fling_controller.h"
 #include "ui/events/blink/synchronous_input_handler_proxy.h"
 #include "ui/events/blink/web_input_event_traits.h"
 
@@ -51,11 +52,13 @@ struct DidOverscrollParams;
 // events intended for a specific WebWidget.
 class InputHandlerProxy : public cc::InputHandlerClient,
                           public SynchronousInputHandlerProxy,
-                          public blink::WebGestureCurveTarget {
+                          public blink::WebGestureCurveTarget,
+                          public SnapFlingClient {
  public:
   InputHandlerProxy(cc::InputHandler* input_handler,
                     InputHandlerProxyClient* client,
-                    bool touchpad_and_wheel_scroll_latching_enabled);
+                    bool touchpad_and_wheel_scroll_latching_enabled,
+                    bool async_wheel_events_enabled);
   ~InputHandlerProxy() override;
 
   InputScrollElasticityController* scroll_elasticity_controller() {
@@ -113,6 +116,14 @@ class InputHandlerProxy : public cc::InputHandlerClient,
   bool ScrollBy(const blink::WebFloatSize& offset,
                 const blink::WebFloatSize& velocity) override;
 
+  // SnapFlingClient implementation.
+  bool GetSnapFlingInfo(const gfx::Vector2dF& natural_displacement,
+                        gfx::Vector2dF* initial_offset,
+                        gfx::Vector2dF* target_offset) const override;
+  gfx::Vector2dF ScrollByForSnapFling(const gfx::Vector2dF& delta) override;
+  void ScrollEndForSnapFling() override;
+  void RequestAnimationForSnapFling() override;
+
   bool gesture_scroll_on_impl_thread_for_testing() const {
     return gesture_scroll_on_impl_thread_;
   }
@@ -135,9 +146,6 @@ class InputHandlerProxy : public cc::InputHandlerClient,
   // Helper functions for handling more complicated input events.
   EventDisposition HandleMouseWheel(
       const blink::WebMouseWheelEvent& event);
-  EventDisposition FlingScrollByMouseWheel(
-      const blink::WebMouseWheelEvent& event,
-      cc::EventListenerProperties listener_properties);
   EventDisposition HandleGestureScrollBegin(
       const blink::WebGestureEvent& event);
   EventDisposition HandleGestureScrollUpdate(
@@ -149,9 +157,6 @@ class InputHandlerProxy : public cc::InputHandlerClient,
   EventDisposition HandleTouchStart(const blink::WebTouchEvent& event);
   EventDisposition HandleTouchMove(const blink::WebTouchEvent& event);
   EventDisposition HandleTouchEnd(const blink::WebTouchEvent& event);
-
-  // Returns true if we scrolled by the increment.
-  bool TouchpadFlingScroll(const blink::WebFloatSize& increment);
 
   // Returns true if we actually had an active fling to cancel, also notifying
   // the client that the fling has ended. Note that if a boosted fling is active
@@ -169,7 +174,7 @@ class InputHandlerProxy : public cc::InputHandlerClient,
   // Used to send overscroll messages to the browser.
   // |bundle_overscroll_params_with_ack| means overscroll message should be
   // bundled with triggering event response, and won't fire |DidOverscroll|.
-  void HandleOverscroll(const gfx::Point& causal_event_viewport_point,
+  void HandleOverscroll(const gfx::PointF& causal_event_viewport_point,
                         const cc::InputHandlerScrollResult& scroll_result,
                         bool bundle_overscroll_params_with_ack);
 
@@ -181,7 +186,10 @@ class InputHandlerProxy : public cc::InputHandlerClient,
       const blink::WebGestureEvent& gesture_event,
       const cc::InputHandlerScrollResult& scroll_result);
 
-  void SetTickClockForTesting(std::unique_ptr<base::TickClock> tick_clock);
+  // Overrides the internal clock for testing.
+  // This doesn't take the ownership of the clock. |tick_clock| must outlive the
+  // InputHandlerProxy instance.
+  void SetTickClockForTesting(const base::TickClock* tick_clock);
 
   // |is_touching_scrolling_layer| indicates if one of the points that has
   // been touched hits a currently scrolling layer.
@@ -198,7 +206,7 @@ class InputHandlerProxy : public cc::InputHandlerClient,
   std::unique_ptr<blink::WebGestureCurve> fling_curve_;
   // Parameters for the active fling animation, stored in case we need to
   // transfer it out later.
-  blink::WebActiveWheelFlingParameters fling_parameters_;
+  blink::WebActiveFlingParameters fling_parameters_;
 
   InputHandlerProxyClient* client_;
   cc::InputHandler* input_handler_;
@@ -215,6 +223,7 @@ class InputHandlerProxy : public cc::InputHandlerClient,
 #endif
   bool gesture_scroll_on_impl_thread_;
   bool gesture_pinch_on_impl_thread_;
+  bool in_inertial_scrolling_ = false;
   bool scroll_sequence_ignored_;
   // This is always false when there are no flings on the main thread, but
   // conservative in the sense that we might not be actually flinging when it is
@@ -239,6 +248,7 @@ class InputHandlerProxy : public cc::InputHandlerClient,
 
   bool smooth_scroll_enabled_;
   const bool touchpad_and_wheel_scroll_latching_enabled_;
+  const bool async_wheel_events_enabled_;
 
   // The merged result of the last touch event with previous touch events.
   // This value will get returned for subsequent TouchMove events to allow
@@ -259,10 +269,13 @@ class InputHandlerProxy : public cc::InputHandlerClient,
 
   std::unique_ptr<CompositorThreadEventQueue> compositor_event_queue_;
   bool has_ongoing_compositor_scroll_fling_pinch_;
+  bool is_first_gesture_scroll_update_;
 
-  std::unique_ptr<base::TickClock> tick_clock_;
+  const base::TickClock* tick_clock_;
 
   std::unique_ptr<FlingBooster> fling_booster_;
+
+  std::unique_ptr<SnapFlingController> snap_fling_controller_;
 
   DISALLOW_COPY_AND_ASSIGN(InputHandlerProxy);
 };

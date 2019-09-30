@@ -27,6 +27,7 @@ class OAuth2TokenServiceDelegate {
     LOAD_CREDENTIALS_FINISHED_WITH_SUCCESS,
     LOAD_CREDENTIALS_FINISHED_WITH_DB_ERRORS,
     LOAD_CREDENTIALS_FINISHED_WITH_DECRYPT_ERRORS,
+    LOAD_CREDENTIALS_FINISHED_WITH_NO_TOKEN_FOR_PRIMARY_ACCOUNT,
     LOAD_CREDENTIALS_FINISHED_WITH_UNKNOWN_ERRORS,
   };
 
@@ -39,7 +40,8 @@ class OAuth2TokenServiceDelegate {
       OAuth2AccessTokenConsumer* consumer) = 0;
 
   virtual bool RefreshTokenIsAvailable(const std::string& account_id) const = 0;
-  virtual bool RefreshTokenHasError(const std::string& account_id) const;
+  virtual GoogleServiceAuthError GetAuthError(
+      const std::string& account_id) const;
   virtual void UpdateAuthError(const std::string& account_id,
                                const GoogleServiceAuthError& error) {}
 
@@ -74,10 +76,13 @@ class OAuth2TokenServiceDelegate {
   virtual LoadCredentialsState GetLoadCredentialsState() const;
 
  protected:
-  // Called by subclasses to notify observers.
+  // Called by subclasses to notify observers. Some are virtual to allow Android
+  // to broadcast the notifications to Java code.
   virtual void FireRefreshTokenAvailable(const std::string& account_id);
   virtual void FireRefreshTokenRevoked(const std::string& account_id);
   virtual void FireRefreshTokensLoaded();
+  void FireAuthErrorChanged(const std::string& account_id,
+                            const GoogleServiceAuthError& error);
 
   // Helper class to scope batch changes.
   class ScopedBatchChange {
@@ -89,12 +94,6 @@ class OAuth2TokenServiceDelegate {
     OAuth2TokenServiceDelegate* delegate_;  // Weak.
     DISALLOW_COPY_AND_ASSIGN(ScopedBatchChange);
   };
-
-  // This function is called by derived classes to help implement
-  // RefreshTokenHasError().  It centralizes the code for determining if
-  // |error| is worthy of being reported as an error for purposes of
-  // RefreshTokenHasError().
-  static bool IsError(const GoogleServiceAuthError& error);
 
  private:
   // List of observers to notify when refresh token availability changes.

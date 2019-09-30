@@ -475,6 +475,11 @@ FileError FileCache::Unpin(const std::string& id) {
   return FILE_ERROR_OK;
 }
 
+bool FileCache::IsMarkedAsMounted(const std::string& id) {
+  AssertOnSequencedWorkerPool();
+  return mounted_files_.count(id);
+}
+
 FileError FileCache::MarkAsMounted(const std::string& id,
                                    base::FilePath* cache_file_path) {
   AssertOnSequencedWorkerPool();
@@ -755,9 +760,10 @@ bool FileCache::RecoverFilesFromCacheDirectory(
     if (it != recovered_cache_info.end() && !it->second.title.empty()) {
       // We can use a file name recovered from the trashed DB.
       dest_base_name = base::FilePath::FromUTF8Unsafe(it->second.title);
-    } else if (net::SniffMimeType(&content[0], read_result,
-                                  net::FilePathToFileURL(current),
-                                  std::string(), &mime_type) ||
+    } else if (net::SniffMimeType(
+                   &content[0], read_result, net::FilePathToFileURL(current),
+                   std::string(), net::ForceSniffFileUrlsForHtml::kDisabled,
+                   &mime_type) ||
                net::SniffMimeTypeFromLocalData(&content[0], read_result,
                                                &mime_type)) {
       // Change base name for common mime types.

@@ -140,13 +140,6 @@ void ShellSurface::SetFullscreen(bool fullscreen) {
   widget_->SetFullscreen(fullscreen);
 }
 
-void ShellSurface::DisableMovement() {
-  movement_disabled_ = true;
-
-  if (widget_)
-    widget_->set_movement_disabled(true);
-}
-
 void ShellSurface::Resize(int component) {
   TRACE_EVENT1("exo", "ShellSurface::Resize", "component", component);
 
@@ -170,8 +163,8 @@ void ShellSurface::OnPreWindowStateTypeChange(
     ash::wm::WindowState* window_state,
     ash::mojom::WindowStateType old_type) {
   ash::mojom::WindowStateType new_type = window_state->GetStateType();
-  if (old_type == ash::mojom::WindowStateType::MINIMIZED ||
-      new_type == ash::mojom::WindowStateType::MINIMIZED) {
+  if (ash::IsMinimizedWindowStateType(old_type) ||
+      ash::IsMinimizedWindowStateType(new_type)) {
     return;
   }
 

@@ -16,11 +16,9 @@
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "chrome/browser/engagement/site_engagement_details.mojom.h"
-#include "chrome/browser/engagement/site_engagement_metrics.h"
-#include "chrome/browser/engagement/site_engagement_observer.h"
 #include "components/history/core/browser/history_service_observer.h"
 #include "components/keyed_service/core/keyed_service.h"
-#include "third_party/WebKit/public/platform/site_engagement.mojom.h"
+#include "third_party/blink/public/platform/site_engagement.mojom.h"
 #include "ui/base/page_transition_types.h"
 
 namespace base {
@@ -29,7 +27,7 @@ class Clock;
 
 namespace banners {
 FORWARD_DECLARE_TEST(AppBannerManagerBrowserTest,
-                     CheckOnLoadWithoutSufficientEngagement);
+                     ExperimentalFlowWebAppBannerNeedsEngagement);
 }
 
 namespace content {
@@ -43,6 +41,7 @@ class HistoryService;
 class GURL;
 class HostContentSettingsMap;
 class Profile;
+class SiteEngagementObserver;
 class SiteEngagementScore;
 
 #if defined(OS_ANDROID)
@@ -78,6 +77,25 @@ class SiteEngagementService : public KeyedService,
                               public history::HistoryServiceObserver,
                               public SiteEngagementScoreProvider {
  public:
+  // This is used to back a UMA histogram, so it should be treated as
+  // append-only. Any new values should be inserted immediately prior to
+  // ENGAGEMENT_LAST and added to SiteEngagementServiceEngagementType in
+  // tools/metrics/histograms/enums.xml.
+  // TODO(calamity): Document each of these engagement types.
+  enum EngagementType {
+    ENGAGEMENT_NAVIGATION,
+    ENGAGEMENT_KEYPRESS,
+    ENGAGEMENT_MOUSE,
+    ENGAGEMENT_TOUCH_GESTURE,
+    ENGAGEMENT_SCROLL,
+    ENGAGEMENT_MEDIA_HIDDEN,
+    ENGAGEMENT_MEDIA_VISIBLE,
+    ENGAGEMENT_WEBAPP_SHORTCUT_LAUNCH,
+    ENGAGEMENT_FIRST_DAILY_ENGAGEMENT,
+    ENGAGEMENT_NOTIFICATION_INTERACTION,
+    ENGAGEMENT_LAST,
+  };
+
   // WebContentsObserver that detects engagement triggering events and notifies
   // the service of them.
   class Helper;
@@ -139,9 +157,10 @@ class SiteEngagementService : public KeyedService,
   // the result of GetScore(|url|) may not be the same as |score|.
   void ResetBaseScoreForURL(const GURL& url, double score);
 
-  // Update the last time |url| was opened from an installed shortcut to be
-  // clock_->Now().
-  void SetLastShortcutLaunchTime(const GURL& url);
+  // Update the last time |url| was opened from an installed shortcut (hosted in
+  // |web_contents|) to be clock_->Now().
+  void SetLastShortcutLaunchTime(content::WebContents* web_contents,
+                                 const GURL& url);
 
   void HelperCreated(SiteEngagementService::Helper* helper);
   void HelperDeleted(SiteEngagementService::Helper* helper);
@@ -152,6 +171,9 @@ class SiteEngagementService : public KeyedService,
   // Overridden from SiteEngagementScoreProvider.
   double GetScore(const GURL& url) const override;
   double GetTotalEngagementPoints() const override;
+
+  // Just forwards calls AddPoints.
+  void AddPointsForTesting(const GURL& url, double points);
 
  private:
   friend class SiteEngagementObserver;
@@ -172,7 +194,6 @@ class SiteEngagementService : public KeyedService,
                            GetTotalNotificationPoints);
   FRIEND_TEST_ALL_PREFIXES(SiteEngagementServiceTest, RestrictedToHTTPAndHTTPS);
   FRIEND_TEST_ALL_PREFIXES(SiteEngagementServiceTest, LastShortcutLaunch);
-  FRIEND_TEST_ALL_PREFIXES(SiteEngagementServiceTest, NotificationPermission);
   FRIEND_TEST_ALL_PREFIXES(SiteEngagementServiceTest,
                            CleanupOriginsOnHistoryDeletion);
   FRIEND_TEST_ALL_PREFIXES(SiteEngagementServiceTest, IsBootstrapped);
@@ -184,8 +205,9 @@ class SiteEngagementService : public KeyedService,
                            IncognitoEngagementService);
   FRIEND_TEST_ALL_PREFIXES(SiteEngagementServiceTest, GetScoreFromSettings);
   FRIEND_TEST_ALL_PREFIXES(banners::AppBannerManagerBrowserTest,
-                           CheckOnLoadWithoutSufficientEngagement);
+                           ExperimentalFlowWebAppBannerNeedsEngagement);
   FRIEND_TEST_ALL_PREFIXES(AppBannerSettingsHelperTest, SiteEngagementTrigger);
+  FRIEND_TEST_ALL_PREFIXES(HostedAppPWAOnlyTest, EngagementHistogram);
 
 #if defined(OS_ANDROID)
   // Shim class to expose the service to Java.
@@ -195,7 +217,7 @@ class SiteEngagementService : public KeyedService,
 #endif
 
   // Only used in tests.
-  SiteEngagementService(Profile* profile, std::unique_ptr<base::Clock> clock);
+  SiteEngagementService(Profile* profile, base::Clock* clock);
 
   // Adds the specified number of points to the given origin, respecting the
   // maximum limits for the day and overall.
@@ -251,15 +273,16 @@ class SiteEngagementService : public KeyedService,
 
   // Update the engagement score of the origin loaded in |web_contents| for
   // time-on-site, based on user input.
-  void HandleUserInput(content::WebContents* web_contents,
-                       SiteEngagementMetrics::EngagementType type);
+  void HandleUserInput(content::WebContents* web_contents, EngagementType type);
 
-  // Called when the engagement for |url| loaded in |web_contents| increases.
-  // Calls OnEngagementIncreased in all observers. |web_contents| may be null if
-  // the engagement has increased when |url| is not in a tab, e.g. from a
-  // notification interaction.
-  void OnEngagementIncreased(content::WebContents* web_contents,
-                             const GURL& url);
+  // Called when the engagement for |url| loaded in |web_contents| is changed,
+  // due to an event of type |type|. Calls OnEngagementEvent in all observers.
+  // |web_contents| may be null if the engagement has increased when |url| is
+  // not in a tab, e.g. from a notification interaction. Also records
+  // engagement-type metrics.
+  void OnEngagementEvent(content::WebContents* web_contents,
+                         const GURL& url,
+                         EngagementType type);
 
   // Called if |url| changes to |level| engagement, and informs every Helper of
   // the change.
@@ -300,7 +323,7 @@ class SiteEngagementService : public KeyedService,
   Profile* profile_;
 
   // The clock used to vend times.
-  std::unique_ptr<base::Clock> clock_;
+  base::Clock* clock_;
 
 #if defined(OS_ANDROID)
   std::unique_ptr<SiteEngagementServiceAndroid> android_service_;
@@ -317,7 +340,7 @@ class SiteEngagementService : public KeyedService,
   std::set<SiteEngagementService::Helper*> helpers_;
 
   // A list of observers. When any origin registers an engagement-increasing
-  // event, each observer's OnEngagementIncreased method will be called.
+  // event, each observer's OnEngagementEvent method will be called.
   base::ObserverList<SiteEngagementObserver> observer_list_;
 
   base::WeakPtrFactory<SiteEngagementService> weak_factory_;

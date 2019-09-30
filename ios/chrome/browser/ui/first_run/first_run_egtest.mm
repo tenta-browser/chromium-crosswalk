@@ -40,7 +40,7 @@
 using chrome_test_util::AccountConsistencySetupSigninButton;
 using chrome_test_util::ButtonWithAccessibilityLabel;
 using chrome_test_util::ButtonWithAccessibilityLabelId;
-using chrome_test_util::NavigationBarDoneButton;
+using chrome_test_util::SettingsDoneButton;
 using chrome_test_util::SettingsMenuBackButton;
 
 namespace {
@@ -119,6 +119,25 @@ void WaitForMatcher(id<GREYMatcher> matcher) {
   [[OmniboxGeolocationController sharedInstance] setLocationManager:nil];
 
   [super tearDown];
+}
+
+// Navigates to the terms of service and back.
+- (void)testPrivacy {
+  [chrome_test_util::GetMainController() showFirstRunUI];
+
+  id<GREYMatcher> privacyLink = grey_accessibilityLabel(@"Privacy Notice");
+  [[EarlGrey selectElementWithMatcher:privacyLink] performAction:grey_tap()];
+
+  [[EarlGrey selectElementWithMatcher:grey_text(l10n_util::GetNSString(
+                                          IDS_IOS_FIRSTRUN_PRIVACY_TITLE))]
+      assertWithMatcher:grey_sufficientlyVisible()];
+
+  [[EarlGrey selectElementWithMatcher:SettingsMenuBackButton()]
+      performAction:grey_tap()];
+
+  // Ensure we went back to the First Run screen.
+  [[EarlGrey selectElementWithMatcher:privacyLink]
+      assertWithMatcher:grey_sufficientlyVisible()];
 }
 
 // Navigates to the terms of service and back.
@@ -239,7 +258,7 @@ void WaitForMatcher(id<GREYMatcher> matcher) {
                   @"Sync shouldn't have finished its original setup yet");
 
   // Close Settings, user is still signed in and sync is now starting.
-  [[EarlGrey selectElementWithMatcher:NavigationBarDoneButton()]
+  [[EarlGrey selectElementWithMatcher:SettingsDoneButton()]
       performAction:grey_tap()];
   [SigninEarlGreyUtils assertSignedInWithIdentity:identity];
   GREYAssertTrue(sync_service->HasFinishedInitialSetup(),

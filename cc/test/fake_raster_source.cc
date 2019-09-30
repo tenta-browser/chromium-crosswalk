@@ -144,15 +144,13 @@ FakeRasterSource::FakeRasterSource(const RecordingSource* recording_source,
     : RasterSource(recording_source),
       playback_allowed_event_(playback_allowed_event) {}
 
-FakeRasterSource::~FakeRasterSource() {}
+FakeRasterSource::~FakeRasterSource() = default;
 
-void FakeRasterSource::PlaybackToCanvas(
-    SkCanvas* canvas,
-    const gfx::ColorSpace& canvas_color_space,
-    const PlaybackSettings& settings) const {
+void FakeRasterSource::PlaybackToCanvas(SkCanvas* canvas,
+                                        ImageProvider* image_provider) const {
   if (playback_allowed_event_)
     playback_allowed_event_->Wait();
-  RasterSource::PlaybackToCanvas(canvas, canvas_color_space, settings);
+  RasterSource::PlaybackToCanvas(canvas, image_provider);
 }
 
 }  // namespace cc

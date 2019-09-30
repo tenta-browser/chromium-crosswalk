@@ -16,11 +16,12 @@
 #include "base/containers/queue.h"
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
+#include "content/browser/background_fetch/background_fetch.pb.h"
 #include "content/browser/background_fetch/background_fetch_registration_id.h"
-#include "content/browser/background_fetch/background_fetch_request_manager.h"
+#include "content/browser/background_fetch/background_fetch_scheduler.h"
 #include "content/browser/background_fetch/storage/database_task.h"
 #include "content/common/content_export.h"
-#include "third_party/WebKit/public/platform/modules/background_fetch/background_fetch.mojom.h"
+#include "third_party/blink/public/platform/modules/background_fetch/background_fetch.mojom.h"
 #include "url/origin.h"
 
 namespace storage {
@@ -47,20 +48,26 @@ class ServiceWorkerContextWrapper;
 //
 // Storage schema is documented in storage/README.md
 class CONTENT_EXPORT BackgroundFetchDataManager
-    : public BackgroundFetchRequestManager {
+    : public BackgroundFetchScheduler::RequestProvider {
  public:
   using SettledFetchesCallback = base::OnceCallback<void(
       blink::mojom::BackgroundFetchError,
       bool /* background_fetch_succeeded */,
       std::vector<BackgroundFetchSettledFetch>,
       std::vector<std::unique_ptr<storage::BlobDataHandle>>)>;
+  using GetMetadataCallback =
+      base::OnceCallback<void(blink::mojom::BackgroundFetchError,
+                              std::unique_ptr<proto::BackgroundFetchMetadata>)>;
   using GetRegistrationCallback =
       base::OnceCallback<void(blink::mojom::BackgroundFetchError,
                               std::unique_ptr<BackgroundFetchRegistration>)>;
+  using NextRequestCallback =
+      base::OnceCallback<void(scoped_refptr<BackgroundFetchRequestInfo>)>;
 
   BackgroundFetchDataManager(
       BrowserContext* browser_context,
       scoped_refptr<ServiceWorkerContextWrapper> service_worker_context);
+
   ~BackgroundFetchDataManager() override;
 
   // Creates and stores a new registration with the given properties. Will
@@ -70,9 +77,16 @@ class CONTENT_EXPORT BackgroundFetchDataManager
       const BackgroundFetchRegistrationId& registration_id,
       const std::vector<ServiceWorkerFetchRequest>& requests,
       const BackgroundFetchOptions& options,
+      const SkBitmap& icon,
       GetRegistrationCallback callback);
 
-  // Get the BackgroundFetchOptions for a registration.
+  // Get the BackgroundFetchMetadata.
+  void GetMetadata(int64_t service_worker_registration_id,
+                   const url::Origin& origin,
+                   const std::string& developer_id,
+                   GetMetadataCallback callback);
+
+  // Get the BackgroundFetchRegistration.
   void GetRegistration(int64_t service_worker_registration_id,
                        const url::Origin& origin,
                        const std::string& developer_id,
@@ -80,7 +94,7 @@ class CONTENT_EXPORT BackgroundFetchDataManager
 
   // Updates the UI values for a Background Fetch registration.
   void UpdateRegistrationUI(
-      const std::string& unique_id,
+      const BackgroundFetchRegistrationId& registration_id,
       const std::string& title,
       blink::mojom::BackgroundFetchService::UpdateUICallback callback);
 
@@ -122,17 +136,13 @@ class CONTENT_EXPORT BackgroundFetchDataManager
   int GetTotalNumberOfRequests(
       const BackgroundFetchRegistrationId& registration_id) const;
 
-  // BackgroundFetchRequestManager implementation:
+  // BackgroundFetchScheduler::RequestProvider implementation:
   void PopNextRequest(const BackgroundFetchRegistrationId& registration_id,
                       NextRequestCallback callback) override;
-  void MarkRequestAsStarted(
-      const BackgroundFetchRegistrationId& registration_id,
-      BackgroundFetchRequestInfo* request,
-      const std::string& download_guid) override;
   void MarkRequestAsComplete(
       const BackgroundFetchRegistrationId& registration_id,
       BackgroundFetchRequestInfo* request,
-      MarkedCompleteCallback callback) override;
+      BackgroundFetchScheduler::MarkedCompleteCallback callback) override;
 
  private:
   FRIEND_TEST_ALL_PREFIXES(BackgroundFetchDataManagerTest, Cleanup);

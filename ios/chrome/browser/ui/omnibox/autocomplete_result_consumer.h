@@ -12,6 +12,10 @@
 // Delegate for AutocompleteResultConsumer.
 @protocol AutocompleteResultConsumerDelegate<NSObject>
 
+// Tells the delegate when a row containing a suggestion is highlighted (i.e.
+// with arrow keys).
+- (void)autocompleteResultConsumer:(id<AutocompleteResultConsumer>)sender
+                   didHighlightRow:(NSUInteger)row;
 // Tells the delegate when a row containing a suggestion is clicked.
 - (void)autocompleteResultConsumer:(id<AutocompleteResultConsumer>)sender
                       didSelectRow:(NSUInteger)row;
@@ -34,6 +38,8 @@
 // CALayer animations to fade the OmniboxPopupRows in.
 - (void)updateMatches:(NSArray<id<AutocompleteSuggestion>>*)result
         withAnimation:(BOOL)animation;
+// Sets the text alignment of the popup content.
+- (void)setTextAlignment:(NSTextAlignment)alignment;
 @end
 
 #endif  // IOS_CHROME_BROWSER_UI_OMNIBOX_AUTOCOMPLETE_RESULT_CONSUMER_H_

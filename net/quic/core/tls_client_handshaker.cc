@@ -6,9 +6,8 @@
 
 #include "net/quic/core/crypto/quic_encrypter.h"
 #include "net/quic/core/quic_session.h"
+#include "net/quic/platform/api/quic_string.h"
 #include "third_party/boringssl/src/include/openssl/ssl.h"
-
-using std::string;
 
 namespace net {
 
@@ -20,7 +19,7 @@ TlsClientHandshaker::ProofVerifierCallbackImpl::~ProofVerifierCallbackImpl() {}
 
 void TlsClientHandshaker::ProofVerifierCallbackImpl::Run(
     bool ok,
-    const string& error_details,
+    const QuicString& error_details,
     std::unique_ptr<ProofVerifyDetails>* details) {
   if (parent_ == nullptr) {
     return;
@@ -46,7 +45,8 @@ TlsClientHandshaker::TlsClientHandshaker(QuicCryptoStream* stream,
     : TlsHandshaker(stream, session, ssl_ctx),
       server_id_(server_id),
       proof_verifier_(proof_verifier),
-      verify_context_(verify_context) {}
+      verify_context_(verify_context),
+      crypto_negotiated_params_(new QuicCryptoNegotiatedParameters) {}
 
 TlsClientHandshaker::~TlsClientHandshaker() {
   if (proof_verify_callback_) {
@@ -54,7 +54,19 @@ TlsClientHandshaker::~TlsClientHandshaker() {
   }
 }
 
+// static
+bssl::UniquePtr<SSL_CTX> TlsClientHandshaker::CreateSslCtx() {
+  return TlsHandshaker::CreateSslCtx();
+}
+
 bool TlsClientHandshaker::CryptoConnect() {
+  CrypterPair crypters;
+  CryptoUtils::CreateTlsInitialCrypters(Perspective::IS_CLIENT,
+                                        session()->connection_id(), &crypters);
+  session()->connection()->SetEncrypter(ENCRYPTION_NONE,
+                                        std::move(crypters.encrypter));
+  session()->connection()->SetDecrypter(ENCRYPTION_NONE,
+                                        std::move(crypters.decrypter));
   state_ = STATE_HANDSHAKE_RUNNING;
   // Configure certificate verification.
   // TODO(nharper): This only verifies certs on initial connection, not on
@@ -94,7 +106,7 @@ bool TlsClientHandshaker::WasChannelIDSourceCallbackRun() const {
   return false;
 }
 
-string TlsClientHandshaker::chlo_hash() const {
+QuicString TlsClientHandshaker::chlo_hash() const {
   return "";
 }
 
@@ -169,25 +181,46 @@ void TlsClientHandshaker::FinishHandshake() {
   QUIC_LOG(INFO) << "Client: handshake finished";
   state_ = STATE_HANDSHAKE_COMPLETE;
   std::vector<uint8_t> client_secret, server_secret;
-  if (!DeriveSecrets(ssl(), &client_secret, &server_secret)) {
+  if (!DeriveSecrets(&client_secret, &server_secret)) {
     CloseConnection();
     return;
   }
 
-  // TODO(nharper): Use |client_secret| and |server_secret| to set the
-  // appropriate crypters on the connection, and set |encryption_established_|
-  // to true. Whenever encryption keys are set, call
-  // session()->connection()->NeuterUnencryptedPackets().
+  QUIC_LOG(INFO) << "Client: setting crypters";
+  std::unique_ptr<QuicEncrypter> initial_encrypter =
+      CreateEncrypter(client_secret);
+  session()->connection()->SetEncrypter(ENCRYPTION_INITIAL,
+                                        std::move(initial_encrypter));
+  std::unique_ptr<QuicEncrypter> encrypter = CreateEncrypter(client_secret);
+  session()->connection()->SetEncrypter(ENCRYPTION_FORWARD_SECURE,
+                                        std::move(encrypter));
+
+  std::unique_ptr<QuicDecrypter> initial_decrypter =
+      CreateDecrypter(server_secret);
+  session()->connection()->SetDecrypter(ENCRYPTION_INITIAL,
+                                        std::move(initial_decrypter));
+  std::unique_ptr<QuicDecrypter> decrypter = CreateDecrypter(server_secret);
+  session()->connection()->SetAlternativeDecrypter(ENCRYPTION_FORWARD_SECURE,
+                                                   std::move(decrypter), true);
+
+  session()->connection()->SetDefaultEncryptionLevel(ENCRYPTION_FORWARD_SECURE);
+
+  session()->NeuterUnencryptedData();
+  encryption_established_ = true;
   handshake_confirmed_ = true;
+}
+
+// static
+TlsClientHandshaker* TlsClientHandshaker::HandshakerFromSsl(SSL* ssl) {
+  return static_cast<TlsClientHandshaker*>(
+      TlsHandshaker::HandshakerFromSsl(ssl));
 }
 
 // static
 enum ssl_verify_result_t TlsClientHandshaker::VerifyCallback(
     SSL* ssl,
     uint8_t* out_alert) {
-  return static_cast<TlsClientHandshaker*>(
-             TlsHandshaker::HandshakerFromSsl(ssl))
-      ->VerifyCert(out_alert);
+  return HandshakerFromSsl(ssl)->VerifyCert(out_alert);
 }
 
 enum ssl_verify_result_t TlsClientHandshaker::VerifyCert(uint8_t* out_alert) {
@@ -203,11 +236,11 @@ enum ssl_verify_result_t TlsClientHandshaker::VerifyCert(uint8_t* out_alert) {
     return ssl_verify_invalid;
   }
   // TODO(nharper): Pass the CRYPTO_BUFFERs into the QUIC stack to avoid copies.
-  std::vector<string> certs;
+  std::vector<QuicString> certs;
   for (CRYPTO_BUFFER* cert : cert_chain) {
     certs.push_back(
-        string(reinterpret_cast<const char*>(CRYPTO_BUFFER_data(cert)),
-               CRYPTO_BUFFER_len(cert)));
+        QuicString(reinterpret_cast<const char*>(CRYPTO_BUFFER_data(cert)),
+                   CRYPTO_BUFFER_len(cert)));
   }
 
   ProofVerifierCallbackImpl* proof_verify_callback =

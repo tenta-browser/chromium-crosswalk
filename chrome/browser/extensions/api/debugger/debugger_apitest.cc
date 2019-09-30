@@ -86,7 +86,7 @@ testing::AssertionResult DebuggerApiTest::RunAttachFunction(
       browser()->tab_strip_model()->GetActiveWebContents();
 
   // Attach by tabId.
-  int tab_id = SessionTabHelper::IdForTab(web_contents);
+  int tab_id = SessionTabHelper::IdForTab(web_contents).id();
   std::string debugee_by_tab = base::StringPrintf("{\"tabId\": %d}", tab_id);
   testing::AssertionResult result =
       RunAttachFunctionOnTarget(debugee_by_tab, expected_error);
@@ -126,20 +126,20 @@ testing::AssertionResult DebuggerApiTest::RunAttachFunctionOnTarget(
   attach_function->set_extension(extension_.get());
 
   std::string actual_error;
-  if (!RunFunction(attach_function.get(),
-                   base::StringPrintf("[%s, \"1.1\"]", debuggee_target.c_str()),
-                   browser(),
-                   extension_function_test_utils::NONE)) {
+  if (!extension_function_test_utils::RunFunction(
+          attach_function.get(),
+          base::StringPrintf("[%s, \"1.1\"]", debuggee_target.c_str()),
+          browser(), api_test_utils::NONE)) {
     actual_error = attach_function->GetError();
   } else {
     // Clean up and detach.
     scoped_refptr<DebuggerDetachFunction> detach_function =
         new DebuggerDetachFunction();
     detach_function->set_extension(extension_.get());
-    if (!RunFunction(detach_function.get(),
-                     base::StringPrintf("[%s]", debuggee_target.c_str()),
-                     browser(),
-                     extension_function_test_utils::NONE)) {
+    if (!extension_function_test_utils::RunFunction(
+            detach_function.get(),
+            base::StringPrintf("[%s]", debuggee_target.c_str()), browser(),
+            api_test_utils::NONE)) {
       return testing::AssertionFailure() << "Could not detach from "
           << debuggee_target << " : " << detach_function->GetError();
     }
@@ -191,7 +191,8 @@ IN_PROC_BROWSER_TEST_F(DebuggerApiTest,
 
 IN_PROC_BROWSER_TEST_F(DebuggerApiTest, InfoBar) {
   int tab_id = SessionTabHelper::IdForTab(
-      browser()->tab_strip_model()->GetActiveWebContents());
+                   browser()->tab_strip_model()->GetActiveWebContents())
+                   .id();
   scoped_refptr<DebuggerAttachFunction> attach_function;
   scoped_refptr<DebuggerDetachFunction> detach_function;
 
@@ -200,7 +201,8 @@ IN_PROC_BROWSER_TEST_F(DebuggerApiTest, InfoBar) {
   AddBlankTabAndShow(another_browser);
   AddBlankTabAndShow(another_browser);
   int tab_id2 = SessionTabHelper::IdForTab(
-      another_browser->tab_strip_model()->GetActiveWebContents());
+                    another_browser->tab_strip_model()->GetActiveWebContents())
+                    .id();
 
   InfoBarService* service1 = InfoBarService::FromWebContents(
       browser()->tab_strip_model()->GetActiveWebContents());
@@ -212,10 +214,10 @@ IN_PROC_BROWSER_TEST_F(DebuggerApiTest, InfoBar) {
   // Attach should create infobars in both browsers.
   attach_function = new DebuggerAttachFunction();
   attach_function->set_extension(extension());
-  ASSERT_TRUE(
-      RunFunction(attach_function.get(),
-                  base::StringPrintf("[{\"tabId\": %d}, \"1.1\"]", tab_id),
-                  browser(), extension_function_test_utils::NONE));
+  ASSERT_TRUE(extension_function_test_utils::RunFunction(
+      attach_function.get(),
+      base::StringPrintf("[{\"tabId\": %d}, \"1.1\"]", tab_id), browser(),
+      api_test_utils::NONE));
   EXPECT_EQ(1u, service1->infobar_count());
   EXPECT_EQ(1u, service2->infobar_count());
   EXPECT_EQ(1u, service3->infobar_count());
@@ -223,10 +225,10 @@ IN_PROC_BROWSER_TEST_F(DebuggerApiTest, InfoBar) {
   // Second attach should not create infobars.
   attach_function = new DebuggerAttachFunction();
   attach_function->set_extension(extension());
-  ASSERT_TRUE(
-      RunFunction(attach_function.get(),
-                  base::StringPrintf("[{\"tabId\": %d}, \"1.1\"]", tab_id2),
-                  browser(), extension_function_test_utils::NONE));
+  ASSERT_TRUE(extension_function_test_utils::RunFunction(
+      attach_function.get(),
+      base::StringPrintf("[{\"tabId\": %d}, \"1.1\"]", tab_id2), browser(),
+      api_test_utils::NONE));
   EXPECT_EQ(1u, service1->infobar_count());
   EXPECT_EQ(1u, service2->infobar_count());
   EXPECT_EQ(1u, service3->infobar_count());
@@ -234,9 +236,9 @@ IN_PROC_BROWSER_TEST_F(DebuggerApiTest, InfoBar) {
   // Detach from one of the tabs should not remove infobars.
   detach_function = new DebuggerDetachFunction();
   detach_function->set_extension(extension());
-  ASSERT_TRUE(RunFunction(detach_function.get(),
-                          base::StringPrintf("[{\"tabId\": %d}]", tab_id2),
-                          browser(), extension_function_test_utils::NONE));
+  ASSERT_TRUE(extension_function_test_utils::RunFunction(
+      detach_function.get(), base::StringPrintf("[{\"tabId\": %d}]", tab_id2),
+      browser(), api_test_utils::NONE));
   EXPECT_EQ(1u, service1->infobar_count());
   EXPECT_EQ(1u, service2->infobar_count());
   EXPECT_EQ(1u, service3->infobar_count());
@@ -244,9 +246,9 @@ IN_PROC_BROWSER_TEST_F(DebuggerApiTest, InfoBar) {
   // Detach should remove all infobars.
   detach_function = new DebuggerDetachFunction();
   detach_function->set_extension(extension());
-  ASSERT_TRUE(RunFunction(detach_function.get(),
-                          base::StringPrintf("[{\"tabId\": %d}]", tab_id),
-                          browser(), extension_function_test_utils::NONE));
+  ASSERT_TRUE(extension_function_test_utils::RunFunction(
+      detach_function.get(), base::StringPrintf("[{\"tabId\": %d}]", tab_id),
+      browser(), api_test_utils::NONE));
   EXPECT_EQ(0u, service1->infobar_count());
   EXPECT_EQ(0u, service2->infobar_count());
   EXPECT_EQ(0u, service3->infobar_count());
@@ -254,10 +256,10 @@ IN_PROC_BROWSER_TEST_F(DebuggerApiTest, InfoBar) {
   // Attach again.
   attach_function = new DebuggerAttachFunction();
   attach_function->set_extension(extension());
-  ASSERT_TRUE(
-      RunFunction(attach_function.get(),
-                  base::StringPrintf("[{\"tabId\": %d}, \"1.1\"]", tab_id),
-                  browser(), extension_function_test_utils::NONE));
+  ASSERT_TRUE(extension_function_test_utils::RunFunction(
+      attach_function.get(),
+      base::StringPrintf("[{\"tabId\": %d}, \"1.1\"]", tab_id), browser(),
+      api_test_utils::NONE));
   EXPECT_EQ(1u, service1->infobar_count());
   EXPECT_EQ(1u, service2->infobar_count());
   EXPECT_EQ(1u, service3->infobar_count());
@@ -275,17 +277,17 @@ IN_PROC_BROWSER_TEST_F(DebuggerApiTest, InfoBar) {
   detach_function = new DebuggerDetachFunction();
   detach_function->set_extension(extension());
   // Cannot detach again.
-  ASSERT_FALSE(RunFunction(detach_function.get(),
-                           base::StringPrintf("[{\"tabId\": %d}]", tab_id),
-                           browser(), extension_function_test_utils::NONE));
+  ASSERT_FALSE(extension_function_test_utils::RunFunction(
+      detach_function.get(), base::StringPrintf("[{\"tabId\": %d}]", tab_id),
+      browser(), api_test_utils::NONE));
 
   // And again...
   attach_function = new DebuggerAttachFunction();
   attach_function->set_extension(extension());
-  ASSERT_TRUE(
-      RunFunction(attach_function.get(),
-                  base::StringPrintf("[{\"tabId\": %d}, \"1.1\"]", tab_id),
-                  browser(), extension_function_test_utils::NONE));
+  ASSERT_TRUE(extension_function_test_utils::RunFunction(
+      attach_function.get(),
+      base::StringPrintf("[{\"tabId\": %d}, \"1.1\"]", tab_id), browser(),
+      api_test_utils::NONE));
   EXPECT_EQ(1u, service1->infobar_count());
   EXPECT_EQ(1u, service2->infobar_count());
   EXPECT_EQ(1u, service3->infobar_count());
@@ -305,9 +307,9 @@ IN_PROC_BROWSER_TEST_F(DebuggerApiTest, InfoBar) {
   // Detach should remove the remaining infobar.
   detach_function = new DebuggerDetachFunction();
   detach_function->set_extension(extension());
-  ASSERT_TRUE(RunFunction(detach_function.get(),
-                          base::StringPrintf("[{\"tabId\": %d}]", tab_id),
-                          browser(), extension_function_test_utils::NONE));
+  ASSERT_TRUE(extension_function_test_utils::RunFunction(
+      detach_function.get(), base::StringPrintf("[{\"tabId\": %d}]", tab_id),
+      browser(), api_test_utils::NONE));
   EXPECT_EQ(0u, service1->infobar_count());
 }
 

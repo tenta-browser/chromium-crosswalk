@@ -6,7 +6,6 @@
 
 #include <memory>
 
-#include "base/ios/ios_util.h"
 #include "base/memory/ptr_util.h"
 #include "base/strings/sys_string_conversions.h"
 #include "components/handoff/pref_names_ios.h"
@@ -20,7 +19,6 @@
 #include "ios/chrome/browser/pref_names.h"
 #include "ios/chrome/browser/prefs/browser_prefs.h"
 #import "ios/chrome/browser/ui/collection_view/collection_view_controller_test.h"
-#import "ios/chrome/browser/ui/settings/physical_web_collection_view_controller.h"
 #include "ios/chrome/grit/ios_chromium_strings.h"
 #include "ios/chrome/grit/ios_strings.h"
 #include "ios/chrome/test/ios_chrome_scoped_testing_local_state.h"
@@ -107,8 +105,6 @@ TEST_F(PrivacyCollectionViewControllerTest, TestModel) {
 
   if (web::IsDoNotTrackSupported())
     expectedRows++;
-  if (experimental_flags::IsPhysicalWebEnabled())
-    expectedRows++;
   EXPECT_EQ(expectedRows, NumberOfItemsInSection(sectionIndex));
 
   CheckSectionHeaderWithId(IDS_IOS_OPTIONS_WEB_SERVICES_LABEL, sectionIndex);
@@ -129,19 +125,6 @@ TEST_F(PrivacyCollectionViewControllerTest, TestModel) {
     CheckTextCellTitleAndSubtitle(
         l10n_util::GetNSString(IDS_IOS_OPTIONS_DO_NOT_TRACK_MOBILE),
         doNotTrackSubtitle, sectionIndex, row++);
-  }
-  if (experimental_flags::IsPhysicalWebEnabled()) {
-    NSInteger physicalWebState =
-        GetApplicationContext()->GetLocalState()->GetInteger(
-            prefs::kIosPhysicalWebEnabled);
-    BOOL physicalWebEnabled = [PhysicalWebCollectionViewController
-        shouldEnableForPreferenceState:physicalWebState];
-    NSString* physicalWebSubtitle =
-        physicalWebEnabled ? l10n_util::GetNSString(IDS_IOS_SETTING_ON)
-                           : l10n_util::GetNSString(IDS_IOS_SETTING_OFF);
-    CheckTextCellTitleAndSubtitle(
-        l10n_util::GetNSString(IDS_IOS_OPTIONS_ENABLE_PHYSICAL_WEB),
-        physicalWebSubtitle, sectionIndex, row++);
   }
 
   sectionIndex++;

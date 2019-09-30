@@ -10,7 +10,7 @@
 #include "base/memory/ptr_util.h"
 #include "base/optional.h"
 #include "media/base/audio_renderer_sink.h"
-#include "media/base/content_decryption_module.h"
+#include "media/base/cdm_context.h"
 #include "media/base/media_url_demuxer.h"
 #include "media/base/renderer.h"
 #include "media/base/video_renderer_sink.h"
@@ -39,7 +39,7 @@ mojo::StrongBindingPtr<mojom::Renderer> MojoRendererService::Create(
     scoped_refptr<AudioRendererSink> audio_sink,
     std::unique_ptr<VideoRendererSink> video_sink,
     std::unique_ptr<media::Renderer> renderer,
-    InitiateSurfaceRequestCB initiate_surface_request_cb,
+    const InitiateSurfaceRequestCB& initiate_surface_request_cb,
     mojo::InterfaceRequest<mojom::Renderer> request) {
   MojoRendererService* service = new MojoRendererService(
       mojo_cdm_service_context, std::move(audio_sink), std::move(video_sink),
@@ -52,6 +52,16 @@ mojo::StrongBindingPtr<mojom::Renderer> MojoRendererService::Create(
   service->set_bad_message_cb(base::Bind(&CloseBindingOnBadMessage, binding));
 
   return binding;
+}
+
+// static
+mojo::StrongBindingPtr<mojom::Renderer> MojoRendererService::Create(
+    std::unique_ptr<media::Renderer> renderer,
+    const InitiateSurfaceRequestCB& initiate_surface_request_cb,
+    mojo::InterfaceRequest<mojom::Renderer> request) {
+  return MojoRendererService::Create(
+      nullptr, nullptr, nullptr, std::move(renderer),
+      initiate_surface_request_cb, std::move(request));
 }
 
 MojoRendererService::MojoRendererService(
@@ -140,24 +150,19 @@ void MojoRendererService::SetCdm(int32_t cdm_id, SetCdmCallback callback) {
     return;
   }
 
-  scoped_refptr<ContentDecryptionModule> cdm =
-      mojo_cdm_service_context_->GetCdm(cdm_id);
-  if (!cdm) {
-    DVLOG(1) << "CDM not found: " << cdm_id;
+  cdm_context_ref_ = mojo_cdm_service_context_->GetCdmContextRef(cdm_id);
+  if (!cdm_context_ref_) {
+    DVLOG(1) << "CdmContextRef not found for CDM ID: " << cdm_id;
     std::move(callback).Run(false);
     return;
   }
 
-  CdmContext* cdm_context = cdm->GetCdmContext();
-  if (!cdm_context) {
-    DVLOG(1) << "CDM context not available: " << cdm_id;
-    std::move(callback).Run(false);
-    return;
-  }
+  auto* cdm_context = cdm_context_ref_->GetCdmContext();
+  DCHECK(cdm_context);
 
   renderer_->SetCdm(cdm_context,
                     base::Bind(&MojoRendererService::OnCdmAttached, weak_this_,
-                               cdm, base::Passed(&callback)));
+                               base::Passed(&callback)));
 }
 
 void MojoRendererService::OnError(PipelineStatus error) {
@@ -277,13 +282,12 @@ void MojoRendererService::OnFlushCompleted(FlushCallback callback) {
 }
 
 void MojoRendererService::OnCdmAttached(
-    scoped_refptr<ContentDecryptionModule> cdm,
     base::OnceCallback<void(bool)> callback,
     bool success) {
   DVLOG(1) << __func__ << "(" << success << ")";
 
-  if (success)
-    cdm_ = cdm;
+  if (!success)
+    cdm_context_ref_.reset();
 
   std::move(callback).Run(success);
 }

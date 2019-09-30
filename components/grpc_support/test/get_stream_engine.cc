@@ -2,9 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <memory>
+#include <utility>
+
+#include "components/grpc_support/test/get_stream_engine.h"
+
 #include "base/lazy_instance.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
 #include "base/message_loop/message_loop.h"
 #include "base/single_thread_task_runner.h"
@@ -12,12 +16,12 @@
 #include "base/strings/stringprintf.h"
 #include "base/threading/thread.h"
 #include "components/grpc_support/include/bidirectional_stream_c.h"
-#include "components/grpc_support/test/quic_test_server.h"
 #include "net/base/host_port_pair.h"
 #include "net/cert/mock_cert_verifier.h"
 #include "net/dns/mapped_host_resolver.h"
 #include "net/dns/mock_host_resolver.h"
 #include "net/http/http_server_properties_impl.h"
+#include "net/test/quic_simple_test_server.h"
 #include "net/url_request/url_request_test_util.h"
 
 namespace grpc_support {
@@ -39,7 +43,7 @@ class BidirectionalStreamTestURLRequestContextGetter
     if (!request_context_.get()) {
       request_context_.reset(
           new net::TestURLRequestContext(true /* delay_initialization */));
-      auto mock_host_resolver = base::MakeUnique<net::MockHostResolver>();
+      auto mock_host_resolver = std::make_unique<net::MockHostResolver>();
       host_resolver_.reset(
           new net::MappedHostResolver(std::move(mock_host_resolver)));
       UpdateHostResolverRules();
@@ -48,11 +52,12 @@ class BidirectionalStreamTestURLRequestContextGetter
       server_properties_.reset(new net::HttpServerPropertiesImpl());
 
       // Need to enable QUIC for the test server.
-      auto params = base::MakeUnique<net::HttpNetworkSession::Params>();
+      auto params = std::make_unique<net::HttpNetworkSession::Params>();
       params->enable_quic = true;
       params->enable_http2 = true;
       net::AlternativeService alternative_service(net::kProtoQUIC, "", 443);
-      url::SchemeHostPort quic_hint_server("https", kTestServerHost, 443);
+      url::SchemeHostPort quic_hint_server(
+          "https", net::QuicSimpleTestServer::GetHost(), 443);
       server_properties_->SetQuicAlternativeService(
           quic_hint_server, alternative_service, base::Time::Max(),
           net::QuicTransportVersionVector());

@@ -10,7 +10,6 @@
 #include <utility>
 
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -143,7 +142,8 @@ class ExamplesWindowContents : public WidgetDelegateView,
     combobox_->ModelChanged();
 
     SetBackground(CreateStandardPanelBackground());
-    GridLayout* layout = GridLayout::CreateAndInstall(this);
+    GridLayout* layout =
+        SetLayoutManager(std::make_unique<views::GridLayout>(this));
     ColumnSet* column_set = layout->AddColumnSet(0);
     column_set->AddPaddingColumn(0, 5);
     column_set->AddColumn(GridLayout::FILL, GridLayout::FILL, 1,
@@ -155,7 +155,7 @@ class ExamplesWindowContents : public WidgetDelegateView,
 
     if (combobox_model_.GetItemCount() > 0) {
       layout->StartRow(1, 0);
-      example_shown_->SetLayoutManager(new FillLayout());
+      example_shown_->SetLayoutManager(std::make_unique<FillLayout>());
       example_shown_->AddChildView(combobox_model_.GetItemViewAt(0));
       layout->AddView(example_shown_);
     }

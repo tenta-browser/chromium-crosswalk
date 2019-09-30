@@ -17,7 +17,8 @@
 #include "content/public/common/content_switches.h"
 #include "media/base/media_switches.h"
 #include "services/device/public/cpp/device_features.h"
-#include "third_party/WebKit/public/platform/WebRuntimeFeatures.h"
+#include "services/network/public/cpp/features.h"
+#include "third_party/blink/public/platform/web_runtime_features.h"
 #include "ui/gfx/switches.h"
 #include "ui/gl/gl_switches.h"
 #include "ui/native_theme/native_theme_features.h"
@@ -92,9 +93,6 @@ void SetRuntimeFeaturesDefaultsAndUpdateFromArgs(
   WebRuntimeFeatures::EnableOriginTrials(
       base::FeatureList::IsEnabled(features::kOriginTrials));
 
-  WebRuntimeFeatures::EnableFeaturePolicy(
-      base::FeatureList::IsEnabled(features::kFeaturePolicy));
-
   if (!base::FeatureList::IsEnabled(features::kWebUsb))
     WebRuntimeFeatures::EnableWebUsb(false);
 
@@ -128,20 +126,8 @@ void SetRuntimeFeaturesDefaultsAndUpdateFromArgs(
   if (command_line.HasSwitch(switches::kDisableFileSystem))
     WebRuntimeFeatures::EnableFileSystem(false);
 
-  if (command_line.HasSwitch(switches::kEnableExperimentalCanvasFeatures))
-    WebRuntimeFeatures::EnableExperimentalCanvasFeatures(true);
-
   if (!command_line.HasSwitch(switches::kDisableAcceleratedJpegDecoding))
     WebRuntimeFeatures::EnableDecodeToYUV(true);
-
-  if (command_line.HasSwitch(switches::kEnableDisplayList2dCanvas))
-    WebRuntimeFeatures::EnableDisplayList2dCanvas(true);
-
-  if (command_line.HasSwitch(switches::kDisableDisplayList2dCanvas))
-    WebRuntimeFeatures::EnableDisplayList2dCanvas(false);
-
-  if (command_line.HasSwitch(switches::kForceDisplayList2dCanvas))
-    WebRuntimeFeatures::ForceDisplayList2dCanvas(true);
 
   if (command_line.HasSwitch(switches::kEnableWebGLDraftExtensions))
     WebRuntimeFeatures::EnableWebGLDraftExtensions(true);
@@ -203,8 +189,9 @@ void SetRuntimeFeaturesDefaultsAndUpdateFromArgs(
   if (command_line.HasSwitch(switches::kReducedReferrerGranularity))
     WebRuntimeFeatures::EnableReducedReferrerGranularity(true);
 
-  if (command_line.HasSwitch(switches::kRootLayerScrolls))
-    WebRuntimeFeatures::EnableRootLayerScrolling(true);
+  WebRuntimeFeatures::EnableRootLayerScrolling(
+      base::FeatureList::IsEnabled(features::kRootLayerScrolling) ||
+      enableExperimentalWebPlatformFeatures);
 
   if (command_line.HasSwitch(switches::kDisablePermissionsAPI))
     WebRuntimeFeatures::EnablePermissionsAPI(false);
@@ -217,8 +204,11 @@ void SetRuntimeFeaturesDefaultsAndUpdateFromArgs(
   if (command_line.HasSwitch(switches::kEnableWebVR))
     WebRuntimeFeatures::EnableWebVR(true);
 
-  WebRuntimeFeatures::EnableWebVRExperimentalRendering(
-      base::FeatureList::IsEnabled(features::kWebVrExperimentalRendering));
+  if (base::FeatureList::IsEnabled(features::kWebXr))
+    WebRuntimeFeatures::EnableWebXR(true);
+
+  if (base::FeatureList::IsEnabled(features::kWebXrGamepadSupport))
+    WebRuntimeFeatures::EnableWebXRGamepadSupport(true);
 
   if (command_line.HasSwitch(switches::kDisablePresentationAPI))
     WebRuntimeFeatures::EnablePresentationAPI(false);
@@ -233,8 +223,15 @@ void SetRuntimeFeaturesDefaultsAndUpdateFromArgs(
   WebRuntimeFeatures::EnableUserActivationV2(
       base::FeatureList::IsEnabled(features::kUserActivationV2));
 
-  if (command_line.HasSwitch(switches::kEnableSlimmingPaintV175))
-    WebRuntimeFeatures::EnableFeatureFromString("SlimmingPaintV175", true);
+  if (base::FeatureList::IsEnabled(features::kScrollAnchorSerialization))
+    WebRuntimeFeatures::EnableScrollAnchorSerialization(true);
+
+  WebRuntimeFeatures::EnableFeatureFromString(
+      "SlimmingPaintV175",
+      base::FeatureList::IsEnabled(features::kSlimmingPaintV175) ||
+          command_line.HasSwitch(switches::kEnableSlimmingPaintV175) ||
+          enableExperimentalWebPlatformFeatures);
+
   if (command_line.HasSwitch(switches::kEnableSlimmingPaintV2))
     WebRuntimeFeatures::EnableSlimmingPaintV2(true);
 
@@ -252,10 +249,6 @@ void SetRuntimeFeaturesDefaultsAndUpdateFromArgs(
       "FramebustingNeedsSameOriginOrUserGesture",
       base::FeatureList::IsEnabled(
           features::kFramebustingNeedsSameOriginOrUserGesture));
-
-  WebRuntimeFeatures::EnableFeatureFromString(
-      "VibrateRequiresUserGesture",
-      base::FeatureList::IsEnabled(features::kVibrateRequiresUserGesture));
 
   if (command_line.HasSwitch(switches::kDisableBackgroundTimerThrottling))
     WebRuntimeFeatures::EnableTimerThrottlingForBackgroundTabs(false);
@@ -291,20 +284,15 @@ void SetRuntimeFeaturesDefaultsAndUpdateFromArgs(
   if (base::FeatureList::IsEnabled(features::kServiceWorkerPaymentApps))
     WebRuntimeFeatures::EnablePaymentApp(true);
 
-  WebRuntimeFeatures::EnableServiceWorkerScriptStreaming(
-      base::FeatureList::IsEnabled(features::kServiceWorkerScriptStreaming));
-
   WebRuntimeFeatures::EnableServiceWorkerScriptFullCodeCache(
       base::FeatureList::IsEnabled(
           features::kServiceWorkerScriptFullCodeCache));
 
-  WebRuntimeFeatures::EnableOffMainThreadFetch(
-      base::FeatureList::IsEnabled(features::kOffMainThreadFetch));
-
-  WebRuntimeFeatures::EnableMojoBlobs(features::IsMojoBlobsEnabled());
-
   WebRuntimeFeatures::EnableNetworkService(
-      base::FeatureList::IsEnabled(features::kNetworkService));
+      base::FeatureList::IsEnabled(network::features::kNetworkService));
+
+  WebRuntimeFeatures::EnableMojoBlobURLs(
+      base::FeatureList::IsEnabled(network::features::kNetworkService));
 
   if (base::FeatureList::IsEnabled(features::kGamepadExtensions))
     WebRuntimeFeatures::EnableGamepadExtensions(true);
@@ -328,14 +316,10 @@ void SetRuntimeFeaturesDefaultsAndUpdateFromArgs(
       WebRuntimeFeatures::EnableGenericSensorExtraClasses(true);
   }
 
-  if (base::FeatureList::IsEnabled(features::kLoadingWithMojo) ||
-      base::FeatureList::IsEnabled(features::kNetworkService))
-    WebRuntimeFeatures::EnableLoadingWithMojo(true);
-
   if (base::FeatureList::IsEnabled(features::kNotificationsWithMojo))
     WebRuntimeFeatures::EnableNotificationsWithMojo(true);
 
-  if (base::FeatureList::IsEnabled(features::kOutOfBlinkCORS))
+  if (base::FeatureList::IsEnabled(network::features::kOutOfBlinkCORS))
     WebRuntimeFeatures::EnableOutOfBlinkCORS(true);
 
   if (base::FeatureList::IsEnabled(features::kOriginManifest))
@@ -348,6 +332,13 @@ void SetRuntimeFeaturesDefaultsAndUpdateFromArgs(
     WebRuntimeFeatures::EnableFeatureFromString("BlockCredentialedSubresources",
                                                 false);
   }
+
+  if (base::FeatureList::IsEnabled(
+          features::kTurnOff2DAndOpacityCompositorAnimations))
+    WebRuntimeFeatures::EnableTurnOff2DAndOpacityCompositorAnimations(true);
+
+  if (base::FeatureList::IsEnabled(features::kRasterInducingScroll))
+    WebRuntimeFeatures::EnableRasterInducingScroll(true);
 
   WebRuntimeFeatures::EnableFeatureFromString(
       "AllowContentInitiatedDataUrlNavigations",
@@ -364,13 +355,12 @@ void SetRuntimeFeaturesDefaultsAndUpdateFromArgs(
     WebRuntimeFeatures::EnableAutoplayMutedVideos(true);
   }
 
-  if (!base::FeatureList::IsEnabled(features::kWebAuth) &&
-      !enableExperimentalWebPlatformFeatures)
-    WebRuntimeFeatures::EnableWebAuth(false);
+  WebRuntimeFeatures::EnableWebAuth(
+      base::FeatureList::IsEnabled(features::kWebAuth));
 
   WebRuntimeFeatures::EnableClientPlaceholdersForServerLoFi(
       base::GetFieldTrialParamValue("PreviewsClientLoFi",
-                                    "replace_server_placeholders") == "true");
+                                    "replace_server_placeholders") != "false");
 
   WebRuntimeFeatures::EnableResourceLoadScheduler(
       base::FeatureList::IsEnabled(features::kResourceLoadScheduler));
@@ -409,6 +399,12 @@ void SetRuntimeFeaturesDefaultsAndUpdateFromArgs(
       "FeaturePolicyForPermissions",
       base::FeatureList::IsEnabled(features::kUseFeaturePolicyForPermissions));
 
+  if (base::FeatureList::IsEnabled(features::kKeyboardLockAPI))
+    WebRuntimeFeatures::EnableFeatureFromString("KeyboardLock", true);
+
+  if (base::FeatureList::IsEnabled(features::kLazyFrameLoading))
+    WebRuntimeFeatures::EnableLazyFrameLoading(true);
+
   // Enable explicitly enabled features, and then disable explicitly disabled
   // ones.
   for (const std::string& feature :
@@ -420,17 +416,42 @@ void SetRuntimeFeaturesDefaultsAndUpdateFromArgs(
     WebRuntimeFeatures::EnableFeatureFromString(feature, false);
   }
 
-  if (base::FeatureList::IsEnabled(features::kV8ContextSnapshot))
-    WebRuntimeFeatures::EnableV8ContextSnapshot(true);
+  WebRuntimeFeatures::EnableV8ContextSnapshot(
+      base::FeatureList::IsEnabled(features::kV8ContextSnapshot));
+
+  if (base::FeatureList::IsEnabled(features::kStopInBackground))
+    WebRuntimeFeatures::EnableStopInBackground(true);
 
   if (base::FeatureList::IsEnabled(features::kStopLoadingInBackground))
-    WebRuntimeFeatures::EnableStopLoadingInBackgroundAndroid(true);
+    WebRuntimeFeatures::EnableStopLoadingInBackground(true);
+
+  if (base::FeatureList::IsEnabled(features::kStopNonTimersInBackground))
+    WebRuntimeFeatures::EnableStopNonTimersInBackground(true);
 
   WebRuntimeFeatures::EnablePWAFullCodeCache(
       base::FeatureList::IsEnabled(features::kPWAFullCodeCache));
 
   WebRuntimeFeatures::EnableRequireCSSExtensionForFile(
       base::FeatureList::IsEnabled(features::kRequireCSSExtensionForFile));
+
+  WebRuntimeFeatures::EnablePictureInPicture(
+      base::FeatureList::IsEnabled(media::kPictureInPicture));
+
+  WebRuntimeFeatures::EnableCodeCacheAfterExecute(
+      base::FeatureList::IsEnabled(features::kCodeCacheAfterExecute));
+
+  WebRuntimeFeatures::EnableCacheInlineScriptCode(
+      base::FeatureList::IsEnabled(features::kCacheInlineScriptCode));
+
+  if (base::FeatureList::IsEnabled(features::kUnifiedTouchAdjustment))
+    WebRuntimeFeatures::EnableUnifiedTouchAdjustment(true);
+
+  // Make srcset on link rel=preload work with SignedHTTPExchange flag too.
+  if (base::FeatureList::IsEnabled(features::kSignedHTTPExchange))
+    WebRuntimeFeatures::EnablePreloadImageSrcSetEnabled(true);
+
+  WebRuntimeFeatures::EnableOffMainThreadWebSocket(
+      base::FeatureList::IsEnabled(features::kOffMainThreadWebSocket));
 };
 
 }  // namespace content

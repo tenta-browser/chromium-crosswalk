@@ -13,16 +13,17 @@
 #include "base/strings/utf_string_conversions.h"
 #include "components/viz/common/gl_helper.h"
 #include "content/public/renderer/render_thread.h"
-#include "content/renderer/media/media_stream_video_capturer_source.h"
-#include "content/renderer/media/media_stream_video_source.h"
-#include "content/renderer/media/media_stream_video_track.h"
-#include "content/renderer/media/webrtc_uma_histograms.h"
+#include "content/renderer/media/stream/media_stream_constraints_util.h"
+#include "content/renderer/media/stream/media_stream_video_capturer_source.h"
+#include "content/renderer/media/stream/media_stream_video_source.h"
+#include "content/renderer/media/stream/media_stream_video_track.h"
+#include "content/renderer/media/webrtc/webrtc_uma_histograms.h"
 #include "content/renderer/render_thread_impl.h"
 #include "media/base/limits.h"
 #include "skia/ext/texture_handle.h"
-#include "third_party/WebKit/public/platform/WebGraphicsContext3DProvider.h"
-#include "third_party/WebKit/public/platform/WebMediaStreamSource.h"
-#include "third_party/WebKit/public/platform/WebString.h"
+#include "third_party/blink/public/platform/web_graphics_context_3d_provider.h"
+#include "third_party/blink/public/platform/web_media_stream_source.h"
+#include "third_party/blink/public/platform/web_string.h"
 #include "third_party/libyuv/include/libyuv.h"
 #include "third_party/skia/include/core/SkImage.h"
 
@@ -54,7 +55,7 @@ class VideoCapturerSource : public media::VideoCapturerSource {
     formats.push_back(media::VideoCaptureFormat(size_, frame_rate_,
                                                 media::PIXEL_FORMAT_I420));
     formats.push_back(media::VideoCaptureFormat(size_, frame_rate_,
-                                                media::PIXEL_FORMAT_YV12A));
+                                                media::PIXEL_FORMAT_I420A));
     return formats;
   }
   void StartCapture(const media::VideoCaptureParams& params,
@@ -144,7 +145,7 @@ CanvasCaptureHandler::CreateCanvasCaptureHandler(
     blink::WebMediaStreamTrack* track) {
   // Save histogram data so we can see how much CanvasCapture is used.
   // The histogram counts the number of calls to the JS API.
-  UpdateWebRTCMethodCount(WEBKIT_CANVAS_CAPTURE_STREAM);
+  UpdateWebRTCMethodCount(blink::WebRTCAPIName::kCanvasCaptureStream);
 
   return std::unique_ptr<CanvasCaptureHandler>(new CanvasCaptureHandler(
       size, frame_rate, std::move(io_task_runner), track));
@@ -329,8 +330,6 @@ void CanvasCaptureHandler::ReadYUVPixelsAsync(
       base::Bind(&CanvasCaptureHandler::OnYUVPixelsReadAsync,
                  weak_ptr_factory_.GetWeakPtr(), image, output_frame,
                  timestamp));
-  context_provider->InvalidateGrContext(
-      viz::ReadbackYUVInterface::GetGrGLBackendStateChanges());
 }
 
 void CanvasCaptureHandler::OnARGBPixelsReadAsync(
@@ -385,7 +384,7 @@ scoped_refptr<media::VideoFrame> CanvasCaptureHandler::ConvertToYUVFrame(
   TRACE_EVENT0("webrtc", "CanvasCaptureHandler::ConvertToYUVFrame");
 
   scoped_refptr<VideoFrame> video_frame = frame_pool_.CreateFrame(
-      is_opaque ? media::PIXEL_FORMAT_I420 : media::PIXEL_FORMAT_YV12A,
+      is_opaque ? media::PIXEL_FORMAT_I420 : media::PIXEL_FORMAT_I420A,
       image_size, gfx::Rect(image_size), image_size, base::TimeDelta());
   if (!video_frame) {
     DLOG(ERROR) << "Couldn't allocate video frame";
@@ -460,13 +459,18 @@ void CanvasCaptureHandler::AddVideoCapturerSourceToVideoTrack(
   std::string str_track_id;
   base::Base64Encode(base::RandBytesAsString(64), &str_track_id);
   const blink::WebString track_id = blink::WebString::FromASCII(str_track_id);
-  blink::WebMediaStreamSource webkit_source;
+  media::VideoCaptureFormats preferred_formats = source->GetPreferredFormats();
   std::unique_ptr<MediaStreamVideoSource> media_stream_source(
       new MediaStreamVideoCapturerSource(
           MediaStreamSource::SourceStoppedCallback(), std::move(source)));
+  blink::WebMediaStreamSource webkit_source;
   webkit_source.Initialize(track_id, blink::WebMediaStreamSource::kTypeVideo,
                            track_id, false);
   webkit_source.SetExtraData(media_stream_source.get());
+  webkit_source.SetCapabilities(ComputeCapabilitiesForVideoSource(
+      track_id, preferred_formats,
+      media::VideoFacingMode::MEDIA_VIDEO_FACING_NONE,
+      false /* is_device_capture */));
 
   web_track->Initialize(webkit_source);
   web_track->SetTrackData(new MediaStreamVideoTrack(

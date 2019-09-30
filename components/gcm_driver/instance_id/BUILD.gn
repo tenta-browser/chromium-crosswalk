@@ -46,7 +46,7 @@ static_library("test_support") {
   ]
   deps = [
     "//base",
-    "//components/gcm_driver:test_support",
+    "//components/gcm_driver",
     "//testing/gtest",
   ]
 
@@ -65,7 +65,7 @@ source_set("unit_tests") {
     ":instance_id",
     ":test_support",
     "//base",
-    "//components/gcm_driver:gcm_build_features",
+    "//components/gcm_driver:gcm_buildflags",
     "//google_apis/gcm",
     "//net:test_support",
     "//testing/gtest",

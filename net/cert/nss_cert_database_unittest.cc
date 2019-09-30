@@ -117,15 +117,17 @@ class CertDatabaseNSSTest : public testing::Test {
     std::sort(
         result.begin(), result.end(),
         [](const ScopedCERTCertificate& lhs, const ScopedCERTCertificate& rhs) {
-          return SHA256HashValueLessThan()(
-              x509_util::CalculateFingerprint256(lhs.get()),
-              x509_util::CalculateFingerprint256(rhs.get()));
+          return x509_util::CalculateFingerprint256(lhs.get()) <
+                 x509_util::CalculateFingerprint256(rhs.get());
         });
     return result;
   }
 
   std::unique_ptr<NSSCertDatabase> cert_db_;
-  const CertificateList empty_cert_list_;
+  // When building with libstdc++, |empty_cert_list_| does not have a default
+  // constructor.  Initialize it explicitly so that CertDatabaseNSSTest gets a
+  // default constructor.
+  const CertificateList empty_cert_list_ = CertificateList();
   crypto::ScopedTestNSSDB test_nssdb_;
   crypto::ScopedPK11Slot public_slot_;
 };
@@ -383,7 +385,7 @@ TEST_F(CertDatabaseNSSTest, ImportCA_NotCACert) {
   ASSERT_EQ(1U, failed.size());
   // Note: this compares pointers directly.  It's okay in this case because
   // ImportCACerts returns the same pointers that were passed in.  In the
-  // general case IsSameOSCert should be used.
+  // general case x509_util::CryptoBufferEqual should be used.
   EXPECT_EQ(certs[0], failed[0].certificate);
   EXPECT_THAT(failed[0].net_error, IsError(ERR_IMPORT_CA_CERT_NOT_CA));
 

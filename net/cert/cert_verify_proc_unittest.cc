@@ -24,7 +24,6 @@
 #include "net/cert/cert_verify_proc_builtin.h"
 #include "net/cert/cert_verify_result.h"
 #include "net/cert/crl_set.h"
-#include "net/cert/crl_set_storage.h"
 #include "net/cert/ev_root_ca_metadata.h"
 #include "net/cert/internal/signature_algorithm.h"
 #include "net/cert/test_root_certs.h"
@@ -68,6 +67,8 @@ const char kTLSFeatureExtensionHistogram[] =
 const char kTLSFeatureExtensionOCSPHistogram[] =
     "Net.Certificate.TLSFeatureExtensionWithPrivateRootHasOCSP";
 const char kTrustAnchorVerifyHistogram[] = "Net.Certificate.TrustAnchor.Verify";
+const char kTrustAnchorVerifyOutOfDateHistogram[] =
+    "Net.Certificate.TrustAnchor.VerifyOutOfDate";
 
 // Mock CertVerifyProc that sets the CertVerifyResult to a given value for
 // all certificates that are Verify()'d
@@ -237,10 +238,12 @@ class CertVerifyProcInternalTest
 
   bool SupportsReturningVerifiedChain() const {
 #if defined(OS_ANDROID)
-    // Before API level 17, Android does not expose the APIs necessary to get at
-    // the verified certificate chain.
+    // Before API level 17 (SDK_VERSION_JELLY_BEAN_MR1), Android does
+    // not expose the APIs necessary to get at the verified
+    // certificate chain.
     if (verify_proc_type() == CERT_VERIFY_PROC_ANDROID &&
-        base::android::BuildInfo::GetInstance()->sdk_int() < 17)
+        base::android::BuildInfo::GetInstance()->sdk_int() <
+            base::android::SDK_VERSION_JELLY_BEAN_MR1)
       return false;
 #endif
     return true;
@@ -248,10 +251,12 @@ class CertVerifyProcInternalTest
 
   bool SupportsDetectingKnownRoots() const {
 #if defined(OS_ANDROID)
-    // Before API level 17, Android does not expose the APIs necessary to get at
-    // the verified certificate chain and detect known roots.
+    // Before API level 17 (SDK_VERSION_JELLY_BEAN_MR1), Android does not expose
+    // the APIs necessary to get at the verified certificate chain and detect
+    // known roots.
     if (verify_proc_type() == CERT_VERIFY_PROC_ANDROID)
-      return base::android::BuildInfo::GetInstance()->sdk_int() >= 17;
+      return base::android::BuildInfo::GetInstance()->sdk_int() >=
+             base::android::SDK_VERSION_JELLY_BEAN_MR1;
 #endif
 
     // iOS does not expose the APIs necessary to get the known system roots.
@@ -333,18 +338,19 @@ TEST_P(CertVerifyProcInternalTest, EVVerificationMultipleOID) {
   //
   // This way CRLSet coverage will be sufficient for EV revocation checking,
   // so this test does not depend on online revocation checking.
-  ASSERT_EQ(1u, chain->GetIntermediateCertificates().size());
-  std::string der_bytes;
-  ASSERT_TRUE(X509Certificate::GetDEREncoded(
-      chain->GetIntermediateCertificates()[0], &der_bytes));
+  ASSERT_EQ(1u, chain->intermediate_buffers().size());
   base::StringPiece spki;
-  ASSERT_TRUE(asn1::ExtractSPKIFromDERCert(der_bytes, &spki));
+  ASSERT_TRUE(
+      asn1::ExtractSPKIFromDERCert(x509_util::CryptoBufferAsStringPiece(
+                                       chain->intermediate_buffers()[0].get()),
+                                   &spki));
   SHA256HashValue spki_sha256;
   crypto::SHA256HashString(spki, spki_sha256.data, sizeof(spki_sha256.data));
-  scoped_refptr<CRLSet> crl_set(CRLSet::ForTesting(false, &spki_sha256, ""));
+  scoped_refptr<CRLSet> crl_set(
+      CRLSet::ForTesting(false, &spki_sha256, "", "", {}));
 
   CertVerifyResult verify_result;
-  int flags = CertVerifier::VERIFY_EV_CERT;
+  int flags = 0;
   int error = Verify(chain.get(), "trustcenter.websecurity.symantec.com", flags,
                      crl_set.get(), CertificateList(), &verify_result);
   EXPECT_THAT(error, IsOk());
@@ -366,17 +372,13 @@ TEST_P(CertVerifyProcInternalTest, TrustedTargetCertWithEVPolicy) {
   ScopedTestRoot scoped_test_root(cert.get());
 
   CertVerifyResult verify_result;
-  int flags = CertVerifier::VERIFY_EV_CERT;
+  int flags = 0;
   int error = Verify(cert.get(), "policy_test.example", flags,
                      nullptr /*crl_set*/, CertificateList(), &verify_result);
-  // TODO(eroman): builtin verifier cannot verify a chain of length 1.
-  if (verify_proc_type() == CERT_VERIFY_PROC_BUILTIN) {
-    EXPECT_THAT(error, IsError(ERR_CERT_INVALID));
-  } else if (ScopedTestRootCanTrustTargetCert(verify_proc_type())) {
+  if (ScopedTestRootCanTrustTargetCert(verify_proc_type())) {
     EXPECT_THAT(error, IsOk());
     ASSERT_TRUE(verify_result.verified_cert);
-    EXPECT_TRUE(
-        verify_result.verified_cert->GetIntermediateCertificates().empty());
+    EXPECT_TRUE(verify_result.verified_cert->intermediate_buffers().empty());
   } else {
     EXPECT_THAT(error, IsError(ERR_CERT_AUTHORITY_INVALID));
   }
@@ -407,17 +409,13 @@ TEST_P(CertVerifyProcInternalTest,
   ScopedTestRoot scoped_test_root(cert.get());
 
   CertVerifyResult verify_result;
-  int flags = CertVerifier::VERIFY_EV_CERT;
+  int flags = 0;
   int error = Verify(cert.get(), "policy_test.example", flags,
                      nullptr /*crl_set*/, CertificateList(), &verify_result);
-  // TODO(eroman): builtin verifier cannot verify a chain of length 1.
-  if (verify_proc_type() == CERT_VERIFY_PROC_BUILTIN) {
-    EXPECT_THAT(error, IsError(ERR_CERT_INVALID));
-  } else if (ScopedTestRootCanTrustTargetCert(verify_proc_type())) {
+  if (ScopedTestRootCanTrustTargetCert(verify_proc_type())) {
     EXPECT_THAT(error, IsOk());
     ASSERT_TRUE(verify_result.verified_cert);
-    EXPECT_TRUE(
-        verify_result.verified_cert->GetIntermediateCertificates().empty());
+    EXPECT_TRUE(verify_result.verified_cert->intermediate_buffers().empty());
   } else {
     EXPECT_THAT(error, IsError(ERR_CERT_AUTHORITY_INVALID));
   }
@@ -442,7 +440,7 @@ TEST_P(CertVerifyProcInternalTest, DISABLED_PaypalNullCertParsing) {
   ASSERT_NE(static_cast<X509Certificate*>(NULL), paypal_null_cert.get());
 
   EXPECT_EQ(paypal_null_fingerprint, X509Certificate::CalculateFingerprint256(
-                                         paypal_null_cert->os_cert_handle()));
+                                         paypal_null_cert->cert_buffer()));
 
   int flags = 0;
   CertVerifyResult verify_result;
@@ -488,11 +486,14 @@ TEST_P(CertVerifyProcInternalTest, InvalidTarget) {
       ImportCertFromFile(GetTestCertsDirectory(), "ok_cert.pem"));
   ASSERT_TRUE(ok_cert);
 
+  std::vector<bssl::UniquePtr<CRYPTO_BUFFER>> intermediates;
+  intermediates.push_back(x509_util::DupCryptoBuffer(ok_cert->cert_buffer()));
   scoped_refptr<X509Certificate> cert_with_bad_target(
-      X509Certificate::CreateFromHandle(bad_cert->os_cert_handle(),
-                                        {ok_cert->os_cert_handle()}));
+      X509Certificate::CreateFromBuffer(
+          x509_util::DupCryptoBuffer(bad_cert->cert_buffer()),
+          std::move(intermediates)));
   ASSERT_TRUE(cert_with_bad_target);
-  EXPECT_EQ(1U, cert_with_bad_target->GetIntermediateCertificates().size());
+  EXPECT_EQ(1U, cert_with_bad_target->intermediate_buffers().size());
 
   int flags = 0;
   CertVerifyResult verify_result;
@@ -521,12 +522,14 @@ TEST_P(CertVerifyProcInternalTest, UnnecessaryInvalidIntermediate) {
       ImportCertFromFile(GetTestCertsDirectory(), "ok_cert.pem"));
   ASSERT_TRUE(ok_cert);
 
+  std::vector<bssl::UniquePtr<CRYPTO_BUFFER>> intermediates;
+  intermediates.push_back(std::move(bad_cert));
   scoped_refptr<X509Certificate> cert_with_bad_intermediate(
-      X509Certificate::CreateFromHandle(ok_cert->os_cert_handle(),
-                                        {bad_cert.get()}));
+      X509Certificate::CreateFromBuffer(
+          x509_util::DupCryptoBuffer(ok_cert->cert_buffer()),
+          std::move(intermediates)));
   ASSERT_TRUE(cert_with_bad_intermediate);
-  EXPECT_EQ(1U,
-            cert_with_bad_intermediate->GetIntermediateCertificates().size());
+  EXPECT_EQ(1U, cert_with_bad_intermediate->intermediate_buffers().size());
 
   int flags = 0;
   CertVerifyResult verify_result;
@@ -552,11 +555,12 @@ TEST_P(CertVerifyProcInternalTest, IntermediateCARequireExplicitPolicy) {
       certs_dir, "explicit-policy-chain.pem", X509Certificate::FORMAT_AUTO);
   ASSERT_EQ(3U, certs.size());
 
-  X509Certificate::OSCertHandles intermediates;
-  intermediates.push_back(certs[1]->os_cert_handle());
+  std::vector<bssl::UniquePtr<CRYPTO_BUFFER>> intermediates;
+  intermediates.push_back(x509_util::DupCryptoBuffer(certs[1]->cert_buffer()));
 
-  scoped_refptr<X509Certificate> cert = X509Certificate::CreateFromHandle(
-      certs[0]->os_cert_handle(), intermediates);
+  scoped_refptr<X509Certificate> cert = X509Certificate::CreateFromBuffer(
+      x509_util::DupCryptoBuffer(certs[0]->cert_buffer()),
+      std::move(intermediates));
   ASSERT_TRUE(cert.get());
 
   ScopedTestRoot scoped_root(certs[2].get());
@@ -579,7 +583,7 @@ TEST_P(CertVerifyProcInternalTest, RejectExpiredCert) {
   scoped_refptr<X509Certificate> cert = CreateCertificateChainFromFile(
       certs_dir, "expired_cert.pem", X509Certificate::FORMAT_AUTO);
   ASSERT_TRUE(cert);
-  ASSERT_EQ(0U, cert->GetIntermediateCertificates().size());
+  ASSERT_EQ(0U, cert->intermediate_buffers().size());
 
   int flags = 0;
   CertVerifyResult verify_result;
@@ -642,11 +646,13 @@ TEST_P(CertVerifyProcInternalTest, RejectWeakKeys) {
           ImportCertFromFile(certs_dir, basename);
       ASSERT_NE(static_cast<X509Certificate*>(NULL), intermediate.get());
 
-      X509Certificate::OSCertHandles intermediates;
-      intermediates.push_back(intermediate->os_cert_handle());
+      std::vector<bssl::UniquePtr<CRYPTO_BUFFER>> intermediates;
+      intermediates.push_back(
+          x509_util::DupCryptoBuffer(intermediate->cert_buffer()));
       scoped_refptr<X509Certificate> cert_chain =
-          X509Certificate::CreateFromHandle(ee_cert->os_cert_handle(),
-                                            intermediates);
+          X509Certificate::CreateFromBuffer(
+              x509_util::DupCryptoBuffer(ee_cert->cert_buffer()),
+              std::move(intermediates));
       ASSERT_TRUE(cert_chain);
 
       CertVerifyResult verify_result;
@@ -699,10 +705,12 @@ TEST_P(CertVerifyProcInternalTest, ExtraneousMD5RootCert) {
 
   ScopedTestRoot scoped_root(root_cert.get());
 
-  X509Certificate::OSCertHandles intermediates;
-  intermediates.push_back(extra_cert->os_cert_handle());
-  scoped_refptr<X509Certificate> cert_chain = X509Certificate::CreateFromHandle(
-      server_cert->os_cert_handle(), intermediates);
+  std::vector<bssl::UniquePtr<CRYPTO_BUFFER>> intermediates;
+  intermediates.push_back(
+      x509_util::DupCryptoBuffer(extra_cert->cert_buffer()));
+  scoped_refptr<X509Certificate> cert_chain = X509Certificate::CreateFromBuffer(
+      x509_util::DupCryptoBuffer(server_cert->cert_buffer()),
+      std::move(intermediates));
   ASSERT_TRUE(cert_chain);
 
   CertVerifyResult verify_result;
@@ -713,11 +721,10 @@ TEST_P(CertVerifyProcInternalTest, ExtraneousMD5RootCert) {
 
   // The extra MD5 root should be discarded
   ASSERT_TRUE(verify_result.verified_cert.get());
-  ASSERT_EQ(1u,
-            verify_result.verified_cert->GetIntermediateCertificates().size());
-  EXPECT_TRUE(X509Certificate::IsSameOSCert(
-      verify_result.verified_cert->GetIntermediateCertificates().front(),
-      root_cert->os_cert_handle()));
+  ASSERT_EQ(1u, verify_result.verified_cert->intermediate_buffers().size());
+  EXPECT_TRUE(x509_util::CryptoBufferEqual(
+      verify_result.verified_cert->intermediate_buffers().front().get(),
+      root_cert->cert_buffer()));
 
   EXPECT_FALSE(verify_result.has_md5);
 }
@@ -734,10 +741,12 @@ TEST_P(CertVerifyProcInternalTest, GoogleDigiNotarTest) {
       ImportCertFromFile(certs_dir, "diginotar_public_ca_2025.pem");
   ASSERT_NE(static_cast<X509Certificate*>(NULL), intermediate_cert.get());
 
-  X509Certificate::OSCertHandles intermediates;
-  intermediates.push_back(intermediate_cert->os_cert_handle());
-  scoped_refptr<X509Certificate> cert_chain = X509Certificate::CreateFromHandle(
-      server_cert->os_cert_handle(), intermediates);
+  std::vector<bssl::UniquePtr<CRYPTO_BUFFER>> intermediates;
+  intermediates.push_back(
+      x509_util ::DupCryptoBuffer(intermediate_cert->cert_buffer()));
+  scoped_refptr<X509Certificate> cert_chain = X509Certificate::CreateFromBuffer(
+      x509_util::DupCryptoBuffer(server_cert->cert_buffer()),
+      std::move(intermediates));
   ASSERT_TRUE(cert_chain);
 
   CertVerifyResult verify_result;
@@ -778,12 +787,10 @@ TEST(CertVerifyProcTest, DigiNotarCerts) {
   for (size_t i = 0; kDigiNotarFilenames[i]; i++) {
     scoped_refptr<X509Certificate> diginotar_cert =
         ImportCertFromFile(certs_dir, kDigiNotarFilenames[i]);
-    std::string der_bytes;
-    ASSERT_TRUE(X509Certificate::GetDEREncoded(diginotar_cert->os_cert_handle(),
-                                               &der_bytes));
-
     base::StringPiece spki;
-    ASSERT_TRUE(asn1::ExtractSPKIFromDERCert(der_bytes, &spki));
+    ASSERT_TRUE(asn1::ExtractSPKIFromDERCert(
+        x509_util::CryptoBufferAsStringPiece(diginotar_cert->cert_buffer()),
+        &spki));
 
     std::string spki_sha256 = crypto::SHA256HashString(spki);
 
@@ -809,7 +816,7 @@ TEST_P(CertVerifyProcInternalTest, NameConstraintsOk) {
       GetTestCertsDirectory(), "name_constraint_good.pem",
       X509Certificate::FORMAT_AUTO);
   ASSERT_TRUE(leaf);
-  ASSERT_EQ(0U, leaf->GetIntermediateCertificates().size());
+  ASSERT_EQ(0U, leaf->intermediate_buffers().size());
 
   int flags = 0;
   CertVerifyResult verify_result;
@@ -1004,13 +1011,10 @@ class CertVerifyProcInspectSignatureAlgorithmsTest : public ::testing::Test {
       return nullptr;
     }
 
-    // Start with the DER bytes of a valid certificate. This will be the basis
-    // for building a modified certificate.
-    std::string cert_der;
-    if (!X509Certificate::GetDEREncoded(cert->os_cert_handle(), &cert_der)) {
-      ADD_FAILURE() << "Failed getting DER bytes";
-      return nullptr;
-    }
+    // Start with the DER bytes of a valid certificate. The der data is copied
+    // to a new std::string as it will modified to create a new certificate.
+    std::string cert_der(
+        x509_util::CryptoBufferAsStringPiece(cert->cert_buffer()));
 
     // Parse the certificate and identify the locations of interest within
     // |cert_der|.
@@ -1061,12 +1065,14 @@ class CertVerifyProcInspectSignatureAlgorithmsTest : public ::testing::Test {
         return nullptr;
     }
 
-    X509Certificate::OSCertHandles intermediates;
+    std::vector<bssl::UniquePtr<CRYPTO_BUFFER>> intermediates;
     for (size_t i = 1; i < certs.size(); ++i)
-      intermediates.push_back(certs[i]->os_cert_handle());
+      intermediates.push_back(
+          x509_util::DupCryptoBuffer(certs[i]->cert_buffer()));
 
-    return X509Certificate::CreateFromHandle(certs[0]->os_cert_handle(),
-                                             intermediates);
+    return X509Certificate::CreateFromBuffer(
+        x509_util::DupCryptoBuffer(certs[0]->cert_buffer()),
+        std::move(intermediates));
   }
 };
 
@@ -1205,9 +1211,8 @@ TEST_P(CertVerifyProcInternalTest, NameConstraintsFailure) {
       X509Certificate::FORMAT_AUTO);
   ASSERT_EQ(1U, cert_list.size());
 
-  X509Certificate::OSCertHandles intermediates;
-  scoped_refptr<X509Certificate> leaf = X509Certificate::CreateFromHandle(
-      cert_list[0]->os_cert_handle(), intermediates);
+  scoped_refptr<X509Certificate> leaf = X509Certificate::CreateFromBuffer(
+      x509_util::DupCryptoBuffer(cert_list[0]->cert_buffer()), {});
   ASSERT_TRUE(leaf);
 
   int flags = 0;
@@ -1235,6 +1240,10 @@ TEST(CertVerifyProcTest, TestHasTooLongValidity) {
       {"40_months_after_2015_04.pem", true},
       {"60_months_after_2012_07.pem", false},
       {"61_months_after_2012_07.pem", true},
+      {"825_days_after_2018_03_01.pem", false},
+      {"826_days_after_2018_03_01.pem", true},
+      {"825_days_1_second_after_2018_03_01.pem", true},
+      {"39_months_based_on_last_day.pem", false},
   };
 
   base::FilePath certs_dir = GetTestCertsDirectory();
@@ -1261,11 +1270,12 @@ TEST_P(CertVerifyProcInternalTest, DISABLED_TestKnownRoot) {
       certs_dir, "twitter-chain.pem", X509Certificate::FORMAT_AUTO);
   ASSERT_EQ(3U, certs.size());
 
-  X509Certificate::OSCertHandles intermediates;
-  intermediates.push_back(certs[1]->os_cert_handle());
+  std::vector<bssl::UniquePtr<CRYPTO_BUFFER>> intermediates;
+  intermediates.push_back(x509_util::DupCryptoBuffer(certs[1]->cert_buffer()));
 
-  scoped_refptr<X509Certificate> cert_chain = X509Certificate::CreateFromHandle(
-      certs[0]->os_cert_handle(), intermediates);
+  scoped_refptr<X509Certificate> cert_chain = X509Certificate::CreateFromBuffer(
+      x509_util::DupCryptoBuffer(certs[0]->cert_buffer()),
+      std::move(intermediates));
   ASSERT_TRUE(cert_chain);
 
   int flags = 0;
@@ -1292,15 +1302,16 @@ TEST_P(CertVerifyProcInternalTest, PublicKeyHashes) {
       certs_dir, "x509_verify_results.chain.pem", X509Certificate::FORMAT_AUTO);
   ASSERT_EQ(3U, certs.size());
 
-  X509Certificate::OSCertHandles intermediates;
-  intermediates.push_back(certs[1]->os_cert_handle());
-  intermediates.push_back(certs[2]->os_cert_handle());
+  std::vector<bssl::UniquePtr<CRYPTO_BUFFER>> intermediates;
+  intermediates.push_back(x509_util::DupCryptoBuffer(certs[1]->cert_buffer()));
+  intermediates.push_back(x509_util::DupCryptoBuffer(certs[2]->cert_buffer()));
 
   ScopedTestRoot scoped_root(certs[2].get());
-  scoped_refptr<X509Certificate> cert_chain = X509Certificate::CreateFromHandle(
-      certs[0]->os_cert_handle(), intermediates);
+  scoped_refptr<X509Certificate> cert_chain = X509Certificate::CreateFromBuffer(
+      x509_util::DupCryptoBuffer(certs[0]->cert_buffer()),
+      std::move(intermediates));
   ASSERT_TRUE(cert_chain);
-  ASSERT_EQ(2U, cert_chain->GetIntermediateCertificates().size());
+  ASSERT_EQ(2U, cert_chain->intermediate_buffers().size());
 
   int flags = 0;
   CertVerifyResult verify_result;
@@ -1384,17 +1395,18 @@ TEST_P(CertVerifyProcInternalTest, VerifyReturnChainBasic) {
       certs_dir, "x509_verify_results.chain.pem", X509Certificate::FORMAT_AUTO);
   ASSERT_EQ(3U, certs.size());
 
-  X509Certificate::OSCertHandles intermediates;
-  intermediates.push_back(certs[1]->os_cert_handle());
-  intermediates.push_back(certs[2]->os_cert_handle());
+  std::vector<bssl::UniquePtr<CRYPTO_BUFFER>> intermediates;
+  intermediates.push_back(x509_util::DupCryptoBuffer(certs[1]->cert_buffer()));
+  intermediates.push_back(x509_util::DupCryptoBuffer(certs[2]->cert_buffer()));
 
   ScopedTestRoot scoped_root(certs[2].get());
 
   scoped_refptr<X509Certificate> google_full_chain =
-      X509Certificate::CreateFromHandle(certs[0]->os_cert_handle(),
-                                        intermediates);
+      X509Certificate::CreateFromBuffer(
+          x509_util::DupCryptoBuffer(certs[0]->cert_buffer()),
+          std::move(intermediates));
   ASSERT_NE(static_cast<X509Certificate*>(NULL), google_full_chain.get());
-  ASSERT_EQ(2U, google_full_chain->GetIntermediateCertificates().size());
+  ASSERT_EQ(2U, google_full_chain->intermediate_buffers().size());
 
   CertVerifyResult verify_result;
   EXPECT_EQ(static_cast<X509Certificate*>(NULL),
@@ -1406,16 +1418,16 @@ TEST_P(CertVerifyProcInternalTest, VerifyReturnChainBasic) {
             verify_result.verified_cert.get());
 
   EXPECT_NE(google_full_chain, verify_result.verified_cert);
-  EXPECT_TRUE(X509Certificate::IsSameOSCert(
-      google_full_chain->os_cert_handle(),
-      verify_result.verified_cert->os_cert_handle()));
-  const X509Certificate::OSCertHandles& return_intermediates =
-      verify_result.verified_cert->GetIntermediateCertificates();
+  EXPECT_TRUE(
+      x509_util::CryptoBufferEqual(google_full_chain->cert_buffer(),
+                                   verify_result.verified_cert->cert_buffer()));
+  const auto& return_intermediates =
+      verify_result.verified_cert->intermediate_buffers();
   ASSERT_EQ(2U, return_intermediates.size());
-  EXPECT_TRUE(X509Certificate::IsSameOSCert(return_intermediates[0],
-                                            certs[1]->os_cert_handle()));
-  EXPECT_TRUE(X509Certificate::IsSameOSCert(return_intermediates[1],
-                                            certs[2]->os_cert_handle()));
+  EXPECT_TRUE(x509_util::CryptoBufferEqual(return_intermediates[0].get(),
+                                           certs[1]->cert_buffer()));
+  EXPECT_TRUE(x509_util::CryptoBufferEqual(return_intermediates[1].get(),
+                                           certs[2]->cert_buffer()));
 }
 
 // Test that certificates issued for 'intranet' names (that is, containing no
@@ -1450,6 +1462,99 @@ TEST(CertVerifyProcTest, IntranetHostsRejected) {
                               CertificateList(), &verify_result);
   EXPECT_THAT(error, IsOk());
   EXPECT_FALSE(verify_result.cert_status & CERT_STATUS_NON_UNIQUE_NAME);
+}
+
+// Tests that certificates issued by Symantec's legacy infrastructure
+// are rejected according to the policies outlined in
+// https://security.googleblog.com/2017/09/chromes-plan-to-distrust-symantec.html
+// unless the caller has explicitly disabled that enforcement.
+TEST(CertVerifyProcTest, SymantecCertsRejected) {
+  constexpr SHA256HashValue kSymantecHashValue = {
+      {0xb2, 0xde, 0xf5, 0x36, 0x2a, 0xd3, 0xfa, 0xcd, 0x04, 0xbd, 0x29,
+       0x04, 0x7a, 0x43, 0x84, 0x4f, 0x76, 0x70, 0x34, 0xea, 0x48, 0x92,
+       0xf8, 0x0e, 0x56, 0xbe, 0xe6, 0x90, 0x24, 0x3e, 0x25, 0x02}};
+  constexpr SHA256HashValue kGoogleHashValue = {
+      {0xec, 0x72, 0x29, 0x69, 0xcb, 0x64, 0x20, 0x0a, 0xb6, 0x63, 0x8f,
+       0x68, 0xac, 0x53, 0x8e, 0x40, 0xab, 0xab, 0x5b, 0x19, 0xa6, 0x48,
+       0x56, 0x61, 0x04, 0x2a, 0x10, 0x61, 0xc4, 0x61, 0x27, 0x76}};
+
+  // Test that certificates from the legacy Symantec infrastructure are
+  // rejected:
+  // - dec_2017.pem : A certificate issued after 2017-12-01, which is rejected
+  //                  as of M65
+  // - pre_june_2016.pem : A certificate issued prior to 2016-06-01, which is
+  //                       rejected as of M66.
+  for (const char* rejected_cert : {"dec_2017.pem", "pre_june_2016.pem"}) {
+    scoped_refptr<X509Certificate> cert = CreateCertificateChainFromFile(
+        GetTestCertsDirectory(), rejected_cert, X509Certificate::FORMAT_AUTO);
+    ASSERT_TRUE(cert);
+
+    scoped_refptr<CertVerifyProc> verify_proc;
+    int error = 0;
+
+    // Test that a legacy Symantec certificate is rejected.
+    CertVerifyResult symantec_result;
+    symantec_result.verified_cert = cert;
+    symantec_result.public_key_hashes.push_back(HashValue(kSymantecHashValue));
+    symantec_result.is_issued_by_known_root = true;
+    verify_proc = base::MakeRefCounted<MockCertVerifyProc>(symantec_result);
+
+    CertVerifyResult test_result_1;
+    error = verify_proc->Verify(cert.get(), "127.0.0.1", std::string(), 0,
+                                nullptr, CertificateList(), &test_result_1);
+    EXPECT_THAT(error, IsError(ERR_CERT_SYMANTEC_LEGACY));
+    EXPECT_TRUE(test_result_1.cert_status & CERT_STATUS_SYMANTEC_LEGACY);
+
+    // ... Unless the Symantec cert chains through a whitelisted intermediate.
+    CertVerifyResult whitelisted_result;
+    whitelisted_result.verified_cert = cert;
+    whitelisted_result.public_key_hashes.push_back(
+        HashValue(kSymantecHashValue));
+    whitelisted_result.public_key_hashes.push_back(HashValue(kGoogleHashValue));
+    whitelisted_result.is_issued_by_known_root = true;
+    verify_proc = base::MakeRefCounted<MockCertVerifyProc>(whitelisted_result);
+
+    CertVerifyResult test_result_2;
+    error = verify_proc->Verify(cert.get(), "127.0.0.1", std::string(), 0,
+                                nullptr, CertificateList(), &test_result_2);
+    EXPECT_THAT(error, IsOk());
+    EXPECT_FALSE(test_result_2.cert_status & CERT_STATUS_AUTHORITY_INVALID);
+
+    // ... Or the caller disabled enforcement of Symantec policies.
+    CertVerifyResult test_result_3;
+    error =
+        verify_proc->Verify(cert.get(), "127.0.0.1", std::string(),
+                            CertVerifier::VERIFY_DISABLE_SYMANTEC_ENFORCEMENT,
+                            nullptr, CertificateList(), &test_result_3);
+    EXPECT_THAT(error, IsOk());
+    EXPECT_FALSE(test_result_3.cert_status & CERT_STATUS_SYMANTEC_LEGACY);
+  }
+
+  // Test that certificates from the legacy Symantec infrastructure that
+  // should still be accepted (for now) are accepted.
+  // - post_june_2016.pem : A certificate issued after 2016-06-01, which is
+  //                        not scheduled for distrust until M70.
+  for (const char* accepted_cert : {"post_june_2016.pem"}) {
+    scoped_refptr<X509Certificate> cert = CreateCertificateChainFromFile(
+        GetTestCertsDirectory(), accepted_cert, X509Certificate::FORMAT_AUTO);
+    ASSERT_TRUE(cert);
+
+    scoped_refptr<CertVerifyProc> verify_proc;
+    int error = 0;
+
+    // Test that a Symantec certificate is accepted.
+    CertVerifyResult symantec_result;
+    symantec_result.verified_cert = cert;
+    symantec_result.public_key_hashes.push_back(HashValue(kSymantecHashValue));
+    symantec_result.is_issued_by_known_root = true;
+    verify_proc = base::MakeRefCounted<MockCertVerifyProc>(symantec_result);
+
+    CertVerifyResult test_result_1;
+    error = verify_proc->Verify(cert.get(), "127.0.0.1", std::string(), 0,
+                                nullptr, CertificateList(), &test_result_1);
+    EXPECT_THAT(error, IsOk());
+    EXPECT_FALSE(test_result_1.cert_status & CERT_STATUS_SYMANTEC_LEGACY);
+  }
 }
 
 // While all SHA-1 certificates should be rejected, in the event that there
@@ -1554,38 +1659,37 @@ TEST_P(CertVerifyProcInternalTest, VerifyReturnChainProperlyOrdered) {
   ASSERT_EQ(3U, certs.size());
 
   // Construct the chain out of order.
-  X509Certificate::OSCertHandles intermediates;
-  intermediates.push_back(certs[2]->os_cert_handle());
-  intermediates.push_back(certs[1]->os_cert_handle());
+  std::vector<bssl::UniquePtr<CRYPTO_BUFFER>> intermediates;
+  intermediates.push_back(x509_util::DupCryptoBuffer(certs[2]->cert_buffer()));
+  intermediates.push_back(x509_util::DupCryptoBuffer(certs[1]->cert_buffer()));
 
   ScopedTestRoot scoped_root(certs[2].get());
 
   scoped_refptr<X509Certificate> google_full_chain =
-      X509Certificate::CreateFromHandle(certs[0]->os_cert_handle(),
-                                        intermediates);
-  ASSERT_NE(static_cast<X509Certificate*>(NULL), google_full_chain.get());
-  ASSERT_EQ(2U, google_full_chain->GetIntermediateCertificates().size());
+      X509Certificate::CreateFromBuffer(
+          x509_util::DupCryptoBuffer(certs[0]->cert_buffer()),
+          std::move(intermediates));
+  ASSERT_TRUE(google_full_chain);
+  ASSERT_EQ(2U, google_full_chain->intermediate_buffers().size());
 
   CertVerifyResult verify_result;
-  EXPECT_EQ(static_cast<X509Certificate*>(NULL),
-            verify_result.verified_cert.get());
+  EXPECT_FALSE(verify_result.verified_cert);
   int error = Verify(google_full_chain.get(), "127.0.0.1", 0, NULL,
                      CertificateList(), &verify_result);
   EXPECT_THAT(error, IsOk());
-  ASSERT_NE(static_cast<X509Certificate*>(NULL),
-            verify_result.verified_cert.get());
+  ASSERT_TRUE(verify_result.verified_cert);
 
   EXPECT_NE(google_full_chain, verify_result.verified_cert);
-  EXPECT_TRUE(X509Certificate::IsSameOSCert(
-      google_full_chain->os_cert_handle(),
-      verify_result.verified_cert->os_cert_handle()));
-  const X509Certificate::OSCertHandles& return_intermediates =
-      verify_result.verified_cert->GetIntermediateCertificates();
+  EXPECT_TRUE(
+      x509_util::CryptoBufferEqual(google_full_chain->cert_buffer(),
+                                   verify_result.verified_cert->cert_buffer()));
+  const auto& return_intermediates =
+      verify_result.verified_cert->intermediate_buffers();
   ASSERT_EQ(2U, return_intermediates.size());
-  EXPECT_TRUE(X509Certificate::IsSameOSCert(return_intermediates[0],
-                                            certs[1]->os_cert_handle()));
-  EXPECT_TRUE(X509Certificate::IsSameOSCert(return_intermediates[1],
-                                            certs[2]->os_cert_handle()));
+  EXPECT_TRUE(x509_util::CryptoBufferEqual(return_intermediates[0].get(),
+                                           certs[1]->cert_buffer()));
+  EXPECT_TRUE(x509_util::CryptoBufferEqual(return_intermediates[1].get(),
+                                           certs[2]->cert_buffer()));
 }
 
 // Test that Verify() filters out certificates which are not related to
@@ -1610,38 +1714,39 @@ TEST_P(CertVerifyProcInternalTest, VerifyReturnChainFiltersUnrelatedCerts) {
   ASSERT_NE(static_cast<X509Certificate*>(NULL), unrelated_certificate2.get());
 
   // Interject unrelated certificates into the list of intermediates.
-  X509Certificate::OSCertHandles intermediates;
-  intermediates.push_back(unrelated_certificate->os_cert_handle());
-  intermediates.push_back(certs[1]->os_cert_handle());
-  intermediates.push_back(unrelated_certificate2->os_cert_handle());
-  intermediates.push_back(certs[2]->os_cert_handle());
+  std::vector<bssl::UniquePtr<CRYPTO_BUFFER>> intermediates;
+  intermediates.push_back(
+      x509_util::DupCryptoBuffer(unrelated_certificate->cert_buffer()));
+  intermediates.push_back(x509_util::DupCryptoBuffer(certs[1]->cert_buffer()));
+  intermediates.push_back(
+      x509_util::DupCryptoBuffer(unrelated_certificate2->cert_buffer()));
+  intermediates.push_back(x509_util::DupCryptoBuffer(certs[2]->cert_buffer()));
 
   scoped_refptr<X509Certificate> google_full_chain =
-      X509Certificate::CreateFromHandle(certs[0]->os_cert_handle(),
-                                        intermediates);
-  ASSERT_NE(static_cast<X509Certificate*>(NULL), google_full_chain.get());
-  ASSERT_EQ(4U, google_full_chain->GetIntermediateCertificates().size());
+      X509Certificate::CreateFromBuffer(
+          x509_util::DupCryptoBuffer(certs[0]->cert_buffer()),
+          std::move(intermediates));
+  ASSERT_TRUE(google_full_chain);
+  ASSERT_EQ(4U, google_full_chain->intermediate_buffers().size());
 
   CertVerifyResult verify_result;
-  EXPECT_EQ(static_cast<X509Certificate*>(NULL),
-            verify_result.verified_cert.get());
+  EXPECT_FALSE(verify_result.verified_cert);
   int error = Verify(google_full_chain.get(), "127.0.0.1", 0, NULL,
                      CertificateList(), &verify_result);
   EXPECT_THAT(error, IsOk());
-  ASSERT_NE(static_cast<X509Certificate*>(NULL),
-            verify_result.verified_cert.get());
+  ASSERT_TRUE(verify_result.verified_cert);
 
   EXPECT_NE(google_full_chain, verify_result.verified_cert);
-  EXPECT_TRUE(X509Certificate::IsSameOSCert(
-      google_full_chain->os_cert_handle(),
-      verify_result.verified_cert->os_cert_handle()));
-  const X509Certificate::OSCertHandles& return_intermediates =
-      verify_result.verified_cert->GetIntermediateCertificates();
+  EXPECT_TRUE(
+      x509_util::CryptoBufferEqual(google_full_chain->cert_buffer(),
+                                   verify_result.verified_cert->cert_buffer()));
+  const auto& return_intermediates =
+      verify_result.verified_cert->intermediate_buffers();
   ASSERT_EQ(2U, return_intermediates.size());
-  EXPECT_TRUE(X509Certificate::IsSameOSCert(return_intermediates[0],
-                                            certs[1]->os_cert_handle()));
-  EXPECT_TRUE(X509Certificate::IsSameOSCert(return_intermediates[1],
-                                            certs[2]->os_cert_handle()));
+  EXPECT_TRUE(x509_util::CryptoBufferEqual(return_intermediates[0].get(),
+                                           certs[1]->cert_buffer()));
+  EXPECT_TRUE(x509_util::CryptoBufferEqual(return_intermediates[1].get(),
+                                           certs[2]->cert_buffer()));
 }
 
 TEST_P(CertVerifyProcInternalTest, AdditionalTrustAnchors) {
@@ -1745,7 +1850,7 @@ TEST_P(CertVerifyProcInternalTest, CRLSet) {
   EXPECT_TRUE(base::ReadFileToString(
       GetTestCertsDirectory().AppendASCII("crlset_by_leaf_spki.raw"),
       &crl_set_bytes));
-  ASSERT_TRUE(CRLSetStorage::Parse(crl_set_bytes, &crl_set));
+  ASSERT_TRUE(CRLSet::Parse(crl_set_bytes, &crl_set));
 
   error = Verify(cert.get(), "127.0.0.1", flags, crl_set.get(),
                  CertificateList(), &verify_result);
@@ -1757,7 +1862,7 @@ TEST_P(CertVerifyProcInternalTest, CRLSet) {
   EXPECT_TRUE(base::ReadFileToString(
       GetTestCertsDirectory().AppendASCII("crlset_by_root_serial.raw"),
       &crl_set_bytes));
-  ASSERT_TRUE(CRLSetStorage::Parse(crl_set_bytes, &crl_set));
+  ASSERT_TRUE(CRLSet::Parse(crl_set_bytes, &crl_set));
 
   error = Verify(cert.get(), "127.0.0.1", flags, crl_set.get(),
                  CertificateList(), &verify_result);
@@ -1780,16 +1885,18 @@ TEST_P(CertVerifyProcInternalTest, CRLSetLeafSerial) {
       GetTestCertsDirectory(), "intermediate_ca_cert.pem",
       X509Certificate::FORMAT_AUTO);
   ASSERT_EQ(1U, intermediate_cert_list.size());
-  X509Certificate::OSCertHandles intermediates;
-  intermediates.push_back(intermediate_cert_list[0]->os_cert_handle());
+  std::vector<bssl::UniquePtr<CRYPTO_BUFFER>> intermediates;
+  intermediates.push_back(
+      x509_util::DupCryptoBuffer(intermediate_cert_list[0]->cert_buffer()));
 
   CertificateList cert_list = CreateCertificateListFromFile(
       GetTestCertsDirectory(), "ok_cert_by_intermediate.pem",
       X509Certificate::FORMAT_AUTO);
   ASSERT_EQ(1U, cert_list.size());
 
-  scoped_refptr<X509Certificate> leaf = X509Certificate::CreateFromHandle(
-      cert_list[0]->os_cert_handle(), intermediates);
+  scoped_refptr<X509Certificate> leaf = X509Certificate::CreateFromBuffer(
+      x509_util::DupCryptoBuffer(cert_list[0]->cert_buffer()),
+      std::move(intermediates));
   ASSERT_TRUE(leaf);
 
   int flags = 0;
@@ -1804,11 +1911,72 @@ TEST_P(CertVerifyProcInternalTest, CRLSetLeafSerial) {
   ASSERT_TRUE(base::ReadFileToString(
       GetTestCertsDirectory().AppendASCII("crlset_by_intermediate_serial.raw"),
       &crl_set_bytes));
-  ASSERT_TRUE(CRLSetStorage::Parse(crl_set_bytes, &crl_set));
+  ASSERT_TRUE(CRLSet::Parse(crl_set_bytes, &crl_set));
 
   error = Verify(leaf.get(), "127.0.0.1", flags, crl_set.get(),
                  CertificateList(), &verify_result);
   EXPECT_THAT(error, IsError(ERR_CERT_REVOKED));
+}
+
+// Tests that CertVerifyProc implementations apply CRLSet revocations by
+// subject.
+TEST_P(CertVerifyProcInternalTest, CRLSetRevokedBySubject) {
+  if (!SupportsCRLSet()) {
+    LOG(INFO) << "Skipping test as verifier doesn't support CRLSet";
+    return;
+  }
+
+  scoped_refptr<X509Certificate> root(
+      ImportCertFromFile(GetTestCertsDirectory(), "root_ca_cert.pem"));
+  ASSERT_TRUE(root);
+
+  scoped_refptr<X509Certificate> leaf(
+      ImportCertFromFile(GetTestCertsDirectory(), "ok_cert.pem"));
+  ASSERT_TRUE(leaf);
+
+  ScopedTestRoot scoped_root(root.get());
+
+  int flags = 0;
+  CertVerifyResult verify_result;
+
+  // Confirm that verifying the certificate chain with an empty CRLSet succeeds.
+  scoped_refptr<CRLSet> crl_set = CRLSet::EmptyCRLSetForTesting();
+  int error = Verify(leaf.get(), "127.0.0.1", flags, crl_set.get(),
+                     CertificateList(), &verify_result);
+  EXPECT_THAT(error, IsOk());
+
+  std::string crl_set_bytes;
+
+  // Revoke the leaf by subject. Verification should now fail.
+  ASSERT_TRUE(base::ReadFileToString(
+      GetTestCertsDirectory().AppendASCII("crlset_by_leaf_subject_no_spki.raw"),
+      &crl_set_bytes));
+  ASSERT_TRUE(CRLSet::Parse(crl_set_bytes, &crl_set));
+
+  error = Verify(leaf.get(), "127.0.0.1", flags, crl_set.get(),
+                 CertificateList(), &verify_result);
+  EXPECT_THAT(error, IsError(ERR_CERT_REVOKED));
+
+  // Revoke the root by subject. Verification should now fail.
+  ASSERT_TRUE(base::ReadFileToString(
+      GetTestCertsDirectory().AppendASCII("crlset_by_root_subject_no_spki.raw"),
+      &crl_set_bytes));
+  ASSERT_TRUE(CRLSet::Parse(crl_set_bytes, &crl_set));
+
+  error = Verify(leaf.get(), "127.0.0.1", flags, crl_set.get(),
+                 CertificateList(), &verify_result);
+  EXPECT_THAT(error, IsError(ERR_CERT_REVOKED));
+
+  // Revoke the leaf by subject, but only if the SPKI doesn't match the given
+  // one. Verification should pass when using the certificate's actual SPKI.
+  ASSERT_TRUE(base::ReadFileToString(
+      GetTestCertsDirectory().AppendASCII("crlset_by_root_subject.raw"),
+      &crl_set_bytes));
+  ASSERT_TRUE(CRLSet::Parse(crl_set_bytes, &crl_set));
+
+  error = Verify(leaf.get(), "127.0.0.1", flags, crl_set.get(),
+                 CertificateList(), &verify_result);
+  EXPECT_THAT(error, IsOk());
 }
 
 // Tests that CRLSets participate in path building functions, and that as
@@ -1859,14 +2027,20 @@ TEST_P(CertVerifyProcInternalTest, CRLSetDuringPathBuilding) {
   // that they're ignored if not necessary.
   // This is to avoid relying on AIA or internal object caches when
   // interacting with the underlying library.
-  X509Certificate::OSCertHandles intermediates;
-  intermediates.push_back(path_1_certs[1]->os_cert_handle());  // B-by-C
-  intermediates.push_back(path_1_certs[2]->os_cert_handle());  // C-by-D
-  intermediates.push_back(path_2_certs[2]->os_cert_handle());  // C-by-E
-  intermediates.push_back(path_3_certs[1]->os_cert_handle());  // B-by-F
-  intermediates.push_back(path_3_certs[2]->os_cert_handle());  // F-by-E
-  scoped_refptr<X509Certificate> cert = X509Certificate::CreateFromHandle(
-      path_1_certs[0]->os_cert_handle(), intermediates);
+  std::vector<bssl::UniquePtr<CRYPTO_BUFFER>> intermediates;
+  intermediates.push_back(
+      x509_util::DupCryptoBuffer(path_1_certs[1]->cert_buffer()));  // B-by-C
+  intermediates.push_back(
+      x509_util::DupCryptoBuffer(path_1_certs[2]->cert_buffer()));  // C-by-D
+  intermediates.push_back(
+      x509_util::DupCryptoBuffer(path_2_certs[2]->cert_buffer()));  // C-by-E
+  intermediates.push_back(
+      x509_util::DupCryptoBuffer(path_3_certs[1]->cert_buffer()));  // B-by-F
+  intermediates.push_back(
+      x509_util::DupCryptoBuffer(path_3_certs[2]->cert_buffer()));  // F-by-E
+  scoped_refptr<X509Certificate> cert = X509Certificate::CreateFromBuffer(
+      x509_util::DupCryptoBuffer(path_1_certs[0]->cert_buffer()),
+      std::move(intermediates));
   ASSERT_TRUE(cert);
 
   struct TestPermutations {
@@ -1886,7 +2060,7 @@ TEST_P(CertVerifyProcInternalTest, CRLSetDuringPathBuilding) {
     std::string crl_set_bytes;
     EXPECT_TRUE(base::ReadFileToString(
         GetTestCertsDirectory().AppendASCII(testcase.crlset), &crl_set_bytes));
-    ASSERT_TRUE(CRLSetStorage::Parse(crl_set_bytes, &crl_set));
+    ASSERT_TRUE(CRLSet::Parse(crl_set_bytes, &crl_set));
 
     int flags = 0;
     CertVerifyResult verify_result;
@@ -1906,13 +2080,13 @@ TEST_P(CertVerifyProcInternalTest, CRLSetDuringPathBuilding) {
     if (!testcase.expected_intermediate)
       continue;
 
-    const X509Certificate::OSCertHandles& verified_intermediates =
-        verify_result.verified_cert->GetIntermediateCertificates();
+    const auto& verified_intermediates =
+        verify_result.verified_cert->intermediate_buffers();
     ASSERT_EQ(3U, verified_intermediates.size());
 
     scoped_refptr<X509Certificate> intermediate =
-        X509Certificate::CreateFromHandle(verified_intermediates[1],
-                                          X509Certificate::OSCertHandles());
+        X509Certificate::CreateFromBuffer(
+            x509_util::DupCryptoBuffer(verified_intermediates[1].get()), {});
     ASSERT_TRUE(intermediate);
 
     EXPECT_TRUE(testcase.expected_intermediate->Equals(intermediate.get()))
@@ -2112,31 +2286,32 @@ TEST_P(CertVerifyProcWeakDigestTest, VerifyDetectsAlgorithm) {
   WeakDigestTestData data = GetParam();
   base::FilePath certs_dir = GetTestCertsDirectory();
 
-  scoped_refptr<X509Certificate> intermediate_cert;
-  scoped_refptr<X509Certificate> root_cert;
-
   // Build |intermediates| as the full chain (including trust anchor).
-  X509Certificate::OSCertHandles intermediates;
+  std::vector<bssl::UniquePtr<CRYPTO_BUFFER>> intermediates;
 
   if (data.intermediate_cert_filename) {
-    intermediate_cert =
+    scoped_refptr<X509Certificate> intermediate_cert =
         ImportCertFromFile(certs_dir, data.intermediate_cert_filename);
     ASSERT_TRUE(intermediate_cert);
-    intermediates.push_back(intermediate_cert->os_cert_handle());
+    intermediates.push_back(
+        x509_util::DupCryptoBuffer(intermediate_cert->cert_buffer()));
   }
 
   if (data.root_cert_filename) {
-    root_cert = ImportCertFromFile(certs_dir, data.root_cert_filename);
+    scoped_refptr<X509Certificate> root_cert =
+        ImportCertFromFile(certs_dir, data.root_cert_filename);
     ASSERT_TRUE(root_cert);
-    intermediates.push_back(root_cert->os_cert_handle());
+    intermediates.push_back(
+        x509_util::DupCryptoBuffer(root_cert->cert_buffer()));
   }
 
   scoped_refptr<X509Certificate> ee_cert =
       ImportCertFromFile(certs_dir, data.ee_cert_filename);
   ASSERT_TRUE(ee_cert);
 
-  scoped_refptr<X509Certificate> ee_chain = X509Certificate::CreateFromHandle(
-      ee_cert->os_cert_handle(), intermediates);
+  scoped_refptr<X509Certificate> ee_chain = X509Certificate::CreateFromBuffer(
+      x509_util::DupCryptoBuffer(ee_cert->cert_buffer()),
+      std::move(intermediates));
   ASSERT_TRUE(ee_chain);
 
   int flags = 0;
@@ -2354,73 +2529,6 @@ TEST_F(CertVerifyProcNameTest, DoesntMatchDnsSanTrailingDot) {
   VerifyCertName(".test.example", false);
 }
 
-// Tests that commonName-fallback is handled correctly:
-// - If it's a publicly trusted certificate, the commonName should never
-//   match.
-// - If it chains to a private root, the commonName should not match if
-//   the subjectAltName is absent, and the flags don't allow fallback.
-// - If it chains to a private root, the commonName SHOULD match iff the
-//   subjectAltName is absent and the flags allow a fallback.
-TEST_F(CertVerifyProcNameTest, HandlesCommonNameFallbackLocalAnchors) {
-  scoped_refptr<X509Certificate> cert(
-      ImportCertFromFile(GetTestCertsDirectory(), "salesforce_com_test.pem"));
-  ASSERT_TRUE(cert);
-
-  CertVerifyResult result;
-  scoped_refptr<CertVerifyProc> verify_proc;
-  CertVerifyResult verify_result;
-  int error;
-
-  // Publicly trusted: Always ignores commonName, regardless of flags.
-  result = CertVerifyResult();
-  verify_result = CertVerifyResult();
-  error = 0;
-  result.is_issued_by_known_root = true;
-  verify_proc = new MockCertVerifyProc(result);
-  error = verify_proc->Verify(cert.get(), "prerelna1.pre.salesforce.com",
-                              std::string(), 0, nullptr, CertificateList(),
-                              &verify_result);
-  EXPECT_THAT(error, IsError(ERR_CERT_COMMON_NAME_INVALID));
-  EXPECT_TRUE(verify_result.cert_status & CERT_STATUS_COMMON_NAME_INVALID);
-
-  result = CertVerifyResult();
-  verify_result = CertVerifyResult();
-  error = 0;
-  result.is_issued_by_known_root = true;
-  verify_proc = new MockCertVerifyProc(result);
-  error = verify_proc->Verify(
-      cert.get(), "prerelna1.pre.salesforce.com", std::string(),
-      CertVerifier::VERIFY_ENABLE_COMMON_NAME_FALLBACK_LOCAL_ANCHORS, nullptr,
-      CertificateList(), &verify_result);
-  EXPECT_THAT(error, IsError(ERR_CERT_COMMON_NAME_INVALID));
-  EXPECT_TRUE(verify_result.cert_status & CERT_STATUS_COMMON_NAME_INVALID);
-
-  // Privately trusted: Ignores commonName by default.
-  result = CertVerifyResult();
-  verify_result = CertVerifyResult();
-  error = 0;
-  result.is_issued_by_known_root = false;
-  verify_proc = new MockCertVerifyProc(result);
-  error = verify_proc->Verify(cert.get(), "prerelna1.pre.salesforce.com",
-                              std::string(), 0, nullptr, CertificateList(),
-                              &verify_result);
-  EXPECT_THAT(error, IsError(ERR_CERT_COMMON_NAME_INVALID));
-  EXPECT_TRUE(verify_result.cert_status & CERT_STATUS_COMMON_NAME_INVALID);
-
-  // Privately trusted: Falls back to common name if flags allow.
-  result = CertVerifyResult();
-  verify_result = CertVerifyResult();
-  error = 0;
-  result.is_issued_by_known_root = false;
-  verify_proc = new MockCertVerifyProc(result);
-  error = verify_proc->Verify(
-      cert.get(), "prerelna1.pre.salesforce.com", std::string(),
-      CertVerifier::VERIFY_ENABLE_COMMON_NAME_FALLBACK_LOCAL_ANCHORS, nullptr,
-      CertificateList(), &verify_result);
-  EXPECT_THAT(error, IsOk());
-  EXPECT_FALSE(verify_result.cert_status & CERT_STATUS_COMMON_NAME_INVALID);
-}
-
 // Tests that CertVerifyProc records a histogram correctly when a
 // certificate chaining to a private root contains the TLS feature
 // extension and does not have a stapled OCSP response.
@@ -2558,7 +2666,6 @@ TEST(CertVerifyProcTest, HasTrustAnchorVerifyUMA) {
   int error = verify_proc->Verify(cert.get(), "127.0.0.1", std::string(), flags,
                                   NULL, CertificateList(), &verify_result);
   EXPECT_EQ(OK, error);
-  histograms.ExpectTotalCount(kTrustAnchorVerifyHistogram, 1);
   histograms.ExpectUniqueSample(kTrustAnchorVerifyHistogram,
                                 kGTSRootR4HistogramID, 1);
 }
@@ -2607,9 +2714,45 @@ TEST(CertVerifyProcTest, LogsOnlyMostSpecificTrustAnchorUMA) {
   EXPECT_EQ(OK, error);
 
   // Only GTS Root R3 should be recorded.
-  histograms.ExpectTotalCount(kTrustAnchorVerifyHistogram, 1);
   histograms.ExpectUniqueSample(kTrustAnchorVerifyHistogram,
                                 kGTSRootR3HistogramID, 1);
+}
+
+// Test that trust anchors histograms record whether or not
+// is_issued_by_known_root was derived from the OS.
+TEST(CertVerifyProcTest, HasTrustAnchorVerifyOutOfDateUMA) {
+  base::HistogramTester histograms;
+  scoped_refptr<X509Certificate> cert(ImportCertFromFile(
+      GetTestCertsDirectory(), "39_months_based_on_last_day.pem"));
+  ASSERT_TRUE(cert);
+
+  CertVerifyResult result;
+
+  // Simulate a certificate chain that is recognized as trusted (from a known
+  // root), but no certificates in the chain are tracked as known trust
+  // anchors.
+  SHA256HashValue leaf_hash = {{0}};
+  SHA256HashValue intermediate_hash = {{1}};
+  SHA256HashValue root_hash = {{2}};
+  result.public_key_hashes.push_back(HashValue(leaf_hash));
+  result.public_key_hashes.push_back(HashValue(intermediate_hash));
+  result.public_key_hashes.push_back(HashValue(root_hash));
+  result.is_issued_by_known_root = true;
+
+  scoped_refptr<CertVerifyProc> verify_proc = new MockCertVerifyProc(result);
+
+  histograms.ExpectTotalCount(kTrustAnchorVerifyHistogram, 0);
+  histograms.ExpectTotalCount(kTrustAnchorVerifyOutOfDateHistogram, 0);
+
+  int flags = 0;
+  CertVerifyResult verify_result;
+  int error = verify_proc->Verify(cert.get(), "127.0.0.1", std::string(), flags,
+                                  NULL, CertificateList(), &verify_result);
+  EXPECT_EQ(OK, error);
+  const base::HistogramBase::Sample kUnknownRootHistogramID = 0;
+  histograms.ExpectUniqueSample(kTrustAnchorVerifyHistogram,
+                                kUnknownRootHistogramID, 1);
+  histograms.ExpectUniqueSample(kTrustAnchorVerifyOutOfDateHistogram, true, 1);
 }
 
 }  // namespace net

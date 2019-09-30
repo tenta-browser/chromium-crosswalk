@@ -9,6 +9,8 @@
 
 #include "components/arc/common/auth.mojom.h"
 
+class Profile;
+
 namespace base {
 class TimeDelta;
 }
@@ -16,25 +18,23 @@ class TimeDelta;
 namespace arc {
 
 // These enums are used to define the buckets for an enumerated UMA histogram
-// and need to be synced with histograms.xml
+// and need to be synced with tools/metrics/histograms/enums.xml. Note that
+// values 0, 1, 2, 3 and 4 are now deprecated.
 enum class OptInActionType : int {
-  // ARC was opted out by user.
-  OPTED_OUT = 0,
-
-  // ARC was opted in by user.
-  OPTED_IN = 1,
-
-  // ARC OptIn notification was accepted.
-  NOTIFICATION_ACCEPTED = 2,
-
-  // ARC OptIn notification was declined.
-  NOTIFICATION_DECLINED = 3,
-
-  // ARC OptIn notification was timed out.
-  NOTIFICATION_TIMED_OUT = 4,
-
   // User asked to retry OptIn.
   RETRY = 5,
+
+  // ARC was opted in by user from OOBE flow.
+  OOBE_OPTED_IN = 6,
+
+  // ARC was opted out by user from OOBE flow.
+  OOBE_OPTED_OUT = 7,
+
+  // ARC was opted in by user from session.
+  SESSION_OPTED_IN = 8,
+
+  // ARC was opted out by user from session.
+  SESSION_OPTED_OUT = 9,
 
   // The size of this enum; keep last.
   SIZE,
@@ -187,12 +187,15 @@ void UpdateOptInActionUMA(OptInActionType type);
 void UpdateOptInCancelUMA(OptInCancelReason reason);
 void UpdateOptInFlowResultUMA(OptInFlowResult result);
 void UpdateEnabledStateUMA(bool enabled);
-void UpdateProvisioningResultUMA(ProvisioningResult result, bool managed);
+void UpdateProvisioningResultUMA(ProvisioningResult result,
+                                 const Profile* profile);
 void UpdateProvisioningTiming(const base::TimeDelta& elapsed_time,
                               bool success,
-                              bool managed);
-void UpdateReauthorizationResultUMA(ProvisioningResult result, bool managed);
-void UpdatePlayStoreShowTime(const base::TimeDelta& elapsed_time, bool managed);
+                              const Profile* profile);
+void UpdateReauthorizationResultUMA(ProvisioningResult result,
+                                    const Profile* profile);
+void UpdatePlayStoreShowTime(const base::TimeDelta& elapsed_time,
+                             const Profile* profile);
 void UpdateSilentAuthCodeUMA(OptInSilentAuthCode state);
 void UpdateReauthorizationSilentAuthCodeUMA(OptInSilentAuthCode state);
 void UpdateAuthTiming(const char* histogram_name, base::TimeDelta elapsed_time);

@@ -3,9 +3,9 @@
 // found in the LICENSE file.
 
 #include <memory>
+#include <utility>
 #include <vector>
 
-#include "ash/app_list/model/app_list_item.h"
 #include "base/macros.h"
 #include "base/run_loop.h"
 #include "chrome/browser/extensions/chrome_app_icon.h"
@@ -24,6 +24,7 @@
 #if defined(OS_CHROMEOS)
 #include "chrome/browser/chromeos/arc/arc_util.h"
 #include "chrome/browser/ui/app_list/arc/arc_app_test.h"
+#include "chrome/browser/ui/app_list/chrome_app_list_item.h"
 #include "chrome/browser/ui/app_list/extension_app_model_builder.h"
 #include "chrome/browser/ui/app_list/search/extension_app_result.h"
 #include "chrome/browser/ui/app_list/test/fake_app_list_model_updater.h"
@@ -74,8 +75,8 @@ class TestAppIcon : public ChromeAppIconDelegate {
   void OnIconUpdated(ChromeAppIcon* icon) override {
     ++icon_update_count_;
     if (icon_update_count_ == icon_update_count_expected_ &&
-        !icon_updated_callback_.is_null()) {
-      base::ResetAndReturn(&icon_updated_callback_).Run();
+        icon_updated_callback_) {
+      std::move(icon_updated_callback_).Run();
     }
   }
 
@@ -266,7 +267,7 @@ class ChromeAppIconWithModelTest : public ChromeAppIconTest {
 
  protected:
   void CreateBuilder() {
-    model_updater_ = std::make_unique<app_list::FakeAppListModelUpdater>();
+    model_updater_ = std::make_unique<FakeAppListModelUpdater>();
     controller_ = std::make_unique<test::TestAppListControllerDelegate>();
     builder_ = std::make_unique<ExtensionAppModelBuilder>(controller_.get());
     builder_->Initialize(nullptr, profile(), model_updater_.get());
@@ -278,7 +279,7 @@ class ChromeAppIconWithModelTest : public ChromeAppIconTest {
     model_updater_.reset();
   }
 
-  app_list::AppListItem* FindAppListItem(const std::string& app_id) {
+  ChromeAppListItem* FindAppListItem(const std::string& app_id) {
     return model_updater_->FindItem(app_id);
   }
 
@@ -287,7 +288,7 @@ class ChromeAppIconWithModelTest : public ChromeAppIconTest {
   }
 
  private:
-  std::unique_ptr<app_list::FakeAppListModelUpdater> model_updater_;
+  std::unique_ptr<FakeAppListModelUpdater> model_updater_;
   std::unique_ptr<test::TestAppListControllerDelegate> controller_;
   std::unique_ptr<ExtensionAppModelBuilder> builder_;
 
@@ -300,9 +301,9 @@ TEST_F(ChromeAppIconWithModelTest, IconsTheSame) {
 
   // App list item is already created. Wait until all image representations are
   // updated and take image snapshot.
-  app_list::AppListItem* app_list_item = FindAppListItem(kTestAppId);
+  ChromeAppListItem* app_list_item = FindAppListItem(kTestAppId);
   ASSERT_TRUE(app_list_item);
-  WaitForIconUpdates<app_list::AppListItem>(*app_list_item);
+  WaitForIconUpdates<ChromeAppListItem>(*app_list_item);
   std::unique_ptr<gfx::ImageSkia> app_list_item_image =
       app_list_item->icon().DeepCopy();
 

@@ -17,7 +17,7 @@ TrayInfoLabel::TrayInfoLabel(TrayInfoLabel::Delegate* delegate, int message_id)
       label_(TrayPopupUtils::CreateDefaultLabel()),
       message_id_(message_id),
       delegate_(delegate) {
-  SetLayoutManager(new views::FillLayout);
+  SetLayoutManager(std::make_unique<views::FillLayout>());
 
   TriView* tri_view = TrayPopupUtils::CreateDefaultRowView();
   tri_view->SetInsets(gfx::Insets(0,
@@ -69,7 +69,7 @@ void TrayInfoLabel::GetAccessibleNodeData(ui::AXNodeData* node_data) {
   ActionableView::GetAccessibleNodeData(node_data);
 
   if (!IsClickable())
-    node_data->role = ui::AX_ROLE_LABEL_TEXT;
+    node_data->role = ax::mojom::Role::kLabelText;
 }
 
 bool TrayInfoLabel::IsClickable() {

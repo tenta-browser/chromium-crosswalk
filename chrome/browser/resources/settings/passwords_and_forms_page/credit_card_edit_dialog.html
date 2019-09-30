@@ -49,7 +49,7 @@
         padding-top: 8px;
       }
     </style>
-    <dialog is="cr-dialog" id="dialog" close-text="$i18n{close}">
+    <cr-dialog id="dialog" close-text="$i18n{close}">
       <div slot="title">[[title_]]</div>
       <div slot="body">
         <paper-input id="nameInput" label="$i18n{creditCardName}"
@@ -89,11 +89,11 @@
       </div>
       <div slot="button-container">
         <paper-button id="cancelButton" class="cancel-button"
-            on-tap="onCancelButtonTap_">$i18n{cancel}</paper-button>
+            on-click="onCancelButtonTap_">$i18n{cancel}</paper-button>
         <paper-button id="saveButton" class="action-button"
-            on-tap="onSaveButtonTap_" disabled>$i18n{save}</paper-button>
+            on-click="onSaveButtonTap_" disabled>$i18n{save}</paper-button>
       </div>
-    </dialog>
+    </cr-dialog>
   </template>
   <script src="credit_card_edit_dialog.js"></script>
 </dom-module>

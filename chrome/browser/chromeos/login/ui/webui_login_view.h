@@ -152,7 +152,7 @@ class WebUILoginView : public views::View,
                                      aura::Window* root_window) override;
 
   // keyboard::KeyboardControllerObserver:
-  void OnKeyboardAvailabilityChanging(bool is_available) override;
+  void OnKeyboardAvailabilityChanged(bool is_available) override;
 
   // Overridden from content::WebContentsDelegate.
   bool HandleContextMenu(const content::ContextMenuParams& params) override;
@@ -165,7 +165,7 @@ class WebUILoginView : public views::View,
       content::WebContents* web_contents,
       const content::MediaStreamRequest& request,
       const content::MediaResponseCallback& callback) override;
-  bool CheckMediaAccessPermission(content::WebContents* web_contents,
+  bool CheckMediaAccessPermission(content::RenderFrameHost* render_frame_host,
                                   const GURL& security_origin,
                                   content::MediaStreamType type) override;
   bool PreHandleGestureEvent(content::WebContents* source,

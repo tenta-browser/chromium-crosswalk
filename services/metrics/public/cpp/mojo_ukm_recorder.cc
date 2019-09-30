@@ -6,7 +6,7 @@
 
 #include <utility>
 
-#include "services/metrics/public/interfaces/constants.mojom.h"
+#include "services/metrics/public/mojom/constants.mojom.h"
 #include "services/service_manager/public/cpp/connector.h"
 
 namespace ukm {
@@ -24,12 +24,12 @@ std::unique_ptr<MojoUkmRecorder> MojoUkmRecorder::Create(
   return std::make_unique<MojoUkmRecorder>(std::move(interface));
 }
 
-void MojoUkmRecorder::UpdateSourceURL(SourceId source_id, const GURL& url) {
-  interface_->UpdateSourceURL(source_id, url.spec());
-}
-
 base::WeakPtr<MojoUkmRecorder> MojoUkmRecorder::GetWeakPtr() {
   return weak_factory_.GetWeakPtr();
+}
+
+void MojoUkmRecorder::UpdateSourceURL(SourceId source_id, const GURL& url) {
+  interface_->UpdateSourceURL(source_id, url.spec());
 }
 
 void MojoUkmRecorder::AddEntry(mojom::UkmEntryPtr entry) {

@@ -26,7 +26,7 @@ class TriggerThrottlerTest : public ::testing::Test {
   TriggerThrottler* throttler() { return &trigger_throttler_; }
 
   void SetTestClock(base::Clock* clock) {
-    trigger_throttler_.SetClockForTesting(base::WrapUnique(clock));
+    trigger_throttler_.SetClockForTesting(clock);
   }
 
   std::vector<time_t> GetEventTimestampsForTriggerType(
@@ -98,11 +98,11 @@ TEST_F(TriggerThrottlerTest, TriggerQuotaResetsAfterOneDay) {
   // We initialize the test clock to several days ago and fire some events to
   // use up quota. We then advance the clock by a day and ensure quota is
   // available again.
-  base::SimpleTestClock* test_clock(new base::SimpleTestClock);
-  test_clock->SetNow(base::Time::Now() - base::TimeDelta::FromDays(10));
-  time_t base_ts = test_clock->Now().ToTimeT();
+  base::SimpleTestClock test_clock;
+  test_clock.SetNow(base::Time::Now() - base::TimeDelta::FromDays(10));
+  time_t base_ts = test_clock.Now().ToTimeT();
 
-  SetTestClock(test_clock);
+  SetTestClock(&test_clock);
   SetQuotaForTriggerType(TriggerType::AD_SAMPLE, 2);
 
   // First two triggers should work
@@ -122,9 +122,9 @@ TEST_F(TriggerThrottlerTest, TriggerQuotaResetsAfterOneDay) {
 
   // Move the clock forward by 1 day (and a bit) and try the trigger again,
   // quota should be available now.
-  test_clock->Advance(base::TimeDelta::FromDays(1) +
-                      base::TimeDelta::FromSeconds(1));
-  time_t advanced_ts = test_clock->Now().ToTimeT();
+  test_clock.Advance(base::TimeDelta::FromDays(1) +
+                     base::TimeDelta::FromSeconds(1));
+  time_t advanced_ts = test_clock.Now().ToTimeT();
   EXPECT_TRUE(throttler()->TriggerCanFire(TriggerType::AD_SAMPLE));
 
   // The previous time stamps should remain in the throttler.
@@ -138,25 +138,41 @@ TEST_F(TriggerThrottlerTest, TriggerQuotaResetsAfterOneDay) {
               ElementsAre(advanced_ts));
 }
 
-TEST(TriggerThrottlerTestFinch, ConfigureQuotaViaFinch) {
-  // Make sure that setting the quota param via Finch params works as expected.
+class TriggerThrottlerTestFinch : public ::testing::Test {
+ public:
+  std::unique_ptr<base::FeatureList> SetupQuotaInFinch(
+      const TriggerType trigger_type,
+      const std::string& group_name,
+      int quota) {
+    base::FieldTrial* trial = base::FieldTrialList::CreateFieldTrial(
+        safe_browsing::kTriggerThrottlerDailyQuotaFeature.name, group_name);
+    std::map<std::string, std::string> feature_params;
+    feature_params[std::string(safe_browsing::kTriggerTypeAndQuotaParam)] =
+        base::StringPrintf("%d,%d", trigger_type, quota);
+    base::AssociateFieldTrialParams(
+        safe_browsing::kTriggerThrottlerDailyQuotaFeature.name, group_name,
+        feature_params);
+    std::unique_ptr<base::FeatureList> feature_list(new base::FeatureList);
+    feature_list->InitializeFromCommandLine(
+        safe_browsing::kTriggerThrottlerDailyQuotaFeature.name, std::string());
+    feature_list->AssociateReportingFieldTrial(
+        safe_browsing::kTriggerThrottlerDailyQuotaFeature.name,
+        base::FeatureList::OVERRIDE_ENABLE_FEATURE, trial);
+    return feature_list;
+  }
+
+  size_t GetDailyQuotaForTrigger(const TriggerThrottler& throttler,
+                                 const TriggerType trigger_type) {
+    return throttler.GetDailyQuotaForTrigger(trigger_type);
+  }
+};
+
+TEST_F(TriggerThrottlerTestFinch, ConfigureQuotaViaFinch) {
   base::FieldTrialList field_trial_list(nullptr);
-  base::FieldTrial* trial = base::FieldTrialList::CreateFieldTrial(
-      safe_browsing::kTriggerThrottlerDailyQuotaFeature.name, "Group");
-  std::map<std::string, std::string> feature_params;
-  feature_params[std::string(safe_browsing::kTriggerTypeAndQuotaParam)] =
-      base::StringPrintf("%d,%d", TriggerType::AD_SAMPLE, 3);
-  base::AssociateFieldTrialParams(
-      safe_browsing::kTriggerThrottlerDailyQuotaFeature.name, "Group",
-      feature_params);
-  std::unique_ptr<base::FeatureList> feature_list(new base::FeatureList);
-  feature_list->InitializeFromCommandLine(
-      safe_browsing::kTriggerThrottlerDailyQuotaFeature.name, std::string());
-  feature_list->AssociateReportingFieldTrial(
-      safe_browsing::kTriggerThrottlerDailyQuotaFeature.name,
-      base::FeatureList::OVERRIDE_ENABLE_FEATURE, trial);
   base::test::ScopedFeatureList scoped_feature_list;
-  scoped_feature_list.InitWithFeatureList(std::move(feature_list));
+  scoped_feature_list.InitWithFeatureList(SetupQuotaInFinch(
+      TriggerType::AD_SAMPLE, "Group_ConfigureQuotaViaFinch", 3));
+  // Make sure that setting the quota param via Finch params works as expected.
 
   // The throttler has been configured (above) to allow ad samples to fire three
   // times per day.
@@ -173,4 +189,39 @@ TEST(TriggerThrottlerTestFinch, ConfigureQuotaViaFinch) {
   // Fourth attempt will fail since we're out of quota.
   EXPECT_FALSE(throttler.TriggerCanFire(TriggerType::AD_SAMPLE));
 }
+
+TEST_F(TriggerThrottlerTestFinch, AdSamplerDefaultQuota) {
+  // Make sure that the ad sampler gets its own default quota when no finch
+  // config exists, but the quota can be overwritten through Finch.
+  TriggerThrottler throttler_default;
+  EXPECT_EQ(kAdSamplerTriggerDefaultQuota,
+            GetDailyQuotaForTrigger(throttler_default, TriggerType::AD_SAMPLE));
+  EXPECT_TRUE(throttler_default.TriggerCanFire(TriggerType::AD_SAMPLE));
+
+  base::FieldTrialList field_trial_list(nullptr);
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitWithFeatureList(SetupQuotaInFinch(
+      TriggerType::AD_SAMPLE, "Group_AdSamplerDefaultQuota", 4));
+  TriggerThrottler throttler_finch;
+  EXPECT_EQ(4u,
+            GetDailyQuotaForTrigger(throttler_finch, TriggerType::AD_SAMPLE));
+}
+
+TEST_F(TriggerThrottlerTestFinch, SuspiciousSiteTriggerDefaultQuota) {
+  // Ensure that suspicious site trigger is disabled by default.
+  TriggerThrottler throttler_default;
+  EXPECT_EQ(0u, GetDailyQuotaForTrigger(throttler_default,
+                                        TriggerType::SUSPICIOUS_SITE));
+  EXPECT_FALSE(throttler_default.TriggerCanFire(TriggerType::SUSPICIOUS_SITE));
+
+  base::FieldTrialList field_trial_list(nullptr);
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitWithFeatureList(
+      SetupQuotaInFinch(TriggerType::SUSPICIOUS_SITE,
+                        "Group_SuspiciousSiteTriggerDefaultQuota", 5));
+  TriggerThrottler throttler_finch;
+  EXPECT_EQ(5u, GetDailyQuotaForTrigger(throttler_finch,
+                                        TriggerType::SUSPICIOUS_SITE));
+}
+
 }  // namespace safe_browsing

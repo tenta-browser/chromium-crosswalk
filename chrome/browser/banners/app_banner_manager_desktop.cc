@@ -27,11 +27,14 @@ bool gDisableTriggeringForTesting = false;
 namespace banners {
 
 bool AppBannerManagerDesktop::IsEnabled() {
-  if (gDisableTriggeringForTesting)
-    return false;
-
   return base::FeatureList::IsEnabled(features::kAppBanners) ||
          IsExperimentalAppBannersEnabled();
+}
+
+// static
+AppBannerManager* AppBannerManager::FromWebContents(
+    content::WebContents* web_contents) {
+  return AppBannerManagerDesktop::FromWebContents(web_contents);
 }
 
 void AppBannerManagerDesktop::DisableTriggeringForTesting() {
@@ -64,13 +67,10 @@ void AppBannerManagerDesktop::DidFinishCreatingBookmarkApp(
   // TODO(crbug.com/789381): plumb through enough information to be able to
   // distinguish between extension install failures and user-cancellations of
   // the app install dialog.
-  if (IsExperimentalAppBannersEnabled()) {
-    SendBannerPromptRequest();  // Reprompt.
-    return;
-  }
-  // Call Terminate() to terminate the flow but don't record a dismiss metric
-  // here because the banner isn't necessarily dismissed.
-  Terminate();
+  SendBannerDismissed();
+  TrackUserResponse(USER_RESPONSE_WEB_APP_DISMISSED);
+  AppBannerSettingsHelper::RecordBannerDismissEvent(
+      contents, GetAppIdentifier(), AppBannerSettingsHelper::WEB);
 }
 
 bool AppBannerManagerDesktop::IsWebAppConsideredInstalled(
@@ -82,15 +82,15 @@ bool AppBannerManagerDesktop::IsWebAppConsideredInstalled(
       web_contents->GetBrowserContext(), start_url);
 }
 
-void AppBannerManagerDesktop::ShowBannerUi() {
+void AppBannerManagerDesktop::ShowBannerUi(WebappInstallSource install_source) {
   content::WebContents* contents = web_contents();
   DCHECK(contents && !manifest_.IsEmpty());
 
   Profile* profile = Profile::FromBrowserContext(contents->GetBrowserContext());
   WebApplicationInfo web_app_info;
 
-  bookmark_app_helper_.reset(
-      new extensions::BookmarkAppHelper(profile, web_app_info, contents));
+  bookmark_app_helper_.reset(new extensions::BookmarkAppHelper(
+      profile, web_app_info, contents, install_source));
 
   if (IsExperimentalAppBannersEnabled()) {
     RecordDidShowBanner("AppBanner.WebApp.Shown");
@@ -126,14 +126,15 @@ void AppBannerManagerDesktop::DidFinishLoad(
   AppBannerManager::DidFinishLoad(render_frame_host, validated_url);
 }
 
-void AppBannerManagerDesktop::OnEngagementIncreased(
+void AppBannerManagerDesktop::OnEngagementEvent(
     content::WebContents* web_contents,
     const GURL& url,
-    double score) {
+    double score,
+    SiteEngagementService::EngagementType type) {
   if (gDisableTriggeringForTesting)
     return;
 
-  AppBannerManager::OnEngagementIncreased(web_contents, url, score);
+  AppBannerManager::OnEngagementEvent(web_contents, url, score, type);
 }
 
 }  // namespace banners

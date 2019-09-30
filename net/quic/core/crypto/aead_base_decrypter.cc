@@ -7,12 +7,13 @@
 #include <cstdint>
 
 #include "net/quic/core/quic_utils.h"
+#include "net/quic/platform/api/quic_arraysize.h"
 #include "net/quic/platform/api/quic_bug_tracker.h"
 #include "net/quic/platform/api/quic_logging.h"
+#include "net/quic/platform/api/quic_string.h"
 #include "third_party/boringssl/src/include/openssl/err.h"
 #include "third_party/boringssl/src/include/openssl/evp.h"
 
-using std::string;
 
 namespace net {
 
@@ -32,7 +33,7 @@ void DLogOpenSslErrors() {
 #else
   while (uint32_t error = ERR_get_error()) {
     char buf[120];
-    ERR_error_string_n(error, buf, arraysize(buf));
+    ERR_error_string_n(error, buf, QUIC_ARRAYSIZE(buf));
     QUIC_DLOG(ERROR) << "OpenSSL error: " << buf;
   }
 #endif
@@ -117,7 +118,7 @@ bool AeadBaseDecrypter::SetDiversificationNonce(
     return true;
   }
 
-  string key, nonce_prefix;
+  QuicString key, nonce_prefix;
   size_t prefix_size = nonce_size_ - sizeof(QuicPacketNumber);
   DiversifyPreliminaryKey(
       QuicStringPiece(reinterpret_cast<const char*>(key_), key_size_),
@@ -173,6 +174,14 @@ bool AeadBaseDecrypter::DecryptPacket(QuicTransportVersion /*version*/,
     return false;
   }
   return true;
+}
+
+size_t AeadBaseDecrypter::GetKeySize() const {
+  return key_size_;
+}
+
+size_t AeadBaseDecrypter::GetIVSize() const {
+  return nonce_size_;
 }
 
 QuicStringPiece AeadBaseDecrypter::GetKey() const {

@@ -6,7 +6,7 @@
         width: 100px;
     }
     #test1 .parent {
-        background-image: url(../resources/animated.gif)
+        background-image: url(../svg/resources/animated-svg-fixed-size.svg)
     }
     #test1 .child {
         background-color: green;
@@ -16,7 +16,7 @@
         position: relative;
         height: 100px;
         width: 100px;
-        background-image: url(../resources/animated.gif);
+        background-image: url(../svg/resources/animated-svg-fixed-size.svg);
         background-repeat: no-repeat;
         background-position: center;
     }
@@ -30,7 +30,7 @@
         width: 50px;
     }
     #test3 img {
-        background-image: url(../resources/animated.gif)
+        background-image: url(../svg/resources/animated-svg-fixed-size.svg)
     }
     #test4 .parent {
         position: relative;
@@ -39,7 +39,7 @@
         background-color: red;
         background-repeat: no-repeat;
         background-position: center;
-        background-image: url(../resources/animated.gif)
+        background-image: url(../svg/resources/animated-svg-fixed-size.svg)
     }
 </style>
 <script>
@@ -54,7 +54,7 @@
 
     function finish() {
         var layerTree = window.internals.layerTreeAsText(document, internals.LAYER_TREE_INCLUDES_PAINT_INVALIDATIONS);
-        var invalidations = JSON.parse(layerTree)["layers"][0].objectPaintInvalidations;
+        var invalidations = JSON.parse(layerTree)["objectPaintInvalidations"];
         // Passes if there is no invalidations other than imgForAdvanceImageAnimation,
         // or only invalidations because of background obscuration change.
         // This is because before the delayed image decoder finishes decoding the image,
@@ -66,8 +66,6 @@
             for (var i = 0; i < invalidations.length; ++i) {
                 var object = invalidations[i].object;
                 if (object.indexOf('imgForAdvanceImageAnimation') != -1)
-                    continue;
-                if ((object.indexOf('target3') != -1 || object.indexOf('target4') != -1) && invalidations[i].reason == 'background obscuration change')
                     continue;
                 invalidatedObjects[object] = true;
             }
@@ -86,9 +84,9 @@
 
         // Ensure the deferred decoder has decoded ../resources/apple.jpg.
         testRunner.capturePixelsAsyncThen(function() {
-            internals.startTrackingRepaints(document);
             internals.advanceImageAnimation(imgForAdvanceImageAnimation);
             testRunner.layoutAndPaintAsyncThen(function() {
+                internals.startTrackingRepaints(document);
                 internals.advanceImageAnimation(imgForAdvanceImageAnimation);
                 testRunner.layoutAndPaintAsyncThen(function() {
                     internals.advanceImageAnimation(imgForAdvanceImageAnimation);
@@ -126,7 +124,7 @@
         </a>
     </div>
 </div>
-<img id="imgForAdvanceImageAnimation" src="../resources/animated.gif">
+<img id="imgForAdvanceImageAnimation" src="../svg/resources/animated-svg-fixed-size.svg">
 <pre id="output"></pre>
 </body>
 </html>

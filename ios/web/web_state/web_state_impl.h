@@ -16,6 +16,7 @@
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/observer_list.h"
+#include "base/strings/string16.h"
 #include "base/values.h"
 #import "ios/web/navigation/navigation_manager_delegate.h"
 #import "ios/web/navigation/navigation_manager_impl.h"
@@ -84,6 +85,9 @@ class WebStateImpl : public WebState, public NavigationManagerDelegate {
   // candidates received in OnFaviconUrlUpdated.
   void OnNavigationFinished(web::NavigationContext* context);
 
+  // Called when current window's canGoBack / canGoForward state was changed.
+  void OnBackForwardStateChanged();
+
   // Called when page title was changed.
   void OnTitleChanged();
 
@@ -106,7 +110,9 @@ class WebStateImpl : public WebState, public NavigationManagerDelegate {
   void OnPageLoaded(const GURL& url, bool load_success);
 
   // Called on form submission.
-  void OnDocumentSubmitted(const std::string& form_name, bool user_initiated);
+  void OnDocumentSubmitted(const std::string& form_name,
+                           bool user_initiated,
+                           bool is_main_frame);
 
   // Called when form activity is registered.
   void OnFormActivityRegistered(const FormActivityParams& params);
@@ -229,7 +235,6 @@ class WebStateImpl : public WebState, public NavigationManagerDelegate {
   void SetHasOpener(bool has_opener) override;
   void TakeSnapshot(const SnapshotCallback& callback,
                     CGSize target_size) const override;
-  base::WeakPtr<WebState> AsWeakPtr() override;
   void AddObserver(WebStateObserver* observer) override;
   void RemoveObserver(WebStateObserver* observer) override;
 
@@ -278,7 +283,6 @@ class WebStateImpl : public WebState, public NavigationManagerDelegate {
   void OnGoToIndexSameDocumentNavigation(
       NavigationInitiationType type) override;
   void WillChangeUserAgentType() override;
-  void WillLoadCurrentItemWithUrl(const GURL&) override;
   void LoadCurrentItem() override;
   void LoadIfNecessary() override;
   void Reload() override;
@@ -294,6 +298,7 @@ class WebStateImpl : public WebState, public NavigationManagerDelegate {
 
   WebState* GetWebState() override;
   id<CRWWebViewNavigationProxy> GetWebViewNavigationProxy() const override;
+  void RemoveWebView() override;
 
  protected:
   void AddPolicyDecider(WebStatePolicyDecider* decider) override;
@@ -324,7 +329,7 @@ class WebStateImpl : public WebState, public NavigationManagerDelegate {
   bool is_being_destroyed_;
 
   // The CRWWebController that backs this object.
-  base::scoped_nsobject<CRWWebController> web_controller_;
+  CRWWebController* web_controller_;
 
   // The NavigationManagerImpl that stores session info for this WebStateImpl.
   std::unique_ptr<NavigationManagerImpl> navigation_manager_;
@@ -368,17 +373,25 @@ class WebStateImpl : public WebState, public NavigationManagerDelegate {
   // WebState::CreateParams::created_with_opener_ for more details.
   bool created_with_opener_;
 
-  // Member variables should appear before the WeakPtrFactory<> to ensure that
-  // any WeakPtrs to WebStateImpl are invalidated before its member variable's
-  // destructors are executed, rendering them invalid.
-  base::WeakPtrFactory<WebState> weak_factory_;
-
   // Mojo interface registry for this WebState.
   std::unique_ptr<WebStateInterfaceProvider> web_state_interface_provider_;
 
   // Cached session history when web usage is disabled. It is used to restore
   // history into WKWebView when web usage is re-enabled.
-  base::scoped_nsobject<CRWSessionStorage> cached_session_storage_;
+  CRWSessionStorage* cached_session_storage_;
+
+  // The most recently restored session history that has not yet committed in
+  // the WKWebView. This is reset in OnNavigationItemCommitted().
+  CRWSessionStorage* restored_session_storage_;
+  // The title of the active navigation entry in |restored_session_storage_|.
+  // It is only valid when |restore_session_storage_| is not nil.
+  base::string16 restored_title_;
+
+  // Favicons URLs received in OnFaviconUrlUpdated.
+  // WebStateObserver:FaviconUrlUpdated must be called for same-document
+  // navigations, so this cache will be used to avoid running expensive favicon
+  // fetching JavaScript.
+  std::vector<web::FaviconURL> cached_favicon_urls_;
 
   // Favicons URLs received in OnFaviconUrlUpdated.
   // WebStateObserver:FaviconUrlUpdated must be called for same-document

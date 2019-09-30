@@ -9,19 +9,21 @@
 #include "content/public/renderer/render_frame.h"
 #include "extensions/common/extension_messages.h"
 #include "extensions/renderer/script_context.h"
-#include "third_party/WebKit/public/web/WebBlob.h"
+#include "third_party/blink/public/web/web_blob.h"
 #include "v8/include/v8.h"
 
 namespace extensions {
 
 PageCaptureCustomBindings::PageCaptureCustomBindings(ScriptContext* context)
-    : ObjectBackedNativeHandler(context) {
-  RouteFunction("CreateBlob", "pageCapture",
-                base::Bind(&PageCaptureCustomBindings::CreateBlob,
-                           base::Unretained(this)));
-  RouteFunction("SendResponseAck", "pageCapture",
-                base::Bind(&PageCaptureCustomBindings::SendResponseAck,
-                           base::Unretained(this)));
+    : ObjectBackedNativeHandler(context) {}
+
+void PageCaptureCustomBindings::AddRoutes() {
+  RouteHandlerFunction("CreateBlob", "pageCapture",
+                       base::Bind(&PageCaptureCustomBindings::CreateBlob,
+                                  base::Unretained(this)));
+  RouteHandlerFunction("SendResponseAck", "pageCapture",
+                       base::Bind(&PageCaptureCustomBindings::SendResponseAck,
+                                  base::Unretained(this)));
 }
 
 void PageCaptureCustomBindings::CreateBlob(
@@ -29,12 +31,13 @@ void PageCaptureCustomBindings::CreateBlob(
   CHECK(args.Length() == 2);
   CHECK(args[0]->IsString());
   CHECK(args[1]->IsInt32());
+  v8::Isolate* isolate = args.GetIsolate();
   blink::WebString path(
-      blink::WebString::FromUTF8(*v8::String::Utf8Value(args[0])));
+      blink::WebString::FromUTF8(*v8::String::Utf8Value(isolate, args[0])));
   blink::WebBlob blob =
       blink::WebBlob::CreateFromFile(path, args[1]->Int32Value());
   args.GetReturnValue().Set(
-      blob.ToV8Value(context()->v8_context()->Global(), args.GetIsolate()));
+      blob.ToV8Value(context()->v8_context()->Global(), isolate));
 }
 
 void PageCaptureCustomBindings::SendResponseAck(

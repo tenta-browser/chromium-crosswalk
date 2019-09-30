@@ -7,6 +7,7 @@
 #include "base/macros.h"
 #include "base/run_loop.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/strings/string_piece.h"
 #include "base/time/time.h"
 #include "base/timer/mock_timer.h"
 #include "net/base/load_timing_info.h"
@@ -16,6 +17,7 @@
 #include "net/http/http_response_headers.h"
 #include "net/http/http_response_info.h"
 #include "net/log/test_net_log.h"
+#include "net/socket/socket_tag.h"
 #include "net/socket/socket_test_util.h"
 #include "net/spdy/chromium/spdy_session.h"
 #include "net/spdy/chromium/spdy_test_util_common.h"
@@ -23,6 +25,7 @@
 #include "net/test/cert_test_util.h"
 #include "net/test/gtest_util.h"
 #include "net/test/test_data_directory.h"
+#include "net/traffic_annotation/network_traffic_annotation_test_helper.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -79,7 +82,7 @@ class TestDelegateBase : public BidirectionalStreamImpl::Delegate {
         not_expect_callback_(false),
         on_failed_called_(false) {}
 
-  ~TestDelegateBase() override {}
+  ~TestDelegateBase() override = default;
 
   void OnStreamReady(bool request_headers_sent) override {
     CHECK(!on_failed_called_);
@@ -131,7 +134,8 @@ class TestDelegateBase : public BidirectionalStreamImpl::Delegate {
              const NetLogWithSource& net_log) {
     stream_->Start(request, net_log,
                    /*send_request_headers_automatically=*/false, this,
-                   std::make_unique<base::Timer>(false, false));
+                   std::make_unique<base::Timer>(false, false),
+                   TRAFFIC_ANNOTATION_FOR_TESTS);
     not_expect_callback_ = false;
   }
 
@@ -233,7 +237,10 @@ class BidirectionalStreamSpdyImplTest : public testing::TestWithParam<bool> {
   BidirectionalStreamSpdyImplTest()
       : default_url_(kDefaultUrl),
         host_port_pair_(HostPortPair::FromURL(default_url_)),
-        key_(host_port_pair_, ProxyServer::Direct(), PRIVACY_MODE_DISABLED),
+        key_(host_port_pair_,
+             ProxyServer::Direct(),
+             PRIVACY_MODE_DISABLED,
+             SocketTag()),
         ssl_data_(SSLSocketDataProvider(ASYNC, OK)) {
     ssl_data_.next_proto = kProtoHTTP2;
     ssl_data_.ssl_info.cert =
@@ -281,7 +288,7 @@ TEST_F(BidirectionalStreamSpdyImplTest, SimplePostRequest) {
   SpdySerializedFrame req(spdy_util_.ConstructSpdyPost(
       kDefaultUrl, 1, kBodyDataSize, LOW, nullptr, 0));
   SpdySerializedFrame data_frame(spdy_util_.ConstructSpdyDataFrame(
-      1, kBodyData, kBodyDataSize, /*fin=*/true));
+      1, base::StringPiece(kBodyData, kBodyDataSize), /*fin=*/true));
   MockWrite writes[] = {
       CreateMockWrite(req, 0), CreateMockWrite(data_frame, 3),
   };
@@ -329,9 +336,9 @@ TEST_F(BidirectionalStreamSpdyImplTest, SimplePostRequest) {
 
 TEST_F(BidirectionalStreamSpdyImplTest, LoadTimingTwoRequests) {
   SpdySerializedFrame req(
-      spdy_util_.ConstructSpdyGet(nullptr, 0, /*stream_id=*/1, LOW, true));
+      spdy_util_.ConstructSpdyGet(nullptr, 0, /*stream_id=*/1, LOW));
   SpdySerializedFrame req2(
-      spdy_util_.ConstructSpdyGet(nullptr, 0, /*stream_id=*/3, LOW, true));
+      spdy_util_.ConstructSpdyGet(nullptr, 0, /*stream_id=*/3, LOW));
   MockWrite writes[] = {
       CreateMockWrite(req, 0), CreateMockWrite(req2, 2),
   };

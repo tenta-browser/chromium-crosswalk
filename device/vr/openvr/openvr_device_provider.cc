@@ -4,6 +4,7 @@
 
 #include "device/vr/openvr/openvr_device_provider.h"
 
+#include "base/metrics/histogram_macros.h"
 #include "device/gamepad/gamepad_data_fetcher_manager.h"
 #include "device/vr/openvr/openvr_device.h"
 #include "device/vr/openvr/openvr_gamepad_data_fetcher.h"
@@ -11,11 +12,27 @@
 
 namespace device {
 
+void OpenVRDeviceProvider::RecordRuntimeAvailability() {
+  XrRuntimeAvailable runtime = XrRuntimeAvailable::NONE;
+  if (vr::VR_IsRuntimeInstalled())
+    runtime = XrRuntimeAvailable::OPENVR;
+  UMA_HISTOGRAM_ENUMERATION("XR.RuntimeAvailable", runtime,
+                            XrRuntimeAvailable::COUNT);
+}
+
 OpenVRDeviceProvider::OpenVRDeviceProvider() = default;
 
 OpenVRDeviceProvider::~OpenVRDeviceProvider() {
   device::GamepadDataFetcherManager::GetInstance()->RemoveSourceFactory(
       device::GAMEPAD_SOURCE_OPENVR);
+  // We must shutdown device_ and set it to null before calling VR_Shutdown,
+  // because VR_Shutdown will unload OpenVR's dll, and device_ (or its render
+  // loop) are potentially still using it.
+  if (device_) {
+    device_->Shutdown();
+    device_ = nullptr;
+  }
+
   vr::VR_Shutdown();
 }
 

@@ -31,7 +31,8 @@
 
       iron-icon {
         --iron-icon-fill-color: var(--paper-grey-500);
-        @apply(--cr-icon-height-width);
+        @apply --cr-icon-height-width;
+        flex-shrink: 0;
       }
 
       iron-icon[icon=warning] {
@@ -46,7 +47,7 @@
        * detail_view.html and error_page.html. Refactor such that no duplication
        * happens.*/
       #main {
-        @apply(--shadow-elevation-2dp);
+        @apply --shadow-elevation-2dp;
         background-color: white;
         margin: auto;
         min-height: 100%;
@@ -58,22 +59,29 @@
       }
 
       #heading {
+        align-items: center;
+        display: flex;
         height: 40px;
         margin-bottom: 30px;
         padding: 8px 12px 0;
-        @apply(--cr-title-text);
+        @apply --cr-title-text;
       }
 
-      #errors-list {
+      #heading span {
+        flex: 1;
+        margin: 0 10px;
+      }
+
+      #errorsList {
         min-height: 100px;
       }
 
       .error-item {
-        @apply(--cr-section);
+        @apply --cr-section;
         padding-left: 0;
       }
 
-      .error-item button[is='paper-icon-button-light'] {
+      .error-item paper-icon-button-light {
         -webkit-margin-end: 0;
       }
 
@@ -92,37 +100,38 @@
       .error-message {
         -webkit-margin-start: 10px;
         flex-grow: 1;
+        word-break: break-all;
       }
 
-      #devtools-controls {
+      .devtools-controls {
         padding: 0 var(--cr-section-padding);
       }
 
-      #stack-trace-heading {
-        @apply(--cr-title-text);
+      .details-heading {
+        @apply --cr-title-text;
         align-items: center;
         display: flex;
         height: var(--cr-section-min-height);
       }
 
-      #stack-trace-container {
+      .stack-trace-container {
         list-style: none;
         margin-top: 0;
         padding: 0;
       }
 
-      #stack-trace-container li {
+      .stack-trace-container li {
         cursor: pointer;
         font-family: monospace;
         padding: 4px;
       }
 
-      #stack-trace-container li.selected,
-      #stack-trace-container li:hover {
+      .stack-trace-container li.selected,
+      .stack-trace-container li:hover {
         background: var(--google-blue-100);
       }
 
-      #dev-tool-button {
+      .devtool-button {
         margin-bottom: 20px;
         max-width: 300px;
       }
@@ -130,6 +139,7 @@
       extensions-code-section {
         background: white;
         height: 200px;
+        margin-bottom: 20px;
       }
 
       /* TODO(scottchen): extract to shared location from settings. */
@@ -150,7 +160,7 @@
       }
 
       /* TODO(scottchen): extract to shared location from settings. */
-      .separator + button[is='paper-icon-button-light'] {
+      .separator + paper-icon-button-light {
         -webkit-margin-start: var(--cr-icon-ripple-margin);
       }
 
@@ -165,43 +175,63 @@
     <div id="container">
       <div id="main">
         <div id="heading">
-          <button id="close-button" is="paper-icon-button-light"
-              class="icon-arrow-back no-overlap" on-tap="onCloseButtonTap_">
-          </button>
+          <paper-icon-button-light class="icon-arrow-back no-overlap">
+            <button id="close-button" aria-label="$i18n{back}"
+                on-click="onCloseButtonTap_">
+            </button>
+          </paper-icon-button-light>
           <span>$i18n{errorsPageHeading}</span>
+          <paper-button on-click="onClearAllTap_" hidden="[[!entries_.length]]">
+            $i18n{clearAll}
+          </paper-button>
         </div>
         <div class="section">
-          <extensions-code-section id="code-section"
-              could-not-display-code="$i18n{noErrorsToShow}">
-          </extensions-code-section>
-          <div id="errors-list">
+          <div id="errorsList">
             <template is="dom-repeat" items="[[entries_]]">
               <div class="item-container">
                 <div class$="error-item
                     [[computeErrorClass_(item, selectedEntry_)]]">
-                  <div actionable class=" start" on-tap="onErrorItemAction_"
-                      on-keydown="onErrorItemAction_" tabindex="0">
-                    <iron-icon icon$="[[computeErrorIcon_(item)]]"></iron-icon>
-                    <div class="error-message">[[item.message]]</div>
-                    <div class$="cr-icon [[iconName_(index, selectedEntry_)]]"
-                        hidden="[[!computeIsRuntimeError_(item)]]">
+                  <div actionable class=" start" on-click="onErrorItemAction_"
+                      on-keydown="onErrorItemAction_" tabindex="0"
+                      role="button">
+                    <iron-icon icon$="[[computeErrorIcon_(item)]]"
+                        title$="[[computeErrorTypeLabel_(item)]]">
+                    </iron-icon>
+                    <div id$="[[item.id]]" class="error-message">
+                      [[item.message]]
+                    </div>
+                    <div class$="cr-icon [[iconName_(index, selectedEntry_)]]">
                     </div>
                   </div>
                   <div class="separator"></div>
-                  <button is="paper-icon-button-light" class="icon-delete-gray"
-                      on-tap="onDeleteErrorAction_"
-                      on-keydown="onDeleteErrorAction_">
-                  </button>
+                  <paper-icon-button-light class="icon-delete-gray">
+                    <button on-click="onDeleteErrorAction_"
+                        aria-describedby$="[[item.id]]"
+                        aria-label="$i18n{clearEntry}"
+                        on-keydown="onDeleteErrorAction_">
+                    </button>
+                  </paper-icon-button-light>
                 </div>
-                <template is="dom-if" if="[[computeIsRuntimeError_(item)]]">
-                  <iron-collapse opened="[[isOpened_(index, selectedEntry_)]]">
-                    <div id="devtools-controls">
-                      <div id="stack-trace-heading">
+                <iron-collapse opened="[[isOpened_(index, selectedEntry_)]]">
+                  <div class="devtools-controls">
+                    <template is="dom-if"
+                        if="[[computeIsRuntimeError_(item)]]">
+                      <div class="details-heading">
+                        $i18n{errorContext}
+                      </div>
+                      <span class="context-url">
+                        [[getContextUrl_(
+                            item, '$i18nPolymer{errorContextUnknown}')]]
+                      </span>
+                      <div class="details-heading">
                         $i18n{stackTrace}
                       </div>
-                      <ul id="stack-trace-container">
+                      <ul class="stack-trace-container"
+                          on-keydown="onStackKeydown_">
                         <template is="dom-repeat" items="[[item.stackTrace]]">
-                          <li on-tap="onStackFrameTap_"
+                          <li on-click="onStackFrameTap_"
+                              tabindex$="[[getStackFrameTabIndex_(item,
+                                  selectedStackFrame_)]]"
                               hidden="[[!shouldDisplayFrame_(item.url)]]"
                               class$="[[getStackFrameClass_(item,
                                   selectedStackFrame_)]]">
@@ -209,14 +239,21 @@
                           </li>
                         </template>
                       </ul>
-                      <paper-button id="dev-tool-button" class="action-button"
-                          disabled="[[!item.canInspect]]"
-                          on-tap="onDevToolButtonTap_">
-                        $i18n{openInDevtool}
-                      </paper-button>
-                    </div>
-                  </iron-collapse>
-                </template>
+                    </template>
+                    <template is="dom-if"
+                        if="[[isOpened_(index, selectedEntry_)]]">
+                      <extensions-code-section code="[[code_]]"
+                          could-not-display-code="$i18n{noErrorsToShow}">
+                      </extensions-code-section>
+                    </template>
+                    <paper-button class="devtool-button action-button"
+                        hidden$="[[!computeIsRuntimeError_(item)]]"
+                        disabled="[[!item.canInspect]]"
+                        on-click="onDevToolButtonTap_">
+                      $i18n{openInDevtool}
+                    </paper-button>
+                  </div>
+                </iron-collapse>
               </div>
             </template>
           </div>

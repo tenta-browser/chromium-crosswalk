@@ -4,11 +4,11 @@
 
 #include "content/public/browser/message_port_provider.h"
 
-#include "content/browser/browser_thread_impl.h"
 #include "content/browser/renderer_host/render_process_host_impl.h"
 #include "content/browser/renderer_host/render_view_host_impl.h"
 #include "content/browser/web_contents/web_contents_impl.h"
 #include "content/common/frame_messages.h"
+#include "content/public/browser/browser_thread.h"
 
 #if defined(OS_ANDROID)
 #include "base/android/jni_string.h"
@@ -29,11 +29,14 @@ void PostMessageToFrameInternal(WebContents* web_contents,
 
   FrameMsg_PostMessage_Params params;
   params.is_data_raw_string = true;
-  params.data = data;
+  params.message = new base::RefCountedData<blink::TransferableMessage>();
+  params.message->data.encoded_message =
+      base::make_span(reinterpret_cast<const uint8_t*>(data.data()),
+                      data.size() * sizeof(base::char16));
+  params.message->data.ports = std::move(channels);
   params.source_routing_id = MSG_ROUTING_NONE;
   params.source_origin = source_origin;
   params.target_origin = target_origin;
-  params.message_ports = std::move(channels);
 
   RenderFrameHost* rfh = web_contents->GetMainFrame();
   rfh->Send(new FrameMsg_PostMessageEvent(rfh->GetRoutingID(), params));

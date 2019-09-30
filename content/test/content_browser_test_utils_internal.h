@@ -14,14 +14,21 @@
 #include <string>
 #include <vector>
 
+#include "base/compiler_specific.h"
 #include "base/files/file_path.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
+#include "base/optional.h"
 #include "base/run_loop.h"
+#include "base/test/histogram_tester.h"
+#include "build/build_config.h"
+#include "content/browser/bad_message.h"
+#include "content/common/frame_messages.h"
 #include "content/public/browser/resource_dispatcher_host_delegate.h"
 #include "content/public/browser/web_contents_delegate.h"
 #include "content/public/common/file_chooser_params.h"
 #include "content/public/test/browser_test_utils.h"
+#include "content/public/test/test_utils.h"
 #include "url/gurl.h"
 
 namespace content {
@@ -31,18 +38,26 @@ class RenderFrameHost;
 class Shell;
 class SiteInstance;
 class ToRenderFrameHost;
-struct ScreenInfo;
+struct FrameResizeParams;
 
 // Navigates the frame represented by |node| to |url|, blocking until the
 // navigation finishes.
 void NavigateFrameToURL(FrameTreeNode* node, const GURL& url);
 
 // Sets the DialogManager to proceed by default or not when showing a
-// BeforeUnload dialog.
-void SetShouldProceedOnBeforeUnload(Shell* shell, bool proceed);
+// BeforeUnload dialog, and if it proceeds, what value to return.
+void SetShouldProceedOnBeforeUnload(Shell* shell, bool proceed, bool success);
 
 // Extends the ToRenderFrameHost mechanism to FrameTreeNodes.
 RenderFrameHost* ConvertToRenderFrameHost(FrameTreeNode* frame_tree_node);
+
+// Helper function to navigate a window to a |url|, using a browser-initiated
+// navigation that will stay in the same BrowsingInstance.  Most
+// browser-initiated navigations swap BrowsingInstances, but some tests need a
+// navigation to swap processes for cross-site URLs (even outside of
+// --site-per-process) while staying in the same BrowsingInstance.
+WARN_UNUSED_RESULT bool NavigateToURLInSameBrowsingInstance(Shell* window,
+                                                            const GURL& url);
 
 // Creates compact textual representations of the state of the frame tree that
 // is appropriate for use in assertions.
@@ -118,7 +133,7 @@ class FileChooserDelegate : public WebContentsDelegate {
  public:
   // Constructs a WebContentsDelegate that mocks a file dialog.
   // The mocked file dialog will always reply that the user selected |file|.
-  FileChooserDelegate(const base::FilePath& file);
+  explicit FileChooserDelegate(const base::FilePath& file);
 
   // Implementation of WebContentsDelegate::RunFileChooser.
   void RunFileChooser(RenderFrameHost* render_frame_host,
@@ -200,10 +215,9 @@ class UpdateResizeParamsMessageFilter : public content::BrowserMessageFilter {
   ~UpdateResizeParamsMessageFilter() override;
 
  private:
-  void OnUpdateResizeParams(const gfx::Rect& rect,
-                            const ScreenInfo& screen_info,
-                            uint64_t sequence_number,
-                            const viz::SurfaceId& surface_id);
+  void OnUpdateResizeParams(const viz::SurfaceId& surface_id,
+                            const FrameResizeParams& resize_params);
+  // |rect| is in DIPs.
   void OnUpdatedFrameRectOnUI(const gfx::Rect& rect);
   void OnUpdatedFrameSinkIdOnUI();
 
@@ -212,11 +226,70 @@ class UpdateResizeParamsMessageFilter : public content::BrowserMessageFilter {
   viz::FrameSinkId frame_sink_id_;
   base::RunLoop frame_sink_id_run_loop_;
 
-  std::unique_ptr<base::RunLoop> frame_rect_run_loop_;
-  bool frame_rect_received_;
+  std::unique_ptr<base::RunLoop> screen_space_rect_run_loop_;
+  bool screen_space_rect_received_;
   gfx::Rect last_rect_;
 
   DISALLOW_COPY_AND_ASSIGN(UpdateResizeParamsMessageFilter);
+};
+
+// Waits for a kill of the given RenderProcessHost and returns the
+// BadMessageReason that caused a //content-triggerred kill.
+//
+// Example usage:
+//   RenderProcessHostKillWaiter kill_waiter(render_process_host);
+//   ... test code that triggers a renderer kill ...
+//   EXPECT_EQ(bad_message::RFH_INVALID_ORIGIN_ON_COMMIT, kill_waiter.Wait());
+//
+// Tests that don't expect kills (e.g. tests where a renderer process exits
+// normally, like RenderFrameHostManagerTest.ProcessExitWithSwappedOutViews)
+// should use RenderProcessHostWatcher instead of RenderProcessHostKillWaiter.
+class RenderProcessHostKillWaiter {
+ public:
+  explicit RenderProcessHostKillWaiter(RenderProcessHost* render_process_host);
+
+  // Waits until the renderer process exits.  Returns the bad message that made
+  // //content kill the renderer.  |base::nullopt| is returned if the renderer
+  // was killed outside of //content or exited normally.
+  base::Optional<bad_message::BadMessageReason> Wait() WARN_UNUSED_RESULT;
+
+ private:
+  RenderProcessHostWatcher exit_watcher_;
+  base::HistogramTester histogram_tester_;
+
+  DISALLOW_COPY_AND_ASSIGN(RenderProcessHostKillWaiter);
+};
+
+class ShowWidgetMessageFilter : public content::BrowserMessageFilter {
+ public:
+  ShowWidgetMessageFilter();
+
+  bool OnMessageReceived(const IPC::Message& message) override;
+
+  gfx::Rect last_initial_rect() const { return initial_rect_; }
+
+  int last_routing_id() const { return routing_id_; }
+
+  void Wait();
+
+  void Reset();
+
+ private:
+  ~ShowWidgetMessageFilter() override;
+
+  void OnShowWidget(int route_id, const gfx::Rect& initial_rect);
+
+#if defined(OS_MACOSX) || defined(OS_ANDROID)
+  void OnShowPopup(const FrameHostMsg_ShowPopup_Params& params);
+#endif
+
+  void OnShowWidgetOnUI(int route_id, const gfx::Rect& initial_rect);
+
+  scoped_refptr<content::MessageLoopRunner> message_loop_runner_;
+  gfx::Rect initial_rect_;
+  int routing_id_;
+
+  DISALLOW_COPY_AND_ASSIGN(ShowWidgetMessageFilter);
 };
 
 }  // namespace content

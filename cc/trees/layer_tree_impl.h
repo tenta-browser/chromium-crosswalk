@@ -12,7 +12,6 @@
 #include <vector>
 
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/values.h"
 #include "cc/base/synced_property.h"
 #include "cc/input/event_listener_properties.h"
@@ -44,6 +43,7 @@ class HeadsUpDisplayLayerImpl;
 class ImageDecodeCache;
 class LayerTreeDebugState;
 class LayerTreeImpl;
+class LayerTreeFrameSink;
 class LayerTreeResourceProvider;
 class LayerTreeSettings;
 class MemoryHistory;
@@ -105,9 +105,11 @@ class CC_EXPORT LayerTreeImpl {
 
   // Methods called by the layer tree that pass-through or access LTHI.
   // ---------------------------------------------------------------------------
+  LayerTreeFrameSink* layer_tree_frame_sink();
   const LayerTreeSettings& settings() const;
   const LayerTreeDebugState& debug_state() const;
   viz::ContextProvider* context_provider() const;
+  viz::SharedBitmapManager* shared_bitmap_manager() const;
   LayerTreeResourceProvider* resource_provider() const;
   TileManager* tile_manager() const;
   ImageDecodeCache* image_decode_cache() const;
@@ -115,6 +117,7 @@ class CC_EXPORT LayerTreeImpl {
   FrameRateCounter* frame_rate_counter() const;
   MemoryHistory* memory_history() const;
   gfx::Size device_viewport_size() const;
+  gfx::Rect viewport_visible_rect() const;
   DebugRectHistory* debug_rect_history() const;
   bool IsActiveTree() const;
   bool IsPendingTree() const;
@@ -141,6 +144,7 @@ class CC_EXPORT LayerTreeImpl {
   void UpdateImageDecodingHints(
       base::flat_map<PaintImage::Id, PaintImage::DecodingMode>
           decoding_mode_map);
+  bool IsActivelyScrolling() const;
 
   // Tree specific methods exposed to layer-impl tree.
   // ---------------------------------------------------------------------------
@@ -183,6 +187,8 @@ class CC_EXPORT LayerTreeImpl {
 
   LayerImplList::const_iterator begin() const;
   LayerImplList::const_iterator end() const;
+  LayerImplList::const_reverse_iterator rbegin() const;
+  LayerImplList::const_reverse_iterator rend() const;
   LayerImplList::reverse_iterator rbegin();
   LayerImplList::reverse_iterator rend();
 
@@ -300,10 +306,12 @@ class CC_EXPORT LayerTreeImpl {
     return local_surface_id_;
   }
 
-  void SetRasterColorSpace(const gfx::ColorSpace& raster_color_space);
+  void SetRasterColorSpace(int raster_color_space_id,
+                           const gfx::ColorSpace& raster_color_space);
   const gfx::ColorSpace& raster_color_space() const {
     return raster_color_space_;
   }
+  int raster_color_space_id() const { return raster_color_space_id_; }
 
   SyncedElasticOverscroll* elastic_overscroll() {
     return elastic_overscroll_.get();
@@ -442,7 +450,8 @@ class CC_EXPORT LayerTreeImpl {
       std::vector<std::unique_ptr<SwapPromise>> new_swap_promises);
   void AppendSwapPromises(
       std::vector<std::unique_ptr<SwapPromise>> new_swap_promises);
-  void FinishSwapPromises(viz::CompositorFrameMetadata* metadata);
+  void FinishSwapPromises(viz::CompositorFrameMetadata* metadata,
+                          FrameTokenAllocator* frame_token_allocator);
   void ClearSwapPromises();
   void BreakSwapPromises(SwapPromise::DidNotSwapReason reason);
 
@@ -473,7 +482,8 @@ class CC_EXPORT LayerTreeImpl {
 
   void RegisterSelection(const LayerSelection& selection);
 
-  bool GetAndResetHandleVisibilityChanged();
+  bool HandleVisibilityChanged() const { return handle_visibility_changed_; }
+  void ResetHandleVisibilityChanged();
 
   // Compute the current selection handle location and visbility with respect to
   // the viewport.
@@ -545,12 +555,19 @@ class CC_EXPORT LayerTreeImpl {
   void ClearLayerList();
 
   void BuildLayerListForTesting();
+
+  void HandleTickmarksVisibilityChange();
   void HandleScrollbarShowRequestsFromMain();
 
   void InvalidateRegionForImages(
       const PaintImageIdFlatSet& images_to_invalidate);
 
   LayerTreeLifecycle& lifecycle() { return lifecycle_; }
+
+  bool request_presentation_time() const { return request_presentation_time_; }
+  void set_request_presentation_time(bool value) {
+    request_presentation_time_ = value;
+  }
 
  protected:
   float ClampPageScaleFactorToLimits(float page_scale_factor) const;
@@ -587,6 +604,7 @@ class CC_EXPORT LayerTreeImpl {
 
   float device_scale_factor_;
   float painted_device_scale_factor_;
+  int raster_color_space_id_ = -1;
   gfx::ColorSpace raster_color_space_;
 
   uint32_t content_source_id_;
@@ -674,7 +692,10 @@ class CC_EXPORT LayerTreeImpl {
   // lifecycle states. See: |LayerTreeLifecycle|.
   LayerTreeLifecycle lifecycle_;
 
- private:
+  // If true LayerTreeHostImpl requests a presentation token for the current
+  // frame.
+  bool request_presentation_time_ = false;
+
   DISALLOW_COPY_AND_ASSIGN(LayerTreeImpl);
 };
 

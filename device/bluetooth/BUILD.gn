@@ -18,26 +18,43 @@ config("bluetooth_config") {
       "/DELAYLOAD:setupapi.dll",
     ]
   }
+  if (is_linux && is_chromecast) {
+    defines = [ "USE_CAST_BLUETOOTH_ADAPTER" ]
+  }
 }
 
-source_set("mojo") {
+# Experimental implementation not ready for production use yet. See
+# public/mojom/README.md
+source_set("deprecated_experimental_mojo") {
   sources = [
-    "//device/bluetooth/public/interfaces/connect_result_type_converter.h",
-    "//device/bluetooth/public/interfaces/gatt_result_type_converter.h",
+    "//device/bluetooth/public/mojom/connect_result_type_converter.h",
+    "//device/bluetooth/public/mojom/gatt_result_type_converter.h",
     "adapter.cc",
     "adapter.h",
-    "adapter_factory.cc",
-    "adapter_factory.h",
     "device.cc",
     "device.h",
     "discovery_session.cc",
     "discovery_session.h",
   ]
 
-  public_deps = [
+  deps = [
     ":bluetooth",
-    "//device/bluetooth/public/interfaces:experimental_interfaces",
+    "//device/bluetooth/public/mojom:deprecated_experimental_interfaces",
     "//mojo/public/cpp/bindings",
+  ]
+
+  visibility = [
+    # Experimental implementation not ready for production use yet. See
+    # public/mojom/README.md
+
+    # Single approved client:
+    "//chrome/browser/ui/webui/bluetooth_internals:*",
+
+    # Implementation tests
+    # Ideally only device_unittests, however android & fushia generate
+    # additional targets with modified names and copy deps. gn can not wildcard
+    # partial target names such as '//device:*device_unittests*'.
+    "//device:*",
   ]
 }
 
@@ -61,7 +78,7 @@ source_set("fake_bluetooth") {
 
   deps = [
     ":bluetooth",
-    "//device/bluetooth/public/interfaces:fake_bluetooth_interfaces",
+    "//device/bluetooth/public/mojom:fake_bluetooth_interfaces",
     "//mojo/public/cpp/bindings",
   ]
 }
@@ -195,6 +212,7 @@ component("bluetooth") {
     "//base",
     "//components/device_event_log",
     "//crypto",
+    "//device/base",
     "//device/bluetooth/strings",
     "//device/bluetooth/uribeacon",
     "//ipc",
@@ -377,10 +395,44 @@ component("bluetooth") {
           "dbus/dbus_thread_manager_linux.h",
         ]
       }
+      if (is_chromeos) {
+        sources += [
+          "chromeos/bluetooth_utils.cc",
+          "chromeos/bluetooth_utils.h",
+        ]
+      }
       deps += [ "//dbus" ]
     } else {  # !use_dbus
-      sources += [ "bluetooth_adapter_stub.cc" ]
+      if (is_chromecast && is_linux) {
+        sources += [
+          "cast/bluetooth_adapter_cast.cc",
+          "cast/bluetooth_adapter_cast.h",
+          "cast/bluetooth_device_cast.cc",
+          "cast/bluetooth_device_cast.h",
+          "cast/bluetooth_remote_gatt_characteristic_cast.cc",
+          "cast/bluetooth_remote_gatt_characteristic_cast.h",
+          "cast/bluetooth_remote_gatt_descriptor_cast.cc",
+          "cast/bluetooth_remote_gatt_descriptor_cast.h",
+          "cast/bluetooth_remote_gatt_service_cast.cc",
+          "cast/bluetooth_remote_gatt_service_cast.h",
+          "cast/bluetooth_utils.cc",
+          "cast/bluetooth_utils.h",
+        ]
+
+        public_deps = [
+          "//chromecast/public",
+        ]
+
+        deps += [
+          "//chromecast/device/bluetooth:util",
+          "//chromecast/device/bluetooth/le",
+        ]
+      } else {
+        sources += [ "bluetooth_adapter_stub.cc" ]
+      }
+
       if (is_linux) {
+        defines += [ "LINUX_WITHOUT_DBUS" ]
         sources += [
           "dbus/dbus_bluez_manager_wrapper_linux.h",
           "dbus/dbus_bluez_manager_wrapper_stub_linux.cc",

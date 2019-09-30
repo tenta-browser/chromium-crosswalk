@@ -31,19 +31,19 @@ const char kDataUrl[] = "data://foo.bar/";
 
 namespace web {
 
-// Test fixture for error translation testing.
+// Test fixture for ContextMenuParams utilities.
 typedef PlatformTest ContextMenuParamsUtilsTest;
 
 // Tests the empty contructor.
 TEST_F(ContextMenuParamsUtilsTest, EmptyParams) {
   web::ContextMenuParams params;
-  EXPECT_EQ(params.menu_title.get(), nil);
+  EXPECT_EQ(params.menu_title, nil);
   EXPECT_FALSE(params.link_url.is_valid());
   EXPECT_FALSE(params.src_url.is_valid());
   EXPECT_EQ(params.referrer_policy, web::ReferrerPolicyDefault);
-  EXPECT_EQ(params.view.get(), nil);
+  EXPECT_EQ(params.view, nil);
   EXPECT_TRUE(CGPointEqualToPoint(params.location, CGPointZero));
-  EXPECT_EQ(params.link_text.get(), nil);
+  EXPECT_EQ(params.link_text, nil);
 }
 
 // Tests the the parsing of the element NSDictionary.
@@ -56,14 +56,14 @@ TEST_F(ContextMenuParamsUtilsTest, DictionaryConstructorTest) {
     kContextMenuElementInnerText : @(kLinkText),
   });
 
-  EXPECT_NSEQ(params.menu_title.get(), @(kTitle));
+  EXPECT_NSEQ(params.menu_title, @(kTitle));
   EXPECT_EQ(params.link_url, GURL(kLinkUrl));
   EXPECT_EQ(params.src_url, GURL(kSrcUrl));
-  EXPECT_NSEQ(params.link_text.get(), @(kLinkText));
+  EXPECT_NSEQ(params.link_text, @(kLinkText));
   EXPECT_EQ(params.referrer_policy,
             web::ReferrerPolicyFromString(kReferrerPolicy));
 
-  EXPECT_EQ(params.view.get(), nil);
+  EXPECT_EQ(params.view, nil);
   EXPECT_TRUE(CGPointEqualToPoint(params.location, CGPointZero));
 }
 
@@ -75,7 +75,7 @@ TEST_F(ContextMenuParamsUtilsTest, DictionaryConstructorTestNoTitle) {
   base::string16 urlText = url_formatter::FormatUrl(GURL(kLinkUrl));
   NSString* title = base::SysUTF16ToNSString(urlText);
 
-  EXPECT_NSEQ(params.menu_title.get(), title);
+  EXPECT_NSEQ(params.menu_title, title);
 }
 
 // Tests title is set to "JavaScript" if there is no title and "href" links to
@@ -84,7 +84,7 @@ TEST_F(ContextMenuParamsUtilsTest, DictionaryConstructorTestJavascriptTitle) {
   web::ContextMenuParams params = web::ContextMenuParamsFromElementDictionary(@{
     kContextMenuElementHyperlink : @(kJavaScriptLinkUrl),
   });
-  EXPECT_NSEQ(params.menu_title.get(), @"JavaScript");
+  EXPECT_NSEQ(params.menu_title, @"JavaScript");
 }
 
 // Tests title is set to |src_url| if there is no title.
@@ -93,7 +93,7 @@ TEST_F(ContextMenuParamsUtilsTest, DictionaryConstructorTestSrcTitle) {
     kContextMenuElementSource : @(kSrcUrl),
   });
   EXPECT_EQ(params.src_url, GURL(kSrcUrl));
-  EXPECT_NSEQ(params.menu_title.get(), @(kSrcUrl));
+  EXPECT_NSEQ(params.menu_title, @(kSrcUrl));
 }
 
 // Tests title is set to nil if there is no title and src is a data URL.
@@ -102,7 +102,58 @@ TEST_F(ContextMenuParamsUtilsTest, DictionaryConstructorTestDataTitle) {
     kContextMenuElementSource : @(kDataUrl),
   });
   EXPECT_EQ(params.src_url, GURL(kDataUrl));
-  EXPECT_NSEQ(params.menu_title.get(), nil);
+  EXPECT_NSEQ(params.menu_title, nil);
+}
+
+// Tests that a context menu will not be shown for an empty element dictionary.
+TEST_F(ContextMenuParamsUtilsTest, CanShowContextMenuTestEmptyDictionary) {
+  EXPECT_FALSE(web::CanShowContextMenuForElementDictionary(@{}));
+}
+
+// Tests that a context menu will not be shown for an element dictionary with
+// only a request id.
+TEST_F(ContextMenuParamsUtilsTest, CanShowContextMenuTestRequestIdOnly) {
+  EXPECT_FALSE(web::CanShowContextMenuForElementDictionary(
+      @{kContextMenuElementRequestId : @"kContextMenuElementRequestId"}));
+}
+
+// Tests that a context menu will be shown for a link.
+TEST_F(ContextMenuParamsUtilsTest, CanShowContextMenuTestHyperlink) {
+  EXPECT_TRUE(web::CanShowContextMenuForElementDictionary(@{
+    kContextMenuElementHyperlink : @"http://example.com",
+    kContextMenuElementInnerText : @"Click me."
+  }));
+}
+
+// Tests that a context menu will not be shown for an invalid link.
+TEST_F(ContextMenuParamsUtilsTest, CanShowContextMenuTestInvalidHyperlink) {
+  EXPECT_FALSE(web::CanShowContextMenuForElementDictionary(
+      @{kContextMenuElementHyperlink : @"invalid_url"}));
+}
+
+// Tests that a context menu will be shown for an image.
+TEST_F(ContextMenuParamsUtilsTest, CanShowContextMenuTestImageWithTitle) {
+  EXPECT_TRUE(web::CanShowContextMenuForElementDictionary(@{
+    kContextMenuElementSource : @"http://example.com/image.jpeg",
+    kContextMenuElementTitle : @"Image"
+  }));
+}
+
+// Tests that a context menu will not be shown for an image with an invalid
+// source url.
+TEST_F(ContextMenuParamsUtilsTest,
+       CanShowContextMenuTestImageWithInvalidSource) {
+  EXPECT_FALSE(web::CanShowContextMenuForElementDictionary(@{
+    kContextMenuElementSource : @"invalid_url",
+  }));
+}
+
+// Tests that a context menu will be shown for a linked image.
+TEST_F(ContextMenuParamsUtilsTest, CanShowContextMenuTestLinkedImage) {
+  EXPECT_TRUE(web::CanShowContextMenuForElementDictionary(@{
+    kContextMenuElementHyperlink : @"http://example.com",
+    kContextMenuElementSource : @"http://example.com/image.jpeg"
+  }));
 }
 
 }  // namespace web

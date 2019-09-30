@@ -118,11 +118,30 @@ login.createScreen('GaiaSigninScreen', 'gaia-signin', function() {
     lastBackMessageValue_: false,
 
     /**
+     * Number of users in the login screen UI.
+     * This is mainly used by views login screen, this value is always 0 for
+     * WebUI login screen.
+     * TODO(crbug.com/808271): WebUI and views implementation should return the
+     * same user list.
+     * @type {number}
+     * @private
+     */
+    userCount_: 0,
+
+    /**
      * Whether the dialog could be closed.
+     * This is being checked in cancel() when user clicks on signin-back-button
+     * (normal gaia flow) or the buttons in gaia-navigation (used in enterprise
+     * enrollment) etc.
+     * This value also controls the visibility of refresh button and close
+     * button in the gaia-navigation.
      * @type {boolean}
      */
     get closable() {
-      return !!$('pod-row').pods.length || this.isOffline();
+      var hasUser = Oobe.getInstance().showingViewsLogin ?
+          (!!this.userCount_) :
+          (!!$('pod-row').pods.length);
+      return hasUser || this.isOffline();
     },
 
     /**
@@ -186,7 +205,7 @@ login.createScreen('GaiaSigninScreen', 'gaia-signin', function() {
      * to match the API version.
      * Note that this cannot be changed after authenticator is created.
      */
-    chromeOSApiVersion_: undefined,
+    chromeOSApiVersion_: 2,
 
     /** @override */
     decorate: function() {
@@ -681,7 +700,11 @@ login.createScreen('GaiaSigninScreen', 'gaia-signin', function() {
 
       this.setSigninFramePartition_(data.webviewPartitionName);
 
+      // Must be set before calling updateSigninFrameContainers_()
+      this.chromeOSApiVersion_ = data.chromeOSApiVersion;
+      // This triggers updateSigninFrameContainers_()
       this.screenMode = data.screenMode;
+      this.userCount_ = data.userCount;
       this.email = '';
       this.authCompleted_ = false;
       this.lastBackMessageValue_ = false;
@@ -695,7 +718,6 @@ login.createScreen('GaiaSigninScreen', 'gaia-signin', function() {
       $('saml-notice-container').hidden = true;
       this.samlPasswordConfirmAttempt_ = 0;
 
-      this.chromeOSApiVersion_ = data.chromeOSApiVersion;
       if (this.chromeOSApiVersion_ == 2) {
         $('signin-frame-container-v2').appendChild($('signin-frame'));
         $('gaia-signin')
@@ -704,6 +726,9 @@ login.createScreen('GaiaSigninScreen', 'gaia-signin', function() {
         $('offline-gaia').removeAttribute('not-a-dialog');
         $('offline-gaia').classList.toggle('fit', false);
       } else {
+        $('gaia-signin-form-container').appendChild($('signin-frame'));
+        $('gaia-signin-form-container')
+            .appendChild($('offline-gaia'), $('gaia-step-contents'));
         $('offline-gaia').glifMode = false;
         $('offline-gaia').setAttribute('not-a-dialog', true);
         $('offline-gaia').classList.toggle('fit', true);

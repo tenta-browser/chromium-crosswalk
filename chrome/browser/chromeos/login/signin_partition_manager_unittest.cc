@@ -4,6 +4,8 @@
 
 #include "chrome/browser/chromeos/login/signin_partition_manager.h"
 
+#include <memory>
+
 #include "base/callback.h"
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
@@ -77,7 +79,7 @@ class SigninPartitionManagerTest : public ChromeRenderViewHostTestHarness {
         content::BrowserThread::GetTaskRunnerForThread(
             content::BrowserThread::IO));
 
-    signin_browser_context_ = base::MakeUnique<TestingProfile>();
+    signin_browser_context_ = std::make_unique<TestingProfile>();
 
     signin_ui_web_contents_ = base::WrapUnique<content::WebContents>(
         content::WebContentsTester::CreateTestWebContents(
@@ -101,6 +103,11 @@ class SigninPartitionManagerTest : public ChromeRenderViewHostTestHarness {
     signin_ui_web_contents_.reset();
 
     signin_browser_context_.reset();
+
+    // ChromeRenderViewHostTestHarness::TearDown() simulates shutdown and
+    // ~URLRequestContextGetter() assumes BrowserThreads are still up so this
+    // must happen first.
+    system_request_context_getter_ = nullptr;
 
     ChromeRenderViewHostTestHarness::TearDown();
   }

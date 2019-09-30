@@ -9,11 +9,10 @@
 #include <utility>
 
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "build/build_config.h"
-#include "third_party/WebKit/public/platform/WebFloatSize.h"
-#include "third_party/WebKit/public/platform/WebGestureCurveTarget.h"
+#include "third_party/blink/public/platform/web_float_size.h"
+#include "third_party/blink/public/platform/web_gesture_curve_target.h"
 #include "ui/events/gestures/fixed_velocity_curve.h"
 #include "ui/events/gestures/fling_curve.h"
 #include "ui/gfx/geometry/safe_integer_conversions.h"
@@ -22,6 +21,10 @@
 
 #if defined(OS_ANDROID)
 #include "ui/events/android/scroller.h"
+#endif
+
+#if !defined(OS_ANDROID) && defined(CHROMECAST_BUILD)
+#include "ui/events/chromecast/scroller.h"
 #endif
 
 using blink::WebGestureCurve;
@@ -37,7 +40,7 @@ std::unique_ptr<GestureCurve> CreateDefaultPlatformCurve(
                                                 base::TimeTicks());
   }
 
-#if defined(OS_ANDROID)
+#if defined(OS_ANDROID) || defined(CHROMECAST_BUILD)
   auto scroller = std::make_unique<Scroller>(Scroller::Config());
   scroller->Fling(0,
                   0,
@@ -88,8 +91,9 @@ WebGestureCurveImpl::WebGestureCurveImpl(std::unique_ptr<GestureCurve> curve,
 
 WebGestureCurveImpl::~WebGestureCurveImpl() {}
 
-bool WebGestureCurveImpl::Apply(double time,
-                                blink::WebGestureCurveTarget* target) {
+bool WebGestureCurveImpl::Advance(double time,
+                                  gfx::Vector2dF& out_current_velocity,
+                                  gfx::Vector2dF& out_delta_to_scroll) {
   // If the fling has yet to start, simply return and report true to prevent
   // fling termination.
   if (time <= 0)
@@ -107,23 +111,14 @@ bool WebGestureCurveImpl::Apply(double time,
 
   const base::TimeTicks time_ticks =
       base::TimeTicks() + base::TimeDelta::FromSecondsD(time);
-  gfx::Vector2dF offset, velocity;
+  gfx::Vector2dF offset;
   bool still_active =
-      curve_->ComputeScrollOffset(time_ticks, &offset, &velocity);
+      curve_->ComputeScrollOffset(time_ticks, &offset, &out_current_velocity);
 
-  gfx::Vector2dF delta = offset - last_offset_;
+  out_delta_to_scroll = offset - last_offset_;
   last_offset_ = offset;
 
-  // As successive timestamps can be arbitrarily close (but monotonic!), don't
-  // assume that a zero delta means the curve has terminated.
-  if (delta.IsZero())
-    return still_active;
-
-  // scrollBy() could delete this curve if the animation is over, so don't touch
-  // any member variables after making that call.
-  bool did_scroll = target->ScrollBy(blink::WebFloatSize(delta),
-                                     blink::WebFloatSize(velocity));
-  return did_scroll && still_active;
+  return still_active;
 }
 
 }  // namespace ui

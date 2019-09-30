@@ -7,8 +7,8 @@
 #include "base/macros.h"
 #include "base/run_loop.h"
 #include "mojo/public/cpp/bindings/binding.h"
-#include "services/resource_coordinator/public/interfaces/coordination_unit_provider.mojom.h"
-#include "services/resource_coordinator/public/interfaces/service_constants.mojom.h"
+#include "services/resource_coordinator/public/mojom/coordination_unit_provider.mojom.h"
+#include "services/resource_coordinator/public/mojom/service_constants.mojom.h"
 #include "services/service_manager/public/cpp/service.h"
 #include "services/service_manager/public/cpp/service_test.h"
 
@@ -47,8 +47,8 @@ TEST_F(ResourceCoordinatorTest, ResourceCoordinatorInstantiate) {
   provider->CreatePageCoordinationUnit(mojo::MakeRequest(&coordination_unit),
                                        new_id);
 
-  coordination_unit->GetID(base::Bind(&ResourceCoordinatorTest::GetIDCallback,
-                                      base::Unretained(this)));
+  coordination_unit->GetID(base::BindOnce(
+      &ResourceCoordinatorTest::GetIDCallback, base::Unretained(this)));
 
   base::RunLoop loop;
   SetRunLoopToQuit(&loop);

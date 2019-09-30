@@ -29,6 +29,7 @@ import android.view.ViewTreeObserver.OnPreDrawListener;
 import android.view.WindowManager;
 
 import org.chromium.base.ApiCompatibilityUtils;
+import org.chromium.base.StrictModeContext;
 import org.chromium.base.TraceEvent;
 import org.chromium.base.VisibleForTesting;
 import org.chromium.base.library_loader.LibraryLoader;
@@ -40,13 +41,15 @@ import org.chromium.chrome.browser.IntentHandler;
 import org.chromium.chrome.browser.LaunchIntentDispatcher;
 import org.chromium.chrome.browser.WarmupManager;
 import org.chromium.chrome.browser.firstrun.FirstRunFlowSequencer;
-import org.chromium.chrome.browser.metrics.MemoryUma;
+import org.chromium.chrome.browser.metrics.UmaUtils;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.tabmodel.DocumentModeAssassin;
 import org.chromium.chrome.browser.upgrade.UpgradeActivity;
 import org.chromium.ui.base.ActivityWindowAndroid;
 import org.chromium.ui.base.DeviceFormFactor;
 import org.chromium.ui.base.WindowAndroid;
+import org.chromium.ui.display.DisplayAndroid;
+import org.chromium.ui.display.DisplayUtil;
 
 import java.lang.reflect.Field;
 
@@ -55,6 +58,7 @@ import java.lang.reflect.Field;
  */
 public abstract class AsyncInitializationActivity extends AppCompatActivity implements
         ChromeActivityNativeDelegate, BrowserParts {
+    private static final String TAG = "AsyncInitActivity";
     protected final Handler mHandler;
 
     private final NativeInitializationController mNativeInitializationController =
@@ -70,7 +74,6 @@ public abstract class AsyncInitializationActivity extends AppCompatActivity impl
     private Bundle mSavedInstanceState;
     private int mCurrentOrientation = Surface.ROTATION_0;
     private boolean mDestroyed;
-    private MemoryUma mMemoryUma;
     private long mLastUserInteractionTime;
     private boolean mIsTablet;
     private boolean mHadWarmStart;
@@ -106,50 +109,46 @@ public abstract class AsyncInitializationActivity extends AppCompatActivity impl
     protected void attachBaseContext(Context newBase) {
         super.attachBaseContext(newBase);
 
-        // On N+, Chrome should always retain the tab strip layout on tablets. Normally in
-        // multi-window, if Chrome is launched into a smaller screen Android will load the tab
-        // switcher resources. Overriding the smallestScreenWidthDp in the Configuration ensures
-        // Android will load the tab strip resources. See crbug.com/588838.
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-            int smallestDeviceWidthDp = DeviceFormFactor.getSmallestDeviceWidthDp();
-
-            if (smallestDeviceWidthDp >= DeviceFormFactor.MINIMUM_TABLET_WIDTH_DP) {
-                Configuration overrideConfiguration = new Configuration();
-                overrideConfiguration.smallestScreenWidthDp = smallestDeviceWidthDp;
-                applyOverrideConfiguration(overrideConfiguration);
-            }
+        // We override the smallestScreenWidthDp here for two reasons:
+        // 1. To prevent multi-window from hiding the tabstrip when on a tablet.
+        // 2. To ensure mIsTablet only needs to be set once. Since the override lasts for the life
+        //    of the activity, it will never change via onConfigurationUpdated().
+        // See crbug.com/588838, crbug.com/662338, crbug.com/780593.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1) {
+            DisplayAndroid display = DisplayAndroid.getNonMultiDisplay(newBase);
+            int targetSmallestScreenWidthDp =
+                    DisplayUtil.pxToDp(display, DisplayUtil.getSmallestWidth(display));
+            Configuration config = new Configuration();
+            // Pre-Android O, fontScale gets initialized to 1 in the constructor. Set it to 0 so
+            // that applyOverrideConfiguration() does not interpret it as an overridden value.
+            // https://crbug.com/834191
+            config.fontScale = 0;
+            config.smallestScreenWidthDp = targetSmallestScreenWidthDp;
+            applyOverrideConfiguration(config);
         }
     }
 
     @CallSuper
     @Override
     public void preInflationStartup() {
+        mIsTablet = DeviceFormFactor.isNonMultiDisplayContextOnTablet(this);
         mHadWarmStart = LibraryLoader.isInitialized();
-        // On some devices, OEM modifications have been made to the resource loader that cause the
-        // DeviceFormFactor calculation of whether a device is using tablet resources to be
-        // incorrect. Check which resources were actually loaded and set the DeviceFormFactor
-        // values. See crbug.com/662338.
-        boolean isTablet = getResources().getBoolean(R.bool.is_tablet);
-        boolean isLargeTablet = getResources().getBoolean(R.bool.is_large_tablet);
-        DeviceFormFactor.setIsTablet(isTablet, isLargeTablet);
-        mIsTablet = isTablet;
     }
 
     @Override
     public final void setContentViewAndLoadLibrary() {
-        // Unless it was called before, {@link #setContentView} inflates the decorView and the basic
-        // UI hierarchy as stubs. This is done here before kicking long running I/O because
-        // inflation accesses resource files (XML, etc) even if we are inflating views defined by
-        // the framework. If this operation gets blocked because other long running I/O are running,
-        // we delay onCreate(), onStart() and first draw consequently.
-
-        setContentView();
-        if (mLaunchBehindWorkaround != null) mLaunchBehindWorkaround.onSetContentView();
+        // Start loading libraries before setContentView(). This "hides" library loading behind
+        // UI inflation and prevents stalling UI thread. See crbug.com/796957 for details.
+        // Note that for optimal performance AsyncInitTaskRunner.startBackgroundTasks() needs
+        // to start warmup renderer only after library is loaded.
 
         if (!mStartupDelayed) {
             // Kick off long running IO tasks that can be done in parallel.
             mNativeInitializationController.startBackgroundTasks(shouldAllocateChildConnection());
         }
+
+        setContentView();
+        if (mLaunchBehindWorkaround != null) mLaunchBehindWorkaround.onSetContentView();
     }
 
     /** Controls the parameter of {@link NativeInitializationController#startBackgroundTasks()}.*/
@@ -220,7 +219,6 @@ public abstract class AsyncInitializationActivity extends AppCompatActivity impl
                         checkOrientation();
                     }
                 });
-        mMemoryUma = new MemoryUma();
         mNativeInitializationController.onNativeInitializationComplete();
     }
 
@@ -258,6 +256,7 @@ public abstract class AsyncInitializationActivity extends AppCompatActivity impl
     }
 
     private final void onCreateInternal(Bundle savedInstanceState) {
+        UmaUtils.recordActivityStartTime();
         setIntent(validateIntent(getIntent()));
 
         @LaunchIntentDispatcher.Action
@@ -268,7 +267,10 @@ public abstract class AsyncInitializationActivity extends AppCompatActivity impl
         }
 
         if (DocumentModeAssassin.getInstance().isMigrationNecessary()) {
-            super.onCreate(null);
+            // Some Samsung devices load fonts from disk, crbug.com/691706.
+            try (StrictModeContext unused = StrictModeContext.allowDiskReads()) {
+                super.onCreate(null);
+            }
 
             // Kick the user to the MigrationActivity.
             UpgradeActivity.launchInstance(this, getIntent());
@@ -291,7 +293,10 @@ public abstract class AsyncInitializationActivity extends AppCompatActivity impl
             return;
         }
 
-        super.onCreate(transformSavedInstanceStateForOnCreate(savedInstanceState));
+        // Some Samsung devices load fonts from disk, crbug.com/691706.
+        try (StrictModeContext unused = StrictModeContext.allowDiskReads()) {
+            super.onCreate(transformSavedInstanceStateForOnCreate(savedInstanceState));
+        }
         mOnCreateTimestampMs = SystemClock.elapsedRealtime();
         mOnCreateTimestampUptimeMs = SystemClock.uptimeMillis();
         mSavedInstanceState = savedInstanceState;
@@ -335,6 +340,13 @@ public abstract class AsyncInitializationActivity extends AppCompatActivity impl
         mNativeInitializationController.startBackgroundTasks(shouldAllocateChildConnection());
 
         if (mFirstDrawComplete) onFirstDrawComplete();
+    }
+
+    /**
+     * @return Whether the native library initialization is delayed at this point.
+     */
+    protected boolean isStartupDelayed() {
+        return mStartupDelayed;
     }
 
     /**
@@ -452,7 +464,6 @@ public abstract class AsyncInitializationActivity extends AppCompatActivity impl
     @Override
     public void onStop() {
         super.onStop();
-        if (mMemoryUma != null) mMemoryUma.onStop();
         mNativeInitializationController.onStop();
     }
 
@@ -570,20 +581,6 @@ public abstract class AsyncInitializationActivity extends AppCompatActivity impl
     protected void onSaveInstanceState(Bundle outState) {
         super.onSaveInstanceState(outState);
         if (mWindowAndroid != null) mWindowAndroid.saveInstanceState(outState);
-    }
-
-    @CallSuper
-    @Override
-    public void onLowMemory() {
-        super.onLowMemory();
-        if (mMemoryUma != null) mMemoryUma.onLowMemory();
-    }
-
-    @CallSuper
-    @Override
-    public void onTrimMemory(int level) {
-        super.onTrimMemory(level);
-        if (mMemoryUma != null) mMemoryUma.onTrimMemory(level);
     }
 
     /**

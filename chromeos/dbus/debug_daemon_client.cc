@@ -41,12 +41,6 @@ const char kCrOSTraceLabel[] = "systemTraceEvents";
 // Because the cheets logs are very huge, we set the D-Bus timeout to 2 minutes.
 const int kBigLogsDBusTimeoutMS = 120 * 1000;
 
-// Used in DebugDaemonClient::EmptyStopAgentTracingCallback().
-void EmptyStopAgentTracingCallbackBody(
-    const std::string& agent_name,
-    const std::string& events_label,
-    const scoped_refptr<base::RefCountedString>& unused_result) {}
-
 // A self-deleting object that wraps the pipe reader operations for reading the
 // big feedback logs. It will delete itself once the pipe stream has been
 // terminated. Once the data has been completely read from the pipe, it invokes
@@ -305,7 +299,7 @@ class DebugDaemonClientImpl : public DebugDaemonClient {
 
     base::ThreadTaskRunnerHandle::Get()->PostTask(
         FROM_HERE,
-        base::Bind(callback, GetTracingAgentName(), true /* success */));
+        base::BindOnce(callback, GetTracingAgentName(), true /* success */));
   }
 
   void StopAgentTracing(const StopAgentTracingCallback& callback) override {
@@ -507,6 +501,36 @@ class DebugDaemonClientImpl : public DebugDaemonClient {
                        error_callback));
   }
 
+  void StartVmConcierge(VmConciergeCallback callback) override {
+    dbus::MethodCall method_call(debugd::kDebugdInterface,
+                                 debugd::kStartVmConcierge);
+    dbus::MessageWriter writer(&method_call);
+    debugdaemon_proxy_->CallMethod(
+        &method_call, dbus::ObjectProxy::TIMEOUT_USE_DEFAULT,
+        base::BindOnce(&DebugDaemonClientImpl::OnStartVmConcierge,
+                       weak_ptr_factory_.GetWeakPtr(), std::move(callback)));
+  }
+
+  void StopVmConcierge(VmConciergeCallback callback) override {
+    dbus::MethodCall method_call(debugd::kDebugdInterface,
+                                 debugd::kStopVmConcierge);
+    dbus::MessageWriter writer(&method_call);
+    debugdaemon_proxy_->CallMethod(
+        &method_call, dbus::ObjectProxy::TIMEOUT_USE_DEFAULT,
+        base::BindOnce(&DebugDaemonClientImpl::OnStopVmConcierge,
+                       weak_ptr_factory_.GetWeakPtr(), std::move(callback)));
+  }
+
+  void SetRlzPingSent(SetRlzPingSentCallback callback) override {
+    dbus::MethodCall method_call(debugd::kDebugdInterface,
+                                 debugd::kSetRlzPingSent);
+    dbus::MessageWriter writer(&method_call);
+    debugdaemon_proxy_->CallMethod(
+        &method_call, dbus::ObjectProxy::TIMEOUT_USE_DEFAULT,
+        base::BindOnce(&DebugDaemonClientImpl::OnSetRlzPingSent,
+                       weak_ptr_factory_.GetWeakPtr(), std::move(callback)));
+  }
+
  protected:
   void Init(dbus::Bus* bus) override {
     debugdaemon_proxy_ =
@@ -703,6 +727,36 @@ class DebugDaemonClientImpl : public DebugDaemonClient {
     }
   }
 
+  void OnStartVmConcierge(VmConciergeCallback callback,
+                          dbus::Response* response) {
+    bool result = false;
+    dbus::MessageReader reader(response);
+    if (response) {
+      reader.PopBool(&result);
+    }
+    std::move(callback).Run(result);
+  }
+
+  void OnStopVmConcierge(VmConciergeCallback callback,
+                         dbus::Response* response) {
+    bool result = false;
+    dbus::MessageReader reader(response);
+    if (response) {
+      reader.PopBool(&result);
+    }
+    std::move(callback).Run(result);
+  }
+
+  void OnSetRlzPingSent(SetRlzPingSentCallback callback,
+                        dbus::Response* response) {
+    bool result = false;
+    dbus::MessageReader reader(response);
+    if (response) {
+      reader.PopBool(&result);
+    }
+    std::move(callback).Run(result);
+  }
+
   dbus::ObjectProxy* debugdaemon_proxy_;
   std::unique_ptr<PipeReader> pipe_reader_;
   StopAgentTracingCallback callback_;
@@ -715,12 +769,6 @@ class DebugDaemonClientImpl : public DebugDaemonClient {
 DebugDaemonClient::DebugDaemonClient() = default;
 
 DebugDaemonClient::~DebugDaemonClient() = default;
-
-// static
-DebugDaemonClient::StopAgentTracingCallback
-DebugDaemonClient::EmptyStopAgentTracingCallback() {
-  return base::Bind(&EmptyStopAgentTracingCallbackBody);
-}
 
 // static
 DebugDaemonClient* DebugDaemonClient::Create() {

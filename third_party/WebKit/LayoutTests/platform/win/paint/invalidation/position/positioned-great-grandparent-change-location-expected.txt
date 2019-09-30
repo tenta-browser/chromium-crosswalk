@@ -3,6 +3,17 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
+      "backgroundColor": "#FFFFFF"
+    },
+    {
+      "name": "Scrolling Layer",
+      "bounds": [800, 600],
+      "drawsContent": false
+    },
+    {
+      "name": "Scrolling Contents Layer",
+      "bounds": [800, 600],
       "contentsOpaque": true,
       "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
@@ -17,12 +28,12 @@
           "reason": "geometry"
         },
         {
-          "object": "LayoutText #text",
+          "object": "InlineTextBox 'Target'",
           "rect": [100, 200, 38, 19],
           "reason": "geometry"
         },
         {
-          "object": "LayoutText #text",
+          "object": "InlineTextBox 'Target'",
           "rect": [100, 100, 38, 19],
           "reason": "geometry"
         }
@@ -30,6 +41,10 @@
     }
   ],
   "objectPaintInvalidations": [
+    {
+      "object": "LayoutBlockFlow (positioned) DIV id='great-grandparent'",
+      "reason": "geometry"
+    },
     {
       "object": "LayoutBlockFlow (positioned) DIV",
       "reason": "geometry"

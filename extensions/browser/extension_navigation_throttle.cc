@@ -9,7 +9,6 @@
 #include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_contents.h"
-#include "content/public/common/browser_side_navigation_policy.h"
 #include "content/public/common/url_constants.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/guest_view/web_view/web_view_guest.h"
@@ -78,27 +77,34 @@ ExtensionNavigationThrottle::WillStartOrRedirectRequest() {
     }
   }
 
-  if (navigation_handle()->IsInMainFrame()) {
-    // Block top-level navigations to blob: or filesystem: URLs with extension
-    // origin from non-extension processes.  See https://crbug.com/645028.
-    bool current_frame_is_extension_process =
-        !!registry->enabled_extensions().GetExtensionOrAppByURL(
-            navigation_handle()->GetStartingSiteInstance()->GetSiteURL());
+  // Block all navigations to blob: or filesystem: URLs with extension
+  // origin from non-extension processes.  See https://crbug.com/645028 and
+  // https://crbug.com/836858.
+  bool current_frame_is_extension_process =
+      !!registry->enabled_extensions().GetExtensionOrAppByURL(
+          navigation_handle()->GetStartingSiteInstance()->GetSiteURL());
 
-    if (!url_has_extension_scheme && !current_frame_is_extension_process) {
-      // Relax this restriction for apps that use <webview>.  See
-      // https://crbug.com/652077.
-      bool has_webview_permission =
-          target_extension->permissions_data()->HasAPIPermission(
-              APIPermission::kWebView);
-      if (!has_webview_permission)
-        return content::NavigationThrottle::CANCEL;
+  if (!url_has_extension_scheme && !current_frame_is_extension_process) {
+    // Relax this restriction for navigations that will result in downloads.
+    // See https://crbug.com/714373.
+    if (target_origin.scheme() == kExtensionScheme &&
+        navigation_handle()->GetSuggestedFilename().has_value()) {
+      return content::NavigationThrottle::PROCEED;
     }
 
+    // Relax this restriction for apps that use <webview>.  See
+    // https://crbug.com/652077.
+    bool has_webview_permission =
+        target_extension->permissions_data()->HasAPIPermission(
+            APIPermission::kWebView);
+    if (!has_webview_permission)
+      return content::NavigationThrottle::CANCEL;
+  }
+
+  if (navigation_handle()->IsInMainFrame()) {
     guest_view::GuestViewBase* guest =
         guest_view::GuestViewBase::FromWebContents(web_contents);
-    if (content::IsBrowserSideNavigationEnabled() && url_has_extension_scheme &&
-        guest) {
+    if (url_has_extension_scheme && guest) {
       // This variant of this logic applies to PlzNavigate top-level
       // navigations. It is performed for subresources, and for non-PlzNavigate
       // top navigations, in url_request_util::AllowCrossRendererResourceLoad.

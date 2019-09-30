@@ -7,8 +7,8 @@
 #include <limits>
 #include <string>
 
+#include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
-#include "base/metrics/sparse_histogram.h"
 #include "base/strings/string_util.h"
 #include "base/time/time.h"
 #include "content/browser/service_worker/embedded_worker_status.h"
@@ -443,8 +443,8 @@ void ServiceWorkerMetrics::RecordDestroyDatabaseResult(
 }
 
 void ServiceWorkerMetrics::RecordPurgeResourceResult(int net_error) {
-  UMA_HISTOGRAM_SPARSE_SLOWLY("ServiceWorker.Storage.PurgeResourceResult",
-                              std::abs(net_error));
+  base::UmaHistogramSparse("ServiceWorker.Storage.PurgeResourceResult",
+                           std::abs(net_error));
 }
 
 void ServiceWorkerMetrics::RecordDeleteAndStartOverResult(
@@ -453,12 +453,9 @@ void ServiceWorkerMetrics::RecordDeleteAndStartOverResult(
                             result, NUM_DELETE_AND_START_OVER_RESULT_TYPES);
 }
 
-void ServiceWorkerMetrics::CountControlledPageLoad(
-    Site site,
-    const GURL& url,
-    bool is_main_frame_load,
-    ui::PageTransition page_transition,
-    size_t redirect_chain_length) {
+void ServiceWorkerMetrics::CountControlledPageLoad(Site site,
+                                                   const GURL& url,
+                                                   bool is_main_frame_load) {
   DCHECK_NE(site, Site::OTHER);
   UMA_HISTOGRAM_ENUMERATION("ServiceWorker.PageLoad", static_cast<int>(site),
                             static_cast<int>(Site::NUM_TYPES));
@@ -470,19 +467,6 @@ void ServiceWorkerMetrics::CountControlledPageLoad(
   if (ShouldExcludeSiteFromHistogram(site))
     return;
 
-  if (is_main_frame_load) {
-    UMA_HISTOGRAM_ENUMERATION(
-        "ServiceWorker.MainFramePageLoad.CoreTransition",
-        static_cast<int>(ui::PageTransitionStripQualifier(page_transition)),
-        static_cast<int>(ui::PAGE_TRANSITION_LAST_CORE) + 1);
-    // Currently the max number of HTTP redirects is 20 as defined in
-    // net::URLRequest::kMaxRedirects in
-    // net/url_request/url_request.h. So the max number of the chain
-    // length is 21.
-    UMA_HISTOGRAM_EXACT_LINEAR(
-        "ServiceWorker.MainFramePageLoad.RedirectChainLength",
-        redirect_chain_length, net::URLRequest::kMaxRedirects + 1);
-  }
   BrowserThread::PostTask(
       BrowserThread::UI, FROM_HERE,
       base::BindOnce(&RecordURLMetricOnUI, "ServiceWorker.ControlledPageUrl",
@@ -513,10 +497,10 @@ void ServiceWorkerMetrics::RecordStartWorkerStatus(
 }
 
 void ServiceWorkerMetrics::RecordInstalledScriptsSenderStatus(
-    ServiceWorkerInstalledScriptsSender::FinishedReason reason) {
+    ServiceWorkerInstalledScriptReader::FinishedReason reason) {
   UMA_HISTOGRAM_ENUMERATION(
       "ServiceWorker.StartWorker.InstalledScriptsSender.FinishedReason", reason,
-      ServiceWorkerInstalledScriptsSender::FinishedReason::kMaxValue);
+      ServiceWorkerInstalledScriptReader::FinishedReason::kMaxValue);
 }
 
 void ServiceWorkerMetrics::RecordStartWorkerTime(base::TimeDelta time,
@@ -627,19 +611,6 @@ void ServiceWorkerMetrics::RecordInstallEventStatus(
     ServiceWorkerStatusCode status) {
   UMA_HISTOGRAM_ENUMERATION("ServiceWorker.InstallEventStatus", status,
                             SERVICE_WORKER_ERROR_MAX_VALUE);
-}
-
-void ServiceWorkerMetrics::RecordForeignFetchRegistrationCount(
-    size_t scope_count,
-    size_t origin_count) {
-  UMA_HISTOGRAM_COUNTS_100("ServiceWorker.ForeignFetch.ScopeCount",
-                           scope_count);
-  if (scope_count > 0) {
-    // Only record number of origins if service worker registered for at least
-    // one foreign fetch scope.
-    UMA_HISTOGRAM_COUNTS_100("ServiceWorker.ForeignFetch.OriginCount",
-                             origin_count);
-  }
 }
 
 void ServiceWorkerMetrics::RecordEventDispatchingDelay(EventType event_type,
@@ -785,20 +756,17 @@ void ServiceWorkerMetrics::RecordStatusZeroResponseError(
     blink::mojom::ServiceWorkerResponseError error) {
   if (is_main_resource) {
     UMA_HISTOGRAM_ENUMERATION(
-        "ServiceWorker.URLRequestJob.MainResource.StatusZeroError", error,
-        static_cast<int>(blink::mojom::ServiceWorkerResponseError::kLast) + 1);
+        "ServiceWorker.URLRequestJob.MainResource.StatusZeroError", error);
   } else {
     UMA_HISTOGRAM_ENUMERATION(
-        "ServiceWorker.URLRequestJob.Subresource.StatusZeroError", error,
-        static_cast<int>(blink::mojom::ServiceWorkerResponseError::kLast) + 1);
+        "ServiceWorker.URLRequestJob.Subresource.StatusZeroError", error);
   }
 }
 
 void ServiceWorkerMetrics::RecordFallbackedRequestMode(
     network::mojom::FetchRequestMode mode) {
-  UMA_HISTOGRAM_ENUMERATION(
-      "ServiceWorker.URLRequestJob.FallbackedRequestMode", mode,
-      static_cast<int>(network::mojom::FetchRequestMode::kLast) + 1);
+  UMA_HISTOGRAM_ENUMERATION("ServiceWorker.URLRequestJob.FallbackedRequestMode",
+                            mode);
 }
 
 void ServiceWorkerMetrics::RecordProcessCreated(bool is_new_process) {

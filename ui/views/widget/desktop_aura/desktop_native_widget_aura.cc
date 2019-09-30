@@ -6,7 +6,6 @@
 
 #include "base/bind.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
 #include "services/ui/public/interfaces/window_manager_constants.mojom.h"
@@ -62,8 +61,8 @@
 #include "ui/base/win/shell.h"
 #endif
 
-DECLARE_EXPORTED_UI_CLASS_PROPERTY_TYPE(VIEWS_EXPORT,
-                                      views::DesktopNativeWidgetAura*);
+DEFINE_EXPORTED_UI_CLASS_PROPERTY_TYPE(VIEWS_EXPORT,
+                                       views::DesktopNativeWidgetAura*);
 
 namespace views {
 
@@ -348,7 +347,8 @@ void DesktopNativeWidgetAura::OnDesktopWindowTreeHostDestroyed(
 }
 
 void DesktopNativeWidgetAura::HandleActivationChanged(bool active) {
-  native_widget_delegate_->OnNativeWidgetActivationChanged(active);
+  if (!native_widget_delegate_->OnNativeWidgetActivationChanged(active))
+    return;
   wm::ActivationClient* activation_client =
       wm::GetActivationClient(host_->window());
   if (!activation_client)
@@ -362,7 +362,7 @@ void DesktopNativeWidgetAura::HandleActivationChanged(bool active) {
       View* view_for_activation = focus_manager->GetFocusedView()
                                       ? focus_manager->GetFocusedView()
                                       : focus_manager->GetStoredFocusView();
-      if (!view_for_activation) {
+      if (!view_for_activation || !view_for_activation->GetWidget()) {
         view_for_activation = GetWidget()->GetRootView();
       } else if (view_for_activation == focus_manager->GetStoredFocusView()) {
         // When desktop native widget has modal transient child, we don't
@@ -413,7 +413,7 @@ void DesktopNativeWidgetAura::InitNativeWidget(
   NativeWidgetAura::RegisterNativeWidgetForWindow(this, content_window_);
   content_window_->SetType(GetAuraWindowTypeForWidgetType(params.type));
   content_window_->Init(params.layer_type);
-  wm::SetShadowElevation(content_window_, wm::ShadowElevation::NONE);
+  wm::SetShadowElevation(content_window_, wm::kShadowElevationNone);
 
   if (!desktop_window_tree_host_) {
     if (params.desktop_window_tree_host) {
@@ -432,7 +432,7 @@ void DesktopNativeWidgetAura::InitNativeWidget(
     }
     host_.reset(desktop_window_tree_host_->AsWindowTreeHost());
   }
-  desktop_window_tree_host_->Init(content_window_, params);
+  desktop_window_tree_host_->Init(params);
 
   host_->window()->AddChild(content_window_);
   host_->window()->SetProperty(kDesktopNativeWidgetAuraKey, this);
@@ -473,6 +473,8 @@ void DesktopNativeWidgetAura::InitNativeWidget(
     aura::client::SetCursorClient(host_->window(), cursor_manager_);
   }
 
+  host_->window()->SetName(params.name);
+  content_window_->SetName("DesktopNativeWidgetAura - content window");
   desktop_window_tree_host_->OnNativeWidgetCreated(params);
 
   UpdateWindowTransparency();

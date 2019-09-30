@@ -13,6 +13,7 @@
 #include "chrome/browser/profiles/profile_android.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/sessions/core/session_id.h"
+#include "components/strings/grit/components_strings.h"
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/web_contents.h"
 #include "jni/DataUseTabUIManager_jni.h"
@@ -56,7 +57,7 @@ uint32_t data_use_ui_message_id_map[DATA_USE_UI_MESSAGE_MAX] = {
             IDS_DATA_USE_TRACKING_ENDED_CHECKBOX_MESSAGE,
         [DATA_USE_TRACKING_ENDED_CONTINUE] =
             IDS_DATA_USE_TRACKING_ENDED_CONTINUE,
-        [DATA_USE_LEARN_MORE_TITLE] = IDS_DATA_USE_LEARN_MORE_TITLE,
+        [DATA_USE_LEARN_MORE_TITLE] = IDS_LEARN_MORE,
         [DATA_USE_LEARN_MORE_LINK_URL] = IDS_DATA_USE_LEARN_MORE_LINK_URL,
 };
 
@@ -68,7 +69,8 @@ jboolean JNI_DataUseTabUIManager_CheckAndResetDataUseTrackingStarted(
     const JavaParamRef<jclass>& clazz,
     jint tab_id,
     const JavaParamRef<jobject>& jprofile) {
-  DCHECK_LE(0, static_cast<SessionID::id_type>(tab_id));
+  SessionID casted_tab_id = SessionID::FromSerializedValue(tab_id);
+  DCHECK(casted_tab_id.is_valid());
 
   Profile* profile = ProfileAndroid::FromProfileAndroid(jprofile);
   android::DataUseUITabModel* data_use_ui_tab_model =
@@ -77,7 +79,7 @@ jboolean JNI_DataUseTabUIManager_CheckAndResetDataUseTrackingStarted(
     return false;
 
   return data_use_ui_tab_model->CheckAndResetDataUseTrackingStarted(
-      static_cast<SessionID::id_type>(tab_id));
+      casted_tab_id);
 }
 
 // static
@@ -86,7 +88,8 @@ jboolean JNI_DataUseTabUIManager_CheckAndResetDataUseTrackingEnded(
     const JavaParamRef<jclass>& clazz,
     jint tab_id,
     const JavaParamRef<jobject>& jprofile) {
-  DCHECK_LE(0, static_cast<SessionID::id_type>(tab_id));
+  SessionID casted_tab_id = SessionID::FromSerializedValue(tab_id);
+  DCHECK(casted_tab_id.is_valid());
 
   Profile* profile = ProfileAndroid::FromProfileAndroid(jprofile);
   android::DataUseUITabModel* data_use_ui_tab_model =
@@ -95,7 +98,7 @@ jboolean JNI_DataUseTabUIManager_CheckAndResetDataUseTrackingEnded(
     return false;
 
   return data_use_ui_tab_model->CheckAndResetDataUseTrackingEnded(
-      static_cast<SessionID::id_type>(tab_id));
+      casted_tab_id);
 }
 
 // static
@@ -104,7 +107,8 @@ void JNI_DataUseTabUIManager_UserClickedContinueOnDialogBox(
     const JavaParamRef<jclass>& clazz,
     jint tab_id,
     const JavaParamRef<jobject>& jprofile) {
-  DCHECK_LE(0, static_cast<SessionID::id_type>(tab_id));
+  SessionID casted_tab_id = SessionID::FromSerializedValue(tab_id);
+  DCHECK(casted_tab_id.is_valid());
 
   Profile* profile = ProfileAndroid::FromProfileAndroid(jprofile);
   android::DataUseUITabModel* data_use_ui_tab_model =
@@ -112,8 +116,7 @@ void JNI_DataUseTabUIManager_UserClickedContinueOnDialogBox(
   if (!data_use_ui_tab_model)
     return;
 
-  data_use_ui_tab_model->UserClickedContinueOnDialogBox(
-      static_cast<SessionID::id_type>(tab_id));
+  data_use_ui_tab_model->UserClickedContinueOnDialogBox(casted_tab_id);
 }
 
 // static
@@ -125,7 +128,8 @@ jboolean JNI_DataUseTabUIManager_WouldDataUseTrackingEnd(
     const JavaParamRef<jstring>& url,
     jint transition_type,
     const JavaParamRef<jobject>& jprofile) {
-  DCHECK_LE(0, static_cast<SessionID::id_type>(tab_id));
+  SessionID casted_tab_id = SessionID::FromSerializedValue(tab_id);
+  DCHECK(casted_tab_id.is_valid());
   content::WebContents* web_contents =
       content::WebContents::FromJavaWebContents(j_web_contents);
   DCHECK(web_contents);
@@ -137,8 +141,7 @@ jboolean JNI_DataUseTabUIManager_WouldDataUseTrackingEnd(
     return false;
 
   return data_use_ui_tab_model->WouldDataUseTrackingEnd(
-      ConvertJavaStringToUTF8(env, url), transition_type,
-      static_cast<SessionID::id_type>(tab_id),
+      ConvertJavaStringToUTF8(env, url), transition_type, casted_tab_id,
       web_contents->GetController().GetPendingEntry());
 }
 
@@ -150,7 +153,8 @@ void JNI_DataUseTabUIManager_OnCustomTabInitialNavigation(
     const JavaParamRef<jstring>& jpackage_name,
     const JavaParamRef<jstring>& jurl,
     const JavaParamRef<jobject>& jprofile) {
-  DCHECK_LE(0, static_cast<SessionID::id_type>(tab_id));
+  SessionID casted_tab_id = SessionID::FromSerializedValue(tab_id);
+  DCHECK(casted_tab_id.is_valid());
 
   Profile* profile = ProfileAndroid::FromProfileAndroid(jprofile);
   android::DataUseUITabModel* data_use_ui_tab_model =
@@ -166,8 +170,8 @@ void JNI_DataUseTabUIManager_OnCustomTabInitialNavigation(
   if (!jpackage_name.is_null())
     ConvertJavaStringToUTF8(env, jpackage_name, &package_name);
 
-  data_use_ui_tab_model->ReportCustomTabInitialNavigation(
-      static_cast<SessionID::id_type>(tab_id), package_name, url);
+  data_use_ui_tab_model->ReportCustomTabInitialNavigation(casted_tab_id,
+                                                          package_name, url);
 }
 
 // static

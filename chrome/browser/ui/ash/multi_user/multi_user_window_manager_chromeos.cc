@@ -40,7 +40,6 @@
 #include "ui/aura/window_tree_host.h"
 #include "ui/base/ui_base_types.h"
 #include "ui/events/event.h"
-#include "ui/message_center/message_center.h"
 #include "ui/wm/core/transient_window_manager.h"
 #include "ui/wm/core/window_animations.h"
 #include "ui/wm/core/window_util.h"
@@ -234,7 +233,7 @@ void MultiUserWindowManagerChromeOS::Init() {
 
   // The BrowserListObserver would have been better to use then the old
   // notification system, but that observer fires before the window got created.
-  registrar_.Add(this, chrome::NOTIFICATION_BROWSER_WINDOW_READY,
+  registrar_.Add(this, chrome::NOTIFICATION_BROWSER_OPENED,
                  content::NotificationService::AllSources());
 
   // Add an app window observer & all already running apps.
@@ -485,7 +484,7 @@ void MultiUserWindowManagerChromeOS::Observe(
     int type,
     const content::NotificationSource& source,
     const content::NotificationDetails& details) {
-  DCHECK_EQ(chrome::NOTIFICATION_BROWSER_WINDOW_READY, type);
+  DCHECK_EQ(chrome::NOTIFICATION_BROWSER_OPENED, type);
   AddBrowserWindow(content::Source<Browser>(source).ptr());
 }
 

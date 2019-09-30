@@ -39,8 +39,8 @@
 #include "net/http/http_response_headers.h"
 #include "net/http/http_response_info.h"
 #include "storage/browser/quota/quota_manager_proxy.h"
-#include "third_party/WebKit/common/service_worker/service_worker_provider_type.mojom.h"
-#include "third_party/WebKit/public/platform/modules/serviceworker/service_worker_registration.mojom.h"
+#include "third_party/blink/public/mojom/service_worker/service_worker_provider_type.mojom.h"
+#include "third_party/blink/public/mojom/service_worker/service_worker_registration.mojom.h"
 #include "url/gurl.h"
 
 namespace content {
@@ -89,7 +89,10 @@ void SuccessReportingCallback(
 bool IsSameOriginClientProviderHost(const GURL& origin,
                                     ServiceWorkerProviderHost* host) {
   return host->IsProviderForClient() &&
-         host->document_url().GetOrigin() == origin;
+         host->document_url().GetOrigin() == origin &&
+         // Don't expose "reserved" clients (clients that are not yet execution
+         // ready) to the Clients API.
+         host->is_execution_ready();
 }
 
 bool IsSameOriginWindowProviderHost(const GURL& origin,
@@ -144,13 +147,13 @@ class ClearAllServiceWorkersHelper
       ServiceWorkerVersion* version(version_itr.second);
       if (version->running_status() == EmbeddedWorkerStatus::STARTING ||
           version->running_status() == EmbeddedWorkerStatus::RUNNING) {
-        version->StopWorker(base::BindOnce(&base::DoNothing));
+        version->StopWorker(base::DoNothing());
       }
     }
     for (const auto& registration_info : registrations) {
       context->UnregisterServiceWorker(
           registration_info.pattern,
-          base::Bind(&ClearAllServiceWorkersHelper::OnResult, this));
+          base::BindOnce(&ClearAllServiceWorkersHelper::OnResult, this));
     }
   }
 
@@ -299,6 +302,7 @@ ServiceWorkerContextCore::ServiceWorkerContextCore(
       dispatcher_hosts_(std::move(old_context->dispatcher_hosts_)),
       providers_(old_context->providers_.release()),
       provider_by_uuid_(old_context->provider_by_uuid_.release()),
+      loader_factory_getter_(old_context->loader_factory_getter()),
       next_handle_id_(old_context->next_handle_id_),
       was_service_worker_registered_(
           old_context->was_service_worker_registered_),
@@ -339,8 +343,7 @@ ServiceWorkerDispatcherHost* ServiceWorkerContextCore::GetDispatcherHost(
 }
 
 void ServiceWorkerContextCore::RemoveDispatcherHost(int process_id) {
-  // Temporary CHECK for debugging https://crbug.com/750267.
-  CHECK(BrowserThread::CurrentlyOn(BrowserThread::IO));
+  DCHECK(BrowserThread::CurrentlyOn(BrowserThread::IO));
   // TODO(falken) Try to remove this call. It should be unnecessary because
   // provider hosts remove themselves when their Mojo connection to the renderer
   // is destroyed. But if we don't remove the hosts immediately here, collisions
@@ -352,8 +355,7 @@ void ServiceWorkerContextCore::RemoveDispatcherHost(int process_id) {
 
 void ServiceWorkerContextCore::AddProviderHost(
     std::unique_ptr<ServiceWorkerProviderHost> host) {
-  // Temporary CHECK for debugging https://crbug.com/750267.
-  CHECK(BrowserThread::CurrentlyOn(BrowserThread::IO));
+  DCHECK(BrowserThread::CurrentlyOn(BrowserThread::IO));
   int process_id = host->process_id();
   int provider_id = host->provider_id();
   ProviderMap* map = GetProviderMapForProcess(process_id);
@@ -367,6 +369,7 @@ void ServiceWorkerContextCore::AddProviderHost(
 ServiceWorkerProviderHost* ServiceWorkerContextCore::GetProviderHost(
     int process_id,
     int provider_id) {
+  DCHECK(BrowserThread::CurrentlyOn(BrowserThread::IO));
   ProviderMap* map = GetProviderMapForProcess(process_id);
   if (!map)
     return nullptr;
@@ -375,8 +378,7 @@ ServiceWorkerProviderHost* ServiceWorkerContextCore::GetProviderHost(
 
 void ServiceWorkerContextCore::RemoveProviderHost(
     int process_id, int provider_id) {
-  // Temporary CHECK for debugging https://crbug.com/750267.
-  CHECK(BrowserThread::CurrentlyOn(BrowserThread::IO));
+  DCHECK(BrowserThread::CurrentlyOn(BrowserThread::IO));
   ProviderMap* map = GetProviderMapForProcess(process_id);
   DCHECK(map);
   map->Remove(provider_id);
@@ -384,38 +386,28 @@ void ServiceWorkerContextCore::RemoveProviderHost(
 
 void ServiceWorkerContextCore::RemoveAllProviderHostsForProcess(
     int process_id) {
-  // Temporary CHECK for debugging https://crbug.com/750267.
-  CHECK(BrowserThread::CurrentlyOn(BrowserThread::IO));
+  DCHECK(BrowserThread::CurrentlyOn(BrowserThread::IO));
   if (providers_->Lookup(process_id))
     providers_->Remove(process_id);
 }
 
 std::unique_ptr<ServiceWorkerContextCore::ProviderHostIterator>
-ServiceWorkerContextCore::GetProviderHostIterator() {
-  // Temporary CHECK for debugging https://crbug.com/750267.
-  CHECK(BrowserThread::CurrentlyOn(BrowserThread::IO));
-  return base::WrapUnique(new ProviderHostIterator(
-      providers_.get(), ProviderHostIterator::ProviderHostPredicate()));
-}
-
-std::unique_ptr<ServiceWorkerContextCore::ProviderHostIterator>
 ServiceWorkerContextCore::GetClientProviderHostIterator(const GURL& origin) {
-  // Temporary CHECK for debugging https://crbug.com/750267.
-  CHECK(BrowserThread::CurrentlyOn(BrowserThread::IO));
+  DCHECK(BrowserThread::CurrentlyOn(BrowserThread::IO));
   return base::WrapUnique(new ProviderHostIterator(
       providers_.get(), base::Bind(IsSameOriginClientProviderHost, origin)));
 }
 
 void ServiceWorkerContextCore::HasMainFrameProviderHost(
     const GURL& origin,
-    const BoolCallback& callback) const {
+    BoolCallback callback) const {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   ProviderHostIterator provider_host_iterator(
       providers_.get(), base::Bind(IsSameOriginWindowProviderHost, origin));
 
   if (provider_host_iterator.IsAtEnd()) {
     base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE, base::BindOnce(callback, false));
+        FROM_HERE, base::BindOnce(std::move(callback), false));
     return;
   }
 
@@ -432,9 +424,8 @@ void ServiceWorkerContextCore::HasMainFrameProviderHost(
 
   BrowserThread::PostTaskAndReplyWithResult(
       BrowserThread::UI, FROM_HERE,
-      base::Bind(&FrameListContainsMainFrameOnUI,
-                 base::Passed(std::move(render_frames))),
-      callback);
+      base::BindOnce(&FrameListContainsMainFrameOnUI, std::move(render_frames)),
+      std::move(callback));
 }
 
 void ServiceWorkerContextCore::RegisterProviderHostByClientID(
@@ -461,14 +452,13 @@ ServiceWorkerProviderHost* ServiceWorkerContextCore::GetProviderHostByClientID(
 void ServiceWorkerContextCore::RegisterServiceWorker(
     const GURL& script_url,
     const blink::mojom::ServiceWorkerRegistrationOptions& options,
-    ServiceWorkerProviderHost* provider_host,
-    const RegistrationCallback& callback) {
+    RegistrationCallback callback) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   was_service_worker_registered_ = true;
   job_coordinator_->Register(
-      script_url, options, provider_host,
-      base::Bind(&ServiceWorkerContextCore::RegistrationComplete, AsWeakPtr(),
-                 options.scope, callback));
+      script_url, options,
+      base::BindOnce(&ServiceWorkerContextCore::RegistrationComplete,
+                     AsWeakPtr(), options.scope, std::move(callback)));
 }
 
 void ServiceWorkerContextCore::UpdateServiceWorker(
@@ -482,30 +472,25 @@ void ServiceWorkerContextCore::UpdateServiceWorker(
     ServiceWorkerRegistration* registration,
     bool force_bypass_cache,
     bool skip_script_comparison,
-    ServiceWorkerProviderHost* provider_host,
-    const UpdateCallback& callback) {
+    UpdateCallback callback) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
-  job_coordinator_->Update(registration, force_bypass_cache,
-                           skip_script_comparison, provider_host,
-                           base::Bind(&ServiceWorkerContextCore::UpdateComplete,
-                                      AsWeakPtr(), callback));
+  job_coordinator_->Update(
+      registration, force_bypass_cache, skip_script_comparison,
+      base::BindOnce(&ServiceWorkerContextCore::UpdateComplete, AsWeakPtr(),
+                     std::move(callback)));
 }
 
 void ServiceWorkerContextCore::UnregisterServiceWorker(
     const GURL& pattern,
-    const UnregistrationCallback& callback) {
+    UnregistrationCallback callback) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   job_coordinator_->Unregister(
-      pattern,
-      base::Bind(&ServiceWorkerContextCore::UnregistrationComplete,
-                 AsWeakPtr(),
-                 pattern,
-                 callback));
+      pattern, base::BindOnce(&ServiceWorkerContextCore::UnregistrationComplete,
+                              AsWeakPtr(), pattern, std::move(callback)));
 }
 
-void ServiceWorkerContextCore::DeleteForOrigin(
-    const GURL& origin,
-    base::OnceCallback<void(ServiceWorkerStatusCode)> callback) {
+void ServiceWorkerContextCore::DeleteForOrigin(const GURL& origin,
+                                               StatusCallback callback) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   storage()->GetRegistrationsForOrigin(
       origin,
@@ -546,26 +531,25 @@ void ServiceWorkerContextCore::DidGetRegistrationsForDeleteForOrigin(
 
 ServiceWorkerContextCore::ProviderMap*
 ServiceWorkerContextCore::GetProviderMapForProcess(int process_id) {
-  // Temporary CHECK for debugging https://crbug.com/750267.
-  CHECK(BrowserThread::CurrentlyOn(BrowserThread::IO));
+  DCHECK(BrowserThread::CurrentlyOn(BrowserThread::IO));
   return providers_->Lookup(process_id);
 }
 
 void ServiceWorkerContextCore::RegistrationComplete(
     const GURL& pattern,
-    const ServiceWorkerContextCore::RegistrationCallback& callback,
+    ServiceWorkerContextCore::RegistrationCallback callback,
     ServiceWorkerStatusCode status,
     const std::string& status_message,
     ServiceWorkerRegistration* registration) {
   if (status != SERVICE_WORKER_OK) {
     DCHECK(!registration);
-    callback.Run(status, status_message,
-                 blink::mojom::kInvalidServiceWorkerRegistrationId);
+    std::move(callback).Run(status, status_message,
+                            blink::mojom::kInvalidServiceWorkerRegistrationId);
     return;
   }
 
   DCHECK(registration);
-  callback.Run(status, status_message, registration->id());
+  std::move(callback).Run(status, status_message, registration->id());
   // TODO(falken): At this point the registration promise is resolved, but we
   // haven't persisted anything to storage yet. So we should either call
   // OnRegistrationStored somewhere else or change its name.
@@ -577,27 +561,27 @@ void ServiceWorkerContextCore::RegistrationComplete(
 }
 
 void ServiceWorkerContextCore::UpdateComplete(
-    const ServiceWorkerContextCore::UpdateCallback& callback,
+    ServiceWorkerContextCore::UpdateCallback callback,
     ServiceWorkerStatusCode status,
     const std::string& status_message,
     ServiceWorkerRegistration* registration) {
   if (status != SERVICE_WORKER_OK) {
     DCHECK(!registration);
-    callback.Run(status, status_message,
-                 blink::mojom::kInvalidServiceWorkerRegistrationId);
+    std::move(callback).Run(status, status_message,
+                            blink::mojom::kInvalidServiceWorkerRegistrationId);
     return;
   }
 
   DCHECK(registration);
-  callback.Run(status, status_message, registration->id());
+  std::move(callback).Run(status, status_message, registration->id());
 }
 
 void ServiceWorkerContextCore::UnregistrationComplete(
     const GURL& pattern,
-    const ServiceWorkerContextCore::UnregistrationCallback& callback,
+    ServiceWorkerContextCore::UnregistrationCallback callback,
     int64_t registration_id,
     ServiceWorkerStatusCode status) {
-  callback.Run(status);
+  std::move(callback).Run(status);
   if (status == SERVICE_WORKER_OK && observer_list_.get()) {
     observer_list_->Notify(
         FROM_HERE, &ServiceWorkerContextCoreObserver::OnRegistrationDeleted,
@@ -722,34 +706,9 @@ void ServiceWorkerContextCore::ScheduleDeleteAndStartOver() const {
                      wrapper_));
 }
 
-void ServiceWorkerContextCore::DeleteAndStartOver(
-    const StatusCallback& callback) {
+void ServiceWorkerContextCore::DeleteAndStartOver(StatusCallback callback) {
   job_coordinator_->AbortAll();
-  storage_->DeleteAndStartOver(callback);
-}
-
-std::unique_ptr<ServiceWorkerProviderHost>
-ServiceWorkerContextCore::TransferProviderHostOut(int process_id,
-                                                  int provider_id) {
-  ProviderMap* map = GetProviderMapForProcess(process_id);
-  ServiceWorkerProviderHost* transferee = map->Lookup(provider_id);
-  std::unique_ptr<ServiceWorkerProviderHost> provisional_host =
-      transferee->PrepareForCrossSiteTransfer();
-  return map->Replace(provider_id, std::move(provisional_host));
-}
-
-void ServiceWorkerContextCore::TransferProviderHostIn(
-    int new_process_id,
-    int new_provider_id,
-    std::unique_ptr<ServiceWorkerProviderHost> transferee) {
-  ProviderMap* map = GetProviderMapForProcess(new_process_id);
-  ServiceWorkerProviderHost* provisional_host = map->Lookup(new_provider_id);
-  if (!provisional_host)
-    return;
-
-  DCHECK(provisional_host->document_url().is_empty());
-  transferee->CompleteCrossSiteTransfer(provisional_host);
-  map->Replace(new_provider_id, std::move(transferee));
+  storage_->DeleteAndStartOver(std::move(callback));
 }
 
 void ServiceWorkerContextCore::ClearAllServiceWorkersForTest(
@@ -762,8 +721,8 @@ void ServiceWorkerContextCore::ClearAllServiceWorkersForTest(
     return;
   was_service_worker_registered_ = false;
   storage()->GetAllRegistrationsInfos(
-      base::Bind(&ClearAllServiceWorkersHelper::DidGetAllRegistrations, helper,
-                 AsWeakPtr()));
+      base::BindOnce(&ClearAllServiceWorkersHelper::DidGetAllRegistrations,
+                     helper, AsWeakPtr()));
 }
 
 void ServiceWorkerContextCore::CheckHasServiceWorker(
@@ -771,10 +730,9 @@ void ServiceWorkerContextCore::CheckHasServiceWorker(
     const GURL& other_url,
     ServiceWorkerContext::CheckHasServiceWorkerCallback callback) {
   storage()->FindRegistrationForDocument(
-      url,
-      base::Bind(&ServiceWorkerContextCore::
-                     DidFindRegistrationForCheckHasServiceWorker,
-                 AsWeakPtr(), other_url, base::Passed(std::move(callback))));
+      url, base::BindOnce(&ServiceWorkerContextCore::
+                              DidFindRegistrationForCheckHasServiceWorker,
+                          AsWeakPtr(), other_url, std::move(callback)));
 }
 
 void ServiceWorkerContextCore::UpdateVersionFailureCount(

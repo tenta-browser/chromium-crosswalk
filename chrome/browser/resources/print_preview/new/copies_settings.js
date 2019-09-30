@@ -9,18 +9,20 @@ Polymer({
 
   properties: {
     /** @private {string} */
-    inputString_: String,
+    currentValue_: String,
 
     /** @private {boolean} */
     inputValid_: Boolean,
+
+    disabled: Boolean,
   },
 
   /** @private {boolean} */
   isInitialized_: false,
 
   observers: [
-    'onInputChanged_(inputString_, inputValid_)',
-    'onInitialized_(settings.copies.value)'
+    'onInputChanged_(currentValue_, inputValid_)',
+    'onInitialized_(settings.copies.value, settings.collate.value)'
   ],
 
   /**
@@ -32,7 +34,9 @@ Polymer({
       return;
     this.isInitialized_ = true;
     const copies = this.getSetting('copies');
-    this.set('inputString_', copies.value);
+    this.currentValue_ = /** @type {string} */ (copies.value.toString());
+    const collate = this.getSetting('collate');
+    this.$.collate.checked = /** @type {boolean} */ (collate.value);
   },
 
   /**
@@ -42,7 +46,7 @@ Polymer({
    */
   onInputChanged_: function() {
     this.setSetting(
-        'copies', this.inputValid_ ? parseInt(this.inputString_, 10) : 1);
+        'copies', this.inputValid_ ? parseInt(this.currentValue_, 10) : 1);
     this.setSettingValid('copies', this.inputValid_);
   },
 
@@ -51,6 +55,11 @@ Polymer({
    * @private
    */
   collateHidden_: function() {
-    return !this.inputValid_ || parseInt(this.inputString_, 10) == 1;
+    return !this.inputValid_ || parseInt(this.currentValue_, 10) == 1;
+  },
+
+  /** @private */
+  onCollateChange_: function() {
+    this.setSetting('collate', this.$.collate.checked);
   },
 });

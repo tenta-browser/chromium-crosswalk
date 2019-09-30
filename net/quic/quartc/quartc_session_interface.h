@@ -14,6 +14,7 @@
 #include "net/quic/core/quic_time.h"
 #include "net/quic/core/quic_types.h"
 #include "net/quic/platform/api/quic_export.h"
+#include "net/quic/quartc/quartc_session_visitor_interface.h"
 #include "net/quic/quartc/quartc_stream_interface.h"
 
 namespace net {
@@ -95,11 +96,6 @@ class QUIC_EXPORT_PRIVATE QuartcSessionInterface {
    public:
     virtual ~PacketTransport() {}
 
-    // Called by the QuartcPacketWriter to check if the underneath transport is
-    // writable. True if packets written are expected to be sent.  False if
-    // packets will be dropped.
-    virtual bool CanWrite() = 0;
-
     // Called by the QuartcPacketWriter when writing packets to the network.
     // Return the number of written bytes. Return 0 if the write is blocked.
     virtual int Write(const char* buffer, size_t buf_len) = 0;
@@ -135,6 +131,9 @@ class QUIC_EXPORT_PRIVATE QuartcSessionInterface {
 
   // The |delegate| is not owned by QuartcSession.
   virtual void SetDelegate(Delegate* delegate) = 0;
+
+  // Sets a visitor for the session.
+  virtual void SetSessionVisitor(QuartcSessionVisitor* debug_visitor) = 0;
 };
 
 }  // namespace net

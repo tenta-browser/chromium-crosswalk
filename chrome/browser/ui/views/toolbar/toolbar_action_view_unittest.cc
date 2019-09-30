@@ -38,6 +38,7 @@ class TestToolbarActionViewDelegate : public ToolbarActionView::Delegate {
   views::MenuButton* GetOverflowReferenceView() override {
     return overflow_reference_view_;
   }
+  gfx::Size GetToolbarActionSize() override { return gfx::Size(32, 32); }
   void WriteDragDataForView(views::View* sender,
                             const gfx::Point& press_pt,
                             ui::OSExchangeData* data) override {}
@@ -220,7 +221,8 @@ TEST_F(ToolbarActionViewUnitTest, BasicToolbarActionViewTest) {
   EXPECT_EQ(tooltip, tooltip_test);
   ui::AXNodeData ax_node_data;
   view.GetAccessibleNodeData(&ax_node_data);
-  EXPECT_EQ(name, ax_node_data.GetString16Attribute(ui::AX_ATTR_NAME));
+  EXPECT_EQ(name, ax_node_data.GetString16Attribute(
+                      ax::mojom::StringAttribute::kName));
 
   // The button should start in normal state, with no actions executed.
   EXPECT_EQ(views::Button::STATE_NORMAL, view.state());

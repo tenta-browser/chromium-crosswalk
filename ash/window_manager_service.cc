@@ -15,11 +15,11 @@
 #include "ash/system/power/power_status.h"
 #include "ash/window_manager.h"
 #include "base/bind.h"
-#include "base/threading/sequenced_worker_pool.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "chromeos/audio/cras_audio_handler.h"
 #include "chromeos/cryptohome/system_salt_getter.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
+#include "chromeos/dbus/power_policy_controller.h"
 #include "chromeos/network/network_connect.h"
 #include "chromeos/network/network_handler.h"
 #include "chromeos/system/fake_statistics_provider.h"
@@ -31,7 +31,6 @@
 #include "ui/aura/env.h"
 #include "ui/aura/mus/window_tree_client.h"
 #include "ui/events/event.h"
-#include "ui/message_center/message_center.h"
 #include "ui/views/mus/aura_init.h"
 
 namespace ash {
@@ -83,15 +82,15 @@ void WindowManagerService::InitWindowManager(
 }
 
 void WindowManagerService::InitializeComponents(bool init_network_handler) {
-  message_center::MessageCenter::Initialize();
-
   // Must occur after mojo::ApplicationRunner has initialized AtExitManager, but
   // before WindowManager::Init(). Tests might initialize their own instance.
   if (!chromeos::DBusThreadManager::IsInitialized()) {
     chromeos::DBusThreadManager::Initialize(
-        chromeos::DBusThreadManager::PROCESS_ASH);
+        chromeos::DBusThreadManager::kShared);
     dbus_thread_manager_initialized_ = true;
   }
+  chromeos::PowerPolicyController::Initialize(
+      chromeos::DBusThreadManager::Get()->GetPowerManagerClient());
 
   // See ChromeBrowserMainPartsChromeos for ordering details.
   bluez::BluezDBusManager::Initialize(
@@ -119,9 +118,9 @@ void WindowManagerService::ShutdownComponents() {
     chromeos::NetworkHandler::Shutdown();
   device::BluetoothAdapterFactory::Shutdown();
   bluez::BluezDBusManager::Shutdown();
+  chromeos::PowerPolicyController::Shutdown();
   if (dbus_thread_manager_initialized_)
     chromeos::DBusThreadManager::Shutdown();
-  message_center::MessageCenter::Shutdown();
 }
 
 void WindowManagerService::OnStart() {
@@ -140,12 +139,11 @@ void WindowManagerService::OnStart() {
   window_manager_ = std::make_unique<WindowManager>(
       context()->connector(), ash_config_, show_primary_host_on_connect_);
 
-  std::unique_ptr<aura::WindowTreeClient> window_tree_client =
-      std::make_unique<aura::WindowTreeClient>(
-          context()->connector(), window_manager_.get(), window_manager_.get());
   const bool automatically_create_display_roots = false;
-  window_tree_client->ConnectAsWindowManager(
-      automatically_create_display_roots);
+  std::unique_ptr<aura::WindowTreeClient> window_tree_client =
+      aura::WindowTreeClient::CreateForWindowManager(
+          context()->connector(), window_manager_.get(), window_manager_.get(),
+          automatically_create_display_roots);
 
   const bool init_network_handler = true;
   InitWindowManager(std::move(window_tree_client), init_network_handler);

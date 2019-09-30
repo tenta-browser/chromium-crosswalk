@@ -31,7 +31,7 @@ TEST_F(TranslateUtilTest, ToTranslateLanguageSynonym) {
   EXPECT_EQ("zh-CN", language);
   language = std::string("zh");
   translate::ToTranslateLanguageSynonym(&language);
-  EXPECT_EQ("zh-CN", language);
+  EXPECT_EQ("zh", language);
 
   // A sub code is not preserved (except for Chinese).
   language = std::string("he-IL");
@@ -79,40 +79,3 @@ TEST_F(TranslateUtilTest, SecurityOrigin) {
   EXPECT_EQ(running_origin, modified_origin.spec());
 }
 
-TEST_F(TranslateUtilTest, ContainsSameBaseLanguage) {
-  std::vector<std::string> list;
-
-  // Empty input.
-  EXPECT_EQ(false, translate::ContainsSameBaseLanguage(list, ""));
-
-  // Empty list.
-  EXPECT_EQ(false, translate::ContainsSameBaseLanguage(list, "fr-FR"));
-
-  // Empty language.
-  list = {"en-US"};
-  EXPECT_EQ(false, translate::ContainsSameBaseLanguage(list, ""));
-
-  // One element, no match.
-  list = {"en-US"};
-  EXPECT_EQ(false, translate::ContainsSameBaseLanguage(list, "fr-FR"));
-
-  // One element, with match.
-  list = {"fr-CA"};
-  EXPECT_EQ(true, translate::ContainsSameBaseLanguage(list, "fr-FR"));
-
-  // Multiple elements, no match.
-  list = {"en-US", "es-AR", "en-UK"};
-  EXPECT_EQ(false, translate::ContainsSameBaseLanguage(list, "fr-FR"));
-
-  // Multiple elements, with match.
-  list = {"en-US", "fr-CA", "es-AR"};
-  EXPECT_EQ(true, translate::ContainsSameBaseLanguage(list, "fr-FR"));
-
-  // Multiple elements matching.
-  list = {"en-US", "fr-CA", "es-AR", "fr-FR"};
-  EXPECT_EQ(true, translate::ContainsSameBaseLanguage(list, "fr-FR"));
-
-  // List includes base language.
-  list = {"en-US", "fr", "es-AR", "fr-FR"};
-  EXPECT_EQ(true, translate::ContainsSameBaseLanguage(list, "fr-FR"));
-}

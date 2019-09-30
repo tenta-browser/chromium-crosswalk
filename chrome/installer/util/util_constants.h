@@ -106,8 +106,11 @@ enum InstallStatus {
                                                // delete all files that belong
                                                // to old versions of Chrome too
                                                // many times without success.
-
-  MAX_INSTALL_STATUS   = 64,  // When adding a new result, bump this and update
+  STORE_DMTOKEN_FAILED = 64,  // Failed to write the specified DMToken to the
+                              // registry.
+  STORE_DMTOKEN_SUCCESS = 65,  // Writing the specified DMToken to the registry
+                               // succeeded.
+  MAX_INSTALL_STATUS   = 66,  // When adding a new result, bump this and update
                               // the InstallStatus enum in histograms.xml.
 };
 
@@ -123,23 +126,23 @@ enum ArchiveType {
 // this are the fork-and-join for diff vs. full installers (where there are
 // additional (costly) stages for the former) and rollback in case of error.
 enum InstallerStage {
-  NO_STAGE,                   // No stage to report.
-  UPDATING_SETUP,             // Courgette patching setup.exe (diff).
-  PRECONDITIONS,              // Evaluating pre-install conditions.
-  UNCOMPRESSING,              // Uncompressing chrome.packed.7z.
-  PATCHING,                   // Patching chrome.7z using Courgette (diff).
-  UNPACKING,                  // Unpacking chrome.7z.
-  CREATING_VISUAL_MANIFEST,   // Creating VisualElementsManifest.xml.
-  BUILDING,                   // Building the install work item list.
-  EXECUTING,                  // Executing the install work item list.
-  UPDATING_CHANNELS,          // Updating channel information.
-  COPYING_PREFERENCES_FILE,   // Copying preferences file.
-  CREATING_SHORTCUTS,         // Creating shortcuts.
-  REGISTERING_CHROME,         // Performing Chrome registration.
-  REMOVING_OLD_VERSIONS,      // Deleting old version directories.
-  ROLLINGBACK,                // Rolling-back the install work item list.
-  FINISHING,                  // Finishing the install.
-  NUM_STAGES                  // The number of stages.
+  NO_STAGE,                  // No stage to report.
+  UPDATING_SETUP,            // Patching setup.exe with differential update.
+  PRECONDITIONS,             // Evaluating pre-install conditions.
+  UNCOMPRESSING,             // Uncompressing chrome.packed.7z.
+  PATCHING,                  // Patching chrome.7z with differential update.
+  UNPACKING,                 // Unpacking chrome.7z.
+  CREATING_VISUAL_MANIFEST,  // Creating VisualElementsManifest.xml.
+  BUILDING,                  // Building the install work item list.
+  EXECUTING,                 // Executing the install work item list.
+  UPDATING_CHANNELS,         // Updating channel information.
+  COPYING_PREFERENCES_FILE,  // Copying preferences file.
+  CREATING_SHORTCUTS,        // Creating shortcuts.
+  REGISTERING_CHROME,        // Performing Chrome registration.
+  REMOVING_OLD_VERSIONS,     // Deleting old version directories.
+  ROLLINGBACK,               // Rolling-back the install work item list.
+  FINISHING,                 // Finishing the install.
+  NUM_STAGES                 // The number of stages.
 };
 
 namespace switches {
@@ -172,6 +175,7 @@ extern const char kRegisterURLProtocol[];
 extern const char kRenameChromeExe[];
 extern const char kRemoveChromeRegistration[];
 extern const char kRunAsAdmin[];
+extern const char kStoreDMToken[];
 extern const char kSelfDestruct[];
 extern const char kSystemLevel[];
 extern const char kTriggerActiveSetup[];
@@ -200,12 +204,14 @@ extern const wchar_t kChromeExe[];
 extern const wchar_t kChromeNewExe[];
 extern const wchar_t kChromeOldExe[];
 extern const wchar_t kCmdOnOsUpgrade[];
+extern const wchar_t kCmdStoreDMToken[];
 extern const wchar_t kEULASentinelFile[];
 extern const wchar_t kInstallBinaryDir[];
 extern const wchar_t kInstallerDir[];
 extern const wchar_t kInstallTempDir[];
 extern const wchar_t kLnkExt[];
 extern const wchar_t kNaClExe[];
+extern const wchar_t kNotificationHelperExe[];
 extern const wchar_t kSetupExe[];
 extern const wchar_t kUninstallArgumentsField[];
 extern const wchar_t kUninstallDisplayNameField[];
@@ -213,7 +219,7 @@ extern const wchar_t kUninstallInstallationDate[];
 extern const char kUninstallMetricsName[];
 extern const wchar_t kUninstallStringField[];
 
-// Google Update installer result API
+// Google Update installer result API.
 extern const wchar_t kInstallerError[];
 extern const wchar_t kInstallerExtraCode1[];
 extern const wchar_t kInstallerResult[];
@@ -232,16 +238,7 @@ extern const wchar_t kChromeChannelStable[];
 extern const wchar_t kChromeChannelStableExplicit[];
 
 extern const size_t kMaxAppModelIdLength;
-
-// The range of error values for the installer, Courgette, and bsdiff is
-// overlapping. These offset values disambiguate between different sets
-// of errors by shifting the values up with the specified offset.
-const int kCourgetteErrorOffset = 300;
-const int kBsdiffErrorOffset = 600;
-
-// Arguments to --patch switch
-extern const char kCourgette[];
-extern const char kBsdiff[];
+enum : size_t { kMaxDMTokenLength = 4096 };
 
 // Name of the allocator (and associated file) for storing histograms to be
 // reported by Chrome during its next upload.

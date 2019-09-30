@@ -21,6 +21,8 @@
         });
       }
 
+      // Instantiates a new non-persistent notification with the given |title|
+      // and |options| and forwards the notification shown or error event.
       function DisplayNonPersistentNotification(title, options) {
         const notification = new Notification(title, options || {});
         notification.addEventListener('show', e =>
@@ -29,10 +31,23 @@
           domAutomationController.send('could not show notification'));
       }
 
+      // Instantiates a new non-persistent notification with the given |title|
+      // and |options| and then closes it.
+      // Forwards 'ok' upon receiving the 'close' event.
+      function DisplayAndCloseNonPersistentNotification(title, options) {
+        const notification = new Notification(title, options || {});
+        notification.addEventListener('show', e => {
+          notification.close();
+        });
+        notification.addEventListener('close', e => {
+          domAutomationController.send('ok');
+        });
+      }
+
       // Renews the registered Service Worker registration for this page, then
       // displays a notification on the activated ServiceWorkerRegistration.
       function DisplayPersistentNotification(title, options) {
-        options = options || { body: 'Hello, world!', 
+        options = options || { body: 'Hello, world!',
                                icon: 'icon.png' };
 
         GetActivatedServiceWorker('platform_notification_service.js',

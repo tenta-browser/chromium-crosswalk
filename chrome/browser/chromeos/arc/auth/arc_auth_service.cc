@@ -89,9 +89,12 @@ ProvisioningResult ConvertArcSignInStatusToProvisioningResult(
   return ProvisioningResult::UNKNOWN_ERROR;
 }
 
-mojom::ChromeAccountType GetAccountType() {
-  return IsArcKioskMode() ? mojom::ChromeAccountType::ROBOT_ACCOUNT
-                          : mojom::ChromeAccountType::USER_ACCOUNT;
+mojom::ChromeAccountType GetAccountType(const Profile* profile) {
+  if (profile->IsChild())
+    return mojom::ChromeAccountType::CHILD_ACCOUNT;
+
+  return IsRobotAccountMode() ? mojom::ChromeAccountType::ROBOT_ACCOUNT
+                              : mojom::ChromeAccountType::USER_ACCOUNT;
 }
 
 mojom::AccountInfoPtr CreateAccountInfo(bool is_enforced,
@@ -149,8 +152,7 @@ void ArcAuthService::OnAuthorizationComplete(mojom::ArcSignInStatus status,
     // Note, UMA for initial signin is updated from ArcSessionManager.
     DCHECK_NE(mojom::ArcSignInStatus::SUCCESS_ALREADY_PROVISIONED, status);
     UpdateReauthorizationResultUMA(
-        ConvertArcSignInStatusToProvisioningResult(status),
-        policy_util::IsAccountManaged(profile_));
+        ConvertArcSignInStatusToProvisioningResult(status), profile_);
     return;
   }
 
@@ -214,10 +216,10 @@ void ArcAuthService::RequestAccountInfo(bool initial_signin) {
 
   if (IsArcOptInVerificationDisabled()) {
     OnAccountInfoReady(
-        CreateAccountInfo(false /* is_enforced */,
-                          std::string() /* auth_info */,
-                          std::string() /* auth_name */, GetAccountType(),
-                          policy_util::IsAccountManaged(profile_)),
+        CreateAccountInfo(
+            false /* is_enforced */, std::string() /* auth_info */,
+            std::string() /* auth_name */, GetAccountType(profile_),
+            policy_util::IsAccountManaged(profile_)),
         mojom::ArcSignInStatus::SUCCESS);
     return;
   }
@@ -229,15 +231,15 @@ void ArcAuthService::RequestAccountInfo(bool initial_signin) {
         std::make_unique<ArcActiveDirectoryEnrollmentTokenFetcher>(
             ArcSessionManager::Get()->support_host());
     enrollment_token_fetcher->Fetch(
-        base::Bind(&ArcAuthService::OnEnrollmentTokenFetched,
-                   weak_ptr_factory_.GetWeakPtr()));
+        base::BindOnce(&ArcAuthService::OnEnrollmentTokenFetched,
+                       weak_ptr_factory_.GetWeakPtr()));
     fetcher_ = std::move(enrollment_token_fetcher);
     return;
   }
   // For non-AD enrolled devices an auth code is fetched.
   std::unique_ptr<ArcAuthCodeFetcher> auth_code_fetcher;
-  if (IsArcKioskMode()) {
-    // In Kiosk mode, use Robot auth code fetching.
+  if (IsRobotAccountMode()) {
+    // In Kiosk and public session mode, use Robot auth code fetching.
     auth_code_fetcher = std::make_unique<ArcRobotAuthCodeFetcher>();
   } else {
     // Optionally retrieve auth code in silent mode.
@@ -295,7 +297,7 @@ void ArcAuthService::OnAuthCodeFetched(bool success,
         CreateAccountInfo(
             !IsArcOptInVerificationDisabled(), auth_code,
             ArcSessionManager::Get()->auth_context()->full_account_id(),
-            GetAccountType(), policy_util::IsAccountManaged(profile_)),
+            GetAccountType(profile_), policy_util::IsAccountManaged(profile_)),
         mojom::ArcSignInStatus::SUCCESS);
   } else {
     // Send error to ARC.

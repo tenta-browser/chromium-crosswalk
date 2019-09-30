@@ -10,7 +10,6 @@
 #include <memory>
 #include <vector>
 
-#import "base/mac/scoped_nsobject.h"
 #include "base/macros.h"
 #import "ios/web/navigation/navigation_item_impl.h"
 #import "ios/web/navigation/navigation_manager_impl.h"
@@ -32,10 +31,6 @@ class SessionStorageBuilder;
 // CRWWebViewNavigationProxy protocol:
 //   @property URL
 //   @property backForwardList
-//   @property canGoBack
-//   @property canGoForward
-//   - goBack
-//   - goForward
 //   - goToBackForwardListItem:
 //
 // This navigation manager uses WKBackForwardList as the ground truth for back-
@@ -52,6 +47,34 @@ class SessionStorageBuilder;
 // because the provisional load and commit events for iframe navigation are not
 // visible via the WKNavigationDelegate interface. Consequently, pending item
 // and previous item are only tracked for the main frame.
+//
+// Empty Window Open Navigation edge case:
+//
+//   If window.open() is called with an empty URL, WKWebView does not seem to
+//   create a WKBackForwardListItem for the first about:blank navigation. Any
+//   subsequent navigation in this window will replace the about:blank entry.
+//   This is consistent with the HTML spec regarding Location-object navigation
+//   when the browser context's only Document is about:blank:
+//   https://html.spec.whatwg.org/multipage/history.html (Section 7.7.4)
+//
+//   This navigation manager will still create a pendingNavigationItem for this
+//   "empty window open item" and allow CommitPendingItem() to be called on it.
+//   All accessors will behave identically as if the navigation history has a
+//   single normal entry. The only difference is that a subsequent call to
+//   CommitPendingItem() will *replace* the empty window open item. From this
+//   point onward, it is as if the empty window open item never occurred.
+//
+// Detach from web view edge case:
+//
+//   As long as this navigation manager is alive, the navigation manager
+//   delegate should not delete its WKWebView. However, legacy use cases exist
+//   (e.g. https://crbug/770914). As a workaround, before deleting the
+//   WKWebView, the delegate must call
+//   NavigationManagerImpl::DetachFromWebView() to cache the current session
+//   history. This puts the navigation manager in a detached state. While in
+//   this state, all getters are serviced using the cached session history.
+//   Mutation methods are not allowed. The navigation manager returns to the
+//   attached state when a new navigation starts.
 class WKBasedNavigationManagerImpl : public NavigationManagerImpl {
  public:
   WKBasedNavigationManagerImpl();
@@ -63,6 +86,7 @@ class WKBasedNavigationManagerImpl : public NavigationManagerImpl {
   void OnNavigationItemsPruned(size_t pruned_item_count) override;
   void OnNavigationItemChanged() override;
   void OnNavigationItemCommitted() override;
+  void DetachFromWebView() override;
   CRWSessionController* GetSessionController() const override;
   void AddTransientItem(const GURL& url) override;
   void AddPendingItem(
@@ -102,11 +126,67 @@ class WKBasedNavigationManagerImpl : public NavigationManagerImpl {
   bool CanPruneAllButLastCommittedItem() const override;
   void Restore(int last_committed_item_index,
                std::vector<std::unique_ptr<NavigationItem>> items) override;
+  void LoadIfNecessary() override;
 
  private:
   // The SessionStorageBuilder functions require access to private variables of
   // NavigationManagerImpl.
   friend SessionStorageBuilder;
+
+  // Access shim for NavigationItems associated with the WKBackForwardList. It
+  // is responsible for caching NavigationItems when the navigation manager
+  // detaches from its web view.
+  class WKWebViewCache {
+   public:
+    explicit WKWebViewCache(WKBasedNavigationManagerImpl* navigation_manager);
+    ~WKWebViewCache();
+
+    // Returns true if the navigation manager is attached to a WKWebView.
+    bool IsAttachedToWebView() const;
+
+    // Caches NavigationItems from the WKWebView in |this| and changes state to
+    // detached.
+    void DetachFromWebView();
+
+    // Clears the cached NavigationItems and resets state to attached. Callers
+    // that wish to restore the cached navigation items into the new web view
+    // must call ReleaseCachedItems() first.
+    void ResetToAttached();
+
+    // Returns ownership of the cached NavigationItems. This is convenient for
+    // restoring session history when reattaching to a new web view.
+    std::vector<std::unique_ptr<NavigationItem>> ReleaseCachedItems();
+
+    // Returns the number of items in the back-forward history.
+    size_t GetBackForwardListItemCount() const;
+
+    // Returns the absolute index of WKBackForwardList's |currentItem| or -1 if
+    // |currentItem| is nil. If navigation manager is in detached mode, returns
+    // the cached value of this property captured at the last call of
+    // DetachFromWebView().
+    int GetCurrentItemIndex() const;
+
+    // Returns the NavigationItem associated with the WKBackForwardListItem at
+    // |index|. If |create_if_missing| is true and the WKBackForwardListItem
+    // does not have an associated NavigationItem, creates a new one and returns
+    // it to the caller.
+    NavigationItemImpl* GetNavigationItemImplAtIndex(
+        size_t index,
+        bool create_if_missing) const;
+
+    // Returns the WKBackForwardListItem at |index|. Must only be called when
+    // IsAttachedToWebView() is true.
+    WKBackForwardListItem* GetWKItemAtIndex(size_t index) const;
+
+   private:
+    WKBasedNavigationManagerImpl* navigation_manager_;
+    bool attached_to_web_view_;
+
+    std::vector<std::unique_ptr<NavigationItemImpl>> cached_items_;
+    int cached_current_item_index_;
+
+    DISALLOW_COPY_AND_ASSIGN(WKWebViewCache);
+  };
 
   // NavigationManagerImpl:
   NavigationItemImpl* GetNavigationItemImplAtIndex(size_t index) const override;
@@ -116,16 +196,9 @@ class WKBasedNavigationManagerImpl : public NavigationManagerImpl {
   NavigationItemImpl* GetTransientItemImpl() const override;
   void FinishGoToIndex(int index,
                        NavigationInitiationType initiation_type) override;
-
-  // Returns the absolute index of WKBackForwardList's |currentItem|. Returns -1
-  // if |currentItem| is nil.
-  int GetWKCurrentItemIndex() const;
-
-  // Returns the WKNavigationItem object at the absolute index, where index = 0
-  // corresponds to the oldest entry in the back-forward history, and
-  // index = GetItemCount() - 1 corresponds to the newest entry in the back-
-  // forward history. Returns nil if |index| is outside [0, GetItemCount()).
-  WKBackForwardListItem* GetWKItemAtIndex(int index) const;
+  void FinishReload() override;
+  void FinishLoadURLWithParams() override;
+  bool IsPlaceholderUrl(const GURL& url) const override;
 
   // The pending main frame navigation item. This is nullptr if there is no
   // pending item or if the pending item is a back-forward navigation, in which
@@ -145,6 +218,13 @@ class WKBasedNavigationManagerImpl : public NavigationManagerImpl {
   // field will equal to -1.
   int last_committed_item_index_;
 
+  // The NavigationItem that corresponds to the empty window open navigation. It
+  // has to be stored separately because it has no WKBackForwardListItem. It is
+  // not null if when CommitPendingItem() is last called, the WKBackForwardList
+  // is empty but not nil. Any subsequent call to CommitPendingItem() will reset
+  // this field to null.
+  std::unique_ptr<NavigationItemImpl> empty_window_open_item_;
+
   // The transient item in main frame.
   std::unique_ptr<NavigationItemImpl> transient_item_;
 
@@ -154,6 +234,8 @@ class WKBasedNavigationManagerImpl : public NavigationManagerImpl {
   // TimeSmoother::GetSmoothedTime() with a const 'this'. Since NavigationItems
   // have to be lazily created on read, this is the only workaround.
   mutable TimeSmoother time_smoother_;
+
+  WKWebViewCache web_view_cache_;
 
   DISALLOW_COPY_AND_ASSIGN(WKBasedNavigationManagerImpl);
 };

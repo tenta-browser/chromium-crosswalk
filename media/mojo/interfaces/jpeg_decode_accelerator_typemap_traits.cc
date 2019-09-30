@@ -6,7 +6,7 @@
 
 #include "base/logging.h"
 #include "media/base/ipc/media_param_traits_macros.h"
-#include "mojo/common/time_struct_traits.h"
+#include "mojo/public/cpp/base/time_mojom_traits.h"
 #include "mojo/public/cpp/system/platform_handle.h"
 
 namespace mojo {
@@ -72,8 +72,13 @@ StructTraits<media::mojom::BitstreamBufferDataView, media::BitstreamBuffer>::
     DLOG(ERROR) << "Failed to duplicate handle of BitstreamBuffer";
     return mojo::ScopedSharedBufferHandle();
   }
-  return mojo::WrapSharedMemoryHandle(input_handle, input.size(),
-                                      true /* read_only */);
+
+  // TODO(https://crbug.com/793446): Update this to |kReadOnly| protection once
+  // BitstreamBuffer can guarantee that its handle() field always corresponds to
+  // a read-only SharedMemoryHandle.
+  return mojo::WrapSharedMemoryHandle(
+      input_handle, input.size(),
+      mojo::UnwrappedSharedMemoryHandleProtection::kReadWrite);
 }
 
 // static

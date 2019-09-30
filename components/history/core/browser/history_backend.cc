@@ -17,7 +17,6 @@
 #include "base/bind.h"
 #include "base/compiler_specific.h"
 #include "base/files/file_enumerator.h"
-#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/rand_util.h"
 #include "base/sequenced_task_runner.h"
@@ -40,9 +39,8 @@
 #include "components/history/core/browser/in_memory_history_backend.h"
 #include "components/history/core/browser/keyword_search_term.h"
 #include "components/history/core/browser/page_usage_data.h"
-#include "components/history/core/browser/typed_url_syncable_service.h"
 #include "components/history/core/browser/url_utils.h"
-#include "components/sync/driver/sync_driver_switches.h"
+#include "components/sync/model_impl/client_tag_based_model_type_processor.h"
 #include "net/base/registry_controlled_domains/registry_controlled_domain.h"
 #include "sql/error_delegate_util.h"
 #include "third_party/skia/include/core/SkBitmap.h"
@@ -57,7 +55,7 @@
 using base::Time;
 using base::TimeDelta;
 using base::TimeTicks;
-using syncer::ModelTypeChangeProcessor;
+using syncer::ClientTagBasedModelTypeProcessor;
 
 /* The HistoryBackend consists of two components:
 
@@ -72,15 +70,6 @@ using syncer::ModelTypeChangeProcessor;
 
 namespace history {
 
-// TODO(crbug.com/746268): Clean up this toggle after impact is measured via
-// Finch, which is expected to be neutral.
-const base::Feature kAvoidStrippingRefFromFaviconPageUrls{
-    "AvoidStrippingRefFromFaviconPageUrls", base::FEATURE_DISABLED_BY_DEFAULT};
-
-// TODO(crbug.com/759631): Clean this up after impact is measured via Finch.
-const base::Feature kPropagateFaviconsAcrossClientRedirects{
-    "PropagateFaviconsAcrossClientRedirects", base::FEATURE_ENABLED_BY_DEFAULT};
-
 namespace {
 
 void RunUnlessCanceled(
@@ -89,8 +78,6 @@ void RunUnlessCanceled(
   if (!is_canceled.Run())
     closure.Run();
 }
-
-}  // namespace
 
 // How long we'll wait to do a commit, so that things are batched together.
 const int kCommitIntervalSeconds = 10;
@@ -105,6 +92,32 @@ const int kMaxRedirectCount = 32;
 // The number of days old a history entry can be before it is considered "old"
 // and is deleted.
 const int kExpireDaysThreshold = 90;
+
+bool IsFaviconBitmapExpired(base::Time last_updated) {
+  return (Time::Now() - last_updated) >
+         TimeDelta::FromDays(kFaviconRefetchDays);
+}
+
+bool AreIconTypesEquivalent(favicon_base::IconType type_a,
+                            favicon_base::IconType type_b) {
+  if (type_a == type_b)
+    return true;
+
+  // Two icon types are considered 'equivalent' if both types are one of
+  // kTouchIcon, kTouchPrecomposedIcon or kWebManifestIcon.
+  const favicon_base::IconTypeSet equivalent_types = {
+      favicon_base::IconType::kTouchIcon,
+      favicon_base::IconType::kTouchPrecomposedIcon,
+      favicon_base::IconType::kWebManifestIcon};
+
+  if (equivalent_types.count(type_a) != 0 &&
+      equivalent_types.count(type_b) != 0) {
+    return true;
+  }
+  return false;
+}
+
+}  // namespace
 
 QueuedHistoryDBTask::QueuedHistoryDBTask(
     std::unique_ptr<HistoryDBTask> task,
@@ -203,16 +216,12 @@ void HistoryBackend::Init(
   if (!force_fail)
     InitImpl(history_database_params);
   delegate_->DBLoaded();
-  if (base::FeatureList::IsEnabled(switches::kSyncUSSTypedURL)) {
-    typed_url_sync_bridge_ = base::MakeUnique<TypedURLSyncBridge>(
-        this, db_.get(),
-        base::BindRepeating(&ModelTypeChangeProcessor::Create,
-                            base::RepeatingClosure()));
-    typed_url_sync_bridge_->Init();
-  } else {
-    typed_url_syncable_service_ =
-        base::MakeUnique<TypedUrlSyncableService>(this);
-  }
+
+  typed_url_sync_bridge_ = std::make_unique<TypedURLSyncBridge>(
+      this, db_.get(),
+      std::make_unique<ClientTagBasedModelTypeProcessor>(
+          syncer::TYPED_URLS, /*dump_stack=*/base::RepeatingClosure()));
+  typed_url_sync_bridge_->Init();
 
   memory_pressure_listener_.reset(new base::MemoryPressureListener(
       base::Bind(&HistoryBackend::OnMemoryPressure, base::Unretained(this))));
@@ -549,11 +558,7 @@ void HistoryBackend::AddPage(const HistoryAddPageArgs& request) {
             db_->UpdateVisitRow(visit_row);
           }
 
-          if (base::FeatureList::IsEnabled(
-                  kPropagateFaviconsAcrossClientRedirects)) {
-            extended_redirect_chain =
-                GetCachedRecentRedirects(request.referrer);
-          }
+          extended_redirect_chain = GetCachedRecentRedirects(request.referrer);
         }
       }
     }
@@ -662,7 +667,8 @@ void HistoryBackend::InitImpl(
       // The frequency of this UMA will indicate how often history
       // initialization fails.
       UMA_HISTOGRAM_BOOLEAN("History.AttemptedToFixProfileError", kill_db);
-    }  // Falls through.
+      FALLTHROUGH;
+    }
     case sql::INIT_TOO_NEW: {
       db_diagnostics_ += sql::GetCorruptFileDiagnosticsInfo(history_name);
       delegate_->NotifyProfileError(status, db_diagnostics_);
@@ -1074,10 +1080,6 @@ void HistoryBackend::QueryURL(const GURL& url,
   // Optionally query the visits.
   if (result->success && want_visits)
     db_->GetVisitsForURL(result->row.id(), &result->visits);
-}
-
-TypedUrlSyncableService* HistoryBackend::GetTypedUrlSyncableService() const {
-  return typed_url_syncable_service_.get();
 }
 
 TypedURLSyncBridge* HistoryBackend::GetTypedURLSyncBridge() const {
@@ -1548,8 +1550,7 @@ void HistoryBackend::GetLargestFaviconForURL(
     return;
   }
 
-  bitmap_result.expired =
-      (Time::Now() - last_updated) > TimeDelta::FromDays(kFaviconRefetchDays);
+  bitmap_result.expired = IsFaviconBitmapExpired(last_updated);
   bitmap_result.fetched_because_of_page_visit = last_requested.is_null();
   if (bitmap_result.is_valid())
     *favicon_bitmap_result = bitmap_result;
@@ -1562,10 +1563,12 @@ void HistoryBackend::GetFaviconsForURL(
     const GURL& page_url,
     const favicon_base::IconTypeSet& icon_types,
     const std::vector<int>& desired_sizes,
+    bool fallback_to_host,
     std::vector<favicon_base::FaviconRawBitmapResult>* bitmap_results) {
   TRACE_EVENT0("browser", "HistoryBackend::GetFaviconsForURL");
   DCHECK(bitmap_results);
-  GetFaviconsFromDB(page_url, icon_types, desired_sizes, bitmap_results);
+  GetFaviconsFromDB(page_url, icon_types, desired_sizes, fallback_to_host,
+                    bitmap_results);
 
   if (desired_sizes.size() == 1)
     bitmap_results->assign(1, favicon_base::ResizeFaviconBitmapResult(
@@ -1658,7 +1661,8 @@ void HistoryBackend::MergeFavicon(
         // Expire the favicon bitmap because sync can provide incorrect
         // |bitmap_data|. See crbug.com/474421 for more details. Expiring the
         // favicon bitmap causes it to be redownloaded the next time that the
-        // user visits any page which uses |icon_url|.
+        // user visits any page which uses |icon_url|. It also allows storing an
+        // on-demand icon along with the icon from sync.
         thumbnail_db_->SetFaviconBitmap(bitmap_id_sizes[i].bitmap_id,
                                         bitmap_data, base::Time());
         replaced_bitmap = true;
@@ -1684,9 +1688,14 @@ void HistoryBackend::MergeFavicon(
       thumbnail_db_->DeleteFaviconBitmap(bitmap_id_sizes[0].bitmap_id);
       favicon_sizes.erase(favicon_sizes.begin());
     }
+    // Set the new bitmap as expired because the bitmaps from sync/profile
+    // import/etc. are not authoritative. Expiring the favicon bitmap causes the
+    // bitmaps to be redownloaded the next time that the user visits any page
+    // which uses |icon_url|. It also allows storing an on-demand icon along
+    // with the icon from sync.
     thumbnail_db_->AddFaviconBitmap(favicon_id, bitmap_data,
-                                    FaviconBitmapType::ON_VISIT,
-                                    base::Time::Now(), pixel_size);
+                                    FaviconBitmapType::ON_VISIT, base::Time(),
+                                    pixel_size);
     favicon_sizes.push_back(pixel_size);
   }
 
@@ -1828,18 +1837,39 @@ void HistoryBackend::CloneFaviconMappingsForPages(
   }
 }
 
+bool HistoryBackend::CanSetOnDemandFavicons(const GURL& page_url,
+                                            favicon_base::IconType icon_type) {
+  if (!thumbnail_db_ || !db_)
+    return false;
+
+  // We allow writing an on demand favicon of type |icon_type| only if there is
+  // no icon of such type in the DB (so that we never overwrite anything) and if
+  // all other icons are expired. This in particular allows writing an on-demand
+  // icon if there is only an icon from sync (icons from sync are immediately
+  // set as expired).
+  std::vector<IconMapping> mapping_data;
+  thumbnail_db_->GetIconMappingsForPageURL(page_url, &mapping_data);
+
+  for (const IconMapping& mapping : mapping_data) {
+    if (AreIconTypesEquivalent(mapping.icon_type, icon_type))
+      return false;
+
+    base::Time last_updated;
+    if (thumbnail_db_->GetFaviconLastUpdatedTime(mapping.icon_id,
+                                                 &last_updated) &&
+        !IsFaviconBitmapExpired(last_updated)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 bool HistoryBackend::SetOnDemandFavicons(const GURL& page_url,
                                          favicon_base::IconType icon_type,
                                          const GURL& icon_url,
                                          const std::vector<SkBitmap>& bitmaps) {
-  if (!thumbnail_db_ || !db_)
+  if (!CanSetOnDemandFavicons(page_url, icon_type))
     return false;
-
-  // Verify there's no known data for the page URL.
-  if (thumbnail_db_->GetIconMappingsForPageURL(page_url,
-                                               /*mapping_data=*/nullptr)) {
-    return false;
-  }
 
   return SetFaviconsImpl({page_url}, icon_type, icon_url, bitmaps,
                          FaviconBitmapType::ON_DEMAND);
@@ -1912,7 +1942,8 @@ void HistoryBackend::SetImportedFavicons(
         }
       } else {
         if (!thumbnail_db_->GetIconMappingsForPageURL(
-                *url, {favicon_base::IconType::kFavicon}, nullptr)) {
+                *url, {favicon_base::IconType::kFavicon},
+                /*mapping_data=*/nullptr)) {
           // URL is present in history, update the favicon *only* if it is not
           // set already.
           thumbnail_db_->AddIconMapping(*url, favicon_id);
@@ -2009,8 +2040,8 @@ bool HistoryBackend::SetFaviconBitmaps(favicon_base::FaviconID icon_id,
   std::vector<FaviconBitmapIDSize> bitmap_id_sizes;
   thumbnail_db_->GetFaviconBitmapIDSizes(icon_id, &bitmap_id_sizes);
 
-  typedef std::pair<scoped_refptr<base::RefCountedBytes>, gfx::Size>
-      PNGEncodedBitmap;
+  using PNGEncodedBitmap =
+      std::pair<scoped_refptr<base::RefCountedBytes>, gfx::Size>;
   std::vector<PNGEncodedBitmap> to_add;
   for (size_t i = 0; i < bitmaps.size(); ++i) {
     scoped_refptr<base::RefCountedBytes> bitmap_data(new base::RefCountedBytes);
@@ -2081,6 +2112,7 @@ bool HistoryBackend::GetFaviconsFromDB(
     const GURL& page_url,
     const favicon_base::IconTypeSet& icon_types,
     const std::vector<int>& desired_sizes,
+    bool fallback_to_host,
     std::vector<favicon_base::FaviconRawBitmapResult>* favicon_bitmap_results) {
   DCHECK(favicon_bitmap_results);
   favicon_bitmap_results->clear();
@@ -2095,6 +2127,22 @@ bool HistoryBackend::GetFaviconsFromDB(
   std::vector<IconMapping> icon_mappings;
   thumbnail_db_->GetIconMappingsForPageURL(page_url, icon_types,
                                            &icon_mappings);
+
+  if (icon_mappings.empty() && fallback_to_host &&
+      page_url.SchemeIsHTTPOrHTTPS()) {
+    // We didn't find any matches, and the caller requested falling back to the
+    // host of |page_url| for fuzzy matching. Query the database for a page_url
+    // that is known to exist and matches the host of |page_url|. Do this only
+    // if we have a HTTP/HTTPS url.
+    base::Optional<GURL> fallback_page_url =
+        thumbnail_db_->FindFirstPageURLForHost(page_url, icon_types);
+
+    if (fallback_page_url) {
+      thumbnail_db_->GetIconMappingsForPageURL(fallback_page_url.value(),
+                                               icon_types, &icon_mappings);
+    }
+  }
+
   std::vector<favicon_base::FaviconID> favicon_ids;
   for (size_t i = 0; i < icon_mappings.size(); ++i)
     favicon_ids.push_back(icon_mappings[i].icon_id);
@@ -2192,22 +2240,6 @@ bool HistoryBackend::SetFaviconMappingsForPageAndRedirects(
       !SetFaviconMappingsForPages(base::flat_set<GURL>(redirects), icon_type,
                                   icon_id)
            .empty();
-  if (page_url.has_ref() &&
-      !base::FeatureList::IsEnabled(kAvoidStrippingRefFromFaviconPageUrls)) {
-    // Refs often gets added by Javascript, but the redirect chain is keyed to
-    // the URL without a ref.
-    // TODO(crbug.com/746268): This can cause orphan favicons, i.e. without a
-    // matching history URL, which will never be cleaned up by the expirer.
-    GURL::Replacements replacements;
-    replacements.ClearRef();
-    GURL page_url_without_ref = page_url.ReplaceComponents(replacements);
-    redirects = GetCachedRecentRedirects(page_url_without_ref);
-    mappings_changed |=
-        !SetFaviconMappingsForPages(base::flat_set<GURL>(redirects), icon_type,
-                                    icon_id)
-             .empty();
-  }
-
   return mappings_changed;
 }
 
@@ -2228,14 +2260,6 @@ bool HistoryBackend::SetFaviconMappingsForPage(
     favicon_base::IconType icon_type,
     favicon_base::FaviconID icon_id) {
   bool mappings_changed = false;
-
-  // Two icon types are considered 'equivalent' if both types are one of
-  // kTouchIcon, kTouchPrecomposedIcon or kWebManifestIcon.
-  const favicon_base::IconTypeSet equivalent_types = {
-      favicon_base::IconType::kTouchIcon,
-      favicon_base::IconType::kTouchPrecomposedIcon,
-      favicon_base::IconType::kWebManifestIcon};
-
   // Sets the icon mappings from |page_url| for |icon_type| to the favicon
   // with |icon_id|. Mappings for |page_url| to favicons of type |icon_type|
   // with FaviconID other than |icon_id| are removed. All icon mappings for
@@ -2255,9 +2279,7 @@ bool HistoryBackend::SetFaviconMappingsForPage(
       continue;
     }
 
-    if (icon_type == m->icon_type ||
-        (equivalent_types.count(icon_type) != 0 &&
-         equivalent_types.count(m->icon_type) != 0)) {
+    if (AreIconTypesEquivalent(icon_type, m->icon_type)) {
       thumbnail_db_->DeleteIconMapping(m->mapping_id);
 
       // Removing the icon mapping may have orphaned the associated favicon so
@@ -2582,7 +2604,7 @@ void HistoryBackend::ProcessDBTask(
     scoped_refptr<base::SingleThreadTaskRunner> origin_loop,
     const base::CancelableTaskTracker::IsCanceledCallback& is_canceled) {
   bool scheduled = !queued_history_db_tasks_.empty();
-  queued_history_db_tasks_.push_back(base::MakeUnique<QueuedHistoryDBTask>(
+  queued_history_db_tasks_.push_back(std::make_unique<QueuedHistoryDBTask>(
       std::move(task), origin_loop, is_canceled));
   if (!scheduled)
     ProcessDBTaskImpl();
@@ -2613,18 +2635,18 @@ void HistoryBackend::NotifyURLsModified(const URLRows& rows) {
     delegate_->NotifyURLsModified(rows);
 }
 
-void HistoryBackend::NotifyURLsDeleted(bool all_history,
+void HistoryBackend::NotifyURLsDeleted(const DeletionTimeRange& time_range,
                                        bool expired,
                                        const URLRows& rows,
                                        const std::set<GURL>& favicon_urls) {
   URLRows copied_rows(rows);
   for (HistoryBackendObserver& observer : observers_) {
-    observer.OnURLsDeleted(this, all_history, expired, copied_rows,
+    observer.OnURLsDeleted(this, time_range.IsAllTime(), expired, copied_rows,
                            favicon_urls);
   }
 
   if (delegate_)
-    delegate_->NotifyURLsDeleted(all_history, expired, copied_rows,
+    delegate_->NotifyURLsDeleted(time_range, expired, copied_rows,
                                  favicon_urls);
 }
 
@@ -2682,7 +2704,8 @@ void HistoryBackend::DeleteAllHistory() {
 
   // Send out the notification that history is cleared. The in-memory database
   // will pick this up and clear itself.
-  NotifyURLsDeleted(true, false, URLRows(), std::set<GURL>());
+  NotifyURLsDeleted(DeletionTimeRange::AllTime(), false, URLRows(),
+                    std::set<GURL>());
 }
 
 bool HistoryBackend::ClearAllThumbnailHistory(

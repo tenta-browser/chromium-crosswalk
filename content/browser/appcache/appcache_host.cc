@@ -15,8 +15,9 @@
 #include "content/browser/appcache/appcache_request_handler.h"
 #include "content/browser/appcache/appcache_subresource_url_factory.h"
 #include "content/public/common/content_features.h"
-#include "content/public/common/url_loader_factory.mojom.h"
 #include "net/url_request/url_request.h"
+#include "services/network/public/cpp/features.h"
+#include "services/network/public/mojom/url_loader_factory.mojom.h"
 #include "storage/browser/quota/quota_manager_proxy.h"
 
 namespace content {
@@ -62,7 +63,6 @@ AppCacheHost::AppCacheHost(int host_id,
       frontend_(frontend),
       service_(service),
       storage_(service->storage()),
-      pending_callback_param_(nullptr),
       main_resource_was_namespace_entry_(false),
       main_resource_blocked_(false),
       associated_cache_info_pending_(false),
@@ -79,7 +79,7 @@ AppCacheHost::~AppCacheHost() {
   if (group_being_updated_.get())
     group_being_updated_->RemoveUpdateObserver(this);
   storage()->CancelDelegateCallbacks(this);
-  if (service()->quota_manager_proxy() && !origin_in_use_.is_empty())
+  if (service()->quota_manager_proxy() && !origin_in_use_.unique())
     service()->quota_manager_proxy()->NotifyOriginNoLongerInUse(origin_in_use_);
 }
 
@@ -108,8 +108,8 @@ bool AppCacheHost::SelectCache(const GURL& document_url,
     return true;
   }
 
-  origin_in_use_ = document_url.GetOrigin();
-  if (service()->quota_manager_proxy() && !origin_in_use_.is_empty())
+  origin_in_use_ = url::Origin::Create(document_url);
+  if (service()->quota_manager_proxy() && !origin_in_use_.unique())
     service()->quota_manager_proxy()->NotifyOriginInUse(origin_in_use_);
 
   if (main_resource_blocked_)
@@ -146,7 +146,6 @@ bool AppCacheHost::SelectCache(const GURL& document_url,
       frontend_->OnContentBlocked(host_id_, manifest_url);
       return true;
     }
-
     // Note: The client detects if the document was not loaded using HTTP GET
     // and invokes SelectCache without a manifest url, so that detection step
     // is also skipped here. See WebApplicationCacheHostImpl.cc
@@ -155,7 +154,6 @@ bool AppCacheHost::SelectCache(const GURL& document_url,
     LoadOrCreateGroup(manifest_url);
     return true;
   }
-
   // TODO(michaeln): If there was a manifest URL, the user agent may report
   // to the user that it was ignored, to aid in application development.
   FinishCacheSelection(nullptr, nullptr);
@@ -194,14 +192,12 @@ bool AppCacheHost::MarkAsForeignEntry(const GURL& document_url,
   return true;
 }
 
-void AppCacheHost::GetStatusWithCallback(GetStatusCallback callback,
-                                         void* callback_param) {
+void AppCacheHost::GetStatusWithCallback(GetStatusCallback callback) {
   DCHECK(pending_start_update_callback_.is_null() &&
          pending_swap_cache_callback_.is_null() &&
          pending_get_status_callback_.is_null());
 
   pending_get_status_callback_ = std::move(callback);
-  pending_callback_param_ = callback_param;
   if (is_selection_pending())
     return;
 
@@ -211,19 +207,15 @@ void AppCacheHost::GetStatusWithCallback(GetStatusCallback callback,
 void AppCacheHost::DoPendingGetStatus() {
   DCHECK_EQ(false, pending_get_status_callback_.is_null());
 
-  std::move(pending_get_status_callback_)
-      .Run(GetStatus(), pending_callback_param_);
-  pending_callback_param_ = nullptr;
+  std::move(pending_get_status_callback_).Run(GetStatus());
 }
 
-void AppCacheHost::StartUpdateWithCallback(StartUpdateCallback callback,
-                                           void* callback_param) {
+void AppCacheHost::StartUpdateWithCallback(StartUpdateCallback callback) {
   DCHECK(pending_start_update_callback_.is_null() &&
          pending_swap_cache_callback_.is_null() &&
          pending_get_status_callback_.is_null());
 
   pending_start_update_callback_ = std::move(callback);
-  pending_callback_param_ = callback_param;
   if (is_selection_pending())
     return;
 
@@ -243,19 +235,16 @@ void AppCacheHost::DoPendingStartUpdate() {
     }
   }
 
-  std::move(pending_start_update_callback_)
-      .Run(success, pending_callback_param_);
-  pending_callback_param_ = nullptr;
+  std::move(pending_start_update_callback_).Run(success);
 }
 
-void AppCacheHost::SwapCacheWithCallback(SwapCacheCallback callback,
-                                         void* callback_param) {
+void AppCacheHost::SwapCacheWithCallback(SwapCacheCallback callback) {
   DCHECK(pending_start_update_callback_.is_null() &&
          pending_swap_cache_callback_.is_null() &&
          pending_get_status_callback_.is_null());
 
   pending_swap_cache_callback_ = std::move(callback);
-  pending_callback_param_ = callback_param;
+
   if (is_selection_pending())
     return;
 
@@ -279,8 +268,7 @@ void AppCacheHost::DoPendingSwapCache() {
     }
   }
 
-  std::move(pending_swap_cache_callback_).Run(success, pending_callback_param_);
-  pending_callback_param_ = nullptr;
+  std::move(pending_swap_cache_callback_).Run(success);
 }
 
 void AppCacheHost::SetSpawningHostId(
@@ -540,7 +528,7 @@ base::WeakPtr<AppCacheHost> AppCacheHost::GetWeakPtr() {
 }
 
 void AppCacheHost::MaybePassSubresourceFactory() {
-  if (!base::FeatureList::IsEnabled(features::kNetworkService))
+  if (!base::FeatureList::IsEnabled(network::features::kNetworkService))
     return;
 
   // We already have a valid factory. This happens when the document was loaded
@@ -548,13 +536,12 @@ void AppCacheHost::MaybePassSubresourceFactory() {
   if (subresource_url_factory_.get())
     return;
 
-  mojom::URLLoaderFactoryPtr factory_ptr = nullptr;
+  network::mojom::URLLoaderFactoryPtr factory_ptr = nullptr;
 
   AppCacheSubresourceURLFactory::CreateURLLoaderFactory(
       service()->url_loader_factory_getter(), GetWeakPtr(), &factory_ptr);
 
-  frontend_->OnSetSubresourceFactory(
-      host_id(), factory_ptr.PassInterface().PassHandle().release());
+  frontend_->OnSetSubresourceFactory(host_id(), std::move(factory_ptr));
 }
 
 void AppCacheHost::SetAppCacheSubresourceFactory(

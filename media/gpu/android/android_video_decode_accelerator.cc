@@ -42,7 +42,7 @@
 #include "media/gpu/android/device_info.h"
 #include "media/gpu/android/promotion_hint_aggregator_impl.h"
 #include "media/gpu/shared_memory_region.h"
-#include "media/mojo/features.h"
+#include "media/mojo/buildflags.h"
 #include "media/video/picture.h"
 #include "services/service_manager/public/cpp/service_context_ref.h"
 #include "ui/gl/android/scoped_java_surface.h"
@@ -232,17 +232,17 @@ AndroidVideoDecodeAccelerator::AndroidVideoDecodeAccelerator(
     AVDACodecAllocator* codec_allocator,
     std::unique_ptr<AndroidVideoSurfaceChooser> surface_chooser,
     const MakeGLContextCurrentCallback& make_context_current_cb,
-    const GetGLES2DecoderCallback& get_gles2_decoder_cb,
+    const GetContextGroupCallback& get_context_group_cb,
     const AndroidOverlayMojoFactoryCB& overlay_factory_cb,
     DeviceInfo* device_info)
     : client_(nullptr),
       codec_allocator_(codec_allocator),
       make_context_current_cb_(make_context_current_cb),
-      get_gles2_decoder_cb_(get_gles2_decoder_cb),
+      get_context_group_cb_(get_context_group_cb),
       state_(BEFORE_OVERLAY_INIT),
       picturebuffers_requested_(false),
       picture_buffer_manager_(this),
-      media_drm_bridge_cdm_context_(nullptr),
+      media_crypto_context_(nullptr),
       cdm_registration_id_(0),
       pending_input_buf_index_(-1),
       during_initialize_(false),
@@ -265,16 +265,16 @@ AndroidVideoDecodeAccelerator::~AndroidVideoDecodeAccelerator() {
   codec_allocator_->StopThread(this);
 
 #if BUILDFLAG(ENABLE_MOJO_MEDIA_IN_GPU_PROCESS)
-  if (!media_drm_bridge_cdm_context_)
+  if (!media_crypto_context_)
     return;
 
   DCHECK(cdm_registration_id_);
 
   // Cancel previously registered callback (if any).
-  media_drm_bridge_cdm_context_->SetMediaCryptoReadyCB(
-      MediaDrmBridgeCdmContext::MediaCryptoReadyCB());
+  media_crypto_context_->SetMediaCryptoReadyCB(
+      MediaCryptoContext::MediaCryptoReadyCB());
 
-  media_drm_bridge_cdm_context_->UnregisterPlayer(cdm_registration_id_);
+  media_crypto_context_->UnregisterPlayer(cdm_registration_id_);
 #endif  // BUILDFLAG(ENABLE_MOJO_MEDIA_IN_GPU_PROCESS)
 }
 
@@ -286,7 +286,7 @@ bool AndroidVideoDecodeAccelerator::Initialize(const Config& config,
   DCHECK(thread_checker_.CalledOnValidThread());
   base::AutoReset<bool> scoper(&during_initialize_, true);
 
-  if (make_context_current_cb_.is_null() || get_gles2_decoder_cb_.is_null()) {
+  if (make_context_current_cb_.is_null() || get_context_group_cb_.is_null()) {
     DLOG(ERROR) << "GL callbacks are required for this VDA";
     return false;
   }
@@ -321,6 +321,9 @@ bool AndroidVideoDecodeAccelerator::Initialize(const Config& config,
     codec_config_->csd1 = config.pps;
   }
 
+  codec_config_->container_color_space = config.container_color_space;
+  codec_config_->hdr_metadata = config.hdr_metadata;
+
   // Only use MediaCodec for VP8/9 if it's likely backed by hardware
   // or if the stream is encrypted.
   if (IsMediaCodecSoftwareDecodingForbidden() &&
@@ -331,9 +334,9 @@ bool AndroidVideoDecodeAccelerator::Initialize(const Config& config,
     return false;
   }
 
-  auto gles_decoder = get_gles2_decoder_cb_.Run();
-  if (!gles_decoder) {
-    DLOG(ERROR) << "Failed to get gles2 decoder instance.";
+  auto* context_group = get_context_group_cb_.Run();
+  if (!context_group) {
+    DLOG(ERROR) << "Failed to get context group.";
     return false;
   }
 
@@ -423,12 +426,12 @@ void AndroidVideoDecodeAccelerator::StartSurfaceChooser() {
   // leave the factory blank.
   AndroidOverlayFactoryCB factory;
   if (config_.overlay_info.HasValidSurfaceId()) {
-    factory = base::Bind(&ContentVideoViewOverlay::Create,
-                         config_.overlay_info.surface_id);
+    factory = base::BindRepeating(&ContentVideoViewOverlay::Create,
+                                  config_.overlay_info.surface_id);
   } else if (config_.overlay_info.HasValidRoutingToken() &&
              overlay_factory_cb_) {
-    factory = base::Bind(overlay_factory_cb_, nullptr,
-                         *config_.overlay_info.routing_token);
+    factory = base::BindRepeating(overlay_factory_cb_,
+                                  *config_.overlay_info.routing_token);
   }
 
   // Notify |surface_chooser_| that we've started.  This guarantees that we'll
@@ -1306,9 +1309,10 @@ void AndroidVideoDecodeAccelerator::SetOverlayInfo(
   if (surface_id != previous_info.surface_id ||
       routing_token != previous_info.routing_token) {
     if (routing_token && overlay_factory_cb_)
-      new_factory = base::Bind(overlay_factory_cb_, nullptr, *routing_token);
+      new_factory = base::BindRepeating(overlay_factory_cb_, *routing_token);
     else if (surface_id != SurfaceManager::kNoSurfaceID)
-      new_factory = base::Bind(&ContentVideoViewOverlay::Create, surface_id);
+      new_factory =
+          base::BindRepeating(&ContentVideoViewOverlay::Create, surface_id);
   }
 
   surface_chooser_helper_.UpdateChooserState(new_factory);
@@ -1353,9 +1357,9 @@ const gfx::Size& AndroidVideoDecodeAccelerator::GetSize() const {
   return size_;
 }
 
-base::WeakPtr<gpu::gles2::GLES2Decoder>
-AndroidVideoDecodeAccelerator::GetGlDecoder() const {
-  return get_gles2_decoder_cb_.Run();
+gpu::gles2::ContextGroup* AndroidVideoDecodeAccelerator::GetContextGroup()
+    const {
+  return get_context_group_cb_.Run();
 }
 
 void AndroidVideoDecodeAccelerator::OnStopUsingOverlayImmediately(
@@ -1447,16 +1451,25 @@ void AndroidVideoDecodeAccelerator::InitializeCdm() {
 #if !BUILDFLAG(ENABLE_MOJO_MEDIA_IN_GPU_PROCESS)
   NOTIMPLEMENTED();
   NOTIFY_ERROR(PLATFORM_FAILURE, "Cdm support needs mojo in the gpu process");
+  return;
 #else
   // Store the CDM to hold a reference to it.
   cdm_for_reference_holding_only_ =
       CdmManager::GetInstance()->GetCdm(config_.cdm_id);
-  DCHECK(cdm_for_reference_holding_only_);
+  if (!cdm_for_reference_holding_only_) {
+    // This could happen during the destruction of the media element and the CDM
+    // and due to IPC CDM could be destroyed before the decoder.
+    NOTIFY_ERROR(PLATFORM_FAILURE, "CDM not available.");
+    return;
+  }
 
-  // On Android platform the CdmContext must be a MediaDrmBridgeCdmContext.
-  media_drm_bridge_cdm_context_ = static_cast<MediaDrmBridgeCdmContext*>(
-      cdm_for_reference_holding_only_->GetCdmContext());
-  DCHECK(media_drm_bridge_cdm_context_);
+  auto* cdm_context = cdm_for_reference_holding_only_->GetCdmContext();
+  media_crypto_context_ =
+      cdm_context ? cdm_context->GetMediaCryptoContext() : nullptr;
+  if (!media_crypto_context_) {
+    NOTIFY_ERROR(PLATFORM_FAILURE, "MediaCryptoContext not available.");
+    return;
+  }
 
   // Register CDM callbacks. The callbacks registered will be posted back to
   // this thread via BindToCurrentLoop.
@@ -1466,13 +1479,13 @@ void AndroidVideoDecodeAccelerator::InitializeCdm() {
   // destructed as well. So the |cdm_unset_cb| will never have a chance to be
   // called.
   // TODO(xhwang): Remove |cdm_unset_cb| after it's not used on all platforms.
-  cdm_registration_id_ = media_drm_bridge_cdm_context_->RegisterPlayer(
+  cdm_registration_id_ = media_crypto_context_->RegisterPlayer(
       BindToCurrentLoop(base::Bind(&AndroidVideoDecodeAccelerator::OnKeyAdded,
                                    weak_this_factory_.GetWeakPtr())),
-      base::Bind(&base::DoNothing));
+      base::DoNothing());
 
   // Deferred initialization will continue in OnMediaCryptoReady().
-  media_drm_bridge_cdm_context_->SetMediaCryptoReadyCB(BindToCurrentLoop(
+  media_crypto_context_->SetMediaCryptoReadyCB(BindToCurrentLoop(
       base::Bind(&AndroidVideoDecodeAccelerator::OnMediaCryptoReady,
                  weak_this_factory_.GetWeakPtr())));
 #endif  // !BUILDFLAG(ENABLE_MOJO_MEDIA_IN_GPU_PROCESS)
@@ -1488,7 +1501,7 @@ void AndroidVideoDecodeAccelerator::OnMediaCryptoReady(
   if (media_crypto->is_null()) {
     LOG(ERROR) << "MediaCrypto is not available, can't play encrypted stream.";
     cdm_for_reference_holding_only_ = nullptr;
-    media_drm_bridge_cdm_context_ = nullptr;
+    media_crypto_context_ = nullptr;
     NOTIFY_ERROR(PLATFORM_FAILURE, "MediaCrypto is not available");
     return;
   }

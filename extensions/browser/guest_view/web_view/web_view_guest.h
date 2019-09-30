@@ -193,7 +193,6 @@ class WebViewGuest : public guest_view::GuestView<WebViewGuest> {
   void GuestViewDidStopLoading() final;
   void GuestZoomChanged(double old_zoom_level, double new_zoom_level) final;
   bool IsAutoSizeSupported() const final;
-  void SetContextMenuPosition(const gfx::Point& position) final;
   void SignalWhenReady(const base::Closure& callback) final;
   void WillAttachToEmbedder() final;
   void WillDestroy() final;
@@ -211,10 +210,11 @@ class WebViewGuest : public guest_view::GuestView<WebViewGuest> {
   void LoadProgressChanged(content::WebContents* source, double progress) final;
   bool PreHandleGestureEvent(content::WebContents* source,
                              const blink::WebGestureEvent& event) final;
-  void RendererResponsive(content::WebContents* source) final;
+  void RendererResponsive(content::WebContents* source,
+                          content::RenderWidgetHost* render_widget_host) final;
   void RendererUnresponsive(
       content::WebContents* source,
-      const content::WebContentsUnresponsiveState& unresponsive_state) final;
+      content::RenderWidgetHost* render_widget_host) final;
   void RequestMediaAccessPermission(
       content::WebContents* source,
       const content::MediaStreamRequest& request,
@@ -223,7 +223,7 @@ class WebViewGuest : public guest_view::GuestView<WebViewGuest> {
       bool user_gesture,
       bool last_unlocked_by_target,
       const base::Callback<void(bool)>& callback) final;
-  bool CheckMediaAccessPermission(content::WebContents* source,
+  bool CheckMediaAccessPermission(content::RenderFrameHost* render_frame_host,
                                   const GURL& security_origin,
                                   content::MediaStreamType type) final;
   void CanDownload(const GURL& url,

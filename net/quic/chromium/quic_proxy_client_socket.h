@@ -2,17 +2,20 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef NET_QUIC_CORE_QUIC_PROXY_CLIENT_SOCKET_H_
-#define NET_QUIC_CORE_QUIC_PROXY_CLIENT_SOCKET_H_
+#ifndef NET_QUIC_CHROMIUM_QUIC_PROXY_CLIENT_SOCKET_H_
+#define NET_QUIC_CHROMIUM_QUIC_PROXY_CLIENT_SOCKET_H_
 
 #include <cstdio>
+#include <memory>
 #include <string>
 
+#include "net/base/completion_once_callback.h"
 #include "net/base/load_timing_info.h"
 #include "net/http/proxy_client_socket.h"
 #include "net/quic/chromium/quic_chromium_client_session.h"
 #include "net/quic/chromium/quic_chromium_client_stream.h"
 #include "net/spdy/chromium/spdy_read_queue.h"
+#include "net/traffic_annotation/network_traffic_annotation.h"
 
 namespace net {
 
@@ -34,14 +37,14 @@ class NET_EXPORT_PRIVATE QuicProxyClientSocket : public ProxyClientSocket {
       const NetLogWithSource& net_log,
       HttpAuthController* auth_controller);
 
-  /// On destruction Disconnect() is called.
+  // On destruction Disconnect() is called.
   ~QuicProxyClientSocket() override;
 
   // ProxyClientSocket methods:
   const HttpResponseInfo* GetConnectResponseInfo() const override;
   std::unique_ptr<HttpStream> CreateConnectResponseStream() override;
   const scoped_refptr<HttpAuthController>& GetAuthController() const override;
-  int RestartWithAuth(const CompletionCallback& callback) override;
+  int RestartWithAuth(CompletionOnceCallback callback) override;
   bool IsUsingSpdy() const override;
   NextProto GetProxyNegotiatedProtocol() const override;
 
@@ -61,6 +64,7 @@ class NET_EXPORT_PRIVATE QuicProxyClientSocket : public ProxyClientSocket {
   void ClearConnectionAttempts() override {}
   void AddConnectionAttempts(const ConnectionAttempts& attempts) override {}
   int64_t GetTotalReceivedBytes() const override;
+  void ApplySocketTag(const SocketTag& tag) override;
 
   // Socket implementation.
   int Read(IOBuffer* buf,
@@ -68,7 +72,8 @@ class NET_EXPORT_PRIVATE QuicProxyClientSocket : public ProxyClientSocket {
            const CompletionCallback& callback) override;
   int Write(IOBuffer* buf,
             int buf_len,
-            const CompletionCallback& callback) override;
+            const CompletionCallback& callback,
+            const NetworkTrafficAnnotationTag& traffic_annotation) override;
   int SetReceiveBufferSize(int32_t size) override;
   int SetSendBufferSize(int32_t size) override;
   int GetPeerAddress(IPEndPoint* address) const override;
@@ -122,6 +127,8 @@ class NET_EXPORT_PRIVATE QuicProxyClientSocket : public ProxyClientSocket {
   IOBuffer* read_buf_;
   // Stores the callback for Write().
   CompletionCallback write_callback_;
+  // Stores the write buffer length for Write().
+  int write_buf_len_;
 
   // CONNECT request and response.
   HttpRequestInfo request_;
@@ -153,4 +160,4 @@ class NET_EXPORT_PRIVATE QuicProxyClientSocket : public ProxyClientSocket {
 
 }  // namespace net
 
-#endif  // NET_QUIC_CORE_ QUIC_PROXY_CLIENT_SOCKET_H_
+#endif  // NET_QUIC_CHROMIUM_QUIC_PROXY_CLIENT_SOCKET_H_

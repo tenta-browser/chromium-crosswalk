@@ -14,7 +14,6 @@
 #include "base/bind_helpers.h"
 #include "base/command_line.h"
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
@@ -122,8 +121,7 @@ class BufferFeeder : public MediaPipelineBackend::Decoder::Delegate {
 
 }  // namespace
 
-using TestParams =
-    std::tr1::tuple<int /* sample rate */, float /* playback rate */>;
+using TestParams = std::tuple<int /* sample rate */, float /* playback rate */>;
 
 class MultizoneBackendTest : public testing::TestWithParam<TestParams> {
  public:
@@ -324,7 +322,7 @@ void MultizoneBackendTest::Initialize(int sample_rate,
   config.bytes_per_channel = 4;
   config.samples_per_second = sample_rate;
 
-  audio_feeder_ = base::MakeUnique<BufferFeeder>(
+  audio_feeder_ = std::make_unique<BufferFeeder>(
       config, false /* effects_only */,
       base::BindOnce(&MultizoneBackendTest::OnEndOfStream,
                      base::Unretained(this)),
@@ -341,7 +339,7 @@ void MultizoneBackendTest::AddEffectsStreams() {
   effects_config.samples_per_second = 48000;
 
   for (int i = 0; i < kNumEffectsStreams; ++i) {
-    auto feeder = base::MakeUnique<BufferFeeder>(
+    auto feeder = std::make_unique<BufferFeeder>(
         effects_config, true /* effects_only */, base::BindOnce(&IgnoreEos), 0);
     feeder->Initialize();
     effects_feeders_.push_back(std::move(feeder));

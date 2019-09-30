@@ -22,6 +22,6 @@ layer at (0,60) size 800x100
         text run at (0,20) width 724: "neque a mi rutrum scelerisque. Nulla sed dui a massa sodales posuere. Nulla libero. Nulla posuere, felis id tincidunt"
         text run at (0,40) width 740: "tincidunt, ipsum metus tristique risus, et convallis turpis elit eget massa. Nunc consectetuer dolor vel nunc. Cum sociis"
         text run at (0,60) width 753: "natoque penatibus et magnis dis parturient montes, nascetur ridiculus mus. Quisque dapibus ante et nulla. Cras nec velit."
-        text run at (0,80) width 643: "Vestibulum ante ipsum primis in faucibus orci luctus et ultrices posuere cubilia Curae; Integer ut tortor."
+        text run at (0,80) width 642: "Vestibulum ante ipsum primis in faucibus orci luctus et ultrices posuere cubilia Curae; Integer ut tortor."
 selection start: position 3 of child 0 {#text} of child 1 {SPAN} of child 1 {DIV} of child 1 {DIV} of child 3 {DIV} of body
 selection end:   position 236 of child 2 {#text} of child 1 {DIV} of child 1 {DIV} of child 3 {DIV} of body

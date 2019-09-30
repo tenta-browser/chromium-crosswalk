@@ -161,6 +161,10 @@ public abstract class AwContentsClient {
 
     public final boolean shouldIgnoreNavigation(Context context, String url, boolean isMainFrame,
             boolean hasUserGesture, boolean isRedirect) {
+        AwContentsClientCallbackHelper.CancelCallbackPoller poller =
+                mCallbackHelper.getCancelCallbackPoller();
+        if (poller != null && poller.shouldCancelAllCallbacks()) return false;
+
         if (hasWebViewClient()) {
             AwWebResourceRequest request = new AwWebResourceRequest();
             request.url = url;
@@ -270,7 +274,7 @@ public abstract class AwContentsClient {
             if (mAcceptTypes == null) {
                 return new String[0];
             }
-            return mAcceptTypes.split(";");
+            return mAcceptTypes.split(",");
         }
 
         public boolean isCaptureEnabled() {
@@ -288,7 +292,7 @@ public abstract class AwContentsClient {
         public Intent createIntent() {
             String mimeType = "*/*";
             if (mAcceptTypes != null && !mAcceptTypes.trim().isEmpty()) {
-                mimeType = mAcceptTypes.split(";")[0];
+                mimeType = mAcceptTypes.split(",")[0];
             }
 
             Intent i = new Intent(Intent.ACTION_GET_CONTENT);

@@ -7,7 +7,7 @@
 #include <utility>
 
 #include "base/command_line.h"
-#include "base/memory/ptr_util.h"
+#include "base/logging.h"
 #include "base/version.h"
 #include "build/build_config.h"
 #include "chrome/browser/app_mode/app_mode_utils.h"
@@ -78,6 +78,11 @@ namespace {
 // new chrome update.
 bool g_did_chrome_update_for_testing = false;
 
+bool ExtensionsDisabled(const base::CommandLine& command_line) {
+  return command_line.HasSwitch(switches::kDisableExtensions) ||
+         command_line.HasSwitch(switches::kDisableExtensionsExcept);
+}
+
 }  // namespace
 
 ChromeExtensionsBrowserClient::ChromeExtensionsBrowserClient() {
@@ -97,7 +102,7 @@ bool ChromeExtensionsBrowserClient::AreExtensionsDisabled(
     const base::CommandLine& command_line,
     content::BrowserContext* context) {
   Profile* profile = static_cast<Profile*>(context);
-  return switches::ExtensionsDisabled(command_line) ||
+  return ExtensionsDisabled(command_line) ||
          profile->GetPrefs()->GetBoolean(prefs::kDisableExtensions);
 }
 
@@ -134,6 +139,7 @@ content::BrowserContext* ChromeExtensionsBrowserClient::GetOffTheRecordContext(
 
 content::BrowserContext* ChromeExtensionsBrowserClient::GetOriginalContext(
     content::BrowserContext* context) {
+  DCHECK(context);
   return static_cast<Profile*>(context)->GetOriginalProfile();
 }
 
@@ -177,6 +183,27 @@ ChromeExtensionsBrowserClient::MaybeCreateResourceBundleRequestJob(
       directory_path,
       content_security_policy,
       send_cors_header);
+}
+
+base::FilePath ChromeExtensionsBrowserClient::GetBundleResourcePath(
+    const network::ResourceRequest& request,
+    const base::FilePath& extension_resources_path,
+    int* resource_id) const {
+  return chrome_url_request_util::GetBundleResourcePath(
+      request, extension_resources_path, resource_id);
+}
+
+void ChromeExtensionsBrowserClient::LoadResourceFromResourceBundle(
+    const network::ResourceRequest& request,
+    network::mojom::URLLoaderRequest loader,
+    const base::FilePath& resource_relative_path,
+    int resource_id,
+    const std::string& content_security_policy,
+    network::mojom::URLLoaderClientPtr client,
+    bool send_cors_header) {
+  chrome_url_request_util::LoadResourceFromResourceBundle(
+      request, std::move(loader), resource_relative_path, resource_id,
+      content_security_policy, std::move(client), send_cors_header);
 }
 
 bool ChromeExtensionsBrowserClient::AllowCrossRendererResourceLoad(
@@ -246,7 +273,7 @@ bool ChromeExtensionsBrowserClient::DidVersionUpdate(
   }
 
   std::string current_version_str = version_info::GetVersionNumber();
-  base::Version current_version(current_version_str);
+  const base::Version& current_version = version_info::GetVersion();
   pref_service->SetString(pref_names::kLastChromeVersion, current_version_str);
 
   // If there was no version string in prefs, assume we're out of date.
@@ -265,6 +292,11 @@ void ChromeExtensionsBrowserClient::PermitExternalProtocolHandler() {
 
 bool ChromeExtensionsBrowserClient::IsRunningInForcedAppMode() {
   return chrome::IsRunningInForcedAppMode();
+}
+
+bool ChromeExtensionsBrowserClient::IsAppModeForcedForApp(
+    const ExtensionId& extension_id) {
+  return chrome::IsRunningInForcedAppModeForApp(extension_id);
 }
 
 bool ChromeExtensionsBrowserClient::IsLoggedInAsPublicAccount() {
@@ -332,7 +364,7 @@ ExtensionCache* ChromeExtensionsBrowserClient::GetExtensionCache() {
   if (!extension_cache_.get()) {
 #if defined(OS_CHROMEOS)
     extension_cache_.reset(new ExtensionCacheImpl(
-        base::MakeUnique<ChromeOSExtensionCacheDelegate>()));
+        std::make_unique<ChromeOSExtensionCacheDelegate>()));
 #else
     extension_cache_.reset(new NullExtensionCache());
 #endif
@@ -347,14 +379,10 @@ bool ChromeExtensionsBrowserClient::IsBackgroundUpdateAllowed() {
 
 bool ChromeExtensionsBrowserClient::IsMinBrowserVersionSupported(
     const std::string& min_version) {
-  base::Version browser_version =
-      base::Version(version_info::GetVersionNumber());
+  const base::Version& browser_version = version_info::GetVersion();
   base::Version browser_min_version(min_version);
-  if (browser_version.IsValid() && browser_min_version.IsValid() &&
-      browser_min_version.CompareTo(browser_version) > 0) {
-    return false;
-  }
-  return true;
+  return !browser_version.IsValid() || !browser_min_version.IsValid() ||
+         browser_min_version.CompareTo(browser_version) <= 0;
 }
 
 ExtensionWebContentsObserver*
@@ -389,7 +417,6 @@ void ChromeExtensionsBrowserClient::AttachExtensionTaskManagerTag(
     case VIEW_TYPE_EXTENSION_BACKGROUND_PAGE:
     case VIEW_TYPE_EXTENSION_DIALOG:
     case VIEW_TYPE_EXTENSION_POPUP:
-    case VIEW_TYPE_LAUNCHER_PAGE:
       // These are the only types that are tracked by the ExtensionTag.
       task_manager::WebContentsTags::CreateForExtension(web_contents,
                                                         view_type);
@@ -424,14 +451,14 @@ ChromeExtensionsBrowserClient::CreateUpdateClient(
 std::unique_ptr<ExtensionApiFrameIdMapHelper>
 ChromeExtensionsBrowserClient::CreateExtensionApiFrameIdMapHelper(
     ExtensionApiFrameIdMap* map) {
-  return base::MakeUnique<ChromeExtensionApiFrameIdMapHelper>(map);
+  return std::make_unique<ChromeExtensionApiFrameIdMapHelper>(map);
 }
 
 std::unique_ptr<content::BluetoothChooser>
 ChromeExtensionsBrowserClient::CreateBluetoothChooser(
     content::RenderFrameHost* frame,
     const content::BluetoothChooser::EventHandler& event_handler) {
-  return base::MakeUnique<ChromeExtensionBluetoothChooser>(frame,
+  return std::make_unique<ChromeExtensionBluetoothChooser>(frame,
                                                            event_handler);
 }
 
@@ -453,6 +480,21 @@ ChromeExtensionsBrowserClient::GetExtensionNavigationUIData(
   if (!navigation_data)
     return nullptr;
   return navigation_data->GetExtensionNavigationUIData();
+}
+
+void ChromeExtensionsBrowserClient::GetTabAndWindowIdForWebContents(
+    content::WebContents* web_contents,
+    int* tab_id,
+    int* window_id) {
+  SessionTabHelper* session_tab_helper =
+      SessionTabHelper::FromWebContents(web_contents);
+  if (session_tab_helper) {
+    *tab_id = session_tab_helper->session_id().id();
+    *window_id = session_tab_helper->window_id().id();
+  } else {
+    *tab_id = -1;
+    *window_id = -1;
+  }
 }
 
 KioskDelegate* ChromeExtensionsBrowserClient::GetKioskDelegate() {

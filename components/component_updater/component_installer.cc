@@ -7,7 +7,6 @@
 #include <utility>
 
 #include "base/bind.h"
-#include "base/bind_helpers.h"
 #include "base/files/file_enumerator.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
@@ -22,6 +21,7 @@
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/values.h"
 #include "base/version.h"
+#include "build/build_config.h"
 #include "components/component_updater/component_updater_paths.h"
 #include "components/component_updater/component_updater_service.h"
 #include "components/update_client/component_unpacker.h"
@@ -182,7 +182,7 @@ void ComponentInstaller::Install(const base::FilePath& unpack_path,
   // returned.
   main_task_runner_->PostTask(
       FROM_HERE, base::BindOnce(&ComponentInstaller::ComponentReady, this,
-                                base::Passed(std::move(manifest))));
+                                std::move(manifest)));
   main_task_runner_->PostTask(FROM_HERE,
                               base::BindOnce(std::move(callback), result));
 }
@@ -205,7 +205,7 @@ bool ComponentInstaller::Uninstall() {
 
 bool ComponentInstaller::FindPreinstallation(
     const base::FilePath& root,
-    const scoped_refptr<RegistrationInfo>& registration_info) {
+    scoped_refptr<RegistrationInfo> registration_info) {
   base::FilePath path = root.Append(installer_policy_->GetRelativeInstallDir());
   if (!base::PathExists(path)) {
     DVLOG(1) << "Relative install dir does not exist: " << path.MaybeAsASCII();
@@ -248,7 +248,7 @@ bool ComponentInstaller::FindPreinstallation(
 }
 
 void ComponentInstaller::StartRegistration(
-    const scoped_refptr<RegistrationInfo>& registration_info) {
+    scoped_refptr<RegistrationInfo> registration_info) {
   VLOG(1) << __func__ << " for " << installer_policy_->GetName();
   DCHECK(task_runner_.get());
   DCHECK(task_runner_->RunsTasksInCurrentSequence());
@@ -274,10 +274,11 @@ void ComponentInstaller::StartRegistration(
   // Then check for a higher-versioned user-wide installation.
   base::FilePath latest_path;
   std::unique_ptr<base::DictionaryValue> latest_manifest;
-  base::FilePath base_dir;
-  if (!PathService::Get(DIR_COMPONENT_USER, &base_dir))
+  base::FilePath base_component_dir;
+  if (!PathService::Get(DIR_COMPONENT_USER, &base_component_dir))
     return;
-  base_dir = base_dir.Append(installer_policy_->GetRelativeInstallDir());
+  base::FilePath base_dir =
+      base_component_dir.Append(installer_policy_->GetRelativeInstallDir());
   if (!base::PathExists(base_dir) && !base::CreateDirectory(base_dir)) {
     PLOG(ERROR) << "Could not create the base directory for "
                 << installer_policy_->GetName() << " ("
@@ -286,9 +287,15 @@ void ComponentInstaller::StartRegistration(
   }
 
 #if defined(OS_CHROMEOS)
-  if (!base::SetPosixFilePermissions(base_dir, 0755)) {
-    PLOG(ERROR) << "SetPosixFilePermissions failed: " << base_dir.value();
-    return;
+  base::FilePath base_dir_ = base_component_dir;
+  std::vector<base::FilePath::StringType> components;
+  installer_policy_->GetRelativeInstallDir().GetComponents(&components);
+  for (const base::FilePath::StringType component : components) {
+    base_dir_ = base_dir_.Append(component);
+    if (!base::SetPosixFilePermissions(base_dir_, 0755)) {
+      PLOG(ERROR) << "SetPosixFilePermissions failed: " << base_dir.value();
+      return;
+    }
   }
 #endif  // defined(OS_CHROMEOS)
 
@@ -383,7 +390,7 @@ void ComponentInstaller::UninstallOnTaskRunner() {
 }
 
 void ComponentInstaller::FinishRegistration(
-    const scoped_refptr<RegistrationInfo>& registration_info,
+    scoped_refptr<RegistrationInfo> registration_info,
     ComponentUpdateService* cus,
     base::OnceClosure callback) {
   VLOG(1) << __func__ << " for " << installer_policy_->GetName();

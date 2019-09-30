@@ -23,6 +23,7 @@ class Window;
 }
 
 namespace arc {
+class AXTreeSourceArcTest;
 
 using AXTreeArcSerializer =
     ui::AXTreeSerializer<mojom::AccessibilityNodeInfoData*,
@@ -60,6 +61,7 @@ class AXTreeSourceArc
   int32_t window_id() const { return window_id_; }
 
  private:
+  friend class arc::AXTreeSourceArcTest;
   class FocusStealer;
 
   // AXTreeSource overrides.
@@ -88,6 +90,15 @@ class AXTreeSourceArc
   const gfx::Rect GetBounds(mojom::AccessibilityNodeInfoData* node,
                             aura::Window* focused_window) const;
 
+  // Computes the smallest rect that encloses all of the descendants of |node|.
+  gfx::Rect ComputeEnclosingBounds(
+      mojom::AccessibilityNodeInfoData* node) const;
+
+  // Helper to recursively compute bounds for |node|. Returns true if non-empty
+  // bounds were encountered.
+  void ComputeEnclosingBoundsInternal(mojom::AccessibilityNodeInfoData* node,
+                                      gfx::Rect& computed_bounds) const;
+
   // AXHostDelegate overrides.
   void PerformAction(const ui::AXActionData& data) override;
 
@@ -108,6 +119,8 @@ class AXTreeSourceArc
   const Delegate* const delegate_;
   std::unique_ptr<FocusStealer> focus_stealer_;
   std::string package_name_;
+  std::map<mojom::AccessibilityNodeInfoData*, gfx::Rect>
+      cached_computed_bounds_;
 
   DISALLOW_COPY_AND_ASSIGN(AXTreeSourceArc);
 };

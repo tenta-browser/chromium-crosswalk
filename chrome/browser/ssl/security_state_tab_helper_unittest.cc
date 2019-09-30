@@ -10,8 +10,8 @@
 #include "base/test/histogram_tester.h"
 #include "chrome/test/base/chrome_render_view_host_test_harness.h"
 #include "components/security_state/content/ssl_status_input_event_data.h"
-#include "components/security_state/core/switches.h"
 #include "content/public/browser/navigation_entry.h"
+#include "content/public/browser/navigation_handle.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace {
@@ -20,6 +20,8 @@ const char kHTTPBadNavigationHistogram[] =
     "Security.HTTPBad.NavigationStartedAfterUserWarnedAboutSensitiveInput";
 const char kHTTPBadWebContentsDestroyedHistogram[] =
     "Security.HTTPBad.WebContentsDestroyedAfterUserWarnedAboutSensitiveInput";
+const char kFormSubmissionSecurityLevelHistogram[] =
+    "Security.SecurityLevel.FormSubmission";
 
 // Gets the Insecure Input Events from the entry's SSLStatus user data.
 security_state::InsecureInputEventData GetInputEvents(
@@ -42,7 +44,7 @@ void SetInputEvents(content::NavigationEntry* entry,
           ssl.user_data.get());
   if (!input_events) {
     ssl.user_data =
-        base::MakeUnique<security_state::SSLStatusInputEventData>(events);
+        std::make_unique<security_state::SSLStatusInputEventData>(events);
   } else {
     *input_events->input_events() = events;
   }
@@ -73,14 +75,14 @@ class SecurityStateTabHelperHistogramTest
     else
       input_events.credit_card_field_edited = true;
     SetInputEvents(entry, input_events);
-    helper_->VisibleSecurityStateChanged();
+    helper_->DidChangeVisibleSecurityState();
   }
 
   void ClearInputEvents() {
     content::NavigationEntry* entry =
         web_contents()->GetController().GetVisibleEntry();
     SetInputEvents(entry, security_state::InsecureInputEventData());
-    helper_->VisibleSecurityStateChanged();
+    helper_->DidChangeVisibleSecurityState();
   }
 
   const std::string HistogramName() {
@@ -88,6 +90,13 @@ class SecurityStateTabHelperHistogramTest
       return "Security.HTTPBad.UserWarnedAboutSensitiveInput.Password";
     else
       return "Security.HTTPBad.UserWarnedAboutSensitiveInput.CreditCard";
+  }
+
+  void StartFormSubmissionNavigation() {
+    std::unique_ptr<content::NavigationHandle> handle =
+        content::NavigationHandle::CreateNavigationHandleForTesting(
+            GURL("http://example.test"), web_contents()->GetMainFrame(), true,
+            net::OK, false, false, ui::PAGE_TRANSITION_LINK, true);
   }
 
   void NavigateToHTTP() { NavigateAndCommit(GURL("http://example.test")); }
@@ -130,6 +139,13 @@ TEST_P(SecurityStateTabHelperHistogramTest,
   SetContents(nullptr);
   histograms.ExpectTotalCount(kHTTPBadNavigationHistogram, 0);
   histograms.ExpectTotalCount(kHTTPBadWebContentsDestroyedHistogram, 1);
+}
+
+TEST_P(SecurityStateTabHelperHistogramTest, FormSubmissionHistogram) {
+  base::HistogramTester histograms;
+  StartFormSubmissionNavigation();
+  histograms.ExpectUniqueSample(kFormSubmissionSecurityLevelHistogram,
+                                security_state::NONE, 1);
 }
 
 // Tests that UMA logs the omnibox warning when security level is

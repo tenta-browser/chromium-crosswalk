@@ -4,19 +4,23 @@
 
 #include "chrome/browser/ui/extensions/extension_enable_flow.h"
 
-#include "base/memory/ptr_util.h"
+#include <memory>
+
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/extension_util.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profiles_state.h"
 #include "chrome/browser/ui/extensions/extension_enable_flow_delegate.h"
-#include "chrome/browser/ui/user_manager.h"
 #include "content/public/browser/notification_details.h"
 #include "content/public/browser/notification_source.h"
 #include "extensions/browser/extension_prefs.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extension_system.h"
+
+#if !defined(OS_CHROMEOS)
+#include "chrome/browser/ui/user_manager.h"
+#endif  // !defined(OS_CHROMEOS)
 
 using extensions::Extension;
 
@@ -48,9 +52,7 @@ void ExtensionEnableFlow::StartForNativeWindow(
   Run();
 }
 
-void ExtensionEnableFlow::StartForCurrentlyNonexistentWindow(
-    base::Callback<gfx::NativeWindow(void)> window_getter) {
-  window_getter_ = window_getter;
+void ExtensionEnableFlow::Start() {
   Run();
 }
 
@@ -102,8 +104,10 @@ void ExtensionEnableFlow::CheckPermissionAndMaybePromptUser() {
   }
 
   if (profiles::IsProfileLocked(profile_->GetPath())) {
+#if !defined(OS_CHROMEOS)
     UserManager::Show(base::FilePath(),
                       profiles::USER_MANAGER_SELECT_PROFILE_APP_LAUNCHER);
+#endif  // !defined(OS_CHROMEOS)
     return;
   }
 
@@ -125,16 +129,14 @@ void ExtensionEnableFlow::CheckPermissionAndMaybePromptUser() {
   prompt_->ShowDialog(base::Bind(&ExtensionEnableFlow::InstallPromptDone,
                                  weak_ptr_factory_.GetWeakPtr()),
                       extension, nullptr,
-                      base::MakeUnique<ExtensionInstallPrompt::Prompt>(type),
+                      std::make_unique<ExtensionInstallPrompt::Prompt>(type),
                       ExtensionInstallPrompt::GetDefaultShowDialogCallback());
 }
 
 void ExtensionEnableFlow::CreatePrompt() {
-  if (!window_getter_.is_null())
-    parent_window_ = window_getter_.Run();
-  prompt_.reset(parent_contents_ ?
-      new ExtensionInstallPrompt(parent_contents_) :
-      new ExtensionInstallPrompt(profile_, parent_window_));
+  prompt_.reset(parent_contents_
+                    ? new ExtensionInstallPrompt(parent_contents_)
+                    : new ExtensionInstallPrompt(profile_, nullptr));
 }
 
 void ExtensionEnableFlow::StartObserving() {

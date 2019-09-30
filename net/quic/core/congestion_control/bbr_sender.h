@@ -20,6 +20,7 @@
 #include "net/quic/core/quic_time.h"
 #include "net/quic/core/quic_unacked_packet_map.h"
 #include "net/quic/platform/api/quic_export.h"
+#include "net/quic/platform/api/quic_string.h"
 
 namespace net {
 
@@ -108,6 +109,8 @@ class QUIC_EXPORT_PRIVATE BbrSender : public SendAlgorithmInterface {
   void AdjustNetworkParameters(QuicBandwidth bandwidth,
                                QuicTime::Delta rtt) override;
   void SetNumEmulatedConnections(int num_connections) override {}
+  void SetInitialCongestionWindowInPackets(
+      QuicPacketCount congestion_window) override;
   void OnCongestionEvent(bool rtt_updated,
                          QuicByteCount prior_in_flight,
                          QuicTime event_time,
@@ -126,7 +129,7 @@ class QUIC_EXPORT_PRIVATE BbrSender : public SendAlgorithmInterface {
   QuicByteCount GetCongestionWindow() const override;
   QuicByteCount GetSlowStartThreshold() const override;
   CongestionControlType GetCongestionControlType() const override;
-  std::string GetDebugState() const override;
+  QuicString GetDebugState() const override;
   void OnApplicationLimited(QuicByteCount bytes_in_flight) override;
   // End implementation of SendAlgorithmInterface.
 
@@ -267,6 +270,9 @@ class QUIC_EXPORT_PRIVATE BbrSender : public SendAlgorithmInterface {
 
   // The largest value the |congestion_window_| can achieve.
   QuicByteCount max_congestion_window_;
+
+  // The smallest value the |congestion_window_| can achieve.
+  QuicByteCount min_congestion_window_;
 
   // The current pacing rate of the connection.
   QuicBandwidth pacing_rate_;

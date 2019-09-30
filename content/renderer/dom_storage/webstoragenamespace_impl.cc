@@ -7,8 +7,8 @@
 #include "base/logging.h"
 #include "content/common/dom_storage/dom_storage_types.h"
 #include "content/renderer/dom_storage/webstoragearea_impl.h"
-#include "third_party/WebKit/public/platform/URLConversion.h"
-#include "third_party/WebKit/public/platform/WebSecurityOrigin.h"
+#include "third_party/blink/public/platform/url_conversion.h"
+#include "third_party/blink/public/platform/web_security_origin.h"
 #include "url/gurl.h"
 #include "url/origin.h"
 
@@ -17,13 +17,10 @@ using blink::WebStorageNamespace;
 
 namespace content {
 
-WebStorageNamespaceImpl::WebStorageNamespaceImpl()
-    : namespace_id_(kLocalStorageNamespaceId) {
-}
-
-WebStorageNamespaceImpl::WebStorageNamespaceImpl(int64_t namespace_id)
+WebStorageNamespaceImpl::WebStorageNamespaceImpl(
+    const std::string& namespace_id)
     : namespace_id_(namespace_id) {
-  DCHECK_NE(kInvalidSessionStorageNamespaceId, namespace_id);
+  DCHECK(!namespace_id.empty());
 }
 
 WebStorageNamespaceImpl::~WebStorageNamespaceImpl() {

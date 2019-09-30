@@ -6,7 +6,7 @@
 
 #include <memory>
 
-#include "ash/accessibility/accessibility_delegate.h"
+#include "ash/accessibility/accessibility_controller.h"
 #include "ash/public/cpp/ash_pref_names.h"
 #include "ash/public/cpp/config.h"
 #include "ash/public/cpp/stylus_utils.h"
@@ -25,7 +25,6 @@
 #include "ash/system/tray/tray_bubble_wrapper.h"
 #include "ash/system/tray/tray_constants.h"
 #include "ash/system/tray/tray_container.h"
-#include "ash/system/tray/tray_popup_header_button.h"
 #include "ash/system/tray/tray_popup_item_style.h"
 #include "ash/system/tray/tray_popup_utils.h"
 #include "base/metrics/histogram_macros.h"
@@ -86,10 +85,11 @@ class TitleView : public views::View, public views::ButtonListener {
   explicit TitleView(PaletteTray* palette_tray) : palette_tray_(palette_tray) {
     // TODO(tdanderson|jdufault): Use TriView to handle the layout of the title.
     // See crbug.com/614453.
-    auto* box_layout = new views::BoxLayout(views::BoxLayout::kHorizontal);
+    auto box_layout =
+        std::make_unique<views::BoxLayout>(views::BoxLayout::kHorizontal);
     box_layout->set_cross_axis_alignment(
         views::BoxLayout::CROSS_AXIS_ALIGNMENT_CENTER);
-    SetLayoutManager(box_layout);
+    views::BoxLayout* layout_ptr = SetLayoutManager(std::move(box_layout));
 
     auto* title_label =
         new views::Label(l10n_util::GetStringUTF16(IDS_ASH_STYLUS_TOOLS_TITLE));
@@ -97,13 +97,11 @@ class TitleView : public views::View, public views::ButtonListener {
     AddChildView(title_label);
     TrayPopupItemStyle style(TrayPopupItemStyle::FontStyle::TITLE);
     style.SetupLabel(title_label);
-    box_layout->SetFlexForView(title_label, 1);
-    help_button_ =
-        new SystemMenuButton(this, TrayPopupInkDropStyle::HOST_CENTERED,
-                             kSystemMenuHelpIcon, IDS_ASH_STATUS_TRAY_HELP);
-    settings_button_ =
-        new SystemMenuButton(this, TrayPopupInkDropStyle::HOST_CENTERED,
-                             kSystemMenuSettingsIcon, IDS_ASH_PALETTE_SETTINGS);
+    layout_ptr->SetFlexForView(title_label, 1);
+    help_button_ = new SystemMenuButton(this, kSystemMenuHelpIcon,
+                                        IDS_ASH_STATUS_TRAY_HELP);
+    settings_button_ = new SystemMenuButton(this, kSystemMenuSettingsIcon,
+                                            IDS_ASH_PALETTE_SETTINGS);
 
     AddChildView(help_button_);
     AddChildView(TrayPopupUtils::CreateVerticalSeparator());
@@ -152,7 +150,7 @@ PaletteTray::PaletteTray(Shelf* shelf)
   PaletteTool::RegisterToolInstances(palette_tool_manager_.get());
 
   SetInkDropMode(InkDropMode::ON);
-  SetLayoutManager(new views::FillLayout());
+  SetLayoutManager(std::make_unique<views::FillLayout>());
   icon_ = new views::ImageView();
   icon_->SetTooltipText(l10n_util::GetStringUTF16(IDS_ASH_STYLUS_TOOLS_TITLE));
   UpdateTrayIcon();
@@ -208,8 +206,8 @@ void PaletteTray::OnActiveUserPrefServiceChanged(PrefService* pref_service) {
   pref_change_registrar_user_->Init(pref_service);
   pref_change_registrar_user_->Add(
       prefs::kEnableStylusTools,
-      base::Bind(&PaletteTray::OnPaletteEnabledPrefChanged,
-                 base::Unretained(this)));
+      base::BindRepeating(&PaletteTray::OnPaletteEnabledPrefChanged,
+                          base::Unretained(this)));
 
   // Read the initial value.
   OnPaletteEnabledPrefChanged();
@@ -255,8 +253,8 @@ void PaletteTray::OnLocalStatePrefServiceInitialized(
   pref_change_registrar_local_->Init(local_state_pref_service_);
   pref_change_registrar_local_->Add(
       prefs::kHasSeenStylus,
-      base::Bind(&PaletteTray::OnHasSeenStylusPrefChanged,
-                 base::Unretained(this)));
+      base::BindRepeating(&PaletteTray::OnHasSeenStylusPrefChanged,
+                          base::Unretained(this)));
 
   OnHasSeenStylusPrefChanged();
 }
@@ -287,9 +285,8 @@ void PaletteTray::OnStylusStateChanged(ui::StylusState stylus_state) {
   if (!stylus_utils::HasStylusInput())
     return;
 
-  // Don't do anything if the palette should not be shown or if the user has
-  // disabled it all-together.
-  if (!palette_utils::IsInUserSession() || !is_palette_enabled_)
+  // Don't do anything if the palette tray is not shown.
+  if (!visible())
     return;
 
   // Auto show/hide the palette if allowed by the user.
@@ -333,7 +330,7 @@ base::string16 PaletteTray::GetAccessibleNameForBubble() {
 }
 
 bool PaletteTray::ShouldEnableExtraKeyboardAccessibility() {
-  return Shell::Get()->accessibility_delegate()->IsSpokenFeedbackEnabled();
+  return Shell::Get()->accessibility_controller()->IsSpokenFeedbackEnabled();
 }
 
 void PaletteTray::HideBubble(const views::TrayBubbleView* bubble_view) {

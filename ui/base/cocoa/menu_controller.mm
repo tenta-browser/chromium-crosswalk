@@ -7,7 +7,6 @@
 #include "base/cancelable_callback.h"
 #include "base/logging.h"
 #include "base/mac/bind_objc_block.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "ui/base/accelerators/accelerator.h"
@@ -89,7 +88,7 @@ NSString* const kMenuControllerMenuDidCloseNotification =
                          toWidth:(int)width {
   NSFont* nsfont = [NSFont menuBarFontOfSize:0];  // 0 means "default"
   return gfx::ElideText(title, gfx::FontList(gfx::Font(nsfont)), width,
-                        gfx::ELIDE_TAIL);
+                        gfx::ELIDE_TAIL, gfx::Typesetter::NATIVE);
 }
 
 - (id)init {

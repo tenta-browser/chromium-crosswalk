@@ -28,8 +28,7 @@ class NotificationHandler {
     TRANSIENT = 3,  // A generic type for any notification that does not outlive
                     // the browser instance and is controlled by a
                     // NotificationDelegate.
-    DOWNLOAD = 4,
-    MAX = DOWNLOAD,
+    MAX = TRANSIENT,
   };
 
   virtual ~NotificationHandler();
@@ -55,8 +54,11 @@ class NotificationHandler {
                        const base::Optional<base::string16>& reply,
                        base::OnceClosure completed_closure);
 
-  // Open notification settings.
-  virtual void OpenSettings(Profile* profile);
+  // Called when notifications of the given origin have to be disabled.
+  virtual void DisableNotifications(Profile* profile, const GURL& origin);
+
+  // Called when the settings page for the given origin has to be opened.
+  virtual void OpenSettings(Profile* profile, const GURL& origin);
 };
 
 #endif  // CHROME_BROWSER_NOTIFICATIONS_NOTIFICATION_HANDLER_H_

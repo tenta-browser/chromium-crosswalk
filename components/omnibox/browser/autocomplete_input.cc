@@ -10,6 +10,7 @@
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/trace_event/memory_usage_estimator.h"
 #include "components/omnibox/browser/autocomplete_scheme_classifier.h"
 #include "components/omnibox/browser/omnibox_field_trial.h"
 #include "components/url_formatter/url_fixer.h"
@@ -306,10 +307,16 @@ metrics::OmniboxInputType AutocompleteInput::Parse(
   // many other characters (perhaps for weird intranet machines), it's extremely
   // unlikely that a user would be trying to type those in for anything other
   // than a search query.
+  //
+  // Per https://tools.ietf.org/html/rfc6761, the .invalid TLD is considered
+  // non-navigable and thus is treated like a non-compliant hostname. (Though
+  // just the word "invalid" is not a hostname).
   const base::string16 original_host(
       text.substr(parts->host.begin, parts->host.len));
-  if ((host_info.family == url::CanonHostInfo::NEUTRAL) &&
-      !net::IsCanonicalizedHostCompliant(canonicalized_url->host())) {
+  if (text != base::ASCIIToUTF16("invalid") &&
+      (host_info.family == url::CanonHostInfo::NEUTRAL) &&
+      (!net::IsCanonicalizedHostCompliant(canonicalized_url->host()) ||
+       canonicalized_url->DomainIs("invalid"))) {
     // Invalid hostname.  There are several possible cases:
     // * The user is typing a multi-word query.  If we see a space anywhere in
     //   the input host we assume this is a search and return QUERY.  (We check
@@ -435,11 +442,21 @@ metrics::OmniboxInputType AutocompleteInput::Parse(
   if (canonicalized_url->has_username() && desired_tld.empty())
     return metrics::OmniboxInputType::UNKNOWN;
 
-  // If the host has a known TLD or a port, it's probably a URL.  Note that we
-  // special-case "localhost" as a known hostname.
-  if (has_known_tld || (canonicalized_url->host() == "localhost") ||
+  // If the host has a known TLD or a port, it's probably a URL. Just localhost
+  // is considered a valid host name due to https://tools.ietf.org/html/rfc6761.
+  if (has_known_tld || canonicalized_url->DomainIs("localhost") ||
       canonicalized_url->has_port())
     return metrics::OmniboxInputType::URL;
+
+  // The .example and .test TLDs are special-cased as known TLDs due to
+  // https://tools.ietf.org/html/rfc6761. Unlike localhost, these are not valid
+  // host names, so they must have at least one subdomain to be a URL.
+  for (const base::StringPiece domain : {"example", "test"}) {
+    // The +1 accounts for a possible trailing period.
+    if (canonicalized_url->DomainIs(domain) &&
+        (canonicalized_url->host().length() > (domain.length() + 1)))
+      return metrics::OmniboxInputType::URL;
+  }
 
   // No scheme, username, port, and no known TLD on the host.
   // This could be:
@@ -506,17 +523,21 @@ void AutocompleteInput::ParseForEmphasizeComponents(
 base::string16 AutocompleteInput::FormattedStringWithEquivalentMeaning(
     const GURL& url,
     const base::string16& formatted_url,
-    const AutocompleteSchemeClassifier& scheme_classifier) {
+    const AutocompleteSchemeClassifier& scheme_classifier,
+    size_t* offset) {
   if (!url_formatter::CanStripTrailingSlash(url))
     return formatted_url;
   const base::string16 url_with_path(formatted_url + base::char16('/'));
-  return (AutocompleteInput::Parse(
-              formatted_url, std::string(), scheme_classifier, nullptr, nullptr,
-              nullptr) == AutocompleteInput::Parse(url_with_path, std::string(),
-                                                   scheme_classifier, nullptr,
-                                                   nullptr, nullptr))
-             ? formatted_url
-             : url_with_path;
+  if (AutocompleteInput::Parse(formatted_url, std::string(), scheme_classifier,
+                               nullptr, nullptr, nullptr) ==
+      AutocompleteInput::Parse(url_with_path, std::string(), scheme_classifier,
+                               nullptr, nullptr, nullptr)) {
+    return formatted_url;
+  }
+  // If offset is past the addition, shift it.
+  if (offset && *offset == formatted_url.size())
+    ++(*offset);
+  return url_with_path;
 }
 
 // static
@@ -576,4 +597,19 @@ void AutocompleteInput::Clear() {
   want_asynchronous_matches_ = true;
   from_omnibox_focus_ = false;
   terms_prefixed_by_http_or_https_.clear();
+}
+
+size_t AutocompleteInput::EstimateMemoryUsage() const {
+  size_t res = 0;
+
+  res += base::trace_event::EstimateMemoryUsage(text_);
+  res += base::trace_event::EstimateMemoryUsage(current_url_);
+  res += base::trace_event::EstimateMemoryUsage(current_title_);
+  res += base::trace_event::EstimateMemoryUsage(scheme_);
+  res += base::trace_event::EstimateMemoryUsage(canonicalized_url_);
+  res += base::trace_event::EstimateMemoryUsage(desired_tld_);
+  res +=
+      base::trace_event::EstimateMemoryUsage(terms_prefixed_by_http_or_https_);
+
+  return res;
 }

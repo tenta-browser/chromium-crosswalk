@@ -12,11 +12,11 @@
 #import "ios/chrome/browser/ui/commands/application_commands.h"
 #import "ios/chrome/browser/ui/commands/browser_commands.h"
 #import "ios/chrome/browser/ui/rtl_geometry.h"
-#import "ios/chrome/browser/ui/toolbar/omnibox_focuser.h"
-#import "ios/chrome/browser/ui/toolbar/public/toolbar_controller_constants.h"
-#import "ios/chrome/browser/ui/toolbar/toolbar_controller+protected.h"
+#import "ios/chrome/browser/ui/toolbar/legacy/toolbar_controller+protected.h"
+#import "ios/chrome/browser/ui/toolbar/legacy/toolbar_controller_constants.h"
+#import "ios/chrome/browser/ui/toolbar/public/fakebox_focuser.h"
+#import "ios/chrome/browser/ui/toolbar/public/omnibox_focuser.h"
 #include "ios/chrome/browser/ui/toolbar/toolbar_resource_macros.h"
-#import "ios/chrome/browser/ui/toolbar/web_toolbar_delegate.h"
 #import "ios/chrome/browser/ui/uikit_ui_util.h"
 #include "ui/base/l10n/l10n_util.h"
 
@@ -66,8 +66,9 @@ enum {
 - (instancetype)initWithDispatcher:(id<ApplicationCommands,
                                        BrowserCommands,
                                        OmniboxFocuser,
-                                       UrlLoader,
-                                       WebToolbarDelegate>)dispatcher {
+                                       FakeboxFocuser,
+                                       ToolbarCommands,
+                                       UrlLoader>)dispatcher {
   self = [super initWithStyle:ToolbarControllerStyleLightMode
                    dispatcher:dispatcher];
   if (self) {

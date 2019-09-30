@@ -3,26 +3,37 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
+      "backgroundColor": "#FFFFFF"
+    },
+    {
+      "name": "Scrolling Layer",
+      "bounds": [800, 600],
+      "drawsContent": false
+    },
+    {
+      "name": "Scrolling Contents Layer",
+      "bounds": [800, 600],
       "contentsOpaque": true,
       "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
         {
           "object": "LayoutBlockFlow DIV class='scroller'",
           "rect": [18, 60, 310, 200],
-          "reason": "subtree"
+          "reason": "full"
         },
         {
           "object": "LayoutBlockFlow (positioned) DIV class='back'",
           "rect": [93, 125, 180, 100],
-          "reason": "subtree"
+          "reason": "paint property change"
         },
         {
           "object": "LayoutBlockFlow (positioned) DIV class='back'",
           "rect": [93, 75, 180, 100],
-          "reason": "subtree"
+          "reason": "paint property change"
         },
         {
-          "object": "LayoutBlockFlow DIV class='scroller'",
+          "object": "VerticalScrollbar",
           "rect": [308, 65, 15, 175],
           "reason": "scroll control"
         }
@@ -67,15 +78,11 @@
   "objectPaintInvalidations": [
     {
       "object": "LayoutBlockFlow DIV class='scroller'",
-      "reason": "subtree"
+      "reason": "full"
     },
     {
       "object": "VerticalScrollbar",
       "reason": "scroll control"
-    },
-    {
-      "object": "LayoutBlockFlow (positioned) DIV class='back'",
-      "reason": "subtree"
     }
   ]
 }

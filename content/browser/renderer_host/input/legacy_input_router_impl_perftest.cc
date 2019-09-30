@@ -91,17 +91,21 @@ class NullInputRouterClient : public InputRouterClient {
       const ui::LatencyInfo& latency_info) override {
     return INPUT_EVENT_ACK_STATE_NOT_CONSUMED;
   }
-  void IncrementInFlightEventCount(
-      blink::WebInputEvent::Type event_type) override {}
+  void IncrementInFlightEventCount() override {}
   void DecrementInFlightEventCount(InputEventAckSource ack_source) override {}
   void OnHasTouchEventHandlers(bool has_handlers) override {}
   void DidOverscroll(const ui::DidOverscrollParams& params) override {}
   void OnSetWhiteListedTouchAction(
       cc::TouchAction white_listed_touch_action) override {}
   void DidStopFlinging() override {}
+  void DidStartScrollingViewport() override {}
+  void ForwardWheelEventWithLatencyInfo(
+      const blink::WebMouseWheelEvent& event,
+      const ui::LatencyInfo& latency_info) override {}
   void ForwardGestureEventWithLatencyInfo(
       const blink::WebGestureEvent& event,
       const ui::LatencyInfo& latency_info) override {}
+  void SetNeedsBeginFrameForFlingProgress() override {}
 };
 
 class NullIPCSender : public IPC::Sender {
@@ -137,16 +141,14 @@ Gestures BuildScrollSequence(size_t steps,
   WebGestureEvent gesture(WebInputEvent::kGestureScrollBegin,
                           WebInputEvent::kNoModifiers,
                           ui::EventTimeStampToSeconds(ui::EventTimeForNow()));
-  gesture.x = origin.x();
-  gesture.y = origin.y();
+  gesture.SetPositionInWidget(gfx::PointF(origin.x(), origin.y()));
   gestures.push_back(gesture);
 
   gesture.SetType(WebInputEvent::kGestureScrollUpdate);
   gesture.data.scroll_update.delta_x = delta.x();
   gesture.data.scroll_update.delta_y = delta.y();
   for (size_t i = 0; i < steps; ++i) {
-    gesture.x += delta.x();
-    gesture.y += delta.y();
+    gesture.SetPositionInWidget(gesture.PositionInWidget() + delta);
     gestures.push_back(gesture);
   }
 

@@ -19,6 +19,7 @@
 #include "net/url_request/url_request.h"
 #include "storage/browser/quota/quota_manager.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "url/origin.h"
 
 namespace content {
 
@@ -77,7 +78,7 @@ class AppCacheHostTest : public testing::Test {
 
     void OnSetSubresourceFactory(
         int host_id,
-        mojo::MessagePipeHandle loader_factory_pipe_handle) override {}
+        network::mojom::URLLoaderFactoryPtr url_loader_factory) override {}
 
     int last_host_id_;
     int64_t last_cache_id_;
@@ -94,56 +95,49 @@ class AppCacheHostTest : public testing::Test {
     // Not needed for our tests.
     void RegisterClient(storage::QuotaClient* client) override {}
     void NotifyStorageAccessed(storage::QuotaClient::ID client_id,
-                               const GURL& origin,
-                               storage::StorageType type) override {}
+                               const url::Origin& origin,
+                               blink::mojom::StorageType type) override {}
     void NotifyStorageModified(storage::QuotaClient::ID client_id,
-                               const GURL& origin,
-                               storage::StorageType type,
+                               const url::Origin& origin,
+                               blink::mojom::StorageType type,
                                int64_t delta) override {}
     void SetUsageCacheEnabled(storage::QuotaClient::ID client_id,
-                              const GURL& origin,
-                              storage::StorageType type,
+                              const url::Origin& origin,
+                              blink::mojom::StorageType type,
                               bool enabled) override {}
     void GetUsageAndQuota(base::SequencedTaskRunner* original_task_runner,
-                          const GURL& origin,
-                          storage::StorageType type,
-                          const UsageAndQuotaCallback& callback) override {}
+                          const url::Origin& origin,
+                          blink::mojom::StorageType type,
+                          UsageAndQuotaCallback callback) override {}
 
-    void NotifyOriginInUse(const GURL& origin) override { inuse_[origin] += 1; }
+    void NotifyOriginInUse(const url::Origin& origin) override {
+      inuse_[origin] += 1;
+    }
 
-    void NotifyOriginNoLongerInUse(const GURL& origin) override {
+    void NotifyOriginNoLongerInUse(const url::Origin& origin) override {
       inuse_[origin] -= 1;
     }
 
-    int GetInUseCount(const GURL& origin) {
-      return inuse_[origin];
-    }
+    int GetInUseCount(const url::Origin& origin) { return inuse_[origin]; }
 
     void reset() {
       inuse_.clear();
     }
 
     // Map from origin to count of inuse notifications.
-    std::map<GURL, int> inuse_;
+    std::map<url::Origin, int> inuse_;
 
    protected:
     ~MockQuotaManagerProxy() override {}
   };
 
-  void GetStatusCallback(AppCacheStatus status, void* param) {
+  void GetStatusCallback(AppCacheStatus status) {
     last_status_result_ = status;
-    last_callback_param_ = param;
   }
 
-  void StartUpdateCallback(bool result, void* param) {
-    last_start_result_ = result;
-    last_callback_param_ = param;
-  }
+  void StartUpdateCallback(bool result) { last_start_result_ = result; }
 
-  void SwapCacheCallback(bool result, void* param) {
-    last_swap_result_ = result;
-    last_callback_param_ = param;
-  }
+  void SwapCacheCallback(bool result) { last_swap_result_ = result; }
 
   base::test::ScopedTaskEnvironment scoped_task_environment_;
 
@@ -157,7 +151,6 @@ class AppCacheHostTest : public testing::Test {
   AppCacheStatus last_status_result_;
   bool last_swap_result_;
   bool last_start_result_;
-  void* last_callback_param_;
 };
 
 TEST_F(AppCacheHostTest, Basic) {
@@ -172,26 +165,18 @@ TEST_F(AppCacheHostTest, Basic) {
   // See that the callbacks are delivered immediately
   // and respond as if there is no cache selected.
   last_status_result_ = AppCacheStatus::APPCACHE_STATUS_OBSOLETE;
-  host.GetStatusWithCallback(std::move(get_status_callback_),
-                             reinterpret_cast<void*>(1));
+  host.GetStatusWithCallback(std::move(get_status_callback_));
   EXPECT_EQ(AppCacheStatus::APPCACHE_STATUS_UNCACHED, last_status_result_);
-  EXPECT_EQ(reinterpret_cast<void*>(1), last_callback_param_);
 
   last_start_result_ = true;
-  host.StartUpdateWithCallback(
-      base::BindOnce(&AppCacheHostTest::StartUpdateCallback,
-                     base::Unretained(this)),
-      reinterpret_cast<void*>(2));
+  host.StartUpdateWithCallback(base::BindOnce(
+      &AppCacheHostTest::StartUpdateCallback, base::Unretained(this)));
   EXPECT_FALSE(last_start_result_);
-  EXPECT_EQ(reinterpret_cast<void*>(2), last_callback_param_);
 
   last_swap_result_ = true;
-  host.SwapCacheWithCallback(
-      base::BindOnce(&AppCacheHostTest::SwapCacheCallback,
-                     base::Unretained(this)),
-      reinterpret_cast<void*>(3));
+  host.SwapCacheWithCallback(base::BindOnce(
+      &AppCacheHostTest::SwapCacheCallback, base::Unretained(this)));
   EXPECT_FALSE(last_swap_result_);
-  EXPECT_EQ(reinterpret_cast<void*>(3), last_callback_param_);
 }
 
 TEST_F(AppCacheHostTest, SelectNoCache) {
@@ -205,10 +190,11 @@ TEST_F(AppCacheHostTest, SelectNoCache) {
   mock_frontend_.last_status_ = AppCacheStatus::APPCACHE_STATUS_OBSOLETE;
 
   const GURL kDocAndOriginUrl(GURL("http://whatever/").GetOrigin());
+  const url::Origin kOrigin(url::Origin::Create(kDocAndOriginUrl));
   {
     AppCacheHost host(1, &mock_frontend_, &service_);
     host.SelectCache(kDocAndOriginUrl, kAppCacheNoCacheId, GURL());
-    EXPECT_EQ(1, mock_quota_proxy->GetInUseCount(kDocAndOriginUrl));
+    EXPECT_EQ(1, mock_quota_proxy->GetInUseCount(kOrigin));
 
     // We should have received an OnCacheSelected msg
     EXPECT_EQ(1, mock_frontend_.last_host_id_);
@@ -224,7 +210,7 @@ TEST_F(AppCacheHostTest, SelectNoCache) {
     EXPECT_FALSE(host.is_selection_pending());
     EXPECT_TRUE(host.preferred_manifest_url().is_empty());
   }
-  EXPECT_EQ(0, mock_quota_proxy->GetInUseCount(kDocAndOriginUrl));
+  EXPECT_EQ(0, mock_quota_proxy->GetInUseCount(kOrigin));
   service_.set_quota_manager_proxy(nullptr);
 }
 
@@ -304,11 +290,8 @@ TEST_F(AppCacheHostTest, FailedCacheLoad) {
 
   // The callback should not occur until we finish cache selection.
   last_status_result_ = AppCacheStatus::APPCACHE_STATUS_OBSOLETE;
-  last_callback_param_ = reinterpret_cast<void*>(-1);
-  host.GetStatusWithCallback(std::move(get_status_callback_),
-                             reinterpret_cast<void*>(1));
+  host.GetStatusWithCallback(std::move(get_status_callback_));
   EXPECT_EQ(AppCacheStatus::APPCACHE_STATUS_OBSOLETE, last_status_result_);
-  EXPECT_EQ(reinterpret_cast<void*>(-1), last_callback_param_);
 
   // Satisfy the load with NULL, a failure.
   host.OnCacheLoaded(nullptr, kMockCacheId);
@@ -322,7 +305,6 @@ TEST_F(AppCacheHostTest, FailedCacheLoad) {
 
   // Callback should have fired upon completing the cache load too.
   EXPECT_EQ(AppCacheStatus::APPCACHE_STATUS_UNCACHED, last_status_result_);
-  EXPECT_EQ(reinterpret_cast<void*>(1), last_callback_param_);
 }
 
 TEST_F(AppCacheHostTest, FailedGroupLoad) {
@@ -337,11 +319,8 @@ TEST_F(AppCacheHostTest, FailedGroupLoad) {
 
   // The callback should not occur until we finish cache selection.
   last_status_result_ = AppCacheStatus::APPCACHE_STATUS_OBSOLETE;
-  last_callback_param_ = reinterpret_cast<void*>(-1);
-  host.GetStatusWithCallback(std::move(get_status_callback_),
-                             reinterpret_cast<void*>(1));
+  host.GetStatusWithCallback(std::move(get_status_callback_));
   EXPECT_EQ(AppCacheStatus::APPCACHE_STATUS_OBSOLETE, last_status_result_);
-  EXPECT_EQ(reinterpret_cast<void*>(-1), last_callback_param_);
 
   // Satisfy the load will NULL, a failure.
   host.OnGroupLoaded(nullptr, kMockManifestUrl);
@@ -355,7 +334,6 @@ TEST_F(AppCacheHostTest, FailedGroupLoad) {
 
   // Callback should have fired upon completing the group load.
   EXPECT_EQ(AppCacheStatus::APPCACHE_STATUS_UNCACHED, last_status_result_);
-  EXPECT_EQ(reinterpret_cast<void*>(1), last_callback_param_);
 }
 
 TEST_F(AppCacheHostTest, SetSwappableCache) {
@@ -442,12 +420,13 @@ TEST_F(AppCacheHostTest, SelectCacheAllowed) {
   mock_frontend_.content_blocked_ = false;
 
   const GURL kDocAndOriginUrl(GURL("http://whatever/").GetOrigin());
+  const url::Origin kOrigin(url::Origin::Create(kDocAndOriginUrl));
   const GURL kManifestUrl(GURL("http://whatever/cache.manifest"));
   {
     AppCacheHost host(1, &mock_frontend_, &service_);
     host.first_party_url_ = kDocAndOriginUrl;
     host.SelectCache(kDocAndOriginUrl, kAppCacheNoCacheId, kManifestUrl);
-    EXPECT_EQ(1, mock_quota_proxy->GetInUseCount(kDocAndOriginUrl));
+    EXPECT_EQ(1, mock_quota_proxy->GetInUseCount(kOrigin));
 
     // MockAppCacheService::LoadOrCreateGroup is asynchronous, so we shouldn't
     // have received an OnCacheSelected msg yet.
@@ -462,7 +441,7 @@ TEST_F(AppCacheHostTest, SelectCacheAllowed) {
 
     EXPECT_TRUE(host.is_selection_pending());
   }
-  EXPECT_EQ(0, mock_quota_proxy->GetInUseCount(kDocAndOriginUrl));
+  EXPECT_EQ(0, mock_quota_proxy->GetInUseCount(kOrigin));
   service_.set_quota_manager_proxy(nullptr);
 }
 
@@ -482,12 +461,13 @@ TEST_F(AppCacheHostTest, SelectCacheBlocked) {
   mock_frontend_.content_blocked_ = false;
 
   const GURL kDocAndOriginUrl(GURL("http://whatever/").GetOrigin());
+  const url::Origin kOrigin(url::Origin::Create(kDocAndOriginUrl));
   const GURL kManifestUrl(GURL("http://whatever/cache.manifest"));
   {
     AppCacheHost host(1, &mock_frontend_, &service_);
     host.first_party_url_ = kDocAndOriginUrl;
     host.SelectCache(kDocAndOriginUrl, kAppCacheNoCacheId, kManifestUrl);
-    EXPECT_EQ(1, mock_quota_proxy->GetInUseCount(kDocAndOriginUrl));
+    EXPECT_EQ(1, mock_quota_proxy->GetInUseCount(kOrigin));
 
     // We should have received an OnCacheSelected msg
     EXPECT_EQ(1, mock_frontend_.last_host_id_);
@@ -508,7 +488,7 @@ TEST_F(AppCacheHostTest, SelectCacheBlocked) {
     EXPECT_FALSE(host.is_selection_pending());
     EXPECT_TRUE(host.preferred_manifest_url().is_empty());
   }
-  EXPECT_EQ(0, mock_quota_proxy->GetInUseCount(kDocAndOriginUrl));
+  EXPECT_EQ(0, mock_quota_proxy->GetInUseCount(kOrigin));
   service_.set_quota_manager_proxy(nullptr);
 }
 

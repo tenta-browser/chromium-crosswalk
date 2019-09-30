@@ -11,10 +11,9 @@
 #include "base/bind.h"
 #include "base/command_line.h"
 #include "base/location.h"
-#include "base/memory/ptr_util.h"
 #include "base/metrics/field_trial_params.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
-#include "base/metrics/sparse_histogram.h"
 #include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
@@ -236,7 +235,7 @@ base::TimeDelta GetTimeoutForLoadingIndicator() {
 template <typename SuggestionPtrContainer>
 std::unique_ptr<std::vector<std::string>> GetSuggestionIDVector(
     const SuggestionPtrContainer& suggestions) {
-  auto result = base::MakeUnique<std::vector<std::string>>();
+  auto result = std::make_unique<std::vector<std::string>>();
   for (const auto& suggestion : suggestions) {
     result->push_back(suggestion->id());
   }
@@ -301,8 +300,8 @@ void RemoveIncompleteSuggestions(RemoteSuggestion::PtrVector* suggestions) {
   UMA_HISTOGRAM_BOOLEAN("NewTabPage.Snippets.IncompleteSnippetsAfterFetch",
                         num_suggestions_removed > 0);
   if (num_suggestions_removed > 0) {
-    UMA_HISTOGRAM_SPARSE_SLOWLY("NewTabPage.Snippets.NumIncompleteSnippets",
-                                num_suggestions_removed);
+    base::UmaHistogramSparse("NewTabPage.Snippets.NumIncompleteSnippets",
+                             num_suggestions_removed);
   }
 }
 
@@ -386,12 +385,13 @@ RemoteSuggestionsProviderImpl::RemoteSuggestionsProviderImpl(
       status_service_(std::move(status_service)),
       clear_history_dependent_state_when_initialized_(false),
       clear_cached_suggestions_when_initialized_(false),
-      clock_(base::MakeUnique<base::DefaultClock>()),
+      clock_(base::DefaultClock::GetInstance()),
       prefetched_pages_tracker_(std::move(prefetched_pages_tracker)),
       breaking_news_raw_data_provider_(
           std::move(breaking_news_raw_data_provider)),
       debug_logger_(debug_logger),
-      fetch_timeout_timer_(std::move(fetch_timeout_timer)) {
+      fetch_timeout_timer_(std::move(fetch_timeout_timer)),
+      request_status_(FetchRequestStatus::NONE) {
   DCHECK(debug_logger_);
   DCHECK(fetch_timeout_timer_);
   RestoreCategoriesFromPrefs();
@@ -418,8 +418,8 @@ RemoteSuggestionsProviderImpl::RemoteSuggestionsProviderImpl(
   // database is done loading.
   database_load_start_ = base::TimeTicks::Now();
   database_->LoadSnippets(
-      base::Bind(&RemoteSuggestionsProviderImpl::OnDatabaseLoaded,
-                 base::Unretained(this)));
+      base::BindOnce(&RemoteSuggestionsProviderImpl::OnDatabaseLoaded,
+                     base::Unretained(this)));
 }
 
 RemoteSuggestionsProviderImpl::~RemoteSuggestionsProviderImpl() {
@@ -442,7 +442,7 @@ void RemoteSuggestionsProviderImpl::ReloadSuggestions() {
   if (!remote_suggestions_scheduler_->AcquireQuotaForInteractiveFetch()) {
     return;
   }
-  auto callback = base::Bind(
+  auto callback = base::BindOnce(
       [](RemoteSuggestionsScheduler* scheduler, Status status_code) {
         scheduler->OnInteractiveFetchFinished(status_code);
       },
@@ -573,6 +573,14 @@ void RemoteSuggestionsProviderImpl::FetchSuggestions(
     }
     return;
   }
+  if (request_status_ == FetchRequestStatus::NONE) {
+    // We cannot rule out concurrent requests although they are rare as the user
+    // has to trigger ReloadSuggestions() while the scheduler decides for a
+    // background fetch. Although preventing concurrent fetches would be
+    // desireable, it's not worth the effort (also see TODO() in
+    // OnFetchFinished()).
+    request_status_ = FetchRequestStatus::IN_PROGRESS;
+  }
 
   // |count_to_fetch| is actually ignored, because the server does not support
   // this functionality.
@@ -684,7 +692,8 @@ void RemoteSuggestionsProviderImpl::
   auto articles_it = category_contents_.find(articles_category_);
   DCHECK(articles_it != category_contents_.end());
   CategoryContent& content = articles_it->second;
-  DCHECK_EQ(content.status, CategoryStatus::AVAILABLE_LOADING);
+  DCHECK(content.status == CategoryStatus::AVAILABLE_LOADING ||
+         content.status == CategoryStatus::CATEGORY_EXPLICITLY_DISABLED);
   UpdateCategoryStatus(articles_it->first, CategoryStatus::AVAILABLE);
   // TODO(jkrcal): Technically, we have no new suggestions; we should not
   // notify. This is a work-around before crbug.com/768410 gets fixed.
@@ -725,16 +734,29 @@ void RemoteSuggestionsProviderImpl::ClearHistory(
   // because it is not known which history entries were used for the suggestions
   // personalization.
   ClearHistoryDependentState();
+  if (request_status_ == FetchRequestStatus::IN_PROGRESS ||
+      request_status_ == FetchRequestStatus::IN_PROGRESS_NEEDS_REFETCH) {
+    request_status_ = FetchRequestStatus::IN_PROGRESS_CANCELED;
+  }
 }
 
-void RemoteSuggestionsProviderImpl::OnSignInStateChanged() {
+void RemoteSuggestionsProviderImpl::ClearCachedSuggestions() {
+  ClearCachedSuggestionsImpl();
+  if (request_status_ == FetchRequestStatus::IN_PROGRESS) {
+    // Called by external cache-cleared trigger. As this can be caused by
+    // language change, we need to refetch a potentiall ongoing fetch.
+    request_status_ = FetchRequestStatus::IN_PROGRESS_NEEDS_REFETCH;
+  }
+}
+
+void RemoteSuggestionsProviderImpl::OnSignInStateChanged(bool has_signed_in) {
   // Make sure the status service is registered and we already initialised its
   // start state.
   if (!initialized()) {
     return;
   }
 
-  status_service_->OnSignInStateChanged();
+  status_service_->OnSignInStateChanged(has_signed_in);
 }
 
 void RemoteSuggestionsProviderImpl::GetDismissedSuggestionsForDebugging(
@@ -898,9 +920,28 @@ void RemoteSuggestionsProviderImpl::OnFetchFinished(
     RemoteSuggestionsFetcher::OptionalFetchedCategories fetched_categories) {
   debug_logger_->Log(FROM_HERE, /*message=*/std::string());
 
+  FetchRequestStatus request_status = request_status_;
+  // TODO(jkrcal): This is potentially incorrect if there is another concurrent
+  // request in progress; when it finishes we will treat it as a standard
+  // request even though it may need to be refetched/disregarded. Even though
+  // the scheduler never triggers two concurrent requests, the user can trigger
+  // the second request via the UI. If cache/history gets cleared before neither
+  // of the two finishes, we can get outdated results afterwards. Low chance &
+  // low risk, feels safe to ignore.
+  request_status_ = FetchRequestStatus::NONE;
+
   if (!ready()) {
     // TODO(tschumann): What happens if this was a user-triggered, interactive
     // request? Is the UI waiting indefinitely now?
+    return;
+  }
+
+  if (request_status == FetchRequestStatus::IN_PROGRESS_NEEDS_REFETCH) {
+    // Disregard the results and start a fetch again.
+    FetchSuggestions(interactive_request, std::move(callback));
+    return;
+  } else if (request_status == FetchRequestStatus::IN_PROGRESS_CANCELED) {
+    // Disregard the results.
     return;
   }
 
@@ -914,11 +955,10 @@ void RemoteSuggestionsProviderImpl::OnFetchFinished(
   if (IsKeepingPrefetchedSuggestionsEnabled() && prefetched_pages_tracker_ &&
       !prefetched_pages_tracker_->IsInitialized()) {
     // Wait until the tracker is initialized.
-    prefetched_pages_tracker_->AddInitializationCompletedCallback(
-        base::BindOnce(&RemoteSuggestionsProviderImpl::OnFetchFinished,
-                       base::Unretained(this), std::move(callback),
-                       interactive_request, status,
-                       std::move(fetched_categories)));
+    prefetched_pages_tracker_->Initialize(base::BindOnce(
+        &RemoteSuggestionsProviderImpl::OnFetchFinished, base::Unretained(this),
+        std::move(callback), interactive_request, status,
+        std::move(fetched_categories)));
     return;
   }
 
@@ -971,7 +1011,7 @@ void RemoteSuggestionsProviderImpl::OnFetchFinished(
     bool response_includes_article_category = false;
     for (FetchedCategory& fetched_category : *fetched_categories) {
       if (fetched_category.category == articles_category_) {
-        UMA_HISTOGRAM_SPARSE_SLOWLY(
+        base::UmaHistogramSparse(
             "NewTabPage.Snippets.NumArticlesFetched",
             std::min(fetched_category.suggestions.size(),
                      static_cast<size_t>(kMaxNormalFetchSuggestionCount)));
@@ -1041,8 +1081,8 @@ void RemoteSuggestionsProviderImpl::OnFetchFinished(
   auto content_it = category_contents_.find(articles_category_);
   DCHECK(content_it != category_contents_.end());
   const CategoryContent& content = content_it->second;
-  UMA_HISTOGRAM_SPARSE_SLOWLY("NewTabPage.Snippets.NumArticles",
-                              content.suggestions.size());
+  base::UmaHistogramSparse("NewTabPage.Snippets.NumArticles",
+                           content.suggestions.size());
   if (content.suggestions.empty() && !content.dismissed.empty()) {
     UMA_HISTOGRAM_COUNTS("NewTabPage.Snippets.NumArticlesZeroDueToDiscarded",
                          content.dismissed.size());
@@ -1315,7 +1355,7 @@ void RemoteSuggestionsProviderImpl::ClearExpiredDismissedSuggestions() {
 }
 
 void RemoteSuggestionsProviderImpl::ClearOrphanedImages() {
-  auto alive_suggestions = base::MakeUnique<std::set<std::string>>();
+  auto alive_suggestions = std::make_unique<std::set<std::string>>();
   for (const auto& entry : category_contents_) {
     const CategoryContent& content = entry.second;
     for (const auto& suggestion_ptr : content.suggestions) {
@@ -1334,16 +1374,18 @@ void RemoteSuggestionsProviderImpl::ClearHistoryDependentState() {
     return;
   }
 
+  debug_logger_->Log(FROM_HERE, /*message=*/std::string());
   NukeAllSuggestions();
   remote_suggestions_scheduler_->OnHistoryCleared();
 }
 
-void RemoteSuggestionsProviderImpl::ClearCachedSuggestions() {
+void RemoteSuggestionsProviderImpl::ClearCachedSuggestionsImpl() {
   if (!initialized()) {
     clear_cached_suggestions_when_initialized_ = true;
     return;
   }
 
+  debug_logger_->Log(FROM_HERE, /*message=*/std::string());
   NukeAllSuggestions();
   remote_suggestions_scheduler_->OnSuggestionsCleared();
 }
@@ -1381,15 +1423,18 @@ void RemoteSuggestionsProviderImpl::NukeAllSuggestions() {
   StoreCategoriesToPrefs();
 }
 
+GURL RemoteSuggestionsProviderImpl::GetImageURLToFetch(
+    const ContentSuggestion::ID& suggestion_id) const {
+  if (!base::ContainsKey(category_contents_, suggestion_id.category())) {
+    return GURL();
+  }
+  return FindSuggestionImageUrl(suggestion_id);
+}
+
 void RemoteSuggestionsProviderImpl::FetchSuggestionImage(
     const ContentSuggestion::ID& suggestion_id,
     ImageFetchedCallback callback) {
-  if (!base::ContainsKey(category_contents_, suggestion_id.category())) {
-    base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE, base::BindOnce(std::move(callback), gfx::Image()));
-    return;
-  }
-  GURL image_url = FindSuggestionImageUrl(suggestion_id);
+  GURL image_url = GetImageURLToFetch(suggestion_id);
   if (image_url.is_empty()) {
     // As we don't know the corresponding suggestion anymore, we don't expect to
     // find it in the database (and also can't fetch it remotely). Cut the
@@ -1399,7 +1444,25 @@ void RemoteSuggestionsProviderImpl::FetchSuggestionImage(
     return;
   }
   image_fetcher_.FetchSuggestionImage(suggestion_id, image_url,
+                                      ImageDataFetchedCallback(),
                                       std::move(callback));
+}
+
+void RemoteSuggestionsProviderImpl::FetchSuggestionImageData(
+    const ContentSuggestion::ID& suggestion_id,
+    ImageDataFetchedCallback callback) {
+  GURL image_url = GetImageURLToFetch(suggestion_id);
+  if (image_url.is_empty()) {
+    // As we don't know the corresponding suggestion anymore, we don't expect to
+    // find it in the database (and also can't fetch it remotely). Cut the
+    // lookup short and return directly.
+    base::ThreadTaskRunnerHandle::Get()->PostTask(
+        FROM_HERE, base::BindOnce(std::move(callback), std::string()));
+    return;
+  }
+  image_fetcher_.FetchSuggestionImage(suggestion_id, image_url,
+                                      std::move(callback),
+                                      ntp_snippets::ImageFetchedCallback());
 }
 
 void RemoteSuggestionsProviderImpl::
@@ -1470,7 +1533,10 @@ void RemoteSuggestionsProviderImpl::OnStatusChanged(
         DCHECK(state_ == State::READY);
         // Clear nonpersonalized suggestions (and notify the scheduler there are
         // no suggestions).
-        ClearCachedSuggestions();
+        ClearCachedSuggestionsImpl();
+        if (request_status_ == FetchRequestStatus::IN_PROGRESS) {
+          request_status_ = FetchRequestStatus::IN_PROGRESS_NEEDS_REFETCH;
+        }
       } else {
         EnterState(State::READY);
       }
@@ -1481,7 +1547,10 @@ void RemoteSuggestionsProviderImpl::OnStatusChanged(
         DCHECK(state_ == State::READY);
         // Clear personalized suggestions (and notify the scheduler there are
         // no suggestions).
-        ClearCachedSuggestions();
+        ClearCachedSuggestionsImpl();
+        if (request_status_ == FetchRequestStatus::IN_PROGRESS) {
+          request_status_ = FetchRequestStatus::IN_PROGRESS_NEEDS_REFETCH;
+        }
       } else {
         EnterState(State::READY);
       }
@@ -1522,7 +1591,7 @@ void RemoteSuggestionsProviderImpl::EnterState(State state) {
       UpdateAllCategoryStatus(CategoryStatus::AVAILABLE);
 
       if (clear_cached_suggestions_when_initialized_) {
-        ClearCachedSuggestions();
+        ClearCachedSuggestionsImpl();
         clear_cached_suggestions_when_initialized_ = false;
       }
       if (clear_history_dependent_state_when_initialized_) {
@@ -1548,7 +1617,7 @@ void RemoteSuggestionsProviderImpl::EnterState(State state) {
         clear_history_dependent_state_when_initialized_ = false;
         ClearHistoryDependentState();
       }
-      ClearCachedSuggestions();
+      ClearCachedSuggestionsImpl();
       clear_cached_suggestions_when_initialized_ = false;
 
       if (breaking_news_raw_data_provider_ &&
@@ -1749,7 +1818,7 @@ void RemoteSuggestionsProviderImpl::StoreCategoriesToPrefs() {
   for (const auto& entry : to_store) {
     const Category& category = entry.first;
     const CategoryContent& content = *entry.second;
-    auto dict = base::MakeUnique<base::DictionaryValue>();
+    auto dict = std::make_unique<base::DictionaryValue>();
     dict->SetInteger(kCategoryContentId, category.id());
     // TODO(tschumann): Persist other properties of the CategoryInfo.
     dict->SetString(kCategoryContentTitle, content.info.title());

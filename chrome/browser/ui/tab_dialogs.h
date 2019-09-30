@@ -15,8 +15,8 @@ class Browser;
 class Profile;
 
 namespace content {
+class RenderWidgetHost;
 class WebContents;
-struct WebContentsUnresponsiveState;
 }
 
 namespace ui {
@@ -44,8 +44,9 @@ class TabDialogs : public base::SupportsUserData::Data {
 
   // Shows or hides the hung renderer dialog.
   virtual void ShowHungRendererDialog(
-      const content::WebContentsUnresponsiveState& unresponsive_state) = 0;
-  virtual void HideHungRendererDialog() = 0;
+      content::RenderWidgetHost* render_widget_host) = 0;
+  virtual void HideHungRendererDialog(
+      content::RenderWidgetHost* render_widget_host) = 0;
   virtual bool IsShowingHungRendererDialog() = 0;
 
   // Shows a dialog asking the user to confirm linking to a managed account.

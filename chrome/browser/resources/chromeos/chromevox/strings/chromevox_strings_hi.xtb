@@ -36,6 +36,7 @@
 <translation id="1237866625126425153">rdgrp</translation>
 <translation id="1251750620252348585">अगले स्‍तर 6 का शीर्षक</translation>
 <translation id="1275718070701477396">चयनित</translation>
+<translation id="1286609444451033486">टॉगल करने के लिए Search+Space दबाएं.</translation>
 <translation id="1319608975892113573">कोई पिछला ब्‍लॉककोट नहीं.</translation>
 <translation id="1321576897702511272">ChromeVox सहायता छिपाएं</translation>
 <translation id="1331702245475014624"><ph name="TOTAL" /> में से <ph name="INDEX" /></translation>
@@ -171,7 +172,7 @@
 <translation id="2770781857296573485">समूह अन्‍वेषण डालें</translation>
 <translation id="2777845298774924149">बाहर हो गया</translation>
 <translation id="2781264313200109999">लिंक शुरू</translation>
-<translation id="2784959586797362050">आप हमेशा की तरह Search+a और उसके बाद i दबाकर हमें सीधे फ़ीडबैक भेज सकते हैं. हम आपके विचार जानने के लिए बेताब हैं.</translation>
+<translation id="2784959586797362050">आप हमेशा की तरह Search+a और उसके बाद i दबाकर हमें सीधे सुझाव भेज सकते हैं. हम आपके विचार जानने के लिए बेताब हैं.</translation>
 <translation id="2800204403141299078">कोई और भिन्‍न तत्‍व नहीं.</translation>
 <translation id="2800780099804980316">कोई पिछला स्‍तर 1 शीर्षक नहीं.</translation>
 <translation id="280499067616661124">पेज में ChromeVox ढूंढें</translation>
@@ -369,8 +370,10 @@
 <translation id="4176463684765177261">अक्षम</translation>
 <translation id="4188530942454211480">पिछला वाक्य</translation>
 <translation id="4191918948604314587">बटन</translation>
+<translation id="419265409837491189">पिछले स्तंभ पर जाएं</translation>
 <translation id="4202186506458631436">दाएं ले जाएं</translation>
 <translation id="4206289001967551965">तालिका के अंदर</translation>
+<translation id="4209770650650780359">शब्दों को अपने आप पूरा करने की सुविधा के लिए ऊपर या नीचे वाला तीर दबाएं.</translation>
 <translation id="4215733775853809057">अगला स्लाइडर</translation>
 <translation id="4218529045364428769">{COUNT,plural, =1{डैश}one{# डैश}other{# डैश}}</translation>
 <translation id="421884353938374759">रंग पिकर</translation>
@@ -404,6 +407,7 @@
 <translation id="4532633738839459153">{COUNT,plural, =1{स्लैश}one{# स्लैश}other{# स्लैश}}</translation>
 <translation id="4547556996012970016">अगले स्तर 5 का शीर्षक</translation>
 <translation id="4562381607973973258">शीर्षलेख</translation>
+<translation id="4569941707103739422">नेविगेट करने के लिए ऊपर या नीचे वाला तीर; चालू करने के लिए enter दबाएं.</translation>
 <translation id="4570424871453628777">गलत वर्तनी समाप्त</translation>
 <translation id="4591507479202817876">, चयनित</translation>
 <translation id="4597532268155981612">फ़ॉर्म</translation>
@@ -417,6 +421,7 @@
 <translation id="4660783501463101648">क्लासिक को हटाया गया. ChromeVox क्लासिक में वापस ले जाने वाला कीबोर्ड टॉगल हटा दिया गया है.</translation>
 <translation id="4661075872484491155">ट्री</translation>
 <translation id="4668929960204016307">,</translation>
+<translation id="4677535310137735442">अगले स्तंभ पर जाएं</translation>
 <translation id="4688873778442829762">grd</translation>
 <translation id="4693675773662933727">पिछला थानचिह्न</translation>
 <translation id="4696413482802371445">कोई अगला स्‍तर 5 शीर्षक नहीं.</translation>
@@ -432,6 +437,7 @@
 <translation id="4826415162591436065">आगे की ओर नेविगेट करें</translation>
 <translation id="4826604887384865800">अगला जंप</translation>
 <translation id="4827410568042294688">अचयनित</translation>
+<translation id="4839925464551908214">पिछली पंक्ति पर जाएं</translation>
 <translation id="4842108708071771135">कोई अगला ब्लॉककोट नहीं.</translation>
 <translation id="4844625982113518938">किसी भी कुंजी का नाम जानने के लिए उसे दबाएं. Ctrl+W से जानें मोड बंद हो जाएगा.</translation>
 <translation id="4846428657345567687">ChromeVox में आपका स्वागत है!</translation>
@@ -497,6 +503,7 @@
 <translation id="536031132345979795">निरंतर पढ़ने के दौरान पीछे जाएं छोड़ें</translation>
 <translation id="5368000168321181111">ईयरकॉन बंद हैं</translation>
 <translation id="5374320867641260420">कोई अगला बटन नहीं.</translation>
+<translation id="5376407118396657359">सेल के मुताबिक नेविगेट करने के लिए तीर कुंजियों के साथ Search+Ctrl+Alt दबाएं.</translation>
 <translation id="5382299583965267720">कोई अगला स्तर 1 शीर्षक नहीं.</translation>
 <translation id="5402367795255837559">ब्रेल</translation>
 <translation id="5402791055281059602">मॉडल सूचना</translation>
@@ -505,6 +512,7 @@
 <translation id="5417034931411865818">रूटिंग कुंजी $1 के अंतर्गत आइटम क्लिक करें</translation>
 <translation id="5436105723448703439">{COUNT,plural, =1{इससे कम}one{# इससे कम चिह्न}other{# इससे कम चिह्न}}</translation>
 <translation id="5444587279251314700">(सक्रिय)</translation>
+<translation id="5446809554778706307">कोई फ़ोकस नहीं है. नया टैब खोलने के लिए Ctrl+T दबाएं.</translation>
 <translation id="5451268436205074266">बिंदु <ph name="DOT" /></translation>
 <translation id="5455441614648621694">पूरक</translation>
 <translation id="5485036206801896268">कोई पिछला ग्राफ़िक नहीं.</translation>
@@ -559,7 +567,7 @@ Chrome ब्राउज़र मेनू खोलने के लिए, A
 <translation id="5748623122140342504">पिछले स्‍तर 5 का शीर्षक</translation>
 <translation id="5750633686117194034">कोई संशोधक नहीं दबाया गया; कृपया एक या अधिक संशोधक दबाकर रखें; पूर्ण हो जाने पर अपनी अंगुलियां उठा लें और आपको सुनाई देगा कि कुंजियां सेट हो गई हैं. बाहर निकलने के लिए टैब दबाएं.</translation>
 <translation id="5788275253279308023">गुप्‍त विंडो, <ph name="TITLE" />, टैब</translation>
-<translation id="5806206155699461681">विशिष्ट साइटें (जैसे Google खोज) एन्‍हांस करें.</translation>
+<translation id="5806206155699461681">चुनिंदा साइटों (जैसे 'Google सर्च') को बेहतर बनाएं.</translation>
 <translation id="5819072574982403430">ट्री आइटम</translation>
 <translation id="5826479389509458994">पंक्ति <ph name="ROW" /> स्तंभ <ph name="COL" /></translation>
 <translation id="5850707923114094062">पीछे पैन करें</translation>
@@ -584,6 +592,7 @@ Chrome ब्राउज़र मेनू खोलने के लिए, A
 <translation id="6006050241733874051">फ़ॉर्म</translation>
 <translation id="6006064078185310784">{COUNT,plural, =1{बैकस्लैश}one{# बैकस्लैश}other{# बैकस्लैश}}</translation>
 <translation id="6037602951055904232">आगे की ओर पैन करें</translation>
+<translation id="6042826534790431634">चालू करने के लिए Search+Space दबाएं.</translation>
 <translation id="6044160928851315051">स्क्रीन गहरी करें</translation>
 <translation id="605761629541007221">बोल्ड समाप्त</translation>
 <translation id="6065293622157674001">व्याकरण गड़बड़ी शुरू</translation>
@@ -783,6 +792,7 @@ Chrome ब्राउज़र मेनू खोलने के लिए, A
 <translation id="8186185314313222077">पूर्ण स्‍क्रीन टॉगल करें</translation>
 <translation id="8199231515320852133">वर्तमान सेल के शीर्षलेखों को प्रदर्शित करें</translation>
 <translation id="820417203470636242">खाली सेल.</translation>
+<translation id="820469951249669083">अगली पंक्ति पर जाएं</translation>
 <translation id="8215202828671303819">एकाधिक चयन</translation>
 <translation id="826991282343985864">पंक्ति$1स्तंभ$2</translation>
 <translation id="8276439074553447000">पिछले फ़ोकस करने योग्‍य आइटम पर जंप करें</translation>
@@ -860,6 +870,7 @@ Chrome ब्राउज़र मेनू खोलने के लिए, A
 <translation id="9065283790526219006">+popup</translation>
 <translation id="9077213568694924680">चयन से निकाले गए</translation>
 <translation id="9082874451376019682">कोई पिछला स्लाइडर नहीं.</translation>
+<translation id="9087707351856729768">शब्दों को अपने आप पूरा करने के लिए लिखें.</translation>
 <translation id="9089864840575085222">टाइपिंग इको को चक्रित करें</translation>
 <translation id="9105227991373418255">$1 काटें.</translation>
 <translation id="9107530006868467849">कोई पिछला मीडिया विजेट नहीं.</translation>

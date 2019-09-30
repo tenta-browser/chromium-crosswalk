@@ -26,14 +26,14 @@ public class DisplayAndroid {
         /**
          * Called whenever the screen orientation changes.
          *
-         * @param orientation One of Surface.ROTATION_* values.
+         * @param rotation One of Surface.ROTATION_* values.
          */
         void onRotationChanged(int rotation);
 
         /**
          * Called whenever the screen density changes.
          *
-         * @param screen density, aka Density Independent Pixel scale.
+         * @param dipScale Density Independent Pixel scale.
          */
         void onDIPScaleChanged(float dipScale);
     }
@@ -85,6 +85,8 @@ public class DisplayAndroid {
     }
 
     /**
+     * Note: For JB pre-MR1, this can sometimes return values smaller than the actual screen.
+     * https://crbug.com/829318
      * @return Display height in physical pixels.
      */
     public int getDisplayHeight() {
@@ -92,6 +94,7 @@ public class DisplayAndroid {
     }
 
     /**
+     * Note: For JB pre-MR1, this can sometimes return values smaller than the actual screen.
      * @return Display width in physical pixels.
      */
     public int getDisplayWidth() {
@@ -130,6 +133,26 @@ public class DisplayAndroid {
      */
     public float getDipScale() {
         return mDipScale;
+    }
+
+    /**
+     * You probably do not want to use this function.
+     *
+     * In VR, there's a mismatch between the dip scale reported by getDipScale and the dip scale
+     * Android UI is rendered with (in order for VR to control the size of the WebContents).
+     * This means that Android UI may need to be scaled when it's drawn to a texture in VR, which
+     * means that values in units of pixels (like input event locations) also need to be scaled
+     * when being passed to WebContents (and vice versa).
+     *
+     * This function should only be used on the boundaries between Android UI and the rest of Chrome
+     * when doing things like scaling sizes/positions.
+     *
+     * Note: This function is not available through the native display::Display.
+     *
+     * @return The scaling factor of Android UI in this display.
+     */
+    public float getAndroidUIScaling() {
+        return 1.0f;
     }
 
     /**

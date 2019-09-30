@@ -5,6 +5,9 @@
 (async function() {
   TestRunner.addResult(`Tests that User-Agent override works for requests from Service Workers.\n`);
   await TestRunner.loadModule('application_test_runner');
+    // Note: every test that uses a storage API must manually clean-up state from previous tests.
+  await ApplicationTestRunner.resetState();
+
   await TestRunner.loadModule('console_test_runner');
   await TestRunner.showPanel('resources');
 
@@ -26,12 +29,12 @@
 
   function waitForConsoleMessage(regex) {
     return new Promise(function(resolve) {
-      ConsoleModel.consoleModel.addEventListener(ConsoleModel.ConsoleModel.Events.MessageAdded, sniff);
+      SDK.consoleModel.addEventListener(SDK.ConsoleModel.Events.MessageAdded, sniff);
 
       function sniff(e) {
         if (e.data && regex.test(e.data.messageText)) {
           resolve(e.data);
-          ConsoleModel.consoleModel.removeEventListener(ConsoleModel.ConsoleModel.Events.MessageAdded, sniff);
+          SDK.consoleModel.removeEventListener(SDK.ConsoleModel.Events.MessageAdded, sniff);
         }
       }
     });

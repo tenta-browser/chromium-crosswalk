@@ -37,7 +37,6 @@
 #include "content/public/browser/service_worker_context.h"
 #include "content/public/common/content_features.h"
 #include "content/public/common/referrer.h"
-#include "content/public/common/resource_request_body.h"
 #include "net/base/net_errors.h"
 #include "net/http/http_request_headers.h"
 #include "net/http/http_response_headers.h"
@@ -46,6 +45,7 @@
 #include "net/log/net_log.h"
 #include "net/log/net_log_event_type.h"
 #include "net/log/net_log_with_source.h"
+#include "services/network/public/cpp/resource_request_body.h"
 #include "storage/browser/blob/blob_data_builder.h"
 #include "storage/browser/blob/blob_data_handle.h"
 #include "storage/browser/blob/blob_impl.h"
@@ -165,9 +165,9 @@ class ServiceWorkerURLRequestJob::FileSizeResolver {
     callback_ = std::move(callback);
 
     std::vector<base::FilePath> file_paths;
-    for (ResourceRequestBody::Element& element : *body_->elements_mutable()) {
-      if (element.type() == ResourceRequestBody::Element::TYPE_FILE &&
-          element.length() == ResourceRequestBody::Element::kUnknownSize) {
+    for (network::DataElement& element : *body_->elements_mutable()) {
+      if (element.type() == network::DataElement::TYPE_FILE &&
+          element.length() == network::DataElement::kUnknownSize) {
         file_elements_.push_back(&element);
         file_paths.push_back(element.path());
       }
@@ -195,7 +195,7 @@ class ServiceWorkerURLRequestJob::FileSizeResolver {
       DCHECK_EQ(sizes.size(), file_elements_.size());
       size_t num_elements = file_elements_.size();
       for (size_t i = 0; i < num_elements; i++) {
-        ResourceRequestBody::Element* element = file_elements_[i];
+        network::DataElement* element = file_elements_[i];
         element->SetToFilePathRange(element->path(), element->offset(),
                                     base::checked_cast<uint64_t>(sizes[i]),
                                     element->expected_modification_time());
@@ -215,8 +215,8 @@ class ServiceWorkerURLRequestJob::FileSizeResolver {
   // Owns and must outlive |this|.
   ServiceWorkerURLRequestJob* owner_;
 
-  scoped_refptr<ResourceRequestBody> body_;
-  std::vector<ResourceRequestBody::Element*> file_elements_;
+  scoped_refptr<network::ResourceRequestBody> body_;
+  std::vector<network::DataElement*> file_elements_;
   base::OnceCallback<void(bool /* success */)> callback_;
   Phase phase_ = Phase::INITIAL;
   base::WeakPtrFactory<FileSizeResolver> weak_factory_;
@@ -323,15 +323,13 @@ ServiceWorkerURLRequestJob::ServiceWorkerURLRequestJob(
     const ResourceContext* resource_context,
     network::mojom::FetchRequestMode request_mode,
     network::mojom::FetchCredentialsMode credentials_mode,
-    FetchRedirectMode redirect_mode,
+    network::mojom::FetchRedirectMode redirect_mode,
     const std::string& integrity,
     bool keepalive,
     ResourceType resource_type,
     RequestContextType request_context_type,
-    RequestContextFrameType frame_type,
-    scoped_refptr<ResourceRequestBody> body,
-    ServiceWorkerFetchType fetch_type,
-    const base::Optional<base::TimeDelta>& timeout,
+    network::mojom::RequestContextFrameType frame_type,
+    scoped_refptr<network::ResourceRequestBody> body,
     Delegate* delegate)
     : net::URLRequestJob(request, network_delegate),
       delegate_(delegate),
@@ -351,8 +349,6 @@ ServiceWorkerURLRequestJob::ServiceWorkerURLRequestJob(
       frame_type_(frame_type),
       fall_back_required_(false),
       body_(body),
-      fetch_type_(fetch_type),
-      timeout_(timeout),
       weak_factory_(this) {
   DCHECK(delegate_) << "ServiceWorkerURLRequestJob requires a delegate";
 }
@@ -556,73 +552,60 @@ void ServiceWorkerURLRequestJob::StartRequest() {
   NOTREACHED();
 }
 
-std::unique_ptr<ServiceWorkerFetchRequest>
-ServiceWorkerURLRequestJob::CreateFetchRequest() {
-  std::string blob_uuid;
-  uint64_t blob_size = 0;
-  if (HasRequestBody())
-    CreateRequestBodyBlob(&blob_uuid, &blob_size);
-  auto request = std::make_unique<ServiceWorkerFetchRequest>();
-  request->mode = request_mode_;
-  request->is_main_resource_load = IsMainResourceLoad();
-  request->request_context_type = request_context_type_;
-  request->frame_type = frame_type_;
+std::unique_ptr<network::ResourceRequest>
+ServiceWorkerURLRequestJob::CreateResourceRequest() {
+  // The network::ResourceRequest will be passed to the renderer and be
+  // converted to blink::WebServiceWorkerRequest in
+  // ServiceWorkerContextClient::ToWebServiceWorkerRequest. So make sure the
+  // fields set here are consistent with the fields read there.
+  auto request = std::make_unique<network::ResourceRequest>();
   request->url = request_->url();
   request->method = request_->method();
-  const net::HttpRequestHeaders& headers = request_->extra_request_headers();
-  for (net::HttpRequestHeaders::Iterator it(headers); it.GetNext();) {
-    if (ServiceWorkerContext::IsExcludedHeaderNameForFetchEvent(it.name()))
-      continue;
-    request->headers[it.name()] = it.value();
+
+  for (net::HttpRequestHeaders::Iterator it(request_->extra_request_headers());
+       it.GetNext();) {
+    if (!ServiceWorkerContext::IsExcludedHeaderNameForFetchEvent(it.name()))
+      request->headers.SetHeader(it.name(), it.value());
   }
-  request->blob_uuid = blob_uuid;
-  request->blob_size = blob_size;
-  request->blob = request_body_blob_handle_;
-  request->credentials_mode = credentials_mode_;
-  request->cache_mode = ServiceWorkerFetchRequest::GetCacheModeFromLoadFlags(
-      request_->load_flags());
-  request->redirect_mode = redirect_mode_;
-  request->integrity = integrity_;
-  request->keepalive = keepalive_;
-  request->client_id = client_id_;
+
+  request->referrer = GURL(request_->referrer());
+  request->referrer_policy = request_->referrer_policy();
+  request->fetch_request_mode = request_mode_;
+  request->resource_type = resource_type_;
+  request->fetch_credentials_mode = credentials_mode_;
+  request->load_flags = request_->load_flags();
+  request->fetch_redirect_mode = redirect_mode_;
+  request->fetch_request_context_type = request_context_type_;
+  request->fetch_frame_type = frame_type_;
   const ResourceRequestInfo* info = ResourceRequestInfo::ForRequest(request_);
-  if (info) {
-    request->is_reload = ui::PageTransitionCoreTypeIs(
-        info->GetPageTransition(), ui::PAGE_TRANSITION_RELOAD);
-    request->referrer =
-        Referrer(GURL(request_->referrer()), info->GetReferrerPolicy());
-  } else {
-    CHECK(
-        request_->referrer_policy() ==
-        net::URLRequest::CLEAR_REFERRER_ON_TRANSITION_FROM_SECURE_TO_INSECURE);
-    request->referrer =
-        Referrer(GURL(request_->referrer()), blink::kWebReferrerPolicyDefault);
-  }
-  request->fetch_type = fetch_type_;
+  if (info)
+    request->transition_type = info->GetPageTransition();
+  request->fetch_integrity = integrity_;
+  request->keepalive = keepalive_;
   return request;
 }
 
-void ServiceWorkerURLRequestJob::CreateRequestBodyBlob(std::string* blob_uuid,
-                                                       uint64_t* blob_size) {
+blink::mojom::BlobPtr ServiceWorkerURLRequestJob::CreateRequestBodyBlob(
+    std::string* blob_uuid,
+    uint64_t* blob_size) {
   DCHECK(HasRequestBody());
-  storage::BlobDataBuilder blob_builder(base::GenerateGUID());
-  for (const ResourceRequestBody::Element& element : (*body_->elements())) {
-    blob_builder.AppendIPCDataElement(element, nullptr);  // TODO
+  auto blob_builder =
+      std::make_unique<storage::BlobDataBuilder>(base::GenerateGUID());
+  for (const network::DataElement& element : (*body_->elements())) {
+    blob_builder->AppendIPCDataElement(element, nullptr,
+                                       blob_storage_context_->registry());
   }
 
+  *blob_uuid = blob_builder->uuid();
   request_body_blob_data_handle_ =
-      blob_storage_context_->AddFinishedBlob(&blob_builder);
-  *blob_uuid = blob_builder.uuid();
+      blob_storage_context_->AddFinishedBlob(std::move(blob_builder));
   *blob_size = request_body_blob_data_handle_->size();
 
-  if (features::IsMojoBlobsEnabled()) {
-    blink::mojom::BlobPtr blob_ptr;
-    storage::BlobImpl::Create(std::make_unique<storage::BlobDataHandle>(
-                                  *request_body_blob_data_handle_),
-                              MakeRequest(&blob_ptr));
-    request_body_blob_handle_ =
-        base::MakeRefCounted<storage::BlobHandle>(std::move(blob_ptr));
-  }
+  blink::mojom::BlobPtr blob_ptr;
+  storage::BlobImpl::Create(std::make_unique<storage::BlobDataHandle>(
+                                *request_body_blob_data_handle_),
+                            MakeRequest(&blob_ptr));
+  return blob_ptr;
 }
 
 bool ServiceWorkerURLRequestJob::ShouldRecordNavigationMetrics(
@@ -686,9 +669,9 @@ void ServiceWorkerURLRequestJob::DidDispatchFetchEvent(
     blink::mojom::BlobPtr body_as_blob,
     scoped_refptr<ServiceWorkerVersion> version) {
   // Do not clear |fetch_dispatcher_| if it has dispatched a navigation preload
-  // request to keep the mojom::URLLoader related objects in it, because the
-  // preload response might still need to be streamed even after calling
-  // respondWith().
+  // request to keep the network::mojom::URLLoader related objects in it,
+  // because the preload response might still need to be streamed even after
+  // calling respondWith().
   if (!did_navigation_preload_) {
     fetch_dispatcher_.reset();
   }
@@ -763,6 +746,8 @@ void ServiceWorkerURLRequestJob::DidDispatchFetchEvent(
   // Set up a request for reading the blob.
   // |body_as_blob| must be kept around until we call this to ensure that
   // it's alive.
+  // TODO(falken): Can we just read |body_as_blob| directly like in
+  // ServiceWorkerNavigationLoader?
   if (!response.blob_uuid.empty() && blob_storage_context_) {
     SetResponseBodyType(BLOB);
     std::unique_ptr<storage::BlobDataHandle> blob_data_handle =
@@ -989,10 +974,22 @@ void ServiceWorkerURLRequestJob::RequestBodyFileSizesResolved(bool success) {
       active_worker->status() == ServiceWorkerVersion::ACTIVATED;
   initial_worker_status_ = active_worker->running_status();
 
+  std::unique_ptr<network::ResourceRequest> resource_request =
+      CreateResourceRequest();
+  std::string blob_uuid;
+  uint64_t blob_size = 0;
+  blink::mojom::BlobPtr blob;
+  if (HasRequestBody()) {
+    // TODO(falken): Could we just set |resource_request->request_body| to
+    // |body_| directly, and not construct a new blob? But I think the
+    // renderer-side might need to know the size of the body.
+    blob = CreateRequestBodyBlob(&blob_uuid, &blob_size);
+  }
+
   DCHECK(!fetch_dispatcher_);
   fetch_dispatcher_ = std::make_unique<ServiceWorkerFetchDispatcher>(
-      CreateFetchRequest(), base::WrapRefCounted(active_worker), resource_type_,
-      timeout_, request()->net_log(),
+      std::move(resource_request), blob_uuid, blob_size, std::move(blob),
+      client_id_, base::WrapRefCounted(active_worker), request()->net_log(),
       base::BindOnce(&ServiceWorkerURLRequestJob::DidPrepareFetchEvent,
                      weak_factory_.GetWeakPtr(),
                      base::WrapRefCounted(active_worker)),

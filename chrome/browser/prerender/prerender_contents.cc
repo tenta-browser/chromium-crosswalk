@@ -10,8 +10,6 @@
 #include <utility>
 
 #include "base/bind.h"
-#include "base/memory/ptr_util.h"
-#include "base/process/process_metrics.h"
 #include "base/stl_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
@@ -23,14 +21,15 @@
 #include "chrome/browser/prerender/prerender_manager.h"
 #include "chrome/browser/prerender/prerender_manager_factory.h"
 #include "chrome/browser/prerender/prerender_resource_throttle.h"
+#include "chrome/browser/prerender/prerender_util.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/task_manager/web_contents_tags.h"
 #include "chrome/browser/ui/tab_helpers.h"
 #include "chrome/browser/ui/web_contents_sizer.h"
 #include "chrome/common/prerender_messages.h"
 #include "chrome/common/prerender_types.h"
+#include "chrome/common/prerender_util.h"
 #include "components/history/core/browser/history_types.h"
-#include "content/public/browser/browser_child_process_host.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/notification_service.h"
@@ -43,6 +42,7 @@
 #include "content/public/browser/web_contents_delegate.h"
 #include "content/public/common/frame_navigate_params.h"
 #include "net/http/http_response_headers.h"
+#include "services/resource_coordinator/public/cpp/memory_instrumentation/memory_instrumentation.h"
 #include "services/service_manager/public/cpp/binder_registry.h"
 #include "ui/base/page_transition_types.h"
 #include "ui/gfx/geometry/size.h"
@@ -56,16 +56,6 @@ using content::WebContents;
 namespace prerender {
 
 namespace {
-
-// Valid HTTP methods for both prefetch and prerendering.
-const char* const kValidHttpMethods[] = {
-    "GET", "HEAD",
-};
-
-// Additional valid HTTP methods for prerendering.
-const char* const kValidHttpMethodsForPrerendering[] = {
-    "OPTIONS", "POST", "TRACE",
-};
 
 void ResumeThrottles(
     std::vector<base::WeakPtr<PrerenderResourceThrottle>> throttles,
@@ -195,15 +185,13 @@ class PrerenderContents::WebContentsDelegateImpl
 
 PrerenderContents::Observer::~Observer() {}
 
-PrerenderContents::PrerenderContents(
-    PrerenderManager* prerender_manager,
-    Profile* profile,
-    const GURL& url,
-    const content::Referrer& referrer,
-    Origin origin)
+PrerenderContents::PrerenderContents(PrerenderManager* prerender_manager,
+                                     Profile* profile,
+                                     const GURL& url,
+                                     const content::Referrer& referrer,
+                                     Origin origin)
     : prerender_mode_(FULL_PRERENDER),
       prerendering_has_started_(false),
-      session_storage_namespace_id_(-1),
       prerender_canceler_binding_(this),
       prerender_manager_(prerender_manager),
       prerender_url_(url),
@@ -213,6 +201,7 @@ PrerenderContents::PrerenderContents(
       has_finished_loading_(false),
       final_status_(FINAL_STATUS_MAX),
       prerendering_has_been_cancelled_(false),
+      process_pid_(base::kNullProcessId),
       child_id_(-1),
       route_id_(-1),
       origin_(origin),
@@ -230,27 +219,6 @@ bool PrerenderContents::Init() {
 void PrerenderContents::SetPrerenderMode(PrerenderMode mode) {
   DCHECK(!prerendering_has_started_);
   prerender_mode_ = mode;
-}
-
-bool PrerenderContents::IsValidHttpMethod(const std::string& method) {
-  DCHECK_NE(prerender_mode(), NO_PRERENDER);
-  // |method| has been canonicalized to upper case at this point so we can just
-  // compare them.
-  DCHECK_EQ(method, base::ToUpperASCII(method));
-  for (auto* valid_method : kValidHttpMethods) {
-    if (method == valid_method)
-      return true;
-  }
-
-  if (prerender_mode() == PREFETCH_ONLY)
-    return false;
-
-  for (auto* valid_method : kValidHttpMethodsForPrerendering) {
-    if (method == valid_method)
-      return true;
-  }
-
-  return false;
 }
 
 // static
@@ -325,7 +293,7 @@ void PrerenderContents::StartPrerendering(
 
   // Transfer over the user agent override.
   prerender_contents_.get()->SetUserAgentOverride(
-      prerender_manager_->config().user_agent_override);
+      prerender_manager_->config().user_agent_override, false);
 
   content::NavigationController::LoadURLParams load_url_params(
       prerender_url_);
@@ -381,7 +349,13 @@ PrerenderContents::~PrerenderContents() {
        !host_iterator.IsAtEnd();
        host_iterator.Advance()) {
     content::RenderProcessHost* host = host_iterator.GetCurrentValue();
-    host->Send(new PrerenderMsg_OnPrerenderRemoveAliases(alias_urls_));
+    IPC::ChannelProxy* channel = host->GetChannel();
+    // |channel| might be NULL in tests.
+    if (channel) {
+      chrome::mojom::PrerenderDispatcherAssociatedPtr prerender_dispatcher;
+      channel->GetRemoteAssociatedInterface(&prerender_dispatcher);
+      prerender_dispatcher->PrerenderRemoveAliases(alias_urls_);
+    }
   }
 
   if (!prerender_contents_)
@@ -497,7 +471,13 @@ bool PrerenderContents::AddAliasURL(const GURL& url) {
        !host_iterator.IsAtEnd();
        host_iterator.Advance()) {
     content::RenderProcessHost* host = host_iterator.GetCurrentValue();
-    host->Send(new PrerenderMsg_OnPrerenderAddAlias(url));
+    IPC::ChannelProxy* channel = host->GetChannel();
+    // |channel| might be NULL in tests.
+    if (channel) {
+      chrome::mojom::PrerenderDispatcherAssociatedPtr prerender_dispatcher;
+      channel->GetRemoteAssociatedInterface(&prerender_dispatcher);
+      prerender_dispatcher->PrerenderAddAlias(url);
+    }
   }
 
   return true;
@@ -538,7 +518,8 @@ void PrerenderContents::RenderFrameCreated(
   // occur.  Note that this is always triggered before the first navigation, so
   // there's no need to send the message just after the WebContents is created.
   render_frame_host->Send(new PrerenderMsg_SetIsPrerendering(
-      render_frame_host->GetRoutingID(), prerender_mode_));
+      render_frame_host->GetRoutingID(), prerender_mode_,
+      PrerenderHistograms::GetHistogramPrefix(origin_)));
 }
 
 void PrerenderContents::DidStopLoading() {
@@ -652,41 +633,54 @@ void PrerenderContents::Destroy(FinalStatus final_status) {
     NotifyPrerenderStop();
 }
 
-base::ProcessMetrics* PrerenderContents::MaybeGetProcessMetrics() {
-  if (!process_metrics_) {
-    // If a PrenderContents hasn't started prerending, don't be fully formed.
+void PrerenderContents::DestroyWhenUsingTooManyResources() {
+  if (process_pid_ == base::kNullProcessId) {
     const RenderViewHost* rvh = GetRenderViewHost();
     if (!rvh)
-      return nullptr;
+      return;
 
     const content::RenderProcessHost* rph = rvh->GetProcess();
     if (!rph)
-      return nullptr;
+      return;
 
     base::ProcessHandle handle = rph->GetHandle();
     if (handle == base::kNullProcessHandle)
-      return nullptr;
+      return;
 
-#if !defined(OS_MACOSX)
-    process_metrics_ = base::ProcessMetrics::CreateProcessMetrics(handle);
-#else
-    process_metrics_ = base::ProcessMetrics::CreateProcessMetrics(
-        handle, content::BrowserChildProcessHost::GetPortProvider());
-#endif
+    process_pid_ = base::GetProcId(handle);
   }
 
-  return process_metrics_.get();
-}
-
-void PrerenderContents::DestroyWhenUsingTooManyResources() {
-  base::ProcessMetrics* metrics = MaybeGetProcessMetrics();
-  if (!metrics)
+  if (process_pid_ == base::kNullProcessId)
     return;
 
-  size_t private_bytes, shared_bytes;
-  if (metrics->GetMemoryBytes(&private_bytes, &shared_bytes) &&
-      private_bytes > prerender_manager_->config().max_bytes) {
-    Destroy(FINAL_STATUS_MEMORY_LIMIT_EXCEEDED);
+  // Using AdaptCallbackForRepeating allows for an easier transition to
+  // OnceCallbacks for https://crbug.com/714018.
+  memory_instrumentation::MemoryInstrumentation::GetInstance()
+      ->RequestGlobalDumpForPid(process_pid_,
+                                base::AdaptCallbackForRepeating(base::BindOnce(
+                                    &PrerenderContents::DidGetMemoryUsage,
+                                    weak_factory_.GetWeakPtr())));
+}
+
+void PrerenderContents::DidGetMemoryUsage(
+    bool success,
+    std::unique_ptr<memory_instrumentation::GlobalMemoryDump> global_dump) {
+  if (!success)
+    return;
+
+  for (const memory_instrumentation::GlobalMemoryDump::ProcessDump& dump :
+       global_dump->process_dumps()) {
+    if (dump.pid() != process_pid_)
+      continue;
+
+    // If |final_status_| == |FINAL_STATUS_USED|, then destruction will be
+    // handled by the entity that set final_status_.
+    if (dump.os_dump().private_footprint_kb * 1024 >
+            prerender_manager_->config().max_bytes &&
+        final_status_ != FINAL_STATUS_USED) {
+      Destroy(FINAL_STATUS_MEMORY_LIMIT_EXCEEDED);
+    }
+    return;
   }
 }
 
@@ -724,7 +718,7 @@ void PrerenderContents::CommitHistory(WebContents* tab) {
 std::unique_ptr<base::DictionaryValue> PrerenderContents::GetAsValue() const {
   if (!prerender_contents_)
     return nullptr;
-  auto dict_value = base::MakeUnique<base::DictionaryValue>();
+  auto dict_value = std::make_unique<base::DictionaryValue>();
   dict_value->SetString("url", prerender_url_.spec());
   base::TimeTicks current_time = base::TimeTicks::Now();
   base::TimeDelta duration = current_time - load_start_time_;
@@ -734,18 +728,12 @@ std::unique_ptr<base::DictionaryValue> PrerenderContents::GetAsValue() const {
   return dict_value;
 }
 
-bool PrerenderContents::IsCrossSiteNavigationPending() const {
-  return prerender_contents_ &&
-         prerender_contents_->GetSiteInstance() !=
-             prerender_contents_->GetPendingSiteInstance();
-}
-
 void PrerenderContents::PrepareForUse() {
   SetFinalStatus(FINAL_STATUS_USED);
 
   if (prerender_contents_.get()) {
-    prerender_contents_->SendToAllFrames(
-        new PrerenderMsg_SetIsPrerendering(MSG_ROUTING_NONE, NO_PRERENDER));
+    prerender_contents_->SendToAllFrames(new PrerenderMsg_SetIsPrerendering(
+        MSG_ROUTING_NONE, NO_PRERENDER, std::string()));
   }
 
   NotifyPrerenderStop();
@@ -759,6 +747,19 @@ void PrerenderContents::PrepareForUse() {
 
 void PrerenderContents::CancelPrerenderForPrinting() {
   Destroy(FINAL_STATUS_WINDOW_PRINT);
+}
+
+void PrerenderContents::CancelPrerenderForUnsupportedMethod() {
+  Destroy(FINAL_STATUS_INVALID_HTTP_METHOD);
+}
+
+void PrerenderContents::CancelPrerenderForUnsupportedScheme(const GURL& url) {
+  Destroy(FINAL_STATUS_UNSUPPORTED_SCHEME);
+  ReportUnsupportedPrerenderScheme(url);
+}
+
+void PrerenderContents::CancelPrerenderForSyncDeferredRedirect() {
+  Destroy(FINAL_STATUS_BAD_DEFERRED_REDIRECT);
 }
 
 void PrerenderContents::OnPrerenderCancelerRequest(

@@ -15,8 +15,8 @@
 #include "base/memory/ref_counted.h"
 #include "content/common/push_messaging.mojom.h"
 #include "content/public/renderer/worker_thread.h"
-#include "third_party/WebKit/public/platform/modules/push_messaging/WebPushError.h"
-#include "third_party/WebKit/public/platform/modules/push_messaging/WebPushProvider.h"
+#include "third_party/blink/public/platform/modules/push_messaging/web_push_error.h"
+#include "third_party/blink/public/platform/modules/push_messaging/web_push_provider.h"
 
 class GURL;
 
@@ -60,11 +60,6 @@ class PushProvider : public blink::WebPushProvider,
   void GetSubscription(
       blink::WebServiceWorkerRegistration* service_worker_registration,
       std::unique_ptr<blink::WebPushSubscriptionCallbacks> callbacks) override;
-  void GetPermissionStatus(
-      blink::WebServiceWorkerRegistration* service_worker_registration,
-      const blink::WebPushSubscriptionOptions& options,
-      std::unique_ptr<blink::WebPushPermissionStatusCallbacks> callbacks)
-      override;
 
  private:
   explicit PushProvider(const scoped_refptr<base::SingleThreadTaskRunner>&
@@ -93,11 +88,6 @@ class PushProvider : public blink::WebPushProvider,
       const base::Optional<PushSubscriptionOptions>& options,
       const base::Optional<std::vector<uint8_t>>& p256dh,
       const base::Optional<std::vector<uint8_t>>& auth);
-
-  void DidGetPermissionStatus(
-      std::unique_ptr<blink::WebPushPermissionStatusCallbacks> callbacks,
-      blink::WebPushError::ErrorType error_type,
-      blink::WebPushPermissionStatus status);
 
   mojom::PushMessagingPtr push_messaging_manager_;
 

@@ -14,6 +14,7 @@
 #include "chrome/browser/notifications/notification_common.h"
 
 class GURL;
+class NotificationLaunchId;
 class XmlWriter;
 
 namespace gfx {
@@ -46,7 +47,7 @@ class NotificationTemplateBuilder {
   // Builds the notification template for the given |notification|.
   static std::unique_ptr<NotificationTemplateBuilder> Build(
       NotificationImageRetainer* notification_image_retainer,
-      const std::string& launch_attribute,
+      const NotificationLaunchId& launch_id,
       const std::string& profile_id,
       const message_center::Notification& notification);
 
@@ -72,7 +73,7 @@ class NotificationTemplateBuilder {
 
   // Writes the <toast> element with a given |launch_attribute|.
   // Also closes the |xml_writer_| for writing as the toast is now complete.
-  void StartToastElement(const std::string& launch_attribute,
+  void StartToastElement(const NotificationLaunchId& launch_id,
                          const message_center::Notification& notification);
   void EndToastElement();
 
@@ -117,13 +118,15 @@ class NotificationTemplateBuilder {
 
   // Fills in the details for the actions (the buttons the notification
   // contains).
-  void AddActions(const message_center::Notification& notification);
+  void AddActions(const message_center::Notification& notification,
+                  const NotificationLaunchId& launch_id);
   void WriteActionElement(const message_center::ButtonInfo& button,
                           int index,
-                          const GURL& origin);
+                          const GURL& origin,
+                          NotificationLaunchId copied_launch_id);
 
   // Adds context menu actions to the notification sent by |origin|.
-  void AddContextMenu();
+  void AddContextMenu(NotificationLaunchId copied_launch_id);
   void WriteContextMenuElement(const std::string& content,
                                const std::string& arguments);
 

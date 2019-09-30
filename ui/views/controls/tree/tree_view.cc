@@ -7,7 +7,6 @@
 #include <algorithm>
 
 #include "base/i18n/rtl.h"
-#include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
 #include "build/build_config.h"
 #include "components/vector_icons/vector_icons.h"
@@ -28,11 +27,13 @@
 #include "ui/gfx/skia_util.h"
 #include "ui/native_theme/native_theme.h"
 #include "ui/resources/grit/ui_resources.h"
+#include "ui/views/border.h"
 #include "ui/views/controls/focus_ring.h"
 #include "ui/views/controls/prefix_selector.h"
 #include "ui/views/controls/scroll_view.h"
 #include "ui/views/controls/textfield/textfield.h"
 #include "ui/views/controls/tree/tree_view_controller.h"
+#include "ui/views/layout/layout_provider.h"
 #include "ui/views/resources/grit/views_resources.h"
 #include "ui/views/style/platform_style.h"
 #include "ui/views/vector_icons.h"
@@ -174,7 +175,14 @@ void TreeView::StartEditing(TreeModelNode* node) {
   DCHECK(!editing_);
   editing_ = true;
   if (!editor_) {
+    LayoutProvider* provider = LayoutProvider::Get();
+    gfx::Insets text_insets(
+        provider->GetDistanceMetric(DISTANCE_CONTROL_VERTICAL_TEXT_PADDING),
+        provider->GetDistanceMetric(
+            DISTANCE_TEXTFIELD_HORIZONTAL_TEXT_PADDING));
     editor_ = new Textfield;
+    editor_->SetBorder(views::CreatePaddedBorder(
+        views::CreateSolidBorder(1, gfx::kGoogleBlue700), text_insets));
     // Add the editor immediately as GetPreferredSize returns the wrong thing if
     // not parented.
     AddChildView(editor_);
@@ -263,8 +271,8 @@ void TreeView::SetSelectedNode(TreeModelNode* model_node) {
     controller_->OnTreeViewSelectionChanged(this);
 
   if (changed) {
-    NotifyAccessibilityEvent(ui::AX_EVENT_TEXT_CHANGED, true);
-    NotifyAccessibilityEvent(ui::AX_EVENT_SELECTION, true);
+    NotifyAccessibilityEvent(ax::mojom::Event::kTextChanged, true);
+    NotifyAccessibilityEvent(ax::mojom::Event::kSelection, true);
   }
 }
 
@@ -416,14 +424,21 @@ void TreeView::ShowContextMenu(const gfx::Point& p,
 }
 
 void TreeView::GetAccessibleNodeData(ui::AXNodeData* node_data) {
-  node_data->role = ui::AX_ROLE_TREE;
-  node_data->AddIntAttribute(ui::AX_ATTR_RESTRICTION,
-                             ui::AX_RESTRICTION_READ_ONLY);
-  if (!selected_node_)
+  node_data->role = ax::mojom::Role::kTree;
+  node_data->SetRestriction(ax::mojom::Restriction::kReadOnly);
+  // TODO(aleventhal): The tree view accessibility implementation is misusing
+  // the name field. It should really be using selection events for the
+  // currently selected item. The name field should be for for the label
+  // if there is one, otherwise something that would work in place of a label.
+  // See http://crbug.com/811277.
+
+  if (!selected_node_) {
+    node_data->SetNameExplicitlyEmpty();
     return;
+  }
 
   // Get selected item info.
-  node_data->role = ui::AX_ROLE_TREE_ITEM;
+  node_data->role = ax::mojom::Role::kTreeItem;
   node_data->SetName(selected_node_->model_node()->GetTitle());
 }
 
@@ -461,7 +476,7 @@ void TreeView::TreeNodesRemoved(TreeModel* model,
     InternalNode* child_removing = parent_node->GetChild(start);
     if (selected_node_ && selected_node_->HasAncestor(child_removing))
       reset_selection = true;
-    parent_node->Remove(child_removing);
+    parent_node->Remove(start);
   }
   if (reset_selection) {
     // selected_node_ is no longer valid (at the time we enter this function

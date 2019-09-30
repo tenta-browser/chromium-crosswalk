@@ -28,7 +28,9 @@
       'ts': 0
     },
     {
-      'args': {'sessionId': sessionId},
+      'args': {'data': {'sessionId': sessionId, 'frames': [
+        {'frame': 'frame1', 'url': 'frameurl', 'name': 'frame-name'}
+      ]}},
       'cat': 'disabled-by-default-devtools.timeline',
       'name': 'TracingStartedInPage',
       'ph': 'I',
@@ -143,7 +145,7 @@
   ];
 
   var model = PerformanceTestRunner.createPerformanceModelWithEvents(rawTraceEvents);
-  var events = model.timelineModel().mainThreadEvents();
+  var events = PerformanceTestRunner.mainTrackEvents();
   events.filter(e => e.name === 'JSFrame').forEach(e => {
     TestRunner.addResult(
         `${e.name}: ${e.startTime.toFixed(3)} / ${(e.duration || 0).toFixed(3)} ${e.args.data.functionName}`);

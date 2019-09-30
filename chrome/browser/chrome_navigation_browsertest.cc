@@ -6,6 +6,7 @@
 #include "base/run_loop.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/test_timeouts.h"
+#include "build/build_config.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/renderer_context_menu/render_view_context_menu_test_util.h"
@@ -18,7 +19,7 @@
 #include "components/network_session_configurator/common/network_switches.h"
 #include "components/url_formatter/url_formatter.h"
 #include "components/variations/active_field_trials.h"
-#include "components/variations/metrics_util.h"
+#include "components/variations/hashing.h"
 #include "components/variations/variations_switches.h"
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/navigation_handle.h"
@@ -209,9 +210,6 @@ class CtrlClickProcessTest : public ChromeNavigationBrowserTest {
   virtual void VerifyProcessExpectations(
       content::WebContents* main_contents,
       content::WebContents* new_contents) = 0;
-  virtual void VerifyBrowsingInstanceExpectations(
-      content::WebContents* main_contents,
-      content::WebContents* new_contents) = 0;
 
   // Simulates ctrl-clicking an anchor with the given id in |main_contents|.
   // Verifies that the new contents are in the correct process and separate
@@ -296,6 +294,21 @@ class CtrlClickProcessTest : public ChromeNavigationBrowserTest {
         new_contents2->GetSiteInstance()));
     VerifyProcessExpectations(new_contents1, new_contents2);
   }
+
+ private:
+  void VerifyBrowsingInstanceExpectations(content::WebContents* main_contents,
+                                          content::WebContents* new_contents) {
+    // Verify that the new contents cannot find the old contents via
+    // window.open. (i.e. window.open should open a new window, rather than
+    // returning a reference to main_contents / old window).
+    std::string location_of_opened_window;
+    EXPECT_TRUE(ExecuteScriptAndExtractString(
+        new_contents,
+        "w = window.open('', 'main_contents');"
+        "window.domAutomationController.send(w.location.href);",
+        &location_of_opened_window));
+    EXPECT_EQ(url::kAboutBlankURL, location_of_opened_window);
+  }
 };
 
 // Tests that verify that ctrl-click results 1) open up in a new renderer
@@ -313,21 +326,6 @@ class CtrlClickShouldEndUpInNewProcessTest : public CtrlClickProcessTest {
               new_contents->GetMainFrame()->GetSiteInstance());
     EXPECT_FALSE(main_contents->GetSiteInstance()->IsRelatedSiteInstance(
         new_contents->GetSiteInstance()));
-  }
-
-  void VerifyBrowsingInstanceExpectations(
-      content::WebContents* main_contents,
-      content::WebContents* new_contents) override {
-    // Verify that the new contents cannot find the old contents via
-    // window.open. (i.e. window.open should open a new window, rather than
-    // returning a reference to main_contents / old window).
-    std::string location_of_opened_window;
-    EXPECT_TRUE(ExecuteScriptAndExtractString(
-        new_contents,
-        "w = window.open('', 'main_contents');"
-        "window.domAutomationController.send(w.location.href);",
-        &location_of_opened_window));
-    EXPECT_EQ(url::kAboutBlankURL, location_of_opened_window);
   }
 };
 
@@ -370,22 +368,6 @@ class CtrlClickShouldEndUpInSameProcessTest : public CtrlClickProcessTest {
               contents2->GetMainFrame()->GetSiteInstance()->GetSiteURL());
     EXPECT_FALSE(contents1->GetSiteInstance()->IsRelatedSiteInstance(
         contents2->GetSiteInstance()));
-  }
-
-  void VerifyBrowsingInstanceExpectations(
-      content::WebContents* main_contents,
-      content::WebContents* new_contents) override {
-    // Since the two WebContents are in the same process, they can find each
-    // other through window.open() using the window.name. See
-    // https://crbug.com/718489.
-    std::string location_of_opened_window;
-    EXPECT_TRUE(ExecuteScriptAndExtractString(
-        new_contents,
-        "w = window.open('', 'main_contents');"
-        "window.domAutomationController.send(w.location.href);",
-        &location_of_opened_window));
-    EXPECT_EQ(main_contents->GetLastCommittedURL(),
-              GURL(location_of_opened_window));
   }
 };
 
@@ -689,7 +671,7 @@ class SignInIsolationBrowserTest : public ChromeNavigationBrowserTest {
     std::vector<std::string> synthetic_trials;
     variations::GetSyntheticTrialGroupIdsAsString(&synthetic_trials);
     std::string trial_hash =
-        base::StringPrintf("%x", metrics::HashName(trial_name));
+        base::StringPrintf("%x", variations::HashName(trial_name));
 
     for (auto entry : synthetic_trials) {
       if (base::StartsWith(entry, trial_hash, base::CompareCase::SENSITIVE))
@@ -703,8 +685,9 @@ class SignInIsolationBrowserTest : public ChromeNavigationBrowserTest {
                                const std::string& trial_group) {
     std::vector<std::string> synthetic_trials;
     variations::GetSyntheticTrialGroupIdsAsString(&synthetic_trials);
-    std::string expected_entry = base::StringPrintf(
-        "%x-%x", metrics::HashName(trial_name), metrics::HashName(trial_group));
+    std::string expected_entry =
+        base::StringPrintf("%x-%x", variations::HashName(trial_name),
+                           variations::HashName(trial_group));
 
     for (auto entry : synthetic_trials) {
       if (entry == expected_entry)
@@ -954,7 +937,14 @@ class WillProcessResponseObserver : public content::WebContentsObserver {
 // Note: This test couldn't be a content_browsertests, since there would be
 // not handler defined for the "ftp" protocol in
 // URLRequestJobFactoryImpl::protocol_handler_map_.
-IN_PROC_BROWSER_TEST_F(ChromeNavigationBrowserTest, BlockLegacySubresources) {
+// Flaky on Mac only.  http://crbug.com/816646
+#if defined(OS_MACOSX)
+#define MAYBE_BlockLegacySubresources DISABLED_BlockLegacySubresources
+#else
+#define MAYBE_BlockLegacySubresources BlockLegacySubresources
+#endif
+IN_PROC_BROWSER_TEST_F(ChromeNavigationBrowserTest,
+                       MAYBE_BlockLegacySubresources) {
   net::SpawnedTestServer ftp_server(
       net::SpawnedTestServer::TYPE_FTP,
       base::FilePath(FILE_PATH_LITERAL("chrome/test/data")));
@@ -1023,7 +1013,7 @@ IN_PROC_BROWSER_TEST_F(ChromeNavigationBrowserTest, ChromeSchemeNavFromSadTab) {
                                             ->GetProcess();
   content::RenderProcessHostWatcher crash_observer(
       process, content::RenderProcessHostWatcher::WATCH_FOR_PROCESS_EXIT);
-  process->Shutdown(-1, true);
+  process->Shutdown(-1);
   crash_observer.Wait();
 
   // Attempt to navigate to a chrome://... URL.  This used to hang and never

@@ -11,7 +11,7 @@
 #include "base/memory/singleton.h"
 #include "base/values.h"
 #include "extensions/browser/extension_function.h"
-#include "ui/accessibility/ax_enums.h"
+#include "ui/accessibility/ax_enums.mojom.h"
 
 // API function that enables or disables web content accessibility support.
 class AccessibilityPrivateSetNativeAccessibilityEnabledFunction
@@ -78,6 +78,15 @@ class AccessibilityPrivateSetNativeChromeVoxArcSupportForCurrentAppFunction
   DECLARE_EXTENSION_FUNCTION(
       "accessibilityPrivate.setNativeChromeVoxArcSupportForCurrentApp",
       ACCESSIBILITY_PRIVATE_SETNATIVECHROMEVOXARCSUPPORTFORCURRENTAPP)
+};
+
+// API function that injects key events.
+class AccessibilityPrivateSendSyntheticKeyEventFunction
+    : public UIThreadExtensionFunction {
+  ~AccessibilityPrivateSendSyntheticKeyEventFunction() override {}
+  ResponseAction Run() override;
+  DECLARE_EXTENSION_FUNCTION("accessibilityPrivate.sendSyntheticKeyEvent",
+                             ACCESSIBILITY_PRIVATE_SENDSYNTHETICKEYEVENT)
 };
 #endif  // defined (OS_CHROMEOS)
 

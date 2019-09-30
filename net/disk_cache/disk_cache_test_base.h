@@ -101,12 +101,16 @@ class DiskCacheTestWithCache : public DiskCacheTest {
   }
 
   void SetSimpleCacheMode() {
+    DCHECK(!use_current_thread_);
     simple_cache_mode_ = true;
   }
 
   void SetMask(uint32_t mask) { mask_ = mask; }
 
   void SetMaxSize(int size);
+
+  // Returns value last given to SetMaxSize (or 0).
+  int MaxSize() const { return size_; }
 
   // Deletes and re-creates the files on initialization errors.
   void SetForceCreation() {
@@ -129,7 +133,9 @@ class DiskCacheTestWithCache : public DiskCacheTest {
     integrity_ = false;
   }
 
+  // This is only supported for blockfile cache.
   void UseCurrentThread() {
+    DCHECK(!simple_cache_mode_);
     use_current_thread_ = true;
   }
 

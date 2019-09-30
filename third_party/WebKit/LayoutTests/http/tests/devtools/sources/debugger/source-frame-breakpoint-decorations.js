@@ -9,11 +9,11 @@
   await TestRunner.addScriptTag('resources/edit-me-breakpoints.js');
 
   function waitAndDumpDecorations(sourceFrame) {
-    return SourcesTestRunner.waitJavaScriptSourceFrameBreakpoints(sourceFrame)
+    return SourcesTestRunner.waitBreakpointSidebarPane(true)
         .then(() => SourcesTestRunner.dumpJavaScriptSourceFrameBreakpoints(sourceFrame));
   }
 
-  Bindings.breakpointManager._storage._breakpoints = {};
+  Bindings.breakpointManager._storage._breakpoints = new Map();
   SourcesTestRunner.runDebuggerTestSuite([
     function testAddRemoveBreakpoint(next) {
       var javaScriptSourceFrame;

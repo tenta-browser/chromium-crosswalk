@@ -6,7 +6,6 @@
 
 #include <stddef.h>
 
-#include "base/memory/ptr_util.h"
 #include "content/renderer/pepper/pepper_plugin_instance_impl.h"
 #include "content/renderer/pepper/renderer_ppapi_host_impl.h"
 #include "content/renderer/pepper/url_request_info_util.h"
@@ -18,17 +17,17 @@
 #include "ppapi/host/ppapi_host.h"
 #include "ppapi/proxy/ppapi_messages.h"
 #include "ppapi/shared_impl/ppapi_globals.h"
-#include "third_party/WebKit/public/platform/WebSecurityOrigin.h"
-#include "third_party/WebKit/public/platform/WebURLError.h"
-#include "third_party/WebKit/public/platform/WebURLRequest.h"
-#include "third_party/WebKit/public/platform/WebURLResponse.h"
-#include "third_party/WebKit/public/web/WebAssociatedURLLoader.h"
-#include "third_party/WebKit/public/web/WebAssociatedURLLoaderOptions.h"
-#include "third_party/WebKit/public/web/WebDocument.h"
-#include "third_party/WebKit/public/web/WebElement.h"
-#include "third_party/WebKit/public/web/WebKit.h"
-#include "third_party/WebKit/public/web/WebLocalFrame.h"
-#include "third_party/WebKit/public/web/WebPluginContainer.h"
+#include "third_party/blink/public/platform/web_security_origin.h"
+#include "third_party/blink/public/platform/web_url_error.h"
+#include "third_party/blink/public/platform/web_url_request.h"
+#include "third_party/blink/public/platform/web_url_response.h"
+#include "third_party/blink/public/web/blink.h"
+#include "third_party/blink/public/web/web_associated_url_loader.h"
+#include "third_party/blink/public/web/web_associated_url_loader_options.h"
+#include "third_party/blink/public/web/web_document.h"
+#include "third_party/blink/public/web/web_element.h"
+#include "third_party/blink/public/web/web_local_frame.h"
+#include "third_party/blink/public/web/web_plugin_container.h"
 
 using blink::WebAssociatedURLLoader;
 using blink::WebAssociatedURLLoaderOptions;
@@ -257,12 +256,9 @@ int32_t PepperURLLoaderHost::InternalOnHostMsgOpen(
   web_request.SetRequestContext(WebURLRequest::kRequestContextPlugin);
   web_request.SetPluginChildID(renderer_ppapi_host_->GetPluginChildId());
 
-  // The requests from the plugins with private permission which can bypass same
-  // origin must skip the ServiceWorker.
-  web_request.SetServiceWorkerMode(
-      host()->permissions().HasPermission(ppapi::PERMISSION_PRIVATE)
-          ? WebURLRequest::ServiceWorkerMode::kNone
-          : WebURLRequest::ServiceWorkerMode::kAll);
+  // Requests from plug-ins must skip service workers, see the comment in
+  // CreateWebURLRequest.
+  DCHECK(web_request.GetSkipServiceWorker());
 
   WebAssociatedURLLoaderOptions options;
   if (!has_universal_access_) {
@@ -312,11 +308,13 @@ int32_t PepperURLLoaderHost::OnHostMsgClose(
 
 int32_t PepperURLLoaderHost::OnHostMsgGrantUniversalAccess(
     ppapi::host::HostMessageContext* context) {
-  // Only plugins with private permission can bypass same origin.
-  if (!host()->permissions().HasPermission(ppapi::PERMISSION_PRIVATE))
-    return PP_ERROR_FAILED;
-  has_universal_access_ = true;
-  return PP_OK;
+  // Only plugins with permission can bypass same origin.
+  if (host()->permissions().HasPermission(ppapi::PERMISSION_PDF) ||
+      host()->permissions().HasPermission(ppapi::PERMISSION_FLASH)) {
+    has_universal_access_ = true;
+    return PP_OK;
+  }
+  return PP_ERROR_FAILED;
 }
 
 void PepperURLLoaderHost::SendUpdateToPlugin(

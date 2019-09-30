@@ -52,8 +52,7 @@ void Signout(SigninManager* signin_manager) {
 bool IsMatchingBrowser(Browser* browser, Profile* profile) {
   return browser->profile()->GetOriginalProfile() ==
              profile->GetOriginalProfile() &&
-         !browser->tab_strip_model()->empty() &&
-         BrowserView::GetBrowserViewForBrowser(browser)->frame()->IsVisible();
+         !browser->tab_strip_model()->empty() && browser->window()->IsVisible();
 }
 
 // Find a browser that is associated with |profile| to show the dialog for
@@ -209,8 +208,8 @@ void ForcedReauthenticationDialogView::AddedToWidget() {
       provider->GetDialogInsetsForContentType(views::TEXT, views::TEXT);
   SetBorder(views::CreateEmptyBorder(dialog_insets.top(), 0,
                                      dialog_insets.bottom(), 0));
-  views::GridLayout* dialog_layout = views::GridLayout::CreateAndInstall(this);
-  SetLayoutManager(dialog_layout);
+  views::GridLayout* dialog_layout =
+      SetLayoutManager(std::make_unique<views::GridLayout>(this));
 
   // Use a column set with no padding.
   dialog_layout->AddColumnSet(0)->AddColumn(views::GridLayout::FILL,
@@ -280,5 +279,5 @@ void ForcedReauthenticationDialogImpl::ShowDialog(
 // static
 std::unique_ptr<ForcedReauthenticationDialog>
 ForcedReauthenticationDialog::Create() {
-  return base::MakeUnique<ForcedReauthenticationDialogImpl>();
+  return std::make_unique<ForcedReauthenticationDialogImpl>();
 }

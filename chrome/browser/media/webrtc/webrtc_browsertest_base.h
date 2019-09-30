@@ -22,6 +22,10 @@ namespace content {
 class WebContents;
 }
 
+namespace extensions {
+class Extension;
+}
+
 // Base class for WebRTC browser tests with useful primitives for interacting
 // getUserMedia. We use inheritance here because it makes the test code look
 // as clean as it can be.
@@ -107,9 +111,10 @@ class WebRtcTestBase : public InProcessBrowserTest {
   content::WebContents* OpenTestPageAndGetUserMediaInNewTab(
     const std::string& test_page) const;
 
-  // Opens the page at |url| where getUserMedia has been invoked through other
-  // means and accepts the user media request.
-  content::WebContents* OpenPageAndAcceptUserMedia(const GURL& url) const;
+  // Convenience method which gets the URL for |test_page|, but without calling
+  // GetUserMedia.
+  content::WebContents* OpenTestPageInNewTab(
+      const std::string& test_page) const;
 
   // Closes the last local stream acquired by the GetUserMedia* methods.
   void CloseLastLocalStream(content::WebContents* tab_contents) const;
@@ -142,6 +147,13 @@ class WebRtcTestBase : public InProcessBrowserTest {
   void SetupPeerconnectionWithCertificateWithoutLocalStream(
       content::WebContents* tab,
       const std::string& certificate) const;
+  // Same as |SetupPeerconnectionWithLocalStream| except RTCPeerConnection
+  // constraints are specified.
+  void SetupPeerconnectionWithConstraintsAndLocalStream(
+      content::WebContents* tab,
+      const std::string& constraints,
+      const std::string& certificate_keygen_algorithm =
+          kUseDefaultCertKeygen) const;
 
   void CreateDataChannel(content::WebContents* tab, const std::string& label);
 
@@ -238,6 +250,10 @@ class WebRtcTestBase : public InProcessBrowserTest {
   // Performs garbage collection with "gc()". Requires command line switch
   // |kJavaScriptFlags| with "--expose-gc".
   void CollectGarbage(content::WebContents* tab) const;
+  // Try to open a dekstop media stream, and return the stream id.
+  // On failure, will return empty string.
+  std::string GetDesktopMediaStream(content::WebContents* tab);
+  base::Optional<std::string> LoadDesktopCaptureExtension();
 
  private:
   void CloseInfoBarInTab(content::WebContents* tab_contents,
@@ -260,6 +276,7 @@ class WebRtcTestBase : public InProcessBrowserTest {
       const std::string& constraints) const;
 
   bool detect_errors_in_javascript_;
+  scoped_refptr<const extensions::Extension> desktop_capture_extension_;
 
   DISALLOW_COPY_AND_ASSIGN(WebRtcTestBase);
 };

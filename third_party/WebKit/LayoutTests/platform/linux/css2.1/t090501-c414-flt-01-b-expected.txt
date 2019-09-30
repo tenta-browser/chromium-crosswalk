@@ -19,5 +19,5 @@ layer at (0,0) size 800x144
           LayoutText {#text} at (184,8) size 380x59
             text run at (184,8) width 380: "Teal rectangle. Teal rectangle. Teal rectangle. Teal rectangle."
             text run at (184,28) width 192: "Teal rectangle. Teal rectangle. "
-            text run at (375,28) width 189: "Teal rectangle. Teal rectangle."
+            text run at (376,28) width 188: "Teal rectangle. Teal rectangle."
             text run at (184,48) width 380: "Teal rectangle. Teal rectangle. Teal rectangle. Teal rectangle."

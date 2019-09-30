@@ -13,10 +13,10 @@
 #include "chrome/browser/ui/browser_dialogs.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/location_bar/location_bar.h"
-#include "chrome/common/features.h"
+#include "chrome/common/buildflags.h"
 
 #if defined(OS_CHROMEOS)
-#include "chrome/browser/chromeos/arc/intent_helper/arc_navigation_throttle.h"
+#include "chrome/browser/chromeos/apps/intent_helper/apps_navigation_types.h"
 #endif  // defined(OS_CHROMEOS)
 
 class LocationBarTesting;
@@ -38,6 +38,7 @@ class TestBrowserWindow : public BrowserWindow {
   void Show() override {}
   void ShowInactive() override {}
   void Hide() override {}
+  bool IsVisible() const override;
   void SetBounds(const gfx::Rect& bounds) override {}
   void Close() override {}
   void Activate() override {}
@@ -72,8 +73,6 @@ class TestBrowserWindow : public BrowserWindow {
   bool ShouldHideUIForFullscreen() const override;
   bool IsFullscreen() const override;
   bool IsFullscreenBubbleVisible() const override;
-  void MaybeShowNewBackShortcutBubble(bool forward) override {}
-  void HideNewBackShortcutBubble() override {}
   LocationBar* GetLocationBar() const override;
   void SetFocusToLocationBar(bool select_all) override {}
   void UpdateReloadStopState(bool is_loading, bool force) override {}
@@ -84,7 +83,7 @@ class TestBrowserWindow : public BrowserWindow {
   void ToolbarSizeChanged(bool is_animating) override {}
   void FocusAppMenu() override {}
   void FocusBookmarksToolbar() override {}
-  void FocusInfobars() override {}
+  void FocusInactivePopupForAccessibility() override {}
   void RotatePaneFocus(bool forwards) override {}
   void ShowAppMenu() override {}
   content::KeyboardEventProcessingResult PreHandleKeyboardEvent(
@@ -100,7 +99,7 @@ class TestBrowserWindow : public BrowserWindow {
   void ShowBookmarkBubble(const GURL& url, bool already_bookmarked) override {}
 #if defined(OS_CHROMEOS)
   void ShowIntentPickerBubble(
-      std::vector<arc::ArcNavigationThrottle::AppInfo> app_info,
+      std::vector<chromeos::IntentPickerAppInfo> app_info,
       IntentPickerResponse callback) override {}
   void SetIntentPickerViewVisibility(bool visible) override {}
 #endif  // defined(OS_CHROMEOS)
@@ -173,6 +172,7 @@ class TestBrowserWindow : public BrowserWindow {
     void UpdateLocationBarVisibility(bool visible, bool animate) override {}
     void SaveStateToContents(content::WebContents* contents) override {}
     void Revert() override {}
+    bool ShowPageInfoDialog(content::WebContents* contents) override;
     const OmniboxView* GetOmniboxView() const override;
     OmniboxView* GetOmniboxView() override;
     LocationBarTesting* GetLocationBarForTesting() override;
@@ -189,7 +189,7 @@ class TestBrowserWindow : public BrowserWindow {
 
 // Handles destroying a TestBrowserWindow when the Browser it is attached to is
 // destroyed.
-class TestBrowserWindowOwner : public chrome::BrowserListObserver {
+class TestBrowserWindowOwner : public BrowserListObserver {
  public:
   explicit TestBrowserWindowOwner(TestBrowserWindow* window);
   ~TestBrowserWindowOwner() override;

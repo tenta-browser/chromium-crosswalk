@@ -18,19 +18,15 @@
 #include "base/strings/string_util.h"
 #include "base/sys_info.h"
 #include "base/time/time.h"
+#include "build/build_config.h"
 #include "components/omnibox/browser/omnibox_switches.h"
 #include "components/omnibox/browser/url_index_private_data.h"
-#include "components/prefs/pref_service.h"
 #include "components/search/search.h"
 #include "components/variations/active_field_trials.h"
-#include "components/variations/metrics_util.h"
+#include "components/variations/hashing.h"
 #include "components/variations/variations_associated_data.h"
 #include "third_party/metrics_proto/omnibox_event.pb.h"
-
-#if defined(OS_ANDROID)
-#include "components/omnibox/browser/omnibox_pref_names.h"
-#include "components/pref_registry/pref_registry_syncable.h"
-#endif
+#include "ui/base/material_design/material_design_controller.h"
 
 using metrics::OmniboxEventProto;
 
@@ -41,16 +37,20 @@ namespace omnibox {
 const base::Feature kOmniboxEntitySuggestions{
     "OmniboxEntitySuggestions", base::FEATURE_DISABLED_BY_DEFAULT};
 
+// Feature used to enable entity suggestion images and enhanced presentation
+// showing more context and descriptive text about the entity.
+const base::Feature kOmniboxRichEntitySuggestions{
+    "OmniboxRichEntitySuggestions", base::FEATURE_DISABLED_BY_DEFAULT};
+
 // Feature used to force on the experiment of transmission of tail suggestions
 // from GWS to this client, currently testing for desktop.
 const base::Feature kOmniboxTailSuggestions{
     "OmniboxTailSuggestions", base::FEATURE_DISABLED_BY_DEFAULT};
 
-// Feature used to enable the identification of open tabs given URLs in
-// suggestions, and converting those suggestions to ones that allow switching to
-// the tab if found.  Currently only on the desktop.
-const base::Feature kOmniboxTabSwitchSuggestions{
-    "OmniboxTabSwitchSuggestions", base::FEATURE_DISABLED_BY_DEFAULT};
+const char kOmniboxTabSwitchSuggestionsFlag[] =
+    "omnibox-tab-switch-suggestions";
+
+const char kOmniboxTabSwitchWithButton[] = "with-button";
 
 // Feature used to enable clipboard provider, which provides the user with
 // suggestions of the URL in the user's clipboard (if any) upon omnibox focus.
@@ -62,12 +62,6 @@ const base::Feature kEnableClipboardProvider {
       base::FEATURE_DISABLED_BY_DEFAULT
 #endif
 };
-
-// Feature to enable personalized omnibox suggestions on focus when Android's
-// Chrome Home feature is enabled.
-const base::Feature kAndroidChromeHomePersonalizedSuggestions{
-    "ChromeHomePersonalizedOmniboxSuggestions",
-    base::FEATURE_DISABLED_BY_DEFAULT};
 
 // Feature to enable the search provider to send a request to the suggest
 // server on focus.  This allows the suggest server to warm up, by, for
@@ -82,13 +76,6 @@ const base::Feature kSearchProviderWarmUpOnFocus{
       base::FEATURE_ENABLED_BY_DEFAULT
 #endif
 };
-
-// Feature used to enable the transmission of HTTPS URLs as part of the
-// context to the suggest server (assuming SearchProvider is permitted to
-// transmit URLs for context in the first place).
-const base::Feature kSearchProviderContextAllowHttpsUrls{
-    "OmniboixSearchProviderContextAllowHttpsUrls",
-    base::FEATURE_ENABLED_BY_DEFAULT};
 
 // Feature used for the Zero Suggest Redirect to Chrome Field Trial.
 const base::Feature kZeroSuggestRedirectToChrome{
@@ -114,15 +101,10 @@ const base::Feature kUIExperimentElideSuggestionUrlAfterHost{
     "OmniboxUIExperimentElideSuggestionUrlAfterHost",
     base::FEATURE_DISABLED_BY_DEFAULT};
 
-// Feature used for hiding the suggestion URL scheme as a UI experiment.
-const base::Feature kUIExperimentHideSuggestionUrlScheme{
-    "OmniboxUIExperimentHideSuggestionUrlScheme",
-    base::FEATURE_DISABLED_BY_DEFAULT};
-
-// Feature used for hiding the suggestion URL subdomain as a UI experiment.
-// This only hides some trivially informative subdomains such as "www" or "m".
-const base::Feature kUIExperimentHideSuggestionUrlTrivialSubdomains{
-    "OmniboxUIExperimentHideSuggestionUrlTrivialSubdomains",
+// Feature used to hide the scheme and trivial subdomains from steady state
+// URLs displayed in the Omnibox. Hidden portions are restored during editing.
+const base::Feature kUIExperimentHideSteadyStateUrlSchemeAndSubdomains{
+    "OmniboxUIExperimentHideSteadyStateUrlSchemeAndSubdomains",
     base::FEATURE_DISABLED_BY_DEFAULT};
 
 // Feature used for the omnibox narrow suggestions dropdown UI experiment.
@@ -151,11 +133,7 @@ const base::Feature kUIExperimentVerticalMargin{
 // query.
 const base::Feature kSpeculativeServiceWorkerStartOnQueryInput{
   "OmniboxSpeculativeServiceWorkerStartOnQueryInput",
-#if defined(OS_ANDROID)
       base::FEATURE_ENABLED_BY_DEFAULT
-#else
-      base::FEATURE_DISABLED_BY_DEFAULT
-#endif
 };
 
 // Feature used to allow breaking words at underscores in building
@@ -247,6 +225,10 @@ HUPScoringParams::ScoreBuckets::ScoreBuckets(const ScoreBuckets& other) =
 HUPScoringParams::ScoreBuckets::~ScoreBuckets() {
 }
 
+size_t HUPScoringParams::ScoreBuckets::EstimateMemoryUsage() const {
+  return base::trace_event::EstimateMemoryUsage(buckets_);
+}
+
 double HUPScoringParams::ScoreBuckets::HalfLifeTimeDecay(
     const base::TimeDelta& elapsed_time) const {
   double time_ms;
@@ -259,14 +241,14 @@ double HUPScoringParams::ScoreBuckets::HalfLifeTimeDecay(
   return pow(2.0, -half_life_intervals);
 }
 
-#if defined(OS_ANDROID)
-// static
-void OmniboxFieldTrial::RegisterProfilePrefs(
-    user_prefs::PrefRegistrySyncable* registry) {
-  registry->RegisterBooleanPref(omnibox::kZeroSuggestChromeHomePersonalized,
-                                false);
+size_t HUPScoringParams::EstimateMemoryUsage() const {
+  size_t res = 0;
+
+  res += base::trace_event::EstimateMemoryUsage(typed_count_buckets);
+  res += base::trace_event::EstimateMemoryUsage(visited_count_buckets);
+
+  return res;
 }
-#endif
 
 int OmniboxFieldTrial::GetDisabledProviderTypes() {
   const std::string& types_string = variations::GetVariationParamValue(
@@ -284,7 +266,7 @@ void OmniboxFieldTrial::GetActiveSuggestFieldTrialHashes(
   field_trial_hashes->clear();
   if (base::FieldTrialList::TrialExists(kBundledExperimentFieldTrialName)) {
     field_trial_hashes->push_back(
-        metrics::HashName(kBundledExperimentFieldTrialName));
+        variations::HashName(kBundledExperimentFieldTrialName));
   }
 }
 
@@ -297,15 +279,14 @@ base::TimeDelta OmniboxFieldTrial::StopTimerFieldTrialDuration() {
   return base::TimeDelta::FromMilliseconds(1500);
 }
 
-bool OmniboxFieldTrial::InZeroSuggestMostVisitedFieldTrial(PrefService* prefs) {
-  return InZeroSuggestMostVisitedWithoutSerpFieldTrial(prefs) ||
-      variations::GetVariationParamValue(
-      kBundledExperimentFieldTrialName,
-      kZeroSuggestVariantRule) == "MostVisited";
+bool OmniboxFieldTrial::InZeroSuggestMostVisitedFieldTrial() {
+  return InZeroSuggestMostVisitedWithoutSerpFieldTrial() ||
+         variations::GetVariationParamValue(kBundledExperimentFieldTrialName,
+                                            kZeroSuggestVariantRule) ==
+             "MostVisited";
 }
 
-bool OmniboxFieldTrial::InZeroSuggestMostVisitedWithoutSerpFieldTrial(
-    PrefService* prefs) {
+bool OmniboxFieldTrial::InZeroSuggestMostVisitedWithoutSerpFieldTrial() {
   std::string variant(variations::GetVariationParamValue(
       kBundledExperimentFieldTrialName,
       kZeroSuggestVariantRule));
@@ -313,10 +294,7 @@ bool OmniboxFieldTrial::InZeroSuggestMostVisitedWithoutSerpFieldTrial(
     return true;
 #if defined(OS_ANDROID)
   // Android defaults to MostVisitedWithoutSERP
-  if (variant.empty() && !InChromeHomePersonalizedZeroSuggest(prefs))
-    return true;
-
-  return false;
+  return variant.empty();
 #elif defined(OS_IOS)
   // iOS defaults to MostVisitedWithoutSERP
   return variant.empty();
@@ -326,20 +304,10 @@ bool OmniboxFieldTrial::InZeroSuggestMostVisitedWithoutSerpFieldTrial(
 }
 
 // static
-bool OmniboxFieldTrial::InZeroSuggestPersonalizedFieldTrial(
-    PrefService* prefs) {
-  std::string variant(variations::GetVariationParamValue(
-      kBundledExperimentFieldTrialName, kZeroSuggestVariantRule));
-  if (variant == "Personalized")
-    return true;
-#if defined(OS_ANDROID)
-  if (variant.empty() && InChromeHomePersonalizedZeroSuggest(prefs))
-    return true;
-
-  return false;
-#else
-  return false;
-#endif
+bool OmniboxFieldTrial::InZeroSuggestPersonalizedFieldTrial() {
+  return variations::GetVariationParamValue(kBundledExperimentFieldTrialName,
+                                            kZeroSuggestVariantRule) ==
+         "Personalized";
 }
 
 // static
@@ -680,10 +648,18 @@ int OmniboxFieldTrial::KeywordScoreForSufficientlyCompleteMatch() {
 OmniboxFieldTrial::EmphasizeTitlesCondition
 OmniboxFieldTrial::GetEmphasizeTitlesConditionForInput(
     const AutocompleteInput& input) {
-  // Check the feature that always swaps title and URL (assuming the title is
+  // Check the features that always swaps title and URL (assuming the title is
   // non-empty).
-  if (base::FeatureList::IsEnabled(omnibox::kUIExperimentSwapTitleAndUrl))
+  if (base::FeatureList::IsEnabled(omnibox::kUIExperimentSwapTitleAndUrl) ||
+      base::FeatureList::IsEnabled(omnibox::kUIExperimentVerticalLayout)) {
     return EMPHASIZE_WHEN_NONEMPTY;
+  }
+
+  // Touch-optimized UI and MD Refresh also always swap title and URL.
+  if (ui::MaterialDesignController::is_mode_initialized() &&
+      ui::MaterialDesignController::IsNewerMaterialUi()) {
+    return EMPHASIZE_WHEN_NONEMPTY;
+  }
 
   // Check the feature that swaps the title and URL only for zero suggest
   // suggestions.
@@ -752,6 +728,25 @@ int OmniboxFieldTrial::GetPhysicalWebAfterTypingBaseRelevance() {
   // Default relevance score of the first Physical Web URL autocomplete match
   // when the user is typing in the omnibox.
   return 700;
+}
+
+// static
+bool OmniboxFieldTrial::InTabSwitchSuggestionTrial() {
+  const base::CommandLine& command_line =
+      *base::CommandLine::ForCurrentProcess();
+  return command_line.HasSwitch(omnibox::kOmniboxTabSwitchSuggestionsFlag) &&
+         command_line.GetSwitchValueASCII(
+             omnibox::kOmniboxTabSwitchSuggestionsFlag) != "disabled";
+}
+
+// static
+bool OmniboxFieldTrial::InTabSwitchSuggestionWithButtonTrial() {
+  const base::CommandLine& command_line =
+      *base::CommandLine::ForCurrentProcess();
+  return command_line.HasSwitch(omnibox::kOmniboxTabSwitchSuggestionsFlag) &&
+         command_line.GetSwitchValueASCII(
+             omnibox::kOmniboxTabSwitchSuggestionsFlag) ==
+             omnibox::kOmniboxTabSwitchWithButton;
 }
 
 const char OmniboxFieldTrial::kBundledExperimentFieldTrialName[] =
@@ -905,17 +900,3 @@ std::string OmniboxFieldTrial::GetValueForRuleInContext(
   it = params.find(rule + ":*:*");
   return (it != params.end()) ? it->second : std::string();
 }
-
-#if defined(OS_ANDROID)
-// static
-bool OmniboxFieldTrial::InChromeHomePersonalizedZeroSuggest(
-    PrefService* prefs) {
-  // Android's Java code sets a preference controlling whether personalized
-  // suggestions are enabled based on whether Chrome Home is enabled and
-  // whether the |kAndroidChromeHomePersonalizedSuggestions| feature is
-  // enabled.
-  return prefs->GetBoolean(omnibox::kZeroSuggestChromeHomePersonalized) &&
-         base::FeatureList::IsEnabled(
-             omnibox::kAndroidChromeHomePersonalizedSuggestions);
-}
-#endif

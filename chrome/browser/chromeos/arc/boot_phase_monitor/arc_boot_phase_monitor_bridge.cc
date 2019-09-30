@@ -83,14 +83,17 @@ class ArcBootPhaseMonitorBridgeFactory
 }  // namespace
 
 // static
-BrowserContextKeyedServiceFactory* ArcBootPhaseMonitorBridge::GetFactory() {
-  return ArcBootPhaseMonitorBridgeFactory::GetInstance();
-}
-
-// static
 ArcBootPhaseMonitorBridge* ArcBootPhaseMonitorBridge::GetForBrowserContext(
     content::BrowserContext* context) {
   return ArcBootPhaseMonitorBridgeFactory::GetForBrowserContext(context);
+}
+
+// static
+ArcBootPhaseMonitorBridge*
+ArcBootPhaseMonitorBridge::GetForBrowserContextForTesting(
+    content::BrowserContext* context) {
+  return ArcBootPhaseMonitorBridgeFactory::GetForBrowserContextForTesting(
+      context);
 }
 
 // static
@@ -160,7 +163,7 @@ void ArcBootPhaseMonitorBridge::OnBootCompleted() {
   chromeos::SessionManagerClient* session_manager_client =
       chromeos::DBusThreadManager::Get()->GetSessionManagerClient();
   session_manager_client->EmitArcBooted(cryptohome::Identification(account_id_),
-                                        base::Bind(&OnEmitArcBooted));
+                                        base::BindOnce(&OnEmitArcBooted));
 
   ArcSessionManager* arc_session_manager = ArcSessionManager::Get();
   DCHECK(arc_session_manager);

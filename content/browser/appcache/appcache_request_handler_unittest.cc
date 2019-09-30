@@ -16,7 +16,6 @@
 #include "base/containers/stack.h"
 #include "base/location.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/memory/weak_ptr.h"
 #include "base/message_loop/message_loop.h"
 #include "base/single_thread_task_runner.h"
@@ -35,8 +34,6 @@
 #include "content/browser/appcache/appcache_url_request_job.h"
 #include "content/browser/appcache/mock_appcache_policy.h"
 #include "content/browser/appcache/mock_appcache_service.h"
-#include "content/public/common/content_features.h"
-#include "content/public/common/resource_request.h"
 #include "net/base/net_errors.h"
 #include "net/base/request_priority.h"
 #include "net/http/http_response_headers.h"
@@ -46,6 +43,8 @@
 #include "net/url_request/url_request_context.h"
 #include "net/url_request/url_request_error_job.h"
 #include "net/url_request/url_request_job_factory.h"
+#include "services/network/public/cpp/features.h"
+#include "services/network/public/cpp/resource_request.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace content {
@@ -93,7 +92,7 @@ class AppCacheRequestHandlerTest
 
     void OnSetSubresourceFactory(
         int host_id,
-        mojo::MessagePipeHandle loader_factory_pipe_handle) override {}
+        network::mojom::URLLoaderFactoryPtr url_loader_factory) override {}
   };
 
   // Helper callback to run a test on our io_thread. The io_thread is spun up
@@ -220,7 +219,7 @@ class AppCacheRequestHandlerTest
       : host_(nullptr), request_(nullptr), request_handler_type_(GetParam()) {
     AppCacheRequestHandler::SetRunningInTests(true);
     if (request_handler_type_ == URLLOADER)
-      feature_list_.InitAndEnableFeature(features::kNetworkService);
+      feature_list_.InitAndEnableFeature(network::features::kNetworkService);
   }
 
   ~AppCacheRequestHandlerTest() {
@@ -448,7 +447,7 @@ class AppCacheRequestHandlerTest
       // status and the response code.
       DCHECK_EQ(net::OK, delegate_.request_status());
     } else {
-      ResourceResponseHead response;
+      network::ResourceResponseHead response;
       response.headers = info.headers;
       request_->AsURLLoaderRequest()->set_response(response);
     }
@@ -461,7 +460,7 @@ class AppCacheRequestHandlerTest
           url_request_.get(), nullptr, info));
       request_->AsURLRequest()->GetURLRequest()->Start();
     } else {
-      ResourceResponseHead response;
+      network::ResourceResponseHead response;
       response.headers = info.headers;
       request_->AsURLLoaderRequest()->set_response(response);
     }
@@ -961,7 +960,7 @@ class AppCacheRequestHandlerTest
           host->CreateRequestHandler(std::move(request), resource_type, false);
       return true;
     } else if (request_handler_type_ == URLLOADER) {
-      ResourceRequest resource_request;
+      network::ResourceRequest resource_request;
       resource_request.url = url;
       resource_request.method = "GET";
       std::unique_ptr<AppCacheRequest> request =

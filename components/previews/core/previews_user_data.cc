@@ -17,6 +17,10 @@ PreviewsUserData::~PreviewsUserData() {}
 
 std::unique_ptr<PreviewsUserData> PreviewsUserData::DeepCopy() const {
   std::unique_ptr<PreviewsUserData> copy(new PreviewsUserData(page_id_));
+  copy->data_savings_inflation_percent_ = data_savings_inflation_percent_;
+  copy->cache_control_no_transform_directive_ =
+      cache_control_no_transform_directive_;
+  copy->SetCommittedPreviewsType(committed_previews_type_);
   return copy;
 }
 
@@ -36,6 +40,12 @@ PreviewsUserData* PreviewsUserData::Create(net::URLRequest* request,
   data = new PreviewsUserData(page_id);
   request->SetUserData(kPreviewsUserDataKey, base::WrapUnique(data));
   return data;
+}
+
+void PreviewsUserData::SetCommittedPreviewsType(
+    previews::PreviewsType previews_type) {
+  DCHECK(committed_previews_type_ == PreviewsType::NONE);
+  committed_previews_type_ = previews_type;
 }
 
 }  // namespace previews

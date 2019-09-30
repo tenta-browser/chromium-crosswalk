@@ -43,8 +43,6 @@ enum ContentSettingsType {
   CONTENT_SETTINGS_TYPE_BLUETOOTH_GUARD,
   CONTENT_SETTINGS_TYPE_BACKGROUND_SYNC,
   CONTENT_SETTINGS_TYPE_AUTOPLAY,
-  // TODO(raymes): Deprecated. See crbug.com/681709. Remove after M60.
-  CONTENT_SETTINGS_TYPE_PROMPT_NO_DECISION_COUNT,
   CONTENT_SETTINGS_TYPE_IMPORTANT_SITE_INFO,
   CONTENT_SETTINGS_TYPE_PERMISSION_AUTOBLOCKER_DATA,
   CONTENT_SETTINGS_TYPE_ADS,
@@ -101,6 +99,18 @@ enum ContentSettingsType {
   // This is special-cased in the permissions layer to always allow, and as
   // such doesn't have associated prefs data.
   CONTENT_SETTINGS_TYPE_CLIPBOARD_WRITE,
+
+  // Used to store whether the user has ever changed the Flash permission for
+  // a site.
+  CONTENT_SETTINGS_TYPE_PLUGINS_DATA,
+
+  // Used to store whether to allow a website to install a payment handler.
+  CONTENT_SETTINGS_TYPE_PAYMENT_HANDLER,
+
+  // Content setting which stores whether to allow sites to ask for permission
+  // to access USB devices. If this is allowed specific device permissions are
+  // stored under CONTENT_SETTINGS_TYPE_USB_CHOOSER_DATA.
+  CONTENT_SETTINGS_TYPE_USB_GUARD,
 
   CONTENT_SETTINGS_NUM_TYPES,
 };

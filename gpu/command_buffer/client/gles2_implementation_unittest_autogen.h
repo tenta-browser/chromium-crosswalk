@@ -3087,9 +3087,9 @@ TEST_F(GLES2ImplementationTest, BeginRasterCHROMIUM) {
     cmds::BeginRasterCHROMIUM cmd;
   };
   Cmds expected;
-  expected.cmd.Init(1, 2, 3, true, true, 6);
+  expected.cmd.Init(1, 2, 3, true, 5, 6);
 
-  gl_->BeginRasterCHROMIUM(1, 2, 3, true, true, 6);
+  gl_->BeginRasterCHROMIUM(1, 2, 3, true, 5, 6);
   EXPECT_EQ(0, memcmp(&expected, commands_, sizeof(expected)));
 }
 
@@ -3137,6 +3137,28 @@ TEST_F(GLES2ImplementationTest, WindowRectanglesEXT) {
   }
   expected.cmd.Init(GL_INCLUSIVE_EXT, 2, &data[0][0]);
   gl_->WindowRectanglesEXT(GL_INCLUSIVE_EXT, 2, &data[0][0]);
+  EXPECT_EQ(0, memcmp(&expected, commands_, sizeof(expected)));
+}
+
+TEST_F(GLES2ImplementationTest, WaitGpuFenceCHROMIUM) {
+  struct Cmds {
+    cmds::WaitGpuFenceCHROMIUM cmd;
+  };
+  Cmds expected;
+  expected.cmd.Init(1);
+
+  gl_->WaitGpuFenceCHROMIUM(1);
+  EXPECT_EQ(0, memcmp(&expected, commands_, sizeof(expected)));
+}
+
+TEST_F(GLES2ImplementationTest, DestroyGpuFenceCHROMIUM) {
+  struct Cmds {
+    cmds::DestroyGpuFenceCHROMIUM cmd;
+  };
+  Cmds expected;
+  expected.cmd.Init(1);
+
+  gl_->DestroyGpuFenceCHROMIUM(1);
   EXPECT_EQ(0, memcmp(&expected, commands_, sizeof(expected)));
 }
 #endif  // GPU_COMMAND_BUFFER_CLIENT_GLES2_IMPLEMENTATION_UNITTEST_AUTOGEN_H_

@@ -109,10 +109,13 @@ class WebStateObserver {
   virtual void DidStopLoading(WebState* web_state) {}
 
   // Called when the current page has finished the loading of the main frame
-  // document. DidStopLoading relates to the general loading state of the
-  // WebState, but PageLoaded is correlated with the main frame document load
-  // phase. Unlike DidStopLoading, this callback is not called when the load
-  // is aborted.
+  // document (including same-document navigations). DidStopLoading relates to
+  // the general loading state of the WebState, but PageLoaded is correlated
+  // with the main frame document load phase. Unlike DidStopLoading, this
+  // callback is not called when the load is aborted (WebState::Stop is called
+  // or the load is rejected via WebStatePolicyDecider (both ShouldAllowRequest
+  // or ShouldAllowResponse). If PageLoaded is called it is always called after
+  // DidFinishNavigation.
   virtual void PageLoaded(WebState* web_state,
                           PageLoadCompletionStatus load_completion_status) {}
 
@@ -120,6 +123,9 @@ class WebStateObserver {
   // |progress| is a value between 0.0 (nothing loaded) to 1.0 (page fully
   // loaded).
   virtual void LoadProgressChanged(WebState* web_state, double progress) {}
+
+  // Called when the canGoBack / canGoForward state of the window was changed.
+  virtual void DidChangeBackForwardState(WebState* web_state) {}
 
   // Called when the title of the WebState is set.
   virtual void TitleWasSet(WebState* web_state) {}
@@ -132,14 +138,19 @@ class WebStateObserver {
   // false.
   virtual void DidSuppressDialog(WebState* web_state) {}
 
-  // Called on form submission. |user_initiated| is true if the user
-  // interacted with the page.
+  // Called on form submission in the main frame or in a same-origin iframe.
+  // |user_initiated| is true if the user interacted with the page.
+  // |is_main_frame| is true if the submitted form is in the main frame.
+  // TODO(crbug.com/823285): move this handler to components/autofill.
   virtual void DocumentSubmitted(WebState* web_state,
                                  const std::string& form_name,
-                                 bool user_initiated) {}
+                                 bool user_initiated,
+                                 bool is_main_frame) {}
 
-  // Called when the user is typing on a form field, with |params.input_missing|
-  // indicating if there is any error when parsing the form field information.
+  // Called when the user is typing on a form field in the main frame or in a
+  // same-origin iframe. |params.input_missing| is indicating if there is any
+  // error when parsing the form field information.
+  // TODO(crbug.com/823285): move this handler to components/autofill.
   virtual void FormActivityRegistered(WebState* web_state,
                                       const FormActivityParams& params) {}
 

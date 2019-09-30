@@ -5,18 +5,19 @@
 #include "android_webview/browser/surfaces_instance.h"
 
 #include <algorithm>
+#include <memory>
 #include <utility>
 
 #include "android_webview/browser/aw_gl_surface.h"
 #include "android_webview/browser/aw_render_thread_context_provider.h"
 #include "android_webview/browser/deferred_gpu_command_service.h"
 #include "android_webview/browser/parent_output_surface.h"
-#include "base/memory/ptr_util.h"
+#include "base/stl_util.h"
 #include "components/viz/common/display/renderer_settings.h"
 #include "components/viz/common/frame_sinks/begin_frame_source.h"
 #include "components/viz/common/quads/solid_color_draw_quad.h"
 #include "components/viz/common/quads/surface_draw_quad.h"
-#include "components/viz/common/surfaces/local_surface_id_allocator.h"
+#include "components/viz/common/surfaces/parent_local_surface_id_allocator.h"
 #include "components/viz/service/display/display.h"
 #include "components/viz/service/display/display_scheduler.h"
 #include "components/viz/service/frame_sinks/compositor_frame_sink_support.h"
@@ -53,13 +54,13 @@ SurfacesInstance::SurfacesInstance()
   // Webview does not own the surface so should not clear it.
   settings.should_clear_root_render_pass = false;
 
-  frame_sink_manager_ = std::make_unique<viz::FrameSinkManagerImpl>(
-      viz::SurfaceManager::LifetimeType::SEQUENCES);
-  local_surface_id_allocator_.reset(new viz::LocalSurfaceIdAllocator());
+  frame_sink_manager_ = std::make_unique<viz::FrameSinkManagerImpl>();
+  parent_local_surface_id_allocator_.reset(
+      new viz::ParentLocalSurfaceIdAllocator());
 
   constexpr bool is_root = true;
   constexpr bool needs_sync_points = true;
-  support_ = viz::CompositorFrameSinkSupport::Create(
+  support_ = std::make_unique<viz::CompositorFrameSinkSupport>(
       this, frame_sink_manager_.get(), frame_sink_id_, is_root,
       needs_sync_points);
 
@@ -69,12 +70,11 @@ SurfacesInstance::SurfacesInstance()
           base::WrapRefCounted(new AwGLSurface),
           DeferredGpuCommandService::GetInstance())));
   output_surface_ = output_surface_holder.get();
-  auto scheduler = base::MakeUnique<viz::DisplayScheduler>(
+  auto scheduler = std::make_unique<viz::DisplayScheduler>(
       begin_frame_source_.get(), nullptr /* current_task_runner */,
       output_surface_holder->capabilities().max_frames_pending);
-  display_ = base::MakeUnique<viz::Display>(
-      nullptr /* shared_bitmap_manager */,
-      nullptr /* gpu_memory_buffer_manager */, settings, frame_sink_id_,
+  display_ = std::make_unique<viz::Display>(
+      nullptr /* shared_bitmap_manager */, settings, frame_sink_id_,
       std::move(output_surface_holder), std::move(scheduler),
       nullptr /* current_task_runner */);
   display_->Initialize(this, frame_sink_manager_->surface_manager());
@@ -119,8 +119,7 @@ void SurfacesInstance::DrawAndSwap(const gfx::Size& viewport,
                                    const gfx::Size& frame_size,
                                    const viz::SurfaceId& child_id,
                                    float device_scale_factor) {
-  DCHECK(std::find(child_ids_.begin(), child_ids_.end(), child_id) !=
-         child_ids_.end());
+  DCHECK(base::ContainsValue(child_ids_, child_id));
 
   // Create a frame with a single SurfaceDrawQuad referencing the child
   // Surface and transformed using the given transform.
@@ -153,13 +152,12 @@ void SurfacesInstance::DrawAndSwap(const gfx::Size& viewport,
 
   if (!root_id_.is_valid() || viewport != surface_size_ ||
       device_scale_factor != device_scale_factor_) {
-    root_id_ = local_surface_id_allocator_->GenerateId();
+    root_id_ = parent_local_surface_id_allocator_->GenerateId();
     surface_size_ = viewport;
     device_scale_factor_ = device_scale_factor;
     display_->SetLocalSurfaceId(root_id_, device_scale_factor);
   }
-  bool result = support_->SubmitCompositorFrame(root_id_, std::move(frame));
-  DCHECK(result);
+  support_->SubmitCompositorFrame(root_id_, std::move(frame));
 
   display_->Resize(viewport);
   display_->DrawAndSwap();
@@ -167,8 +165,7 @@ void SurfacesInstance::DrawAndSwap(const gfx::Size& viewport,
 }
 
 void SurfacesInstance::AddChildId(const viz::SurfaceId& child_id) {
-  DCHECK(std::find(child_ids_.begin(), child_ids_.end(), child_id) ==
-         child_ids_.end());
+  DCHECK(!base::ContainsValue(child_ids_, child_id));
   child_ids_.push_back(child_id);
   if (root_id_.is_valid())
     SetSolidColorRootFrame();
@@ -203,8 +200,7 @@ void SurfacesInstance::SetSolidColorRootFrame() {
       viz::BeginFrameAck::CreateManualAckWithDamage();
   frame.metadata.referenced_surfaces = child_ids_;
   frame.metadata.device_scale_factor = device_scale_factor_;
-  bool result = support_->SubmitCompositorFrame(root_id_, std::move(frame));
-  DCHECK(result);
+  support_->SubmitCompositorFrame(root_id_, std::move(frame));
 }
 
 void SurfacesInstance::DidReceiveCompositorFrameAck(

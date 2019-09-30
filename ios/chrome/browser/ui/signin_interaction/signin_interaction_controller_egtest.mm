@@ -9,7 +9,6 @@
 #import "base/test/ios/wait_util.h"
 #include "base/test/scoped_feature_list.h"
 #include "components/signin/core/browser/signin_manager.h"
-#include "ios/chrome/browser/bookmarks/bookmark_new_generation_features.h"
 #include "ios/chrome/browser/experimental_flags.h"
 #include "ios/chrome/browser/signin/signin_manager_factory.h"
 #import "ios/chrome/browser/ui/authentication/signin_earlgrey_utils.h"
@@ -34,6 +33,7 @@
 
 using chrome_test_util::NavigationBarDoneButton;
 using chrome_test_util::SecondarySignInButton;
+using chrome_test_util::SettingsDoneButton;
 
 namespace {
 
@@ -90,7 +90,7 @@ void WaitForMatcher(id<GREYMatcher> matcher) {
   [ChromeEarlGreyUI tapSettingsMenuButton:SecondarySignInButton()];
   [ChromeEarlGreyUI signInToIdentityByEmail:identity.userEmail];
   [ChromeEarlGreyUI confirmSigninConfirmationDialog];
-  [[EarlGrey selectElementWithMatcher:NavigationBarDoneButton()]
+  [[EarlGrey selectElementWithMatcher:SettingsDoneButton()]
       performAction:grey_tap()];
 
   // Check |identity| is signed-in.
@@ -130,7 +130,7 @@ void WaitForMatcher(id<GREYMatcher> matcher) {
   // Check the signed-in user did change.
   [SigninEarlGreyUtils assertSignedInWithIdentity:identity2];
 
-  [[EarlGrey selectElementWithMatcher:NavigationBarDoneButton()]
+  [[EarlGrey selectElementWithMatcher:SettingsDoneButton()]
       performAction:grey_tap()];
 }
 
@@ -168,7 +168,7 @@ void WaitForMatcher(id<GREYMatcher> matcher) {
   // Check the signed-in user did change.
   [SigninEarlGreyUtils assertSignedInWithIdentity:identity2];
 
-  [[EarlGrey selectElementWithMatcher:NavigationBarDoneButton()]
+  [[EarlGrey selectElementWithMatcher:SettingsDoneButton()]
       performAction:grey_tap()];
 }
 
@@ -214,7 +214,7 @@ void WaitForMatcher(id<GREYMatcher> matcher) {
 
   [SigninEarlGreyUtils assertSignedInWithIdentity:identity];
 
-  [[EarlGrey selectElementWithMatcher:NavigationBarDoneButton()]
+  [[EarlGrey selectElementWithMatcher:SettingsDoneButton()]
       performAction:grey_tap()];
 }
 
@@ -245,7 +245,7 @@ void WaitForMatcher(id<GREYMatcher> matcher) {
       onElementWithMatcher:chrome_test_util::SettingsAccountsCollectionView()]
       performAction:grey_tap()];
   TapButtonWithLabelId(IDS_IOS_DISCONNECT_DIALOG_CONTINUE_BUTTON_MOBILE);
-  [[EarlGrey selectElementWithMatcher:NavigationBarDoneButton()]
+  [[EarlGrey selectElementWithMatcher:SettingsDoneButton()]
       performAction:grey_tap()];
 
   // Check that there is no signed in user.
@@ -287,7 +287,7 @@ void WaitForMatcher(id<GREYMatcher> matcher) {
       onElementWithMatcher:chrome_test_util::SettingsAccountsCollectionView()]
       performAction:grey_tap()];
   TapButtonWithLabelId(IDS_IOS_MANAGED_DISCONNECT_DIALOG_ACCEPT);
-  [[EarlGrey selectElementWithMatcher:NavigationBarDoneButton()]
+  [[EarlGrey selectElementWithMatcher:SettingsDoneButton()]
       performAction:grey_tap()];
 
   // Check that there is no signed in user.
@@ -312,7 +312,7 @@ void WaitForMatcher(id<GREYMatcher> matcher) {
   [[EarlGrey selectElementWithMatcher:settings_link_matcher]
       performAction:grey_tap()];
 
-  [[EarlGrey selectElementWithMatcher:NavigationBarDoneButton()]
+  [[EarlGrey selectElementWithMatcher:SettingsDoneButton()]
       performAction:grey_tap()];
 
   // All Settings should be gone and user signed in.
@@ -353,7 +353,7 @@ void WaitForMatcher(id<GREYMatcher> matcher) {
 
   // Close sign-in screen and Settings.
   TapButtonWithLabelId(IDS_IOS_ACCOUNT_CONSISTENCY_SETUP_SKIP_BUTTON);
-  [[EarlGrey selectElementWithMatcher:NavigationBarDoneButton()]
+  [[EarlGrey selectElementWithMatcher:SettingsDoneButton()]
       performAction:grey_tap()];
 }
 
@@ -394,7 +394,7 @@ void WaitForMatcher(id<GREYMatcher> matcher) {
 
   // Close sign-in screen and Settings.
   TapButtonWithLabelId(IDS_IOS_ACCOUNT_CONSISTENCY_SETUP_SKIP_BUTTON);
-  [[EarlGrey selectElementWithMatcher:NavigationBarDoneButton()]
+  [[EarlGrey selectElementWithMatcher:SettingsDoneButton()]
       performAction:grey_tap()];
 }
 
@@ -456,19 +456,15 @@ void WaitForMatcher(id<GREYMatcher> matcher) {
 
   // Close sign-in screen and Settings.
   TapButtonWithLabelId(IDS_IOS_ACCOUNT_CONSISTENCY_SETUP_SKIP_BUTTON);
-  [[EarlGrey selectElementWithMatcher:NavigationBarDoneButton()]
+  [[EarlGrey selectElementWithMatcher:SettingsDoneButton()]
       performAction:grey_tap()];
   [SigninEarlGreyUtils assertSignedOut];
 }
 
-// Opens the sign in screen from the bookmarks and then cancel it by opening a
-// new tab. Ensures that the sign in screen is correctly dismissed.
+// Opens the sign in screen from the bookmarks and then cancel it by tapping on
+// done. Ensures that the sign in screen is correctly dismissed.
 // Regression test for crbug.com/596029.
 - (void)testSignInCancelFromBookmarks {
-  // TODO(crbug.com/782551): Rewrite this test for the new Bookmarks UI.
-  base::test::ScopedFeatureList scoped_feature_list;
-  scoped_feature_list.InitAndDisableFeature(kBookmarkNewGeneration);
-
   ChromeIdentity* identity = [SigninEarlGreyUtils fakeIdentity1];
   ios::FakeChromeIdentityService::GetInstanceFromChromeProvider()->AddIdentity(
       identity);
@@ -476,20 +472,6 @@ void WaitForMatcher(id<GREYMatcher> matcher) {
   // Open Bookmarks and tap on Sign In promo button.
   [ChromeEarlGreyUI openToolsMenu];
   [ChromeEarlGreyUI tapToolsMenuButton:chrome_test_util::BookmarksMenuButton()];
-
-  if (!IsIPadIdiom()) {
-    // Opens the bookmark manager sidebar on handsets.
-    [[EarlGrey selectElementWithMatcher:grey_accessibilityID(@"Menu")]
-        performAction:grey_tap()];
-  }
-
-  // Selects the top level folder (Sign In promo is only shown there).
-  NSString* topLevelFolderTitle = @"Mobile Bookmarks";
-  id<GREYMatcher> all_bookmarks_matcher =
-      grey_allOf(grey_kindOfClass(NSClassFromString(@"BookmarkMenuCell")),
-                 grey_descendant(grey_text(topLevelFolderTitle)), nil);
-  [[EarlGrey selectElementWithMatcher:all_bookmarks_matcher]
-      performAction:grey_tap()];
   [ChromeEarlGreyUI tapSettingsMenuButton:SecondarySignInButton()];
 
   // Assert sign-in screen was shown.
@@ -508,29 +490,14 @@ void WaitForMatcher(id<GREYMatcher> matcher) {
   // this will fail.
   [ChromeEarlGreyUI openToolsMenu];
   [ChromeEarlGreyUI tapToolsMenuButton:chrome_test_util::BookmarksMenuButton()];
-  if (!IsIPadIdiom()) {
-    [[EarlGrey selectElementWithMatcher:grey_accessibilityID(@"Menu")]
-        performAction:grey_tap()];
-  }
-  [[EarlGrey selectElementWithMatcher:all_bookmarks_matcher]
-      performAction:grey_tap()];
   [ChromeEarlGreyUI tapSettingsMenuButton:SecondarySignInButton()];
   [[EarlGrey selectElementWithMatcher:signin_matcher]
       assertWithMatcher:grey_sufficientlyVisible()];
 
   // Close sign-in screen and Bookmarks.
   TapButtonWithLabelId(IDS_IOS_ACCOUNT_CONSISTENCY_SETUP_SKIP_BUTTON);
-  if (IsIPadIdiom()) {
-    // Switch back to the Home Panel.  This is to prevent Bookmarks Panel, which
-    // has an infinite spinner, from appearing in the coming tests and causing
-    // timeouts.
-    [chrome_test_util::GetCurrentNewTabPageController()
-        selectPanel:ntp_home::HOME_PANEL];
-    [[GREYUIThreadExecutor sharedInstance] drainUntilIdle];
-  } else {
-    [[EarlGrey selectElementWithMatcher:NavigationBarDoneButton()]
-        performAction:grey_tap()];
-  }
+  [[EarlGrey selectElementWithMatcher:NavigationBarDoneButton()]
+      performAction:grey_tap()];
 }
 
 @end

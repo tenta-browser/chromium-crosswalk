@@ -5,7 +5,7 @@
 <link rel="import" href="chrome://resources/polymer/v1_0/neon-animation/neon-animatable-behavior.html">
 <link rel="import" href="chrome://resources/polymer/v1_0/paper-icon-button/paper-icon-button-light.html">
 <link rel="import" href="chrome://resources/polymer/v1_0/paper-ripple/paper-ripple.html">
-<link rel="import" href="chrome://resources/polymer/v1_0/paper-spinner/paper-spinner.html">
+<link rel="import" href="chrome://resources/polymer/v1_0/paper-spinner/paper-spinner-lite.html">
 <link rel="import" href="../icons.html">
 <link rel="import" href="../route.html">
 <link rel="import" href="settings_subpage_search.html">
@@ -26,7 +26,7 @@
       }
 
       #learnMore {
-        @apply(--cr-paper-icon-button-margin);
+        @apply --cr-paper-icon-button-margin;
         align-items: center;
         display: flex;
         height: var(--cr-icon-ripple-size);
@@ -35,19 +35,19 @@
         width: var(--cr-icon-ripple-size);
       }
 
-      button[is='paper-icon-button-light'] {
+      paper-icon-button-light {
         /* Centers the ripple on the icon with appropriate margin on right. */
         -webkit-margin-end: 10px;
         -webkit-margin-start: -10px;
       }
 
-      paper-spinner {
-        @apply(--cr-icon-height-width);
+      paper-spinner-lite {
+        @apply --cr-icon-height-width;
       }
 
       h1 {
         flex: 1;  /* Push other items to the end. */
-        @apply(--cr-title-text);
+        @apply --cr-title-text;
       }
 
       settings-subpage-search {
@@ -56,9 +56,9 @@
       }
     </style>
     <div class="settings-box first" id="headerLine">
-      <button is="paper-icon-button-light" on-tap="onTapBack_"
-          aria-label="$i18n{back}" class="icon-arrow-back">
-      </button>
+      <paper-icon-button-light class="icon-arrow-back">
+        <button on-click="onTapBack_" aria-label="$i18n{back}"></button>
+      </paper-icon-button-light>
       <h1>[[pageTitle]]</h1>
       <slot name="subpage-title-extra"></slot>
       <template is="dom-if" if="[[learnMoreUrl]]">
@@ -74,7 +74,7 @@
         </settings-subpage-search>
       </template>
       <template is="dom-if" if="[[showSpinner]]">
-        <paper-spinner active></paper-spinner>
+        <paper-spinner-lite active></paper-spinner-lite>
       </template>
     </div>
     <slot></slot>

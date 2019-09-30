@@ -15,7 +15,6 @@
 #include "base/bind_helpers.h"
 #include "base/location.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
@@ -48,7 +47,7 @@ namespace content {
 std::unique_ptr<media::VideoCaptureJpegDecoder> CreateGpuJpegDecoder(
     media::VideoCaptureJpegDecoder::DecodeDoneCB decode_done_cb) {
   return std::make_unique<content::VideoCaptureGpuJpegDecoder>(
-      std::move(decode_done_cb), base::Bind([](const std::string&) {}));
+      std::move(decode_done_cb), base::DoNothing());
 }
 
 class MockVideoCaptureControllerEventHandler
@@ -89,7 +88,7 @@ class MockVideoCaptureControllerEventHandler
       const media::mojom::VideoFrameInfoPtr& frame_info) override {
     EXPECT_EQ(expected_pixel_format_, frame_info->pixel_format);
     media::VideoFrameMetadata metadata;
-    metadata.MergeInternalValuesFrom(*frame_info->metadata);
+    metadata.MergeInternalValuesFrom(frame_info->metadata);
     base::TimeTicks reference_time;
     EXPECT_TRUE(metadata.GetTimeTicks(media::VideoFrameMetadata::REFERENCE_TIME,
                                       &reference_time));
@@ -536,7 +535,7 @@ TEST_F(VideoCaptureControllerTest, ErrorBeforeDeviceCreation) {
 
   media::VideoCaptureFormat device_format(
       capture_resolution, arbitrary_frame_rate_, media::PIXEL_FORMAT_I420,
-      media::PIXEL_STORAGE_CPU);
+      media::VideoPixelStorage::CPU);
   const int arbitrary_frame_feedback_id = 101;
   media::VideoCaptureDevice::Client::Buffer buffer =
       device_client_->ReserveOutputBuffer(

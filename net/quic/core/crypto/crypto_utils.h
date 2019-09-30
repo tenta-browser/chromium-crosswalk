@@ -9,7 +9,6 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <string>
 
 #include "base/macros.h"
 #include "net/quic/core/crypto/crypto_handshake.h"
@@ -18,7 +17,9 @@
 #include "net/quic/core/quic_packets.h"
 #include "net/quic/core/quic_time.h"
 #include "net/quic/platform/api/quic_export.h"
+#include "net/quic/platform/api/quic_string.h"
 #include "net/quic/platform/api/quic_string_piece.h"
+#include "third_party/boringssl/src/include/openssl/evp.h"
 
 namespace net {
 
@@ -68,6 +69,38 @@ class QUIC_EXPORT_PRIVATE CryptoUtils {
     DiversificationNonce* nonce_;
   };
 
+  // Implements the QHKDF-Expand function defined in section 5.2.3 of
+  // draft-ietf-quic-tls-09. The QHKDF-Expand function takes 3 explicit
+  // arguments, as well as an implicit PRF which is the hash function negotiated
+  // by TLS. This PRF is passed in as |prf|; the explicit arguments to
+  // QHKDF-Expand - Secret, Label, and Length - are passed in as |secret|,
+  // |label|, and |out_len|, respectively.
+  static std::vector<uint8_t> QhkdfExpand(const EVP_MD* prf,
+                                          const std::vector<uint8_t>& secret,
+                                          const std::string& label,
+                                          size_t out_len);
+
+  // SetKeyAndIV derives the key and IV from the given packet protection secret
+  // |pp_secret| and sets those fields on the given QuicEncrypter or
+  // QuicDecrypter |*crypter|. This follows the derivation described in section
+  // 5.2.4 of draft-ietf-quic-tls-09.
+  template <class QuicCrypter>
+  static void SetKeyAndIV(const EVP_MD* prf,
+                          const std::vector<uint8_t>& pp_secret,
+                          QuicCrypter* crypter);
+
+  // QUIC encrypts TLS handshake messages with a version-specific key (to
+  // prevent network observers that are not aware of that QUIC version from
+  // making decisions based on the TLS handshake). This packet protection secret
+  // is derived from the connection ID in the client's Initial packet.
+  //
+  // This function takes that |connection_id| and creates the encrypter and
+  // decrypter (put in |*crypters|) to use for this packet protection, as well
+  // as setting the key and IV on those crypters.
+  static void CreateTlsInitialCrypters(Perspective perspective,
+                                       QuicConnectionId connection_id,
+                                       CrypterPair* crypters);
+
   // Generates the connection nonce. The nonce is formed as:
   //   <4 bytes> current time
   //   <8 bytes> |orbit| (or random if |orbit| is empty)
@@ -75,7 +108,7 @@ class QUIC_EXPORT_PRIVATE CryptoUtils {
   static void GenerateNonce(QuicWallTime now,
                             QuicRandom* random_generator,
                             QuicStringPiece orbit,
-                            std::string* nonce);
+                            QuicString* nonce);
 
   // DeriveKeys populates |crypters->encrypter|, |crypters->decrypter|, and
   // |subkey_secret| (optional -- may be null) given the contents of
@@ -97,11 +130,11 @@ class QUIC_EXPORT_PRIVATE CryptoUtils {
                          QuicTag aead,
                          QuicStringPiece client_nonce,
                          QuicStringPiece server_nonce,
-                         const std::string& hkdf_input,
+                         const QuicString& hkdf_input,
                          Perspective perspective,
                          Diversification diversification,
                          CrypterPair* crypters,
-                         std::string* subkey_secret);
+                         QuicString* subkey_secret);
 
   // Performs key extraction to derive a new secret of |result_len| bytes
   // dependent on |subkey_secret|, |label|, and |context|. Returns false if the
@@ -111,7 +144,7 @@ class QUIC_EXPORT_PRIVATE CryptoUtils {
                                    QuicStringPiece label,
                                    QuicStringPiece context,
                                    size_t result_len,
-                                   std::string* result);
+                                   QuicString* result);
 
   // Computes the FNV-1a hash of the provided DER-encoded cert for use in the
   // XLCT tag.
@@ -125,7 +158,7 @@ class QUIC_EXPORT_PRIVATE CryptoUtils {
   static QuicErrorCode ValidateServerHello(
       const CryptoHandshakeMessage& server_hello,
       const QuicTransportVersionVector& negotiated_versions,
-      std::string* error_details);
+      QuicString* error_details);
 
   // Validates that |client_hello| is actually a CHLO and that this is not part
   // of a downgrade attack.
@@ -137,7 +170,7 @@ class QUIC_EXPORT_PRIVATE CryptoUtils {
       const CryptoHandshakeMessage& client_hello,
       QuicTransportVersion version,
       const QuicTransportVersionVector& supported_versions,
-      std::string* error_details);
+      QuicString* error_details);
 
   // Returns the name of the HandshakeFailureReason as a char*
   static const char* HandshakeFailureReasonToString(
@@ -145,7 +178,7 @@ class QUIC_EXPORT_PRIVATE CryptoUtils {
 
   // Writes a hash of the serialized |message| into |output|.
   static void HashHandshakeMessage(const CryptoHandshakeMessage& message,
-                                   std::string* output,
+                                   QuicString* output,
                                    Perspective perspective);
 
  private:

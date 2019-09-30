@@ -9,7 +9,6 @@
 
 #include "base/bind.h"
 #include "base/callback.h"
-#include "base/memory/ptr_util.h"
 #include "net/base/registry_controlled_domains/registry_controlled_domain.h"
 #include "net/cookies/canonical_cookie.h"
 #include "url/origin.h"
@@ -106,10 +105,6 @@ bool MatchesPluginSiteForRegisterableDomainsAndIPs(
       (domains_and_ips.find(domain_or_ip) != domains_and_ips.end()));
 }
 
-bool NoopFilter(const GURL& url) {
-  return true;
-}
-
 }  // namespace
 
 // static
@@ -120,7 +115,7 @@ BrowsingDataFilterBuilder::Create(Mode mode) {
 
 // static
 base::Callback<bool(const GURL&)> BrowsingDataFilterBuilder::BuildNoopFilter() {
-  return base::Bind(&NoopFilter);
+  return base::Bind([](const GURL&) { return true; });
 }
 
 BrowsingDataFilterBuilderImpl::BrowsingDataFilterBuilderImpl(Mode mode)
@@ -162,6 +157,20 @@ bool BrowsingDataFilterBuilderImpl::IsEmptyBlacklist() const {
 base::RepeatingCallback<bool(const GURL&)>
 BrowsingDataFilterBuilderImpl::BuildGeneralFilter() const {
   return base::BindRepeating(&MatchesURL, origins_, domains_, mode_);
+}
+
+network::mojom::ClearCacheUrlFilterPtr
+BrowsingDataFilterBuilderImpl::BuildClearCacheUrlFilter() const {
+  network::mojom::ClearCacheUrlFilterPtr filter =
+      network::mojom::ClearCacheUrlFilter::New();
+  filter->type = (mode_ == Mode::WHITELIST)
+                     ? network::mojom::ClearCacheUrlFilter::Type::DELETE_MATCHES
+                     : network::mojom::ClearCacheUrlFilter::Type::KEEP_MATCHES;
+  filter->origins.insert(filter->origins.begin(), origins_.begin(),
+                         origins_.end());
+  filter->domains.insert(filter->domains.begin(), domains_.begin(),
+                         domains_.end());
+  return filter;
 }
 
 base::RepeatingCallback<bool(const net::CanonicalCookie& cookie)>

@@ -15,9 +15,11 @@
 // See http://dev.chromium.org/developers/testing/threadsanitizer-tsan-v2
 // for the instructions on writing suppressions.
 char kTSanDefaultSuppressions[] =
-    // False positives in libflashplayer.so and libglib.so. Since we don't
-    // instrument them, we cannot reason about the synchronization in them.
+    // False positives in libflashplayer.so, libgio.so and libglib.so.
+    // Since we don't instrument them, we cannot reason about the
+    // synchronization in them.
     "race:libflashplayer.so\n"
+    "race:libgio*.so\n"
     "race:libglib*.so\n"
 
     // Intentional race in ToolsSanityTest.DataRace in base_unittests.
@@ -76,8 +78,8 @@ char kTSanDefaultSuppressions[] =
     "race:webrtc::RTPSender::ProcessBitrate\n"
     "race:webrtc::VideoCodingModuleImpl::Decode\n"
     "race:webrtc::RTPSender::SendOutgoingData\n"
-    "race:webrtc::VP8EncoderImpl::GetEncodedPartitions\n"
-    "race:webrtc::VP8EncoderImpl::Encode\n"
+    "race:webrtc::LibvpxVp8Encoder::GetEncodedPartitions\n"
+    "race:webrtc::LibvpxVp8Encoder::Encode\n"
     "race:webrtc::ViEEncoder::DeliverFrame\n"
     "race:webrtc::vcm::VideoReceiver::Decode\n"
     "race:webrtc::VCMReceiver::FrameForDecoding\n"
@@ -234,8 +236,10 @@ char kTSanDefaultSuppressions[] =
 
     // http://crbug.com/587199
     "race:base::TimerTest_OneShotTimer_CustomTaskRunner_Test::TestBody\n"
-    "race:base::TimerSequenceTest_OneShotTimerTaskOnPoolThread_Test::TestBody\n"
-    "race:base::TimerSequenceTest_OneShotTimerUsedAndTaskedOnDifferentPools\n"
+    "race:base::TimerSequenceTest_OneShotTimerTaskOnPoolSequence_Test::"
+    "TestBody\n"
+    "race:base::TimerSequenceTest_"
+    "OneShotTimerUsedAndTaskedOnDifferentSequences\n"
 
     // http://crbug.com/v8/6065
     "race:net::(anonymous namespace)::ProxyResolverV8TracingImpl::RequestImpl"
@@ -250,6 +254,15 @@ char kTSanDefaultSuppressions[] =
     // http://crbug.com/695929
     "race:base::i18n::IsRTL\n"
     "race:base::i18n::SetICUDefaultLocale\n"
+
+    // https://crbug.com/794920
+    "race:base::debug::SetCrashKeyString\n"
+
+    // http://crbug.com/795110
+    "race:third_party/fontconfig/*\n"
+
+    // http://crbug.com/797998
+    "race:content::SandboxIPCHandler::HandleLocaltime\n"
 
     //
     "race:third_party/harfbuzz-ng/src/*\n"

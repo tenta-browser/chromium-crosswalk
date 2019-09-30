@@ -64,6 +64,10 @@ class CONTENT_EXPORT BrowserChildProcessHostImpl
   // from FieldTrials.
   static void CopyFeatureAndFieldTrialFlags(base::CommandLine* cmd_line);
 
+  // Appends kTraceStartup and kTraceRecordMode flags to the command line, if
+  // needed.
+  static void CopyTraceStartupFlags(base::CommandLine* cmd_line);
+
   // BrowserChildProcessHost implementation:
   bool Send(IPC::Message* message) override;
   void Launch(std::unique_ptr<SandboxedProcessLauncherDelegate> delegate,
@@ -80,7 +84,6 @@ class CONTENT_EXPORT BrowserChildProcessHostImpl
   service_manager::mojom::ServiceRequest TakeInProcessServiceRequest() override;
 
   // ChildProcessHostDelegate implementation:
-  bool CanShutdown() override;
   void OnChannelInitialized(IPC::Channel* channel) override;
   void OnChildDisconnected() override;
   const base::Process& GetProcess() const override;

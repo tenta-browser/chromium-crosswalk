@@ -33,6 +33,7 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
+import org.junit.rules.TestRule;
 import org.junit.runner.RunWith;
 
 import org.chromium.base.ThreadUtils;
@@ -55,8 +56,8 @@ import org.chromium.chrome.browser.widget.TintedImageButton;
 import org.chromium.chrome.browser.widget.selection.SelectableItemView;
 import org.chromium.chrome.browser.widget.selection.SelectableItemViewHolder;
 import org.chromium.chrome.browser.widget.selection.SelectionDelegate.SelectionObserver;
-import org.chromium.chrome.test.ChromeActivityTestRule;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
+import org.chromium.chrome.test.util.browser.ChromeModernDesign;
 import org.chromium.chrome.test.util.browser.signin.SigninTestUtil;
 import org.chromium.chrome.test.util.browser.sync.SyncTestUtil;
 import org.chromium.components.signin.ChromeSigninController;
@@ -72,15 +73,15 @@ import java.util.concurrent.TimeUnit;
  * Tests the {@link HistoryActivity}.
  */
 @RunWith(ChromeJUnit4ClassRunner.class)
-@CommandLineFlags.Add({
-        ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE,
-        ChromeActivityTestRule.DISABLE_NETWORK_PREDICTION_FLAG,
-})
+@CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
 @Restriction(UiRestriction.RESTRICTION_TYPE_PHONE)
 public class HistoryActivityTest {
     @Rule
     public IntentsTestRule<HistoryActivity> mActivityTestRule =
             new IntentsTestRule<>(HistoryActivity.class, false, false);
+
+    @Rule
+    public TestRule mChromeModernDesignStateRule = new ChromeModernDesign.Processor();
 
     private static class TestObserver extends RecyclerView.AdapterDataObserver
             implements SelectionObserver<HistoryItem>, SignInStateObserver, PrefObserver {
@@ -202,7 +203,7 @@ public class HistoryActivityTest {
         Assert.assertEquals(1, mHistoryProvider.removeItemsCallback.getCallCount());
         Assert.assertEquals(3, mAdapter.getItemCount());
         Assert.assertEquals(View.VISIBLE, mRecyclerView.getVisibility());
-        Assert.assertEquals(View.GONE, mHistoryManager.getEmptyView().getVisibility());
+        Assert.assertEquals(View.GONE, mHistoryManager.getEmptyViewForTests().getVisibility());
     }
 
     @Test
@@ -230,7 +231,7 @@ public class HistoryActivityTest {
         Assert.assertEquals(1, mHistoryProvider.removeItemsCallback.getCallCount());
         Assert.assertFalse(mHistoryManager.getSelectionDelegateForTests().isSelectionEnabled());
         Assert.assertEquals(View.GONE, mRecyclerView.getVisibility());
-        Assert.assertEquals(View.VISIBLE, mHistoryManager.getEmptyView().getVisibility());
+        Assert.assertEquals(View.VISIBLE, mHistoryManager.getEmptyViewForTests().getVisibility());
     }
 
     @Test
@@ -415,6 +416,7 @@ public class HistoryActivityTest {
 
     @Test
     @SmallTest
+    @ChromeModernDesign.Enable
     public void testSearchView() throws Exception {
         final HistoryManagerToolbar toolbar = mHistoryManager.getToolbarForTests();
         View toolbarShadow = mHistoryManager.getSelectableListLayout().getToolbarShadowForTests();
@@ -436,7 +438,7 @@ public class HistoryActivityTest {
         // The selection should be cleared when a search is started.
         mTestObserver.onSelectionCallback.waitForCallback(callCount, 1);
         Assert.assertFalse(mHistoryManager.getSelectionDelegateForTests().isSelectionEnabled());
-        Assert.assertEquals(View.VISIBLE, toolbarShadow.getVisibility());
+        Assert.assertEquals(View.GONE, toolbarShadow.getVisibility());
         Assert.assertEquals(View.VISIBLE, toolbarSearchView.getVisibility());
 
         // Select an item and assert that the search view is no longer showing.
@@ -448,7 +450,7 @@ public class HistoryActivityTest {
         // Clear the selection and assert that the search view is showing again.
         toggleItemSelection(2);
         Assert.assertFalse(mHistoryManager.getSelectionDelegateForTests().isSelectionEnabled());
-        Assert.assertEquals(View.VISIBLE, toolbarShadow.getVisibility());
+        Assert.assertEquals(View.GONE, toolbarShadow.getVisibility());
         Assert.assertEquals(View.VISIBLE, toolbarSearchView.getVisibility());
 
         // Close the search view.
@@ -677,10 +679,9 @@ public class HistoryActivityTest {
         SigninTestUtil.setUpAuthForTest(InstrumentationRegistry.getInstrumentation());
         final Account account = SigninTestUtil.addTestAccount();
         ThreadUtils.runOnUiThreadBlocking(() -> {
-            SigninManager.get(mActivityTestRule.getActivity()).onFirstRunCheckDone();
-            SigninManager.get(mActivityTestRule.getActivity())
-                    .addSignInStateObserver(mTestObserver);
-            SigninManager.get(mActivityTestRule.getActivity()).signIn(account, null, null);
+            SigninManager.get().onFirstRunCheckDone();
+            SigninManager.get().addSignInStateObserver(mTestObserver);
+            SigninManager.get().signIn(account, null, null);
         });
 
         mTestObserver.onSigninStateChangedCallback.waitForCallback(
@@ -741,7 +742,7 @@ public class HistoryActivityTest {
         ThreadUtils.runOnUiThreadBlocking(new Runnable() {
             @Override
             public void run() {
-                SigninManager.get(mActivityTestRule.getActivity()).signOut(null);
+                SigninManager.get().signOut(null);
             }
         });
         mTestObserver.onSigninStateChangedCallback.waitForCallback(currentCallCount, 1);
@@ -751,8 +752,7 @@ public class HistoryActivityTest {
         ThreadUtils.runOnUiThreadBlocking(new Runnable() {
             @Override
             public void run() {
-                SigninManager.get(mActivityTestRule.getActivity())
-                        .removeSignInStateObserver(mTestObserver);
+                SigninManager.get().removeSignInStateObserver(mTestObserver);
             }
         });
         SigninTestUtil.tearDownAuthForTest();

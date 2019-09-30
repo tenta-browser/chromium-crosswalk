@@ -38,6 +38,7 @@ import org.chromium.base.Log;
 import org.chromium.base.VisibleForTesting;
 
 import java.io.IOException;
+import java.net.Socket;
 import java.util.Arrays;
 
 import javax.annotation.concurrent.GuardedBy;
@@ -57,16 +58,15 @@ public class NetworkChangeNotifierAutoDetect extends BroadcastReceiver {
         private final boolean mConnected;
         private final int mType;
         private final int mSubtype;
-        // WIFI SSID of the connection. Always non-null (i.e. instead of null it'll be an empty
-        // string) to facilitate .equals().
-        private final String mWifiSsid;
+        // WIFI SSID of the connection on pre-Marshmallow, NetID starting with Marshmallow. Always
+        // non-null (i.e. instead of null it'll be an empty string) to facilitate .equals().
+        private final String mNetworkIdentifier;
 
-        public NetworkState(boolean connected, int type, int subtype, String wifiSsid) {
+        public NetworkState(boolean connected, int type, int subtype, String networkIdentifier) {
             mConnected = connected;
             mType = type;
             mSubtype = subtype;
-            assert mType == ConnectivityManager.TYPE_WIFI || wifiSsid == null;
-            mWifiSsid = wifiSsid == null ? "" : wifiSsid;
+            mNetworkIdentifier = networkIdentifier == null ? "" : networkIdentifier;
         }
 
         public boolean isConnected() {
@@ -81,9 +81,9 @@ public class NetworkChangeNotifierAutoDetect extends BroadcastReceiver {
             return mSubtype;
         }
 
-        // WiFi SSID, always non-null to facilitate .equals()
-        public String getWifiSsid() {
-            return mWifiSsid;
+        // Always non-null to facilitate .equals().
+        public String getNetworkIdentifier() {
+            return mNetworkIdentifier;
         }
 
         /**
@@ -192,11 +192,11 @@ public class NetworkChangeNotifierAutoDetect extends BroadcastReceiver {
         }
 
         /**
+         * @param networkInfo The NetworkInfo for the active network.
          * @return the info of the network that is available to this app.
          */
         @TargetApi(Build.VERSION_CODES.LOLLIPOP)
-        private NetworkInfo getActiveNetworkInfo() {
-            final NetworkInfo networkInfo = mConnectivityManager.getActiveNetworkInfo();
+        private NetworkInfo processActiveNetworkInfo(NetworkInfo networkInfo) {
             if (networkInfo == null) {
                 return null;
             }
@@ -232,10 +232,23 @@ public class NetworkChangeNotifierAutoDetect extends BroadcastReceiver {
          * default network.
          */
         NetworkState getNetworkState(WifiManagerDelegate wifiManagerDelegate) {
-            final NetworkInfo networkInfo = getActiveNetworkInfo();
+            Network network = null;
+            NetworkInfo networkInfo;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                network = getDefaultNetwork();
+                networkInfo = mConnectivityManager.getNetworkInfo(network);
+            } else {
+                networkInfo = mConnectivityManager.getActiveNetworkInfo();
+            }
+            networkInfo = processActiveNetworkInfo(networkInfo);
             if (networkInfo == null) {
                 return new NetworkState(false, -1, -1, null);
             }
+            if (network != null) {
+                return new NetworkState(true, networkInfo.getType(), networkInfo.getSubtype(),
+                        String.valueOf(networkToNetId(network)));
+            }
+            assert Build.VERSION.SDK_INT < Build.VERSION_CODES.M;
             // If Wifi, then fetch SSID also
             if (networkInfo.getType() == ConnectivityManager.TYPE_WIFI) {
                 // Since Android 4.2 the SSID can be retrieved from NetworkInfo.getExtraInfo().
@@ -307,11 +320,20 @@ public class NetworkChangeNotifierAutoDetect extends BroadcastReceiver {
         protected boolean vpnAccessible(Network network) {
             // Determine if the VPN applies to the current user by seeing if a socket can be bound
             // to the VPN.
+            Socket s = new Socket();
             try {
-                network.getSocketFactory().createSocket().close();
+                // Avoid using network.getSocketFactory().createSocket() because it leaks.
+                // https://crbug.com/805424
+                network.bindSocket(s);
             } catch (IOException e) {
                 // Failed to bind so this VPN isn't for the current user to use.
                 return false;
+            } finally {
+                try {
+                    s.close();
+                } catch (IOException e) {
+                    // Not worth taking action on a failed close.
+                }
             }
             return true;
         }
@@ -347,22 +369,29 @@ public class NetworkChangeNotifierAutoDetect extends BroadcastReceiver {
         }
 
         /**
-         * Returns the NetID of the current default network. Returns
-         * NetId.INVALID if no current default network connected.
+         * Returns the current default {@link Network}, or {@code null} if disconnected.
          * Only callable on Lollipop and newer releases.
          */
         @TargetApi(Build.VERSION_CODES.LOLLIPOP)
-        long getDefaultNetId() {
+        Network getDefaultNetwork() {
+            Network defaultNetwork = null;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                defaultNetwork = mConnectivityManager.getActiveNetwork();
+                // getActiveNetwork() returning null cannot be trusted to indicate disconnected
+                // as it suffers from https://crbug.com/677365.
+                if (defaultNetwork != null) {
+                    return defaultNetwork;
+                }
+            }
             // Android Lollipop had no API to get the default network; only an
             // API to return the NetworkInfo for the default network. To
             // determine the default network one can find the network with
             // type matching that of the default network.
             final NetworkInfo defaultNetworkInfo = mConnectivityManager.getActiveNetworkInfo();
             if (defaultNetworkInfo == null) {
-                return NetId.INVALID;
+                return null;
             }
             final Network[] networks = getAllNetworksFiltered(this, null);
-            long defaultNetId = NetId.INVALID;
             for (Network network : networks) {
                 final NetworkInfo networkInfo = getNetworkInfo(network);
                 if (networkInfo != null
@@ -377,13 +406,12 @@ public class NetworkChangeNotifierAutoDetect extends BroadcastReceiver {
                     // There should not be multiple connected networks of the
                     // same type. At least as of Android Marshmallow this is
                     // not supported. If this becomes supported this assertion
-                    // may trigger. At that point ConnectivityManager.getDefaultNetwork()
-                    // could be used though it's only available with Android Marshmallow.
-                    assert defaultNetId == NetId.INVALID;
-                    defaultNetId = networkToNetId(network);
+                    // may trigger.
+                    assert defaultNetwork == null;
+                    defaultNetwork = network;
                 }
             }
-            return defaultNetId;
+            return defaultNetwork;
         }
     }
 
@@ -403,6 +431,8 @@ public class NetworkChangeNotifierAutoDetect extends BroadcastReceiver {
         private WifiManager mWifiManager;
 
         WifiManagerDelegate(Context context) {
+            // Getting SSID requires more permissions in later Android releases.
+            assert Build.VERSION.SDK_INT < Build.VERSION_CODES.M;
             mContext = context;
         }
 
@@ -752,7 +782,9 @@ public class NetworkChangeNotifierAutoDetect extends BroadcastReceiver {
         mObserver = observer;
         mConnectivityManagerDelegate =
                 new ConnectivityManagerDelegate(ContextUtils.getApplicationContext());
-        mWifiManagerDelegate = new WifiManagerDelegate(ContextUtils.getApplicationContext());
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
+            mWifiManagerDelegate = new WifiManagerDelegate(ContextUtils.getApplicationContext());
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
             mNetworkCallback = new MyNetworkCallback();
             mNetworkRequest = new NetworkRequest.Builder()
@@ -974,7 +1006,16 @@ public class NetworkChangeNotifierAutoDetect extends BroadcastReceiver {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP) {
             return NetId.INVALID;
         }
-        return mConnectivityManagerDelegate.getDefaultNetId();
+        Network network = mConnectivityManagerDelegate.getDefaultNetwork();
+        return network == null ? NetId.INVALID : networkToNetId(network);
+    }
+
+    /**
+     * Returns {@code true} if NetworkCallback failed to register, indicating that network-specific
+     * callbacks will not be issued.
+     */
+    public boolean registerNetworkCallbackFailed() {
+        return mRegisterNetworkCallbackFailed;
     }
 
     /**
@@ -1051,7 +1092,8 @@ public class NetworkChangeNotifierAutoDetect extends BroadcastReceiver {
     private void connectionTypeChanged() {
         NetworkState networkState = getCurrentNetworkState();
         if (networkState.getConnectionType() != mNetworkState.getConnectionType()
-                || !networkState.getWifiSsid().equals(mNetworkState.getWifiSsid())) {
+                || !networkState.getNetworkIdentifier().equals(
+                           mNetworkState.getNetworkIdentifier())) {
             mObserver.onConnectionTypeChanged(networkState.getConnectionType());
         }
         if (networkState.getConnectionType() != mNetworkState.getConnectionType()

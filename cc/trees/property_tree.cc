@@ -9,6 +9,7 @@
 
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
+#include "base/numerics/checked_math.h"
 #include "base/trace_event/trace_event_argument.h"
 #include "cc/layers/layer_impl.h"
 #include "cc/trees/clip_node.h"
@@ -37,7 +38,7 @@ PropertyTree<T>::PropertyTree()
 // but due to a gcc bug the generated destructor will have wrong symbol
 // visibility in component build.
 template <typename T>
-PropertyTree<T>::~PropertyTree() {}
+PropertyTree<T>::~PropertyTree() = default;
 
 template <typename T>
 PropertyTree<T>& PropertyTree<T>::operator=(const PropertyTree<T>&) = default;
@@ -735,7 +736,7 @@ EffectTree::EffectTree() {
   render_surfaces_.push_back(nullptr);
 }
 
-EffectTree::~EffectTree() {}
+EffectTree::~EffectTree() = default;
 
 int EffectTree::Insert(const EffectNode& tree_node, int parent_id) {
   int node_id = PropertyTree<EffectNode>::Insert(tree_node, parent_id);
@@ -938,33 +939,74 @@ void EffectTree::TakeCopyRequestsAndTransformToSurface(
   DCHECK(effect_node->has_render_surface);
   DCHECK(effect_node->has_copy_request);
 
-  auto range = copy_requests_.equal_range(node_id);
-  for (auto it = range.first; it != range.second; ++it)
-    requests->push_back(std::move(it->second));
-  copy_requests_.erase(range.first, range.second);
-
-  for (auto& it : *requests) {
-    if (!it->has_area())
-      continue;
-
-    // The area needs to be transformed from the space of content that draws to
-    // the surface to the space of the surface itself.
-    int destination_id = effect_node->transform_id;
-    int source_id;
-    if (effect_node->parent_id != EffectTree::kInvalidNodeId) {
-      // For non-root surfaces, transform only by sub-layer scale.
-      source_id = destination_id;
-    } else {
-      // The root surface doesn't have the notion of sub-layer scale, but
-      // instead has a similar notion of transforming from the space of the root
-      // layer to the space of the screen.
-      DCHECK_EQ(kRootNodeId, destination_id);
-      source_id = TransformTree::kContentsRootNodeId;
-    }
-    gfx::Transform transform;
-    property_trees()->GetToTarget(source_id, node_id, &transform);
-    it->set_area(MathUtil::MapEnclosingClippedRect(transform, it->area()));
+  // The area needs to be transformed from the space of content that draws to
+  // the surface to the space of the surface itself.
+  int destination_id = effect_node->transform_id;
+  int source_id;
+  if (effect_node->parent_id != EffectTree::kInvalidNodeId) {
+    // For non-root surfaces, transform only by sub-layer scale.
+    source_id = destination_id;
+  } else {
+    // The root surface doesn't have the notion of sub-layer scale, but instead
+    // has a similar notion of transforming from the space of the root layer to
+    // the space of the screen.
+    DCHECK_EQ(kRootNodeId, destination_id);
+    source_id = TransformTree::kContentsRootNodeId;
   }
+  gfx::Transform transform;
+  property_trees()->GetToTarget(source_id, node_id, &transform);
+
+  // Move each CopyOutputRequest out of |copy_requests_| and into |requests|,
+  // adjusting the source area and scale ratio of each. If the transform is
+  // something other than a straightforward translate+scale, the copy requests
+  // will be dropped.
+  auto range = copy_requests_.equal_range(node_id);
+  if (transform.IsPositiveScaleOrTranslation()) {
+    // Transform a vector in content space to surface space to determine how the
+    // scale ratio of each CopyOutputRequest should be adjusted. Since the scale
+    // ratios are provided integer coordinates, the basis vector determines the
+    // precision w.r.t. the fractional part of the Transform's scale factors.
+    constexpr gfx::Vector2d kContentVector(1024, 1024);
+    gfx::RectF surface_rect(0, 0, kContentVector.x(), kContentVector.y());
+    transform.TransformRect(&surface_rect);
+
+    for (auto it = range.first; it != range.second; ++it) {
+      viz::CopyOutputRequest* const request = it->second.get();
+      if (request->has_area()) {
+        request->set_area(
+            MathUtil::MapEnclosingClippedRect(transform, request->area()));
+      }
+
+      // Only adjust the scale ratio if the request specifies one, or if it
+      // specifies a result selection. Otherwise, the requestor is expecting a
+      // copy of the exact source pixels. If the adjustment to the scale ratio
+      // would produce out-of-range values, drop the copy request.
+      if (request->is_scaled() || request->has_result_selection()) {
+        float scale_from_x = request->scale_from().x() * surface_rect.width();
+        float scale_from_y = request->scale_from().y() * surface_rect.height();
+        if (std::isnan(scale_from_x) ||
+            !base::IsValueInRangeForNumericType<int>(scale_from_x) ||
+            std::isnan(scale_from_y) ||
+            !base::IsValueInRangeForNumericType<int>(scale_from_y)) {
+          continue;
+        }
+        int scale_to_x = request->scale_to().x();
+        int scale_to_y = request->scale_to().y();
+        if (!base::CheckMul(scale_to_x, kContentVector.x())
+                 .AssignIfValid(&scale_to_x) ||
+            !base::CheckMul(scale_to_y, kContentVector.y())
+                 .AssignIfValid(&scale_to_y)) {
+          continue;
+        }
+        request->SetScaleRatio(gfx::Vector2d(gfx::ToRoundedInt(scale_from_x),
+                                             gfx::ToRoundedInt(scale_from_y)),
+                               gfx::Vector2d(scale_to_x, scale_to_y));
+      }
+
+      requests->push_back(std::move(it->second));
+    }
+  }
+  copy_requests_.erase(range.first, range.second);
 }
 
 bool EffectTree::HasCopyRequests() const {
@@ -1160,7 +1202,7 @@ ScrollTree::ScrollTree()
     : currently_scrolling_node_id_(kInvalidNodeId),
       scroll_offset_map_(ScrollTree::ScrollOffsetMap()) {}
 
-ScrollTree::~ScrollTree() {}
+ScrollTree::~ScrollTree() = default;
 
 ScrollTree& ScrollTree::operator=(const ScrollTree& from) {
   PropertyTree::operator=(from);
@@ -1351,18 +1393,23 @@ const gfx::ScrollOffset ScrollTree::current_scroll_offset(ElementId id) const {
 
 gfx::ScrollOffset ScrollTree::PullDeltaForMainThread(
     SyncedScrollOffset* scroll_offset) {
-  // TODO(miletus): Remove all this temporary flooring machinery when
-  // Blink fully supports fractional scrolls.
+  DCHECK(property_trees()->is_active);
+  // TODO(flackr): We should pass the fractional scroll deltas when Blink fully
+  // supports fractional scrolls.
+  // TODO(flackr): We should ideally round the fractional scrolls in the same
+  // direction as the scroll will be snapped but for common cases this is
+  // equivalent to rounding to the nearest integer offset.
   gfx::ScrollOffset current_offset =
-      scroll_offset->Current(property_trees()->is_active);
-  gfx::ScrollOffset current_delta = property_trees()->is_active
-                                        ? scroll_offset->Delta()
-                                        : scroll_offset->PendingDelta().get();
-  gfx::ScrollOffset floored_delta(floor(current_delta.x()),
-                                  floor(current_delta.y()));
-  gfx::ScrollOffset diff_delta = floored_delta - current_delta;
-  gfx::ScrollOffset tmp_offset = current_offset + diff_delta;
-  scroll_offset->SetCurrent(tmp_offset);
+      scroll_offset->Current(/* is_active_tree */ true);
+  gfx::ScrollOffset rounded_offset =
+      gfx::ScrollOffset(roundf(current_offset.x()), roundf(current_offset.y()));
+  // The calculation of the difference from the rounded active base is to
+  // represent the integer delta that the main thread should know about.
+  gfx::ScrollOffset active_base = scroll_offset->ActiveBase();
+  gfx::ScrollOffset diff_active_base =
+      gfx::ScrollOffset(active_base.x() - roundf(active_base.x()),
+                        active_base.y() - roundf(active_base.y()));
+  scroll_offset->SetCurrent(rounded_offset + diff_active_base);
   gfx::ScrollOffset delta = scroll_offset->PullDeltaForMainThread();
   scroll_offset->SetCurrent(current_offset);
   return delta;
@@ -1587,7 +1634,7 @@ PropertyTreesCachedData::PropertyTreesCachedData()
   animation_scales.clear();
 }
 
-PropertyTreesCachedData::~PropertyTreesCachedData() {}
+PropertyTreesCachedData::~PropertyTreesCachedData() = default;
 
 PropertyTrees::PropertyTrees()
     : needs_rebuild(true),
@@ -1603,7 +1650,7 @@ PropertyTrees::PropertyTrees()
   scroll_tree.SetPropertyTrees(this);
 }
 
-PropertyTrees::~PropertyTrees() {}
+PropertyTrees::~PropertyTrees() = default;
 
 bool PropertyTrees::operator==(const PropertyTrees& other) const {
   return transform_tree == other.transform_tree &&

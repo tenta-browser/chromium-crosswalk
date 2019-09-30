@@ -32,6 +32,7 @@ class FeedbackPrivateAPI : public BrowserContextKeyedAPI {
 #endif  // defined(OS_CHROMEOS)
 
   void RequestFeedbackForFlow(const std::string& description_template,
+                              const std::string& description_placeholder_text,
                               const std::string& category_tag,
                               const std::string& extra_diagnostics,
                               const GURL& page_url,
@@ -117,7 +118,8 @@ class FeedbackPrivateReadLogSourceFunction : public UIThreadExtensionFunction {
 
 #if defined(OS_CHROMEOS)
  private:
-  void OnCompleted(const api::feedback_private::ReadLogSourceResult& result);
+  void OnCompleted(
+      std::unique_ptr<api::feedback_private::ReadLogSourceResult> result);
 #endif  // defined(OS_CHROMEOS)
 };
 
@@ -131,7 +133,7 @@ class FeedbackPrivateSendFeedbackFunction : public UIThreadExtensionFunction {
   ResponseAction Run() override;
 
  private:
-  void OnCompleted(bool success);
+  void OnCompleted(api::feedback_private::LandingPageType type, bool success);
 };
 
 class FeedbackPrivateLogSrtPromptResultFunction
@@ -142,7 +144,7 @@ class FeedbackPrivateLogSrtPromptResultFunction
 
  protected:
   ~FeedbackPrivateLogSrtPromptResultFunction() override {}
-  AsyncExtensionFunction::ResponseAction Run() override;
+  ResponseAction Run() override;
 };
 
 }  // namespace extensions

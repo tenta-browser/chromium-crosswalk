@@ -6,7 +6,6 @@
 
 #include "base/bind.h"
 #import "base/mac/mac_util.h"
-#include "base/memory/ptr_util.h"
 #include "base/stl_util.h"
 #include "base/strings/string_util.h"
 #include "base/strings/sys_string_conversions.h"
@@ -43,6 +42,7 @@
 #import "chrome/browser/ui/cocoa/toolbar/toolbar_controller.h"
 #include "chrome/browser/ui/content_settings/content_setting_bubble_model.h"
 #include "chrome/browser/ui/content_settings/content_setting_image_model.h"
+#include "chrome/browser/ui/page_info/page_info_dialog.h"
 #include "chrome/browser/ui/passwords/manage_passwords_ui_controller.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/common/pref_names.h"
@@ -115,7 +115,7 @@ LocationBarViewMac::LocationBarViewMac(AutocompleteTextField* field,
       ContentSettingImageModel::GenerateContentSettingImageModels();
   for (auto& model : models) {
     content_setting_decorations_.push_back(
-        base::MakeUnique<ContentSettingDecoration>(std::move(model), this,
+        std::make_unique<ContentSettingDecoration>(std::move(model), this,
                                                    profile));
   }
 
@@ -237,6 +237,11 @@ void LocationBarViewMac::Revert() {
   omnibox_view_->RevertAll();
 }
 
+bool LocationBarViewMac::ShowPageInfoDialog(WebContents* contents) {
+  // Cocoa doesn't show page info on the location bar.
+  return ::ShowPageInfoDialog(contents);
+}
+
 const OmniboxView* LocationBarViewMac::GetOmniboxView() const {
   return omnibox_view_.get();
 }
@@ -265,6 +270,11 @@ bool LocationBarViewMac::TestContentSettingImagePressed(size_t index) {
   NSRect frame = [cell frameForDecoration:decoration inFrame:[field_ bounds]];
   decoration->OnMousePressed(frame, NSZeroPoint);
   return true;
+}
+
+bool LocationBarViewMac::IsContentSettingBubbleShowing(size_t index) {
+  return index < content_setting_decorations_.size() &&
+         content_setting_decorations_[index]->IsShowingBubble();
 }
 
 void LocationBarViewMac::SetEditable(bool editable) {
@@ -325,10 +335,6 @@ NSPoint LocationBarViewMac::GetPageInfoBubblePoint() const {
   return [field_ bubblePointForDecoration:page_info_decoration_.get()];
 }
 
-NSPoint LocationBarViewMac::GetInfoBarAnchorPoint() const {
-  return [field_ arrowAnchorPointForDecoration:page_info_decoration_.get()];
-}
-
 void LocationBarViewMac::OnDecorationsChanged() {
   // TODO(shess): The field-editor frame and cursor rects should not
   // change, here.
@@ -386,6 +392,7 @@ void LocationBarViewMac::Layout() {
       [cell availableWidthInFrame:[[cell controlView] frame]];
   is_width_available_for_security_verbose_ = available_width >= kMinURLWidth;
 
+  NSString* a11y_description = @"";
   if (!keyword.empty() && !is_keyword_hint) {
     // Switch from location icon to keyword mode.
     selected_keyword_decoration_->SetVisible(true);
@@ -396,12 +403,16 @@ void LocationBarViewMac::Layout() {
     // Design we need to set its color, which we cannot do until we know the
     // theme (by being installed in a browser window).
     selected_keyword_decoration_->SetImage(GetKeywordImage(keyword));
+    a11y_description = selected_keyword_decoration_->GetAccessibilityLabel();
   } else if (!keyword.empty() && is_keyword_hint) {
     keyword_hint_decoration_->SetKeyword(short_name, is_extension_keyword);
     keyword_hint_decoration_->SetVisible(true);
+    a11y_description = keyword_hint_decoration_->GetAccessibilityLabel();
   } else {
     UpdatePageInfoText();
   }
+  [cell accessibilitySetOverrideValue:a11y_description
+                         forAttribute:NSAccessibilityDescriptionAttribute];
 
   if (!page_info_decoration_->IsVisible())
     page_info_decoration_->ResetAnimation();
@@ -523,12 +534,7 @@ bool LocationBarViewMac::HasSecurityVerboseText() const {
   if (GetPageInfoVerboseType() != PageInfoVerboseType::kSecurity)
     return false;
 
-  security_state::SecurityLevel security =
-      GetToolbarModel()->GetSecurityLevel(false);
-  return security == security_state::EV_SECURE ||
-         security == security_state::SECURE ||
-         security == security_state::DANGEROUS ||
-         security == security_state::HTTP_SHOW_WARNING;
+  return !GetToolbarModel()->GetSecureVerboseText().empty();
 }
 
 bool LocationBarViewMac::IsLocationBarDark() const {
@@ -594,7 +600,7 @@ void LocationBarViewMac::UpdatePageInfoText() {
   base::string16 label;
   PageInfoVerboseType type = GetPageInfoVerboseType();
   if (type == PageInfoVerboseType::kEVCert) {
-    label = GetToolbarModel()->GetEVCertName();
+    label = GetToolbarModel()->GetSecureVerboseText();
   } else if (type == PageInfoVerboseType::kExtension && GetWebContents()) {
     label = extensions::ui_util::GetEnabledExtensionNameForUrl(
         GetToolbarModel()->GetURL(), GetWebContents()->GetBrowserContext());
@@ -652,6 +658,7 @@ void LocationBarViewMac::AnimatePageInfoIfPossible(bool tab_changed) {
   using SecurityLevel = security_state::SecurityLevel;
   SecurityLevel new_security_level = GetToolbarModel()->GetSecurityLevel(false);
   bool is_new_security_level = security_level_ != new_security_level;
+  SecurityLevel old_security_level = security_level_;
   security_level_ = new_security_level;
 
   if (tab_changed)
@@ -661,6 +668,14 @@ void LocationBarViewMac::AnimatePageInfoIfPossible(bool tab_changed) {
   // isn't updated from a tab switch.
   if (GetPageInfoVerboseType() != PageInfoVerboseType::kSecurity ||
       !HasSecurityVerboseText() || tab_changed) {
+    page_info_decoration_->ShowWithoutAnimation();
+    return;
+  }
+
+  // Do not animate HTTP_SHOW_WARNING to DANGEROUS transitions because they look
+  // messy/confusing.
+  if (old_security_level == security_state::HTTP_SHOW_WARNING &&
+      security_level_ == security_state::DANGEROUS) {
     page_info_decoration_->ShowWithoutAnimation();
     return;
   }

@@ -5,11 +5,13 @@
 #ifndef IOS_WEB_VIEW_TEST_WEB_VIEW_INT_TEST_H_
 #define IOS_WEB_VIEW_TEST_WEB_VIEW_INT_TEST_H_
 
+#import <Foundation/Foundation.h>
 #include <memory>
 #include <string>
 
-#import "base/mac/scoped_nsobject.h"
 #include "testing/platform_test.h"
+
+NS_ASSUME_NONNULL_BEGIN
 
 namespace net {
 namespace test_server {
@@ -47,7 +49,7 @@ class WebViewIntTest : public PlatformTest {
 
   // CWVWebView created with default configuration and frame equal to screen
   // bounds.
-  base::scoped_nsobject<CWVWebView> web_view_;
+  CWVWebView* web_view_;
 
   // Embedded server for handling requests sent to the URLs returned by the
   // GetURL* methods.
@@ -55,5 +57,7 @@ class WebViewIntTest : public PlatformTest {
 };
 
 }  // namespace ios_web_view
+
+NS_ASSUME_NONNULL_END
 
 #endif  // IOS_WEB_VIEW_TEST_WEB_VIEW_INT_TEST_H_

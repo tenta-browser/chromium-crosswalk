@@ -16,9 +16,9 @@
 #include "content/shell/test_runner/web_test_delegate.h"
 #include "content/shell/test_runner/web_view_test_proxy.h"
 #include "content/shell/test_runner/web_widget_test_proxy.h"
-#include "third_party/WebKit/public/platform/WebScreenInfo.h"
-#include "third_party/WebKit/public/web/WebPagePopup.h"
-#include "third_party/WebKit/public/web/WebWidget.h"
+#include "third_party/blink/public/platform/web_screen_info.h"
+#include "third_party/blink/public/web/web_page_popup.h"
+#include "third_party/blink/public/web/web_widget.h"
 
 namespace test_runner {
 
@@ -45,17 +45,14 @@ void WebWidgetTestClient::ScheduleAnimation() {
 }
 
 void WebWidgetTestClient::AnimateNow() {
-  if (animation_scheduled_) {
-    blink::WebWidget* web_widget = web_widget_test_proxy_base_->web_widget();
-    animation_scheduled_ = false;
-    base::TimeDelta animate_time = base::TimeTicks::Now() - base::TimeTicks();
-    web_widget->BeginFrame(animate_time.InSecondsF());
-    web_widget->UpdateAllLifecyclePhases();
-    if (blink::WebPagePopup* popup = web_widget->GetPagePopup()) {
-      popup->BeginFrame(animate_time.InSecondsF());
-      popup->UpdateAllLifecyclePhases();
-    }
-  }
+  if (!animation_scheduled_)
+    return;
+
+  animation_scheduled_ = false;
+  blink::WebWidget* web_widget = web_widget_test_proxy_base_->web_widget();
+  web_widget->UpdateAllLifecyclePhasesAndCompositeForTesting();
+  if (blink::WebPagePopup* popup = web_widget->GetPagePopup())
+    popup->UpdateAllLifecyclePhasesAndCompositeForTesting();
 }
 
 blink::WebScreenInfo WebWidgetTestClient::GetScreenInfo() {

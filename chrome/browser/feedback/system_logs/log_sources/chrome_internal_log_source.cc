@@ -29,10 +29,15 @@
 #include "extensions/common/extension_set.h"
 
 #if defined(OS_CHROMEOS)
+#include "ash/shell.h"
 #include "chrome/browser/chromeos/arc/arc_util.h"
 #include "chrome/browser/metrics/chromeos_metrics_provider.h"
+#include "chrome/browser/ui/ash/ash_util.h"
 #include "chromeos/system/statistics_provider.h"
 #include "chromeos/system/version_loader.h"
+#include "ui/display/manager/display_manager.h"
+#include "ui/display/manager/managed_display_info.h"
+#include "ui/display/types/display_constants.h"
 #endif
 
 #if defined(OS_WIN)
@@ -56,6 +61,7 @@ constexpr char kHWIDKey[] = "HWID";
 constexpr char kSettingsKey[] = "settings";
 constexpr char kLocalStateSettingsResponseKey[] = "Local State: settings";
 constexpr char kArcStatusKey[] = "CHROMEOS_ARC_STATUS";
+constexpr char kMonitorInfoKey[] = "monitor_info";
 #else
 constexpr char kOsVersionTag[] = "OS VERSION";
 #endif
@@ -111,7 +117,7 @@ ChromeInternalLogSource::ChromeInternalLogSource()
 ChromeInternalLogSource::~ChromeInternalLogSource() {
 }
 
-void ChromeInternalLogSource::Fetch(const SysLogsSourceCallback& callback) {
+void ChromeInternalLogSource::Fetch(SysLogsSourceCallback callback) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   DCHECK(!callback.is_null());
 
@@ -143,6 +149,7 @@ void ChromeInternalLogSource::Fetch(const SysLogsSourceCallback& callback) {
 
 #if defined(OS_CHROMEOS)
   PopulateLocalStateSettings(response.get());
+  PopulateMonitorInfo(response.get());
 
   // Store ARC enabled status.
   response->emplace(kArcStatusKey, arc::IsArcPlayStoreEnabledForProfile(
@@ -156,10 +163,10 @@ void ChromeInternalLogSource::Fetch(const SysLogsSourceCallback& callback) {
   base::PostTaskWithTraitsAndReply(
       FROM_HERE, {base::MayBlock(), base::TaskPriority::BACKGROUND},
       base::BindOnce(&GetEntriesAsync, response_ptr),
-      base::BindOnce(callback, std::move(response)));
+      base::BindOnce(std::move(callback), std::move(response)));
 #else
   // On other platforms, we're done. Invoke the callback.
-  callback.Run(std::move(response));
+  std::move(callback).Run(std::move(response));
 #endif  // defined(OS_CHROMEOS)
 }
 
@@ -277,6 +284,42 @@ void ChromeInternalLogSource::PopulateLocalStateSettings(
 
   response->emplace(kLocalStateSettingsResponseKey, serialized_settings);
 }
+
+void ChromeInternalLogSource::PopulateMonitorInfo(
+    SystemLogsResponse* response) {
+  // TODO(https://crbug.com/682402): Mash support.
+  if (ash_util::IsRunningInMash())
+    return;
+
+  const display::DisplayManager* display_manager =
+      ash::Shell::Get()->display_manager();
+
+  std::string entry;
+  for (const int64_t display_id : display_manager->GetCurrentDisplayIdList()) {
+    const display::ManagedDisplayInfo& display_info =
+        display_manager->GetDisplayInfo(display_id);
+
+    if (!entry.empty())
+      base::StringAppendF(&entry, "\n");
+    if (!display_info.name().empty())
+      base::StringAppendF(&entry, "%s : ", display_info.name().c_str());
+    if (!display_info.manufacturer_id().empty()) {
+      base::StringAppendF(&entry, "Manufacturer: %s - ",
+                          display_info.manufacturer_id().c_str());
+    }
+    if (!display_info.product_id().empty()) {
+      base::StringAppendF(&entry, "Product ID: %s - ",
+                          display_info.product_id().c_str());
+    }
+    if (display_info.year_of_manufacture() !=
+        display::kInvalidYearOfManufacture) {
+      base::StringAppendF(&entry, "Year of Manufacture: %d",
+                          display_info.year_of_manufacture());
+    }
+  }
+  response->emplace(kMonitorInfoKey, entry);
+}
+
 #endif  // defined(OS_CHROMEOS)
 
 #if defined(OS_WIN)

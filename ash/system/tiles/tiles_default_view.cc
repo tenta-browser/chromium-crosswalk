@@ -54,29 +54,27 @@ TilesDefaultView::TilesDefaultView(SystemTrayItem* owner)
 TilesDefaultView::~TilesDefaultView() = default;
 
 void TilesDefaultView::Init() {
-  views::BoxLayout* box_layout =
-      new views::BoxLayout(views::BoxLayout::kHorizontal, gfx::Insets(0, 4));
+  auto box_layout = std::make_unique<views::BoxLayout>(
+      views::BoxLayout::kHorizontal, gfx::Insets(0, 4));
   box_layout->set_main_axis_alignment(
       views::BoxLayout::MAIN_AXIS_ALIGNMENT_START);
   box_layout->set_cross_axis_alignment(
       views::BoxLayout::CROSS_AXIS_ALIGNMENT_CENTER);
-  SetLayoutManager(box_layout);
+  SetLayoutManager(std::move(box_layout));
 
   // Show the buttons in this row as disabled if the user is at the login
   // screen, lock screen, or in a secondary account flow. The exception is
   // |power_button_| which is always shown as enabled.
   const bool can_show_web_ui = TrayPopupUtils::CanOpenWebUISettings();
 
-  settings_button_ = new SystemMenuButton(
-      this, TrayPopupInkDropStyle::HOST_CENTERED, kSystemMenuSettingsIcon,
-      IDS_ASH_STATUS_TRAY_SETTINGS);
+  settings_button_ = new SystemMenuButton(this, kSystemMenuSettingsIcon,
+                                          IDS_ASH_STATUS_TRAY_SETTINGS);
   settings_button_->SetEnabled(can_show_web_ui);
   AddChildView(settings_button_);
   AddChildView(TrayPopupUtils::CreateVerticalSeparator());
 
   help_button_ =
-      new SystemMenuButton(this, TrayPopupInkDropStyle::HOST_CENTERED,
-                           kSystemMenuHelpIcon, IDS_ASH_STATUS_TRAY_HELP);
+      new SystemMenuButton(this, kSystemMenuHelpIcon, IDS_ASH_STATUS_TRAY_HELP);
   if (base::i18n::IsRTL() &&
       base::i18n::GetConfiguredLocale() == kHebrewLocale) {
     // The asset for the help button is a question mark '?'. Normally this asset
@@ -96,17 +94,15 @@ void TilesDefaultView::Init() {
   }
 
   lock_button_ =
-      new SystemMenuButton(this, TrayPopupInkDropStyle::HOST_CENTERED,
-                           kSystemMenuLockIcon, IDS_ASH_STATUS_TRAY_LOCK);
+      new SystemMenuButton(this, kSystemMenuLockIcon, IDS_ASH_STATUS_TRAY_LOCK);
   lock_button_->SetEnabled(can_show_web_ui &&
                            Shell::Get()->session_controller()->CanLockScreen());
 
   AddChildView(lock_button_);
   AddChildView(TrayPopupUtils::CreateVerticalSeparator());
 
-  power_button_ =
-      new SystemMenuButton(this, TrayPopupInkDropStyle::HOST_CENTERED,
-                           kSystemMenuPowerIcon, IDS_ASH_STATUS_TRAY_SHUTDOWN);
+  power_button_ = new SystemMenuButton(this, kSystemMenuPowerIcon,
+                                       IDS_ASH_STATUS_TRAY_SHUTDOWN);
   AddChildView(power_button_);
   // This object is recreated every time the menu opens. Don't bother updating
   // the tooltip if the shutdown policy changes while the menu is open.

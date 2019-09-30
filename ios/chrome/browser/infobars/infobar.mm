@@ -27,11 +27,11 @@ InfoBarIOS::InfoBarIOS(std::unique_ptr<InfoBarDelegate> delegate)
 InfoBarIOS::~InfoBarIOS() {
   DCHECK(controller_);
   [controller_ detachView];
-  controller_.reset();
+  controller_ = nil;
 }
 
 void InfoBarIOS::SetController(InfoBarController* controller) {
-  controller_.reset(controller);
+  controller_ = controller;
 }
 
 void InfoBarIOS::Layout(CGRect container_bounds) {
@@ -41,7 +41,7 @@ void InfoBarIOS::Layout(CGRect container_bounds) {
   } else {
     [controller_ layoutForDelegate:delegate() frame:container_bounds];
   }
-  SetBarTargetHeight([controller_ barHeight]);
+  SetTargetHeight([controller_ barHeight]);
 }
 
 UIView* InfoBarIOS::view() {
@@ -54,15 +54,15 @@ void InfoBarIOS::RemoveView() {
   [controller_ removeView];
 }
 
-void InfoBarIOS::PlatformSpecificOnHeightsRecalculated() {
+void InfoBarIOS::PlatformSpecificOnHeightRecalculated() {
   DCHECK(controller_);
-  [controller_ onHeightsRecalculated:bar_height()];
+  [controller_ onHeightRecalculated:computed_height()];
 }
 
 #pragma mark - InfoBarViewDelegate
 
 void InfoBarIOS::SetInfoBarTargetHeight(int height) {
-  SetBarTargetHeight(height);
+  SetTargetHeight(height);
 }
 
 // Some infobar button was pressed.

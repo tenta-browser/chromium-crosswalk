@@ -551,6 +551,164 @@ var tests = [
     chrome.test.succeed();
   },
 
+  function testGoToPageAndXY() {
+    var mockWindow = new MockWindow(100, 100);
+    var mockSizer = new MockSizer();
+    var mockCallback = new MockViewportChangedCallback();
+    var viewport = new Viewport(mockWindow, mockSizer, mockCallback.callback,
+                                function() {}, function() {}, function() {},
+                                0, 1, 0);
+    var documentDimensions = new MockDocumentDimensions();
+
+    documentDimensions.addPage(100, 100);
+    documentDimensions.addPage(200, 200);
+    documentDimensions.addPage(100, 400);
+    viewport.setDocumentDimensions(documentDimensions);
+    viewport.setZoom(1);
+
+    mockCallback.reset();
+    viewport.goToPageAndXY(0, 0, 0);
+    chrome.test.assertTrue(mockCallback.wasCalled);
+    chrome.test.assertEq(0, viewport.position.x);
+    chrome.test.assertEq(0, viewport.position.y);
+
+    mockCallback.reset();
+    viewport.goToPageAndXY(1, 0, 0);
+    chrome.test.assertTrue(mockCallback.wasCalled);
+    chrome.test.assertEq(0, viewport.position.x);
+    chrome.test.assertEq(100, viewport.position.y);
+
+    mockCallback.reset();
+    viewport.goToPageAndXY(2, 42, 46);
+    chrome.test.assertTrue(mockCallback.wasCalled);
+    chrome.test.assertEq(0 + 42, viewport.position.x);
+    chrome.test.assertEq(300 + 46, viewport.position.y);
+
+    mockCallback.reset();
+    viewport.goToPageAndXY(2, 42, 0);
+    chrome.test.assertTrue(mockCallback.wasCalled);
+    chrome.test.assertEq(0 + 42, viewport.position.x);
+    chrome.test.assertEq(300, viewport.position.y);
+
+    mockCallback.reset();
+    viewport.goToPageAndXY(2, 0, 46);
+    chrome.test.assertTrue(mockCallback.wasCalled);
+    chrome.test.assertEq(0, viewport.position.x);
+    chrome.test.assertEq(300 + 46, viewport.position.y);
+
+    viewport.setZoom(0.5);
+    mockCallback.reset();
+    viewport.goToPageAndXY(2, 42, 46);
+    chrome.test.assertTrue(mockCallback.wasCalled);
+    chrome.test.assertEq(0 + 21, viewport.position.x);
+    chrome.test.assertEq(150 + 23, viewport.position.y);
+    chrome.test.succeed();
+  },
+
+  function testScrollTo() {
+    var mockWindow = new MockWindow(100, 100);
+    var mockSizer = new MockSizer();
+    var mockCallback = new MockViewportChangedCallback();
+    var viewport = new Viewport(mockWindow, mockSizer, mockCallback.callback,
+                                function() {}, function() {}, function() {},
+                                0, 1, 0);
+    var documentDimensions = new MockDocumentDimensions();
+
+    documentDimensions.addPage(200, 200);
+    viewport.setDocumentDimensions(documentDimensions);
+    viewport.setZoom(1);
+
+    chrome.test.assertEq(0, viewport.position.x);
+    chrome.test.assertEq(0, viewport.position.y);
+
+    mockCallback.reset();
+    viewport.scrollTo({x: 0, y: 0});
+    chrome.test.assertFalse(mockCallback.wasCalled);
+    chrome.test.assertEq(0, viewport.position.x);
+    chrome.test.assertEq(0, viewport.position.y);
+
+    mockCallback.reset();
+    viewport.scrollTo({x: 10, y: 20});
+    chrome.test.assertTrue(mockCallback.wasCalled);
+    chrome.test.assertEq(10, viewport.position.x);
+    chrome.test.assertEq(20, viewport.position.y);
+
+    mockCallback.reset();
+    viewport.scrollTo({y: 30});
+    chrome.test.assertTrue(mockCallback.wasCalled);
+    chrome.test.assertEq(10, viewport.position.x);
+    chrome.test.assertEq(30, viewport.position.y);
+
+    mockCallback.reset();
+    viewport.scrollTo({y: 30});
+    chrome.test.assertFalse(mockCallback.wasCalled);
+    chrome.test.assertEq(10, viewport.position.x);
+    chrome.test.assertEq(30, viewport.position.y);
+
+    mockCallback.reset();
+    viewport.scrollTo({x: 40});
+    chrome.test.assertTrue(mockCallback.wasCalled);
+    chrome.test.assertEq(40, viewport.position.x);
+    chrome.test.assertEq(30, viewport.position.y);
+
+    mockCallback.reset();
+    viewport.scrollTo({});
+    chrome.test.assertFalse(mockCallback.wasCalled);
+    chrome.test.assertEq(40, viewport.position.x);
+    chrome.test.assertEq(30, viewport.position.y);
+
+    chrome.test.succeed();
+  },
+
+  function testScrollBy() {
+    var mockWindow = new MockWindow(100, 100);
+    var mockSizer = new MockSizer();
+    var mockCallback = new MockViewportChangedCallback();
+    var viewport = new Viewport(mockWindow, mockSizer, mockCallback.callback,
+                                function() {}, function() {}, function() {},
+                                0, 1, 0);
+    var documentDimensions = new MockDocumentDimensions();
+
+    documentDimensions.addPage(200, 200);
+    viewport.setDocumentDimensions(documentDimensions);
+    viewport.setZoom(1);
+
+    chrome.test.assertEq(0, viewport.position.x);
+    chrome.test.assertEq(0, viewport.position.y);
+
+    mockCallback.reset();
+    viewport.scrollBy({x: 10, y: 20});
+    chrome.test.assertTrue(mockCallback.wasCalled);
+    chrome.test.assertEq(10, viewport.position.x);
+    chrome.test.assertEq(20, viewport.position.y);
+
+    mockCallback.reset();
+    viewport.scrollBy({x: 10, y: 20});
+    chrome.test.assertTrue(mockCallback.wasCalled);
+    chrome.test.assertEq(20, viewport.position.x);
+    chrome.test.assertEq(40, viewport.position.y);
+
+    mockCallback.reset();
+    viewport.scrollBy({x: -5, y: 0});
+    chrome.test.assertTrue(mockCallback.wasCalled);
+    chrome.test.assertEq(15, viewport.position.x);
+    chrome.test.assertEq(40, viewport.position.y);
+
+    mockCallback.reset();
+    viewport.scrollBy({x: 0, y: 60});
+    chrome.test.assertTrue(mockCallback.wasCalled);
+    chrome.test.assertEq(15, viewport.position.x);
+    chrome.test.assertEq(100, viewport.position.y);
+
+    mockCallback.reset();
+    viewport.scrollBy({x: 0, y: 0});
+    chrome.test.assertFalse(mockCallback.wasCalled);
+    chrome.test.assertEq(15, viewport.position.x);
+    chrome.test.assertEq(100, viewport.position.y);
+
+    chrome.test.succeed();
+  },
+
   function testGetPageScreenRect() {
     var mockWindow = new MockWindow(100, 100);
     var mockSizer = new MockSizer();

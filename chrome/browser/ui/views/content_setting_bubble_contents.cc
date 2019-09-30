@@ -4,15 +4,8 @@
 
 #include "chrome/browser/ui/views/content_setting_bubble_contents.h"
 
-#include <algorithm>
-#include <set>
-#include <string>
-#include <utility>
 #include <vector>
 
-#include "base/bind.h"
-#include "base/macros.h"
-#include "base/stl_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/media/webrtc/media_capture_devices_dispatcher.h"
 #include "chrome/browser/plugins/plugin_finder.h"
@@ -30,28 +23,21 @@
 #include "content/public/browser/plugin_service.h"
 #include "content/public/browser/web_contents.h"
 #include "ui/base/cursor/cursor.h"
-#include "ui/base/default_style.h"
 #include "ui/base/l10n/l10n_util.h"
-#include "ui/base/models/simple_menu_model.h"
+#include "ui/base/models/combobox_model.h"
 #include "ui/base/resource/resource_bundle.h"
-#include "ui/gfx/color_palette.h"
-#include "ui/gfx/color_utils.h"
-#include "ui/gfx/font_list.h"
-#include "ui/gfx/paint_vector_icon.h"
-#include "ui/gfx/text_utils.h"
+#include "ui/gfx/geometry/insets.h"
+#include "ui/gfx/geometry/size.h"
 #include "ui/native_theme/native_theme.h"
 #include "ui/views/controls/button/image_button.h"
 #include "ui/views/controls/button/image_button_factory.h"
 #include "ui/views/controls/button/label_button_border.h"
 #include "ui/views/controls/button/md_text_button.h"
-#include "ui/views/controls/button/menu_button.h"
 #include "ui/views/controls/button/radio_button.h"
 #include "ui/views/controls/combobox/combobox.h"
 #include "ui/views/controls/image_view.h"
 #include "ui/views/controls/label.h"
 #include "ui/views/controls/link.h"
-#include "ui/views/controls/menu/menu_config.h"
-#include "ui/views/controls/menu/menu_runner.h"
 #include "ui/views/controls/scroll_view.h"
 #include "ui/views/controls/separator.h"
 #include "ui/views/layout/box_layout.h"
@@ -76,24 +62,113 @@ const int kMinMultiLineContentsWidth = 250;
 // Display a maximum of 4 visible items in a list before scrolling.
 const int kMaxVisibleListItems = 4;
 
+enum class LayoutRowType {
+  DEFAULT,
+  INDENTED,
+  FULL_WIDTH,
+};
+
+// Represents a row containing a single view in the layout. The type determines
+// the view's horizontal margins.
+struct LayoutRow {
+  std::unique_ptr<views::View> view;
+  LayoutRowType type;
+};
+
+// A combobox model that builds the contents of the media capture devices menu
+// in the content setting bubble.
+class MediaComboboxModel : public ui::ComboboxModel {
+ public:
+  explicit MediaComboboxModel(content::MediaStreamType type);
+  ~MediaComboboxModel() override;
+
+  content::MediaStreamType type() const { return type_; }
+  const content::MediaStreamDevices& GetDevices() const;
+  int GetDeviceIndex(const content::MediaStreamDevice& device) const;
+
+  // ui::ComboboxModel:
+  int GetItemCount() const override;
+  base::string16 GetItemAt(int index) override;
+
+ private:
+  content::MediaStreamType type_;
+
+  DISALLOW_COPY_AND_ASSIGN(MediaComboboxModel);
+};
+
+// A view representing one or more rows, each containing a label and combobox
+// pair, that allow the user to select a device for each media type (microphone
+// and/or camera).
+class MediaMenuBlock : public views::View {
+ public:
+  MediaMenuBlock(views::ComboboxListener* listener,
+                 ContentSettingBubbleModel::MediaMenuMap media) {
+    const ChromeLayoutProvider* provider = ChromeLayoutProvider::Get();
+
+    views::GridLayout* layout =
+        SetLayoutManager(std::make_unique<views::GridLayout>(this));
+    constexpr int kColumnSetId = 0;
+    views::ColumnSet* column_set = layout->AddColumnSet(kColumnSetId);
+    column_set->AddColumn(views::GridLayout::LEADING, views::GridLayout::CENTER,
+                          0, views::GridLayout::USE_PREF, 0, 0);
+    column_set->AddPaddingColumn(
+        0, provider->GetDistanceMetric(
+               views::DISTANCE_RELATED_CONTROL_HORIZONTAL));
+    column_set->AddColumn(views::GridLayout::FILL, views::GridLayout::FILL, 1,
+                          views::GridLayout::FIXED, 0, 0);
+
+    bool first_row = true;
+    for (auto i = media.cbegin(); i != media.cend(); ++i) {
+      if (!first_row) {
+        layout->AddPaddingRow(0, provider->GetDistanceMetric(
+                                     views::DISTANCE_RELATED_CONTROL_VERTICAL));
+      }
+      first_row = false;
+
+      layout->StartRow(0, kColumnSetId);
+      content::MediaStreamType stream_type = i->first;
+      const ContentSettingBubbleModel::MediaMenu& menu = i->second;
+
+      views::Label* label = new views::Label(menu.label);
+      label->SetHorizontalAlignment(gfx::ALIGN_LEFT);
+      layout->AddView(label);
+
+      auto combobox_model = std::make_unique<MediaComboboxModel>(stream_type);
+      // Disable the device selection when the website is managing the devices
+      // itself or if there are no devices present.
+      const bool combobox_enabled =
+          !menu.disabled && !combobox_model->GetDevices().empty();
+      const int combobox_selected_index =
+          combobox_model->GetDevices().empty()
+              ? 0
+              : combobox_model->GetDeviceIndex(menu.selected_device);
+      // The combobox takes ownership of the model.
+      views::Combobox* combobox =
+          new views::Combobox(std::move(combobox_model));
+      combobox->SetEnabled(combobox_enabled);
+      combobox->set_listener(listener);
+      combobox->SetSelectedIndex(combobox_selected_index);
+      layout->AddView(combobox);
+    }
+  }
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(MediaMenuBlock);
+};
+
 }  // namespace
 
-using content::PluginService;
-using content::WebContents;
+// MediaComboboxModel ----------------------------------------------------------
 
-// ContentSettingBubbleContents::MediaComboboxModel ----------------------------
-
-ContentSettingBubbleContents::MediaComboboxModel::MediaComboboxModel(
-    content::MediaStreamType type)
+MediaComboboxModel::MediaComboboxModel(content::MediaStreamType type)
     : type_(type) {
   DCHECK(type_ == content::MEDIA_DEVICE_AUDIO_CAPTURE ||
          type_ == content::MEDIA_DEVICE_VIDEO_CAPTURE);
 }
 
-ContentSettingBubbleContents::MediaComboboxModel::~MediaComboboxModel() {}
+MediaComboboxModel::~MediaComboboxModel() {}
 
-const content::MediaStreamDevices&
-ContentSettingBubbleContents::MediaComboboxModel::GetDevices() const {
+const content::MediaStreamDevices& MediaComboboxModel::GetDevices() const {
   MediaCaptureDevicesDispatcher* dispatcher =
       MediaCaptureDevicesDispatcher::GetInstance();
   return type_ == content::MEDIA_DEVICE_AUDIO_CAPTURE
@@ -101,7 +176,7 @@ ContentSettingBubbleContents::MediaComboboxModel::GetDevices() const {
              : dispatcher->GetVideoCaptureDevices();
 }
 
-int ContentSettingBubbleContents::MediaComboboxModel::GetDeviceIndex(
+int MediaComboboxModel::GetDeviceIndex(
     const content::MediaStreamDevice& device) const {
   const auto& devices = GetDevices();
   for (size_t i = 0; i < devices.size(); ++i) {
@@ -112,12 +187,11 @@ int ContentSettingBubbleContents::MediaComboboxModel::GetDeviceIndex(
   return 0;
 }
 
-int ContentSettingBubbleContents::MediaComboboxModel::GetItemCount() const {
+int MediaComboboxModel::GetItemCount() const {
   return std::max(1, static_cast<int>(GetDevices().size()));
 }
 
-base::string16 ContentSettingBubbleContents::MediaComboboxModel::GetItemAt(
-    int index) {
+base::string16 MediaComboboxModel::GetItemAt(int index) {
   return GetDevices().empty()
              ? l10n_util::GetStringUTF16(IDS_MEDIA_MENU_NO_DEVICE_TITLE)
              : base::UTF8ToUTF16(GetDevices()[index].name);
@@ -223,6 +297,7 @@ void ContentSettingBubbleContents::ListItemContainer::AddItem(
     icon->SetImage(item.image.AsImageSkia());
     label = new views::Label(item.title);
   }
+  label->SetHorizontalAlignment(gfx::HorizontalAlignment::ALIGN_LEFT);
   list_item_views_.push_back(Row(icon, label));
   AddRowToLayout(list_item_views_.back());
 }
@@ -252,7 +327,8 @@ int ContentSettingBubbleContents::ListItemContainer::GetRowIndexOf(
 
 void ContentSettingBubbleContents::ListItemContainer::ResetLayout() {
   using views::GridLayout;
-  GridLayout* layout = GridLayout::CreateAndInstall(this);
+  GridLayout* layout =
+      SetLayoutManager(std::make_unique<views::GridLayout>(this));
   views::ColumnSet* item_list_column_set = layout->AddColumnSet(0);
   item_list_column_set->AddColumn(GridLayout::LEADING, GridLayout::FILL, 0,
                                   GridLayout::USE_PREF, 0, 0);
@@ -329,6 +405,20 @@ gfx::Size ContentSettingBubbleContents::CalculatePreferredSize() const {
   } else {
     preferred_size.set_width(std::min(preferred_width, kMaxContentsWidth));
   }
+
+  // These bubbles should all be the "small" dialog width, but only when in
+  // Harmony mode.
+  ChromeLayoutProvider* provider = ChromeLayoutProvider::Get();
+  if (provider->IsHarmonyMode()) {
+    // Subtract out this dialog's margins. The margins are imposed by
+    // DialogClientView around this view, so this view's width plus the width of
+    // these margins must equal the desired width, which is
+    // GetSnappedDialogWidth(0).
+    preferred_size.set_width(provider->GetSnappedDialogWidth(0) -
+                             margins().width());
+    preferred_size.set_height(GetHeightForWidth(preferred_size.width()));
+  }
+
   return preferred_size;
 }
 
@@ -361,86 +451,50 @@ bool ContentSettingBubbleContents::ShouldShowCloseButton() const {
 }
 
 void ContentSettingBubbleContents::Init() {
-  using views::GridLayout;
-
-  GridLayout* layout = views::GridLayout::CreateAndInstall(this);
   const ChromeLayoutProvider* provider = ChromeLayoutProvider::Get();
-  const int related_control_horizontal_spacing =
-      provider->GetDistanceMetric(views::DISTANCE_RELATED_CONTROL_HORIZONTAL);
-  const int related_control_vertical_spacing =
-      provider->GetDistanceMetric(views::DISTANCE_RELATED_CONTROL_VERTICAL);
-
-  const int kSingleColumnSetId = 0;
-  views::ColumnSet* column_set = layout->AddColumnSet(kSingleColumnSetId);
-  column_set->AddColumn(GridLayout::LEADING, GridLayout::FILL, 1,
-                        GridLayout::USE_PREF, 0, 0);
-  column_set->AddPaddingColumn(0, related_control_horizontal_spacing);
-  column_set->AddColumn(GridLayout::LEADING, GridLayout::FILL, 1,
-                        GridLayout::USE_PREF, 0, 0);
+  SetLayoutManager(std::make_unique<views::BoxLayout>(
+      views::BoxLayout::kVertical, gfx::Insets(),
+      provider->GetDistanceMetric(views::DISTANCE_RELATED_CONTROL_VERTICAL)));
+  std::vector<LayoutRow> rows;
 
   const ContentSettingBubbleModel::BubbleContent& bubble_content =
       content_setting_bubble_model_->bubble_content();
-  bool bubble_content_empty = true;
 
   if (!bubble_content.message.empty()) {
-    views::Label* message_label = new views::Label(
+    auto message_label = std::make_unique<views::Label>(
         bubble_content.message, views::style::CONTEXT_LABEL, STYLE_SECONDARY);
     message_label->SetMultiLine(true);
     message_label->SetHorizontalAlignment(gfx::ALIGN_LEFT);
-    layout->StartRow(0, kSingleColumnSetId);
-    layout->AddView(message_label);
-    bubble_content_empty = false;
+    rows.push_back({std::move(message_label), LayoutRowType::DEFAULT});
   }
 
   // Layout for the item list (blocked plugins and popups).
   if (!bubble_content.list_items.empty()) {
-    const int kItemListColumnSetId = 2;
-    views::ColumnSet* column_set = layout->AddColumnSet(kItemListColumnSetId);
-    column_set->AddColumn(GridLayout::FILL, GridLayout::FILL, 1,
-                          GridLayout::USE_PREF, 0, 0);
+    list_item_container_ = new ListItemContainer(this);
+    list_item_container_->SetBorder(
+        views::CreateEmptyBorder(0, margins().left(), 0, margins().right()));
+    auto scroll_view = std::make_unique<views::ScrollView>();
+    scroll_view->SetContents(list_item_container_);
+    rows.push_back({std::move(scroll_view), LayoutRowType::FULL_WIDTH});
 
     for (const ContentSettingBubbleModel::ListItem& list_item :
          bubble_content.list_items) {
-      if (!list_item_container_) {
-        if (!bubble_content_empty)
-          layout->AddPaddingRow(0, related_control_vertical_spacing);
-
-        list_item_container_ = new ListItemContainer(this);
-        views::ScrollView* scroll_view = new views::ScrollView();
-        scroll_view->SetContents(list_item_container_);
-        layout->StartRow(0, kItemListColumnSetId);
-        layout->AddView(scroll_view);
-      }
-
       list_item_container_->AddItem(list_item);
-      bubble_content_empty = false;
     }
   }
-
-  const int kIndentedSingleColumnSetId = 3;
-  // Insert a column set with greater indent.
-  views::ColumnSet* indented_single_column_set =
-      layout->AddColumnSet(kIndentedSingleColumnSetId);
-  indented_single_column_set->AddPaddingColumn(
-      0, provider->GetDistanceMetric(DISTANCE_SUBSECTION_HORIZONTAL_INDENT));
-  indented_single_column_set->AddColumn(GridLayout::LEADING, GridLayout::FILL,
-                                        1, GridLayout::USE_PREF, 0, 0);
 
   const ContentSettingBubbleModel::RadioGroup& radio_group =
       bubble_content.radio_group;
   if (!radio_group.radio_items.empty()) {
-    if (!bubble_content_empty)
-      layout->AddPaddingRow(0, related_control_vertical_spacing);
     for (ContentSettingBubbleModel::RadioItems::const_iterator i(
          radio_group.radio_items.begin());
          i != radio_group.radio_items.end(); ++i) {
-      views::RadioButton* radio = new views::RadioButton(*i, 0);
+      auto radio = std::make_unique<views::RadioButton>(*i, 0);
       radio->SetEnabled(bubble_content.radio_group_enabled);
       radio->set_listener(this);
-      radio_group_.push_back(radio);
-      layout->StartRow(0, kIndentedSingleColumnSetId);
-      layout->AddView(radio);
-      bubble_content_empty = false;
+      radio->SetMultiLine(true);
+      radio_group_.push_back(radio.get());
+      rows.push_back({std::move(radio), LayoutRowType::INDENTED});
     }
     DCHECK(!radio_group_.empty());
     // Now that the buttons have been added to the view hierarchy, it's safe
@@ -450,74 +504,56 @@ void ContentSettingBubbleContents::Init() {
 
   // Layout code for the media device menus.
   if (content_setting_bubble_model_->AsMediaStreamBubbleModel()) {
-    const int kMediaMenuColumnSetId = 4;
-    views::ColumnSet* menu_column_set =
-        layout->AddColumnSet(kMediaMenuColumnSetId);
-    menu_column_set->AddPaddingColumn(
-        0, provider->GetDistanceMetric(DISTANCE_SUBSECTION_HORIZONTAL_INDENT));
-    menu_column_set->AddColumn(GridLayout::LEADING, GridLayout::FILL, 0,
-                               GridLayout::USE_PREF, 0, 0);
-    menu_column_set->AddPaddingColumn(0, related_control_horizontal_spacing);
-    menu_column_set->AddColumn(GridLayout::LEADING, GridLayout::FILL, 1,
-                               GridLayout::USE_PREF, 0, 0);
-
-    for (ContentSettingBubbleModel::MediaMenuMap::const_iterator i(
-         bubble_content.media_menus.begin());
-         i != bubble_content.media_menus.end(); ++i) {
-      if (!bubble_content_empty)
-        layout->AddPaddingRow(0, related_control_vertical_spacing);
-      layout->StartRow(0, kMediaMenuColumnSetId);
-
-      views::Label* label = new views::Label(i->second.label);
-      label->SetHorizontalAlignment(gfx::ALIGN_LEFT);
-      layout->AddView(label);
-
-      combobox_models_.emplace_back(i->first);
-      MediaComboboxModel* model = &combobox_models_.back();
-      views::Combobox* combobox = new views::Combobox(model);
-      // Disable the device selection when the website is managing the devices
-      // itself or if there are no devices present.
-      combobox->SetEnabled(
-          !(i->second.disabled || model->GetDevices().empty()));
-      combobox->set_listener(this);
-      combobox->SetSelectedIndex(
-          model->GetDevices().empty()
-              ? 0
-              : model->GetDeviceIndex(i->second.selected_device));
-      layout->AddView(combobox);
-
-      bubble_content_empty = false;
-    }
+    rows.push_back(
+        {std::make_unique<MediaMenuBlock>(this, bubble_content.media_menus),
+         LayoutRowType::INDENTED});
   }
 
   for (std::vector<ContentSettingBubbleModel::DomainList>::const_iterator i(
            bubble_content.domain_lists.begin());
        i != bubble_content.domain_lists.end(); ++i) {
     auto list_view =
-        base::MakeUnique<ContentSettingDomainListView>(i->title, i->hosts);
-    layout->StartRow(0, kSingleColumnSetId);
-    layout->AddView(list_view.release());
-    bubble_content_empty = false;
+        std::make_unique<ContentSettingDomainListView>(i->title, i->hosts);
+    rows.push_back({std::move(list_view), LayoutRowType::DEFAULT});
   }
 
   if (!bubble_content.custom_link.empty()) {
-    custom_link_ = new views::Link(bubble_content.custom_link);
-    custom_link_->SetEnabled(bubble_content.custom_link_enabled);
-    custom_link_->set_listener(this);
-    if (!bubble_content_empty)
-      layout->AddPaddingRow(0, related_control_vertical_spacing);
-    layout->StartRow(0, kSingleColumnSetId);
-    layout->AddView(custom_link_);
-    bubble_content_empty = false;
+    auto custom_link =
+        std::make_unique<views::Link>(bubble_content.custom_link);
+    custom_link->SetEnabled(bubble_content.custom_link_enabled);
+    custom_link->SetMultiLine(true);
+    custom_link->set_listener(this);
+    custom_link->SetHorizontalAlignment(gfx::ALIGN_LEFT);
+    custom_link_ = custom_link.get();
+    rows.push_back({std::move(custom_link), LayoutRowType::DEFAULT});
   }
 
   if (bubble_content.manage_text_style ==
       ContentSettingBubbleModel::ManageTextStyle::kCheckbox) {
-    layout->AddPaddingRow(0, related_control_vertical_spacing);
-    layout->StartRow(0, kIndentedSingleColumnSetId);
-    manage_checkbox_ = new views::Checkbox(bubble_content.manage_text);
-    manage_checkbox_->set_listener(this);
-    layout->AddView(manage_checkbox_);
+    auto manage_checkbox =
+        std::make_unique<views::Checkbox>(bubble_content.manage_text);
+    manage_checkbox->set_listener(this);
+    manage_checkbox_ = manage_checkbox.get();
+    rows.push_back({std::move(manage_checkbox), LayoutRowType::DEFAULT});
+  }
+
+  // We have to apply the left and right margins manually, because rows using
+  // LayoutRowType::FULL_WIDTH need to not have them applied to look correct.
+  const int left_margin = margins().left();
+  const int right_margin = margins().right();
+  set_margins(gfx::Insets(margins().top(), 0, margins().bottom(), 0));
+
+  for (LayoutRow& row : rows) {
+    if (row.type != LayoutRowType::FULL_WIDTH) {
+      const int row_left_margin =
+          left_margin + (row.type == LayoutRowType::INDENTED
+                             ? provider->GetDistanceMetric(
+                                   DISTANCE_SUBSECTION_HORIZONTAL_INDENT)
+                             : 0);
+      row.view->SetBorder(
+          views::CreateEmptyBorder(0, row_left_margin, 0, right_margin));
+    }
+    AddChildView(row.view.release());
   }
 
   if (list_item_container_)
@@ -555,7 +591,7 @@ views::View* ContentSettingBubbleContents::CreateExtraView() {
   if (extra_views.size() == 1)
     return extra_views.front();
   views::View* container = new views::View();
-  container->SetLayoutManager(new views::BoxLayout(
+  container->SetLayoutManager(std::make_unique<views::BoxLayout>(
       views::BoxLayout::kHorizontal, gfx::Insets(),
       layout->GetDistanceMetric(views::DISTANCE_RELATED_CONTROL_HORIZONTAL)));
   for (auto* extra_view : extra_views)
@@ -588,11 +624,8 @@ void ContentSettingBubbleContents::StyleLearnMoreButton(
   DCHECK(learn_more_button_);
   SkColor text_color =
       theme->GetSystemColor(ui::NativeTheme::kColorId_LabelEnabledColor);
-  learn_more_button_->SetImage(
-      views::Button::STATE_NORMAL,
-      gfx::CreateVectorIcon(vector_icons::kHelpOutlineIcon, 16,
-                            color_utils::DeriveDefaultIconColor(text_color)));
-  learn_more_button_->set_ink_drop_base_color(text_color);
+  views::SetImageFromVectorIcon(learn_more_button_,
+                                vector_icons::kHelpOutlineIcon, text_color);
 }
 
 void ContentSettingBubbleContents::DidFinishNavigation(
@@ -602,6 +635,16 @@ void ContentSettingBubbleContents::DidFinishNavigation(
 
   // Content settings are based on the main frame, so if it switches then
   // close up shop.
+  GetWidget()->Close();
+}
+
+void ContentSettingBubbleContents::OnVisibilityChanged(
+    content::Visibility visibility) {
+  if (visibility == content::Visibility::HIDDEN)
+    GetWidget()->Close();
+}
+
+void ContentSettingBubbleContents::WebContentsDestroyed() {
   GetWidget()->Close();
 }
 

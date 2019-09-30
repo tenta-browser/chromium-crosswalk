@@ -77,11 +77,11 @@ int TestWebContents::DownloadImage(const GURL& url,
                                    bool is_favicon,
                                    uint32_t max_bitmap_size,
                                    bool bypass_cache,
-                                   const ImageDownloadCallback& callback) {
+                                   ImageDownloadCallback callback) {
   static int g_next_image_download_id = 0;
   ++g_next_image_download_id;
   pending_image_downloads_[url].emplace_back(g_next_image_download_id,
-                                             callback);
+                                             std::move(callback));
   return g_next_image_download_id;
 }
 
@@ -138,7 +138,6 @@ void TestWebContents::TestDidNavigateWithSequenceNumber(
   params.gesture = NavigationGestureUser;
   params.method = "GET";
   params.post_id = 0;
-  params.was_within_same_document = was_within_same_document;
   params.http_status_code = 200;
   params.url_is_unreachable = false;
   if (item_sequence_number != -1 && document_sequence_number != -1) {
@@ -159,11 +158,15 @@ void TestWebContents::TestDidNavigateWithSequenceNumber(
   params.searchable_form_url = GURL();
   params.searchable_form_encoding = std::string();
 
-  rfh->SendNavigateWithParams(&params);
+  rfh->SendNavigateWithParams(&params, was_within_same_document);
 }
 
-const std::string& TestWebContents::GetSaveFrameHeaders() {
+const std::string& TestWebContents::GetSaveFrameHeaders() const {
   return save_frame_headers_;
+}
+
+const base::string16& TestWebContents::GetSuggestedFileName() const {
+  return suggested_filename_;
 }
 
 bool TestWebContents::HasPendingDownloadImage(const GURL& url) {
@@ -178,9 +181,11 @@ bool TestWebContents::TestDidDownloadImage(
   if (!HasPendingDownloadImage(url))
     return false;
   int id = pending_image_downloads_[url].front().first;
-  ImageDownloadCallback callback = pending_image_downloads_[url].front().second;
+  ImageDownloadCallback callback =
+      std::move(pending_image_downloads_[url].front().second);
   pending_image_downloads_[url].pop_front();
-  callback.Run(id, http_status_code, url, bitmaps, original_bitmap_sizes);
+  std::move(callback).Run(id, http_status_code, url, bitmaps,
+                          original_bitmap_sizes);
   return true;
 }
 
@@ -188,11 +193,39 @@ void TestWebContents::SetLastCommittedURL(const GURL& url) {
   last_committed_url_ = url;
 }
 
+void TestWebContents::SetMainFrameMimeType(const std::string& mime_type) {
+  WebContentsImpl::SetMainFrameMimeType(mime_type);
+}
+
+void TestWebContents::SetWasRecentlyAudible(bool audible) {
+  audio_stream_monitor()->set_was_recently_audible_for_testing(audible);
+}
+
+void TestWebContents::SetIsCurrentlyAudible(bool audible) {
+  audio_stream_monitor()->set_is_currently_audible_for_testing(audible);
+}
+
+void TestWebContents::TestDidReceiveInputEvent(
+    blink::WebInputEvent::Type type) {
+  // Use the first RenderWidgetHost from the frame tree to make sure that the
+  // interaction doesn't get ignored.
+  DCHECK(frame_tree_.Nodes().begin() != frame_tree_.Nodes().end());
+  RenderWidgetHostImpl* render_widget_host = (*frame_tree_.Nodes().begin())
+                                                 ->current_frame_host()
+                                                 ->GetRenderWidgetHost();
+  DidReceiveInputEvent(render_widget_host, type);
+}
+
+void TestWebContents::TestDidFailLoadWithError(
+    const GURL& url,
+    int error_code,
+    const base::string16& error_description) {
+  FrameHostMsg_DidFailLoadWithError msg(0, url, error_code, error_description);
+  frame_tree_.root()->current_frame_host()->OnMessageReceived(msg);
+}
+
 bool TestWebContents::CrossProcessNavigationPending() {
-  if (IsBrowserSideNavigationEnabled()) {
-    return GetRenderManager()->speculative_render_frame_host_ != nullptr;
-  }
-  return GetRenderManager()->pending_frame_host() != nullptr;
+  return GetRenderManager()->speculative_render_frame_host_ != nullptr;
 }
 
 bool TestWebContents::CreateRenderViewForRenderManager(
@@ -237,18 +270,11 @@ void TestWebContents::TestSetIsLoading(bool value) {
       DCHECK(current_frame_host);
       current_frame_host->ResetLoadingState();
 
-      if (IsBrowserSideNavigationEnabled()) {
-        RenderFrameHostImpl* speculative_frame_host =
-            node->render_manager()->speculative_frame_host();
-        if (speculative_frame_host)
-          speculative_frame_host->ResetLoadingState();
-        node->ResetNavigationRequest(false, true);
-      } else {
-        RenderFrameHostImpl* pending_frame_host =
-            node->render_manager()->pending_frame_host();
-        if (pending_frame_host)
-          pending_frame_host->ResetLoadingState();
-      }
+      RenderFrameHostImpl* speculative_frame_host =
+          node->render_manager()->speculative_frame_host();
+      if (speculative_frame_host)
+        speculative_frame_host->ResetLoadingState();
+      node->ResetNavigationRequest(false, true);
     }
   }
 }
@@ -296,8 +322,9 @@ RenderViewHostDelegateView* TestWebContents::GetDelegateView() {
   return WebContentsImpl::GetDelegateView();
 }
 
-void TestWebContents::SetOpener(TestWebContents* opener) {
-  frame_tree_.root()->SetOpener(opener->GetFrameTree()->root());
+void TestWebContents::SetOpener(WebContents* opener) {
+  frame_tree_.root()->SetOpener(
+      static_cast<WebContentsImpl*>(opener)->GetFrameTree()->root());
 }
 
 void TestWebContents::AddPendingContents(TestWebContents* contents) {
@@ -327,14 +354,6 @@ void TestWebContents::SetHistoryOffsetAndLength(int history_offset,
 
 void TestWebContents::TestDidFinishLoad(const GURL& url) {
   FrameHostMsg_DidFinishLoad msg(0, url);
-  frame_tree_.root()->current_frame_host()->OnMessageReceived(msg);
-}
-
-void TestWebContents::TestDidFailLoadWithError(
-    const GURL& url,
-    int error_code,
-    const base::string16& error_description) {
-  FrameHostMsg_DidFailLoadWithError msg(0, url, error_code, error_description);
   frame_tree_.root()->current_frame_host()->OnMessageReceived(msg);
 }
 
@@ -385,18 +404,13 @@ void TestWebContents::ShowCreatedFullscreenWidget(int process_id,
                                                   int route_id) {
 }
 
-void TestWebContents::SaveFrameWithHeaders(const GURL& url,
-                                           const Referrer& referrer,
-                                           const std::string& headers) {
+void TestWebContents::SaveFrameWithHeaders(
+    const GURL& url,
+    const Referrer& referrer,
+    const std::string& headers,
+    const base::string16& suggested_filename) {
   save_frame_headers_ = headers;
-}
-
-void TestWebContents::SetWasRecentlyAudible(bool audible) {
-  audio_stream_monitor()->set_was_recently_audible_for_testing(audible);
-}
-
-void TestWebContents::SetIsCurrentlyAudible(bool audible) {
-  audio_stream_monitor()->set_is_currently_audible_for_testing(audible);
+  suggested_filename_ = suggested_filename;
 }
 
 }  // namespace content

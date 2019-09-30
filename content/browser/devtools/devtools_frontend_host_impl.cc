@@ -12,7 +12,7 @@
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/content_client.h"
-#include "third_party/WebKit/common/associated_interfaces/associated_interface_provider.h"
+#include "third_party/blink/public/common/associated_interfaces/associated_interface_provider.h"
 
 namespace content {
 
@@ -36,7 +36,7 @@ void DevToolsFrontendHost::SetupExtensionsAPI(
     RenderFrameHost* frame_host,
     const std::string& extension_api) {
   DCHECK(frame_host->GetParent());
-  mojom::DevToolsFrontendAssociatedPtr frontend;
+  blink::mojom::DevToolsFrontendAssociatedPtr frontend;
   frame_host->GetRemoteAssociatedInterfaces()->GetInterface(&frontend);
   frontend->SetupDevToolsExtensionAPI(extension_api);
 }
@@ -59,13 +59,13 @@ DevToolsFrontendHostImpl::DevToolsFrontendHostImpl(
     : web_contents_(WebContents::FromRenderFrameHost(frame_host)),
       handle_message_callback_(handle_message_callback),
       binding_(this) {
-  mojom::DevToolsFrontendAssociatedPtr frontend;
+  blink::mojom::DevToolsFrontendAssociatedPtr frontend;
   frame_host->GetRemoteAssociatedInterfaces()->GetInterface(&frontend);
   std::string api_script =
       content::DevToolsFrontendHost::GetFrontendResource(kCompatibilityScript)
           .as_string() +
       kCompatibilityScriptSourceURL;
-  mojom::DevToolsFrontendHostAssociatedPtrInfo host;
+  blink::mojom::DevToolsFrontendHostAssociatedPtrInfo host;
   binding_.Bind(mojo::MakeRequest(&host));
   frontend->SetupDevToolsFrontend(api_script, std::move(host));
 }

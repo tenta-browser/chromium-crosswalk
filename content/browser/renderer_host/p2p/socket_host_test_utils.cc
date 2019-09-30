@@ -12,6 +12,7 @@
 #include "net/base/completion_callback.h"
 #include "net/base/io_buffer.h"
 #include "net/base/ip_address.h"
+#include "net/traffic_annotation/network_traffic_annotation.h"
 
 const int kStunHeaderSize = 20;
 const uint16_t kStunBindingRequest = 0x0001;
@@ -45,7 +46,7 @@ void FakeSocket::AppendInputData(const char* data, int data_size) {
     read_buffer_ = nullptr;
     net::CompletionCallback cb = read_callback_;
     read_callback_.Reset();
-    cb.Run(result);
+    std::move(cb).Run(result);
   }
 }
 
@@ -75,8 +76,11 @@ int FakeSocket::Read(net::IOBuffer* buf, int buf_len,
   }
 }
 
-int FakeSocket::Write(net::IOBuffer* buf, int buf_len,
-                      const net::CompletionCallback& callback) {
+int FakeSocket::Write(
+    net::IOBuffer* buf,
+    int buf_len,
+    const net::CompletionCallback& callback,
+    const net::NetworkTrafficAnnotationTag& /*traffic_annotation*/) {
   DCHECK(buf);
   DCHECK(!write_pending_);
 

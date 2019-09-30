@@ -13,17 +13,13 @@
 #include "base/command_line.h"
 #include "base/location.h"
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/single_thread_task_runner.h"
 #include "base/stl_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/task_runner_util.h"
-#include "base/threading/sequenced_worker_pool.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
-#include "content/browser/media/capture/desktop_capture_device_uma_types.h"
-#include "content/browser/media/capture/web_contents_video_capture_device.h"
 #include "content/browser/media/media_internals.h"
 #include "content/browser/renderer_host/media/video_capture_controller.h"
 #include "content/public/browser/browser_thread.h"
@@ -32,27 +28,7 @@
 #include "media/base/bind_to_current_loop.h"
 #include "media/base/media_switches.h"
 #include "media/base/video_facing.h"
-#include "media/capture/video/video_capture_buffer_pool_impl.h"
-#include "media/capture/video/video_capture_buffer_tracker_factory_impl.h"
 #include "media/capture/video/video_capture_device.h"
-#include "media/capture/video/video_capture_device_client.h"
-#include "media/capture/video/video_capture_device_factory.h"
-
-#if defined(ENABLE_SCREEN_CAPTURE)
-
-#if BUILDFLAG(ENABLE_WEBRTC) && !defined(OS_ANDROID)
-#include "content/browser/media/capture/desktop_capture_device.h"
-#endif
-
-#if defined(USE_AURA)
-#include "content/browser/media/capture/desktop_capture_device_aura.h"
-#endif
-
-#if defined(OS_ANDROID)
-#include "content/browser/media/capture/screen_capture_device_android.h"
-#endif
-
-#endif  // defined(ENABLE_SCREEN_CAPTURE)
 
 namespace {
 
@@ -375,10 +351,14 @@ void VideoCaptureManager::ConnectClient(
     VideoCaptureControllerEventHandler* client_handler,
     const DoneCB& done_cb) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
-  std::ostringstream string_stream;
-  string_stream << "ConnectClient: session_id = " << session_id << ", request: "
-                << media::VideoCaptureFormat::ToString(params.requested_format);
-  EmitLogMessage(string_stream.str(), 1);
+  {
+    std::ostringstream string_stream;
+    string_stream << "ConnectClient: session_id = " << session_id
+                  << ", request: "
+                  << media::VideoCaptureFormat::ToString(
+                         params.requested_format);
+    EmitLogMessage(string_stream.str(), 1);
+  }
 
   VideoCaptureController* controller =
       GetOrCreateController(session_id, params);
@@ -702,7 +682,7 @@ void VideoCaptureManager::OnDeviceInfosReceived(
   for (const auto& entry : device_infos) {
     string_stream << std::endl
                   << "device_id: " << entry.descriptor.device_id
-                  << ", display_name: " << entry.descriptor.display_name;
+                  << ", display_name: " << entry.descriptor.display_name();
   }
   EmitLogMessage(string_stream.str(), 1);
 

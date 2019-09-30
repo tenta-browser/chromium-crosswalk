@@ -25,7 +25,8 @@ class CC_EXPORT SurfaceLayerImpl : public LayerImpl {
   }
   ~SurfaceLayerImpl() override;
 
-  void SetPrimarySurfaceId(const viz::SurfaceId& surface_id);
+  void SetPrimarySurfaceId(const viz::SurfaceId& surface_id,
+                           base::Optional<uint32_t> deadline_in_frames);
   const viz::SurfaceId& primary_surface_id() const {
     return primary_surface_id_;
   }
@@ -40,19 +41,24 @@ class CC_EXPORT SurfaceLayerImpl : public LayerImpl {
     return fallback_surface_id_;
   }
 
+  base::Optional<uint32_t> deadline_in_frames() const {
+    return deadline_in_frames_;
+  }
+
   void SetStretchContentToFillBounds(bool stretch_content);
   bool stretch_content_to_fill_bounds() const {
     return stretch_content_to_fill_bounds_;
   }
 
-  void SetDefaultBackgroundColor(SkColor background_color);
-  SkColor default_background_color() const { return default_background_color_; }
+  void SetHitTestable(bool hit_testable);
+  bool hit_testable() const { return hit_testable_; }
 
   // LayerImpl overrides.
   std::unique_ptr<LayerImpl> CreateLayerImpl(LayerTreeImpl* tree_impl) override;
   void PushPropertiesTo(LayerImpl* layer) override;
   void AppendQuads(viz::RenderPass* render_pass,
                    AppendQuadsData* append_quads_data) override;
+  bool is_surface_layer() const override;
 
  protected:
   SurfaceLayerImpl(LayerTreeImpl* tree_impl, int id);
@@ -70,9 +76,10 @@ class CC_EXPORT SurfaceLayerImpl : public LayerImpl {
 
   viz::SurfaceId primary_surface_id_;
   viz::SurfaceId fallback_surface_id_;
+  base::Optional<uint32_t> deadline_in_frames_;
 
   bool stretch_content_to_fill_bounds_ = false;
-  SkColor default_background_color_ = SK_ColorWHITE;
+  bool hit_testable_ = false;
 
   DISALLOW_COPY_AND_ASSIGN(SurfaceLayerImpl);
 };

@@ -21,7 +21,6 @@
 #include "content/shell/test_runner/layout_and_paint_async_then.h"
 #include "content/shell/test_runner/layout_dump.h"
 #include "content/shell/test_runner/mock_content_settings_client.h"
-#include "content/shell/test_runner/mock_credential_manager_client.h"
 #include "content/shell/test_runner/mock_screen_orientation_client.h"
 #include "content/shell/test_runner/mock_web_document_subresource_filter.h"
 #include "content/shell/test_runner/mock_web_speech_recognizer.h"
@@ -33,35 +32,34 @@
 #include "content/shell/test_runner/test_runner_for_specific_view.h"
 #include "content/shell/test_runner/web_test_delegate.h"
 #include "content/shell/test_runner/web_view_test_proxy.h"
-#include "device/sensors/public/cpp/motion_data.h"
-#include "device/sensors/public/cpp/orientation_data.h"
 #include "gin/arguments.h"
 #include "gin/array_buffer.h"
 #include "gin/handle.h"
 #include "gin/object_template_builder.h"
 #include "gin/wrappable.h"
-#include "third_party/WebKit/public/platform/WebCanvas.h"
-#include "third_party/WebKit/public/platform/WebData.h"
-#include "third_party/WebKit/public/platform/WebPasswordCredential.h"
-#include "third_party/WebKit/public/platform/WebPoint.h"
-#include "third_party/WebKit/public/platform/WebURLResponse.h"
-#include "third_party/WebKit/public/platform/modules/serviceworker/WebServiceWorkerRegistration.h"
-#include "third_party/WebKit/public/web/WebArrayBuffer.h"
-#include "third_party/WebKit/public/web/WebArrayBufferConverter.h"
-#include "third_party/WebKit/public/web/WebDocument.h"
-#include "third_party/WebKit/public/web/WebDocumentLoader.h"
-#include "third_party/WebKit/public/web/WebFindOptions.h"
-#include "third_party/WebKit/public/web/WebFrame.h"
-#include "third_party/WebKit/public/web/WebInputElement.h"
-#include "third_party/WebKit/public/web/WebKit.h"
-#include "third_party/WebKit/public/web/WebLocalFrame.h"
-#include "third_party/WebKit/public/web/WebPageImportanceSignals.h"
-#include "third_party/WebKit/public/web/WebScriptSource.h"
-#include "third_party/WebKit/public/web/WebSecurityPolicy.h"
-#include "third_party/WebKit/public/web/WebSerializedScriptValue.h"
-#include "third_party/WebKit/public/web/WebSettings.h"
-#include "third_party/WebKit/public/web/WebSurroundingText.h"
-#include "third_party/WebKit/public/web/WebView.h"
+#include "services/device/public/cpp/generic_sensor/motion_data.h"
+#include "services/device/public/cpp/generic_sensor/orientation_data.h"
+#include "third_party/blink/public/platform/modules/serviceworker/web_service_worker_registration.h"
+#include "third_party/blink/public/platform/web_canvas.h"
+#include "third_party/blink/public/platform/web_data.h"
+#include "third_party/blink/public/platform/web_point.h"
+#include "third_party/blink/public/platform/web_url_response.h"
+#include "third_party/blink/public/web/blink.h"
+#include "third_party/blink/public/web/web_array_buffer.h"
+#include "third_party/blink/public/web/web_array_buffer_converter.h"
+#include "third_party/blink/public/web/web_document.h"
+#include "third_party/blink/public/web/web_document_loader.h"
+#include "third_party/blink/public/web/web_find_options.h"
+#include "third_party/blink/public/web/web_frame.h"
+#include "third_party/blink/public/web/web_input_element.h"
+#include "third_party/blink/public/web/web_local_frame.h"
+#include "third_party/blink/public/web/web_page_importance_signals.h"
+#include "third_party/blink/public/web/web_script_source.h"
+#include "third_party/blink/public/web/web_security_policy.h"
+#include "third_party/blink/public/web/web_serialized_script_value.h"
+#include "third_party/blink/public/web/web_settings.h"
+#include "third_party/blink/public/web/web_surrounding_text.h"
+#include "third_party/blink/public/web/web_view.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "third_party/skia/include/core/SkCanvas.h"
 #include "ui/display/display_switches.h"
@@ -70,8 +68,8 @@
 #include "ui/gfx/geometry/size.h"
 #include "ui/gfx/skia_util.h"
 
-#if defined(__linux__) || defined(ANDROID)
-#include "third_party/WebKit/public/web/linux/WebFontRendering.h"
+#if defined(OS_LINUX) || defined(OS_ANDROID) || defined(OS_FUCHSIA)
+#include "third_party/blink/public/platform/web_font_render_style.h"
 #endif
 
 using namespace blink;
@@ -101,7 +99,7 @@ class TestRunnerBindings : public gin::Wrappable<TestRunnerBindings> {
   static void Install(base::WeakPtr<TestRunner> test_runner,
                       base::WeakPtr<TestRunnerForSpecificView> view_test_runner,
                       WebLocalFrame* frame,
-                      bool is_web_platform_tests_mode);
+                      bool is_wpt_reftest);
 
  private:
   explicit TestRunnerBindings(
@@ -123,7 +121,6 @@ class TestRunnerBindings : public gin::Wrappable<TestRunnerBindings> {
   void CapturePixelsAsyncThen(v8::Local<v8::Function> callback);
   void ClearAllDatabases();
   void ClearPrinting();
-  void CloseWebInspector();
   void CopyImageAtAndCapturePixelsAsyncThen(int x,
                                             int y,
                                             v8::Local<v8::Function> callback);
@@ -156,7 +153,6 @@ class TestRunnerBindings : public gin::Wrappable<TestRunnerBindings> {
   void DumpTitleChanges();
   void DumpUserGestureInFrameLoadCallbacks();
   void EnableUseZoomForDSF(v8::Local<v8::Function> callback);
-  void EvaluateInWebInspector(int call_id, const std::string& script);
   void EvaluateScriptInIsolatedWorld(int world_id, const std::string& script);
   void ExecCommand(gin::Arguments* args);
   void ForceNextDrawingBufferCreationToFail();
@@ -238,6 +234,7 @@ class TestRunnerBindings : public gin::Wrappable<TestRunnerBindings> {
   void SetPointerLockWillRespondAsynchronously();
   void SetPopupBlockingEnabled(bool block_popups);
   void SetPrinting();
+  void SetPrintingForFrame(const std::string& frame_name);
   void SetScriptsAllowed(bool allowed);
   void SetShouldGeneratePixelResults(bool);
   void SetShouldStayOnPageAfterHandlingBeforeUnload(bool value);
@@ -251,26 +248,20 @@ class TestRunnerBindings : public gin::Wrappable<TestRunnerBindings> {
   void SetWillSendRequestClearHeader(const std::string& header);
   void SetWindowIsKey(bool value);
   void SetXSSAuditorEnabled(bool enabled);
-  void ShowWebInspector(gin::Arguments* args);
+  void NavigateSecondaryWindow(const std::string& url);
+  void InspectSecondaryWindow();
   void SimulateWebNotificationClick(gin::Arguments* args);
   void SimulateWebNotificationClose(const std::string& title, bool by_user);
   void UseUnfortunateSynchronousResizeMode();
   void WaitForPolicyDelegate();
   void WaitUntilDone();
   void WaitUntilExternalURLLoad();
-  void SetMockCredentialManagerError(const std::string& error);
-  void SetMockCredentialManagerResponse(const std::string& id,
-                                        const std::string& name,
-                                        const std::string& avatar,
-                                        const std::string& password);
-  void ClearMockCredentialManagerResponse();
   bool CallShouldCloseOnWebView();
   bool DisableAutoResizeMode(int new_width, int new_height);
   bool EnableAutoResizeMode(int min_width,
                             int min_height,
                             int max_width,
                             int max_height);
-  std::string EvaluateInWebInspectorOverlay(const std::string& script);
   v8::Local<v8::Value> EvaluateScriptInIsolatedWorldAndReturnValue(
       int world_id,
       const std::string& script);
@@ -301,7 +292,7 @@ void TestRunnerBindings::Install(
     base::WeakPtr<TestRunner> test_runner,
     base::WeakPtr<TestRunnerForSpecificView> view_test_runner,
     WebLocalFrame* frame,
-    bool is_web_platform_tests_mode) {
+    bool is_wpt_reftest) {
   v8::Isolate* isolate = blink::MainThreadIsolate();
   v8::HandleScope handle_scope(isolate);
   v8::Local<v8::Context> context = frame->MainWorldScriptContext();
@@ -321,33 +312,44 @@ void TestRunnerBindings::Install(
 
   global->Set(gin::StringToV8(isolate, "testRunner"), v8_bindings);
 
-  // The web-platform-tests suite require that reference comparison is delayed
-  // for any test with a 'reftest-wait' class on the root element, until that
-  // class attribute is removed. To support this approach, we inject some
-  // JavaScript that implements the same behavior using TestRunner.
+  // Inject some JavaScript to the top-level frame of a reftest in the
+  // web-platform-tests suite to have the same reftest screenshot timing as
+  // upstream WPT:
   //
-  // See http://web-platform-tests.org/writing-tests/reftests.html for more
-  // details about reference tests in the web-platform-tests suite.
-  if (is_web_platform_tests_mode) {
+  // 1. For normal reftest, we would like to take screenshots after web fonts
+  //    are loaded, i.e. replicate the behavior of this injected script:
+  //    https://github.com/w3c/web-platform-tests/blob/master/tools/wptrunner/wptrunner/executors/reftest-wait_webdriver.js
+  // 2. For reftests with a 'reftest-wait' class on the root element, reference
+  //    comparison is delayed until that class attribute is removed. To support
+  //    this feature, we use a mutation observer.
+  //    http://web-platform-tests.org/writing-tests/reftests.html#controlling-when-comparison-occurs
+  //
+  // Note that this method may be called multiple times on a frame, so we put
+  // the code behind a flag. The flag is safe to be installed on testRunner
+  // because WPT reftests never access this object.
+  if (is_wpt_reftest && !frame->Parent()) {
     frame->ExecuteScript(blink::WebString(
-        R"(window.addEventListener('load', function() {
-          if (!window.testRunner) {
-            return;
-          }
-          const target = document.documentElement;
-          if (target != null && target.classList.contains('reftest-wait')) {
+        R"(if (!window.testRunner._wpt_reftest_setup) {
+          window.testRunner._wpt_reftest_setup = true;
+
+          window.addEventListener('load', function() {
             window.testRunner.waitUntilDone();
-            const observer = new MutationObserver(function(mutations) {
-              mutations.forEach(function(mutation) {
-                if (!target.classList.contains('reftest-wait')) {
-                  window.testRunner.notifyDone();
-                }
+            const target = document.documentElement;
+            if (target != null && target.classList.contains('reftest-wait')) {
+              const observer = new MutationObserver(function(mutations) {
+                mutations.forEach(function(mutation) {
+                  if (!target.classList.contains('reftest-wait')) {
+                    window.testRunner.notifyDone();
+                  }
+                });
               });
-            });
-            const config = {attributes: true};
-            observer.observe(target, config);
-          }
-        });)"));
+              const config = {attributes: true};
+              observer.observe(target, config);
+            } else {
+              document.fonts.ready.then(() => window.testRunner.notifyDone());
+            }
+          });
+        })"));
   }
 }
 
@@ -363,12 +365,6 @@ gin::ObjectTemplateBuilder TestRunnerBindings::GetObjectTemplateBuilder(
   return gin::Wrappable<TestRunnerBindings>::GetObjectTemplateBuilder(isolate)
       .SetMethod("abortModal", &TestRunnerBindings::NotImplemented)
       .SetMethod("addDisallowedURL", &TestRunnerBindings::NotImplemented)
-      .SetMethod("setMockCredentialManagerError",
-                 &TestRunnerBindings::SetMockCredentialManagerError)
-      .SetMethod("setMockCredentialManagerResponse",
-                 &TestRunnerBindings::SetMockCredentialManagerResponse)
-      .SetMethod("clearMockCredentialManagerResponse",
-                 &TestRunnerBindings::ClearMockCredentialManagerResponse)
       .SetMethod("addMockSpeechRecognitionResult",
                  &TestRunnerBindings::AddMockSpeechRecognitionResult)
       .SetMethod("addOriginAccessWhitelistEntry",
@@ -381,7 +377,6 @@ gin::ObjectTemplateBuilder TestRunnerBindings::GetObjectTemplateBuilder(
       .SetMethod("clearAllDatabases", &TestRunnerBindings::ClearAllDatabases)
       .SetMethod("clearBackForwardList", &TestRunnerBindings::NotImplemented)
       .SetMethod("clearPrinting", &TestRunnerBindings::ClearPrinting)
-      .SetMethod("closeWebInspector", &TestRunnerBindings::CloseWebInspector)
       .SetMethod("copyImageAtAndCapturePixelsAsyncThen",
                  &TestRunnerBindings::CopyImageAtAndCapturePixelsAsyncThen)
       .SetMethod("didAcquirePointerLock",
@@ -437,10 +432,6 @@ gin::ObjectTemplateBuilder TestRunnerBindings::GetObjectTemplateBuilder(
                  &TestRunnerBindings::EnableAutoResizeMode)
       .SetMethod("enableUseZoomForDSF",
                  &TestRunnerBindings::EnableUseZoomForDSF)
-      .SetMethod("evaluateInWebInspector",
-                 &TestRunnerBindings::EvaluateInWebInspector)
-      .SetMethod("evaluateInWebInspectorOverlay",
-                 &TestRunnerBindings::EvaluateInWebInspectorOverlay)
       .SetMethod("evaluateScriptInIsolatedWorld",
                  &TestRunnerBindings::EvaluateScriptInIsolatedWorld)
       .SetMethod(
@@ -573,6 +564,8 @@ gin::ObjectTemplateBuilder TestRunnerBindings::GetObjectTemplateBuilder(
       .SetMethod("setPopupBlockingEnabled",
                  &TestRunnerBindings::SetPopupBlockingEnabled)
       .SetMethod("setPrinting", &TestRunnerBindings::SetPrinting)
+      .SetMethod("setPrintingForFrame",
+                 &TestRunnerBindings::SetPrintingForFrame)
       .SetMethod("setScriptsAllowed", &TestRunnerBindings::SetScriptsAllowed)
       .SetMethod("setScrollbarPolicy", &TestRunnerBindings::NotImplemented)
       .SetMethod("setShouldGeneratePixelResults",
@@ -598,7 +591,10 @@ gin::ObjectTemplateBuilder TestRunnerBindings::GetObjectTemplateBuilder(
       .SetMethod("setWindowIsKey", &TestRunnerBindings::SetWindowIsKey)
       .SetMethod("setXSSAuditorEnabled",
                  &TestRunnerBindings::SetXSSAuditorEnabled)
-      .SetMethod("showWebInspector", &TestRunnerBindings::ShowWebInspector)
+      .SetMethod("navigateSecondaryWindow",
+                 &TestRunnerBindings::NavigateSecondaryWindow)
+      .SetMethod("inspectSecondaryWindow",
+                 &TestRunnerBindings::InspectSecondaryWindow)
       .SetMethod("simulateWebNotificationClick",
                  &TestRunnerBindings::SimulateWebNotificationClick)
       .SetMethod("simulateWebNotificationClose",
@@ -1208,6 +1204,11 @@ void TestRunnerBindings::SetPrinting() {
     runner_->SetPrinting();
 }
 
+void TestRunnerBindings::SetPrintingForFrame(const std::string& frame_name) {
+  if (runner_)
+    runner_->SetPrintingForFrame(frame_name);
+}
+
 void TestRunnerBindings::ClearPrinting() {
   if (runner_)
     runner_->ClearPrinting();
@@ -1250,39 +1251,20 @@ void TestRunnerBindings::DumpNavigationPolicy() {
     runner_->DumpNavigationPolicy();
 }
 
-void TestRunnerBindings::ShowWebInspector(gin::Arguments* args) {
-  if (runner_) {
-    std::string settings;
-    args->GetNext(&settings);
-    std::string frontend_url;
-    args->GetNext(&frontend_url);
-    runner_->ShowWebInspector(settings, frontend_url);
-  }
+void TestRunnerBindings::NavigateSecondaryWindow(const std::string& url) {
+  if (runner_)
+    runner_->NavigateSecondaryWindow(GURL(url));
 }
 
-void TestRunnerBindings::CloseWebInspector() {
+void TestRunnerBindings::InspectSecondaryWindow() {
   if (runner_)
-    runner_->CloseWebInspector();
+    runner_->InspectSecondaryWindow();
 }
 
 bool TestRunnerBindings::IsChooserShown() {
   if (runner_)
     return runner_->IsChooserShown();
   return false;
-}
-
-void TestRunnerBindings::EvaluateInWebInspector(int call_id,
-                                                const std::string& script) {
-  if (runner_)
-    runner_->EvaluateInWebInspector(call_id, script);
-}
-
-std::string TestRunnerBindings::EvaluateInWebInspectorOverlay(
-    const std::string& script) {
-  if (runner_)
-    return runner_->EvaluateInWebInspectorOverlay(script);
-
-  return std::string();
 }
 
 void TestRunnerBindings::ClearAllDatabases() {
@@ -1416,26 +1398,6 @@ void TestRunnerBindings::SetMockSpeechRecognitionError(
     const std::string& message) {
   if (runner_)
     runner_->SetMockSpeechRecognitionError(error, message);
-}
-
-void TestRunnerBindings::SetMockCredentialManagerResponse(
-    const std::string& id,
-    const std::string& name,
-    const std::string& avatar,
-    const std::string& password) {
-  if (runner_)
-    runner_->SetMockCredentialManagerResponse(id, name, avatar, password);
-}
-
-void TestRunnerBindings::ClearMockCredentialManagerResponse() {
-  if (runner_)
-    runner_->ClearMockCredentialManagerResponse();
-}
-
-void TestRunnerBindings::SetMockCredentialManagerError(
-    const std::string& error) {
-  if (runner_)
-    runner_->SetMockCredentialManagerError(error);
 }
 
 void TestRunnerBindings::AddWebPageOverlay() {
@@ -1618,7 +1580,6 @@ TestRunner::TestRunner(TestInterfaces* interfaces)
       main_view_(nullptr),
       mock_content_settings_client_(
           new MockContentSettingsClient(&layout_test_runtime_flags_)),
-      credential_manager_client_(new MockCredentialManagerClient),
       mock_screen_orientation_client_(new MockScreenOrientationClient),
       spellcheck_(new SpellCheckClient(this)),
       chooser_count_(0),
@@ -1633,8 +1594,13 @@ TestRunner::~TestRunner() {}
 void TestRunner::Install(
     WebLocalFrame* frame,
     base::WeakPtr<TestRunnerForSpecificView> view_test_runner) {
+  // In WPT, only reftests generate pixel results.
+  bool is_wpt_reftest =
+      is_web_platform_tests_mode() && ShouldGeneratePixelResults();
   TestRunnerBindings::Install(weak_factory_.GetWeakPtr(), view_test_runner,
-                              frame, is_web_platform_tests_mode());
+                              frame, is_wpt_reftest);
+  mock_screen_orientation_client_->OverrideAssociatedInterfaceProviderForFrame(
+      frame);
 }
 
 void TestRunner::SetDelegate(WebTestDelegate* delegate) {
@@ -1659,8 +1625,8 @@ void TestRunner::Reset() {
   drag_image_.Reset();
 
   WebSecurityPolicy::ResetOriginAccessWhitelists();
-#if defined(__linux__) || defined(ANDROID)
-  WebFontRendering::SetSubpixelPositioning(false);
+#if defined(OS_LINUX) || defined(OS_ANDROID) || defined(OS_FUCHSIA)
+  WebFontRenderStyle::SetSubpixelPositioning(false);
 #endif
 
   if (delegate_) {
@@ -1792,7 +1758,15 @@ void TestRunner::DumpPixelsAsync(
 
   // Request appropriate kind of pixel dump.
   if (layout_test_runtime_flags_.is_printing()) {
-    test_runner::PrintFrameAsync(frame, std::move(callback));
+    auto* target_frame = frame;
+    std::string frame_name = layout_test_runtime_flags_.printing_frame();
+    if (!frame_name.empty()) {
+      auto* frame_to_print =
+          frame->FindFrameByName(WebString::FromUTF8(frame_name));
+      if (frame_to_print && frame_to_print->IsWebLocalFrame())
+        target_frame = frame_to_print->ToWebLocalFrame();
+    }
+    test_runner::PrintFrameAsync(target_frame, std::move(callback));
   } else {
     // TODO(lukasza): Ask the |delegate_| to capture the pixels in the browser
     // process, so that OOPIF pixels are also captured.
@@ -1887,10 +1861,6 @@ WebContentSettingsClient* TestRunner::GetWebContentSettings() const {
 
 WebTextCheckClient* TestRunner::GetWebTextCheckClient() const {
   return spellcheck_.get();
-}
-
-void TestRunner::InitializeWebViewWithMocks(blink::WebView* web_view) {
-  web_view->SetCredentialManagerClient(credential_manager_client_.get());
 }
 
 bool TestRunner::shouldDumpSpellCheckCallbacks() const {
@@ -1992,10 +1962,6 @@ midi::mojom::Result TestRunner::midiAccessorResult() {
   return midi_accessor_result_;
 }
 
-void TestRunner::ClearDevToolsLocalStorage() {
-  delegate_->ClearDevToolsLocalStorage();
-}
-
 void TestRunner::SetV8CacheDisabled(bool disabled) {
   if (!main_view_) {
     disable_v8_cache_ = disabled;
@@ -2006,9 +1972,12 @@ void TestRunner::SetV8CacheDisabled(bool disabled) {
                : blink::WebSettings::kV8CacheOptionsDefault);
 }
 
-void TestRunner::ShowDevTools(const std::string& settings,
-                              const std::string& frontend_url) {
-  delegate_->ShowDevTools(settings, frontend_url);
+void TestRunner::NavigateSecondaryWindow(const GURL& url) {
+  delegate_->NavigateSecondaryWindow(url);
+}
+
+void TestRunner::InspectSecondaryWindow() {
+  delegate_->InspectSecondaryWindow();
 }
 
 class WorkItemBackForward : public TestRunner::WorkItem {
@@ -2194,10 +2163,10 @@ void TestRunner::RemoveOriginAccessWhitelistEntry(
 }
 
 void TestRunner::SetTextSubpixelPositioning(bool value) {
-#if defined(__linux__) || defined(ANDROID)
+#if defined(OS_LINUX) || defined(OS_ANDROID) || defined(OS_FUCHSIA)
   // Since FontConfig doesn't provide a variable to control subpixel
   // positioning, we'll fall back to setting it globally for all fonts.
-  WebFontRendering::SetSubpixelPositioning(value);
+  WebFontRenderStyle::SetSubpixelPositioning(value);
 #endif
 }
 
@@ -2340,15 +2309,6 @@ void TestRunner::SetMockScreenOrientation(const std::string& orientation_str) {
 
 void TestRunner::DisableMockScreenOrientation() {
   mock_screen_orientation_client_->SetDisabled(true);
-}
-
-void TestRunner::DidOpenChooser() {
-  chooser_count_++;
-}
-
-void TestRunner::DidCloseChooser() {
-  chooser_count_--;
-  DCHECK_LE(0, chooser_count_);
 }
 
 void TestRunner::SetPopupBlockingEnabled(bool block_popups) {
@@ -2601,6 +2561,11 @@ void TestRunner::DumpSelectionRect() {
 }
 
 void TestRunner::SetPrinting() {
+  SetPrintingForFrame("");
+}
+
+void TestRunner::SetPrintingForFrame(const std::string& frame_name) {
+  layout_test_runtime_flags_.set_printing_frame(frame_name);
   layout_test_runtime_flags_.set_is_printing(true);
   OnLayoutTestRuntimeFlagsChanged();
 }
@@ -2626,13 +2591,9 @@ void TestRunner::SetUseMockTheme(bool use) {
   blink::SetMockThemeEnabledForTest(use);
 }
 
-void TestRunner::ShowWebInspector(const std::string& str,
-                                  const std::string& frontend_url) {
-  ShowDevTools(str, frontend_url);
-}
-
 void TestRunner::WaitUntilExternalURLLoad() {
   layout_test_runtime_flags_.set_wait_until_external_url_load(true);
+  layout_test_runtime_flags_.set_wait_until_done(true);
   OnLayoutTestRuntimeFlagsChanged();
 }
 
@@ -2674,22 +2635,8 @@ bool TestRunner::ShouldDumpJavaScriptDialogs() const {
   return layout_test_runtime_flags_.dump_javascript_dialogs();
 }
 
-void TestRunner::CloseWebInspector() {
-  delegate_->CloseDevTools();
-}
-
 bool TestRunner::IsChooserShown() {
   return 0 < chooser_count_;
-}
-
-void TestRunner::EvaluateInWebInspector(int call_id,
-                                        const std::string& script) {
-  delegate_->EvaluateInWebInspector(call_id, script);
-}
-
-std::string TestRunner::EvaluateInWebInspectorOverlay(
-    const std::string& script) {
-  return delegate_->EvaluateInWebInspectorOverlay(script);
 }
 
 void TestRunner::ClearAllDatabases() {
@@ -2765,23 +2712,6 @@ void TestRunner::SetMockSpeechRecognitionError(const std::string& error,
                                                const std::string& message) {
   getMockWebSpeechRecognizer()->SetError(WebString::FromUTF8(error),
                                          WebString::FromUTF8(message));
-}
-
-void TestRunner::SetMockCredentialManagerResponse(const std::string& id,
-                                                  const std::string& name,
-                                                  const std::string& avatar,
-                                                  const std::string& password) {
-  credential_manager_client_->SetResponse(new WebPasswordCredential(
-      WebString::FromUTF8(id), WebString::FromUTF8(password),
-      WebString::FromUTF8(name), WebURL(GURL(avatar))));
-}
-
-void TestRunner::ClearMockCredentialManagerResponse() {
-  credential_manager_client_->SetResponse(nullptr);
-}
-
-void TestRunner::SetMockCredentialManagerError(const std::string& error) {
-  credential_manager_client_->SetError(error);
 }
 
 void TestRunner::OnLayoutTestRuntimeFlagsChanged() {

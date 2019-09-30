@@ -7,7 +7,6 @@
 #include "base/debug/stack_trace.h"
 #include "base/run_loop.h"
 
-#include "base/memory/ptr_util.h"
 #include "ui/aura/client/cursor_client.h"
 #include "ui/aura/client/focus_client.h"
 #include "ui/aura/client/transient_window_client.h"
@@ -328,10 +327,10 @@ TEST_F(DesktopWindowTreeHostMusTest, ShadowDefaults) {
   widget.Init(params);
   // |DesktopNativeWidgetAura::content_window_| should have no shadow; the wm
   // should provide it if it so desires.
-  EXPECT_EQ(wm::ShadowElevation::NONE,
+  EXPECT_EQ(wm::kShadowElevationNone,
             widget.GetNativeView()->GetProperty(wm::kShadowElevationKey));
   // The wm honors the shadow property from the WindowTreeHost's window.
-  EXPECT_EQ(wm::ShadowElevation::DEFAULT,
+  EXPECT_EQ(wm::kShadowElevationDefault,
             widget.GetNativeView()->GetHost()->window()->GetProperty(
                 wm::kShadowElevationKey));
 }
@@ -342,9 +341,9 @@ TEST_F(DesktopWindowTreeHostMusTest, NoShadow) {
   params.ownership = Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
   params.shadow_type = Widget::InitParams::SHADOW_TYPE_NONE;
   widget.Init(params);
-  EXPECT_EQ(wm::ShadowElevation::NONE,
+  EXPECT_EQ(wm::kShadowElevationNone,
             widget.GetNativeView()->GetProperty(wm::kShadowElevationKey));
-  EXPECT_EQ(wm::ShadowElevation::NONE,
+  EXPECT_EQ(wm::kShadowElevationNone,
             widget.GetNativeView()->GetHost()->window()->GetProperty(
                 wm::kShadowElevationKey));
 }

@@ -8,11 +8,11 @@
 #include <utility>
 #include <vector>
 
-#include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "components/arc/arc_bridge_service.h"
 #include "components/arc/connection_holder.h"
+#include "components/arc/test/connection_holder_util.h"
 #include "components/arc/test/fake_notifications_instance.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/arc/notification/arc_notification_manager.h"
@@ -59,20 +59,6 @@ class MockMessageCenter : public message_center::FakeMessageCenter {
   DISALLOW_COPY_AND_ASSIGN(MockMessageCenter);
 };
 
-class NotificationsObserver
-    : public ConnectionObserver<mojom::NotificationsInstance> {
- public:
-  NotificationsObserver() = default;
-  void OnConnectionReady() override { ready_ = true; }
-
-  bool IsReady() { return ready_; }
-
- private:
-  bool ready_ = false;
-
-  DISALLOW_COPY_AND_ASSIGN(NotificationsObserver);
-};
-
 }  // anonymous namespace
 
 class ArcNotificationManagerTest : public testing::Test {
@@ -98,9 +84,7 @@ class ArcNotificationManagerTest : public testing::Test {
     data->key = key;
     data->title = "TITLE";
     data->message = "MESSAGE";
-
-    std::vector<unsigned char> icon_data;
-    data->icon_data = icon_data;
+    data->package_name = "PACKAGE_NAME";
 
     arc_notification_manager()->OnNotificationPosted(std::move(data));
 
@@ -122,14 +106,8 @@ class ArcNotificationManagerTest : public testing::Test {
     arc_notification_manager_ = ArcNotificationManager::CreateForTesting(
         service_.get(), EmptyAccountId(), message_center_.get());
 
-    NotificationsObserver observer;
-    service_->notifications()->AddObserver(&observer);
     service_->notifications()->SetInstance(arc_notifications_instance_.get());
-
-    while (!observer.IsReady())
-      base::RunLoop().RunUntilIdle();
-
-    service_->notifications()->RemoveObserver(&observer);
+    WaitForInstanceReady(service_->notifications());
   }
 
   void TearDown() override {

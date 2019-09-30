@@ -23,9 +23,10 @@ class _ThreadTimes(perf_benchmark.PerfBenchmark):
     return 'thread_times'
 
   @classmethod
-  def ValueCanBeAddedPredicate(cls, value, _):
+  def ShouldAddValue(cls, name, from_first_story_run):
+    del from_first_story_run  # unused
     # Default to only reporting per-frame metrics.
-    return 'per_second' not in value.name
+    return 'per_second' not in name
 
   def SetExtraBrowserOptions(self, options):
     silk_flags.CustomizeBrowserOptionsForThreadTimes(options)
@@ -45,24 +46,7 @@ class ThreadTimesKeySilkCases(_ThreadTimes):
   def Name(cls):
     return 'thread_times.key_silk_cases'
 
-  def GetExpectations(self):
-    class StoryExpectations(story.expectations.StoryExpectations):
-      def SetExpectations(self):
-        self.DisableStory('https://polymer-topeka.appspot.com/',
-                          [story.expectations.ALL], 'crbug.com/507865')
-        self.DisableStory('http://plus.google.com/app/basic/stream',
-                          [story.expectations.ALL], 'crbug.com/338838')
-        self.DisableStory('inbox_app.html?slide_drawer',
-                          [story.expectations.ALL], 'crbug.com/446332')
-        self.DisableStory('http://s.codepen.io/befamous/fullpage/pFsqb?scroll',
-                          [story.expectations.ALL], 'crbug.com/764825')
-        self.DisableStory('inbox_app.html?swipe_to_dismiss',
-                          [story.expectations.ALL], 'crbug.com/764825')
-        self.DisableStory('masonry.html',
-                          [story.expectations.ALL], 'crbug.com/764825')
-    return StoryExpectations()
-
-
+@benchmark.Owner(emails=['vmiura@chromium.org', 'sadrul@chromium.org'])
 class ThreadTimesKeyHitTestCases(_ThreadTimes):
   """Measure timeline metrics while performing smoothness action on key hit
   testing cases."""
@@ -74,15 +58,6 @@ class ThreadTimesKeyHitTestCases(_ThreadTimes):
   @classmethod
   def Name(cls):
     return 'thread_times.key_hit_test_cases'
-
-  def GetExpectations(self):
-    class StoryExpectations(story.expectations.StoryExpectations):
-      def SetExpectations(self):
-        self.DisableBenchmark(
-            [story.expectations.ALL],
-            'Disabled on all platforms due to use of deprecated web platform '
-            'features. Crbug.com/750876.')
-    return StoryExpectations()
 
 
 @benchmark.Owner(emails=['vmiura@chromium.org'])
@@ -98,21 +73,6 @@ class ThreadTimesKeyMobileSitesSmooth(_ThreadTimes):
   def Name(cls):
     return 'thread_times.key_mobile_sites_smooth'
 
-  def GetExpectations(self):
-    class StoryExpectations(story.expectations.StoryExpectations):
-      def SetExpectations(self):
-        pass
-        # TODO(rnephew): Uncomment when these stories is rerecorded.
-        # self.DisableStory(
-        #     'http://forecast.io', [story.expectations.ALL],
-        #     'crbug.com/249736')
-        # self.DisableStory(
-        #    'Twitter', [story.expectations.ALL],
-        #    'Forbidden (Rate Limit Exceeded)')
-        # self.DisableStory('ESPN', [story.expectations.ALL],
-        #                   'crbug.com/249722')
-    return StoryExpectations()
-
 
 @benchmark.Owner(emails=['vmiura@chromium.org'])
 class ThreadTimesSimpleMobileSites(_ThreadTimes):
@@ -124,13 +84,6 @@ class ThreadTimesSimpleMobileSites(_ThreadTimes):
   @classmethod
   def Name(cls):
     return 'thread_times.simple_mobile_sites'
-
-  def GetExpectations(self):
-    class StoryExpectations(story.expectations.StoryExpectations):
-      def SetExpectations(self):
-        self.DisableStory('https://www.flickr.com/', [story.expectations.ALL],
-                          'crbug.com/752228')
-    return StoryExpectations()
 
 
 @benchmark.Owner(emails=['vmiura@chromium.org'])
@@ -149,12 +102,6 @@ class ThreadTimesCompositorCases(_ThreadTimes):
   def Name(cls):
     return 'thread_times.tough_compositor_cases'
 
-  def GetExpectations(self):
-    class StoryExpectations(story.expectations.StoryExpectations):
-      def SetExpectations(self):
-        pass # Nothing disabled.
-    return StoryExpectations()
-
 
 @benchmark.Owner(emails=['skyostil@chromium.org'])
 class ThreadTimesKeyIdlePowerCases(_ThreadTimes):
@@ -168,17 +115,13 @@ class ThreadTimesKeyIdlePowerCases(_ThreadTimes):
     return 'thread_times.key_idle_power_cases'
 
   @classmethod
-  def ValueCanBeAddedPredicate(cls, value, _):
+  def ShouldAddValue(cls, name, from_first_story_run):
+    del from_first_story_run  # unused
     # Only report per-second metrics.
-    return 'per_frame' not in value.name and 'mean_frame' not in value.name
-
-  def GetExpectations(self):
-    class StoryExpectations(story.expectations.StoryExpectations):
-      def SetExpectations(self):
-        pass
-    return StoryExpectations()
+    return 'per_frame' not in name and 'mean_frame' not in name
 
 
+@benchmark.Owner(emails=['vmiura@chromium.org', 'sadrul@chromium.org'])
 class ThreadTimesKeyNoOpCases(_ThreadTimes):
   """Measures timeline metrics for common interactions and behaviors that should
   have minimal cost. The metrics are per-second rather than per-frame."""
@@ -190,18 +133,13 @@ class ThreadTimesKeyNoOpCases(_ThreadTimes):
     return 'thread_times.key_noop_cases'
 
   @classmethod
-  def ValueCanBeAddedPredicate(cls, value, _):
+  def ShouldAddValue(cls, name, from_first_story_run):
+    del from_first_story_run  # unused
     # Only report per-second metrics.
-    return 'per_frame' not in value.name and 'mean_frame' not in value.name
-
-  def GetExpectations(self):
-    class StoryExpectations(story.expectations.StoryExpectations):
-      def SetExpectations(self):
-        pass
-    return StoryExpectations()
+    return 'per_frame' not in name and 'mean_frame' not in name
 
 
-@benchmark.Owner(emails=['tdresser@chromium.org'])
+@benchmark.Owner(emails=['bokan@chromium.org', 'nzolghadr@chromium.org'])
 class ThreadTimesToughScrollingCases(_ThreadTimes):
   """Measure timeline metrics while performing smoothness action on tough
   scrolling cases."""
@@ -210,38 +148,3 @@ class ThreadTimesToughScrollingCases(_ThreadTimes):
   @classmethod
   def Name(cls):
     return 'thread_times.tough_scrolling_cases'
-
-  def GetExpectations(self):
-    class StoryExpectations(story.expectations.StoryExpectations):
-      def SetExpectations(self):
-        self.DisableStory('canvas_05000_pixels_per_second',
-                          [story.expectations.ANDROID_WEBVIEW],
-                          'crbug.com/783362')
-        self.DisableStory('canvas_10000_pixels_per_second',
-                          [story.expectations.ANDROID_WEBVIEW],
-                          'crbug.com/783362')
-        self.DisableStory('canvas_15000_pixels_per_second',
-                          [story.expectations.ANDROID_WEBVIEW],
-                          'crbug.com/783362')
-        self.DisableStory('canvas_20000_pixels_per_second',
-                          [story.expectations.ANDROID_WEBVIEW],
-                          'crbug.com/783362')
-        self.DisableStory('canvas_30000_pixels_per_second',
-                          [story.expectations.ANDROID_WEBVIEW],
-                          'crbug.com/783362')
-        self.DisableStory('canvas_40000_pixels_per_second',
-                          [story.expectations.ANDROID_WEBVIEW],
-                          'crbug.com/783362')
-        self.DisableStory('canvas_50000_pixels_per_second',
-                          [story.expectations.ANDROID_WEBVIEW],
-                          'crbug.com/783362')
-        self.DisableStory('canvas_60000_pixels_per_second',
-                          [story.expectations.ANDROID_WEBVIEW],
-                          'crbug.com/783362')
-        self.DisableStory('canvas_75000_pixels_per_second',
-                          [story.expectations.ANDROID_WEBVIEW],
-                          'crbug.com/783362')
-        self.DisableStory('canvas_90000_pixels_per_second',
-                          [story.expectations.ANDROID_WEBVIEW],
-                          'crbug.com/783362')
-    return StoryExpectations()

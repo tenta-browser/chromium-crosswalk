@@ -4,10 +4,10 @@
 
 suite('SiteDataTest', function() {
   /** @type {SiteDataElement} */
-  var siteData;
+  let siteData;
 
   /** @type {TestLocalDataBrowserProxy} */
-  var testBrowserProxy;
+  let testBrowserProxy;
 
   setup(function() {
     settings.navigateTo(settings.routes.SITE_SETTINGS);
@@ -25,17 +25,17 @@ suite('SiteDataTest', function() {
         test_util.eventToPromise('site-data-list-complete', siteData)
             .then(() => {
               Polymer.dom.flush();
-              var button =
+              const button =
                   siteData.$$('.site-item').querySelector('.icon-delete-gray');
               assertTrue(!!button);
-              assertEquals(button.is, 'paper-icon-button-light');
-              MockInteractions.tap(button);
+              assertEquals('PAPER-ICON-BUTTON-LIGHT', button.tagName);
+              MockInteractions.tap(button.querySelector('button'));
               return testBrowserProxy.whenCalled('removeItem');
             })
             .then(function(path) {
               assertEquals('Hello', path);
             });
-    var sites = [
+    const sites = [
       {site: 'Hello', id: '1', localData: 'Cookiez!'},
     ];
     testBrowserProxy.setCookieList(sites);
@@ -56,7 +56,7 @@ suite('SiteDataTest', function() {
                       .then(() => {
                         assertEquals(1, siteData.$.list.items.length);
                       });
-    var sites = [
+    const sites = [
       {site: 'Hello', id: '1', localData: 'Cookiez!'},
       {site: 'World', id: '2', localData: 'Cookiez!'},
     ];

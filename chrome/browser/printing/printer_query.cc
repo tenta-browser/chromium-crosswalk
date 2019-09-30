@@ -66,6 +66,10 @@ int PrinterQuery::cookie() const {
   return cookie_;
 }
 
+void PrinterQuery::set_callback(base::OnceClosure callback) {
+  callback_ = std::move(callback);
+}
+
 void PrinterQuery::GetSettings(GetSettingsAskParam ask_user_for_settings,
                                int expected_page_count,
                                bool has_selection,
@@ -83,9 +87,10 @@ void PrinterQuery::GetSettings(GetSettingsAskParam ask_user_for_settings,
       ask_user_for_settings == GetSettingsAskParam::ASK_USER;
   worker_->PostTask(
       FROM_HERE,
-      base::Bind(&PrintJobWorker::GetSettings, base::Unretained(worker_.get()),
-                 is_print_dialog_box_shown_, expected_page_count, has_selection,
-                 margin_type, is_scripted, is_modifiable));
+      base::BindOnce(&PrintJobWorker::GetSettings,
+                     base::Unretained(worker_.get()),
+                     is_print_dialog_box_shown_, expected_page_count,
+                     has_selection, margin_type, is_scripted, is_modifiable));
 }
 
 void PrinterQuery::SetSettings(
@@ -93,11 +98,23 @@ void PrinterQuery::SetSettings(
     base::OnceClosure callback) {
   StartWorker(std::move(callback));
 
-  worker_->PostTask(FROM_HERE,
-                    base::Bind(&PrintJobWorker::SetSettings,
-                               base::Unretained(worker_.get()),
-                               base::Passed(&new_settings)));
+  worker_->PostTask(FROM_HERE, base::BindOnce(&PrintJobWorker::SetSettings,
+                                              base::Unretained(worker_.get()),
+                                              std::move(new_settings)));
 }
+
+#if defined(OS_CHROMEOS)
+void PrinterQuery::SetSettingsFromPOD(
+    std::unique_ptr<printing::PrintSettings> new_settings,
+    base::OnceClosure callback) {
+  StartWorker(std::move(callback));
+
+  worker_->PostTask(
+      FROM_HERE,
+      base::BindOnce(&PrintJobWorker::SetSettingsFromPOD,
+                     base::Unretained(worker_.get()), std::move(new_settings)));
+}
+#endif
 
 void PrinterQuery::StartWorker(base::OnceClosure callback) {
   DCHECK(!callback_);

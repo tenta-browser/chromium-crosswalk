@@ -126,22 +126,11 @@ template("mac_toolchain") {
     ld = _cxx
 
     if (use_clang_static_analyzer) {
-      # Static analysis isn't supported under GOMA. See crbug.com/687245
-      # for progress on this issue.
-      assert(!use_goma, "'use_clang_static_analyzer' cannot be used with GOMA.")
-
-      # Call "ccc-analyzer" or "c++-analyzer" instead of directly calling Clang.
-      # |wrapper_tool| sets the environment variables which are read by the
-      # analyzer tools.
       analyzer_wrapper =
           rebase_path("//build/toolchain/clang_static_analyzer_wrapper.py",
-                      root_build_dir)
-      cc = analyzer_wrapper + " --clang-cc-path=${cc} --analyzer=" +
-           rebase_path("//third_party/scan-build/src/libexec/ccc-analyzer",
-                       root_build_dir)
-      cxx = analyzer_wrapper + " --clang-cxx-path=${cxx} --analyzer=" +
-            rebase_path("//third_party/scan-build/src/libexec/c++-analyzer",
-                        root_build_dir)
+                      root_build_dir) + "  --mode=clang"
+      cc = analyzer_wrapper + " ${cc}"
+      cxx = analyzer_wrapper + " ${cxx}"
 
       ld = cxx
     }
@@ -247,7 +236,18 @@ template("mac_toolchain") {
     tool("alink") {
       script =
           rebase_path("//build/toolchain/mac/filter_libtool.py", root_build_dir)
-      command = "$env_wrapper rm -f {{output}} && TOOL_VERSION=${tool_versions.filter_libtool} python $script libtool -static {{arflags}} -o {{output}} {{inputs}}"
+
+      # Note about -filelist: Apple's linker reads the file list file and
+      # interprets each newline-separated chunk of text as a file name. It
+      # doesn't do the things one would expect from the shell like unescaping
+      # or handling quotes. In contrast, when Ninja finds a file name with
+      # spaces, it single-quotes them in $inputs_newline as it would normally
+      # do for command-line arguments. Thus any source names with spaces, or
+      # label names with spaces (which GN bases the output paths on) will be
+      # corrupted by this process. Don't use spaces for source files or labels.
+      rspfile = "{{output}}.rsp"
+      rspfile_content = "{{inputs_newline}}"
+      command = "$env_wrapper rm -f {{output}} && TOOL_VERSION=${tool_versions.filter_libtool} python $script libtool -static {{arflags}} -o {{output}} -filelist $rspfile"
       description = "LIBTOOL-STATIC {{output}}"
       outputs = [
         "{{output_dir}}/{{target_output_name}}{{output_extension}}",
@@ -361,7 +361,7 @@ template("mac_toolchain") {
       rspfile = "$outfile.rsp"
       pool = "//build/toolchain:link_pool($default_toolchain)"
 
-      # Note about --filelist: Apple's linker reads the file list file and
+      # Note about -filelist: Apple's linker reads the file list file and
       # interprets each newline-separated chunk of text as a file name. It
       # doesn't do the things one would expect from the shell like unescaping
       # or handling quotes. In contrast, when Ninja finds a file name with
@@ -446,6 +446,10 @@ template("mac_toolchain") {
 
       description = "COMPILE_XCASSETS {{output}}"
       pool = ":bundle_pool($default_toolchain)"
+    }
+
+    tool("action") {
+      pool = "//build/toolchain:action_pool($default_toolchain)"
     }
   }
 }

@@ -45,7 +45,7 @@ Polymer({
 
   /** @private */
   closePopupMenu_: function() {
-    this.$$('dialog[is=cr-action-menu]').close();
+    this.$$('cr-action-menu').close();
   },
 
   /**
@@ -85,8 +85,8 @@ Polymer({
 
   /** @private */
   onDotsTap_: function() {
-    /** @type {!CrActionMenuElement} */ (this.$$('dialog[is=cr-action-menu]'))
-        .showAt(assert(this.$$('button[is="paper-icon-button-light"]')));
+    /** @type {!CrActionMenuElement} */ (this.$$('cr-action-menu'))
+        .showAt(assert(this.$$('paper-icon-button-light button')));
   },
 
   /**
@@ -99,14 +99,14 @@ Polymer({
 
     this.showEditSearchEngineDialog_ = true;
     this.async(() => {
-      var dialog = this.$$('settings-search-engine-dialog');
+      const dialog = this.$$('settings-search-engine-dialog');
       // Register listener to detect when the dialog is closed. Flip the boolean
       // once closed to force a restamp next time it is shown such that the
       // previous dialog's contents are cleared.
       dialog.addEventListener('close', () => {
         this.showEditSearchEngineDialog_ = false;
         cr.ui.focusWithoutInk(
-            assert(this.$$('button[is="paper-icon-button-light"]')));
+            assert(this.$$('paper-icon-button-light button')));
       });
     });
   },

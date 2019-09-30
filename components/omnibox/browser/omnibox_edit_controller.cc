@@ -4,6 +4,8 @@
 
 #include "components/omnibox/browser/omnibox_edit_controller.h"
 
+#include "components/toolbar/toolbar_model.h"
+
 void OmniboxEditController::OnAutocompleteAccept(
     const GURL& destination_url,
     WindowOpenDisposition disposition,
@@ -14,10 +16,11 @@ void OmniboxEditController::OnAutocompleteAccept(
   transition_ = transition;
 }
 
-bool OmniboxEditController::SwitchToTabWithURL(const std::string& url,
-                                               bool close_this) {
-  return false;
-}
+void OmniboxEditController::OnInputInProgress(bool in_progress) {}
+
+void OmniboxEditController::OnChanged() {}
+
+void OmniboxEditController::OnPopupVisibilityChanged() {}
 
 OmniboxEditController::OmniboxEditController()
     : disposition_(WindowOpenDisposition::CURRENT_TAB),

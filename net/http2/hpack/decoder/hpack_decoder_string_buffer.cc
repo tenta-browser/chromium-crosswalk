@@ -8,6 +8,7 @@
 
 #include "base/logging.h"
 #include "base/trace_event/memory_usage_estimator.h"
+#include "net/http2/platform/api/http2_string.h"
 #include "net/http2/tools/http2_bug_tracker.h"
 
 namespace net {
@@ -53,7 +54,7 @@ HpackDecoderStringBuffer::HpackDecoderStringBuffer()
       is_huffman_encoded_(false),
       state_(State::RESET),
       backing_(Backing::RESET) {}
-HpackDecoderStringBuffer::~HpackDecoderStringBuffer() {}
+HpackDecoderStringBuffer::~HpackDecoderStringBuffer() = default;
 
 void HpackDecoderStringBuffer::Reset() {
   DVLOG(3) << "HpackDecoderStringBuffer::Reset";
@@ -166,9 +167,9 @@ void HpackDecoderStringBuffer::BufferStringIfUnbuffered() {
   DVLOG(3) << "HpackDecoderStringBuffer::BufferStringIfUnbuffered state="
            << state_ << ", backing=" << backing_;
   if (state_ != State::RESET && backing_ == Backing::UNBUFFERED) {
-    DVLOG(2) << "HpackDecoderStringBuffer buffering string of length "
+    DVLOG(2) << "HpackDecoderStringBuffer buffering Http2String of length "
              << value_.size();
-    value_.CopyToString(&buffer_);
+    buffer_.assign(value_.data(), value_.size());
     if (state_ == State::COMPLETE) {
       value_ = buffer_;
     }
@@ -201,7 +202,7 @@ Http2String HpackDecoderStringBuffer::ReleaseString() {
     if (backing_ == Backing::BUFFERED) {
       return std::move(buffer_);
     } else {
-      return value_.as_string();
+      return Http2String(value_);
     }
   }
   return "";

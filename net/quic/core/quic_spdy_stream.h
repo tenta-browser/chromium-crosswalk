@@ -13,7 +13,6 @@
 
 #include <cstddef>
 #include <list>
-#include <string>
 
 #include "base/macros.h"
 #include "net/base/iovec.h"
@@ -24,6 +23,7 @@
 #include "net/quic/platform/api/quic_export.h"
 #include "net/quic/platform/api/quic_flags.h"
 #include "net/quic/platform/api/quic_socket_address.h"
+#include "net/quic/platform/api/quic_string.h"
 #include "net/spdy/core/spdy_framer.h"
 
 namespace net {
@@ -34,12 +34,6 @@ class QuicStreamPeer;
 }  // namespace test
 
 class QuicSpdySession;
-
-// This is somewhat arbitrary.  It's possible, but unlikely, we will either fail
-// to set a priority client-side, or cancel a stream before stripping the
-// priority from the wire server-side.  In either case, start out with a
-// priority in the middle.
-const SpdyPriority kDefaultPriority = 3;
 
 // A QUIC stream that can send and receive HTTP2 (SPDY) headers.
 class QUIC_EXPORT_PRIVATE QuicSpdyStream : public QuicStream {
@@ -93,6 +87,10 @@ class QUIC_EXPORT_PRIVATE QuicSpdyStream : public QuicStream {
                                    size_t frame_len,
                                    const QuicHeaderList& header_list);
 
+  // Called by the session when a PRIORITY frame has been been received for this
+  // stream. This method will only be called for server streams.
+  void OnPriorityFrame(SpdyPriority priority);
+
   // Override the base class to not discard response when receiving
   // QUIC_STREAM_NO_ERROR.
   void OnStreamReset(const QuicRstStreamFrame& frame) override;
@@ -106,7 +104,7 @@ class QUIC_EXPORT_PRIVATE QuicSpdyStream : public QuicStream {
 
   // Sends |data| to the peer, or buffers if it can't be sent immediately.
   void WriteOrBufferBody(
-      const std::string& data,
+      const QuicString& data,
       bool fin,
       QuicReferenceCountedPointer<QuicAckListenerInterface> ack_listener);
 
@@ -160,12 +158,6 @@ class QUIC_EXPORT_PRIVATE QuicSpdyStream : public QuicStream {
   // been received and there are no trailers.
   bool FinishedReadingTrailers() const;
 
-  virtual SpdyPriority priority() const;
-
-  // Sets priority_ to priority.  This should only be called before bytes are
-  // written to the server.
-  void SetPriority(SpdyPriority priority);
-
   // Called when owning session is getting deleted to avoid subsequent
   // use of the spdy_session_ member.
   void ClearSession();
@@ -198,8 +190,6 @@ class QUIC_EXPORT_PRIVATE QuicSpdyStream : public QuicStream {
   Visitor* visitor_;
   // True if the headers have been completely decompressed.
   bool headers_decompressed_;
-  // The priority of the stream, once parsed.
-  SpdyPriority priority_;
   // Contains a copy of the decompressed header (name, value) pairs until they
   // are consumed via Readv.
   QuicHeaderList header_list_;

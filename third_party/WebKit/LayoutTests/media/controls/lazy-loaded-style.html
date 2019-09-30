@@ -1,10 +1,11 @@
 <!DOCTYPE html>
 <html>
+<script src="../media-controls.js"></script>
 <title>Test that media controls are styled correctly if lazy loaded.</title>
-<script src="../media-file.js"></script>
 <video width="400"></video>
 <script>
   var video = document.querySelector('video');
+  enableTestMode(video);
 
   if (window.testRunner)
     testRunner.waitUntilDone();
@@ -16,7 +17,7 @@
       testRunner.notifyDone();
   };
 
-  video.src = findMediaFile("video", "../content/test");
+  video.src = "../content/test.ogv";
   video.play();
 </script>
 </html>

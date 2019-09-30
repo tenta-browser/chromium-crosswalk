@@ -9,7 +9,6 @@
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/callback.h"
-#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "base/message_loop/message_loop.h"
@@ -89,12 +88,12 @@ class AutofillWalletDataTypeControllerTest : public testing::Test,
     prefs_.registry()->RegisterBooleanPref(
         autofill::prefs::kAutofillCreditCardEnabled, true);
 
-    web_data_service_ =
-        new FakeWebDataService(base::ThreadTaskRunnerHandle::Get(),
-                               base::ThreadTaskRunnerHandle::Get());
-    autofill_wallet_dtc_ = base::MakeUnique<AutofillWalletDataTypeController>(
+    web_data_service_ = base::MakeRefCounted<FakeWebDataService>(
+        base::ThreadTaskRunnerHandle::Get(),
+        base::ThreadTaskRunnerHandle::Get());
+    autofill_wallet_dtc_ = std::make_unique<AutofillWalletDataTypeController>(
         syncer::AUTOFILL_WALLET_DATA, base::ThreadTaskRunnerHandle::Get(),
-        base::Bind(&base::DoNothing), this, web_data_service_);
+        base::DoNothing(), this, web_data_service_);
 
     last_type_ = syncer::UNSPECIFIED;
     last_error_ = syncer::SyncError();
@@ -118,10 +117,9 @@ class AutofillWalletDataTypeControllerTest : public testing::Test,
  protected:
   void SetStartExpectations() {
     autofill_wallet_dtc_->SetGenericChangeProcessorFactoryForTest(
-        base::WrapUnique<syncer::GenericChangeProcessorFactory>(
-            new syncer::FakeGenericChangeProcessorFactory(
-                base::MakeUnique<syncer::FakeGenericChangeProcessor>(
-                    syncer::AUTOFILL_WALLET_DATA, this))));
+        std::make_unique<syncer::FakeGenericChangeProcessorFactory>(
+            std::make_unique<syncer::FakeGenericChangeProcessor>(
+                syncer::AUTOFILL_WALLET_DATA, this)));
   }
 
   void Start() {

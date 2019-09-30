@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <memory>
+
 #include "base/bind.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
@@ -79,7 +81,7 @@ class ScrollLatencyBrowserTest : public ContentBrowserTest {
     RenderWidgetHostImpl* host = GetWidgetHost();
     host->GetView()->SetSize(gfx::Size(400, 400));
 
-    frame_observer_ = base::MakeUnique<MainThreadFrameObserver>(
+    frame_observer_ = std::make_unique<MainThreadFrameObserver>(
         shell()->web_contents()->GetRenderViewHost()->GetWidget());
 
     // Wait a frame to make sure the page has renderered.
@@ -126,6 +128,7 @@ IN_PROC_BROWSER_TEST_F(ScrollLatencyBrowserTest, SmoothWheelScroll) {
   size_t num_samples = 0;
 
   while (num_samples == 0) {
+    FetchHistogramsFromChildProcesses();
     num_samples =
         histogram_tester
             .GetAllSamples(

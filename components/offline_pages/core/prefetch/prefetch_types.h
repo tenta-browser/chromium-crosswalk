@@ -5,6 +5,7 @@
 #ifndef COMPONENTS_OFFLINE_PAGES_CORE_PREFETCH_PREFETCH_TYPES_H_
 #define COMPONENTS_OFFLINE_PAGES_CORE_PREFETCH_PREFETCH_TYPES_H_
 
+#include <array>
 #include <string>
 #include <vector>
 
@@ -86,13 +87,16 @@ struct RenderPageInfo {
   base::Time render_time;
 };
 
-// List of states a prefetch item can be at during its progress through the
-// prefetching process. They follow somewhat the order below, but some states
-// might be skipped.
+// Contains all states an item can be at during its progress through the
+// prefetching pipeline. State progression will normally follow the order below,
+// but some states might be skipped and there might be backtracking when
+// retrying a failed operation.
 //
 // Changes to this enum must be reflected in the respective metrics enum named
 // OfflinePrefetchItemState in enums.xml. Use the exact same integer value for
-// each mirrored entry.
+// each mirrored entry. Existing elements should never have their assigned
+// values changed. Changes should also be reflected in
+// |PrefetchTaskTestBase::kOrderedPrefetchItemStates|.
 enum class PrefetchItemState {
   // New request just received from the client.
   NEW_REQUEST = 0,
@@ -183,8 +187,11 @@ enum class PrefetchItemErrorCode {
   // The archive importing was not completed probably due to that Chrome was
   // killed before everything finishes.
   IMPORT_LOST = 1600,
+  // The page suggestion is no longer valid, so the item no longer needs to be
+  // downloaded.
+  SUGGESTION_INVALIDATED = 1700,
   // Note: Must always have the same value as the last actual entry.
-  MAX = IMPORT_LOST
+  MAX = SUGGESTION_INVALIDATED
 };
 
 // Callback invoked upon completion of a prefetch request.

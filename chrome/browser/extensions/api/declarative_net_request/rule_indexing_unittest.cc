@@ -14,8 +14,8 @@
 #include "base/test/histogram_tester.h"
 #include "chrome/browser/extensions/api/declarative_net_request/dnr_test_base.h"
 #include "chrome/browser/extensions/chrome_test_extension_loader.h"
-#include "chrome/browser/extensions/extension_error_reporter.h"
 #include "chrome/browser/extensions/extension_service.h"
+#include "chrome/browser/extensions/load_error_reporter.h"
 #include "extensions/browser/api/declarative_net_request/constants.h"
 #include "extensions/browser/api/declarative_net_request/parse_info.h"
 #include "extensions/browser/api/declarative_net_request/test_utils.h"
@@ -24,6 +24,7 @@
 #include "extensions/common/file_util.h"
 #include "extensions/common/install_warning.h"
 #include "extensions/common/manifest_constants.h"
+#include "extensions/common/url_pattern.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace extensions {
@@ -129,10 +130,12 @@ class RuleIndexingTest : public DNRTestBase {
 
     if (rules_value_) {
       WriteManifestAndRuleset(extension_dir_, kJSONRulesetFilepath,
-                              kJSONRulesFilename, *rules_value_);
+                              kJSONRulesFilename, *rules_value_,
+                              {URLPattern::kAllUrlsPattern});
     } else {
       WriteManifestAndRuleset(extension_dir_, kJSONRulesetFilepath,
-                              kJSONRulesFilename, rules_list_);
+                              kJSONRulesFilename, rules_list_,
+                              {URLPattern::kAllUrlsPattern});
     }
 
     // Overwrite the JSON rules file with some invalid json.
@@ -149,8 +152,8 @@ class RuleIndexingTest : public DNRTestBase {
     }
   }
 
-  ExtensionErrorReporter* error_reporter() {
-    return ExtensionErrorReporter::GetInstance();
+  LoadErrorReporter* error_reporter() {
+    return LoadErrorReporter::GetInstance();
   }
 
   std::vector<TestRule> rules_list_;

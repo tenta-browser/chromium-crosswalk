@@ -48,12 +48,12 @@
 #include "crypto/hmac.h"
 #include "crypto/symmetric_key.h"
 #include "net/base/host_port_pair.h"
+#include "net/base/proxy_server.h"
 #include "net/cert/pem_tokenizer.h"
 #include "net/cert/x509_certificate.h"
 #include "net/cert/x509_util_nss.h"
-#include "net/proxy/proxy_bypass_rules.h"
-#include "net/proxy/proxy_config.h"
-#include "net/proxy/proxy_server.h"
+#include "net/proxy_resolution/proxy_bypass_rules.h"
+#include "net/proxy_resolution/proxy_config.h"
 #include "third_party/cros_system_api/dbus/service_constants.h"
 #include "url/gurl.h"
 #include "url/url_constants.h"
@@ -359,6 +359,13 @@ class OncMaskValues : public Mapper {
       bool* found_unknown_field,
       bool* error) override {
     if (FieldIsCredential(object_signature, field_name)) {
+      // If it's the password field and the substitution string is used, don't
+      // mask it.
+      if (&object_signature == &kEAPSignature && field_name == eap::kPassword &&
+          onc_value.GetString() == substitutes::kPasswordField) {
+        return Mapper::MapField(field_name, object_signature, onc_value,
+                                found_unknown_field, error);
+      }
       return std::unique_ptr<base::Value>(new base::Value(mask_));
     } else {
       return Mapper::MapField(field_name, object_signature, onc_value,
@@ -378,8 +385,6 @@ std::unique_ptr<base::DictionaryValue> MaskCredentialsInOncObject(
     const std::string& mask) {
   return OncMaskValues::Mask(signature, onc_object, mask);
 }
-
-namespace {
 
 std::string DecodePEM(const std::string& pem_encoded) {
   // The PEM block header used for DER certificates
@@ -407,6 +412,8 @@ std::string DecodePEM(const std::string& pem_encoded) {
   }
   return decoded;
 }
+
+namespace {
 
 CertPEMsByGUIDMap GetServerAndCACertsByGUID(
     const base::ListValue& certificates) {
@@ -457,9 +464,12 @@ bool ParseAndValidateOncForImport(const std::string& onc_blob,
                                   base::ListValue* network_configs,
                                   base::DictionaryValue* global_network_config,
                                   base::ListValue* certificates) {
-  network_configs->Clear();
-  global_network_config->Clear();
-  certificates->Clear();
+  if (network_configs)
+    network_configs->Clear();
+  if (global_network_config)
+    global_network_config->Clear();
+  if (certificates)
+    certificates->Clear();
   if (onc_blob.empty())
     return true;
 
@@ -518,12 +528,16 @@ bool ParseAndValidateOncForImport(const std::string& onc_blob,
   }
 
   base::ListValue* validated_certs = nullptr;
-  if (toplevel_onc->GetListWithoutPathExpansion(toplevel_config::kCertificates,
-                                                &validated_certs)) {
+  if (certificates && toplevel_onc->GetListWithoutPathExpansion(
+                          toplevel_config::kCertificates, &validated_certs)) {
     certificates->Swap(validated_certs);
   }
 
   base::ListValue* validated_networks = nullptr;
+  // Note that this processing is performed even if |network_configs| is
+  // nullptr, because ResolveServerCertRefsInNetworks could affect the return
+  // value of the function (which is supposed to aggregate validation issues in
+  // all segments of the ONC blob).
   if (toplevel_onc->GetListWithoutPathExpansion(
           toplevel_config::kNetworkConfigurations, &validated_networks)) {
     FillInHexSSIDFieldsInNetworks(validated_networks);
@@ -538,13 +552,14 @@ bool ParseAndValidateOncForImport(const std::string& onc_blob,
       success = false;
     }
 
-    network_configs->Swap(validated_networks);
+    if (network_configs)
+      network_configs->Swap(validated_networks);
   }
 
   base::DictionaryValue* validated_global_config = nullptr;
-  if (toplevel_onc->GetDictionaryWithoutPathExpansion(
-          toplevel_config::kGlobalNetworkConfiguration,
-          &validated_global_config)) {
+  if (global_network_config && toplevel_onc->GetDictionaryWithoutPathExpansion(
+                                   toplevel_config::kGlobalNetworkConfiguration,
+                                   &validated_global_config)) {
     global_network_config->Swap(validated_global_config);
   }
 
@@ -898,10 +913,10 @@ void SetProxyForScheme(const net::ProxyConfig::ProxyRules& proxy_rules,
                        const std::string& onc_scheme,
                        base::DictionaryValue* dict) {
   const net::ProxyList* proxy_list = nullptr;
-  if (proxy_rules.type == net::ProxyConfig::ProxyRules::TYPE_SINGLE_PROXY) {
+  if (proxy_rules.type == net::ProxyConfig::ProxyRules::Type::PROXY_LIST) {
     proxy_list = &proxy_rules.single_proxies;
   } else if (proxy_rules.type ==
-             net::ProxyConfig::ProxyRules::TYPE_PROXY_PER_SCHEME) {
+             net::ProxyConfig::ProxyRules::Type::PROXY_LIST_PER_SCHEME) {
     proxy_list = proxy_rules.MapUrlSchemeToProxyList(scheme);
   }
   if (!proxy_list || proxy_list->IsEmpty())
@@ -1328,6 +1343,57 @@ bool HasPolicyForNetwork(const PrefService* profile_prefs,
   const base::DictionaryValue* policy = onc::GetPolicyForNetwork(
       profile_prefs, local_state_prefs, network, &ignored_onc_source);
   return policy != NULL;
+}
+
+bool HasUserPasswordSubsitutionVariable(const OncValueSignature& signature,
+                                        base::DictionaryValue* onc_object) {
+  if (&signature == &kEAPSignature) {
+    std::string password_field;
+    if (!onc_object->GetStringWithoutPathExpansion(::onc::eap::kPassword,
+                                                   &password_field)) {
+      return false;
+    }
+
+    if (password_field == ::onc::substitutes::kPasswordField) {
+      return true;
+    }
+  }
+
+  // Recurse into nested objects.
+  for (base::DictionaryValue::Iterator it(*onc_object); !it.IsAtEnd();
+       it.Advance()) {
+    base::DictionaryValue* inner_object = nullptr;
+    if (!onc_object->GetDictionaryWithoutPathExpansion(it.key(), &inner_object))
+      continue;
+
+    const OncFieldSignature* field_signature =
+        GetFieldSignature(signature, it.key());
+    if (!field_signature)
+      continue;
+
+    bool result = HasUserPasswordSubsitutionVariable(
+        *field_signature->value_signature, inner_object);
+    if (result) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+bool HasUserPasswordSubsitutionVariable(base::ListValue* network_configs) {
+  for (auto& entry : *network_configs) {
+    base::DictionaryValue* network = nullptr;
+    entry.GetAsDictionary(&network);
+    DCHECK(network);
+
+    bool result = HasUserPasswordSubsitutionVariable(
+        kNetworkConfigurationSignature, network);
+    if (result) {
+      return true;
+    }
+  }
+  return false;
 }
 
 }  // namespace onc

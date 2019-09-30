@@ -66,10 +66,11 @@ class SubresourceFilterAgent
   static ActivationState GetParentActivationState(
       content::RenderFrame* render_frame);
 
-  void OnActivateForNextCommittedLoad(const ActivationState& activation_state);
+  void OnActivateForNextCommittedLoad(const ActivationState& activation_state,
+                                      bool is_ad_subframe);
   void RecordHistogramsOnLoadCommitted(const ActivationState& activation_state);
   void RecordHistogramsOnLoadFinished();
-  void ResetActivatonStateForNextCommit();
+  void ResetInfoForNextCommit();
 
   // content::RenderFrameObserver:
   void OnDestruct() override;
@@ -84,6 +85,13 @@ class SubresourceFilterAgent
   UnverifiedRulesetDealer* ruleset_dealer_;
 
   ActivationState activation_state_for_next_commit_;
+
+  // This is received along with activation state in the
+  // SubresourceFilterMsg_ActivateForNextCommittedLoad IPC message. Specifies
+  // whether this is a subframe which is identified as an ad. Note that this
+  // will only be set in dry run mode because in blocking mode the frame would
+  // have been blocked.
+  bool is_ad_subframe_for_next_commit_;
 
   base::WeakPtr<WebDocumentSubresourceFilterImpl>
       filter_for_last_committed_load_;

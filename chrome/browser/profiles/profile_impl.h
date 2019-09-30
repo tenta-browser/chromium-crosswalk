@@ -18,10 +18,10 @@
 #include "build/build_config.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_impl_io_data.h"
-#include "chrome/common/features.h"
+#include "chrome/common/buildflags.h"
 #include "components/prefs/pref_change_registrar.h"
 #include "content/public/browser/content_browser_client.h"
-#include "extensions/features/features.h"
+#include "extensions/buildflags/buildflags.h"
 
 #if !defined(OS_ANDROID)
 #include "chrome/browser/ui/zoom/chrome_zoom_level_prefs.h"
@@ -143,14 +143,14 @@ class ProfileImpl : public Profile {
   bool WasCreatedByVersionOrLater(const std::string& version) override;
   void SetExitType(ExitType exit_type) override;
   ExitType GetLastSessionExitType() override;
+  bool ShouldRestoreOldSessionCookies() override;
+  bool ShouldPersistSessionCookies() override;
 
 #if defined(OS_CHROMEOS)
   void ChangeAppLocale(const std::string& locale, AppLocaleChangedVia) override;
   void OnLogin() override;
   void InitChromeOSPreferences() override;
 #endif  // defined(OS_CHROMEOS)
-
-  PrefProxyConfigTracker* GetProxyConfigTracker() override;
 
  private:
 #if defined(OS_CHROMEOS)
@@ -190,10 +190,11 @@ class ProfileImpl : public Profile {
   void UpdateNameInStorage();
   void UpdateAvatarInStorage();
   void UpdateIsEphemeralInStorage();
+  void UpdateCTPolicy();
+
+  void ScheduleUpdateCTPolicy();
 
   void GetMediaCacheParameters(base::FilePath* cache_path, int* max_size);
-
-  PrefProxyConfigTracker* CreateProxyConfigTracker();
 
   std::unique_ptr<domain_reliability::DomainReliabilityMonitor>
   CreateDomainReliabilityMonitor(PrefService* local_state);
@@ -262,8 +263,6 @@ class ProfileImpl : public Profile {
   std::unique_ptr<chromeos::LocaleChangeGuard> locale_change_guard_;
 #endif
 
-  std::unique_ptr<PrefProxyConfigTracker> pref_proxy_config_tracker_;
-
   // TODO(mmenke):  This should be removed from the Profile, and use a
   // BrowserContextKeyedService instead.
   // See https://crbug.com/713733
@@ -286,6 +285,9 @@ class ProfileImpl : public Profile {
   Profile::Delegate* delegate_;
 
   chrome_browser_net::Predictor* predictor_;
+
+  // Used to post schedule CT policy updates
+  base::OneShotTimer ct_policy_update_timer_;
 
   DISALLOW_COPY_AND_ASSIGN(ProfileImpl);
 };

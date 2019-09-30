@@ -13,7 +13,6 @@
 #include "base/lazy_instance.h"
 #include "base/macros.h"
 #include "base/md5.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task_scheduler/post_task.h"
 #include "base/threading/sequenced_task_runner_handle.h"
@@ -21,7 +20,6 @@
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/devtools/devtools_file_watcher.h"
 #include "chrome/browser/download/download_prefs.h"
-#include "chrome/browser/platform_util.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/chrome_select_file_policy.h"
 #include "chrome/common/pref_names.h"
@@ -56,7 +54,6 @@ namespace {
 
 static const char kRootName[] = "<root>";
 static const char kPermissionDenied[] = "<permission denied>";
-static const char kAlreadyAdded[] = "<already added>";
 
 base::LazyInstance<base::FilePath>::Leaky
     g_last_save_path = LAZY_INSTANCE_INITIALIZER;
@@ -343,10 +340,8 @@ void DevToolsFileHelper::InnerAddFileSystem(
     const base::FilePath& path) {
   std::string file_system_path = path.AsUTF8Unsafe();
 
-  if (IsFileSystemAdded(file_system_path)) {
-    FailedToAddFileSystem(kAlreadyAdded);
-    return;
-  }
+  if (IsFileSystemAdded(file_system_path))
+    RemoveFileSystem(file_system_path);
 
   std::string path_display_name = path.AsEndingWithSeparator().AsUTF8Unsafe();
   base::string16 message = l10n_util::GetStringFUTF16(
@@ -372,7 +367,7 @@ void DevToolsFileHelper::AddUserConfirmedFileSystem(const std::string& type,
                               prefs::kDevToolsFileSystemPaths);
   base::DictionaryValue* file_systems_paths_value = update.Get();
   file_systems_paths_value->SetWithoutPathExpansion(
-      file_system_path, base::MakeUnique<base::Value>(type));
+      file_system_path, std::make_unique<base::Value>(type));
 }
 
 void DevToolsFileHelper::FailedToAddFileSystem(const std::string& error) {
@@ -424,6 +419,24 @@ bool DevToolsFileHelper::IsFileSystemAdded(
   const base::DictionaryValue* file_systems_paths_value =
       profile_->GetPrefs()->GetDictionary(prefs::kDevToolsFileSystemPaths);
   return file_systems_paths_value->HasKey(file_system_path);
+}
+
+void DevToolsFileHelper::OnOpenItemComplete(
+    const base::FilePath& path,
+    platform_util::OpenOperationResult result) {
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+  if (result == platform_util::OPEN_FAILED_INVALID_TYPE)
+    platform_util::ShowItemInFolder(profile_, path);
+}
+
+void DevToolsFileHelper::ShowItemInFolder(const std::string& file_system_path) {
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+  if (file_system_path.empty())
+    return;
+  base::FilePath path = base::FilePath::FromUTF8Unsafe(file_system_path);
+  platform_util::OpenItem(profile_, path, platform_util::OPEN_FOLDER,
+                          base::Bind(&DevToolsFileHelper::OnOpenItemComplete,
+                                     weak_factory_.GetWeakPtr(), path));
 }
 
 void DevToolsFileHelper::FileSystemPathsSettingChanged() {

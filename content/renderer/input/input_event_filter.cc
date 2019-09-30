@@ -11,7 +11,6 @@
 #include "base/bind.h"
 #include "base/debug/crash_logging.h"
 #include "base/location.h"
-#include "base/memory/ptr_util.h"
 #include "base/single_thread_task_runner.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/trace_event/trace_event.h"
@@ -31,26 +30,7 @@
 using blink::WebInputEvent;
 using ui::DidOverscrollParams;
 
-#include "ipc/ipc_message_null_macros.h"
-#undef IPC_MESSAGE_DECL
-#define IPC_MESSAGE_DECL(name, ...) \
-  case name::ID:                    \
-    return #name;
-
-const char* GetInputMessageTypeName(const IPC::Message& message) {
-  switch (message.type()) {
-// Someone else might have included input_messages.h so undef the guard.
-#undef CONTENT_COMMON_INPUT_MESSAGES_H_
-#include "content/common/input_messages.h"
-#ifndef CONTENT_COMMON_INPUT_MESSAGES_H_
-#error "Failed to include content/common/input_messages.h"
-#endif
-    default:
-      NOTREACHED() << "Invalid message type: " << message.type();
-      break;
-  };
-  return "NonInputMsgType";
-}
+const char* GetInputMessageTypeName(const IPC::Message& message);
 
 namespace content {
 
@@ -104,6 +84,11 @@ void InputEventFilter::DidOverscroll(int routing_id,
 
 void InputEventFilter::DidStopFlinging(int routing_id) {
   SendMessage(std::make_unique<InputHostMsg_DidStopFlinging>(routing_id));
+}
+
+void InputEventFilter::DidStartScrollingViewport(int routing_id) {
+  SendMessage(
+      std::make_unique<InputHostMsg_DidStartScrollingViewport>(routing_id));
 }
 
 void InputEventFilter::QueueClosureForMainThreadEventQueue(
@@ -306,7 +291,7 @@ void InputEventFilter::SendInputEventAck(
 void InputEventFilter::SendMessage(std::unique_ptr<IPC::Message> message) {
   CHECK(io_task_runner_->PostTask(
       FROM_HERE, base::BindOnce(&InputEventFilter::SendMessageOnIOThread, this,
-                                base::Passed(&message))))
+                                std::move(message))))
       << "PostTask failed";
 }
 
@@ -322,8 +307,11 @@ void InputEventFilter::SendMessageOnIOThread(
     return;
   static size_t s_send_failure_count_ = 0;
   s_send_failure_count_++;
-  base::debug::SetCrashKeyValue("input-event-filter-send-failure",
-                                base::IntToString(s_send_failure_count_));
+
+  static auto* crash_key = base::debug::AllocateCrashKeyString(
+      "input-event-filter-send-failure", base::debug::CrashKeySize::Size32);
+  base::debug::SetCrashKeyString(crash_key,
+                                 base::IntToString(s_send_failure_count_));
 }
 
 }  // namespace content

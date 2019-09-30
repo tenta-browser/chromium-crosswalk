@@ -23,8 +23,8 @@
 #include "net/base/host_port_pair.h"
 #include "net/base/ip_endpoint.h"
 #include "net/base/net_errors.h"
-#include "net/test/spawned_test_server/remote_test_server_proxy.h"
 #include "net/test/spawned_test_server/remote_test_server_spawner_request.h"
+#include "net/test/tcp_socket_proxy.h"
 #include "url/gurl.h"
 
 namespace net {
@@ -88,6 +88,24 @@ bool RemoteTestServer::StartInBackground() {
   // pass right server type to Python test server.
   arguments_dict.SetString("server-type", GetServerTypeString(type()));
 
+  // If the server is expected to handle OCSP, it needs to know what port
+  // number to write into the AIA urls. Initialize the ocsp proxy to
+  // reserve a port, and pass it to the testserver so it can generate
+  // certificates for the OCSP server valid for the proxied port. Note that
+  // the test spawer may forward OCSP a second time, from the device to the
+  // host.
+  bool ocsp_server_enabled =
+      type() == TYPE_HTTPS && (ssl_options().server_certificate ==
+                                   SSLOptions::CERT_AUTO_AIA_INTERMEDIATE ||
+                               !ssl_options().GetOCSPArgument().empty());
+  if (ocsp_server_enabled) {
+    ocsp_proxy_ = std::make_unique<TcpSocketProxy>(io_thread_.task_runner());
+    bool initialized = ocsp_proxy_->Initialize();
+    CHECK(initialized);
+    arguments_dict.SetKey("ocsp-proxy-port-number",
+                          base::Value(ocsp_proxy_->local_port()));
+  }
+
   // Generate JSON-formatted argument string.
   std::string arguments_string;
   base::JSONWriter::Write(arguments_dict, &arguments_string);
@@ -104,27 +122,41 @@ bool RemoteTestServer::StartInBackground() {
 bool RemoteTestServer::BlockUntilStarted() {
   DCHECK(start_request_);
 
-  std::string server_data;
-  bool request_result = start_request_->WaitForCompletion(&server_data);
+  std::string server_data_json;
+  bool request_result = start_request_->WaitForCompletion(&server_data_json);
   start_request_.reset();
   if (!request_result)
     return false;
 
-  // Parse server_data.
-  if (server_data.empty() ||
-      !SetAndParseServerData(server_data, &remote_port_)) {
-    LOG(ERROR) << "Could not parse server_data: " << server_data;
+  // Parse server_data_json.
+  if (server_data_json.empty() ||
+      !SetAndParseServerData(server_data_json, &remote_port_)) {
+    LOG(ERROR) << "Could not parse server_data: " << server_data_json;
     return false;
   }
 
   // If the server is not on localhost then start a proxy on localhost to
   // forward connections to the server.
   if (config_.address() != IPAddress::IPv4Localhost()) {
-    test_server_proxy_ = std::make_unique<RemoteTestServerProxy>(
-        IPEndPoint(config_.address(), remote_port_), io_thread_.task_runner());
+    test_server_proxy_ =
+        std::make_unique<TcpSocketProxy>(io_thread_.task_runner());
+    bool initialized = test_server_proxy_->Initialize();
+    CHECK(initialized);
+    test_server_proxy_->Start(IPEndPoint(config_.address(), remote_port_));
+
     SetPort(test_server_proxy_->local_port());
   } else {
     SetPort(remote_port_);
+  }
+
+  if (ocsp_proxy_) {
+    const base::Value* ocsp_port_value = server_data().FindKey("ocsp_port");
+    if (ocsp_port_value && ocsp_port_value->is_int()) {
+      ocsp_proxy_->Start(
+          IPEndPoint(config_.address(), ocsp_port_value->GetInt()));
+    } else {
+      LOG(WARNING) << "testserver.py didn't return ocsp_port.";
+    }
   }
 
   return SetupWhenServerStarted();

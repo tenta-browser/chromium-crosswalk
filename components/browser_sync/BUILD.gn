@@ -43,6 +43,7 @@ static_library("browser_sync") {
     "//components/version_info:generate_version_info",
     "//google_apis",
     "//net",
+    "//services/identity/public/cpp",
   ]
 }
 
@@ -53,7 +54,6 @@ source_set("unit_tests") {
     "profile_sync_service_autofill_unittest.cc",
     "profile_sync_service_bookmark_unittest.cc",
     "profile_sync_service_startup_unittest.cc",
-    "profile_sync_service_typed_url_unittest.cc",
     "profile_sync_service_unittest.cc",
   ]
 
@@ -127,6 +127,7 @@ static_library("test_support") {
     "//components/sync_sessions:test_support",
     "//google_apis",
     "//net:test_support",
+    "//services/identity/public/cpp",
     "//testing/gmock",
   ]
 }

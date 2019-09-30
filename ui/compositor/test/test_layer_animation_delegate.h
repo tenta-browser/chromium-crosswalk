@@ -21,8 +21,9 @@ class TestLayerThreadedAnimationDelegate
   ~TestLayerThreadedAnimationDelegate() override;
 
   // Implementation of LayerThreadedAnimationDelegate
-  void AddThreadedAnimation(std::unique_ptr<cc::Animation> animation) override;
-  void RemoveThreadedAnimation(int animation_id) override;
+  void AddThreadedAnimation(
+      std::unique_ptr<cc::KeyframeModel> keyframe_model) override;
+  void RemoveThreadedAnimation(int keyframe_model_id) override;
 };
 
 class TestLayerAnimationDelegate : public LayerAnimationDelegate {
@@ -54,8 +55,6 @@ class TestLayerAnimationDelegate : public LayerAnimationDelegate {
                                  PropertyChangeReason reason) override;
   void SetColorFromAnimation(SkColor color,
                              PropertyChangeReason reason) override;
-  void SetTemperatureFromAnimation(float temperature,
-                                   PropertyChangeReason reason) override;
   void ScheduleDrawForAnimation() override;
   const gfx::Rect& GetBoundsForAnimation() const override;
   gfx::Transform GetTransformForAnimation() const override;
@@ -64,7 +63,6 @@ class TestLayerAnimationDelegate : public LayerAnimationDelegate {
   float GetBrightnessForAnimation() const override;
   float GetGrayscaleForAnimation() const override;
   SkColor GetColorForAnimation() const override;
-  float GetTemperatureFromAnimation() const override;
   float GetDeviceScaleFactor() const override;
   LayerAnimatorCollection* GetLayerAnimatorCollection() override;
   ui::Layer* GetLayer() override;
@@ -89,7 +87,6 @@ class TestLayerAnimationDelegate : public LayerAnimationDelegate {
   float brightness_;
   float grayscale_;
   SkColor color_;
-  float temperature_;
   scoped_refptr<cc::Layer> cc_layer_;
 
   // Allow copy and assign.

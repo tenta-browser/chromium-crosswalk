@@ -28,7 +28,7 @@ content::WebUIDataSource* GetSource() {
       "chrome/browser/ui/webui/interventions_internals/"
       "interventions_internals.mojom.js",
       IDR_INTERVENTIONS_INTERNALS_MOJO_INDEX_JS);
-  source->AddResourcePath("url/mojo/url.mojom.js", IDR_URL_MOJO_JS);
+  source->AddResourcePath("url/mojom/url.mojom.js", IDR_URL_MOJO_JS);
   source->SetDefaultResource(IDR_INTERVENTIONS_INTERNALS_INDEX_HTML);
   source->UseGzip(std::vector<std::string>());
   return source;
@@ -45,7 +45,8 @@ content::WebUIDataSource* GetUnsupportedSource() {
 }  // namespace
 
 InterventionsInternalsUI::InterventionsInternalsUI(content::WebUI* web_ui)
-    : MojoWebUIController(web_ui), previews_ui_service_(nullptr) {
+    : ui::MojoWebUIController<mojom::InterventionsInternalsPageHandler>(web_ui),
+      previews_ui_service_(nullptr) {
   // Set up the chrome://interventions-internals/ source.
   Profile* profile = Profile::FromWebUI(web_ui);
 

@@ -4,8 +4,6 @@
 
 #include "ui/aura/mus/client_surface_embedder.h"
 
-#include "base/memory/ptr_util.h"
-#include "components/viz/common/surfaces/stub_surface_reference_factory.h"
 #include "ui/aura/window.h"
 #include "ui/gfx/geometry/dip_util.h"
 
@@ -30,15 +28,16 @@ ClientSurfaceEmbedder::ClientSurfaceEmbedder(
   // this is the case with window decorations provided by Window Manager.
   // This content should appear underneath the content of the embedded client.
   window_->layer()->StackAtTop(surface_layer_.get());
-  ref_factory_ = new viz::StubSurfaceReferenceFactory();
 }
 
 ClientSurfaceEmbedder::~ClientSurfaceEmbedder() = default;
 
 void ClientSurfaceEmbedder::SetPrimarySurfaceId(
     const viz::SurfaceId& surface_id) {
-  surface_layer_->SetShowPrimarySurface(surface_id, window_->bounds().size(),
-                                        ref_factory_);
+  surface_layer_->SetShowPrimarySurface(
+      surface_id, window_->bounds().size(), SK_ColorWHITE,
+      cc::DeadlinePolicy::UseDefaultDeadline(),
+      false /* stretch_content_to_fill_bounds */);
 }
 
 void ClientSurfaceEmbedder::SetFallbackSurfaceInfo(
@@ -93,6 +92,11 @@ void ClientSurfaceEmbedder::UpdateSizeAndGutters() {
     bottom_gutter_.reset();
   }
   window_->layer()->StackAtTop(surface_layer_.get());
+}
+
+const viz::SurfaceId& ClientSurfaceEmbedder::GetPrimarySurfaceIdForTesting()
+    const {
+  return *surface_layer_->GetPrimarySurfaceId();
 }
 
 }  // namespace aura

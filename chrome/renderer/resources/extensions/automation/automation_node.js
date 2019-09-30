@@ -189,7 +189,7 @@ var GetUnclippedLocation = natives.GetUnclippedLocation;
 /**
  * @param {number} axTreeID The id of the accessibility tree.
  * @param {number} nodeID The id of a node.
- * @return {!Array.<number>} The text offset where each line starts, or an empty
+ * @return {!Array<number>} The text offset where each line starts, or an empty
  *     array if this node has no text content, or undefined if the tree or node
  *     was not found.
  */
@@ -227,6 +227,16 @@ var GetIntAttribute = natives.GetIntAttribute;
  * @param {number} axTreeID The id of the accessibility tree.
  * @param {number} nodeID The id of a node.
  * @param {string} attr The name of an attribute.
+ * @return {?Array<number>} The ids of nodes who have a relationship pointing
+ *     to |nodeID| (a reverse relationship).
+ */
+var GetIntAttributeReverseRelations =
+    natives.GetIntAttributeReverseRelations;
+
+/**
+ * @param {number} axTreeID The id of the accessibility tree.
+ * @param {number} nodeID The id of a node.
+ * @param {string} attr The name of an attribute.
  * @return {?number} The value of this attribute, or undefined if the tree,
  *     node, or attribute wasn't found.
  */
@@ -236,11 +246,21 @@ var GetFloatAttribute = natives.GetFloatAttribute;
  * @param {number} axTreeID The id of the accessibility tree.
  * @param {number} nodeID The id of a node.
  * @param {string} attr The name of an attribute.
- * @return {?Array.<number>} The value of this attribute, or undefined
+ * @return {?Array<number>} The value of this attribute, or undefined
  *     if the tree, node, or attribute wasn't found.
  */
 var GetIntListAttribute =
     natives.GetIntListAttribute;
+
+/**
+ * @param {number} axTreeID The id of the accessibility tree.
+ * @param {number} nodeID The id of a node.
+ * @param {string} attr The name of an attribute.
+ * @return {?Array<number>} The ids of nodes who have a relationship pointing
+ *     to |nodeID| (a reverse relationship).
+ */
+var GetIntListAttributeReverseRelations =
+    natives.GetIntListAttributeReverseRelations;
 
 /**
  * @param {number} axTreeID The id of the accessibility tree.
@@ -289,10 +309,24 @@ var GetLineThrough = natives.GetLineThrough;
 /**
  * @param {number} axTreeID The id of the accessibility tree.
  * @param {number} nodeID The id of a node.
- * @return {?Array.<automation.CustomAction>} List of custom actions of the
+ * @return {?Array<automation.CustomAction>} List of custom actions of the
  *     node.
  */
 var GetCustomActions = natives.GetCustomActions;
+
+/**
+ * @param {number} axTreeID The id of the accessibility tree.
+ * @param {number} nodeID The id of a node.
+ * @return {?Array<string>} List of standard actions of the node.
+ */
+var GetStandardActions = natives.GetStandardActions;
+
+/**
+ * @param {number} axTreeID The id of the accessibility tree.
+ * @param {number} nodeID The id of a node.
+ * @return {automation.NameFromType} The source of the node's name.
+ */
+var GetDefaultActionVerb = natives.GetDefaultActionVerb;
 
 var logging = requireNative('logging');
 var utils = require('utils');
@@ -466,6 +500,14 @@ AutomationNodeImpl.prototype = {
     return GetCustomActions(this.treeID, this.id);
   },
 
+  get standardActions() {
+    return GetStandardActions(this.treeID, this.id);
+  },
+
+  get defaultActionVerb() {
+    return GetDefaultActionVerb(this.treeID, this.id);
+  },
+
   doDefault: function() {
     this.performAction_('doDefault');
   },
@@ -481,20 +523,44 @@ AutomationNodeImpl.prototype = {
   },
 
   hitTest: function(x, y, eventToFire) {
+    this.hitTestInternal(x, y, eventToFire);
+  },
+
+  hitTestWithReply: function(x, y, opt_callback) {
+    this.hitTestInternal(x, y, 'hitTestResult', opt_callback);
+  },
+
+  hitTestInternal: function(x, y, eventToFire, opt_callback) {
     // Convert from global to tree-relative coordinates.
     var location = GetLocation(this.treeID, GetRootID(this.treeID));
     this.performAction_('hitTest',
                         { x: Math.floor(x - location.left),
                           y: Math.floor(y - location.top),
-                          eventToFire: eventToFire });
+                          eventToFire: eventToFire },
+                        opt_callback);
   },
 
   makeVisible: function() {
-    this.performAction_('makeVisible');
+    this.performAction_('scrollToMakeVisible');
   },
 
   performCustomAction: function(customActionId) {
     this.performAction_('customAction', { customActionID: customActionId });
+  },
+
+  performStandardAction: function(action) {
+    var standardActions = GetStandardActions(this.treeID, this.id);
+    if (!standardActions ||
+        !standardActions.find(item => action == item)) {
+      throw 'Inapplicable action for node: ' + action;
+    }
+    this.performAction_(action);
+  },
+
+  replaceSelectedText: function(value) {
+    if (this.state.editable) {
+      this.performAction_('replaceSelectedText', { value: value});
+    }
   },
 
   resumeMedia: function() {
@@ -526,7 +592,7 @@ AutomationNodeImpl.prototype = {
   },
 
   setSelection: function(startIndex, endIndex) {
-    if (this.role == 'textField' || this.role == 'textBox') {
+    if (this.state.editable) {
       this.performAction_('setSelection',
                           { focusNodeID: this.id,
                             anchorOffset: startIndex,
@@ -536,6 +602,12 @@ AutomationNodeImpl.prototype = {
 
   setSequentialFocusNavigationStartingPoint: function() {
     this.performAction_('setSequentialFocusNavigationStartingPoint');
+  },
+
+  setValue: function(value) {
+    if (this.state.editable) {
+      this.performAction_('setValue', { value: value});
+    }
   },
 
   showContextMenu: function() {
@@ -819,6 +891,8 @@ AutomationNodeImpl.prototype = {
 var stringAttributes = [
     'accessKey',
     'ariaInvalidValue',
+    'autoComplete',
+    'className',
     'containerLiveRelevant',
     'containerLiveStatus',
     'description',
@@ -841,7 +915,9 @@ var boolAttributes = [
     'containerLiveAtomic',
     'containerLiveBusy',
     'liveAtomic',
-    'scrollable'
+    'modal',
+    'scrollable',
+    'selected'
 ];
 
 var intAttributes = [
@@ -872,14 +948,19 @@ var intAttributes = [
     'textSelEnd',
     'textSelStart'];
 
+// Int attribute, relation property to expose, reverse relation to expose.
 var nodeRefAttributes = [
-    ['activedescendantId', 'activeDescendant'],
-    ['inPageLinkTargetId', 'inPageLinkTarget'],
-    ['nextOnLineId', 'nextOnLine'],
-    ['previousOnLineId', 'previousOnLine'],
-    ['tableColumnHeaderId', 'tableColumnHeader'],
-    ['tableHeaderId', 'tableHeader'],
-    ['tableRowHeaderId', 'tableRowHeader']];
+    ['activedescendantId', 'activeDescendant', null],
+    ['detailsId', 'details', 'detailsFor'],
+    ['errorMessageId', 'errorMessage', 'errorMessageFor'],
+    ['inPageLinkTargetId', 'inPageLinkTarget', null],
+    ['nextFocusId', 'nextFocus', null],
+    ['nextOnLineId', 'nextOnLine', null],
+    ['previousFocusId', 'previousFocus', null],
+    ['previousOnLineId', 'previousOnLine', null],
+    ['tableColumnHeaderId', 'tableColumnHeader', null],
+    ['tableHeaderId', 'tableHeader', null],
+    ['tableRowHeaderId', 'tableRowHeader', null]];
 
 var intListAttributes = [
     'lineBreaks',
@@ -889,11 +970,12 @@ var intListAttributes = [
     'wordEnds',
     'wordStarts'];
 
+// Intlist attribute, relation property to expose, reverse relation to expose.
 var nodeRefListAttributes = [
-    ['controlsIds', 'controls'],
-    ['describedbyIds', 'describedBy'],
-    ['flowtoIds', 'flowTo'],
-    ['labelledbyIds', 'labelledBy']];
+    ['controlsIds', 'controls', 'controlledBy'],
+    ['describedbyIds', 'describedBy', 'descriptionFor'],
+    ['flowtoIds', 'flowTo', 'flowFrom'],
+    ['labelledbyIds', 'labelledBy', 'labelFor']];
 
 var floatAttributes = [
     'valueForRange',
@@ -938,6 +1020,7 @@ $Array.forEach(intAttributes, function(attributeName) {
 $Array.forEach(nodeRefAttributes, function(params) {
   var srcAttributeName = params[0];
   var dstAttributeName = params[1];
+  var dstReverseAttributeName = params[2];
   $Array.push(publicAttributes, dstAttributeName);
   $Object.defineProperty(AutomationNodeImpl.prototype, dstAttributeName, {
     __proto__: null,
@@ -949,6 +1032,26 @@ $Array.forEach(nodeRefAttributes, function(params) {
         return undefined;
     }
   });
+  if (dstReverseAttributeName) {
+    $Array.push(publicAttributes, dstReverseAttributeName);
+    $Object.defineProperty(AutomationNodeImpl.prototype,
+                           dstReverseAttributeName, {
+      __proto__: null,
+      get: function() {
+        var ids = GetIntAttributeReverseRelations(
+            this.treeID, this.id, srcAttributeName);
+        if (!ids || !this.rootImpl)
+          return undefined;
+        var result = [];
+        for (var i = 0; i < ids.length; ++i) {
+          var node = this.rootImpl.get(ids[i]);
+          if (node)
+          $Array.push(result, node);
+        }
+        return result;
+      }
+    });
+  }
 });
 
 $Array.forEach(intListAttributes, function(attributeName) {
@@ -964,6 +1067,7 @@ $Array.forEach(intListAttributes, function(attributeName) {
 $Array.forEach(nodeRefListAttributes, function(params) {
   var srcAttributeName = params[0];
   var dstAttributeName = params[1];
+  var dstReverseAttributeName = params[2];
   $Array.push(publicAttributes, dstAttributeName);
   $Object.defineProperty(AutomationNodeImpl.prototype, dstAttributeName, {
     __proto__: null,
@@ -980,6 +1084,26 @@ $Array.forEach(nodeRefListAttributes, function(params) {
       return result;
     }
   });
+  if (dstReverseAttributeName) {
+    $Array.push(publicAttributes, dstReverseAttributeName);
+    $Object.defineProperty(AutomationNodeImpl.prototype,
+                           dstReverseAttributeName, {
+      __proto__: null,
+      get: function() {
+        var ids = GetIntListAttributeReverseRelations(
+            this.treeID, this.id, srcAttributeName);
+        if (!ids || !this.rootImpl)
+          return undefined;
+        var result = [];
+        for (var i = 0; i < ids.length; ++i) {
+          var node = this.rootImpl.get(ids[i]);
+          if (node)
+          $Array.push(result, node);
+        }
+        return result;
+      }
+    });
+  }
 });
 
 $Array.forEach(floatAttributes, function(attributeName) {
@@ -1193,6 +1317,10 @@ AutomationRootNodeImpl.prototype = {
       targetNodeImpl.dispatchEvent(
           eventParams.eventType, eventParams.eventFrom,
           eventParams.mouseX, eventParams.mouseY);
+
+      if (eventParams.actionRequestID != -1) {
+        this.onActionResult(eventParams.actionRequestID, targetNode);
+      }
     } else {
       logging.WARNING('Got ' + eventParams.eventType +
                       ' event on unknown node: ' + eventParams.targetID +
@@ -1243,9 +1371,12 @@ utils.expose(AutomationNode, AutomationNodeImpl, {
     'focus',
     'getImageData',
     'hitTest',
+    'hitTestWithReply',
     'makeVisible',
     'matches',
     'performCustomAction',
+    'performStandardAction',
+    'replaceSelectedText',
     'resumeMedia',
     'scrollBackward',
     'scrollForward',
@@ -1255,6 +1386,7 @@ utils.expose(AutomationNode, AutomationNodeImpl, {
     'scrollRight',
     'setSelection',
     'setSequentialFocusNavigationStartingPoint',
+    'setValue',
     'showContextMenu',
     'startDuckingMedia',
     'stopDuckingMedia',
@@ -1275,6 +1407,7 @@ utils.expose(AutomationNode, AutomationNodeImpl, {
       'isRootNode',
       'role',
       'checked',
+      'defaultActionVerb',
       'restriction',
       'state',
       'location',
@@ -1288,6 +1421,7 @@ utils.expose(AutomationNode, AutomationNodeImpl, {
       'underline',
       'lineThrough',
       'customActions',
+      'standardActions',
       'unclippedLocation',
   ]),
 });

@@ -9,7 +9,7 @@
 
 #include "content/common/content_export.h"
 #include "content/common/input/input_event_ack.h"
-#include "third_party/WebKit/public/platform/WebInputEventResult.h"
+#include "third_party/blink/public/platform/web_input_event_result.h"
 
 namespace blink {
 class WebGestureEvent;
@@ -36,6 +36,7 @@ class CONTENT_EXPORT RenderWidgetInputHandlerDelegate {
   virtual void ObserveGestureEventAndResult(
       const blink::WebGestureEvent& gesture_event,
       const gfx::Vector2dF& unused_delta,
+      const cc::OverscrollBehavior& overscroll_behavior,
       bool event_processed) = 0;
 
   // Notifies that a key event was just handled.

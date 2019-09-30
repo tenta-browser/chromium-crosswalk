@@ -53,22 +53,14 @@ class VideoDecodeAccelerator;
 //   loop.
 class MEDIA_EXPORT GpuVideoAcceleratorFactories {
  public:
-  class ScopedGLContextLock {
-   public:
-    ScopedGLContextLock() {}
-    virtual gpu::gles2::GLES2Interface* ContextGL() = 0;
-    virtual ~ScopedGLContextLock(){};
-
-   private:
-    DISALLOW_COPY_AND_ASSIGN(ScopedGLContextLock);
-  };
-
   enum class OutputFormat {
     UNDEFINED = 0,    // Unset state
     I420,             // 3 x R8 GMBs
     UYVY,             // One 422 GMB
     NV12_SINGLE_GMB,  // One NV12 GMB
     NV12_DUAL_GMB,    // One R8, one RG88 GMB
+    XR30,             // 10:10:10:2 BGRX in one GMB
+    XB30,             // 10:10:10:2 RGBX in one GMB
   };
 
   // Return whether GPU encoding/decoding is enabled.
@@ -110,12 +102,19 @@ class MEDIA_EXPORT GpuVideoAcceleratorFactories {
       gfx::BufferUsage usage) = 0;
 
   virtual bool ShouldUseGpuMemoryBuffersForVideoFrames() const = 0;
+
+  // The GLContextLock must be taken when calling this.
   virtual unsigned ImageTextureTarget(gfx::BufferFormat format) = 0;
+
   // Pixel format of the hardware video frames created when GpuMemoryBuffers
   // video frames are enabled.
-  virtual OutputFormat VideoFrameOutputFormat() = 0;
+  virtual OutputFormat VideoFrameOutputFormat(size_t bit_depth) = 0;
 
-  virtual std::unique_ptr<ScopedGLContextLock> GetGLContextLock() = 0;
+  // Returns a GL Context that can be used on the task runner associated with
+  // the same instance of GpuVideoAcceleratorFactories.
+  // nullptr will be returned in cases where a context couldn't be created or
+  // the context was lost.
+  virtual gpu::gles2::GLES2Interface* ContextGL() = 0;
 
   // Allocate & return a shared memory segment.
   virtual std::unique_ptr<base::SharedMemory> CreateSharedMemory(
@@ -135,9 +134,12 @@ class MEDIA_EXPORT GpuVideoAcceleratorFactories {
 
   virtual viz::ContextProvider* GetMediaContextProvider() = 0;
 
+  // Sets the current pipeline rendering color space.
+  virtual void SetRenderingColorSpace(const gfx::ColorSpace& color_space) = 0;
+
  protected:
   friend class base::RefCounted<GpuVideoAcceleratorFactories>;
-  virtual ~GpuVideoAcceleratorFactories() {}
+  virtual ~GpuVideoAcceleratorFactories() = default;
 };
 
 }  // namespace media

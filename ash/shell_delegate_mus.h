@@ -25,17 +25,13 @@ class ShellDelegateMus : public ShellDelegate {
   service_manager::Connector* GetShellConnector() const override;
   bool IsRunningInForcedAppMode() const override;
   bool CanShowWindowForUser(aura::Window* window) const override;
-  bool IsForceMaximizeOnFirstRun() const override;
   void PreInit() override;
   void PreShutdown() override;
   std::unique_ptr<keyboard::KeyboardUI> CreateKeyboardUI() override;
   void OpenUrlFromArc(const GURL& url) override;
   NetworkingConfigDelegate* GetNetworkingConfigDelegate() override;
   std::unique_ptr<ScreenshotDelegate> CreateScreenshotDelegate() override;
-  std::unique_ptr<WallpaperDelegate> CreateWallpaperDelegate() override;
   AccessibilityDelegate* CreateAccessibilityDelegate() override;
-  base::string16 GetProductName() const override;
-  gfx::Image GetDeprecatedAcceleratorImage() const override;
   ui::InputDeviceControllerClient* GetInputDeviceControllerClient() override;
 
  private:

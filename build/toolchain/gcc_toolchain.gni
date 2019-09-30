@@ -334,13 +334,21 @@ template("gcc_toolchain") {
       # POSIX-like toolchains such as NaCl on Windows).
       ar_wrapper =
           rebase_path("//build/toolchain/gcc_ar_wrapper.py", root_build_dir)
-      if (current_os == "aix") {
-        # We use slightly different arflags for AIX.
-        extra_arflags = "rcsT"
-      } else {
+
+      # TODO(thomasanderson): Remove the special ChromeOS case once
+      # https://crbug.com/829956 is fixed.
+      if (default_toolchain == "//build/toolchain/cros:target") {
         extra_arflags = "rcsD"
+      } else if (current_os == "aix") {
+        # We use slightly different arflags for AIX.
+        extra_arflags = "-r -c -s"
+      } else {
+        extra_arflags = "-r -c -s -D"
       }
-      command = "$python_path \"$ar_wrapper\"$whitelist_flag --output={{output}} --ar=\"$ar\" {{arflags}} $extra_arflags @\"$rspfile\""
+
+      # Almost all targets build with //build/config/compiler:thin_archive which
+      # adds -T to arflags.
+      command = "$python_path \"$ar_wrapper\"$whitelist_flag --output={{output}} --ar=\"$ar\" \"{{arflags}} $extra_arflags\" @\"$rspfile\""
       description = "AR {{output}}"
       rspfile_content = "{{inputs}}"
       outputs = [
@@ -402,7 +410,11 @@ template("gcc_toolchain") {
           rebase_path("//build/toolchain/gcc_solink_wrapper.py", root_build_dir)
       command = "$python_path \"$solink_wrapper\" --readelf=\"$readelf\" --nm=\"$nm\" $strip_switch--sofile=\"$unstripped_sofile\" --tocfile=\"$tocfile\"$map_switch --output=\"$sofile\"$whitelist_flag -- $link_command"
 
-      rspfile_content = "-Wl,--whole-archive {{inputs}} {{solibs}} -Wl,--no-whole-archive $solink_libs_section_prefix {{libs}} $solink_libs_section_postfix"
+      if (target_cpu == "mipsel" && is_component_build && is_android) {
+        rspfile_content = "-Wl,--start-group -Wl,--whole-archive {{inputs}} {{solibs}} -Wl,--no-whole-archive $solink_libs_section_prefix {{libs}} $solink_libs_section_postfix -Wl,--end-group"
+      } else {
+        rspfile_content = "-Wl,--whole-archive {{inputs}} {{solibs}} -Wl,--no-whole-archive $solink_libs_section_prefix {{libs}} $solink_libs_section_postfix"
+      }
 
       description = "SOLINK $sofile"
 
@@ -573,6 +585,10 @@ template("gcc_toolchain") {
       description = copy_description
     }
 
+    tool("action") {
+      pool = "//build/toolchain:action_pool($default_toolchain)"
+    }
+
     forward_variables_from(invoker, [ "deps" ])
   }
 }
@@ -605,6 +621,7 @@ template("clang_toolchain") {
                              "strip",
                              "is_clang_analysis_supported",
                              "enable_linker_map",
+                             "use_unstripped_as_runtime_outputs",
                            ])
 
     toolchain_args = {

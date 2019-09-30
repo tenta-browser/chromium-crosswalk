@@ -22,7 +22,6 @@ import org.chromium.base.test.util.Feature;
 import org.chromium.blink_public.platform.WebDisplayMode;
 import org.chromium.chrome.browser.ChromeSwitches;
 import org.chromium.chrome.browser.tab.Tab;
-import org.chromium.chrome.test.ChromeActivityTestRule;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 import org.chromium.chrome.test.ChromeTabbedActivityTestRule;
 import org.chromium.chrome.test.util.browser.WebappTestPage;
@@ -38,7 +37,6 @@ import java.util.Map;
  */
 @RunWith(ChromeJUnit4ClassRunner.class)
 @CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE,
-        ChromeActivityTestRule.DISABLE_NETWORK_PREDICTION_FLAG,
         ChromeSwitches.CHECK_FOR_WEB_MANIFEST_UPDATE_ON_STARTUP})
 public class WebApkUpdateManagerTest {
     @Rule
@@ -184,7 +182,7 @@ public class WebApkUpdateManagerTest {
         creationData.startUrl = mTestServerRule.getServer().getURL(
                 "/chrome/test/data/banners/manifest_%74est_page.html");
 
-        WebappTestPage.navigateToPageWithServiceWorkerAndManifest(
+        WebappTestPage.navigateToServiceWorkerPageWithManifest(
                 mTestServerRule.getServer(), mTab, WEBAPK_MANIFEST_URL);
         Assert.assertFalse(checkUpdateNeeded(creationData));
     }
@@ -201,7 +199,7 @@ public class WebApkUpdateManagerTest {
         creationData.startUrl = mTestServerRule.getServer().getURL(
                 "/chrome/test/data/banners/manifest_%62est_page.html");
 
-        WebappTestPage.navigateToPageWithServiceWorkerAndManifest(
+        WebappTestPage.navigateToServiceWorkerPageWithManifest(
                 mTestServerRule.getServer(), mTab, WEBAPK_MANIFEST_URL);
         Assert.assertTrue(checkUpdateNeeded(creationData));
     }

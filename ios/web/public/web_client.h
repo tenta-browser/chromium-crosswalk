@@ -77,10 +77,6 @@ class WebClient {
   // schemes early on in the startup sequence.
   virtual void AddAdditionalSchemes(Schemes* schemes) const {}
 
-  // Returns the languages used in the Accept-Languages HTTP header.
-  // Used to decide URL formatting.
-  virtual std::string GetAcceptLangs(BrowserState* state) const;
-
   // Returns the embedding application locale string.
   virtual std::string GetApplicationLocale() const;
 
@@ -124,10 +120,21 @@ class WebClient {
 
   // Gives the embedder a chance to provide the JavaScript to be injected into
   // the web view as early as possible. Result must not be nil.
+  // The script returned will be injected in all frames (main and subframes).
   //
   // TODO(crbug.com/703964): Change the return value to NSArray<NSString*> to
   // improve performance.
-  virtual NSString* GetEarlyPageScript(BrowserState* browser_state) const;
+  virtual NSString* GetDocumentStartScriptForAllFrames(
+      BrowserState* browser_state) const;
+
+  // Gives the embedder a chance to provide the JavaScript to be injected into
+  // the web view as early as possible. Result must not be nil.
+  // The script returned will only be injected in the main frame.
+  //
+  // TODO(crbug.com/703964): Change the return value to NSArray<NSString*> to
+  // improve performance.
+  virtual NSString* GetDocumentStartScriptForMainFrame(
+      BrowserState* browser_state) const;
 
   using StaticServiceMap =
       std::map<std::string, service_manager::EmbeddedServiceInfo>;

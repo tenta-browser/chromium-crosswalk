@@ -17,10 +17,8 @@ import org.junit.runner.RunWith;
 
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.Feature;
-import org.chromium.base.test.util.RetryOnFailure;
 import org.chromium.chrome.browser.ChromeSwitches;
 import org.chromium.chrome.browser.sync.SyncTestRule.DataCriteria;
-import org.chromium.chrome.test.ChromeActivityTestRule;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 import org.chromium.chrome.test.util.browser.sync.SyncTestUtil;
 import org.chromium.components.sync.ModelType;
@@ -37,11 +35,7 @@ import java.util.concurrent.Callable;
  * Test suite for the autofill profile sync data type.
  */
 @RunWith(ChromeJUnit4ClassRunner.class)
-@CommandLineFlags.Add({
-        ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE,
-        ChromeActivityTestRule.DISABLE_NETWORK_PREDICTION_FLAG,
-})
-@RetryOnFailure // crbug.com/637448
+@CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
 public class AutofillTest {
     @Rule
     public SyncTestRule mSyncTestRule = new SyncTestRule();
@@ -96,7 +90,7 @@ public class AutofillTest {
     @LargeTest
     @Feature({"Sync"})
     public void testDownloadAutofill() throws Exception {
-        addServerAutofillProfile(STREET, CITY, STATE, ZIP);
+        addServerAutofillProfile(getServerAutofillProfile(STREET, CITY, STATE, ZIP));
         SyncTestUtil.triggerSync();
         waitForClientAutofillProfileCount(1);
 
@@ -117,14 +111,14 @@ public class AutofillTest {
     @Feature({"Sync"})
     public void testDownloadAutofillModification() throws Exception {
         // Add the entity to test modifying.
-        EntitySpecifics specifics = addServerAutofillProfile(STREET, CITY, STATE, ZIP);
+        addServerAutofillProfile(getServerAutofillProfile(STREET, CITY, STATE, ZIP));
         SyncTestUtil.triggerSync();
         waitForClientAutofillProfileCount(1);
 
         // Modify on server, sync, and verify modification locally.
         Autofill autofill = getClientAutofillProfiles().get(0);
-        specifics.autofillProfile.addressHomeCity = MODIFIED_CITY;
-        mSyncTestRule.getFakeServerHelper().modifyEntitySpecifics(autofill.id, specifics);
+        mSyncTestRule.getFakeServerHelper().modifyEntitySpecifics(
+                autofill.id, getServerAutofillProfile(STREET, MODIFIED_CITY, STATE, ZIP));
         SyncTestUtil.triggerSync();
         mSyncTestRule.pollInstrumentationThread(new ClientAutofillCriteria() {
             @Override
@@ -141,7 +135,7 @@ public class AutofillTest {
     @Feature({"Sync"})
     public void testDownloadDeletedAutofill() throws Exception {
         // Add the entity to test deleting.
-        addServerAutofillProfile(STREET, CITY, STATE, ZIP);
+        addServerAutofillProfile(getServerAutofillProfile(STREET, CITY, STATE, ZIP));
         SyncTestUtil.triggerSync();
         waitForClientAutofillProfileCount(1);
 
@@ -159,24 +153,27 @@ public class AutofillTest {
     public void testDisabledNoDownloadAutofill() throws Exception {
         // The AUTOFILL type here controls both AUTOFILL and AUTOFILL_PROFILE.
         mSyncTestRule.disableDataType(ModelType.AUTOFILL);
-        addServerAutofillProfile(STREET, CITY, STATE, ZIP);
+        addServerAutofillProfile(getServerAutofillProfile(STREET, CITY, STATE, ZIP));
         SyncTestUtil.triggerSyncAndWaitForCompletion();
         assertClientAutofillProfileCount(0);
     }
 
-    private EntitySpecifics addServerAutofillProfile(
+    private EntitySpecifics getServerAutofillProfile(
             String street, String city, String state, String zip) {
-        EntitySpecifics specifics = new EntitySpecifics();
-        AutofillProfileSpecifics profile = new AutofillProfileSpecifics();
-        profile.guid = GUID;
-        profile.origin = ORIGIN;
-        profile.addressHomeLine1 = street;
-        profile.addressHomeCity = city;
-        profile.addressHomeState = state;
-        profile.addressHomeZip = zip;
-        specifics.autofillProfile = profile;
-        mSyncTestRule.getFakeServerHelper().injectUniqueClientEntity(street /* name */, specifics);
-        return specifics;
+        AutofillProfileSpecifics profile = AutofillProfileSpecifics.newBuilder()
+                                                   .setGuid(GUID)
+                                                   .setOrigin(ORIGIN)
+                                                   .setAddressHomeLine1(street)
+                                                   .setAddressHomeCity(city)
+                                                   .setAddressHomeState(state)
+                                                   .setAddressHomeZip(zip)
+                                                   .build();
+        return EntitySpecifics.newBuilder().setAutofillProfile(profile).build();
+    }
+
+    private void addServerAutofillProfile(EntitySpecifics specifics) {
+        mSyncTestRule.getFakeServerHelper().injectUniqueClientEntity(
+                specifics.getAutofillProfile().getAddressHomeLine1() /* name */, specifics);
     }
 
     private List<Autofill> getClientAutofillProfiles() throws JSONException {

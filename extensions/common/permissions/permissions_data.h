@@ -212,10 +212,16 @@ class PermissionsData {
                                     std::string* error) const;
 
   // Returns true if extension is allowed to obtain the contents of a page as
-  // an image. Since a page may contain sensitive information, this is
-  // restricted to the extension's host permissions as well as the extension
-  // page itself.
-  bool CanCaptureVisiblePage(int tab_id, std::string* error) const;
+  // an image. Pages may contain multiple sources (e.g., example.com may embed
+  // google.com), so simply checking the top-frame's URL is insufficient.
+  // Instead:
+  // - If the page is a chrome:// page, require activeTab.
+  // - For all other pages, require host permissions to the document
+  //   (GetPageAccess()) and one of either <all_urls> or granted activeTab.
+  bool CanCaptureVisiblePage(const GURL& document_url,
+                             const Extension* extension,
+                             int tab_id,
+                             std::string* error) const;
 
   const TabPermissionsMap& tab_specific_permissions() const {
     DCHECK(!thread_checker_ || thread_checker_->CalledOnValidThread());
@@ -277,23 +283,16 @@ class PermissionsData {
   // Must be called with |runtime_lock_| acquired.
   const PermissionSet* GetTabSpecificPermissions(int tab_id) const;
 
-  // Returns true if the |extension| has tab-specific permission to operate on
-  // the tab specified by |tab_id| with the given |url|.
-  // Note that if this returns false, it doesn't mean the extension can't run on
-  // the given tab, only that it does not have tab-specific permission to do so.
-  // Must be called with |runtime_lock_| acquired.
-  bool HasTabSpecificPermissionToExecuteScript(int tab_id,
-                                               const GURL& url) const;
-
   // Returns whether or not the extension is permitted to run on the given page,
-  // checking against |permitted_url_patterns| in addition to blocking special
-  // sites (like the webstore or chrome:// urls).
+  // checking against |permitted_url_patterns| and |tab_url_patterns| in
+  // addition to blocking special sites (like the webstore or chrome:// urls).
   // Must be called with |runtime_lock_| acquired.
   AccessType CanRunOnPage(const Extension* extension,
                           const GURL& document_url,
                           int tab_id,
                           const URLPatternSet& permitted_url_patterns,
                           const URLPatternSet& withheld_url_patterns,
+                          const URLPatternSet* tab_url_patterns,
                           std::string* error) const;
 
   // Check if a specific URL is blocked by policy from extension use at runtime.

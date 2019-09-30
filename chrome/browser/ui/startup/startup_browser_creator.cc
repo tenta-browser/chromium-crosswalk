@@ -47,10 +47,9 @@
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/startup/startup_browser_creator_impl.h"
-#include "chrome/browser/ui/user_manager.h"
+#include "chrome/common/buildflags.h"
 #include "chrome/common/chrome_constants.h"
 #include "chrome/common/chrome_switches.h"
-#include "chrome/common/features.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/common/url_constants.h"
 #include "components/prefs/pref_registry_simple.h"
@@ -68,7 +67,7 @@
 #include "content/public/common/content_switches.h"
 #include "extensions/common/switches.h"
 #include "net/base/port_util.h"
-#include "printing/features/features.h"
+#include "printing/buildflags/buildflags.h"
 
 #if defined(OS_CHROMEOS)
 #include "chrome/browser/chromeos/app_mode/app_launch_utils.h"
@@ -78,6 +77,8 @@
 #include "chromeos/chromeos_switches.h"
 #include "chromeos/cryptohome/cryptohome_parameters.h"
 #include "components/user_manager/user_manager.h"
+#else
+#include "chrome/browser/ui/user_manager.h"
 #endif
 
 #if defined(TOOLKIT_VIEWS) && defined(OS_LINUX)
@@ -89,16 +90,14 @@
 #endif
 
 #if defined(OS_WIN)
+#include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/metrics/jumplist_metrics_win.h"
+#include "chrome/browser/notifications/notification_platform_bridge_win.h"
 #include "chrome/browser/ui/webui/settings/reset_settings_handler.h"
 #endif
 
 #if BUILDFLAG(ENABLE_PRINT_PREVIEW)
 #include "chrome/browser/printing/print_dialog_cloud.h"
-#endif
-
-#if BUILDFLAG(ENABLE_APP_LIST)
-#include "chrome/browser/ui/app_list/app_list_service.h"
 #endif
 
 using content::BrowserThread;
@@ -114,7 +113,7 @@ class ProfileLaunchObserver : public content::NotificationObserver {
         activated_profile_(false) {
     registrar_.Add(this, chrome::NOTIFICATION_PROFILE_DESTROYED,
                    content::NotificationService::AllSources());
-    registrar_.Add(this, chrome::NOTIFICATION_BROWSER_WINDOW_READY,
+    registrar_.Add(this, chrome::NOTIFICATION_BROWSER_OPENED,
                    content::NotificationService::AllSources());
   }
   ~ProfileLaunchObserver() override {}
@@ -134,7 +133,7 @@ class ProfileLaunchObserver : public content::NotificationObserver {
         MaybeActivateProfile();
         break;
       }
-      case chrome::NOTIFICATION_BROWSER_WINDOW_READY: {
+      case chrome::NOTIFICATION_BROWSER_OPENED: {
         Browser* browser = content::Source<Browser>(source).ptr();
         DCHECK(browser);
         opened_profiles_.insert(browser->profile());
@@ -154,7 +153,7 @@ class ProfileLaunchObserver : public content::NotificationObserver {
     launched_profiles_.insert(profile);
     if (chrome::FindBrowserWithProfile(profile)) {
       // A browser may get opened before we get initialized (e.g., in tests),
-      // so we never see the NOTIFICATION_BROWSER_WINDOW_READY for it.
+      // so we never see the NOTIFICATION_BROWSER_OPENED for it.
       opened_profiles_.insert(profile);
     }
   }
@@ -190,7 +189,7 @@ class ProfileLaunchObserver : public content::NotificationObserver {
         base::BindOnce(&ProfileLaunchObserver::ActivateProfile,
                        base::Unretained(this)));
     // Avoid posting more than once before ActivateProfile gets called.
-    registrar_.Remove(this, chrome::NOTIFICATION_BROWSER_WINDOW_READY,
+    registrar_.Remove(this, chrome::NOTIFICATION_BROWSER_OPENED,
                       content::NotificationService::AllSources());
     registrar_.Remove(this, chrome::NOTIFICATION_PROFILE_DESTROYED,
                       content::NotificationService::AllSources());
@@ -272,11 +271,14 @@ bool CanOpenProfileOnStartup(Profile* profile) {
 }
 
 void ShowUserManagerOnStartup(const base::CommandLine& command_line) {
+#if !defined(OS_CHROMEOS)
+  // TODO(crbug/821659): Clean up the desktop UserManager webui.
   profiles::UserManagerAction action =
       command_line.HasSwitch(switches::kShowAppList) ?
           profiles::USER_MANAGER_SELECT_PROFILE_APP_LAUNCHER :
           profiles::USER_MANAGER_SELECT_PROFILE_NO_ACTION;
   UserManager::Show(base::FilePath(), action);
+#endif  // !defined(OS_CHROMEOS)
 }
 
 }  // namespace
@@ -397,8 +399,11 @@ SessionStartupPref StartupBrowserCreator::GetSessionStartupPref(
       user_manager::UserManager::Get()->IsCurrentUserNew();
   // On ChromeOS restarts force the user to login again. The expectation is that
   // after a login the user gets clean state. For this reason we ignore
-  // StartupBrowserCreator::WasRestarted().
+  // StartupBrowserCreator::WasRestarted(). However
+  // StartupBrowserCreator::WasRestarted has to be called in order to correctly
+  // update pref values.
   const bool did_restart = false;
+  StartupBrowserCreator::WasRestarted();
 #else
   const bool is_first_run = first_run::IsChromeFirstRun();
   const bool did_restart = StartupBrowserCreator::WasRestarted();
@@ -457,6 +462,7 @@ void StartupBrowserCreator::RegisterLocalStatePrefs(
   registry->RegisterStringPref(prefs::kLastWelcomedOSVersion, std::string());
   registry->RegisterBooleanPref(prefs::kWelcomePageOnOSUpgradeEnabled, true);
   registry->RegisterBooleanPref(prefs::kHasSeenWin10PromoPage, false);
+  registry->RegisterBooleanPref(prefs::kResetHasSeenWin10PromoPage, true);
 #endif
   registry->RegisterBooleanPref(prefs::kSuppressUnsupportedOSWarning, false);
   registry->RegisterBooleanPref(prefs::kWasRestarted, false);
@@ -948,12 +954,17 @@ base::FilePath GetStartupProfilePath(const base::FilePath& user_data_dir,
         command_line.GetSwitchValuePath(switches::kProfileDirectory));
   }
 
-#if BUILDFLAG(ENABLE_APP_LIST)
-  // If we are showing the app list then chrome isn't shown so load the app
-  // list's profile rather than chrome's.
-  if (command_line.HasSwitch(switches::kShowAppList))
-    return AppListService::Get()->GetProfilePath(user_data_dir);
-#endif
+#if defined(OS_WIN)
+  if (command_line.HasSwitch(switches::kNotificationLaunchId)) {
+    std::string profile_id =
+        NotificationPlatformBridgeWin::GetProfileIdFromLaunchId(
+            command_line.GetSwitchValueNative(switches::kNotificationLaunchId));
+    if (!profile_id.empty()) {
+      return user_data_dir.Append(
+          base::FilePath(base::UTF8ToUTF16(profile_id)));
+    }
+  }
+#endif  // defined(OS_WIN)
 
   return g_browser_process->profile_manager()->GetLastUsedProfileDir(
       user_data_dir);

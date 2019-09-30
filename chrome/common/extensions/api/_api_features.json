@@ -348,10 +348,6 @@
     "dependencies": ["manifest:devtools_page"],
     "contexts": ["blessed_extension"]
   },
-  "dial": {
-    "dependencies": ["permission:dial"],
-    "contexts": ["blessed_extension"]
-  },
   "downloads": {
     "dependencies": ["permission:downloads"],
     "contexts": ["blessed_extension"]
@@ -386,8 +382,8 @@
     "dependencies": ["permission:enterprise.platformKeysPrivate"],
     "contexts": ["blessed_extension"]
   },
-  "experienceSamplingPrivate": {
-    "dependencies": ["permission:experienceSamplingPrivate"],
+  "enterprise.reportingPrivate": {
+    "dependencies": ["permission:enterprise.reportingPrivate"],
     "contexts": ["blessed_extension"]
   },
   "experimental.devtools.audits": {
@@ -465,7 +461,7 @@
   "screenlockPrivate": {
     "dependencies": ["permission:screenlockPrivate"],
     "extension_types": ["platform_app"],
-    "contexts": ["blessed_extension", "unblessed_extension"]
+    "contexts": ["blessed_extension"]
   },
   "fileManagerPrivate": {
     "dependencies": ["permission:fileManagerPrivate"],
@@ -556,10 +552,6 @@
       "chrome://settings/*"
     ]
   }],
-  "launcherPage": {
-    "dependencies": ["manifest:launcher_page"],
-    "contexts": ["blessed_extension"]
-  },
   "launcherSearchProvider": {
     "dependencies": ["permission:launcherSearchProvider"],
     "contexts": ["blessed_extension"]

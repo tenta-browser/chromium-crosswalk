@@ -4,10 +4,10 @@
 
 #include "components/omnibox/browser/test_omnibox_client.h"
 
+#include <memory>
 #include <utility>
 #include <vector>
 
-#include "base/memory/ptr_util.h"
 #include "components/omnibox/browser/autocomplete_controller.h"
 #include "components/omnibox/browser/autocomplete_scheme_classifier.h"
 #include "components/omnibox/browser/mock_autocomplete_provider_client.h"
@@ -16,14 +16,18 @@
 #include "components/search_engines/template_url_service_client.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/skia/include/core/SkBitmap.h"
+#include "ui/gfx/image/image.h"
+#include "ui/gfx/image/image_skia.h"
 
 TestOmniboxClient::TestOmniboxClient()
-    : autocomplete_classifier_(
-          base::MakeUnique<AutocompleteController>(
+    : session_id_(SessionID::FromSerializedValue(1)),
+      autocomplete_classifier_(
+          std::make_unique<AutocompleteController>(
               CreateAutocompleteProviderClient(),
               nullptr,
               AutocompleteClassifier::DefaultOmniboxProviders()),
-          base::MakeUnique<TestSchemeClassifier>()) {}
+          std::make_unique<TestSchemeClassifier>()) {}
 
 TestOmniboxClient::~TestOmniboxClient() {
   autocomplete_classifier_.Shutdown();
@@ -32,7 +36,7 @@ TestOmniboxClient::~TestOmniboxClient() {
 std::unique_ptr<AutocompleteProviderClient>
 TestOmniboxClient::CreateAutocompleteProviderClient() {
   std::unique_ptr<MockAutocompleteProviderClient> provider_client(
-      new testing::NiceMock<MockAutocompleteProviderClient>());
+      new MockAutocompleteProviderClient());
   EXPECT_CALL(*provider_client.get(), GetBuiltinURLs())
       .WillRepeatedly(testing::Return(std::vector<base::string16>()));
   EXPECT_CALL(*provider_client.get(), GetSchemeClassifier())
@@ -68,4 +72,12 @@ const AutocompleteSchemeClassifier& TestOmniboxClient::GetSchemeClassifier()
 
 AutocompleteClassifier* TestOmniboxClient::GetAutocompleteClassifier() {
   return &autocomplete_classifier_;
+}
+
+gfx::Image TestOmniboxClient::GetSizedIcon(
+    const gfx::VectorIcon& vector_icon_type,
+    SkColor vector_icon_color) const {
+  SkBitmap bitmap;
+  bitmap.allocN32Pixels(16, 16);
+  return gfx::Image(gfx::ImageSkia::CreateFrom1xBitmap(bitmap));
 }

@@ -13,8 +13,8 @@
 #include "chrome/browser/printing/cloud_print/privet_http.h"
 #include "components/keyed_service/core/keyed_service.h"
 #include "components/prefs/pref_member.h"
-#include "net/net_features.h"
-#include "ui/message_center/notification_delegate.h"
+#include "net/net_buildflags.h"
+#include "ui/message_center/public/cpp/notification_delegate.h"
 
 class Profile;
 
@@ -121,6 +121,12 @@ class PrivetNotificationService
   void OnNotificationsEnabledChanged();
   void StartLister();
 
+  void AddNotification(
+      int devices_active,
+      bool device_added,
+      std::unique_ptr<std::set<std::string>> displayed_notifications,
+      bool supports_synchronization);
+
   // Virtual for testing. The returned delegate is refcounted.
   virtual PrivetNotificationDelegate* CreateNotificationDelegate(
       Profile* profile);
@@ -142,14 +148,15 @@ class PrivetNotificationDelegate : public message_center::NotificationDelegate {
   explicit PrivetNotificationDelegate(Profile* profile);
 
   // NotificationDelegate implementation.
-  void ButtonClick(int button_index) override;
+  void Click(const base::Optional<int>& button_index,
+             const base::Optional<base::string16>& reply) override;
 
  protected:
   // Refcounted.
   ~PrivetNotificationDelegate() override;
 
  private:
-  // ButtonClick() response handlers. Virtual for testing.
+  // Click() response handlers. Virtual for testing.
   virtual void OpenTab(const GURL& url);
   virtual void DisableNotifications();
 

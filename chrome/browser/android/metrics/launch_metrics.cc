@@ -15,7 +15,7 @@
 #include "components/rappor/rappor_service_impl.h"
 #include "content/public/browser/web_contents.h"
 #include "jni/LaunchMetrics_jni.h"
-#include "third_party/WebKit/public/platform/WebDisplayMode.h"
+#include "third_party/blink/public/platform/web_display_mode.h"
 #include "url/gurl.h"
 
 using base::android::JavaParamRef;
@@ -63,7 +63,7 @@ static void JNI_LaunchMetrics_RecordLaunch(
     // launched from a shortcut receive a boost to their engagement.
     SiteEngagementService* service = SiteEngagementService::Get(
         Profile::FromBrowserContext(web_contents->GetBrowserContext()));
-    service->SetLastShortcutLaunchTime(url);
+    service->SetLastShortcutLaunchTime(web_contents, url);
   }
 
   std::string rappor_metric_source;

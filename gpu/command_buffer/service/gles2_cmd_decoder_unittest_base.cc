@@ -18,6 +18,7 @@
 #include "gpu/command_buffer/common/gles2_cmd_format.h"
 #include "gpu/command_buffer/common/gles2_cmd_utils.h"
 #include "gpu/command_buffer/service/context_group.h"
+#include "gpu/command_buffer/service/copy_texture_chromium_mock.h"
 #include "gpu/command_buffer/service/gpu_switches.h"
 #include "gpu/command_buffer/service/logger.h"
 #include "gpu/command_buffer/service/mailbox_manager.h"
@@ -134,7 +135,7 @@ GLES2DecoderTestBase::GLES2DecoderTestBase()
   memset(immediate_buffer_, 0xEE, sizeof(immediate_buffer_));
 }
 
-GLES2DecoderTestBase::~GLES2DecoderTestBase() {}
+GLES2DecoderTestBase::~GLES2DecoderTestBase() = default;
 
 void GLES2DecoderTestBase::OnConsoleMessage(int32_t id,
                                             const std::string& message) {}
@@ -486,7 +487,7 @@ void GLES2DecoderTestBase::InitDecoderWithWorkarounds(
   shared_memory_base_ = buffer->memory();
   ClearSharedMemory();
 
-  gles2::ContextCreationAttribHelper attribs;
+  ContextCreationAttribs attribs;
   attribs.alpha_size = normalized_init.request_alpha ? 8 : 0;
   attribs.depth_size = normalized_init.request_depth ? 24 : 0;
   attribs.stencil_size = normalized_init.request_stencil ? 8 : 0;
@@ -498,6 +499,10 @@ void GLES2DecoderTestBase::InitDecoderWithWorkarounds(
                                       &outputter_, group_.get()));
   decoder_->SetIgnoreCachedStateForTest(ignore_cached_state_for_test_);
   decoder_->GetLogger()->set_log_synthesized_gl_errors(false);
+
+  copy_texture_manager_ = new MockCopyTextureResourceManager();
+  decoder_->SetCopyTextureResourceManagerForTest(copy_texture_manager_);
+
   ASSERT_EQ(decoder_->Initialize(surface_, context_, false,
                                  DisallowedFeatures(), attribs),
             gpu::ContextResult::kSuccess);
@@ -583,6 +588,14 @@ void GLES2DecoderTestBase::ResetDecoder() {
   }
 
   decoder_->EndDecoding();
+
+  if (!decoder_->WasContextLost()) {
+    EXPECT_CALL(*copy_texture_manager_, Destroy())
+        .Times(1)
+        .RetiresOnSaturation();
+    copy_texture_manager_ = nullptr;
+  }
+
   decoder_->Destroy(!decoder_->WasContextLost());
   decoder_.reset();
   group_->Destroy(mock_decoder_.get(), false);
@@ -1503,6 +1516,44 @@ void GLES2DecoderTestBase::DoTexImage3D(GLenum target,
   EXPECT_EQ(error::kNoError, ExecuteCmd(cmd));
 }
 
+void GLES2DecoderTestBase::DoCopyTexImage2D(
+    GLenum target,
+    GLint level,
+    GLenum internal_format,
+    GLint x,
+    GLint y,
+    GLsizei width,
+    GLsizei height,
+    GLint border) {
+  // For GL_BGRA_EXT, we have to fall back to TexImage2D and
+  // CopyTexSubImage2D, since GL_BGRA_EXT is not accepted by CopyTexImage2D.
+  // In some cases this fallback further triggers set and restore of
+  // GL_UNPACK_ALIGNMENT.
+  if (internal_format == GL_BGRA_EXT) {
+    EXPECT_CALL(*gl_, PixelStorei(GL_UNPACK_ALIGNMENT, _))
+        .Times(2)
+        .RetiresOnSaturation();
+
+    EXPECT_CALL(*gl_, TexImage2D(target, level, internal_format,
+                                 width, height, border,
+                                 internal_format, GL_UNSIGNED_BYTE, _))
+        .Times(1)
+        .RetiresOnSaturation();
+    EXPECT_CALL(*gl_, CopyTexSubImage2D(target, level, 0, 0, 0, 0,
+                                        width, height))
+        .Times(1)
+        .RetiresOnSaturation();
+  } else {
+    EXPECT_CALL(*gl_, CopyTexImage2D(target, level, internal_format, 0, 0,
+                                     width, height, border))
+        .Times(1)
+        .RetiresOnSaturation();
+  }
+  cmds::CopyTexImage2D cmd;
+  cmd.Init(target, level, internal_format, 0, 0, width, height);
+  EXPECT_EQ(error::kNoError, ExecuteCmd(cmd));
+}
+
 void GLES2DecoderTestBase::DoRenderbufferStorage(
     GLenum target, GLenum internal_format, GLenum actual_format,
     GLsizei width, GLsizei height,  GLenum error) {
@@ -2334,7 +2385,7 @@ GLES2DecoderPassthroughTestBase::GLES2DecoderPassthroughTestBase(
   context_creation_attribs_.context_type = context_type;
 }
 
-GLES2DecoderPassthroughTestBase::~GLES2DecoderPassthroughTestBase() {}
+GLES2DecoderPassthroughTestBase::~GLES2DecoderPassthroughTestBase() = default;
 
 void GLES2DecoderPassthroughTestBase::OnConsoleMessage(
     int32_t id,
@@ -2450,10 +2501,6 @@ GLint GLES2DecoderPassthroughTestBase::GetGLError() {
   cmd.Init(shared_memory_id_, shared_memory_offset_);
   EXPECT_EQ(error::kNoError, ExecuteCmd(cmd));
   return static_cast<GLint>(*GetSharedMemoryAs<GLenum*>());
-}
-
-void GLES2DecoderPassthroughTestBase::InjectGLError(GLenum error) {
-  decoder_->InjectDriverError(error);
 }
 
 void GLES2DecoderPassthroughTestBase::DoRequestExtension(

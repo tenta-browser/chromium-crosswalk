@@ -56,7 +56,7 @@ class TestWebContents : public WebContentsImpl, public WebContentsTester {
                     bool is_favicon,
                     uint32_t max_bitmap_size,
                     bool bypass_cache,
-                    const ImageDownloadCallback& callback) override;
+                    ImageDownloadCallback callback) override;
   const GURL& GetLastCommittedURL() const override;
 
   // WebContentsTester implementation.
@@ -78,7 +78,15 @@ class TestWebContents : public WebContentsImpl, public WebContentsTester {
                                          bool was_within_same_document,
                                          int item_sequence_number,
                                          int document_sequence_number);
-  const std::string& GetSaveFrameHeaders() override;
+  void SetNavigationData(
+      NavigationHandle* navigation_handle,
+      std::unique_ptr<NavigationData> navigation_data) override;
+  void SetHttpResponseHeaders(
+      NavigationHandle* navigation_handle,
+      scoped_refptr<net::HttpResponseHeaders> response_headers) override;
+  void SetOpener(WebContents* opener) override;
+  const std::string& GetSaveFrameHeaders() const override;
+  const base::string16& GetSuggestedFileName() const override;
   bool HasPendingDownloadImage(const GURL& url) override;
   bool TestDidDownloadImage(
       const GURL& url,
@@ -86,8 +94,14 @@ class TestWebContents : public WebContentsImpl, public WebContentsTester {
       const std::vector<SkBitmap>& bitmaps,
       const std::vector<gfx::Size>& original_bitmap_sizes) override;
   void SetLastCommittedURL(const GURL& url) override;
+  void SetMainFrameMimeType(const std::string& mime_type) override;
   void SetWasRecentlyAudible(bool audible) override;
   void SetIsCurrentlyAudible(bool audible) override;
+  void TestDidReceiveInputEvent(blink::WebInputEvent::Type type) override;
+  void TestDidFailLoadWithError(
+      const GURL& url,
+      int error_code,
+      const base::string16& error_description) override;
 
   // True if a cross-site navigation is pending.
   bool CrossProcessNavigationPending();
@@ -99,7 +113,7 @@ class TestWebContents : public WebContentsImpl, public WebContentsTester {
       int proxy_routing_id,
       const base::UnguessableToken& devtools_frame_token,
       const FrameReplicationState& replicated_frame_state) override;
-  void UpdateRenderViewSizeForRenderManager() override {}
+  void UpdateRenderViewSizeForRenderManager(bool is_main_frame) override {}
 
   // Returns a clone of this TestWebContents. The returned object is also a
   // TestWebContents. The caller owns the returned object.
@@ -110,10 +124,6 @@ class TestWebContents : public WebContentsImpl, public WebContentsTester {
   void set_delegate_view(RenderViewHostDelegateView* view) {
     delegate_view_override_ = view;
   }
-
-  // Allows us to simulate this tab's main frame having an opener that points
-  // to the main frame of the |opener|.
-  void SetOpener(TestWebContents* opener);
 
   // Allows us to simulate that a contents was created via CreateNewWindow.
   void AddPendingContents(TestWebContents* contents);
@@ -130,17 +140,6 @@ class TestWebContents : public WebContentsImpl, public WebContentsTester {
                                  int history_length) override;
 
   void TestDidFinishLoad(const GURL& url);
-  void TestDidFailLoadWithError(const GURL& url,
-                                int error_code,
-                                const base::string16& error_description);
-
-  void SetNavigationData(
-      NavigationHandle* navigation_handle,
-      std::unique_ptr<NavigationData> navigation_data) override;
-
-  void SetHttpResponseHeaders(
-      NavigationHandle* navigation_handle,
-      scoped_refptr<net::HttpResponseHeaders> response_headers) override;
 
  protected:
   // The deprecated WebContentsTester still needs to subclass this.
@@ -173,7 +172,8 @@ class TestWebContents : public WebContentsImpl, public WebContentsTester {
   void ShowCreatedFullscreenWidget(int process_id, int route_id) override;
   void SaveFrameWithHeaders(const GURL& url,
                             const Referrer& referrer,
-                            const std::string& headers) override;
+                            const std::string& headers,
+                            const base::string16& suggested_filename) override;
 
   RenderViewHostDelegateView* delegate_view_override_;
 
@@ -182,6 +182,7 @@ class TestWebContents : public WebContentsImpl, public WebContentsTester {
   int expect_set_history_offset_and_length_history_offset_;
   int expect_set_history_offset_and_length_history_length_;
   std::string save_frame_headers_;
+  base::string16 suggested_filename_;
   // Map keyed by image URL. Values are <id, callback> pairs.
   std::map<GURL, std::list<std::pair<int, ImageDownloadCallback>>>
       pending_image_downloads_;

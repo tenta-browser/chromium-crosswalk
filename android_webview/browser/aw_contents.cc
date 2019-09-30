@@ -5,6 +5,7 @@
 #include "android_webview/browser/aw_contents.h"
 
 #include <limits>
+#include <memory>
 #include <utility>
 
 #include "android_webview/browser/aw_autofill_client.h"
@@ -43,15 +44,16 @@
 #include "base/bind.h"
 #include "base/callback.h"
 #include "base/command_line.h"
+#include "base/i18n/rtl.h"
 #include "base/json/json_writer.h"
 #include "base/location.h"
 #include "base/macros.h"
 #include "base/memory/memory_pressure_listener.h"
-#include "base/memory/ptr_util.h"
 #include "base/pickle.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string16.h"
 #include "base/supports_user_data.h"
+#include "base/threading/thread_restrictions.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "components/autofill/android/autofill_provider_android.h"
 #include "components/autofill/content/browser/content_autofill_driver_factory.h"
@@ -64,7 +66,6 @@
 #include "content/public/browser/browsing_data_remover.h"
 #include "content/public/browser/child_process_security_policy.h"
 #include "content/public/browser/favicon_status.h"
-#include "content/public/browser/gpu_data_manager.h"
 #include "content/public/browser/interstitial_page.h"
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/navigation_handle.h"
@@ -77,10 +78,11 @@
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/mhtml_generation_params.h"
 #include "content/public/common/renderer_preferences.h"
-#include "gpu/config/gpu_info.h"
+#include "content/public/common/use_zoom_for_dsf_policy.h"
 #include "jni/AwContents_jni.h"
 #include "net/base/auth.h"
 #include "net/cert/x509_certificate.h"
+#include "net/cert/x509_util.h"
 #include "third_party/skia/include/core/SkPicture.h"
 #include "ui/gfx/android/java_bitmap.h"
 #include "ui/gfx/geometry/rect_f.h"
@@ -153,6 +155,16 @@ void JavaScriptResultCallbackForTesting(
 }
 
 }  // namespace
+
+class ScopedAllowInitGLBindings {
+ public:
+  ScopedAllowInitGLBindings() {}
+
+  ~ScopedAllowInitGLBindings() {}
+
+ private:
+  base::ScopedAllowBlocking allow_blocking_;
+};
 
 // static
 AwContents* AwContents::FromWebContents(WebContents* web_contents) {
@@ -229,7 +241,7 @@ AwContents::AwContents(std::unique_ptr<WebContents> web_contents)
   icon_helper_.reset(new IconHelper(web_contents_.get()));
   icon_helper_->SetListener(this);
   web_contents_->SetUserData(android_webview::kAwContentsUserDataKey,
-                             base::MakeUnique<AwContentsUserData>(this));
+                             std::make_unique<AwContentsUserData>(this));
   browser_view_renderer_.RegisterWithWebContents(web_contents_.get());
 
   CompositorID compositor_id;
@@ -283,11 +295,11 @@ void AwContents::SetJavaPeers(
   AwContentsIoThreadClient::Associate(web_contents_.get(), io_thread_client);
 
   InterceptNavigationDelegate::Associate(
-      web_contents_.get(), base::MakeUnique<InterceptNavigationDelegate>(
+      web_contents_.get(), std::make_unique<InterceptNavigationDelegate>(
                                env, intercept_navigation_delegate));
 
   if (!autofill_provider.is_null()) {
-    autofill_provider_ = base::MakeUnique<autofill::AutofillProviderAndroid>(
+    autofill_provider_ = std::make_unique<autofill::AutofillProviderAndroid>(
         autofill_provider, web_contents_.get());
   }
 
@@ -417,9 +429,12 @@ static jlong JNI_AwContents_Init(JNIEnv* env,
 static jboolean JNI_AwContents_HasRequiredHardwareExtensions(
     JNIEnv* env,
     const JavaParamRef<jclass>&) {
-  return content::GpuDataManager::GetInstance()
-      ->GetGPUInfo()
-      .can_support_threaded_texture_mailbox;
+  ScopedAllowInitGLBindings scoped_allow_init_gl_bindings;
+  // Make sure GPUInfo is collected. This will initialize GL bindings,
+  // collect GPUInfo, and compute GpuFeatureInfo if they have not been
+  // already done.
+  return DeferredGpuCommandService::GetInstance()
+      ->CanSupportThreadedTextureMailbox();
 }
 
 static void JNI_AwContents_SetAwDrawSWFunctionTable(JNIEnv* env,
@@ -439,6 +454,15 @@ jint JNI_AwContents_GetNativeInstanceCount(JNIEnv* env,
   return base::subtle::NoBarrier_Load(&g_instance_count);
 }
 
+// static
+ScopedJavaLocalRef<jstring> JNI_AwContents_GetSafeBrowsingLocaleForTesting(
+    JNIEnv* env,
+    const JavaParamRef<jclass>&) {
+  ScopedJavaLocalRef<jstring> locale =
+      ConvertUTF8ToJavaString(env, base::i18n::GetConfiguredLocale());
+  return locale;
+}
+
 namespace {
 void DocumentHasImagesCallback(const ScopedJavaGlobalRef<jobject>& message,
                                bool has_images) {
@@ -454,7 +478,7 @@ void AwContents::DocumentHasImages(JNIEnv* env,
   ScopedJavaGlobalRef<jobject> j_message;
   j_message.Reset(env, message);
   render_view_host_ext_->DocumentHasImages(
-      base::Bind(&DocumentHasImagesCallback, j_message));
+      base::BindOnce(&DocumentHasImagesCallback, j_message));
 }
 
 namespace {
@@ -476,8 +500,8 @@ void AwContents::GenerateMHTML(JNIEnv* env,
   base::FilePath target_path(ConvertJavaStringToUTF8(env, jpath));
   web_contents_->GenerateMHTML(
       content::MHTMLGenerationParams(target_path),
-      base::Bind(&GenerateMHTMLCallback,
-                 ScopedJavaGlobalRef<jobject>(env, callback), target_path));
+      base::BindOnce(&GenerateMHTMLCallback,
+                     ScopedJavaGlobalRef<jobject>(env, callback), target_path));
 }
 
 void AwContents::CreatePdfExporter(JNIEnv* env,
@@ -549,19 +573,20 @@ void ShowGeolocationPromptHelper(const JavaObjectWeakGlobalRef& java_ref,
   if (java_ref.get(env).obj()) {
     content::BrowserThread::PostTask(
         content::BrowserThread::UI, FROM_HERE,
-        base::Bind(&ShowGeolocationPromptHelperTask, java_ref, origin));
+        base::BindOnce(&ShowGeolocationPromptHelperTask, java_ref, origin));
   }
 }
 
 }  // anonymous namespace
 
-void AwContents::ShowGeolocationPrompt(const GURL& requesting_frame,
-                                       base::Callback<void(bool)> callback) {
+void AwContents::ShowGeolocationPrompt(
+    const GURL& requesting_frame,
+    base::OnceCallback<void(bool)> callback) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
   GURL origin = requesting_frame.GetOrigin();
   bool show_prompt = pending_geolocation_prompts_.empty();
-  pending_geolocation_prompts_.push_back(OriginCallback(origin, callback));
+  pending_geolocation_prompts_.emplace_back(origin, std::move(callback));
   if (show_prompt) {
     ShowGeolocationPromptHelper(java_ref_, origin);
   }
@@ -580,7 +605,7 @@ void AwContents::InvokeGeolocationCallback(
   GURL callback_origin(base::android::ConvertJavaStringToUTF16(env, origin));
   if (callback_origin.GetOrigin() ==
       pending_geolocation_prompts_.front().first) {
-    pending_geolocation_prompts_.front().second.Run(value);
+    std::move(pending_geolocation_prompts_.front().second).Run(value);
     pending_geolocation_prompts_.pop_front();
     if (!pending_geolocation_prompts_.empty()) {
       ShowGeolocationPromptHelper(java_ref_,
@@ -656,10 +681,10 @@ void AwContents::PreauthorizePermission(JNIEnv* env,
 
 void AwContents::RequestProtectedMediaIdentifierPermission(
     const GURL& origin,
-    const base::Callback<void(bool)>& callback) {
+    base::OnceCallback<void(bool)> callback) {
   permission_request_handler_->SendRequest(
       std::unique_ptr<AwPermissionRequestDelegate>(new SimplePermissionRequest(
-          origin, AwPermissionRequest::ProtectedMediaId, callback)));
+          origin, AwPermissionRequest::ProtectedMediaId, std::move(callback))));
 }
 
 void AwContents::CancelProtectedMediaIdentifierPermissionRequests(
@@ -670,19 +695,19 @@ void AwContents::CancelProtectedMediaIdentifierPermissionRequests(
 
 void AwContents::RequestGeolocationPermission(
     const GURL& origin,
-    const base::Callback<void(bool)>& callback) {
+    base::OnceCallback<void(bool)> callback) {
   JNIEnv* env = AttachCurrentThread();
   ScopedJavaLocalRef<jobject> obj = java_ref_.get(env);
   if (obj.is_null())
     return;
 
   if (Java_AwContents_useLegacyGeolocationPermissionAPI(env, obj)) {
-    ShowGeolocationPrompt(origin, callback);
+    ShowGeolocationPrompt(origin, std::move(callback));
     return;
   }
   permission_request_handler_->SendRequest(
       std::unique_ptr<AwPermissionRequestDelegate>(new SimplePermissionRequest(
-          origin, AwPermissionRequest::Geolocation, callback)));
+          origin, AwPermissionRequest::Geolocation, std::move(callback))));
 }
 
 void AwContents::CancelGeolocationPermissionRequests(const GURL& origin) {
@@ -701,10 +726,10 @@ void AwContents::CancelGeolocationPermissionRequests(const GURL& origin) {
 
 void AwContents::RequestMIDISysexPermission(
     const GURL& origin,
-    const base::Callback<void(bool)>& callback) {
+    base::OnceCallback<void(bool)> callback) {
   permission_request_handler_->SendRequest(
       std::unique_ptr<AwPermissionRequestDelegate>(new SimplePermissionRequest(
-          origin, AwPermissionRequest::MIDISysex, callback)));
+          origin, AwPermissionRequest::MIDISysex, std::move(callback))));
 }
 
 void AwContents::CancelMIDISysexPermissionRequests(const GURL& origin) {
@@ -841,9 +866,8 @@ base::android::ScopedJavaLocalRef<jbyteArray> AwContents::GetCertificate(
     return ScopedJavaLocalRef<jbyteArray>();
 
   // Convert the certificate and return it
-  std::string der_string;
-  net::X509Certificate::GetDEREncoded(
-      entry->GetSSL().certificate->os_cert_handle(), &der_string);
+  base::StringPiece der_string = net::x509_util::CryptoBufferAsStringPiece(
+      entry->GetSSL().certificate->cert_buffer());
   return base::android::ToJavaByteArray(
       env, reinterpret_cast<const uint8_t*>(der_string.data()),
       der_string.length());
@@ -1154,8 +1178,9 @@ void AwContents::SmoothScroll(JNIEnv* env,
                               jlong duration_ms) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
-  float scale = browser_view_renderer_.dip_scale() *
-                browser_view_renderer_.page_scale_factor();
+  float scale = browser_view_renderer_.page_scale_factor();
+  if (!content::IsUseZoomForDSFEnabled())
+    scale *= browser_view_renderer_.dip_scale();
   render_view_host_ext_->SmoothScroll(target_x / scale, target_y / scale,
                                       duration_ms);
 }
@@ -1177,8 +1202,13 @@ void AwContents::OnWebLayoutContentsSizeChanged(
   ScopedJavaLocalRef<jobject> obj = java_ref_.get(env);
   if (obj.is_null())
     return;
+  gfx::Size contents_size_css =
+      content::IsUseZoomForDSFEnabled()
+          ? ScaleToRoundedSize(contents_size,
+                               1 / browser_view_renderer_.dip_scale())
+          : contents_size;
   Java_AwContents_onWebLayoutContentsSizeChanged(
-      env, obj, contents_size.width(), contents_size.height());
+      env, obj, contents_size_css.width(), contents_size_css.height());
 }
 
 jlong AwContents::CapturePicture(JNIEnv* env,
@@ -1224,9 +1254,8 @@ void AwContents::InsertVisualStateCallback(
 jint AwContents::GetEffectivePriority(
     JNIEnv* env,
     const base::android::JavaParamRef<jobject>& obj) {
-  switch (web_contents_->GetMainFrame()
-              ->GetProcess()
-              ->ComputeEffectiveImportance()) {
+  switch (
+      web_contents_->GetMainFrame()->GetProcess()->GetEffectiveImportance()) {
     case content::ChildProcessImportance::NORMAL:
       return static_cast<jint>(RendererPriority::WAIVED);
     case content::ChildProcessImportance::MODERATE:

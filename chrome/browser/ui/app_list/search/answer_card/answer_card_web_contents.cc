@@ -6,25 +6,29 @@
 
 #include <string>
 
+#include "base/bind.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/metrics/user_metrics.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser_navigator.h"
 #include "chrome/browser/ui/browser_navigator_params.h"
+#include "content/public/browser/host_zoom_map.h"
 #include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/page_navigator.h"
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/render_widget_host.h"
+#include "content/public/browser/render_widget_host_view.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/renderer_preferences.h"
 #include "net/http/http_response_headers.h"
 #include "net/http/http_status_code.h"
-#include "ui/app_list/app_list_features.h"
+#include "ui/app_list/answer_card_contents_registry.h"
 #include "ui/app_list/views/app_list_view.h"
 #include "ui/aura/window.h"
 #include "ui/views/controls/native/native_view_host.h"
 #include "ui/views/controls/webview/web_contents_set_background_color.h"
 #include "ui/views/controls/webview/webview.h"
+#include "ui/views/mus/remote_view/remote_view_provider.h"
 #include "ui/views/widget/widget.h"
 
 namespace app_list {
@@ -73,8 +77,7 @@ class SearchAnswerWebView : public views::WebView {
     OnVisibilityEvent(false);
     // Focus Behavior is originally set in WebView::SetWebContents, but
     // overriden here because we do not want the webview to get focus.
-    if (features::IsAppListFocusEnabled())
-      SetFocusBehavior(FocusBehavior::ACCESSIBLE_ONLY);
+    SetFocusBehavior(FocusBehavior::ACCESSIBLE_ONLY);
   }
 
   void RemovedFromWidget() override {
@@ -134,12 +137,12 @@ void ParseResponseHeaders(const net::HttpResponseHeaders* headers,
 }  // namespace
 
 AnswerCardWebContents::AnswerCardWebContents(Profile* profile)
-    : web_view_(base::MakeUnique<SearchAnswerWebView>(profile)),
-      web_contents_(
+    : web_contents_(
           content::WebContents::Create(content::WebContents::CreateParams(
               profile,
               content::SiteInstance::Create(profile)))),
-      profile_(profile) {
+      profile_(profile),
+      weak_ptr_factory_(this) {
   content::RendererPreferences* renderer_prefs =
       web_contents_->GetMutableRendererPrefs();
   renderer_prefs->can_accept_load_drops = false;
@@ -149,9 +152,6 @@ AnswerCardWebContents::AnswerCardWebContents(Profile* profile)
 
   Observe(web_contents_.get());
   web_contents_->SetDelegate(this);
-  web_view_->set_owned_by_client();
-  web_view_->SetWebContents(web_contents_.get());
-  web_view_->SetResizeBackgroundColor(SK_ColorTRANSPARENT);
 
   // Make the webview transparent since it's going to be shown on top of a
   // highlightable button.
@@ -161,9 +161,24 @@ AnswerCardWebContents::AnswerCardWebContents(Profile* profile)
   content::RenderViewHost* const rvh = web_contents_->GetRenderViewHost();
   if (rvh)
     AttachToHost(rvh->GetWidget());
+
+  if (AnswerCardContentsRegistry::Get()) {
+    web_view_ = std::make_unique<SearchAnswerWebView>(profile);
+    web_view_->set_owned_by_client();
+    web_view_->SetWebContents(web_contents_.get());
+    web_view_->SetResizeBackgroundColor(SK_ColorTRANSPARENT);
+
+    token_ = AnswerCardContentsRegistry::Get()->Register(web_view_.get());
+  } else {
+    remote_view_provider_ = std::make_unique<views::RemoteViewProvider>(
+        web_contents_->GetNativeView());
+  }
 }
 
 AnswerCardWebContents::~AnswerCardWebContents() {
+  if (AnswerCardContentsRegistry::Get() && !token_.is_empty())
+    AnswerCardContentsRegistry::Get()->Unregister(token_);
+
   DetachFromHost();
   web_contents_->SetDelegate(nullptr);
   Observe(nullptr);
@@ -175,19 +190,22 @@ void AnswerCardWebContents::LoadURL(const GURL& url) {
   load_params.should_clear_history_list = true;
   web_contents_->GetController().LoadURLWithParams(load_params);
 
-  web_contents_->GetRenderViewHost()->EnableAutoResize(
+  web_contents_->GetRenderWidgetHostView()->EnableAutoResize(
       gfx::Size(1, 1), gfx::Size(INT_MAX, INT_MAX));
 }
 
-views::View* AnswerCardWebContents::GetView() {
-  return web_view_.get();
+const base::UnguessableToken& AnswerCardWebContents::GetToken() const {
+  return token_;
 }
 
 void AnswerCardWebContents::ResizeDueToAutoResize(
     content::WebContents* web_contents,
     const gfx::Size& new_size) {
   delegate()->UpdatePreferredSize(this);
-  web_view_->SetPreferredSize(new_size);
+  if (web_view_)
+    web_view_->SetPreferredSize(new_size);
+
+  // TODO(https://crbug.com/812434): Support preferred size change for mash.
 }
 
 content::WebContents* AnswerCardWebContents::OpenURLFromTab(
@@ -198,8 +216,7 @@ content::WebContents* AnswerCardWebContents::OpenURLFromTab(
 
   // Open the user-clicked link in the browser taking into account the requested
   // disposition.
-  chrome::NavigateParams new_tab_params(profile_, params.url,
-                                        params.transition);
+  NavigateParams new_tab_params(profile_, params.url, params.transition);
 
   new_tab_params.disposition = params.disposition;
 
@@ -208,10 +225,10 @@ content::WebContents* AnswerCardWebContents::OpenURLFromTab(
     // activated window with the new activated tab after the user closes the
     // launcher. So it's "background" relative to the launcher itself.
     new_tab_params.disposition = WindowOpenDisposition::NEW_FOREGROUND_TAB;
-    new_tab_params.window_action = chrome::NavigateParams::SHOW_WINDOW_INACTIVE;
+    new_tab_params.window_action = NavigateParams::SHOW_WINDOW_INACTIVE;
   }
 
-  chrome::Navigate(&new_tab_params);
+  Navigate(&new_tab_params);
 
   base::RecordAction(base::UserMetricsAction("SearchAnswer_OpenedUrl"));
 
@@ -248,7 +265,14 @@ void AnswerCardWebContents::DidFinishNavigation(
 }
 
 void AnswerCardWebContents::DidStopLoading() {
-  delegate()->DidStopLoading(this);
+  if (!remote_view_provider_) {
+    delegate()->OnContentsReady(this);
+    return;
+  }
+
+  remote_view_provider_->GetEmbedToken(
+      base::BindOnce(&AnswerCardWebContents::OnGotEmbedTokenAndNotify,
+                     weak_ptr_factory_.GetWeakPtr()));
 }
 
 void AnswerCardWebContents::DidGetUserInteraction(
@@ -259,6 +283,12 @@ void AnswerCardWebContents::DidGetUserInteraction(
 void AnswerCardWebContents::RenderViewCreated(content::RenderViewHost* host) {
   if (!host_)
     AttachToHost(host->GetWidget());
+
+  // Do not zoom for answer card web contents.
+  content::HostZoomMap* zoom_map =
+      content::HostZoomMap::GetForWebContents(web_contents());
+  DCHECK(zoom_map);
+  zoom_map->SetZoomLevelForHost(web_contents()->GetURL().host(), 0);
 }
 
 void AnswerCardWebContents::RenderViewDeleted(content::RenderViewHost* host) {
@@ -284,6 +314,13 @@ void AnswerCardWebContents::DetachFromHost() {
     return;
 
   host_ = nullptr;
+}
+
+void AnswerCardWebContents::OnGotEmbedTokenAndNotify(
+    const base::UnguessableToken& token) {
+  token_ = token;
+  web_contents_->GetNativeView()->Show();
+  delegate()->OnContentsReady(this);
 }
 
 }  // namespace app_list

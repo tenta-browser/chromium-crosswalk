@@ -14,6 +14,7 @@
 #include "base/macros.h"
 #include "base/message_loop/message_loop.h"
 #include "base/threading/thread.h"
+#include "components/user_manager/user_type.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/aura/client/window_types.h"
@@ -52,6 +53,7 @@ class WidgetDelegate;
 
 namespace ash {
 
+class AppListTestHelper;
 class AshTestEnvironment;
 class AshTestHelper;
 class Shelf;
@@ -177,6 +179,8 @@ class AshTestBase : public testing::Test,
 
   TestSessionControllerClient* GetSessionControllerClient();
 
+  AppListTestHelper* GetAppListTestHelper();
+
   // Emulates an ash session that have |session_count| user sessions running.
   // Note that existing user sessions will be cleared.
   void CreateUserSessions(int session_count);
@@ -184,6 +188,15 @@ class AshTestBase : public testing::Test,
   // Simulates a user sign-in. It creates a new user session, adds it to
   // existing user sessions and makes it the active user session.
   void SimulateUserLogin(const std::string& user_email);
+
+  // Simular to SimulateUserLogin but for a newly created user first ever login.
+  void SimulateNewUserFirstLogin(const std::string& user_email);
+
+  // Similar to SimulateUserLogin but for a guest user.
+  void SimulateGuestLogin();
+
+  // Simulates kiosk mode. |user_type| must correlate to a kiosk type user.
+  void SimulateKioskMode(user_manager::UserType user_type);
 
   // Clears all user sessions and resets to the primary login screen state.
   void ClearLogin();

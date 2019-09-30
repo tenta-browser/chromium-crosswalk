@@ -5,6 +5,8 @@
 package org.chromium.chrome.browser.download;
 
 import org.chromium.components.offline_items_collection.ContentId;
+import org.chromium.components.offline_items_collection.FailState;
+import org.chromium.components.offline_items_collection.PendingState;
 
 /**
  * Class for reporting the status of a download.
@@ -23,8 +25,9 @@ public interface DownloadNotifier {
     /**
      * Add a download failed notification.
      * @param downloadInfo info about the failed download.
+     * @param failState The reason the download failed.
      */
-    void notifyDownloadFailed(DownloadInfo downloadInfo);
+    void notifyDownloadFailed(DownloadInfo downloadInfo, @FailState int failState);
 
     /**
      * Update the download progress notification.
@@ -47,8 +50,10 @@ public interface DownloadNotifier {
      * Update the download notification to paused.
      * @param downloadInfo info about in progress download.
      * @param isAutoResumable Whether the download can be auto resumed when network is available.
+     * @param pendingState Reason download is pending
      */
-    void notifyDownloadInterrupted(DownloadInfo downloadInfo, boolean isAutoResumable);
+    void notifyDownloadInterrupted(
+            DownloadInfo downloadInfo, boolean isAutoResumable, @PendingState int pendingState);
 
     /**
      * Cancel the notification for a download.

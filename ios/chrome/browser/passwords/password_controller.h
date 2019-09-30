@@ -33,6 +33,9 @@ class PasswordManagerDriver;
 - (BOOL)displaySignInNotification:(UIViewController*)viewController
                         fromTabId:(NSString*)tabId;
 
+// Opens the list of saved passwords in the settings.
+- (void)displaySavedPasswordList;
+
 @end
 
 // Per-tab password controller. Handles password autofill and saving.
@@ -53,6 +56,9 @@ class PasswordManagerDriver;
 
 // The PasswordFormFiller owned by this PasswordController.
 @property(nonatomic, readonly) id<PasswordFormFiller> passwordFormFiller;
+
+// The base view controller from which to present UI.
+@property(nonatomic, readwrite, weak) UIViewController* baseViewController;
 
 // The dispatcher used for the PasswordController. This property can return nil
 // even after being set to a non-nil object.

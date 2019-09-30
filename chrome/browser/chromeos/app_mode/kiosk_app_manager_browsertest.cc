@@ -13,7 +13,6 @@
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/path_service.h"
 #include "base/strings/stringprintf.h"
 #include "base/sys_info.h"
@@ -278,7 +277,7 @@ class KioskAppManagerTest : public InProcessBrowserTest {
   // Locks device for enterprise.
   InstallAttributes::LockResult LockDeviceForEnterprise() {
     std::unique_ptr<InstallAttributes::LockResult> lock_result =
-        base::MakeUnique<InstallAttributes::LockResult>(
+        std::make_unique<InstallAttributes::LockResult>(
             InstallAttributes::LOCK_NOT_READY);
     scoped_refptr<content::MessageLoopRunner> runner =
         new content::MessageLoopRunner;
@@ -454,7 +453,7 @@ class KioskAppManagerTest : public InProcessBrowserTest {
 IN_PROC_BROWSER_TEST_F(KioskAppManagerTest, Basic) {
   // Add a couple of apps. Use "fake_app_x" that do not have data on the test
   // server to avoid pending data loads that could be lingering on tear down and
-  // cause DCHECK failure in utility_process_host_impl.cc.
+  // cause DCHECK failure in utility_process_host.cc.
   manager()->AddApp("fake_app_1", owner_settings_service_.get());
   manager()->AddApp("fake_app_2", owner_settings_service_.get());
   EXPECT_EQ("fake_app_1,fake_app_2", GetAppIds());
@@ -592,8 +591,8 @@ IN_PROC_BROWSER_TEST_F(KioskAppManagerTest, UpdateAppDataFromCrx) {
   ExternalCachePutWaiter put_waiter;
   manager()->PutValidatedExternalExtension(
       kAppId, crx_file, "2.0.0",
-      base::Bind(&ExternalCachePutWaiter::OnPutExtension,
-                 base::Unretained(&put_waiter)));
+      base::BindOnce(&ExternalCachePutWaiter::OnPutExtension,
+                     base::Unretained(&put_waiter)));
   put_waiter.Wait();
   ASSERT_TRUE(put_waiter.success());
 

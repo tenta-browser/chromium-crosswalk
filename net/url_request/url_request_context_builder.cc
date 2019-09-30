@@ -33,7 +33,8 @@
 #include "net/http/http_server_properties_manager.h"
 #include "net/http/transport_security_persister.h"
 #include "net/http/transport_security_state.h"
-#include "net/net_features.h"
+#include "net/log/net_log.h"
+#include "net/net_buildflags.h"
 #include "net/nqe/network_quality_estimator.h"
 #include "net/quic/chromium/quic_stream_factory.h"
 #include "net/ssl/channel_id_service.h"
@@ -59,10 +60,10 @@
 #endif
 
 #if BUILDFLAG(ENABLE_REPORTING)
+#include "net/network_error_logging/network_error_logging_delegate.h"
 #include "net/network_error_logging/network_error_logging_service.h"
 #include "net/reporting/reporting_policy.h"
 #include "net/reporting/reporting_service.h"
-#include "net/url_request/network_error_logging_delegate.h"
 #endif  // BUILDFLAG(ENABLE_REPORTING)
 
 namespace net {
@@ -125,7 +126,7 @@ class BasicNetworkDelegate : public NetworkDelegateImpl {
   }
 
   bool OnCanSetCookie(const URLRequest& request,
-                      const net::CanonicalCookie& cookie,
+                      const CanonicalCookie& cookie,
                       CookieOptions* options) override {
     return true;
   }
@@ -150,16 +151,22 @@ class ContainerURLRequestContext final : public URLRequestContext {
 
   ~ContainerURLRequestContext() override {
 #if BUILDFLAG(ENABLE_REPORTING)
+    // Destroy the NetworkErrorLoggingService so that destroying the
+    // ReportingService (which might abort in-flight URLRequests, generating
+    // network errors) won't recursively try to queue more network error
+    // reports.
+    storage_.set_network_error_logging_service(nullptr);
+
     // Destroy the ReportingService before the rest of the URLRequestContext, so
     // it cancels any pending requests it may have.
     storage_.set_reporting_service(nullptr);
 #endif  // BUILDFLAG(ENABLE_REPORTING)
 
-    // Shut down the ProxyService, as it may have pending URLRequests using this
-    // context. Since this cancels requests, it's not safe to subclass this, as
-    // some parts of the URLRequestContext may then be torn down before this
-    // cancels the ProxyService's URLRequests.
-    proxy_service()->OnShutdown();
+    // Shut down the ProxyResolutionService, as it may have pending URLRequests
+    // using this context. Since this cancels requests, it's not safe to
+    // subclass this, as some parts of the URLRequestContext may then be torn
+    // down before this cancels the ProxyResolutionService's URLRequests.
+    proxy_resolution_service()->OnShutdown();
 
     AssertNoURLRequests();
   }
@@ -191,7 +198,6 @@ URLRequestContextBuilder::HttpCacheParams::~HttpCacheParams() = default;
 URLRequestContextBuilder::URLRequestContextBuilder()
     : enable_brotli_(false),
       network_quality_estimator_(nullptr),
-      shared_http_user_agent_settings_(nullptr),
       data_enabled_(false),
 #if !BUILDFLAG(DISABLE_FILE_SUPPORT)
       file_enabled_(false),
@@ -205,7 +211,7 @@ URLRequestContextBuilder::URLRequestContextBuilder()
       net_log_(nullptr),
       shared_host_resolver_(nullptr),
       pac_quick_check_enabled_(true),
-      pac_sanitize_url_policy_(ProxyService::SanitizeUrlPolicy::SAFE),
+      pac_sanitize_url_policy_(ProxyResolutionService::SanitizeUrlPolicy::SAFE),
       shared_proxy_delegate_(nullptr),
 #if BUILDFLAG(ENABLE_REPORTING)
       shared_http_auth_handler_factory_(nullptr),
@@ -227,7 +233,8 @@ void URLRequestContextBuilder::SetHttpNetworkSessionComponents(
   session_context->cert_transparency_verifier =
       request_context->cert_transparency_verifier();
   session_context->ct_policy_enforcer = request_context->ct_policy_enforcer();
-  session_context->proxy_service = request_context->proxy_service();
+  session_context->proxy_resolution_service =
+      request_context->proxy_resolution_service();
   session_context->ssl_config_service = request_context->ssl_config_service();
   session_context->http_auth_handler_factory =
       request_context->http_auth_handler_factory();
@@ -246,18 +253,17 @@ void URLRequestContextBuilder::SetHttpNetworkSessionComponents(
 
 void URLRequestContextBuilder::set_accept_language(
     const std::string& accept_language) {
-  DCHECK(!shared_http_user_agent_settings_);
+  DCHECK(!http_user_agent_settings_);
   accept_language_ = accept_language;
 }
 void URLRequestContextBuilder::set_user_agent(const std::string& user_agent) {
-  DCHECK(!shared_http_user_agent_settings_);
+  DCHECK(!http_user_agent_settings_);
   user_agent_ = user_agent;
 }
-void URLRequestContextBuilder::set_shared_http_user_agent_settings(
-    HttpUserAgentSettings* shared_http_user_agent_settings) {
-  DCHECK(accept_language_.empty());
-  DCHECK(user_agent_.empty());
-  shared_http_user_agent_settings_ = shared_http_user_agent_settings;
+
+void URLRequestContextBuilder::set_http_user_agent_settings(
+    std::unique_ptr<HttpUserAgentSettings> http_user_agent_settings) {
+  http_user_agent_settings_ = std::move(http_user_agent_settings);
 }
 
 void URLRequestContextBuilder::EnableHttpCache(const HttpCacheParams& params) {
@@ -293,7 +299,7 @@ void URLRequestContextBuilder::SetCertVerifier(
 
 #if BUILDFLAG(ENABLE_REPORTING)
 void URLRequestContextBuilder::set_reporting_policy(
-    std::unique_ptr<net::ReportingPolicy> reporting_policy) {
+    std::unique_ptr<ReportingPolicy> reporting_policy) {
   reporting_policy_ = std::move(reporting_policy);
 }
 #endif  // BUILDFLAG(ENABLE_REPORTING)
@@ -388,8 +394,8 @@ std::unique_ptr<URLRequestContext> URLRequestContextBuilder::Build() {
   context->set_enable_brotli(enable_brotli_);
   context->set_network_quality_estimator(network_quality_estimator_);
 
-  if (shared_http_user_agent_settings_) {
-    context->set_http_user_agent_settings(shared_http_user_agent_settings_);
+  if (http_user_agent_settings_) {
+    storage->set_http_user_agent_settings(std::move(http_user_agent_settings_));
   } else {
     storage->set_http_user_agent_settings(
         std::make_unique<StaticHttpUserAgentSettings>(accept_language_,
@@ -421,7 +427,7 @@ std::unique_ptr<URLRequestContext> URLRequestContextBuilder::Build() {
   if (ssl_config_service_) {
     // This takes a raw pointer, but |storage| will hold onto a reference to the
     // service.
-    storage->set_ssl_config_service(ssl_config_service_.get());
+    storage->set_ssl_config_service(ssl_config_service_);
   } else {
     storage->set_ssl_config_service(new SSLConfigServiceDefaults);
   }
@@ -499,23 +505,25 @@ std::unique_ptr<URLRequestContext> URLRequestContextBuilder::Build() {
         std::make_unique<URLRequestThrottlerManager>());
   }
 
-  if (!proxy_service_) {
+  if (!proxy_resolution_service_) {
 #if !defined(OS_LINUX) && !defined(OS_ANDROID)
     // TODO(willchan): Switch to using this code when
-    // ProxyService::CreateSystemProxyConfigService()'s signature doesn't suck.
+    // ProxyResolutionService::CreateSystemProxyConfigService()'s signature
+    // doesn't suck.
     if (!proxy_config_service_) {
-      proxy_config_service_ = ProxyService::CreateSystemProxyConfigService(
-          base::ThreadTaskRunnerHandle::Get().get());
+      proxy_config_service_ =
+          ProxyResolutionService::CreateSystemProxyConfigService(
+              base::ThreadTaskRunnerHandle::Get().get());
     }
 #endif  // !defined(OS_LINUX) && !defined(OS_ANDROID)
-    proxy_service_ =
-        CreateProxyService(std::move(proxy_config_service_), context.get(),
-                           context->host_resolver(),
-                           context->network_delegate(), context->net_log());
-    proxy_service_->set_quick_check_enabled(pac_quick_check_enabled_);
-    proxy_service_->set_sanitize_url_policy(pac_sanitize_url_policy_);
+    proxy_resolution_service_ = CreateProxyResolutionService(
+        std::move(proxy_config_service_), context.get(),
+        context->host_resolver(), context->network_delegate(),
+        context->net_log());
+    proxy_resolution_service_->set_quick_check_enabled(pac_quick_check_enabled_);
+    proxy_resolution_service_->set_sanitize_url_policy(pac_sanitize_url_policy_);
   }
-  storage->set_proxy_service(std::move(proxy_service_));
+  storage->set_proxy_resolution_service(std::move(proxy_resolution_service_));
 
   HttpNetworkSession::Context network_session_context;
   SetHttpNetworkSessionComponents(context.get(), &network_session_context);
@@ -605,13 +613,13 @@ std::unique_ptr<URLRequestContext> URLRequestContextBuilder::Build() {
   }
 #endif  // !BUILDFLAG(DISABLE_FTP_SUPPORT)
 
-  std::unique_ptr<net::URLRequestJobFactory> top_job_factory(job_factory);
+  std::unique_ptr<URLRequestJobFactory> top_job_factory(job_factory);
   if (!url_request_interceptors_.empty()) {
     // Set up interceptors in the reverse order.
 
     for (auto i = url_request_interceptors_.rbegin();
          i != url_request_interceptors_.rend(); ++i) {
-      top_job_factory.reset(new net::URLRequestInterceptingJobFactory(
+      top_job_factory.reset(new URLRequestInterceptingJobFactory(
           std::move(top_job_factory), std::move(*i)));
     }
     url_request_interceptors_.clear();
@@ -632,16 +640,17 @@ std::unique_ptr<URLRequestContext> URLRequestContextBuilder::Build() {
   }
 
   if (network_error_logging_enabled_) {
-    storage->set_network_error_logging_delegate(
-        NetworkErrorLoggingService::Create());
+    storage->set_network_error_logging_service(
+        NetworkErrorLoggingService::Create(
+            NetworkErrorLoggingDelegate::Create()));
   }
 
   // If both Reporting and Network Error Logging are actually enabled, then
   // connect them so Network Error Logging can use Reporting to deliver error
   // reports.
   if (context->reporting_service() &&
-      context->network_error_logging_delegate()) {
-    context->network_error_logging_delegate()->SetReportingService(
+      context->network_error_logging_service()) {
+    context->network_error_logging_service()->SetReportingService(
         context->reporting_service());
   }
 #endif  // BUILDFLAG(ENABLE_REPORTING)
@@ -649,13 +658,14 @@ std::unique_ptr<URLRequestContext> URLRequestContextBuilder::Build() {
   return std::move(context);
 }
 
-std::unique_ptr<ProxyService> URLRequestContextBuilder::CreateProxyService(
+std::unique_ptr<ProxyResolutionService>
+URLRequestContextBuilder::CreateProxyResolutionService(
     std::unique_ptr<ProxyConfigService> proxy_config_service,
     URLRequestContext* url_request_context,
     HostResolver* host_resolver,
     NetworkDelegate* network_delegate,
     NetLog* net_log) {
-  return ProxyService::CreateUsingSystemProxyResolver(
+  return ProxyResolutionService::CreateUsingSystemProxyResolver(
       std::move(proxy_config_service), net_log);
 }
 

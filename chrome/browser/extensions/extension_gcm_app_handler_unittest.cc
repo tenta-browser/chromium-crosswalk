@@ -49,11 +49,13 @@
 #include "components/signin/core/browser/signin_manager.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_thread.h"
+#include "content/public/browser/storage_partition.h"
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "content/public/test/test_utils.h"
 #include "extensions/browser/extension_system.h"
 #include "extensions/browser/uninstall_reason.h"
 #include "extensions/common/extension.h"
+#include "extensions/common/extension_builder.h"
 #include "extensions/common/manifest.h"
 #include "extensions/common/manifest_constants.h"
 #include "extensions/common/permissions/api_permission.h"
@@ -206,7 +208,7 @@ class ExtensionGCMAppHandlerTest : public testing::Test {
     scoped_refptr<base::SequencedTaskRunner> blocking_task_runner(
         base::CreateSequencedTaskRunnerWithTraits(
             {base::MayBlock(), base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN}));
-    return base::MakeUnique<gcm::GCMProfileService>(
+    return std::make_unique<gcm::GCMProfileService>(
         profile->GetPrefs(), profile->GetPath(), profile->GetRequestContext(),
         chrome::GetChannel(),
         gcm::GetProductCategoryForSubtypes(profile->GetPrefs()),
@@ -272,22 +274,20 @@ class ExtensionGCMAppHandlerTest : public testing::Test {
 
     waiter_.PumpUILoop();
     gcm_app_handler_->Shutdown();
+    auto* partition =
+        content::BrowserContext::GetDefaultStoragePartition(profile());
+    if (partition)
+      partition->WaitForDeletionTasksForTesting();
   }
 
   // Returns a barebones test extension.
   scoped_refptr<Extension> CreateExtension() {
-    base::DictionaryValue manifest;
-    manifest.SetString(manifest_keys::kVersion, "1.0.0.0");
-    manifest.SetString(manifest_keys::kName, kTestExtensionName);
-    auto permission_list = base::MakeUnique<base::ListValue>();
-    permission_list->AppendString("gcm");
-    manifest.Set(manifest_keys::kPermissions, std::move(permission_list));
-
-    std::string error;
-    scoped_refptr<Extension> extension = Extension::Create(
-        temp_dir_.GetPath(), Manifest::UNPACKED, manifest, Extension::NO_FLAGS,
-        "ldnnhddmnhbkjipkidpdiheffobcpfmf", &error);
-    EXPECT_TRUE(extension.get()) << error;
+    scoped_refptr<Extension> extension =
+        ExtensionBuilder(kTestExtensionName)
+            .AddPermission("gcm")
+            .SetPath(temp_dir_.GetPath())
+            .SetID("ldnnhddmnhbkjipkidpdiheffobcpfmf")
+            .Build();
     EXPECT_TRUE(
         extension->permissions_data()->HasAPIPermission(APIPermission::kGcm));
 

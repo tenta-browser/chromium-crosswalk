@@ -26,6 +26,7 @@ recordActionTaken:
     ScriptsBreakpointSet : 3
     SelectCommandFromCommandMenu : 25
     SelectFileFromFilePicker : 24
+    ShowedThirdPartyBadges : 31
     StyleRuleCopied : 27
     StyleRuleEdited : 14
     TimelinePageReloadStarted : 18
@@ -42,7 +43,7 @@ recordPanelShown:
     audits2 : 18
     console : 8
     drawer-animations : 11
-    drawer-console : 10
+    drawer-console-view : 10
     drawer-network.config : 12
     drawer-rendering : 13
     drawer-sensors : 14
@@ -59,5 +60,12 @@ recordPanelShown:
 }
 Panel shown: js_profiler
 Panel shown: timeline
-Panel shown: audits
+
+Test that drawer usage is recorded by PanelShown
+Show drawer:
+Panel shown: drawer-console-view
+Selecting tab from triple dots menu:
+Panel shown: drawer-animations
+Selecting tab from tabbed pane header:
+Panel shown: drawer-console-view
 

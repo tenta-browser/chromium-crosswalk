@@ -72,7 +72,7 @@ class IOSChromePasswordManagerClient
       override;
   bool IsIncognito() const override;
   const password_manager::PasswordManager* GetPasswordManager() const override;
-  PrefService* GetPrefs() override;
+  PrefService* GetPrefs() const override;
   password_manager::PasswordStore* GetPasswordStore() const override;
   void NotifyUserAutoSignin(
       std::vector<std::unique_ptr<autofill::PasswordForm>> local_forms,
@@ -88,7 +88,6 @@ class IOSChromePasswordManagerClient
   const password_manager::CredentialsFilter* GetStoreResultFilter()
       const override;
   const password_manager::LogManager* GetLogManager() const override;
-  ukm::UkmRecorder* GetUkmRecorder() override;
   ukm::SourceId GetUkmSourceId() override;
   password_manager::PasswordManagerMetricsRecorder& GetMetricsRecorder()
       override;

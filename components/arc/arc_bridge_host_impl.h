@@ -82,10 +82,14 @@ class ArcBridgeHostImpl : public mojom::ArcBridgeHost {
   void OnProcessInstanceReady(mojom::ProcessInstancePtr process_ptr) override;
   void OnRotationLockInstanceReady(
       mojom::RotationLockInstancePtr rotation_lock_ptr) override;
+  void OnScreenCaptureInstanceReady(
+      mojom::ScreenCaptureInstancePtr screen_capture_ptr) override;
   void OnStorageManagerInstanceReady(
       mojom::StorageManagerInstancePtr storage_manager_ptr) override;
+  void OnTimerInstanceReady(mojom::TimerInstancePtr timer_ptr) override;
   void OnTracingInstanceReady(mojom::TracingInstancePtr trace_ptr) override;
   void OnTtsInstanceReady(mojom::TtsInstancePtr tts_ptr) override;
+  void OnUsbHostInstanceReady(mojom::UsbHostInstancePtr usb_host_ptr) override;
   void OnVideoInstanceReady(mojom::VideoInstancePtr video_ptr) override;
   void OnVoiceInteractionArcHomeInstanceReady(
       mojom::VoiceInteractionArcHomeInstancePtr home_ptr) override;
@@ -93,6 +97,8 @@ class ArcBridgeHostImpl : public mojom::ArcBridgeHost {
       mojom::VoiceInteractionFrameworkInstancePtr framework_ptr) override;
   void OnVolumeMounterInstanceReady(
       mojom::VolumeMounterInstancePtr volume_mounter_ptr) override;
+  void OnWakeLockInstanceReady(
+      mojom::WakeLockInstancePtr wake_lock_ptr) override;
   void OnWallpaperInstanceReady(
       mojom::WallpaperInstancePtr wallpaper_ptr) override;
 

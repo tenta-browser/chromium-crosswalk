@@ -12,7 +12,6 @@
 #include "base/i18n/time_formatting.h"
 #include "base/json/json_writer.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_piece.h"
 #include "base/strings/utf_string_conversions.h"
@@ -108,7 +107,7 @@ std::unique_ptr<base::DictionaryValue> CertNodeBuilder::Build() {
     node_.SetKey("children", std::move(children_));
   }
   built_ = true;
-  return base::MakeUnique<base::DictionaryValue>(std::move(node_));
+  return std::make_unique<base::DictionaryValue>(std::move(node_));
 }
 
 }  // namespace
@@ -267,7 +266,7 @@ std::string CertificateViewerModalDialog::GetDialogArgs() const {
       cert_node->Set("children", std::move(children));
 
     // Add this node to the children list for the next iteration.
-    children = base::MakeUnique<base::ListValue>();
+    children = std::make_unique<base::ListValue>();
     children->Append(std::move(cert_node));
   }
   // Set the last node as the top of the certificate hierarchy.
@@ -346,12 +345,15 @@ CertificateViewerDialogHandler::~CertificateViewerDialogHandler() {
 }
 
 void CertificateViewerDialogHandler::RegisterMessages() {
-  web_ui()->RegisterMessageCallback("exportCertificate",
-      base::Bind(&CertificateViewerDialogHandler::ExportCertificate,
-                 base::Unretained(this)));
-  web_ui()->RegisterMessageCallback("requestCertificateFields",
-      base::Bind(&CertificateViewerDialogHandler::RequestCertificateFields,
-                 base::Unretained(this)));
+  web_ui()->RegisterMessageCallback(
+      "exportCertificate",
+      base::BindRepeating(&CertificateViewerDialogHandler::ExportCertificate,
+                          base::Unretained(this)));
+  web_ui()->RegisterMessageCallback(
+      "requestCertificateFields",
+      base::BindRepeating(
+          &CertificateViewerDialogHandler::RequestCertificateFields,
+          base::Unretained(this)));
 }
 
 void CertificateViewerDialogHandler::ExportCertificate(

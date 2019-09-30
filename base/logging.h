@@ -552,9 +552,26 @@ class CheckOpResult {
 #define TRAP_SEQUENCE() __builtin_trap()
 #endif  // ARCH_CPU_*
 
+// CHECK() and the trap sequence can be invoked from a constexpr function.
+// This could make compilation fail on GCC, as it forbids directly using inline
+// asm inside a constexpr function. However, it allows calling a lambda
+// expression including the same asm.
+// The side effect is that the top of the stacktrace will not point to the
+// calling function, but to this anonymous lambda. This is still useful as the
+// full name of the lambda will typically include the name of the function that
+// calls CHECK() and the debugger will still break at the right line of code.
+#if !defined(__clang__)
+#define WRAPPED_TRAP_SEQUENCE() \
+  do {                          \
+    [] { TRAP_SEQUENCE(); }();  \
+  } while (false)
+#else
+#define WRAPPED_TRAP_SEQUENCE() TRAP_SEQUENCE()
+#endif
+
 #define IMMEDIATE_CRASH()    \
   ({                         \
-    TRAP_SEQUENCE();         \
+    WRAPPED_TRAP_SEQUENCE(); \
     __builtin_unreachable(); \
   })
 
@@ -573,7 +590,11 @@ class CheckOpResult {
 // TODO(scottmg): Reinvestigate a short sequence that will work on both
 // compilers once clang supports more intrinsics. See https://crbug.com/693713.
 #if defined(__clang__)
-#define IMMEDIATE_CRASH() ({__asm int 3 __asm ud2 __asm push __COUNTER__})
+#define IMMEDIATE_CRASH()                           \
+  ({                                                \
+    {__asm int 3 __asm ud2 __asm push __COUNTER__}; \
+    __builtin_unreachable();                        \
+  })
 #else
 #define IMMEDIATE_CRASH() __debugbreak()
 #endif  // __clang__
@@ -815,7 +836,7 @@ DEFINE_CHECK_OP_IMPL(GT, > )
 
 #if DCHECK_IS_ON()
 
-#if defined(SYZYASAN)
+#if DCHECK_IS_CONFIGURABLE
 BASE_EXPORT extern LogSeverity LOG_DCHECK;
 #else
 const LogSeverity LOG_DCHECK = LOG_FATAL;
@@ -1021,7 +1042,7 @@ class BASE_EXPORT LogMessage {
 // is not used" and "statement has no effect".
 class LogMessageVoidify {
  public:
-  LogMessageVoidify() { }
+  LogMessageVoidify() = default;
   // This has to be an operator with a precedence lower than << but
   // higher than ?:
   void operator&(std::ostream&) { }

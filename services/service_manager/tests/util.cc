@@ -19,8 +19,8 @@
 #include "mojo/edk/embedder/platform_channel_pair.h"
 #include "mojo/edk/embedder/scoped_platform_handle.h"
 #include "services/service_manager/public/cpp/connector.h"
-#include "services/service_manager/public/interfaces/connector.mojom.h"
-#include "services/service_manager/public/interfaces/service_factory.mojom.h"
+#include "services/service_manager/public/mojom/connector.mojom.h"
+#include "services/service_manager/public/mojom/service_factory.mojom.h"
 #include "services/service_manager/runner/common/switches.h"
 
 namespace service_manager {
@@ -44,7 +44,7 @@ mojom::ConnectResult LaunchAndConnectToProcess(
     service_manager::Connector* connector,
     base::Process* process) {
   base::FilePath target_path;
-  CHECK(base::PathService::Get(base::DIR_EXE, &target_path));
+  CHECK(base::PathService::Get(base::DIR_ASSETS, &target_path));
   target_path = target_path.AppendASCII(target_exe_name);
 
   base::CommandLine child_command_line(target_path);

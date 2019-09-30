@@ -13,7 +13,6 @@
 #include <set>
 #include <vector>
 
-#include "base/compiler_specific.h"
 #include "base/containers/circular_deque.h"
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
@@ -21,6 +20,7 @@
 #include "base/memory/scoped_refptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
+#include "net/base/completion_once_callback.h"
 #include "net/base/host_port_pair.h"
 #include "net/base/io_buffer.h"
 #include "net/base/load_states.h"
@@ -49,8 +49,13 @@
 #include "net/spdy/platform/api/spdy_string.h"
 #include "net/spdy/platform/api/spdy_string_piece.h"
 #include "net/ssl/ssl_config_service.h"
+#include "net/traffic_annotation/network_traffic_annotation.h"
 #include "url/gurl.h"
 #include "url/scheme_host_port.h"
+
+namespace crypto {
+class ECPrivateKey;
+}
 
 namespace net {
 
@@ -86,7 +91,6 @@ const SpdyStreamId kLastStreamId = 0x7fffffff;
 
 struct LoadTimingInfo;
 class NetLog;
-class ProxyDelegate;
 class SpdyStream;
 class SSLInfo;
 class TransportSecurityState;
@@ -182,8 +186,10 @@ class NET_EXPORT_PRIVATE SpdyStreamRequest {
                    const base::WeakPtr<SpdySession>& session,
                    const GURL& url,
                    RequestPriority priority,
+                   const SocketTag& socket_tag,
                    const NetLogWithSource& net_log,
-                   const CompletionCallback& callback);
+                   CompletionOnceCallback callback,
+                   const NetworkTrafficAnnotationTag& traffic_annotation);
 
   // Cancels any pending stream creation request. May be called
   // repeatedly.
@@ -197,6 +203,10 @@ class NET_EXPORT_PRIVATE SpdyStreamRequest {
 
   // Returns the estimate of dynamically allocated memory in bytes.
   size_t EstimateMemoryUsage() const;
+
+  const NetworkTrafficAnnotationTag traffic_annotation() const {
+    return NetworkTrafficAnnotationTag(traffic_annotation_);
+  }
 
  private:
   friend class SpdySession;
@@ -223,8 +233,10 @@ class NET_EXPORT_PRIVATE SpdyStreamRequest {
   base::WeakPtr<SpdyStream> stream_;
   GURL url_;
   RequestPriority priority_;
+  SocketTag socket_tag_;
   NetLogWithSource net_log_;
-  CompletionCallback callback_;
+  CompletionOnceCallback callback_;
+  MutableNetworkTrafficAnnotationTag traffic_annotation_;
 
   base::WeakPtrFactory<SpdyStreamRequest> weak_ptr_factory_;
 
@@ -234,7 +246,8 @@ class NET_EXPORT_PRIVATE SpdyStreamRequest {
 class NET_EXPORT SpdySession : public BufferedSpdyFramerVisitorInterface,
                                public SpdyFramerDebugVisitorInterface,
                                public MultiplexedSession,
-                               public HigherLayeredPool {
+                               public HigherLayeredPool,
+                               public Http2PushPromiseIndex::Delegate {
  public:
   // TODO(akalin): Use base::TickClock when it becomes available.
   typedef base::TimeTicks (*TimeFunc)(void);
@@ -257,11 +270,11 @@ class NET_EXPORT SpdySession : public BufferedSpdyFramerVisitorInterface,
               bool enable_sending_initial_data,
               bool enable_ping_based_connection_checking,
               bool support_ietf_format_quic_altsvc,
+              bool is_trusted_proxy,
               size_t session_max_recv_window_size,
               const SettingsMap& initial_settings,
               TimeFunc time_func,
               ServerPushDelegate* push_delegate,
-              ProxyDelegate* proxy_delegate,
               NetLog* net_log);
 
   ~SpdySession() override;
@@ -284,12 +297,22 @@ class NET_EXPORT SpdySession : public BufferedSpdyFramerVisitorInterface,
   // reset).  Returns an error (not ERR_IO_PENDING) otherwise, and
   // resets |spdy_stream|.
   //
+  // If |pushed_stream_id != kNoPushedStreamFound|, then the pushed stream with
+  // pushed_stream_id is used.  An error is returned if that stream is not
+  // available.
+  //
+  // If |pushed_stream_id == kNoPushedStreamFound|, then any matching pushed
+  // stream that has not been claimed by another request can be used.  This can
+  // happen, for example, with http scheme pushed streams, or if the pushed
+  // stream was received from the server in the meanwhile.
+  //
   // If a stream was found and the stream is still open, the priority
   // of that stream is updated to match |priority|.
-  int GetPushStream(const GURL& url,
-                    RequestPriority priority,
-                    SpdyStream** spdy_stream,
-                    const NetLogWithSource& stream_net_log);
+  int GetPushedStream(const GURL& url,
+                      SpdyStreamId pushed_stream_id,
+                      RequestPriority priority,
+                      SpdyStream** spdy_stream,
+                      const NetLogWithSource& stream_net_log);
 
   // Called when the pushed stream should be cancelled. If the pushed stream is
   // not claimed and active, sends RST to the server to cancel the stream.
@@ -316,7 +339,7 @@ class NET_EXPORT SpdySession : public BufferedSpdyFramerVisitorInterface,
   // TODO(wtc): rename this function and the Net.SpdyIPPoolDomainMatch
   // histogram because this function does more than verifying domain
   // authentication now.
-  bool VerifyDomainAuthentication(const SpdyString& domain);
+  bool VerifyDomainAuthentication(const SpdyString& domain) const;
 
   // Pushes the given producer into the write queue for
   // |stream|. |stream| is guaranteed to be activated before the
@@ -441,33 +464,13 @@ class NET_EXPORT SpdySession : public BufferedSpdyFramerVisitorInterface,
   bool GetLoadTimingInfo(SpdyStreamId stream_id,
                          LoadTimingInfo* load_timing_info) const;
 
-  // Returns true if session is not currently active
+  // Returns true if session is currently active.
   bool is_active() const {
     return !active_streams_.empty() || !created_streams_.empty();
   }
 
-  // Access to the number of active and pending streams.  These are primarily
-  // available for testing and diagnostics.
-  size_t num_active_streams() const { return active_streams_.size(); }
-  size_t num_unclaimed_pushed_streams() const;
-  size_t num_created_streams() const { return created_streams_.size(); }
-  size_t count_unclaimed_pushed_streams_for_url(const GURL& url) const;
-
-  size_t num_pushed_streams() const { return num_pushed_streams_; }
-  size_t num_active_pushed_streams() const {
-    return num_active_pushed_streams_;
-  }
-
-  size_t pending_create_stream_queue_size(RequestPriority priority) const {
-    DCHECK_GE(priority, MINIMUM_PRIORITY);
-    DCHECK_LE(priority, MAXIMUM_PRIORITY);
-    return pending_create_stream_queues_[priority].size();
-  }
-
-  // Returns the current |stream_initial_send_window_size_|.
-  int32_t stream_initial_send_window_size() const {
-    return stream_initial_send_window_size_;
-  }
+  // True if the server supports WebSocket protocol.
+  bool support_websocket() const { return support_websocket_; }
 
   // Returns true if no stream in the session can send data due to
   // session flow control.
@@ -493,11 +496,18 @@ class NET_EXPORT SpdySession : public BufferedSpdyFramerVisitorInterface,
   // standards for TLS.
   bool HasAcceptableTransportSecurity() const;
 
-  // Must be used only by |pool_|.
+  // Must be used only by |pool_| (including |pool_.push_promise_index_|).
   base::WeakPtr<SpdySession> GetWeakPtr();
 
   // HigherLayeredPool implementation:
   bool CloseOneIdleConnection() override;
+
+  // Http2PushPromiseIndex::Delegate implementation:
+  bool ValidatePushedStream(SpdyStreamId stream_id,
+                            const GURL& url,
+                            const HttpRequestInfo& request_info,
+                            const SpdySessionKey& key) const override;
+  base::WeakPtr<SpdySession> GetWeakPtrToSession() override;
 
   // Dumps memory allocation stats to |stats|. Sets |*is_session_active| to
   // indicate whether session is active.
@@ -508,6 +518,9 @@ class NET_EXPORT SpdySession : public BufferedSpdyFramerVisitorInterface,
   size_t DumpMemoryStats(StreamSocket::SocketMemoryStats* stats,
                          bool* is_session_active) const;
 
+  // Change this session's socket tag to |new_tag|. Returns true on success.
+  bool ChangeSocketTag(const SocketTag& new_tag);
+
  private:
   friend class test::SpdyStreamTest;
   friend class base::RefCounted<SpdySession>;
@@ -516,44 +529,10 @@ class NET_EXPORT SpdySession : public BufferedSpdyFramerVisitorInterface,
   friend class SpdyHttpStreamTest;
   friend class SpdyNetworkTransactionTest;
   friend class SpdyProxyClientSocketTest;
+  friend class SpdySessionPoolTest;
   friend class SpdySessionTest;
   friend class SpdyStreamRequest;
 
-  // Allow tests to access our innards for testing purposes.
-  FRIEND_TEST_ALL_PREFIXES(SpdySessionTest, ClientPing);
-  FRIEND_TEST_ALL_PREFIXES(SpdySessionTest, FailedPing);
-  FRIEND_TEST_ALL_PREFIXES(SpdySessionTest, WaitingForWrongPing);
-  FRIEND_TEST_ALL_PREFIXES(SpdySessionTest, CancelPushBeforeClaimed);
-  FRIEND_TEST_ALL_PREFIXES(SpdySessionTest, CancelPushAfterSessionGoesAway);
-  FRIEND_TEST_ALL_PREFIXES(SpdySessionTest, CancelPushAfterExpired);
-  FRIEND_TEST_ALL_PREFIXES(SpdySessionTest, ClaimPushedStreamBeforeExpires);
-  FRIEND_TEST_ALL_PREFIXES(SpdySessionTest, ProtocolNegotiation);
-  FRIEND_TEST_ALL_PREFIXES(SpdySessionTest, AdjustRecvWindowSize);
-  FRIEND_TEST_ALL_PREFIXES(SpdySessionTest, AdjustSendWindowSize);
-  FRIEND_TEST_ALL_PREFIXES(SpdySessionTest, SessionFlowControlInactiveStream);
-  FRIEND_TEST_ALL_PREFIXES(SpdySessionTest, SessionFlowControlPadding);
-  FRIEND_TEST_ALL_PREFIXES(SpdySessionTest,
-                           SessionFlowControlTooMuchDataTwoDataFrames);
-  FRIEND_TEST_ALL_PREFIXES(SpdySessionTest,
-                           StreamFlowControlTooMuchDataTwoDataFrames);
-  FRIEND_TEST_ALL_PREFIXES(SpdySessionTest, SessionFlowControlNoReceiveLeaks);
-  FRIEND_TEST_ALL_PREFIXES(SpdySessionTest, SessionFlowControlNoSendLeaks);
-  FRIEND_TEST_ALL_PREFIXES(SpdySessionTest, SessionFlowControlEndToEnd);
-  FRIEND_TEST_ALL_PREFIXES(SpdySessionTest, StreamIdSpaceExhausted);
-  FRIEND_TEST_ALL_PREFIXES(SpdySessionTest, MaxConcurrentStreamsZero);
-  FRIEND_TEST_ALL_PREFIXES(SpdySessionTest, UnstallRacesWithStreamCreation);
-  FRIEND_TEST_ALL_PREFIXES(SpdySessionTest, GoAwayOnSessionFlowControlError);
-  FRIEND_TEST_ALL_PREFIXES(SpdySessionTest,
-                           RejectPushedStreamExceedingConcurrencyLimit);
-  FRIEND_TEST_ALL_PREFIXES(SpdySessionTest, IgnoreReservedRemoteStreamsCount);
-  FRIEND_TEST_ALL_PREFIXES(SpdySessionTest,
-                           CancelReservedStreamOnHeadersReceived);
-  FRIEND_TEST_ALL_PREFIXES(SpdySessionTest, RejectInvalidUnknownFrames);
-  FRIEND_TEST_ALL_PREFIXES(SpdySessionPoolTest, IPAddressChanged);
-  FRIEND_TEST_ALL_PREFIXES(SpdyNetworkTransactionTest,
-                           ServerPushValidCrossOrigin);
-  FRIEND_TEST_ALL_PREFIXES(SpdyNetworkTransactionTest,
-                           ServerPushValidCrossOriginWithOpenSession);
   FRIEND_TEST_ALL_PREFIXES(RecordPushedStreamHistogramTest, VaryResponseHeader);
 
   using PendingStreamRequestQueue =
@@ -585,52 +564,6 @@ class NET_EXPORT SpdySession : public BufferedSpdyFramerVisitorInterface,
     WRITE_STATE_IDLE,
     WRITE_STATE_DO_WRITE,
     WRITE_STATE_DO_WRITE_COMPLETE,
-  };
-
-  // Container class for unclaimed pushed streams on a SpdySession.  Guarantees
-  // that |spdy_session_.pool_| gets notified every time a stream is pushed or
-  // an unclaimed pushed stream is claimed.
-  class UnclaimedPushedStreamContainer {
-   public:
-    using PushedStreamMap = std::map<GURL, SpdyStreamId>;
-    using iterator = PushedStreamMap::iterator;
-    using const_iterator = PushedStreamMap::const_iterator;
-
-    UnclaimedPushedStreamContainer() = delete;
-    explicit UnclaimedPushedStreamContainer(SpdySession* spdy_session);
-    ~UnclaimedPushedStreamContainer();
-
-    bool empty() const { return streams_.empty(); }
-    size_t size() const { return streams_.size(); }
-    const_iterator begin() const { return streams_.begin(); }
-    const_iterator end() const { return streams_.end(); }
-    const_iterator find(const GURL& url) const { return streams_.find(url); }
-    size_t count(const GURL& url) const { return streams_.count(url); }
-    const_iterator lower_bound(const GURL& url) const {
-      return streams_.lower_bound(url);
-    }
-
-    // Return true if there was an element with |url|, which was then erased.
-    bool erase(const GURL& url);
-
-    // Return the iterator following |it|.
-    iterator erase(const_iterator it);
-
-    // Return true if there was not already an entry with |url|,
-    // in which case the insertion was successful.
-    bool insert(const GURL& url, SpdyStreamId stream_id) WARN_UNUSED_RESULT;
-
-    size_t EstimateMemoryUsage() const;
-
-   private:
-    SpdySession* spdy_session_;
-
-    // (Bijective) map from the URL to the ID of the streams that have
-    // already started to be pushed by the server, but do not have
-    // consumers yet. Contains a subset of |active_streams_|.
-    PushedStreamMap streams_;
-
-    DISALLOW_COPY_AND_ASSIGN(UnclaimedPushedStreamContainer);
   };
 
   // Called by SpdyStreamRequest to start a request to create a
@@ -776,7 +709,8 @@ class NET_EXPORT SpdySession : public BufferedSpdyFramerVisitorInterface,
   void EnqueueWrite(RequestPriority priority,
                     SpdyFrameType frame_type,
                     std::unique_ptr<SpdyBufferProducer> producer,
-                    const base::WeakPtr<SpdyStream>& stream);
+                    const base::WeakPtr<SpdyStream>& stream,
+                    const NetworkTrafficAnnotationTag& traffic_annotation);
 
   // Inserts a newly-created stream into |created_streams_|.
   void InsertCreatedStream(std::unique_ptr<SpdyStream> stream);
@@ -792,11 +726,6 @@ class NET_EXPORT SpdySession : public BufferedSpdyFramerVisitorInterface,
   // and process any pending stream requests before deleting it.  Note
   // that |stream| may hold the last reference to the session.
   void DeleteStream(std::unique_ptr<SpdyStream> stream, int status);
-
-  // Check if we have a pending pushed-stream for this url
-  // Returns the stream if found (and returns it from the pending
-  // list). Returns NULL otherwise.
-  SpdyStream* GetActivePushStream(const GURL& url);
 
   void RecordPingRTTHistogram(base::TimeDelta duration);
   void RecordHistograms();
@@ -857,7 +786,7 @@ class NET_EXPORT SpdySession : public BufferedSpdyFramerVisitorInterface,
   void OnStreamPadding(SpdyStreamId stream_id, size_t len) override;
   void OnSettings() override;
   void OnSettingsAck() override;
-  void OnSetting(SpdySettingsIds id, uint32_t value) override;
+  void OnSetting(SpdySettingsId id, uint32_t value) override;
   void OnSettingsEnd() override {}
   void OnWindowUpdate(SpdyStreamId stream_id, int delta_window_size) override;
   void OnPushPromise(SpdyStreamId stream_id,
@@ -950,36 +879,12 @@ class NET_EXPORT SpdySession : public BufferedSpdyFramerVisitorInterface,
   // empty.
   SpdyStreamId PopStreamToPossiblyResume();
 
-  // --------------------------
-  // Helper methods for testing
-  // --------------------------
-
-  void set_connection_at_risk_of_loss_time(base::TimeDelta duration) {
-    connection_at_risk_of_loss_time_ = duration;
-  }
-
-  void set_hung_interval(base::TimeDelta duration) {
-    hung_interval_ = duration;
-  }
-
-  void set_max_concurrent_pushed_streams(size_t value) {
-    max_concurrent_pushed_streams_ = value;
-  }
-
-  int64_t pings_in_flight() const { return pings_in_flight_; }
-
-  SpdyPingId next_ping_id() const { return next_ping_id_; }
-
-  base::TimeTicks last_read_time() const { return last_read_time_; }
-
-  bool check_ping_status_pending() const { return check_ping_status_pending_; }
-
   // Whether Do{Read,Write}Loop() is in the call stack. Useful for
   // making sure we don't destroy ourselves prematurely in that case.
   bool in_io_loop_;
 
   // The key used to identify this session.
-  const SpdySessionKey spdy_session_key_;
+  SpdySessionKey spdy_session_key_;
 
   // Set set of SpdySessionKeys for which this session has serviced
   // requests.
@@ -1020,8 +925,6 @@ class NET_EXPORT SpdySession : public BufferedSpdyFramerVisitorInterface,
   // them?
   ActiveStreamMap active_streams_;
 
-  UnclaimedPushedStreamContainer unclaimed_pushed_streams_;
-
   // Not owned. |push_delegate_| outlives the session and handles server pushes
   // received by session.
   ServerPushDelegate* push_delegate_;
@@ -1061,6 +964,9 @@ class NET_EXPORT SpdySession : public BufferedSpdyFramerVisitorInterface,
   // The stream to notify when |in_flight_write_| has been written to
   // the socket completely.
   base::WeakPtr<SpdyStream> in_flight_write_stream_;
+
+  // Traffic annotation for the write in progress.
+  MutableNetworkTrafficAnnotationTag in_flight_write_traffic_annotation;
 
   // Spdy Frame state.
   std::unique_ptr<BufferedSpdyFramer> buffered_spdy_framer_;
@@ -1160,6 +1066,15 @@ class NET_EXPORT SpdySession : public BufferedSpdyFramerVisitorInterface,
   // If true, alt-svc headers advertising QUIC in IETF format will be supported.
   bool support_ietf_format_quic_altsvc_;
 
+  // If true, this session is being made to a trusted SPDY/HTTP2 proxy that is
+  // allowed to push cross-origin resources.
+  const bool is_trusted_proxy_;
+
+  // True if the server has advertised WebSocket support via
+  // SETTINGS_ENABLE_CONNECT_PROTOCOL, see
+  // https://tools.ietf.org/html/draft-ietf-httpbis-h2-websockets-00.
+  bool support_websocket_;
+
   // |connection_at_risk_of_loss_time_| is an optimization to avoid sending
   // wasteful preface pings (when we just got some data).
   //
@@ -1181,11 +1096,6 @@ class NET_EXPORT SpdySession : public BufferedSpdyFramerVisitorInterface,
   // to build a new connection, and see if that completes before we (finally)
   // get a PING response (http://crbug.com/127812).
   base::TimeDelta hung_interval_;
-
-  // The |proxy_delegate_| verifies that a given proxy is a trusted SPDY proxy,
-  // which is allowed to push resources from origins that are different from
-  // those of their associated streams. May be nullptr.
-  ProxyDelegate* proxy_delegate_;
 
   TimeFunc time_func_;
 

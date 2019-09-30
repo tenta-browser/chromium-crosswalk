@@ -36,8 +36,9 @@ enum ShellWindowId {
   // lock-screen-related windows (which are displayed regardless of the screen
   // lock state, effectively containers stacked above
   // kShellWindowId_LockSystemModalContainer). Used by the shelf, status area,
-  // virtual keyboard, settings bubble, menus, etc. Also used by the
-  // PowerButtonController for animating lower-level containers.
+  // virtual keyboard, settings bubble, menus, Docked Magnifier viewport, etc.
+  // Also used by the PowerButtonController for animating lower-level
+  // containers.
   kShellWindowId_LockScreenRelatedContainersContainer,
 
   // A container used for windows of WINDOW_TYPE_CONTROL that have no parent.
@@ -95,7 +96,6 @@ enum ShellWindowId {
   kShellWindowId_ImeWindowParentContainer,
 
   // The virtual keyboard container.
-  // NOTE: this is lazily created.
   kShellWindowId_VirtualKeyboardContainer,
 
   // The container for menus.
@@ -104,13 +104,24 @@ enum ShellWindowId {
   // The container for drag/drop images and tooltips.
   kShellWindowId_DragImageAndTooltipContainer,
 
+  // The container for the fullscreen power button menu.
+  kShellWindowId_PowerMenuContainer,
+
   // The container for bubbles briefly overlaid onscreen to show settings
   // changes (volume, brightness, input method bubbles, etc.).
   kShellWindowId_SettingBubbleContainer,
 
+  // Contains special accessibility windows that can inset the display work area
+  // (e.g. the ChromeVox spoken feedback window).
+  // TODO(jamescook): Consolidate this with DockedMagnifierContainer.
+  kShellWindowId_AccessibilityPanelContainer,
+
   // The container for special components overlaid onscreen, such as the
   // region selector for partial screenshots.
   kShellWindowId_OverlayContainer,
+
+  // The container for the Docked Magnifier viewport widget and the separator.
+  kShellWindowId_DockedMagnifierContainer,
 
   // The container for mouse cursor.
   kShellWindowId_MouseCursorContainer,
@@ -153,8 +164,11 @@ const int32_t kAllShellContainerIds[] = {
     kShellWindowId_ImeWindowParentContainer,
     kShellWindowId_MenuContainer,
     kShellWindowId_DragImageAndTooltipContainer,
+    kShellWindowId_PowerMenuContainer,
     kShellWindowId_SettingBubbleContainer,
+    kShellWindowId_AccessibilityPanelContainer,
     kShellWindowId_OverlayContainer,
+    kShellWindowId_DockedMagnifierContainer,
     kShellWindowId_MouseCursorContainer,
     kShellWindowId_PowerButtonAnimationContainer,
 };

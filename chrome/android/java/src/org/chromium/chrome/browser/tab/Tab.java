@@ -20,7 +20,6 @@ import android.support.annotation.Nullable;
 import android.text.TextUtils;
 import android.view.ContextThemeWrapper;
 import android.view.Gravity;
-import android.view.KeyEvent;
 import android.view.View;
 import android.view.View.OnAttachStateChangeListener;
 import android.view.ViewGroup;
@@ -40,7 +39,6 @@ import org.chromium.base.ThreadUtils;
 import org.chromium.base.TraceEvent;
 import org.chromium.base.VisibleForTesting;
 import org.chromium.base.annotations.CalledByNative;
-import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.AppHooks;
 import org.chromium.chrome.browser.ChromeActionModeCallback;
@@ -70,6 +68,9 @@ import org.chromium.chrome.browser.fullscreen.FullscreenManager;
 import org.chromium.chrome.browser.help.HelpAndFeedback;
 import org.chromium.chrome.browser.infobar.InfoBarContainer;
 import org.chromium.chrome.browser.media.ui.MediaSessionTabHelper;
+import org.chromium.chrome.browser.metrics.PageLoadMetrics;
+import org.chromium.chrome.browser.metrics.StartupPageLoadMetricsObserver;
+import org.chromium.chrome.browser.metrics.UmaUtils;
 import org.chromium.chrome.browser.net.spdyproxy.DataReductionProxySettings;
 import org.chromium.chrome.browser.ntp.NativePageAssassin;
 import org.chromium.chrome.browser.ntp.NativePageFactory;
@@ -86,7 +87,6 @@ import org.chromium.chrome.browser.tabmodel.AsyncTabParamsManager;
 import org.chromium.chrome.browser.tabmodel.TabModel;
 import org.chromium.chrome.browser.tabmodel.TabModel.TabLaunchType;
 import org.chromium.chrome.browser.tabmodel.TabModel.TabSelectionType;
-import org.chromium.chrome.browser.tabmodel.TabModelImpl;
 import org.chromium.chrome.browser.tabmodel.TabModelSelector;
 import org.chromium.chrome.browser.tabmodel.TabReparentingParams;
 import org.chromium.chrome.browser.util.ColorUtils;
@@ -94,7 +94,7 @@ import org.chromium.chrome.browser.util.FeatureUtilities;
 import org.chromium.chrome.browser.vr_shell.VrShellDelegate;
 import org.chromium.chrome.browser.widget.PulseDrawable;
 import org.chromium.chrome.browser.widget.textbubble.TextBubble;
-import org.chromium.chrome.browser.widget.textbubble.ViewAnchoredTextBubble;
+import org.chromium.components.content_view.ContentView;
 import org.chromium.components.dom_distiller.core.DomDistillerUrlUtils;
 import org.chromium.components.feature_engagement.EventConstants;
 import org.chromium.components.feature_engagement.FeatureConstants;
@@ -102,14 +102,17 @@ import org.chromium.components.feature_engagement.Tracker;
 import org.chromium.components.navigation_interception.InterceptNavigationDelegate;
 import org.chromium.components.security_state.ConnectionSecurityLevel;
 import org.chromium.components.sync.SyncConstants;
-import org.chromium.content.browser.ContentView;
-import org.chromium.content.browser.ContentViewCore;
 import org.chromium.content.browser.crypto.CipherFactory;
 import org.chromium.content_public.browser.ChildProcessImportance;
+import org.chromium.content_public.browser.ContentViewCore;
+import org.chromium.content_public.browser.GestureListenerManager;
 import org.chromium.content_public.browser.GestureStateListener;
+import org.chromium.content_public.browser.ImeAdapter;
 import org.chromium.content_public.browser.ImeEventObserver;
 import org.chromium.content_public.browser.LoadUrlParams;
+import org.chromium.content_public.browser.SelectionPopupController;
 import org.chromium.content_public.browser.WebContents;
+import org.chromium.content_public.browser.WebContentsAccessibility;
 import org.chromium.content_public.common.BrowserControlsState;
 import org.chromium.content_public.common.Referrer;
 import org.chromium.content_public.common.ResourceRequestBody;
@@ -120,6 +123,8 @@ import org.chromium.ui.base.LocalizationUtils;
 import org.chromium.ui.base.PageTransition;
 import org.chromium.ui.base.WindowAndroid;
 import org.chromium.ui.mojom.WindowOpenDisposition;
+import org.chromium.ui.widget.AnchoredPopupWindow;
+import org.chromium.ui.widget.ViewRectProvider;
 
 import java.lang.ref.WeakReference;
 import java.nio.ByteBuffer;
@@ -207,6 +212,7 @@ public class Tab
     // Content layer Observers and Delegates
     private TabWebContentsObserver mWebContentsObserver;
     private TabWebContentsDelegateAndroid mWebContentsDelegate;
+    private StartupPageLoadMetricsObserver mStartupPageLoadMetricsObserver;
 
     /**
      * If this tab was opened from another tab, store the id of the tab that
@@ -229,6 +235,7 @@ public class Tab
 
     private boolean mIsClosing;
     private boolean mIsShowingErrorPage;
+    private boolean mIsShowingTabModalDialog;
 
     private Bitmap mFavicon;
 
@@ -356,9 +363,7 @@ public class Tab
     private TabRedirectHandler mTabRedirectHandler;
 
     private FullscreenManager mFullscreenManager;
-    private float mPreviousTopControlsOffsetY = Float.NaN;
-    private float mPreviousBottomControlsOffsetY = Float.NaN;
-    private float mPreviousContentOffsetY = Float.NaN;
+    private final TabBrowserControlsOffsetHelper mControlsOffsetHelper;
 
     /**
      * Indicates whether this tab is detached from any activity and its corresponding
@@ -414,6 +419,14 @@ public class Tab
     private int mBottomControlsHeight;
     private boolean mControlsResizeView;
 
+    /**
+     * The publisher URL for pages hosted on a trusted CDN, or null otherwise.
+     */
+    private @Nullable String mTrustedCdnPublisherUrl;
+
+    /** The current browser controls constraints. -1 if not set. */
+    private @BrowserControlsState int mBrowserConstrolsConstraints = -1;
+
     private GestureStateListener createGestureStateListener() {
         return new GestureStateListener() {
             @Override
@@ -439,8 +452,13 @@ public class Tab
             private void onScrollingStateChanged() {
                 FullscreenManager fullscreenManager = getFullscreenManager();
                 if (fullscreenManager == null) return;
-                fullscreenManager.onContentViewScrollingStateChanged(
-                        getContentViewCore() != null && getContentViewCore().isScrollInProgress());
+                fullscreenManager.onContentViewScrollingStateChanged(isScrollInProgress());
+            }
+
+            private boolean isScrollInProgress() {
+                WebContents webContents = getWebContents();
+                if (webContents == null) return false;
+                return GestureListenerManager.fromWebContents(webContents).isScrollInProgress();
             }
         };
     }
@@ -512,8 +530,10 @@ public class Tab
                 mFullscreenManager.setPersistentFullscreenMode(enable);
             }
 
-            if (enable && mContentViewCore != null) {
-                mContentViewCore.destroySelectActionMode();
+            if (enable && getWebContents() != null) {
+                SelectionPopupController controller =
+                        SelectionPopupController.fromWebContents(getWebContents());
+                controller.destroySelectActionMode();
             }
 
             // When going into fullscreen, we want to remove any cached thumbnail of the Tab.
@@ -597,6 +617,8 @@ public class Tab
         ContextualSearchTabHelper.createForTab(this);
         MediaSessionTabHelper.createForTab(this);
 
+        mControlsOffsetHelper = new TabBrowserControlsOffsetHelper(this);
+
         if (creationState != null) {
             mTabUma = new TabUma(creationState);
             if (frozenState == null) {
@@ -623,7 +645,8 @@ public class Tab
     }
 
     private int calculateDefaultThemeColor() {
-        boolean useModernDesign = getActivity() != null && getActivity().getBottomSheet() != null;
+        boolean useModernDesign = getActivity() != null && getActivity().supportsModernDesign()
+                && FeatureUtilities.isChromeModernDesignEnabled();
         Resources resources = mThemedApplicationContext.getResources();
         return ColorUtils.getDefaultThemeColor(resources, useModernDesign, mIncognito);
     }
@@ -739,6 +762,13 @@ public class Tab
                 return handleJavaCrash();
             }
 
+            if (mNativeTabAndroid == 0) {
+                // if mNativeTabAndroid is null then we are going to crash anyways on the
+                // native side. Lets crash on the java side so that we can have a better stack
+                // trace.
+                throw new RuntimeException("Tab.loadUrl called when no native side exists");
+            }
+
             // We load the URL from the tab rather than directly from the ContentView so the tab has
             // a chance of using a prerenderer page is any.
             int loadType = nativeLoadUrl(mNativeTabAndroid, params.getUrl(),
@@ -791,6 +821,13 @@ public class Tab
      */
     public boolean isShowingInterstitialPage() {
         return getWebContents() != null && getWebContents().isShowingInterstitialPage();
+    }
+
+    /**
+     * @return Whether a tab modal dialog is showing.
+     */
+    public boolean isShowingTabModalDialog() {
+        return mIsShowingTabModalDialog;
     }
 
     /**
@@ -1238,7 +1275,7 @@ public class Tab
             loadIfNeeded();
             assert !isFrozen();
 
-            if (mContentViewCore != null) mContentViewCore.onShow();
+            if (getWebContents() != null) getWebContents().onShow();
 
             if (mTabUma != null) {
                 mTabUma.onShow(type, getTimestampMillis(),
@@ -1279,7 +1316,7 @@ public class Tab
             mIsHidden = true;
             updateInteractableState();
 
-            if (mContentViewCore != null) mContentViewCore.onHide();
+            if (getWebContents() != null) getWebContents().onHide();
 
             // Clean up any fullscreen state that might impact other tabs.
             if (mFullscreenManager != null) {
@@ -1656,6 +1693,8 @@ public class Tab
     protected void didStartPageLoad(String validatedUrl, boolean showingErrorPage) {
         updateTitle();
         removeSadTabIfPresent();
+        // A page load means that any pending reload is no longer necessary.
+        mNeedsReload = false;
 
         mDataSavedOnStartPageLoad =
                 DataReductionProxySettings.getInstance().getContentLengthSavedInHistorySummary();
@@ -1674,10 +1713,6 @@ public class Tab
         mIsTabStateDirty = true;
         updateTitle();
         updateFullscreenEnabledState();
-        if (!isNativePage()) {
-            RecordHistogram.recordBooleanHistogram(
-                    "Navigation.IsMobileOptimized", mContentViewCore.getIsMobileOptimizedHint());
-        }
 
         // Reset the succressiveRefresh counter after successfully loading a page.
         mSadTabSuccessiveRefreshCounter = 0;
@@ -1707,10 +1742,11 @@ public class Tab
 
         if (!(getActivity() instanceof ChromeTabbedActivity)) return;
 
-        ViewAnchoredTextBubble textBubble = new ViewAnchoredTextBubble(getActivity(),
-                getActivity().getToolbarManager().getMenuButton(),
-                R.string.iph_data_saver_detail_text,
-                R.string.iph_data_saver_detail_accessibility_text);
+        View anchorView = getActivity().getToolbarManager().getMenuButton();
+        ViewRectProvider rectProvider = new ViewRectProvider(anchorView);
+        TextBubble textBubble =
+                new TextBubble(getActivity(), anchorView, R.string.iph_data_saver_detail_text,
+                        R.string.iph_data_saver_detail_accessibility_text, rectProvider);
         textBubble.setDismissOnTouchInteraction(true);
         getActivity().getAppMenuHandler().setMenuHighlight(R.id.app_menu_footer);
         textBubble.addOnDismissListener(new OnDismissListener() {
@@ -1727,7 +1763,7 @@ public class Tab
         });
         int yInsetPx = mThemedApplicationContext.getResources().getDimensionPixelOffset(
                 R.dimen.text_bubble_menu_anchor_y_inset);
-        textBubble.setInsetPx(0, FeatureUtilities.isChromeHomeEnabled() ? yInsetPx : 0, 0,
+        rectProvider.setInsetPx(0, FeatureUtilities.isChromeHomeEnabled() ? yInsetPx : 0, 0,
                 FeatureUtilities.isChromeHomeEnabled() ? 0 : yInsetPx);
         textBubble.show();
     }
@@ -1768,14 +1804,15 @@ public class Tab
     }
 
     private ContentViewCore createContentViewCore(WebContents webContents) {
-        ContentViewCore cvc = ContentViewCore.create(mThemedApplicationContext, PRODUCT_VERSION);
-        ContentView cv = ContentView.createContentView(mThemedApplicationContext, cvc);
+        ContentView cv = ContentView.createContentView(mThemedApplicationContext, webContents);
         cv.setContentDescription(mThemedApplicationContext.getResources().getString(
                 R.string.accessibility_content_view));
-        cvc.initialize(new TabViewAndroidDelegate(this, cv), cv, webContents, getWindowAndroid());
-        ChromeActionModeCallback actionModeCallback = new ChromeActionModeCallback(
-                mThemedApplicationContext, this, cvc.getActionModeCallbackHelper());
-        cvc.setActionModeCallback(actionModeCallback);
+        ContentViewCore cvc = ContentViewCore.create(mThemedApplicationContext, PRODUCT_VERSION,
+                webContents, new TabViewAndroidDelegate(this, cv), cv, getWindowAndroid());
+        SelectionPopupController controller = SelectionPopupController.fromWebContents(webContents);
+        ChromeActionModeCallback actionModeCallback =
+                new ChromeActionModeCallback(this, controller.getActionModeCallbackHelper());
+        controller.setActionModeCallback(actionModeCallback);
         return cvc;
     }
 
@@ -1796,9 +1833,10 @@ public class Tab
             mNativePage = null;
             destroyNativePageInternal(previousNativePage);
 
-            if (mContentViewCore != null) {
-                mContentViewCore.setObscuredByAnotherView(false);
-                mContentViewCore.getWebContents().setImportance(ChildProcessImportance.NORMAL);
+            WebContents oldWebContents = getWebContents();
+            if (oldWebContents != null) {
+                oldWebContents.setImportance(ChildProcessImportance.NORMAL);
+                getWebContentsAccessibility(oldWebContents).setObscuredByAnotherView(false);
             }
 
             mContentViewCore = cvc;
@@ -1812,14 +1850,22 @@ public class Tab
             mWebContentsDelegate = mDelegateFactory.createWebContentsDelegate(this);
             mWebContentsObserver =
                     new TabWebContentsObserver(mContentViewCore.getWebContents(), this);
+            if (UmaUtils.isRunningApplicationStart()) {
+                mStartupPageLoadMetricsObserver = new StartupPageLoadMetricsObserver();
+                PageLoadMetrics.addObserver(mStartupPageLoadMetricsObserver);
+            }
 
             mDownloadDelegate = new ChromeDownloadDelegate(mThemedApplicationContext, this);
 
-            assert mNativeTabAndroid != 0;
-            nativeInitWebContents(mNativeTabAndroid, mIncognito, mIsDetached,
-                    mContentViewCore.getWebContents(), mWebContentsDelegate,
-                    new TabContextMenuPopulator(
-                            mDelegateFactory.createContextMenuPopulator(this), this));
+            WebContents parentWebContents = null;
+            if (getParentId() != INVALID_TAB_ID) {
+                Tab parentTab = getTabModelSelector().getTabById(getParentId());
+                if (parentTab != null && parentTab.isIncognito() == isIncognito()) {
+                    parentWebContents = parentTab.getWebContents();
+                }
+            }
+
+            initWebContents(mContentViewCore.getWebContents(), parentWebContents);
 
             // In the case where restoring a Tab or showing a prerendered one we already have a
             // valid infobar container, no need to recreate one.
@@ -1834,7 +1880,7 @@ public class Tab
                 mInfoBarContainer = new InfoBarContainer(mThemedApplicationContext, bottomContainer,
                         this);
             }
-            mInfoBarContainer.setContentViewCore(mContentViewCore);
+            mInfoBarContainer.setWebContents(getWebContents());
 
             mSwipeRefreshHandler = new SwipeRefreshHandler(mThemedApplicationContext, this);
 
@@ -1844,39 +1890,49 @@ public class Tab
             // For browser tabs, we want to set accessibility focus to the page
             // when it loads. This is not the default behavior for embedded
             // web views.
-            mContentViewCore.setShouldSetAccessibilityFocusOnPageLoad(true);
+            getWebContentsAccessibility(getWebContents()).setShouldFocusOnPageLoad(true);
 
-            mContentViewCore.addImeEventObserver(new ImeEventObserver() {
-                @Override
-                public void onImeEvent() {
-                    // Some text was set in the page. Don't reuse it if a tab is
-                    // open from the same external application, we might lose some
-                    // user data.
-                    mAppAssociatedWith = null;
-                }
+            ImeAdapter.fromWebContents(mContentViewCore.getWebContents())
+                    .addEventObserver(new ImeEventObserver() {
+                        @Override
+                        public void onImeEvent() {
+                            // Some text was set in the page. Don't reuse it if a tab is
+                            // open from the same external application, we might lose some
+                            // user data.
+                            mAppAssociatedWith = null;
+                        }
 
-                @Override
-                public void onNodeAttributeUpdated(boolean editable, boolean password) {
-                    if (getFullscreenManager() == null) return;
-                    updateFullscreenEnabledState();
-                }
-
-                @Override
-                public void onBeforeSendKeyEvent(KeyEvent event) {}
-            });
+                        @Override
+                        public void onNodeAttributeUpdated(boolean editable, boolean password) {
+                            if (getFullscreenManager() == null) return;
+                            updateFullscreenEnabledState();
+                        }
+                    });
 
             setInterceptNavigationDelegate(mDelegateFactory.createInterceptNavigationDelegate(
                     this));
 
             getAppBannerManager().setIsEnabledForTab(mDelegateFactory.canShowAppBanners(this));
-
-            if (mGestureStateListener == null) {
-                mGestureStateListener = createGestureStateListener();
-            }
-            cvc.addGestureStateListener(mGestureStateListener);
         } finally {
             TraceEvent.end("ChromeTab.setContentViewCore");
         }
+    }
+
+    private void initWebContents(WebContents webContents, WebContents parentWebContents) {
+        assert mNativeTabAndroid != 0;
+        nativeInitWebContents(mNativeTabAndroid, mIncognito, mIsDetached, webContents,
+                parentWebContents, mWebContentsDelegate,
+                new TabContextMenuPopulator(
+                        mDelegateFactory.createContextMenuPopulator(this), this));
+
+        if (mGestureStateListener == null) {
+            mGestureStateListener = createGestureStateListener();
+        }
+        GestureListenerManager.fromWebContents(webContents).addListener(mGestureStateListener);
+    }
+
+    private static WebContentsAccessibility getWebContentsAccessibility(WebContents webContents) {
+        return webContents != null ? WebContentsAccessibility.fromWebContents(webContents) : null;
     }
 
     /**
@@ -1965,10 +2021,7 @@ public class Tab
                             LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT));
             notifyContentChanged();
         }
-        FullscreenManager fullscreenManager = getFullscreenManager();
-        if (fullscreenManager != null) {
-            fullscreenManager.setPositionsForTabToNonFullscreen();
-        }
+        mControlsOffsetHelper.showAndroidControls(false);
     }
 
     /**
@@ -1990,6 +2043,16 @@ public class Tab
     public void reloadSadTabForTesting() {
         removeSadTabIfPresent();
         showSadTab();
+    }
+
+    /**
+     * @return The ID of the renderer process that backs this tab or
+     *         {@link #INVALID_RENDER_PROCESS_PID} if there is none.
+     */
+    @VisibleForTesting
+    public int getCurrentRenderProcessIdForTesting() {
+        assert mNativeTabAndroid != 0;
+        return nativeGetCurrentRenderProcessId(mNativeTabAndroid);
     }
 
     /**
@@ -2044,9 +2107,7 @@ public class Tab
             mInfoBarContainer = null;
         }
 
-        mPreviousTopControlsOffsetY = Float.NaN;
-        mPreviousBottomControlsOffsetY = Float.NaN;
-        mPreviousContentOffsetY = Float.NaN;
+        mControlsOffsetHelper.destroy();
 
         mNeedsReload = false;
     }
@@ -2408,13 +2469,10 @@ public class Tab
 
         mContentViewCore.getContainerView().setOnHierarchyChangeListener(null);
         mContentViewCore.getContainerView().setOnSystemUiVisibilityChangeListener(null);
-        if (mGestureStateListener != null) {
-            mContentViewCore.removeGestureStateListener(mGestureStateListener);
-        }
 
         if (mInfoBarContainer != null && mInfoBarContainer.getParent() != null) {
             mInfoBarContainer.removeFromParentView();
-            mInfoBarContainer.setContentViewCore(null);
+            mInfoBarContainer.setWebContents(null);
         }
         if (mSwipeRefreshHandler != null) {
             mSwipeRefreshHandler.destroy();
@@ -2423,6 +2481,13 @@ public class Tab
         mContentView.removeOnAttachStateChangeListener(mAttachStateChangeListener);
         mContentView = null;
         updateInteractableState();
+
+        if (mGestureStateListener != null) {
+            GestureListenerManager manager =
+                    GestureListenerManager.fromWebContents(mContentViewCore.getWebContents());
+            manager.removeListener(mGestureStateListener);
+        }
+
         mContentViewCore.destroy();
         mContentViewCore = null;
 
@@ -2431,6 +2496,11 @@ public class Tab
         if (mWebContentsObserver != null) {
             mWebContentsObserver.destroy();
             mWebContentsObserver = null;
+        }
+
+        if (mStartupPageLoadMetricsObserver != null) {
+            PageLoadMetrics.removeObserver(mStartupPageLoadMetricsObserver);
+            mStartupPageLoadMetricsObserver = null;
         }
 
         assert mNativeTabAndroid != 0;
@@ -2489,6 +2559,14 @@ public class Tab
     }
 
     /**
+     * Called when navigation entries were removed.
+     */
+    void notifyNavigationEntriesDeleted() {
+        mIsTabStateDirty = true;
+        for (TabObserver observer : mObservers) observer.onNavigationEntriesDeleted(this);
+    }
+
+    /**
      * Returns the SnackbarManager for the activity that owns this Tab, if any. May
      * return null.
      */
@@ -2535,9 +2613,9 @@ public class Tab
         int originalWidth = 0;
         int originalHeight = 0;
         if (mContentViewCore != null) {
-            originalWidth = mContentViewCore.getViewportWidthPix();
-            originalHeight = mContentViewCore.getViewportHeightPix();
-            mContentViewCore.onHide();
+            originalWidth = mContentView.getWidth();
+            originalHeight = mContentView.getHeight();
+            mContentViewCore.getWebContents().onHide();
         }
 
         Rect bounds = new Rect();
@@ -2550,19 +2628,17 @@ public class Tab
         destroyContentViewCore(deleteOldNativeWebContents);
         NativePage previousNativePage = mNativePage;
         mNativePage = null;
-        // Size of the new ContentViewCore is zero at this point. If we don't call onSizeChanged(),
-        // next onShow() call would send a resize message with the current ContentViewCore size
-        // (zero) to the renderer process, although the new size will be set soon.
-        // However, this size fluttering may confuse Blink and rendered result can be broken
-        // (see http://crbug.com/340987).
-        newContentViewCore.onSizeChanged(originalWidth, originalHeight, 0, 0);
+        // Size of the new content is zero at this point. Set the view size in advance
+        // so that next onShow() call won't send a resize message with zero size
+        // to the renderer process. This prevents the size fluttering that may confuse
+        // Blink and break rendered result (see http://crbug.com/340987).
         newContentViewCore.getWebContents().setSize(originalWidth, originalHeight);
 
         if (!bounds.isEmpty()) {
             nativeOnPhysicalBackingSizeChanged(mNativeTabAndroid,
                     newContentViewCore.getWebContents(), bounds.right, bounds.bottom);
         }
-        newContentViewCore.onShow();
+        newContentViewCore.getWebContents().onShow();
         setContentViewCore(newContentViewCore);
 
         destroyNativePageInternal(previousNativePage);
@@ -2679,6 +2755,21 @@ public class Tab
     }
 
     /**
+     * Delete navigation entries from frozen state matching the predicate.
+     * @param predicate Handle for a deletion predicate interpreted by native code.
+     *                  Only valid during this call frame.
+     */
+    @CalledByNative
+    private void deleteNavigationEntriesFromFrozenState(long predicate) {
+        if (mFrozenContentsState == null) return;
+        WebContentsState newState = mFrozenContentsState.deleteNavigationEntries(predicate);
+        if (newState != null) {
+            mFrozenContentsState = newState;
+            notifyNavigationEntriesDeleted();
+        }
+    }
+
+    /**
      * @return The reason the Tab was launched.
      */
     public TabLaunchType getLaunchType() {
@@ -2714,33 +2805,6 @@ public class Tab
     }
 
     /**
-     * Called when offset values related with fullscreen functionality has been changed by the
-     * compositor.
-     * @param topControlsOffsetY The Y offset of the top controls in physical pixels.
-     *    {@code Float.NaN} if the value is invalid and the cached value should be used.
-     * @param bottomControlsOffsetY The Y offset of the bottom controls in physical pixels.
-     *    {@code Float.NaN} if the value is invalid and the cached value should be used.
-     * @param contentOffsetY The Y offset of the content in physical pixels.
-     */
-    void onOffsetsChanged(
-            float topControlsOffsetY, float bottomControlsOffsetY, float contentOffsetY) {
-        if (!Float.isNaN(topControlsOffsetY)) mPreviousTopControlsOffsetY = topControlsOffsetY;
-        if (!Float.isNaN(bottomControlsOffsetY)) {
-            mPreviousBottomControlsOffsetY = bottomControlsOffsetY;
-        }
-        if (!Float.isNaN(contentOffsetY)) mPreviousContentOffsetY = contentOffsetY;
-
-        if (mFullscreenManager == null) return;
-        if (isShowingSadTab() || isNativePage()) {
-            mFullscreenManager.setPositionsForTabToNonFullscreen();
-        } else {
-            mFullscreenManager.setPositionsForTab(mPreviousTopControlsOffsetY,
-                    mPreviousBottomControlsOffsetY, mPreviousContentOffsetY);
-        }
-        TabModelImpl.setActualTabSwitchLatencyMetricRequired();
-    }
-
-    /**
      * Push state about whether or not the browser controls can show or hide to the renderer.
      */
     public void updateFullscreenEnabledState() {
@@ -2773,6 +2837,12 @@ public class Tab
             @BrowserControlsState int current, boolean animate) {
         if (mNativeTabAndroid == 0) return;
         nativeUpdateBrowserControlsState(mNativeTabAndroid, constraints, current, animate);
+
+        if (constraints == mBrowserConstrolsConstraints) return;
+        mBrowserConstrolsConstraints = constraints;
+        for (TabObserver observer : mObservers) {
+            observer.onBrowserControlsConstraintsUpdated(this, constraints);
+        }
     }
 
     /**
@@ -2871,24 +2941,7 @@ public class Tab
      */
     public void setFullscreenManager(FullscreenManager manager) {
         mFullscreenManager = manager;
-        if (mFullscreenManager != null) {
-            boolean topOffsetsInitialized = !Float.isNaN(mPreviousTopControlsOffsetY)
-                    && !Float.isNaN(mPreviousContentOffsetY);
-            boolean bottomOffsetsInitialized =
-                    !Float.isNaN(mPreviousBottomControlsOffsetY);
-            boolean isChromeHomeEnabled = FeatureUtilities.isChromeHomeEnabled();
-
-            // Make sure the dominant control offsets have been set.
-            if ((!topOffsetsInitialized && !isChromeHomeEnabled)
-                    || (!bottomOffsetsInitialized && isChromeHomeEnabled)) {
-                mFullscreenManager.setPositionsForTabToNonFullscreen();
-            } else {
-                mFullscreenManager.setPositionsForTab(mPreviousTopControlsOffsetY,
-                        mPreviousBottomControlsOffsetY,
-                        mPreviousContentOffsetY);
-            }
-            updateFullscreenEnabledState();
-        }
+        mControlsOffsetHelper.resetPositions();
     }
 
     /**
@@ -3128,11 +3181,11 @@ public class Tab
             }
         }
 
-        ContentViewCore cvc = getContentViewCore();
-        if (cvc != null) {
+        WebContentsAccessibility wcax = getWebContentsAccessibility(getWebContents());
+        if (wcax != null) {
             boolean isWebContentObscured = isObscuredByAnotherViewForAccessibility()
                     || isShowingSadTab();
-            cvc.setObscuredByAnotherView(isWebContentObscured);
+            wcax.setObscuredByAnotherView(isWebContentObscured);
         }
     }
 
@@ -3186,7 +3239,6 @@ public class Tab
         Rect bounds = getEstimatedContentSize(context);
         int width = bounds.right - bounds.left;
         int height = bounds.bottom - bounds.top;
-        tab.getContentViewCore().onSizeChanged(width, height, 0, 0);
         tab.getWebContents().setSize(width, height);
 
         tab.detach();
@@ -3247,7 +3299,7 @@ public class Tab
         mIsRendererUnresponsive = true;
         if (mFullscreenManager == null) return;
 
-        mFullscreenManager.setPositionsForTabToNonFullscreen();
+        mControlsOffsetHelper.showAndroidControls(false);
         updateBrowserControlsState(BrowserControlsState.SHOWN, false);
     }
 
@@ -3317,6 +3369,15 @@ public class Tab
     }
 
     /**
+     * Configures web preferences for enabling Picture-in-Picture.
+     * @param enabled Whether Picture-in-Picture should be enabled.
+     */
+    public void setPictureInPictureEnabled(boolean enabled) {
+        if (mNativeTabAndroid == 0) return;
+        nativeSetPictureInPictureEnabled(mNativeTabAndroid, enabled);
+    }
+
+    /**
      * Configures web preferences for viewing downloaded media.
      * @param enabled Whether embedded media experience should be enabled.
      */
@@ -3332,8 +3393,39 @@ public class Tab
         hideMediaDownloadInProductHelp();
     }
 
+    /**
+     * Handle browser controls when a tab modal dialog is shown.
+     * @param isShowing Whether a tab modal dialog is showing.
+     */
+    public void onTabModalDialogStateChanged(boolean isShowing) {
+        mIsShowingTabModalDialog = isShowing;
+        // Also need to update browser control state after dismissal to refresh the constraints.
+        if (isShowing && areRendererInputEventsIgnored()) {
+            mControlsOffsetHelper.showAndroidControls(true);
+        } else {
+            updateBrowserControlsState(BrowserControlsState.SHOWN,
+                    !mControlsOffsetHelper.isControlsOffsetOverridden());
+        }
+    }
+
+    /**
+     * @return Whether input events from the renderer are ignored on the browser side.
+     */
+    boolean areRendererInputEventsIgnored() {
+        return nativeAreRendererInputEventsIgnored(mNativeTabAndroid);
+    }
+
+    /**
+     * @return The {@link TabBrowserControlsOffsetHelper} for this tab.
+     */
+    public TabBrowserControlsOffsetHelper getControlsOffsetHelper() {
+        return mControlsOffsetHelper;
+    }
+
     @CalledByNative
     private void showMediaDownloadInProductHelp(int x, int y, int width, int height) {
+        Rect rect = new Rect(x, y, x + width, y + height);
+
         // If we are not currently showing the widget, ask the tracker if we can show it.
         if (mDownloadIPHBubble == null) {
             Tracker tracker = TrackerFactory.getTrackerForProfile(Profile.getLastUsedProfile());
@@ -3347,7 +3439,7 @@ public class Tab
 
             mDownloadIPHBubble = new TextBubble(getApplicationContext(),
                     mContentViewCore.getContainerView(), R.string.iph_media_download_text,
-                    R.string.iph_media_download_accessibility_text);
+                    R.string.iph_media_download_accessibility_text, rect);
             mDownloadIPHBubble.setDismissOnTouchInteraction(true);
             mDownloadIPHBubble.addOnDismissListener(new OnDismissListener() {
                 @Override
@@ -3362,9 +3454,8 @@ public class Tab
             });
         }
 
-        Rect rect = new Rect(x, y, x + width, y + height);
-        mDownloadIPHBubble.setAnchorRect(rect);
-        mDownloadIPHBubble.setPreferredOrientation(TextBubble.Orientation.BELOW);
+        mDownloadIPHBubble.setPreferredVerticalOrientation(
+                AnchoredPopupWindow.VERTICAL_ORIENTATION_BELOW);
         mDownloadIPHBubble.show();
         createPulse(rect);
     }
@@ -3408,10 +3499,26 @@ public class Tab
         nativeMediaDownloadInProductHelpDismissed(mNativeTabAndroid);
     }
 
+    /**
+     * @return The publisher URL if the current page is hosted on a trusted CDN, or null otherwise.
+     */
+    public @Nullable String getTrustedCdnPublisherUrl() {
+        ChromeActivity activity = getActivity();
+        if (activity == null) return null;
+        if (!activity.canShowTrustedCdnPublisherUrl()) return null;
+        if (getSecurityLevel() == ConnectionSecurityLevel.DANGEROUS) return null;
+        return mTrustedCdnPublisherUrl;
+    }
+
+    @CalledByNative
+    private void setTrustedCdnPublisherUrl(@Nullable String url) {
+        mTrustedCdnPublisherUrl = url;
+    }
+
     private native void nativeInit();
     private native void nativeDestroy(long nativeTabAndroid);
     private native void nativeInitWebContents(long nativeTabAndroid, boolean incognito,
-            boolean isBackgroundTab, WebContents webContents,
+            boolean isBackgroundTab, WebContents webContents, WebContents parentWebContents,
             TabWebContentsDelegateAndroid delegate, ContextMenuPopulator contextMenuPopulator);
     private native void nativeUpdateDelegates(long nativeTabAndroid,
             TabWebContentsDelegateAndroid delegate, ContextMenuPopulator contextMenuPopulator);
@@ -3440,7 +3547,10 @@ public class Tab
     private native void nativeClearThumbnailPlaceholder(long nativeTabAndroid);
     private native boolean nativeHasPrerenderedUrl(long nativeTabAndroid, String url);
     private native void nativeSetWebappManifestScope(long nativeTabAndroid, String scope);
+    private native void nativeSetPictureInPictureEnabled(long nativeTabAndroid, boolean enabled);
     private native void nativeEnableEmbeddedMediaExperience(long nativeTabAndroid, boolean enabled);
     private native void nativeAttachDetachedTab(long nativeTabAndroid);
     private native void nativeMediaDownloadInProductHelpDismissed(long nativeTabAndroid);
+    private native int nativeGetCurrentRenderProcessId(long nativeTabAndroid);
+    private native boolean nativeAreRendererInputEventsIgnored(long nativeTabAndroid);
 }

@@ -103,12 +103,14 @@ bool HttpCache::Writers::StopCaching(bool keep_entry) {
   return true;
 }
 
-void HttpCache::Writers::AddTransaction(Transaction* transaction,
-                                        bool is_exclusive,
-                                        RequestPriority priority,
-                                        const TransactionInfo& info) {
+void HttpCache::Writers::AddTransaction(
+    Transaction* transaction,
+    ParallelWritingPattern initial_writing_pattern,
+    RequestPriority priority,
+    const TransactionInfo& info) {
   DCHECK(transaction);
-  DCHECK(CanAddWriters());
+  ParallelWritingPattern writers_pattern;
+  DCHECK(CanAddWriters(&writers_pattern));
 
   DCHECK_EQ(0u, all_writers_.count(transaction));
 
@@ -117,6 +119,15 @@ void HttpCache::Writers::AddTransaction(Transaction* transaction,
   should_keep_entry_ =
       IsValidResponseForWriter(info.partial != nullptr, &(info.response_info));
 
+  if (all_writers_.empty()) {
+    DCHECK_EQ(PARALLEL_WRITING_NONE, parallel_writing_pattern_);
+    parallel_writing_pattern_ = initial_writing_pattern;
+    if (parallel_writing_pattern_ != PARALLEL_WRITING_JOIN)
+      is_exclusive_ = true;
+  } else {
+    DCHECK_EQ(PARALLEL_WRITING_JOIN, parallel_writing_pattern_);
+  }
+
   if (info.partial && !info.truncated) {
     DCHECK(!partial_do_not_truncate_);
     partial_do_not_truncate_ = true;
@@ -124,11 +135,6 @@ void HttpCache::Writers::AddTransaction(Transaction* transaction,
 
   std::pair<Transaction*, TransactionInfo> writer(transaction, info);
   all_writers_.insert(writer);
-
-  if (is_exclusive) {
-    DCHECK_EQ(1u, all_writers_.size());
-    is_exclusive_ = true;
-  }
 
   priority_ = std::max(priority, priority_);
   if (network_transaction_) {
@@ -160,14 +166,8 @@ void HttpCache::Writers::RemoveTransaction(Transaction* transaction,
   if (!all_writers_.empty())
     return;
 
-  if (!success) {
-    DCHECK_NE(State::CACHE_WRITE_TRUNCATED_RESPONSE, next_state_);
-    if (InitiateTruncateEntry()) {
-      // |this| may have been deleted after truncation, so don't touch any
-      // members.
-      return;
-    }
-  }
+  if (!success && ShouldTruncate())
+    TruncateEntry();
 
   cache_->WritersDoneWritingToEntry(entry_, success, should_keep_entry_,
                                     TransactionSet());
@@ -227,14 +227,8 @@ bool HttpCache::Writers::ContainsOnlyIdleWriters() const {
   return waiting_for_read_.empty() && !active_transaction_;
 }
 
-bool HttpCache::Writers::CanAddWriters() {
-  //  While cleaning up writers (truncation) we should delay adding new writers.
-  //  The caller can try again later.
-  if (next_state_ == State::ASYNC_OP_COMPLETE_PRE_TRUNCATE ||
-      next_state_ == State::CACHE_WRITE_TRUNCATED_RESPONSE_COMPLETE) {
-    DCHECK(all_writers_.empty());
-    return false;
-  }
+bool HttpCache::Writers::CanAddWriters(ParallelWritingPattern* reason) {
+  *reason = parallel_writing_pattern_;
 
   if (all_writers_.empty())
     return true;
@@ -245,31 +239,24 @@ bool HttpCache::Writers::CanAddWriters() {
 void HttpCache::Writers::ProcessFailure(int error) {
   // Notify waiting_for_read_ of the failure. Tasks will be posted for all the
   // transactions.
-  ProcessWaitingForReadTransactions(error);
+  CompleteWaitingForReadTransactions(error);
 
   // Idle readers should fail when Read is invoked on them.
-  SetIdleWritersFailState(error);
+  RemoveIdleWriters(error);
 }
 
-bool HttpCache::Writers::InitiateTruncateEntry() {
-  // If there is already an operation ongoing in the state machine, queue the
-  // truncation to happen after the outstanding operation is complete by setting
-  // the state.
-  if (next_state_ != State::NONE) {
-    DCHECK(next_state_ == State::CACHE_WRITE_DATA_COMPLETE ||
-           next_state_ == State::NETWORK_READ_COMPLETE);
-    next_state_ = State::ASYNC_OP_COMPLETE_PRE_TRUNCATE;
-    return true;
-  }
+void HttpCache::Writers::TruncateEntry() {
+  DCHECK(ShouldTruncate());
 
-  if (!ShouldTruncate())
-    return false;
-
-  next_state_ = State::CACHE_WRITE_TRUNCATED_RESPONSE;
-  // If not in do loop, initiate do loop.
-  if (!in_do_loop_)
-    DoLoop(OK);
-  return true;
+  scoped_refptr<PickledIOBuffer> data(new PickledIOBuffer());
+  response_info_truncation_.Persist(data->pickle(),
+                                    true /* skip_transient_headers*/,
+                                    true /* response_truncated */);
+  data->Done();
+  io_buf_len_ = data->pickle()->size();
+  CompletionCallback noop_callback = base::BindRepeating([](int result) {});
+  entry_->disk_entry->WriteData(kResponseInfoIndex, 0, data.get(), io_buf_len_,
+                                noop_callback, true);
 }
 
 bool HttpCache::Writers::ShouldTruncate() {
@@ -292,6 +279,11 @@ bool HttpCache::Writers::ShouldTruncate() {
   // Double check that there is something worth keeping.
   int current_size = entry_->disk_entry->GetDataSize(kResponseContentIndex);
   if (!current_size) {
+    should_keep_entry_ = false;
+    return false;
+  }
+
+  if (response_info_truncation_.headers->HasHeader("Content-Encoding")) {
     should_keep_entry_ = false;
     return false;
   }
@@ -330,13 +322,11 @@ HttpCache::Writers::WaitingForRead::WaitingForRead(const WaitingForRead&) =
 int HttpCache::Writers::DoLoop(int result) {
   DCHECK_NE(State::UNSET, next_state_);
   DCHECK_NE(State::NONE, next_state_);
-  DCHECK(!in_do_loop_);
 
   int rv = result;
   do {
     State state = next_state_;
     next_state_ = State::UNSET;
-    base::AutoReset<bool> scoped_in_do_loop(&in_do_loop_, true);
     switch (state) {
       case State::NETWORK_READ:
         DCHECK_EQ(OK, rv);
@@ -350,15 +340,6 @@ int HttpCache::Writers::DoLoop(int result) {
         break;
       case State::CACHE_WRITE_DATA_COMPLETE:
         rv = DoCacheWriteDataComplete(rv);
-        break;
-      case State::ASYNC_OP_COMPLETE_PRE_TRUNCATE:
-        rv = DoAsyncOpCompletePreTruncate(rv);
-        break;
-      case State::CACHE_WRITE_TRUNCATED_RESPONSE:
-        rv = DoCacheWriteTruncatedResponse();
-        break;
-      case State::CACHE_WRITE_TRUNCATED_RESPONSE_COMPLETE:
-        rv = DoCacheWriteTruncatedResponseComplete(rv);
         break;
       case State::UNSET:
         NOTREACHED() << "bad state";
@@ -415,13 +396,10 @@ void HttpCache::Writers::OnNetworkReadFailure(int result) {
     EraseTransaction(active_transaction_, result);
   active_transaction_ = nullptr;
 
-  post_truncate_result_ = result;
-  if (!InitiateTruncateEntry()) {
-    post_truncate_result_ = OK;
-    SetCacheCallback(false, TransactionSet());
-  }
-  // |this| may have been deleted after truncation, so don't touch any
-  // members.
+  if (ShouldTruncate())
+    TruncateEntry();
+
+  SetCacheCallback(false, TransactionSet());
 }
 
 int HttpCache::Writers::DoCacheWriteData(int num_bytes) {
@@ -457,6 +435,7 @@ int HttpCache::Writers::DoCacheWriteData(int num_bytes) {
 }
 
 int HttpCache::Writers::DoCacheWriteDataComplete(int result) {
+  DCHECK(!all_writers_.empty());
   next_state_ = State::NONE;
   if (result != write_len_) {
     // Note that it is possible for cache write to fail if the size of the file
@@ -471,49 +450,7 @@ int HttpCache::Writers::DoCacheWriteDataComplete(int result) {
   return result;
 }
 
-int HttpCache::Writers::DoAsyncOpCompletePreTruncate(int result) {
-  DCHECK(all_writers_.empty() && !active_transaction_);
-
-  if (ShouldTruncate()) {
-    next_state_ = State::CACHE_WRITE_TRUNCATED_RESPONSE;
-  } else {
-    next_state_ = State::NONE;
-    SetCacheCallback(false, TransactionSet());
-  }
-
-  return OK;
-}
-
-int HttpCache::Writers::DoCacheWriteTruncatedResponse() {
-  next_state_ = State::CACHE_WRITE_TRUNCATED_RESPONSE_COMPLETE;
-  scoped_refptr<PickledIOBuffer> data(new PickledIOBuffer());
-  response_info_truncation_.Persist(data->pickle(),
-                                    true /* skip_transient_headers*/, true);
-  data->Done();
-  io_buf_len_ = data->pickle()->size();
-  CompletionCallback io_callback =
-      base::Bind(&HttpCache::Writers::OnIOComplete, weak_factory_.GetWeakPtr());
-  return entry_->disk_entry->WriteData(kResponseInfoIndex, 0, data.get(),
-                                       io_buf_len_, io_callback, true);
-}
-
-int HttpCache::Writers::DoCacheWriteTruncatedResponseComplete(int result) {
-  next_state_ = State::NONE;
-  if (result != io_buf_len_) {
-    DLOG(ERROR) << "failed to write response info to cache";
-    should_keep_entry_ = false;
-  }
-
-  SetCacheCallback(false, TransactionSet());
-  result = post_truncate_result_;
-  post_truncate_result_ = OK;
-  return result;
-}
-
 void HttpCache::Writers::OnDataReceived(int result) {
-  // If active_transaction_ has been destroyed and there is no other
-  // transaction, we should not be in this state but in
-  // ASYNC_OP_COMPLETE_PRE_TRUNCATE.
   DCHECK(!all_writers_.empty());
 
   auto it = all_writers_.find(active_transaction_);
@@ -545,7 +482,7 @@ void HttpCache::Writers::OnDataReceived(int result) {
     if (active_transaction_)
       EraseTransaction(active_transaction_, result);
     active_transaction_ = nullptr;
-    ProcessWaitingForReadTransactions(write_len_);
+    CompleteWaitingForReadTransactions(write_len_);
 
     // Invoke entry processing.
     DCHECK(ContainsOnlyIdleWriters());
@@ -559,7 +496,7 @@ void HttpCache::Writers::OnDataReceived(int result) {
 
   // Notify waiting_for_read_. Tasks will be posted for all the
   // transactions.
-  ProcessWaitingForReadTransactions(write_len_);
+  CompleteWaitingForReadTransactions(write_len_);
 
   active_transaction_ = nullptr;
 }
@@ -582,7 +519,7 @@ void HttpCache::Writers::OnCacheWriteFailure() {
   }
 }
 
-void HttpCache::Writers::ProcessWaitingForReadTransactions(int result) {
+void HttpCache::Writers::CompleteWaitingForReadTransactions(int result) {
   for (auto it = waiting_for_read_.begin(); it != waiting_for_read_.end();) {
     Transaction* transaction = it->first;
     int callback_result = result;
@@ -608,7 +545,7 @@ void HttpCache::Writers::ProcessWaitingForReadTransactions(int result) {
   }
 }
 
-void HttpCache::Writers::SetIdleWritersFailState(int result) {
+void HttpCache::Writers::RemoveIdleWriters(int result) {
   // Since this is only for idle transactions, waiting_for_read_
   // should be empty.
   DCHECK(waiting_for_read_.empty());

@@ -5,6 +5,7 @@
 #include "chrome/browser/signin/chrome_signin_helper.h"
 
 #include <memory>
+#include <utility>
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
@@ -18,6 +19,7 @@
 #include "build/build_config.h"
 #include "chrome/browser/prefs/incognito_mode_prefs.h"
 #include "chrome/browser/profiles/profile_io_data.h"
+#include "chrome/browser/signin/account_consistency_mode_manager.h"
 #include "chrome/browser/signin/account_reconcilor_factory.h"
 #include "chrome/browser/signin/chrome_signin_client.h"
 #include "chrome/browser/signin/chrome_signin_client_factory.h"
@@ -35,7 +37,7 @@
 #include "components/signin/core/browser/account_reconcilor.h"
 #include "components/signin/core/browser/chrome_connected_header_helper.h"
 #include "components/signin/core/browser/profile_management_switches.h"
-#include "components/signin/core/browser/signin_features.h"
+#include "components/signin/core/browser/signin_buildflags.h"
 #include "components/signin/core/browser/signin_header_helper.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/resource_request_info.h"
@@ -49,7 +51,6 @@
 #include "chrome/browser/android/signin/account_management_screen_helper.h"
 #else
 #include "chrome/browser/ui/browser_commands.h"
-#include "chrome/browser/ui/browser_finder.h"
 #include "extensions/browser/guest_view/web_view/web_view_renderer_state.h"
 #endif  // defined(OS_ANDROID)
 
@@ -119,11 +120,12 @@ class DiceURLRequestUserData : public base::SupportsUserData::Data {
     if (!IsDicePrepareMigrationEnabled())
       return;
 
-    if (ShouldBlockReconcilorForRequest(request)) {
+    if (ShouldBlockReconcilorForRequest(request) &&
+        !request->GetUserData(kDiceURLRequestUserDataKey)) {
       const content::ResourceRequestInfo* info =
           content::ResourceRequestInfo::ForRequest(request);
       request->SetUserData(kDiceURLRequestUserDataKey,
-                           base::MakeUnique<DiceURLRequestUserData>(
+                           std::make_unique<DiceURLRequestUserData>(
                                info->GetWebContentsGetterForRequest()));
     }
   }
@@ -190,7 +192,6 @@ void ProcessMirrorHeaderUIThread(
     const content::ResourceRequestInfo::WebContentsGetter&
         web_contents_getter) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
-  DCHECK(IsAccountConsistencyMirrorEnabled());
 
   GAIAServiceType service_type = manage_accounts_params.service_type;
   DCHECK_NE(GAIA_SERVICE_TYPE_NONE, service_type);
@@ -201,6 +202,9 @@ void ProcessMirrorHeaderUIThread(
 
   Profile* profile =
       Profile::FromBrowserContext(web_contents->GetBrowserContext());
+  DCHECK(AccountConsistencyModeManager::IsMirrorEnabledForProfile(profile))
+      << "Gaia should not send the X-Chrome-Manage-Accounts header "
+      << "when Mirror is disabled.";
   AccountReconcilor* account_reconcilor =
       AccountReconcilorFactory::GetForProfile(profile);
   account_reconcilor->OnReceivedManageAccountsResponse(service_type);
@@ -223,6 +227,16 @@ void ProcessMirrorHeaderUIThread(
     }
     signin_metrics::LogAccountReconcilorStateOnGaiaResponse(
         account_reconcilor->GetState());
+
+#if defined(OS_CHROMEOS)
+    // Chrome OS does not have an account picker right now. To fix
+    // https://crbug.com/807568, this is a no-op here. This is OK because in the
+    // limited cases that Mirror is available on Chrome OS, 1:1 account
+    // consistency is enforced and adding/removing accounts is not allowed,
+    // GAIA_SERVICE_TYPE_INCOGNITO may be allowed though.
+    return;
+#endif
+
     browser->window()->ShowAvatarBubbleFromAvatarButton(
         bubble_mode, manage_accounts_params,
         signin_metrics::AccessPoint::ACCESS_POINT_CONTENT_AREA, false);
@@ -249,6 +263,7 @@ void ProcessMirrorHeaderUIThread(
 // Creates a DiceTurnOnSyncHelper.
 void CreateDiceTurnOnSyncHelper(Profile* profile,
                                 signin_metrics::AccessPoint access_point,
+                                signin_metrics::PromoAction promo_action,
                                 signin_metrics::Reason reason,
                                 content::WebContents* web_contents,
                                 const std::string& account_id) {
@@ -258,7 +273,9 @@ void CreateDiceTurnOnSyncHelper(Profile* profile,
                          : chrome::FindBrowserWithProfile(profile);
   // DiceTurnSyncOnHelper is suicidal (it will kill itself once it finishes
   // enabling sync).
-  new DiceTurnSyncOnHelper(profile, browser, access_point, reason, account_id);
+  new DiceTurnSyncOnHelper(
+      profile, browser, access_point, promo_action, reason, account_id,
+      DiceTurnSyncOnHelper::SigninAbortedMode::REMOVE_ACCOUNT);
 }
 
 // Shows UI for signin errors.
@@ -291,12 +308,16 @@ void ProcessDiceHeaderUIThread(
 
   signin_metrics::AccessPoint access_point =
       signin_metrics::AccessPoint::ACCESS_POINT_UNKNOWN;
+  signin_metrics::PromoAction promo_action =
+      signin_metrics::PromoAction::PROMO_ACTION_NO_SIGNIN_PROMO;
   signin_metrics::Reason reason = signin_metrics::Reason::REASON_UNKNOWN_REASON;
+
   bool is_sync_signin_tab = false;
   DiceTabHelper* tab_helper = DiceTabHelper::FromWebContents(web_contents);
   if (signin::IsDicePrepareMigrationEnabled() && tab_helper) {
-    is_sync_signin_tab = tab_helper->should_start_sync_after_web_signin();
+    is_sync_signin_tab = true;
     access_point = tab_helper->signin_access_point();
+    promo_action = tab_helper->signin_promo_action();
     reason = tab_helper->signin_reason();
   }
 
@@ -304,11 +325,11 @@ void ProcessDiceHeaderUIThread(
       DiceResponseHandler::GetForProfile(profile);
   dice_response_handler->ProcessDiceHeader(
       dice_params,
-      base::MakeUnique<ProcessDiceHeaderDelegateImpl>(
+      std::make_unique<ProcessDiceHeaderDelegateImpl>(
           web_contents, profile->GetPrefs(),
           SigninManagerFactory::GetForProfile(profile), is_sync_signin_tab,
           base::BindOnce(&CreateDiceTurnOnSyncHelper, base::Unretained(profile),
-                         access_point, reason),
+                         access_point, promo_action, reason),
           base::BindOnce(&ShowDiceSigninError, base::Unretained(profile))));
 }
 #endif  // BUILDFLAG(ENABLE_DICE_SUPPORT)
@@ -341,12 +362,6 @@ void ProcessMirrorResponseHeaderIfExists(net::URLRequest* request,
   if (is_off_the_record) {
     NOTREACHED() << "Gaia should not send the X-Chrome-Manage-Accounts header "
                  << "in incognito.";
-    return;
-  }
-
-  if (!IsAccountConsistencyMirrorEnabled()) {
-    NOTREACHED() << "Gaia should not send the X-Chrome-Manage-Accounts header "
-                 << "when Mirror is disabled.";
     return;
   }
 
@@ -438,9 +453,14 @@ void FixAccountConsistencyRequestHeader(net::URLRequest* request,
     profile_mode_mask |= PROFILE_MODE_INCOGNITO_DISABLED;
   }
 
+  AccountConsistencyMethod account_consistency =
+      AccountConsistencyModeManager::GetMethodForPrefMember(
+          io_data->dice_enabled());
+
 #if defined(OS_CHROMEOS)
   // Mirror account consistency required by profile.
   if (io_data->account_consistency_mirror_required()->GetValue()) {
+    account_consistency = AccountConsistencyMethod::kMirror;
     // Can't add new accounts.
     profile_mode_mask |= PROFILE_MODE_ADD_ACCOUNT_DISABLED;
   }
@@ -453,7 +473,7 @@ void FixAccountConsistencyRequestHeader(net::URLRequest* request,
   // Dice header:
   bool dice_header_added = AppendOrRemoveDiceRequestHeader(
       request, redirect_url, account_id, io_data->IsSyncEnabled(),
-      io_data->SyncHasAuthError(), io_data->dice_enabled(),
+      io_data->SyncHasAuthError(), account_consistency,
       io_data->GetCookieSettings());
 
   // Block the AccountReconcilor while the Dice requests are in flight. This
@@ -462,18 +482,10 @@ void FixAccountConsistencyRequestHeader(net::URLRequest* request,
   if (dice_header_added)
     DiceURLRequestUserData::AttachToRequest(request);
 
-#if defined(OS_CHROMEOS)
-  bool mirror_enabled =
-      io_data->account_consistency_mirror_required()->GetValue() ||
-      IsAccountConsistencyMirrorEnabled();
-#else
-  bool mirror_enabled = IsAccountConsistencyMirrorEnabled();
-#endif
-
   // Mirror header:
-  AppendOrRemoveMirrorRequestHeader(request, redirect_url, account_id,
-                                    io_data->GetCookieSettings(),
-                                    mirror_enabled, profile_mode_mask);
+  AppendOrRemoveMirrorRequestHeader(
+      request, redirect_url, account_id, account_consistency,
+      io_data->GetCookieSettings(), profile_mode_mask);
 }
 
 void ProcessAccountConsistencyResponseHeaders(net::URLRequest* request,

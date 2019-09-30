@@ -309,11 +309,13 @@ void QuicPacketGenerator::SetMaxPacketLength(QuicByteCount length) {
 
 std::unique_ptr<QuicEncryptedPacket>
 QuicPacketGenerator::SerializeVersionNegotiationPacket(
-    const QuicTransportVersionVector& supported_versions) {
-  return packet_creator_.SerializeVersionNegotiationPacket(supported_versions);
+    bool ietf_quic,
+    const ParsedQuicVersionVector& supported_versions) {
+  return packet_creator_.SerializeVersionNegotiationPacket(ietf_quic,
+                                                           supported_versions);
 }
 
-std::unique_ptr<QuicEncryptedPacket>
+OwningSerializedPacketPointer
 QuicPacketGenerator::SerializeConnectivityProbingPacket() {
   return packet_creator_.SerializeConnectivityProbingPacket();
 }
@@ -344,9 +346,10 @@ void QuicPacketGenerator::set_encryption_level(EncryptionLevel level) {
   packet_creator_.set_encryption_level(level);
 }
 
-void QuicPacketGenerator::SetEncrypter(EncryptionLevel level,
-                                       QuicEncrypter* encrypter) {
-  packet_creator_.SetEncrypter(level, encrypter);
+void QuicPacketGenerator::SetEncrypter(
+    EncryptionLevel level,
+    std::unique_ptr<QuicEncrypter> encrypter) {
+  packet_creator_.SetEncrypter(level, std::move(encrypter));
 }
 
 void QuicPacketGenerator::AddRandomPadding() {
@@ -369,6 +372,15 @@ bool QuicPacketGenerator::HasRetransmittableFrames() const {
 bool QuicPacketGenerator::HasPendingStreamFramesOfStream(
     QuicStreamId id) const {
   return packet_creator_.HasPendingStreamFramesOfStream(id);
+}
+
+void QuicPacketGenerator::SetTransmissionType(TransmissionType type) {
+  packet_creator_.SetTransmissionType(type);
+}
+
+void QuicPacketGenerator::SetCanSetTransmissionType(
+    bool can_set_transmission_type) {
+  packet_creator_.set_can_set_transmission_type(can_set_transmission_type);
 }
 
 }  // namespace net

@@ -34,6 +34,7 @@
 #include "net/spdy/core/spdy_headers_handler_interface.h"
 #include "net/spdy/core/spdy_protocol.h"
 #include "net/spdy/platform/api/spdy_estimate_memory_usage.h"
+#include "net/spdy/platform/api/spdy_flags.h"
 #include "net/spdy/platform/api/spdy_ptr_util.h"
 #include "net/spdy/platform/api/spdy_string_utils.h"
 
@@ -165,7 +166,7 @@ Http2DecoderAdapter::Http2DecoderAdapter() {
   ResetInternal();
 }
 
-Http2DecoderAdapter::~Http2DecoderAdapter() {}
+Http2DecoderAdapter::~Http2DecoderAdapter() = default;
 
 void Http2DecoderAdapter::set_visitor(SpdyFramerVisitorInterface* visitor) {
   visitor_ = visitor;
@@ -436,10 +437,9 @@ void Http2DecoderAdapter::OnContinuationEnd() {
 void Http2DecoderAdapter::OnPadLength(size_t trailing_length) {
   DVLOG(1) << "OnPadLength: " << trailing_length;
   opt_pad_length_ = trailing_length;
+  DCHECK_LT(trailing_length, 256u);
   if (frame_header_.type == Http2FrameType::DATA) {
-    visitor()->OnStreamPadding(stream_id(), 1);
-  } else if (frame_header_.type == Http2FrameType::HEADERS) {
-    CHECK_LT(trailing_length, 256u);
+    visitor()->OnStreamPadLength(stream_id(), trailing_length);
   }
 }
 
@@ -474,17 +474,24 @@ void Http2DecoderAdapter::OnSettingsStart(const Http2FrameHeader& header) {
 
 void Http2DecoderAdapter::OnSetting(const Http2SettingFields& setting_fields) {
   DVLOG(1) << "OnSetting: " << setting_fields;
-  const uint16_t parameter = static_cast<uint16_t>(setting_fields.parameter);
-  SpdySettingsIds setting_id;
+  const auto parameter = static_cast<SpdySettingsId>(setting_fields.parameter);
+  if (GetSpdyRestartFlag(http2_propagate_unknown_settings)) {
+    visitor()->OnSetting(parameter, setting_fields.value);
+    if (extension_ != nullptr) {
+      extension_->OnSetting(parameter, setting_fields.value);
+    }
+    return;
+  }
+  SpdyKnownSettingsId setting_id;
   if (!ParseSettingsId(parameter, &setting_id)) {
     if (extension_ == nullptr) {
-      DVLOG(1) << "Ignoring unknown setting id: " << setting_fields;
+      DVLOG(1) << "No extension for unknown setting id: " << setting_fields;
     } else {
       extension_->OnSetting(parameter, setting_fields.value);
     }
     return;
   }
-  visitor()->OnSetting(setting_id, setting_fields.value);
+  visitor()->OnSettingOld(setting_id, setting_fields.value);
 }
 
 void Http2DecoderAdapter::OnSettingsEnd() {
@@ -798,7 +805,7 @@ void Http2DecoderAdapter::ResetInternal() {
   CorruptFrameHeader(&frame_header_);
   CorruptFrameHeader(&hpack_first_frame_header_);
 
-  frame_decoder_.reset(new Http2FrameDecoder(this));
+  frame_decoder_ = SpdyMakeUnique<Http2FrameDecoder>(this);
   hpack_decoder_ = nullptr;
 }
 

@@ -8,7 +8,9 @@
 
 #import "ios/chrome/app/main_controller_private.h"
 #include "ios/chrome/browser/chrome_switches.h"
+#import "ios/chrome/browser/ui/authentication/signin_earlgrey_utils.h"
 #import "ios/chrome/browser/ui/tab_switcher/tab_switcher_egtest_util.h"
+#include "ios/chrome/browser/ui/tab_switcher/tab_switcher_mode.h"
 #import "ios/chrome/browser/ui/tab_switcher/tab_switcher_panel_cell.h"
 #import "ios/chrome/browser/ui/ui_util.h"
 #include "ios/chrome/grit/ios_strings.h"
@@ -19,6 +21,7 @@
 #import "ios/chrome/test/earl_grey/chrome_earl_grey_ui.h"
 #import "ios/chrome/test/earl_grey/chrome_matchers.h"
 #import "ios/chrome/test/earl_grey/chrome_test_case.h"
+#import "ios/public/provider/chrome/browser/signin/fake_chrome_identity_service.h"
 #import "ios/testing/wait_util.h"
 #import "ios/web/public/test/http_server/blank_page_response_provider.h"
 #import "ios/web/public/test/http_server/http_server.h"
@@ -83,8 +86,10 @@ using web::test::HttpServer;
 
 // Tests entering and leaving the tab switcher.
 - (void)testEnteringTabSwitcher {
-  if (!IsIPadIdiom())
-    return;
+  if (GetTabSwitcherMode() != TabSwitcherMode::TABLET_SWITCHER) {
+    EARL_GREY_TEST_SKIPPED(
+        @"TabSwitcher tests are not applicable in this configuration");
+  }
 
   [self assertTabSwitcherIsInactive];
 
@@ -106,8 +111,10 @@ using web::test::HttpServer;
 // Tests entering tab switcher by closing all tabs, and leaving the tab switcher
 // by creating a new tab.
 - (void)testClosingAllTabsAndCreatingNewTab {
-  if (!IsIPadIdiom())
-    return;
+  if (GetTabSwitcherMode() != TabSwitcherMode::TABLET_SWITCHER) {
+    EARL_GREY_TEST_SKIPPED(
+        @"TabSwitcher tests are not applicable in this configuration");
+  }
 
   [self assertTabSwitcherIsInactive];
 
@@ -130,8 +137,10 @@ using web::test::HttpServer;
 
 // Tests entering tab switcher from incognito mode.
 - (void)testIncognitoTabs {
-  if (!IsIPadIdiom())
-    return;
+  if (GetTabSwitcherMode() != TabSwitcherMode::TABLET_SWITCHER) {
+    EARL_GREY_TEST_SKIPPED(
+        @"TabSwitcher tests are not applicable in this configuration");
+  }
 
   [self assertTabSwitcherIsInactive];
 
@@ -174,8 +183,10 @@ using web::test::HttpServer;
 
 // Tests leaving the tab switcher while on the "Other Devices" panel.
 - (void)testLeavingSwitcherFromOtherDevices {
-  if (!IsIPadIdiom())
-    return;
+  if (GetTabSwitcherMode() != TabSwitcherMode::TABLET_SWITCHER) {
+    EARL_GREY_TEST_SKIPPED(
+        @"TabSwitcher tests are not applicable in this configuration");
+  }
 
   [self assertTabSwitcherIsInactive];
 
@@ -214,8 +225,10 @@ using web::test::HttpServer;
 // Tests that elements on iPad tab switcher are accessible.
 // TODO: (crbug.com/691095) Open tabs label is not accessible
 - (void)DISABLED_testAccessibilityOnTabSwitcher {
-  if (!IsIPadIdiom())
-    return;
+  if (GetTabSwitcherMode() != TabSwitcherMode::TABLET_SWITCHER) {
+    EARL_GREY_TEST_SKIPPED(
+        @"TabSwitcher tests are not applicable in this configuration");
+  }
   [self assertTabSwitcherIsInactive];
 
   [[EarlGrey selectElementWithMatcher:TabletTabSwitcherOpenButton()]
@@ -237,8 +250,10 @@ using web::test::HttpServer;
 // Tests that elements on iPad tab switcher incognito tab are accessible.
 // TODO: (crbug.com/691095) Incognito tabs label should be tappable.
 - (void)DISABLED_testAccessibilityOnIncognitoTabSwitcher {
-  if (!IsIPadIdiom())
-    return;
+  if (GetTabSwitcherMode() != TabSwitcherMode::TABLET_SWITCHER) {
+    EARL_GREY_TEST_SKIPPED(
+        @"TabSwitcher tests are not applicable in this configuration");
+  }
   [self assertTabSwitcherIsInactive];
 
   [[EarlGrey selectElementWithMatcher:TabletTabSwitcherOpenButton()]
@@ -265,8 +280,10 @@ using web::test::HttpServer;
 // Tests that elements on iPad tab switcher other devices are accessible.
 // TODO: (crbug.com/691095) Other devices label should be tappable.
 - (void)DISABLED_testAccessibilityOnOtherDeviceTabSwitcher {
-  if (!IsIPadIdiom())
-    return;
+  if (GetTabSwitcherMode() != TabSwitcherMode::TABLET_SWITCHER) {
+    EARL_GREY_TEST_SKIPPED(
+        @"TabSwitcher tests are not applicable in this configuration");
+  }
   [self assertTabSwitcherIsInactive];
 
   [[EarlGrey selectElementWithMatcher:TabletTabSwitcherOpenButton()]
@@ -293,9 +310,10 @@ using web::test::HttpServer;
 // Tests that closing a Tab that has a queued dialog successfully cancels the
 // dialog.
 - (void)testCloseTabWithDialog {
-  // The TabSwitcherController is only used on iPhones.
-  if (!IsIPadIdiom())
-    EARL_GREY_TEST_SKIPPED(@"TabSwitcherController is only used on iPads.");
+  if (GetTabSwitcherMode() != TabSwitcherMode::TABLET_SWITCHER) {
+    EARL_GREY_TEST_SKIPPED(
+        @"TabSwitcher tests are not applicable in this configuration");
+  }
 
   // Load the blank test page so that JavaScript can be executed.
   const GURL kBlankPageURL = HttpServer::MakeUrl("http://blank-page");
@@ -339,6 +357,116 @@ using web::test::HttpServer;
   GREYAssert(testing::WaitUntilConditionOrTimeout(
                  testing::kWaitForUIElementTimeout, condition),
              @"Alert with message was not found: %@", kMessageText);
+}
+
+// Tests sign-in promo view in cold state.
+- (void)testColdSigninPromoView {
+  if (GetTabSwitcherMode() != TabSwitcherMode::TABLET_SWITCHER) {
+    EARL_GREY_TEST_SKIPPED(
+        @"TabSwitcher tests are not applicable in this configuration");
+  }
+
+  // Enter the tab switcher and press the "Other Devices" button.
+  [[EarlGrey selectElementWithMatcher:TabletTabSwitcherOpenButton()]
+      performAction:grey_tap()];
+  [[EarlGrey
+      selectElementWithMatcher:TabletTabSwitcherOtherDevicesPanelButton()]
+      performAction:grey_tap()];
+  // Check the sign-in promo view with cold state.
+  [SigninEarlGreyUtils
+      checkSigninPromoVisibleWithMode:SigninPromoViewModeColdState
+                          closeButton:NO];
+}
+
+// Tests sign-in promo view in warm state.
+- (void)testWarmSigninPromoView {
+  if (GetTabSwitcherMode() != TabSwitcherMode::TABLET_SWITCHER) {
+    EARL_GREY_TEST_SKIPPED(
+        @"TabSwitcher tests are not applicable in this configuration");
+  }
+
+  // Set up a fake identity.
+  ChromeIdentity* identity = [SigninEarlGreyUtils fakeIdentity1];
+  ios::FakeChromeIdentityService::GetInstanceFromChromeProvider()->AddIdentity(
+      identity);
+
+  // Enter the tab switcher and press the "Other Devices" button.
+  [[EarlGrey selectElementWithMatcher:TabletTabSwitcherOpenButton()]
+      performAction:grey_tap()];
+  [[EarlGrey
+      selectElementWithMatcher:TabletTabSwitcherOtherDevicesPanelButton()]
+      performAction:grey_tap()];
+  // Check the sign-in promo view with warm state.
+  [SigninEarlGreyUtils
+      checkSigninPromoVisibleWithMode:SigninPromoViewModeWarmState
+                          closeButton:NO];
+
+  // Tap the secondary button.
+  [[EarlGrey
+      selectElementWithMatcher:grey_allOf(
+                                   chrome_test_util::PrimarySignInButton(),
+                                   grey_sufficientlyVisible(), nil)]
+      performAction:grey_tap()];
+  // Tap the UNDO button.
+  [[EarlGrey selectElementWithMatcher:grey_buttonTitle(@"UNDO")]
+      performAction:grey_tap()];
+  // Check the sign-in promo view with warm state.
+  [SigninEarlGreyUtils
+      checkSigninPromoVisibleWithMode:SigninPromoViewModeWarmState
+                          closeButton:NO];
+}
+
+// Tests to reload the other devices tab after sign-in.
+// See crbug.comm/832527
+- (void)testReloadOtherTabDevicesTab {
+  if (GetTabSwitcherMode() != TabSwitcherMode::TABLET_SWITCHER) {
+    EARL_GREY_TEST_SKIPPED(
+        @"TabSwitcher tests are not applicable in this configuration");
+  }
+
+  // Set up a fake identity.
+  ChromeIdentity* identity = [SigninEarlGreyUtils fakeIdentity1];
+  ios::FakeChromeIdentityService::GetInstanceFromChromeProvider()->AddIdentity(
+      identity);
+
+  // Enter the tab switcher and press the "Other Devices" tab.
+  [[EarlGrey selectElementWithMatcher:TabletTabSwitcherOpenButton()]
+      performAction:grey_tap()];
+  [[EarlGrey
+      selectElementWithMatcher:TabletTabSwitcherOtherDevicesPanelButton()]
+      performAction:grey_tap()];
+  // Close the tab switcher.
+  [[EarlGrey selectElementWithMatcher:TabletTabSwitcherCloseButton()]
+      performAction:grey_tap()];
+
+  // Open the settings to sign-in.
+  [ChromeEarlGreyUI openSettingsMenu];
+  [ChromeEarlGreyUI
+      tapSettingsMenuButton:chrome_test_util::PrimarySignInButton()];
+  [ChromeEarlGreyUI confirmSigninConfirmationDialog];
+  [ChromeEarlGreyUI
+      tapSettingsMenuButton:chrome_test_util::SettingsAccountButton()];
+  // Sign-out.
+  [ChromeEarlGreyUI
+      tapSettingsMenuButton:chrome_test_util::SignOutAccountsButton()];
+  [[EarlGrey selectElementWithMatcher:
+                 ButtonWithAccessibilityLabelId(
+                     IDS_IOS_DISCONNECT_DIALOG_CONTINUE_BUTTON_MOBILE)]
+      performAction:grey_tap()];
+
+  // Open the tab switcher to the "Other Devices" tab.
+  [[EarlGrey selectElementWithMatcher:chrome_test_util::SettingsDoneButton()]
+      performAction:grey_tap()];
+  [[EarlGrey selectElementWithMatcher:TabletTabSwitcherOpenButton()]
+      performAction:grey_tap()];
+  [[EarlGrey
+      selectElementWithMatcher:TabletTabSwitcherOtherDevicesPanelButton()]
+      performAction:grey_tap()];
+
+  // Check the sign-in promo view with warm state.
+  [SigninEarlGreyUtils
+      checkSigninPromoVisibleWithMode:SigninPromoViewModeWarmState
+                          closeButton:NO];
 }
 
 @end

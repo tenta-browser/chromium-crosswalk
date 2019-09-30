@@ -441,6 +441,30 @@ Once a `mojo::Binding<T>` is destroyed, it is guaranteed that no more method
 calls are dispatched to the implementation and the connection error handler (if
 registered) won't be called.
 
+### Best practices for dealing with process crashes and callbacks
+A common situation when calling mojo interface methods that take a callback is
+that the caller wants to know if the other endpoint is torn down (e.g. because
+of a crash). In that case, the consumer usually wants to know if the response
+callback won't be run. There are different solutions for this problem, depending
+on how the `InterfacePtr<T>` is held:
+1. The consumer owns the `InterfacePtr<T>`: `set_connection_error_handler`
+   should be used.
+2. The consumer doesn't own the `InterfacePtr<T>`: there are two helpers
+   depending on the behavior that the caller wants. If the caller wants to
+   ensure that an error handler is run, then
+   [**`mojo::WrapCallbackWithDropHandler`**](https://cs.chromium.org/chromium/src/mojo/public/cpp/bindings/callback_helpers.h?l=46)
+   should be used. If the caller wants the callback to always be run, then
+   [**`mojo::WrapCallbackWithDefaultInvokeIfNotRun`**](https://cs.chromium.org/chromium/src/mojo/public/cpp/bindings/callback_helpers.h?l=40)
+   helper should be used. With both of these helpers, usual callback care should
+   be followed to ensure that the callbacks don't run after the consumer is
+   destructed (e.g. because the owner of the `InterfacePtr<T>` outlives the
+   consumer). This includes using
+   [**`base::WeakPtr`**](https://cs.chromium.org/chromium/src/base/memory/weak_ptr.h?l=5)
+   or
+   [**`base::RefCounted`**](https://cs.chromium.org/chromium/src/base/memory/ref_counted.h?l=246).
+   It should also be noted that with these helpers, the callbacks could be run
+   synchronously while the InterfacePtr<T> is reset or destroyed.
+
 ### A Note About Ordering
 
 As mentioned in the previous section, closing one end of a pipe will eventually
@@ -471,11 +495,16 @@ pipe, but the impl-side won't notice this until it receives the sent `Log`
 message. Thus the `impl` above will first log our message and *then* see a
 connection error and break out of the run loop.
 
+## Types
+
 ### Enums
 
 [Mojom enums](/mojo/public/tools/bindings#Enumeration-Types) translate directly
 to equivalent strongly-typed C++11 enum classes with `int32_t` as the underlying
-type. The typename and value names are identical between Mojom and C++.
+type. The typename and value names are identical between Mojom and C++. Mojo
+also always defines a special enumerator `kMaxValue` that shares the value of
+the highest enumerator: this makes it easy to record Mojo enums in histograms
+and interoperate with legacy IPC.
 
 For example, consider the following Mojom definition:
 
@@ -499,6 +528,7 @@ enum class Department : int32_t {
   kEngineering,
   kMarketing,
   kSales,
+  kMaxValue = kSales,
 };
 
 }  // namespace mojom
@@ -843,7 +873,7 @@ pipes.
 A **strong binding** exists as a standalone object which owns its interface
 implementation and automatically cleans itself up when its bound interface
 endpoint detects an error. The
-[**`MakeStrongBinding`**](https://cs.chromim.org/chromium/src//mojo/public/cpp/bindings/strong_binding.h)
+[**`MakeStrongBinding`**](https://cs.chromium.org/chromium/src/mojo/public/cpp/bindings/strong_binding.h)
 function is used to create such a binding.
 .
 
@@ -1133,7 +1163,10 @@ Let's place this `geometry.typemap` file alongside our Mojom file:
 mojom = "//ui/gfx/geometry/mojo/geometry.mojom"
 public_headers = [ "//ui/gfx/geometry/rect.h" ]
 traits_headers = [ "//ui/gfx/geometry/mojo/geometry_struct_traits.h" ]
-sources = [ "//ui/gfx/geometry/mojo/geometry_struct_traits.cc" ]
+sources = [
+  "//ui/gfx/geometry/mojo/geometry_struct_traits.cc",
+  "//ui/gfx/geometry/mojo/geometry_struct_traits.h",
+]
 public_deps = [ "//ui/gfx/geometry" ]
 type_mappings = [
   "gfx.mojom.Rect=gfx::Rect",
@@ -1151,8 +1184,9 @@ Let's look at each of the variables above:
   here.
 * `traits_headers`: Headers which contain the relevant `StructTraits`
   specialization(s) for any type mappings described by this file.
-* `sources`: Any private implementation sources needed for the `StructTraits`
-  definition.
+* `sources`: Any implementation sources and headers needed for the
+  `StructTraits` definition. These sources are compiled directly into the
+  generated C++ bindings target for a `mojom` file applying this typemap.
 * `public_deps`: Target dependencies exposed by the `public_headers` and
   `traits_headers`.
 * `deps`: Target dependencies exposed by `sources` but not already covered by
@@ -1175,6 +1209,10 @@ Let's look at each of the variables above:
       `StructTraits` definition for this type mapping must define additional
       `IsNull` and `SetToNull` methods. See
       [Specializing Nullability](#Specializing-Nullability) below.
+    * `force_serialize`: The typemap is incompatible with lazy serialization
+      (e.g. consider a typemap to a `base::StringPiece`, where retaining a
+      copy is unsafe). Any messages carrying the type will be forced down the
+      eager serailization path.
 
 
 Now that we have the typemap file we need to add it to a local list of typemaps
@@ -1447,6 +1485,10 @@ generates the function in the same namespace as the generated C++ enum type:
 ```cpp
 inline bool IsKnownEnumValue(Department value);
 ```
+
+### Using Mojo Bindings in Chrome
+
+See [Converting Legacy Chrome IPC To Mojo](/ipc).
 
 ### Additional Documentation
 

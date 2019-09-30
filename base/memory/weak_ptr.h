@@ -109,7 +109,7 @@ class BASE_EXPORT WeakReference {
   };
 
   WeakReference();
-  explicit WeakReference(const Flag* flag);
+  explicit WeakReference(const scoped_refptr<Flag>& flag);
   ~WeakReference();
 
   WeakReference(WeakReference&& other);
@@ -130,9 +130,7 @@ class BASE_EXPORT WeakReferenceOwner {
 
   WeakReference GetRef() const;
 
-  bool HasRefs() const {
-    return flag_.get() && !flag_->HasOneRef();
-  }
+  bool HasRefs() const { return flag_ && !flag_->HasOneRef(); }
 
   void Invalidate();
 
@@ -153,6 +151,11 @@ class BASE_EXPORT WeakPtrBase {
   WeakPtrBase(WeakPtrBase&& other) = default;
   WeakPtrBase& operator=(const WeakPtrBase& other) = default;
   WeakPtrBase& operator=(WeakPtrBase&& other) = default;
+
+  void reset() {
+    ref_ = internal::WeakReference();
+    ptr_ = 0;
+  }
 
  protected:
   WeakPtrBase(const WeakReference& ref, uintptr_t ptr);
@@ -215,7 +218,7 @@ template <typename T> class WeakPtrFactory;
 template <typename T>
 class WeakPtr : public internal::WeakPtrBase {
  public:
-  WeakPtr() {}
+  WeakPtr() = default;
 
   WeakPtr(std::nullptr_t) {}
 
@@ -247,11 +250,6 @@ class WeakPtr : public internal::WeakPtrBase {
   T* operator->() const {
     DCHECK(get() != nullptr);
     return get();
-  }
-
-  void reset() {
-    ref_ = internal::WeakReference();
-    ptr_ = 0;
   }
 
   // Allow conditionals to test validity, e.g. if (weak_ptr) {...};
@@ -306,7 +304,7 @@ class WeakPtrFactory : public internal::WeakPtrFactoryBase {
   explicit WeakPtrFactory(T* ptr)
       : WeakPtrFactoryBase(reinterpret_cast<uintptr_t>(ptr)) {}
 
-  ~WeakPtrFactory() {}
+  ~WeakPtrFactory() = default;
 
   WeakPtr<T> GetWeakPtr() {
     DCHECK(ptr_);
@@ -338,14 +336,14 @@ class WeakPtrFactory : public internal::WeakPtrFactoryBase {
 template <class T>
 class SupportsWeakPtr : public internal::SupportsWeakPtrBase {
  public:
-  SupportsWeakPtr() {}
+  SupportsWeakPtr() = default;
 
   WeakPtr<T> AsWeakPtr() {
     return WeakPtr<T>(weak_reference_owner_.GetRef(), static_cast<T*>(this));
   }
 
  protected:
-  ~SupportsWeakPtr() {}
+  ~SupportsWeakPtr() = default;
 
  private:
   internal::WeakReferenceOwner weak_reference_owner_;

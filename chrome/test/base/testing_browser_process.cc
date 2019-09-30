@@ -14,12 +14,14 @@
 #include "chrome/browser/lifetime/application_lifetime.h"
 #include "chrome/browser/notifications/notification_platform_bridge.h"
 #include "chrome/browser/notifications/notification_ui_manager.h"
+#include "chrome/browser/policy/chrome_browser_policy_connector.h"
 #include "chrome/browser/printing/print_job_manager.h"
 #include "chrome/browser/profiles/profile_manager.h"
+#include "chrome/browser/resource_coordinator/tab_lifecycle_unit_source.h"
 #include "chrome/browser/resource_coordinator/tab_manager.h"
 #include "chrome/browser/safe_browsing/safe_browsing_service.h"
+#include "chrome/common/buildflags.h"
 #include "chrome/common/chrome_paths.h"
-#include "chrome/common/features.h"
 #include "chrome/test/base/testing_browser_process_platform_part.h"
 #include "components/network_time/network_time_tracker.h"
 #include "components/optimization_guide/optimization_guide_service.h"
@@ -28,14 +30,13 @@
 #include "components/subresource_filter/content/browser/content_ruleset_service.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/common/network_connection_tracker.h"
-#include "extensions/features/features.h"
-#include "media/media_features.h"
+#include "extensions/buildflags/buildflags.h"
+#include "media/media_buildflags.h"
 #include "net/url_request/url_request_context_getter.h"
-#include "printing/features/features.h"
+#include "printing/buildflags/buildflags.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "ui/message_center/message_center.h"
 
-#if BUILDFLAG(ENABLE_BACKGROUND)
+#if BUILDFLAG(ENABLE_BACKGROUND_MODE)
 #include "chrome/browser/background/background_mode_manager.h"
 #endif
 
@@ -199,8 +200,8 @@ variations::VariationsService* TestingBrowserProcess::variations_service() {
   return nullptr;
 }
 
-policy::BrowserPolicyConnector*
-    TestingBrowserProcess::browser_policy_connector() {
+policy::ChromeBrowserPolicyConnector*
+TestingBrowserProcess::browser_policy_connector() {
   if (!browser_policy_connector_) {
     EXPECT_FALSE(created_browser_policy_connector_);
     created_browser_policy_connector_ = true;
@@ -234,10 +235,6 @@ policy::PolicyService* TestingBrowserProcess::policy_service() {
 }
 
 IconManager* TestingBrowserProcess::icon_manager() {
-  return nullptr;
-}
-
-GpuProfileCache* TestingBrowserProcess::gpu_profile_cache() {
   return nullptr;
 }
 
@@ -307,18 +304,11 @@ TestingBrowserProcess::notification_platform_bridge() {
   return notification_platform_bridge_.get();
 }
 
-message_center::MessageCenter* TestingBrowserProcess::message_center() {
-  return message_center::MessageCenter::Get();
-}
-
 IntranetRedirectDetector* TestingBrowserProcess::intranet_redirect_detector() {
   return nullptr;
 }
 
-void TestingBrowserProcess::CreateDevToolsHttpProtocolHandler(
-    const std::string& ip,
-    uint16_t port) {
-}
+void TestingBrowserProcess::CreateDevToolsProtocolHandler() {}
 
 void TestingBrowserProcess::CreateDevToolsAutoOpener() {
 }
@@ -431,8 +421,12 @@ gcm::GCMDriver* TestingBrowserProcess::gcm_driver() {
 
 resource_coordinator::TabManager* TestingBrowserProcess::GetTabManager() {
 #if defined(OS_WIN) || defined(OS_MACOSX) || defined(OS_LINUX)
-  if (!tab_manager_.get())
-    tab_manager_.reset(new resource_coordinator::TabManager());
+  if (!tab_manager_) {
+    tab_manager_ = std::make_unique<resource_coordinator::TabManager>();
+    tab_lifecycle_unit_source_ =
+        std::make_unique<resource_coordinator::TabLifecycleUnitSource>();
+    tab_lifecycle_unit_source_->AddObserver(tab_manager_.get());
+  }
   return tab_manager_.get();
 #else
   return nullptr;

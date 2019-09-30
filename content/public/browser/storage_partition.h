@@ -13,8 +13,8 @@
 #include "base/files/file_path.h"
 #include "base/time/time.h"
 #include "content/common/content_export.h"
-#include "content/public/common/url_loader_factory.mojom.h"
 #include "net/cookies/cookie_store.h"
+#include "services/network/public/cpp/shared_url_loader_factory.h"
 
 class GURL;
 
@@ -29,6 +29,13 @@ class FileSystemContext;
 namespace net {
 class URLRequestContextGetter;
 }
+
+namespace network {
+namespace mojom {
+class CookieManager;
+class NetworkContext;
+}
+}  // namespace network
 
 namespace storage {
 class QuotaManager;
@@ -48,17 +55,14 @@ class DOMStorageContext;
 class IndexedDBContext;
 class PlatformNotificationContext;
 class ServiceWorkerContext;
+class SharedWorkerService;
+class WebPackageContext;
 
 #if !defined(OS_ANDROID)
 class HostZoomLevelContext;
 class HostZoomMap;
 class ZoomLevelDelegate;
 #endif  // !defined(OS_ANDROID)
-
-namespace mojom {
-class NetworkContext;
-class URLLoaderFactory;
-}
 
 // Defines what persistent state a child process can access.
 //
@@ -71,13 +75,22 @@ class CONTENT_EXPORT StoragePartition {
   virtual base::FilePath GetPath() = 0;
   virtual net::URLRequestContextGetter* GetURLRequestContext() = 0;
   virtual net::URLRequestContextGetter* GetMediaURLRequestContext() = 0;
-  virtual mojom::NetworkContext* GetNetworkContext() = 0;
-  // Returns a pointer to a URLLoaderFactory owned by the storage partition.
-  // Prefer to use this instead of creating a new URLLoaderFactory when issuing
-  // requests from the Browser process, to share resources. The returned
-  // URLLoaderFactory should not be sent to subprocesses, due to its
-  // permissions.
-  virtual mojom::URLLoaderFactory* GetURLLoaderFactoryForBrowserProcess() = 0;
+  virtual network::mojom::NetworkContext* GetNetworkContext() = 0;
+  // Returns a pointer/info to a URLLoaderFactory/CookieManager owned by
+  // the storage partition. Prefer to use this instead of creating a new
+  // URLLoaderFactory when issuing requests from the Browser process, to
+  // share resources and preserve ordering.
+  // The returned info from |GetURLLoaderFactoryForBrowserProcessIOThread()|
+  // must be consumed on the IO thread to get the actual factory, and is safe to
+  // use after StoragePartition has gone.
+  // The returned SharedURLLoaderFactory can be held on and will work across
+  // network process restarts.
+  virtual scoped_refptr<network::SharedURLLoaderFactory>
+  GetURLLoaderFactoryForBrowserProcess() = 0;
+  virtual std::unique_ptr<network::SharedURLLoaderFactoryInfo>
+  GetURLLoaderFactoryForBrowserProcessIOThread() = 0;
+  virtual network::mojom::CookieManager*
+  GetCookieManagerForBrowserProcess() = 0;
   virtual storage::QuotaManager* GetQuotaManager() = 0;
   virtual AppCacheService* GetAppCacheService() = 0;
   virtual storage::FileSystemContext* GetFileSystemContext() = 0;
@@ -85,6 +98,7 @@ class CONTENT_EXPORT StoragePartition {
   virtual DOMStorageContext* GetDOMStorageContext() = 0;
   virtual IndexedDBContext* GetIndexedDBContext() = 0;
   virtual ServiceWorkerContext* GetServiceWorkerContext() = 0;
+  virtual SharedWorkerService* GetSharedWorkerService() = 0;
   virtual CacheStorageContext* GetCacheStorageContext() = 0;
 #if !defined(OS_ANDROID)
   virtual HostZoomMap* GetHostZoomMap() = 0;
@@ -92,6 +106,7 @@ class CONTENT_EXPORT StoragePartition {
   virtual ZoomLevelDelegate* GetZoomLevelDelegate() = 0;
 #endif  // !defined(OS_ANDROID)
   virtual PlatformNotificationContext* GetPlatformNotificationContext() = 0;
+  virtual WebPackageContext* GetWebPackageContext() = 0;
 
   enum : uint32_t {
     REMOVE_DATA_MASK_APPCACHE = 1 << 0,
@@ -129,8 +144,7 @@ class CONTENT_EXPORT StoragePartition {
   // is fixed.
   virtual void ClearDataForOrigin(uint32_t remove_mask,
                                   uint32_t quota_storage_remove_mask,
-                                  const GURL& storage_origin,
-                                  net::URLRequestContextGetter* rq_context) = 0;
+                                  const GURL& storage_origin) = 0;
 
   // A callback type to check if a given origin matches a storage policy.
   // Can be passed empty/null where used, which means the origin will always
@@ -195,10 +209,12 @@ class CONTENT_EXPORT StoragePartition {
   // Clear the bluetooth allowed devices map. For test use only.
   virtual void ClearBluetoothAllowedDevicesMapForTesting() = 0;
 
-  // Overrides the network URLLoaderFactory for subsequent requests. Passing a
-  // null pointer will restore the default behavior.
-  virtual void SetNetworkFactoryForTesting(
-      mojom::URLLoaderFactory* test_factory) = 0;
+  // Call |FlushForTesting()| on Network Service related interfaces. For test
+  // use only.
+  virtual void FlushNetworkInterfaceForTesting() = 0;
+
+  // Wait until all deletions tasks are finished. For test use only.
+  virtual void WaitForDeletionTasksForTesting() = 0;
 
  protected:
   virtual ~StoragePartition() {}

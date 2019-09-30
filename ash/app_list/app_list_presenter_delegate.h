@@ -7,11 +7,11 @@
 
 #include <stdint.h>
 
+#include "ash/app_list/presenter/app_list_presenter_delegate.h"
 #include "ash/ash_export.h"
 #include "ash/shell_observer.h"
 #include "ash/wm/tablet_mode/tablet_mode_observer.h"
 #include "base/macros.h"
-#include "ui/app_list/presenter/app_list_presenter_delegate.h"
 #include "ui/events/event_handler.h"
 #include "ui/keyboard/keyboard_controller_observer.h"
 
@@ -35,7 +35,6 @@ namespace ash {
 class ASH_EXPORT AppListPresenterDelegate
     : public app_list::AppListPresenterDelegate,
       public ui::EventHandler,
-      public keyboard::KeyboardControllerObserver,
       public ShellObserver,
       public TabletModeObserver {
  public:
@@ -51,7 +50,6 @@ class ASH_EXPORT AppListPresenterDelegate
             int current_apps_page) override;
   void OnShown(int64_t display_id) override;
   void OnDismissed() override;
-  void UpdateBounds() override;
   gfx::Vector2d GetVisibilityAnimationOffset(
       aura::Window* root_window) override;
   base::TimeDelta GetVisibilityAnimationDuration(aura::Window* root_window,
@@ -64,11 +62,6 @@ class ASH_EXPORT AppListPresenterDelegate
   void OnMouseEvent(ui::MouseEvent* event) override;
   void OnGestureEvent(ui::GestureEvent* event) override;
 
-  // KeyboardControllerObserver overrides:
-  void OnKeyboardWorkspaceOccludedBoundsChanging(
-      const gfx::Rect& new_bounds) override;
-  void OnKeyboardClosed() override;
-
   // ShellObserver overrides:
   void OnOverviewModeStarting() override;
 
@@ -78,9 +71,6 @@ class ASH_EXPORT AppListPresenterDelegate
 
   // Whether the app list is visible (or in the process of being shown).
   bool is_visible_ = false;
-
-  // Whether the fullscreen app list feature is enabled.
-  const bool is_fullscreen_app_list_enabled_;
 
   // Not owned. Pointer is guaranteed to be valid while this object is alive.
   app_list::AppListPresenterImpl* presenter_;

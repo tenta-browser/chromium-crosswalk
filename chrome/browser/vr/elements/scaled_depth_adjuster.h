@@ -25,10 +25,12 @@ class ScaledDepthAdjuster : public UiElement {
  private:
   gfx::Transform LocalTransform() const override;
   gfx::Transform GetTargetLocalTransform() const override;
-  bool OnBeginFrame(const base::TimeTicks& time,
-                    const gfx::Vector3dF& look_at) override;
+  bool OnBeginFrame(const gfx::Transform& head_pose) override;
   void OnSetType() override;
+
+#ifndef NDEBUG
   void DumpGeometry(std::ostringstream* os) const override;
+#endif
 
   gfx::Transform transform_;
 

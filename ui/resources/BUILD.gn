@@ -2,8 +2,10 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
+import("//build/config/jumbo.gni")
 import("//tools/grit/grit_rule.gni")
 import("//tools/grit/repack.gni")
+import("//ui/webui/webui_features.gni")
 
 group("resources") {
   public_deps = [
@@ -34,6 +36,7 @@ grit("ui_unscaled_resources_grd") {
 }
 
 grit("webui_resources_grd") {
+  defines = [ "optimize_webui=$optimize_webui" ]
   source = "../webui/resources/webui_resources.grd"
 
   # The .grd contains references to generated files.
@@ -188,7 +191,7 @@ repack("repack_ui_test_pak_100_percent") {
   ]
 
   if (!is_ios) {
-    deps += [ "//third_party/WebKit/public:resources_grit" ]
+    deps += [ "//third_party/blink/public:resources_grit" ]
   }
 
   if (!is_mac) {
@@ -205,14 +208,16 @@ repack("repack_ui_test_pak_100_percent") {
   if (toolkit_views) {
     deps += [ "//ui/views/resources" ]
     sources += [
-      "$root_gen_dir/blink/public/resources/blink_resources.pak",
+      "$root_gen_dir/third_party/blink/public/resources/blink_resources.pak",
       "$root_gen_dir/ui/views/resources/views_resources_100_percent.pak",
     ]
   }
 
   if (use_aura && toolkit_views) {
     deps += [ "//ui/app_list/resources" ]
-    sources += [ "$root_gen_dir/ui/app_list/resources/app_list_resources_100_percent.pak" ]
+    sources += [
+      "$root_gen_dir/ui/app_list/resources/app_list_resources_100_percent.pak",
+    ]
   }
 }
 

@@ -12,11 +12,11 @@
 #include "base/strings/stringprintf.h"
 #include "base/strings/sys_string_conversions.h"
 #include "components/cronet/ios/test/cronet_test_base.h"
-#include "components/cronet/ios/test/test_server.h"
-#include "components/grpc_support/test/quic_test_server.h"
+#include "components/cronet/test/test_server.h"
 #include "net/base/mac/url_conversions.h"
 #include "net/base/net_errors.h"
 #include "net/cert/mock_cert_verifier.h"
+#include "net/test/quic_simple_test_server.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "testing/gtest_mac.h"
 #include "url/gurl.h"
@@ -78,7 +78,7 @@ class PerfTest : public CronetTestBase,
               entry.first.quic, entry.first.http2, entry.first.akd4,
               entry.first.cronet, entry.second.mean,
               entry.second.total ? 8 * entry.second.total_bytes_downloaded /
-                                       entry.second.total / 10e6
+                                       entry.second.total / 1e6
                                  : 0,
               entry.second.max, entry.second.failed_requests,
               entry.second.total_requests];
@@ -138,7 +138,7 @@ class PerfTest : public CronetTestBase,
     NSString* rules = base::SysUTF8ToNSString(
         base::StringPrintf("MAP test.example.com 127.0.0.1:%d,"
                            "MAP notfound.example.com ~NOTFOUND",
-                           grpc_support::GetQuicTestServerPort()));
+                           net::QuicSimpleTestServer::GetPort()));
     [Cronet setHostResolverRulesForTesting:rules];
     // This is the end of the behavior normally performed by StartCronet()
 
@@ -172,7 +172,7 @@ std::map<TestConfig, PerfResult> PerfTest::perf_test_results;
 TEST_P(PerfTest, NSURLSessionReceivesImageLoop) {
   int iterations = kTestIterations;
   int failed_iterations = 0;
-  int total_bytes_received = 0;
+  int64_t total_bytes_received = 0;
   NSTimeInterval elapsed_total = 0;
   NSTimeInterval elapsed_max = 0;
 
@@ -209,11 +209,13 @@ TEST_P(PerfTest, NSURLSessionReceivesImageLoop) {
       [task cancel];
     }
 
+    success = success && IsResponseSuccessful(task);
+
     NSTimeInterval elapsed = -[start timeIntervalSinceNow];
 
     // Do not tolerate failures on internal server.
     if (!kUseExternalUrl) {
-      CHECK(success && ![delegate_ errorPerTask][task]);
+      CHECK(success);
     }
 
     if (kUseExternalUrl && success && !first_log) {

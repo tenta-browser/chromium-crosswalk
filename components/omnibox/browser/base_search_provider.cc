@@ -8,11 +8,11 @@
 #include <stdint.h>
 
 #include <algorithm>
+#include <memory>
 
 #include "base/feature_list.h"
 #include "base/i18n/case_conversion.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "components/data_use_measurement/core/data_use_user_data.h"
@@ -149,9 +149,20 @@ AutocompleteMatch BaseSearchProvider::CreateSearchSuggestion(
   // mode.  They also assume the caller knows what it's doing and we set
   // this match to look as if it was received/created synchronously.
   SearchSuggestionParser::SuggestResult suggest_result(
-      suggestion, type, 0, suggestion, base::string16(), base::string16(),
-      base::string16(), base::string16(), nullptr, std::string(), std::string(),
-      from_keyword_provider, 0, false, false, base::string16());
+      suggestion, type,
+      /*subtype_identifier=*/0,
+      /*match_contents=*/suggestion,
+      /*match_contents_prefix=*/base::string16(),
+      /*annotation=*/base::string16(),
+      /*answer_contents=*/base::string16(),
+      /*answer_type=*/base::string16(),
+      /*answer=*/nullptr,
+      /*suggest_query_params=*/std::string(),
+      /*deletion_url=*/std::string(), from_keyword_provider,
+      /*relevance=*/0,
+      /*relevance_from_server=*/false,
+      /*should_prefetch=*/false,
+      /*input_text=*/base::string16());
   suggest_result.set_received_after_last_keystroke(false);
   return CreateSearchSuggestion(nullptr, AutocompleteInput(),
                                 from_keyword_provider, suggest_result,
@@ -161,7 +172,7 @@ AutocompleteMatch BaseSearchProvider::CreateSearchSuggestion(
 void BaseSearchProvider::DeleteMatch(const AutocompleteMatch& match) {
   DCHECK(match.deletable);
   if (!match.GetAdditionalInfo(BaseSearchProvider::kDeletionUrlKey).empty()) {
-    deletion_handlers_.push_back(base::MakeUnique<SuggestionDeletionHandler>(
+    deletion_handlers_.push_back(std::make_unique<SuggestionDeletionHandler>(
         match.GetAdditionalInfo(BaseSearchProvider::kDeletionUrlKey),
         client_->GetRequestContext(),
         base::Bind(&BaseSearchProvider::OnDeletionComplete,
@@ -170,7 +181,7 @@ void BaseSearchProvider::DeleteMatch(const AutocompleteMatch& match) {
 
   const TemplateURL* template_url =
       match.GetTemplateURL(client_->GetTemplateURLService(), false);
-  // This may be NULL if the template corresponding to the keyword has been
+  // This may be nullptr if the template corresponding to the keyword has been
   // deleted or there is no keyword set.
   if (template_url != nullptr) {
     client_->DeleteMatchingURLsForKeywordFromHistory(template_url->id(),
@@ -345,21 +356,13 @@ bool BaseSearchProvider::CanSendURL(
   if (IsNTPPage(page_classification))
     return false;
 
-  // Only allow HTTP URLs or HTTPS URLs.  For HTTPS URLs, require that either
-  // the appropriate feature flag is enabled or the URL is the same domain as
-  // the search provider.
-  const bool scheme_allowed =
-      (current_page_url.scheme() == url::kHttpScheme) ||
-      ((current_page_url.scheme() == url::kHttpsScheme) &&
-       (base::FeatureList::IsEnabled(
-            omnibox::kSearchProviderContextAllowHttpsUrls) ||
-        net::registry_controlled_domains::SameDomainOrHost(
-            current_page_url, suggest_url,
-            net::registry_controlled_domains::EXCLUDE_PRIVATE_REGISTRIES)));
+  // Only allow HTTP URLs or HTTPS URLs.
+  const bool scheme_allowed = (current_page_url.scheme() == url::kHttpScheme) ||
+                              (current_page_url.scheme() == url::kHttpsScheme);
   if (!scheme_allowed)
     return false;
 
-  if (!client->TabSyncEnabledAndUnencrypted())
+  if (!client->IsTabUploadToGoogleActive())
     return false;
 
   return true;

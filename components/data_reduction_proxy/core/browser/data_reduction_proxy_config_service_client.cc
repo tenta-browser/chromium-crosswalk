@@ -11,21 +11,25 @@
 #include "base/base64.h"
 #include "base/bind.h"
 #include "base/bind_helpers.h"
+#include "base/feature_list.h"
 #include "base/json/json_writer.h"
 #include "base/location.h"
 #include "base/logging.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
-#include "base/metrics/sparse_histogram.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/sys_info.h"
 #include "base/values.h"
+#include "build/build_config.h"
 #include "components/data_reduction_proxy/core/browser/data_reduction_proxy_config.h"
 #include "components/data_reduction_proxy/core/browser/data_reduction_proxy_io_data.h"
 #include "components/data_reduction_proxy/core/browser/data_reduction_proxy_mutable_config_values.h"
 #include "components/data_reduction_proxy/core/browser/data_reduction_proxy_request_options.h"
+#include "components/data_reduction_proxy/core/browser/data_reduction_proxy_util.h"
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_event_creator.h"
+#include "components/data_reduction_proxy/core/common/data_reduction_proxy_features.h"
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_params.h"
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_server.h"
-#include "components/data_reduction_proxy/core/common/data_reduction_proxy_util.h"
 #include "components/data_reduction_proxy/proto/client_config.pb.h"
 #include "components/data_use_measurement/core/data_use_user_data.h"
 #include "components/variations/net/variations_http_headers.h"
@@ -33,15 +37,19 @@
 #include "net/base/load_flags.h"
 #include "net/base/load_timing_info.h"
 #include "net/base/net_errors.h"
+#include "net/base/proxy_server.h"
 #include "net/http/http_network_session.h"
 #include "net/http/http_request_headers.h"
 #include "net/http/http_response_headers.h"
 #include "net/http/http_status_code.h"
 #include "net/log/net_log_source_type.h"
-#include "net/proxy/proxy_server.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
 #include "net/url_request/url_fetcher.h"
 #include "net/url_request/url_request_status.h"
+
+#if defined(OS_ANDROID)
+#include "net/android/network_library.h"
+#endif
 
 namespace data_reduction_proxy {
 
@@ -91,7 +99,9 @@ std::vector<DataReductionProxyServer> GetProxiesForHTTP(
       proxies.push_back(DataReductionProxyServer(
           net::ProxyServer(
               protobuf_parser::SchemeFromProxyScheme(server.scheme()),
-              net::HostPortPair(server.host(), server.port())),
+              net::HostPortPair(server.host(), server.port()),
+              /* HTTPS proxies are marked as trusted. */
+              server.scheme() == ProxyServer_ProxyScheme_HTTPS),
           server.type()));
     }
   }
@@ -372,9 +382,22 @@ void DataReductionProxyConfigServiceClient::RetrieveRemoteConfig() {
   DCHECK(thread_checker_.CalledOnValidThread());
   CreateClientConfigRequest request;
   std::string serialized_request;
+#if defined(OS_ANDROID)
+  request.set_telephony_network_operator(
+      net::android::GetTelephonyNetworkOperator());
+#endif
+
+  data_reduction_proxy::ConfigDeviceInfo* device_info =
+      request.mutable_device_info();
+  device_info->set_total_device_memory_kb(
+      base::SysInfo::AmountOfPhysicalMemory() / 1024);
   const std::string& session_key = request_options_->GetSecureSession();
   if (!session_key.empty())
     request.set_session_key(request_options_->GetSecureSession());
+  request.set_dogfood_group(
+      base::FeatureList::IsEnabled(features::kDogfood)
+          ? CreateClientConfigRequest_DogfoodGroup_DOGFOOD
+          : CreateClientConfigRequest_DogfoodGroup_NONDOGFOOD);
   data_reduction_proxy::VersionInfo* version_info =
       request.mutable_version_info();
   uint32_t build;
@@ -399,12 +422,13 @@ void DataReductionProxyConfigServiceClient::RetrieveRemoteConfig() {
 
   // Attach variations headers.
   net::HttpRequestHeaders headers;
-  variations::AppendVariationHeaders(config_service_url_, false /* incognito */,
-                                     false /* uma_enabled */,
-                                     false /* is_signed_in */, &headers);
+  variations::AppendVariationHeaders(config_service_url_,
+                                     variations::InIncognito::kNo,
+                                     variations::SignedIn::kNo, &headers);
   if (!headers.IsEmpty())
     fetcher_->SetExtraRequestHeaders(headers.ToString());
-
+  UMA_HISTOGRAM_BOOLEAN("DataReductionProxy.ConfigService.SentVariationHeaders",
+                        !headers.IsEmpty());
   fetcher_->Start();
 }
 
@@ -474,8 +498,7 @@ void DataReductionProxyConfigServiceClient::HandleResponse(
 
   if (net::NetworkChangeNotifier::GetConnectionType() !=
       net::NetworkChangeNotifier::CONNECTION_NONE) {
-    UMA_HISTOGRAM_SPARSE_SLOWLY(kUMAConfigServiceFetchResponseCode,
-                                response_code);
+    base::UmaHistogramSparse(kUMAConfigServiceFetchResponseCode, response_code);
   }
 
   if (status.status() == net::URLRequestStatus::SUCCESS &&

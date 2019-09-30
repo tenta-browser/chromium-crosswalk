@@ -12,14 +12,16 @@
 
 #include "ui/gl/gl_mock.h"
 
-namespace gl {
-
+namespace {
 // This is called mainly to prevent the compiler combining the code of mock
 // functions with identical contents, so that their function pointers will be
 // different.
 void MakeFunctionUnique(const char* func_name) {
   VLOG(2) << "Calling mock " << func_name;
 }
+}  // namespace
+
+namespace gl {
 
 void GL_BINDING_CALL MockGLInterface::Mock_glActiveTexture(GLenum texture) {
   MakeFunctionUnique("glActiveTexture");
@@ -1498,7 +1500,7 @@ MockGLInterface::Mock_glGetBufferPointervRobustANGLE(GLenum target,
                                            params);
 }
 
-void GL_BINDING_CALL
+GLuint GL_BINDING_CALL
 MockGLInterface::Mock_glGetDebugMessageLog(GLuint count,
                                            GLsizei bufSize,
                                            GLenum* sources,
@@ -1508,11 +1510,11 @@ MockGLInterface::Mock_glGetDebugMessageLog(GLuint count,
                                            GLsizei* lengths,
                                            char* messageLog) {
   MakeFunctionUnique("glGetDebugMessageLog");
-  interface_->GetDebugMessageLog(count, bufSize, sources, types, ids,
-                                 severities, lengths, messageLog);
+  return interface_->GetDebugMessageLog(count, bufSize, sources, types, ids,
+                                        severities, lengths, messageLog);
 }
 
-void GL_BINDING_CALL
+GLuint GL_BINDING_CALL
 MockGLInterface::Mock_glGetDebugMessageLogKHR(GLuint count,
                                               GLsizei bufSize,
                                               GLenum* sources,
@@ -1522,8 +1524,8 @@ MockGLInterface::Mock_glGetDebugMessageLogKHR(GLuint count,
                                               GLsizei* lengths,
                                               char* messageLog) {
   MakeFunctionUnique("glGetDebugMessageLogKHR");
-  interface_->GetDebugMessageLog(count, bufSize, sources, types, ids,
-                                 severities, lengths, messageLog);
+  return interface_->GetDebugMessageLog(count, bufSize, sources, types, ids,
+                                        severities, lengths, messageLog);
 }
 
 GLenum GL_BINDING_CALL MockGLInterface::Mock_glGetError(void) {

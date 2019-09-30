@@ -8,7 +8,7 @@
 #include "base/macros.h"
 #include "content/browser/devtools/protocol/devtools_domain_handler.h"
 #include "content/browser/devtools/protocol/emulation.h"
-#include "third_party/WebKit/public/web/WebDeviceEmulationParams.h"
+#include "third_party/blink/public/web/web_device_emulation_params.h"
 
 namespace content {
 
@@ -24,7 +24,7 @@ class EmulationHandler : public DevToolsDomainHandler,
   ~EmulationHandler() override;
 
   void Wire(UberDispatcher* dispatcher) override;
-  void SetRenderer(RenderProcessHost* process_host,
+  void SetRenderer(int process_host_id,
                    RenderFrameHostImpl* frame_host) override;
 
   Response Disable() override;
@@ -70,7 +70,6 @@ class EmulationHandler : public DevToolsDomainHandler,
   std::string touch_emulation_configuration_;
 
   bool device_emulation_enabled_;
-  gfx::Size original_view_size_;
   blink::WebDeviceEmulationParams device_emulation_params_;
 
   RenderFrameHostImpl* host_;

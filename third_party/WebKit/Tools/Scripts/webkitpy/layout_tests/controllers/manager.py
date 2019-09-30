@@ -66,7 +66,6 @@ class Manager(object):
     """A class for managing running a series of layout tests."""
 
     HTTP_SUBDIR = 'http'
-    INSPECTOR_SUBDIR = 'inspector'
     PERF_SUBDIR = 'perf'
     WEBSOCKET_SUBDIR = 'websocket'
     ARCHIVED_RESULTS_LIMIT = 25
@@ -142,11 +141,14 @@ class Manager(object):
         if exit_code:
             return test_run_results.RunDetails(exit_code=exit_code)
 
-        # Don't retry failures if an explicit list of tests was passed in.
-        if self._options.retry_failures is None:
+        if self._options.num_retries is None:
+            # Don't retry failures if an explicit list of tests was passed in.
             should_retry_failures = len(paths) < len(test_names)
+            # Retry failures 3 times by default.
+            if should_retry_failures:
+                self._options.num_retries = 3
         else:
-            should_retry_failures = self._options.retry_failures
+            should_retry_failures = self._options.num_retries > 0
 
         try:
             self._start_servers(tests_to_run)
@@ -277,9 +279,6 @@ class Manager(object):
             self._port.TEST_PATH_SEPARATOR + self.HTTP_SUBDIR + self._port.TEST_PATH_SEPARATOR in test
         )
 
-    def _is_inspector_test(self, test):
-        return self.INSPECTOR_SUBDIR + self._port.TEST_PATH_SEPARATOR in test
-
     def _is_websocket_test(self, test):
         if self._port.should_use_wptserve(test):
             return False
@@ -371,7 +370,10 @@ class Manager(object):
         # Create the output directory if it doesn't already exist.
         self._port.host.filesystem.maybe_make_directory(self._results_directory)
 
-        self._port.setup_test_run()
+        exit_code = self._port.setup_test_run()
+        if exit_code:
+            _log.error('Build setup failed')
+            return exit_code
 
         # Check that the system dependencies (themes, fonts, ...) are correct.
         if not self._options.nocheck_sys_deps:
@@ -387,6 +389,10 @@ class Manager(object):
 
         test_inputs = []
         for _ in xrange(iterations):
+            # TODO(crbug.com/650747): We may want to switch the two loops below
+            # to make the behavior consistent with gtest runner (--gtest_repeat
+            # is an alias for --repeat-each now), which looks like "ABCABCABC".
+            # And remember to update the help text when we do so.
             for test in tests_to_run:
                 for _ in xrange(repeat_each):
                     test_inputs.append(self._test_input_for_file(test))
@@ -399,8 +405,7 @@ class Manager(object):
             self._port.start_wptserve()
             self._wptserve_started = True
 
-        if self._port.requires_http_server() or any((self._is_http_test(test) or self._is_inspector_test(test))
-                                                    for test in tests_to_run):
+        if self._port.requires_http_server() or any(self._is_http_test(test) for test in tests_to_run):
             self._printer.write_update('Starting HTTP server ...')
             self._port.start_http_server(additional_dirs={}, number_of_drivers=self._options.max_locked_shards)
             self._http_server_started = True

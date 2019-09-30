@@ -6,14 +6,14 @@
 
 #include <algorithm>
 
-#include "ui/arc/notification/arc_notification_content_view_delegate.h"
+#include "ui/accessibility/ax_action_data.h"
+#include "ui/arc/notification/arc_notification_content_view.h"
 #include "ui/arc/notification/arc_notification_item.h"
 #include "ui/base/ime/input_method.h"
 #include "ui/base/ime/text_input_client.h"
 #include "ui/base/ime/text_input_type.h"
 #include "ui/gfx/geometry/size.h"
 #include "ui/message_center/public/cpp/message_center_constants.h"
-#include "ui/message_center/views/message_view_delegate.h"
 #include "ui/message_center/views/notification_control_buttons_view.h"
 #include "ui/views/background.h"
 #include "ui/views/controls/button/image_button.h"
@@ -23,35 +23,34 @@
 namespace arc {
 
 // static
-const char ArcNotificationView::kViewClassName[] = "ArcNotificationView";
+const char ArcNotificationView::kMessageViewSubClassName[] =
+    "ArcNotificationView";
 
 ArcNotificationView::ArcNotificationView(
-    std::unique_ptr<views::View> contents_view,
-    std::unique_ptr<ArcNotificationContentViewDelegate> contents_view_delegate,
-    message_center::MessageViewDelegate* delegate,
+    ArcNotificationItem* item,
     const message_center::Notification& notification)
-    : message_center::MessageView(delegate, notification),
-      contents_view_(contents_view.get()),
-      contents_view_delegate_(std::move(contents_view_delegate)) {
+    : message_center::MessageView(notification),
+      item_(item),
+      content_view_(new ArcNotificationContentView(item_, notification, this)) {
   DCHECK_EQ(message_center::NOTIFICATION_TYPE_CUSTOM, notification.type());
 
-  DCHECK(contents_view);
-  AddChildView(contents_view.release());
+  item_->AddObserver(this);
 
-  DCHECK(contents_view_delegate_);
+  AddChildView(content_view_);
 
-  if (contents_view_->background()) {
+  if (content_view_->background()) {
     background_view()->background()->SetNativeControlColor(
-        contents_view_->background()->get_color());
+        content_view_->background()->get_color());
   }
-
-  UpdateControlButtonsVisibilityWithNotification(notification);
 
   focus_painter_ = views::Painter::CreateSolidFocusPainter(
       message_center::kFocusBorderColor, gfx::Insets(0, 1, 3, 2));
 }
 
-ArcNotificationView::~ArcNotificationView() = default;
+ArcNotificationView::~ArcNotificationView() {
+  if (item_)
+    item_->RemoveObserver(this);
+}
 
 void ArcNotificationView::OnContentFocused() {
   SchedulePaint();
@@ -64,36 +63,23 @@ void ArcNotificationView::OnContentBlured() {
 void ArcNotificationView::UpdateWithNotification(
     const message_center::Notification& notification) {
   message_center::MessageView::UpdateWithNotification(notification);
-
-  UpdateControlButtonsVisibilityWithNotification(notification);
+  content_view_->Update(this, notification);
 }
 
 void ArcNotificationView::SetDrawBackgroundAsActive(bool active) {
-  // Do nothing if |contents_view_| has a background.
-  if (contents_view_->background())
+  // Do nothing if |content_view_| has a background.
+  if (content_view_->background())
     return;
 
   message_center::MessageView::SetDrawBackgroundAsActive(active);
 }
 
-bool ArcNotificationView::IsCloseButtonFocused() const {
-  if (!contents_view_delegate_)
-    return false;
-  return contents_view_delegate_->IsCloseButtonFocused();
-}
-
-void ArcNotificationView::RequestFocusOnCloseButton() {
-  if (contents_view_delegate_)
-    contents_view_delegate_->RequestFocusOnCloseButton();
-}
-
-const char* ArcNotificationView::GetClassName() const {
-  return kViewClassName;
-}
-
 void ArcNotificationView::UpdateControlButtonsVisibility() {
-  if (contents_view_delegate_)
-    contents_view_delegate_->UpdateControlButtonsVisibility();
+  content_view_->UpdateControlButtonsVisibility();
+}
+
+const char* ArcNotificationView::GetMessageViewSubClassName() const {
+  return kMessageViewSubClassName;
 }
 
 void ArcNotificationView::GetAccessibleNodeData(ui::AXNodeData* node_data) {
@@ -103,90 +89,107 @@ void ArcNotificationView::GetAccessibleNodeData(ui::AXNodeData* node_data) {
 
 message_center::NotificationControlButtonsView*
 ArcNotificationView::GetControlButtonsView() const {
-  return contents_view_delegate_->GetControlButtonsView();
+  return content_view_->GetControlButtonsView();
 }
 
 bool ArcNotificationView::IsExpanded() const {
-  if (contents_view_delegate_)
-    return contents_view_delegate_->IsExpanded();
-  return false;
+  return item_ &&
+         item_->GetExpandState() == mojom::ArcNotificationExpandState::EXPANDED;
+}
+
+bool ArcNotificationView::IsAutoExpandingAllowed() const {
+  if (!item_)
+    return false;
+
+  // Disallow auto-expanding if the notificaiton is bundled. This is consistent
+  // behavior with Android since expanded height of bundle notification might be
+  // too long vertically.
+  return item_->GetNotificationType() != mojom::ArcNotificationType::BUNDLED;
 }
 
 void ArcNotificationView::SetExpanded(bool expanded) {
-  if (contents_view_delegate_)
-    contents_view_delegate_->SetExpanded(expanded);
+  if (!item_)
+    return;
+
+  auto expand_state = item_->GetExpandState();
+  if (expanded) {
+    if (expand_state == mojom::ArcNotificationExpandState::COLLAPSED)
+      item_->ToggleExpansion();
+  } else {
+    if (expand_state == mojom::ArcNotificationExpandState::EXPANDED)
+      item_->ToggleExpansion();
+  }
+}
+
+bool ArcNotificationView::IsManuallyExpandedOrCollapsed() const {
+  if (item_)
+    return item_->IsManuallyExpandedOrCollapsed();
+  return false;
 }
 
 void ArcNotificationView::OnContainerAnimationStarted() {
-  if (contents_view_delegate_)
-    contents_view_delegate_->OnContainerAnimationStarted();
+  content_view_->OnContainerAnimationStarted();
 }
 
 void ArcNotificationView::OnContainerAnimationEnded() {
-  if (contents_view_delegate_)
-    contents_view_delegate_->OnContainerAnimationEnded();
+  content_view_->OnContainerAnimationEnded();
 }
 
 void ArcNotificationView::OnSlideChanged() {
-  if (contents_view_delegate_)
-    contents_view_delegate_->OnSlideChanged();
+  content_view_->OnSlideChanged();
 }
 
 gfx::Size ArcNotificationView::CalculatePreferredSize() const {
   const gfx::Insets insets = GetInsets();
   const int contents_width = message_center::kNotificationWidth;
-  const int contents_height = contents_view_->GetHeightForWidth(contents_width);
+  const int contents_height = content_view_->GetHeightForWidth(contents_width);
   return gfx::Size(contents_width + insets.width(),
                    contents_height + insets.height());
 }
 
 void ArcNotificationView::Layout() {
   // Setting the bounds before calling the parent to prevent double Layout.
-  contents_view_->SetBoundsRect(GetContentsBounds());
+  content_view_->SetBoundsRect(GetContentsBounds());
 
   message_center::MessageView::Layout();
 
   // If the content view claims focus, defer focus handling to the content view.
-  if (contents_view_->IsFocusable())
+  if (content_view_->IsFocusable())
     SetFocusBehavior(FocusBehavior::NEVER);
 }
 
 bool ArcNotificationView::HasFocus() const {
   // In case that focus handling is defered to the content view, asking the
   // content view about focus.
-  if (contents_view_ && contents_view_->IsFocusable())
-    return contents_view_->HasFocus();
-  else
-    return message_center::MessageView::HasFocus();
+  return content_view_->IsFocusable() ? content_view_->HasFocus()
+                                      : message_center::MessageView::HasFocus();
 }
 
 void ArcNotificationView::RequestFocus() {
-  if (contents_view_ && contents_view_->IsFocusable())
-    contents_view_->RequestFocus();
+  if (content_view_->IsFocusable())
+    content_view_->RequestFocus();
   else
     message_center::MessageView::RequestFocus();
 }
 
 void ArcNotificationView::OnPaint(gfx::Canvas* canvas) {
   MessageView::OnPaint(canvas);
-  if (contents_view_ && contents_view_->IsFocusable())
-    views::Painter::PaintFocusPainter(contents_view_, canvas,
+  if (content_view_->IsFocusable()) {
+    views::Painter::PaintFocusPainter(content_view_, canvas,
                                       focus_painter_.get());
+  }
 }
 
 bool ArcNotificationView::OnKeyPressed(const ui::KeyEvent& event) {
-  if (contents_view_) {
-    ui::InputMethod* input_method = contents_view_->GetInputMethod();
-    if (input_method) {
-      ui::TextInputClient* text_input_client =
-          input_method->GetTextInputClient();
-      if (text_input_client &&
-          text_input_client->GetTextInputType() != ui::TEXT_INPUT_TYPE_NONE) {
-        // If the focus is in an edit box, we skip the special key handling for
-        // back space and return keys. So that these key events are sent to the
-        // arc container correctly without being handled by the message center.
-        return false;
-      }
+  ui::InputMethod* input_method = content_view_->GetInputMethod();
+  if (input_method) {
+    ui::TextInputClient* text_input_client = input_method->GetTextInputClient();
+    if (text_input_client &&
+        text_input_client->GetTextInputType() != ui::TEXT_INPUT_TYPE_NONE) {
+      // If the focus is in an edit box, we skip the special key handling for
+      // back space and return keys. So that these key events are sent to the
+      // arc container correctly without being handled by the message center.
+      return false;
     }
   }
 
@@ -194,30 +197,22 @@ bool ArcNotificationView::OnKeyPressed(const ui::KeyEvent& event) {
 }
 
 void ArcNotificationView::ChildPreferredSizeChanged(View* child) {
-  // Notify MessageViewDelegate when the custom content changes size,
-  // as it may need to relayout.
-  if (delegate())
-    delegate()->UpdateNotificationSize(notification_id());
+  PreferredSizeChanged();
 }
 
 bool ArcNotificationView::HandleAccessibleAction(
     const ui::AXActionData& action) {
-  if (contents_view_)
-    return contents_view_->HandleAccessibleAction(action);
+  if (item_ && action.action == ax::mojom::Action::kDoDefault) {
+    item_->ToggleExpansion();
+    return true;
+  }
   return false;
 }
 
-// TODO(yoshiki): move this to MessageView and share the code among
-// NotificationView and NotificationViewMD.
-void ArcNotificationView::UpdateControlButtonsVisibilityWithNotification(
-    const message_center::Notification& notification) {
-  if (!GetControlButtonsView())
-    return;
-
-  GetControlButtonsView()->ShowSettingsButton(
-      notification.should_show_settings_button());
-  GetControlButtonsView()->ShowCloseButton(!GetPinned());
-  UpdateControlButtonsVisibility();
+void ArcNotificationView::OnItemDestroying() {
+  DCHECK(item_);
+  item_->RemoveObserver(this);
+  item_ = nullptr;
 }
 
 }  // namespace message_center

@@ -38,7 +38,7 @@ LogoutButtonTray::LogoutButtonTray(Shelf* shelf)
       show_logout_button_in_tray_(false) {
   DCHECK(shelf);
   Shell::Get()->session_controller()->AddObserver(this);
-  SetLayoutManager(new views::FillLayout);
+  SetLayoutManager(std::make_unique<views::FillLayout>());
   AddChildView(container_);
 
   button_->SetProminent(true);
@@ -86,12 +86,12 @@ void LogoutButtonTray::OnActiveUserPrefServiceChanged(PrefService* prefs) {
   pref_change_registrar_->Init(prefs);
   pref_change_registrar_->Add(
       prefs::kShowLogoutButtonInTray,
-      base::Bind(&LogoutButtonTray::UpdateShowLogoutButtonInTray,
-                 base::Unretained(this)));
+      base::BindRepeating(&LogoutButtonTray::UpdateShowLogoutButtonInTray,
+                          base::Unretained(this)));
   pref_change_registrar_->Add(
       prefs::kLogoutDialogDurationMs,
-      base::Bind(&LogoutButtonTray::UpdateLogoutDialogDuration,
-                 base::Unretained(this)));
+      base::BindRepeating(&LogoutButtonTray::UpdateLogoutDialogDuration,
+                          base::Unretained(this)));
 
   // Read the initial values.
   UpdateShowLogoutButtonInTray();

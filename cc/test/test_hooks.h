@@ -8,6 +8,7 @@
 #include "base/macros.h"
 #include "cc/animation/animation_delegate.h"
 #include "cc/trees/layer_tree_host.h"
+#include "cc/trees/layer_tree_host_client.h"
 #include "cc/trees/layer_tree_host_impl.h"
 
 namespace viz {
@@ -24,10 +25,8 @@ class TestHooks : public AnimationDelegate {
   ~TestHooks() override;
 
   // Compositor thread hooks.
-  virtual void CreateResourceAndRasterBufferProvider(
-      LayerTreeHostImpl* host_impl,
-      std::unique_ptr<RasterBufferProvider>* raster_buffer_provider,
-      std::unique_ptr<ResourcePool>* resource_pool);
+  virtual std::unique_ptr<RasterBufferProvider> CreateRasterBufferProvider(
+      LayerTreeHostImpl* host_impl);
   virtual void WillBeginImplFrameOnThread(LayerTreeHostImpl* host_impl,
                                           const viz::BeginFrameArgs& args) {}
   virtual void DidFinishImplFrameOnThread(LayerTreeHostImpl* host_impl) {}
@@ -69,6 +68,7 @@ class TestHooks : public AnimationDelegate {
   virtual void WillAnimateLayers(LayerTreeHostImpl* host_impl,
                                  base::TimeTicks monotonic_time) {}
   virtual void DidInvalidateContentOnImplSide(LayerTreeHostImpl* host_impl) {}
+  virtual void DidInvalidateLayerTreeFrameSink(LayerTreeHostImpl* host_impl) {}
   virtual void DidReceiveImplSideInvalidationRequest(
       LayerTreeHostImpl* host_impl) {}
   virtual void DidRequestImplSideInvalidation(LayerTreeHostImpl* host_impl) {}
@@ -98,7 +98,8 @@ class TestHooks : public AnimationDelegate {
   virtual void BeginMainFrame(const viz::BeginFrameArgs& args) {}
   virtual void WillBeginMainFrame() {}
   virtual void DidBeginMainFrame() {}
-  virtual void UpdateLayerTreeHost() {}
+  virtual void UpdateLayerTreeHost(
+      LayerTreeHostClient::VisualStateUpdate requested_update) {}
   virtual void DidInitializeLayerTreeFrameSink() {}
   virtual void DidFailToInitializeLayerTreeFrameSink() {}
   virtual void DidAddAnimation() {}

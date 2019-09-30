@@ -8,7 +8,7 @@
 #include <memory>
 
 #include "base/macros.h"
-#include "ui/message_center/notification_delegate.h"
+#include "ui/message_center/public/cpp/notification_delegate.h"
 
 class PrefRegistrySimple;
 class Profile;
@@ -26,10 +26,9 @@ class QuitWithAppsController : public message_center::NotificationDelegate {
   QuitWithAppsController();
 
   // NotificationDelegate interface.
-  void Display() override;
   void Close(bool by_user) override;
-  void Click() override;
-  void ButtonClick(int button_index) override;
+  void Click(const base::Optional<int>& button_index,
+             const base::Optional<base::string16>& reply) override;
 
   // Attempt to quit Chrome. This will display a notification and return false
   // if there are apps running.

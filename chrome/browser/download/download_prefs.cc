@@ -11,6 +11,7 @@
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
+#include "base/feature_list.h"
 #include "base/files/file_util.h"
 #include "base/lazy_instance.h"
 #include "base/logging.h"
@@ -22,17 +23,21 @@
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
 #include "chrome/browser/download/chrome_download_manager_delegate.h"
+#include "chrome/browser/download/download_core_service_factory.h"
+#include "chrome/browser/download/download_core_service_impl.h"
+#include "chrome/browser/download/download_prompt_status.h"
 #include "chrome/browser/download/download_target_determiner.h"
 #include "chrome/browser/download/trusted_sources_manager.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
+#include "chrome/common/chrome_features.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/common/safe_browsing/file_type_policies.h"
+#include "components/download/public/common/download_item.h"
 #include "components/pref_registry/pref_registry_syncable.h"
 #include "components/prefs/pref_service.h"
 #include "content/public/browser/browser_thread.h"
-#include "content/public/browser/download_item.h"
 #include "content/public/browser/download_manager.h"
 #include "content/public/browser/save_page_type.h"
 
@@ -40,6 +45,7 @@
 #include "chrome/browser/chromeos/drive/drive_integration_service.h"
 #include "chrome/browser/chromeos/drive/file_system_util.h"
 #include "chrome/browser/chromeos/file_manager/path_util.h"
+#include "chromeos/dbus/cros_disks_client.h"
 #endif
 
 #if defined(OS_WIN)
@@ -154,6 +160,9 @@ DownloadPrefs::DownloadPrefs(Profile* profile) : profile_(profile) {
   }
 
   prompt_for_download_.Init(prefs::kPromptForDownload, prefs);
+#if defined(OS_ANDROID)
+  prompt_for_download_android_.Init(prefs::kPromptForDownloadAndroid, prefs);
+#endif
   download_path_.Init(prefs::kDownloadDefaultDirectory, prefs);
   save_file_path_.Init(prefs::kSaveFileDefaultDirectory, prefs);
   save_file_type_.Init(prefs::kSaveFileType, prefs);
@@ -222,6 +231,14 @@ void DownloadPrefs::RegisterProfilePrefs(
 #if defined(OS_WIN) || defined(OS_LINUX) || defined(OS_MACOSX)
   registry->RegisterBooleanPref(prefs::kOpenPdfDownloadInSystemReader, false);
 #endif
+#if defined(OS_ANDROID)
+  DownloadPromptStatus download_prompt_status =
+      (base::FeatureList::IsEnabled(features::kDownloadsLocationChange))
+          ? DownloadPromptStatus::SHOW_INITIAL
+          : DownloadPromptStatus::DONT_SHOW;
+  registry->RegisterIntegerPref(prefs::kPromptForDownloadAndroid,
+                                static_cast<int>(download_prompt_status));
+#endif
 }
 
 base::FilePath DownloadPrefs::GetDefaultDownloadDirectoryForProfile() const {
@@ -240,9 +257,14 @@ const base::FilePath& DownloadPrefs::GetDefaultDownloadDirectory() {
 // static
 DownloadPrefs* DownloadPrefs::FromDownloadManager(
     DownloadManager* download_manager) {
+  DCHECK(download_manager->GetBrowserContext());
+  DownloadCoreService* service =
+      DownloadCoreServiceFactory::GetForBrowserContext(
+          download_manager->GetBrowserContext());
+  DCHECK(service);
   ChromeDownloadManagerDelegate* delegate =
-      static_cast<ChromeDownloadManagerDelegate*>(
-          download_manager->GetDelegate());
+      service->GetDownloadManagerDelegate();
+  DCHECK(delegate);
   return delegate->download_prefs();
 }
 
@@ -252,7 +274,7 @@ DownloadPrefs* DownloadPrefs::FromBrowserContext(
   return FromDownloadManager(BrowserContext::GetDownloadManager(context));
 }
 
-bool DownloadPrefs::IsFromTrustedSource(const content::DownloadItem& item) {
+bool DownloadPrefs::IsFromTrustedSource(const download::DownloadItem& item) {
   if (!trusted_sources_manager_)
     trusted_sources_manager_.reset(TrustedSourcesManager::Create());
   return trusted_sources_manager_->IsFromTrustedSource(item.GetURL());
@@ -270,7 +292,7 @@ base::FilePath DownloadPrefs::DownloadPath() const {
       return GetDefaultDownloadDirectoryForProfile();
   }
 #endif
-  return *download_path_;
+  return SanitizeDownloadTargetPath(*download_path_);
 }
 
 void DownloadPrefs::SetDownloadPath(const base::FilePath& path) {
@@ -279,7 +301,7 @@ void DownloadPrefs::SetDownloadPath(const base::FilePath& path) {
 }
 
 base::FilePath DownloadPrefs::SaveFilePath() const {
-  return *save_file_path_;
+  return SanitizeDownloadTargetPath(*save_file_path_);
 }
 
 void DownloadPrefs::SetSaveFilePath(const base::FilePath& path) {
@@ -294,6 +316,15 @@ bool DownloadPrefs::PromptForDownload() const {
   // If the DownloadDirectory policy is set, then |prompt_for_download_| should
   // always be false.
   DCHECK(!download_path_.IsManaged() || !prompt_for_download_.GetValue());
+
+// Return the Android prompt for download only.
+#if defined(OS_ANDROID)
+  // As long as they haven't indicated in preferences they do not want the
+  // dialog shown, show the dialog.
+  return *prompt_for_download_android_ !=
+         static_cast<int>(DownloadPromptStatus::DONT_SHOW);
+#endif
+
   return *prompt_for_download_;
 }
 
@@ -397,6 +428,39 @@ void DownloadPrefs::SaveAutoOpenState() {
     extensions.erase(extensions.size() - 1);
 
   profile_->GetPrefs()->SetString(prefs::kDownloadExtensionsToOpen, extensions);
+}
+
+base::FilePath DownloadPrefs::SanitizeDownloadTargetPath(
+    const base::FilePath& path) const {
+#if defined(OS_CHROMEOS)
+  // If |path| isn't absolute, fall back to the default directory.
+  base::FilePath profile_download_dir = GetDefaultDownloadDirectoryForProfile();
+  if (!path.IsAbsolute())
+    return profile_download_dir;
+
+  // Allow paths that are under the default download directory.
+  base::FilePath relative;
+  if (profile_download_dir.AppendRelativePath(path, &relative) &&
+      !relative.ReferencesParent()) {
+    return profile_download_dir.Append(relative);
+  }
+
+  // Allow paths under the drive mount point.
+  if (drive::util::IsUnderDriveMountPoint(path) && !path.ReferencesParent())
+    return path;
+
+  // Allow removable media.
+  base::FilePath media_mount_point =
+      chromeos::CrosDisksClient::GetRemovableDiskMountPoint();
+  if (media_mount_point.AppendRelativePath(path, &relative) &&
+      !relative.ReferencesParent()) {
+    return media_mount_point.Append(relative);
+  }
+
+  // Fall back to the default download directory for all other paths.
+  return profile_download_dir;
+#endif
+  return path;
 }
 
 bool DownloadPrefs::AutoOpenCompareFunctor::operator()(

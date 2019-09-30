@@ -6,7 +6,8 @@
 
 #import <Foundation/Foundation.h>
 
-#include "base/memory/ptr_util.h"
+#include <memory>
+
 #include "base/run_loop.h"
 #include "base/test/test_simple_task_runner.h"
 #include "base/threading/thread_task_runner_handle.h"
@@ -48,7 +49,7 @@ void TestPersistentCookieStore::RunLoadedCallback() {
   cookies.push_back(std::move(cookie));
 
   std::unique_ptr<net::CanonicalCookie> bad_canonical_cookie(
-      base::MakeUnique<net::CanonicalCookie>(
+      std::make_unique<net::CanonicalCookie>(
           "name", "\x81r\xe4\xbd\xa0\xe5\xa5\xbd", "domain", "/path/",
           base::Time(),  // creation
           base::Time(),  // expires
@@ -94,28 +95,6 @@ void TestPersistentCookieStore::Flush(base::OnceClosure callback) {
 }
 
 #pragma mark -
-#pragma mark GetCookieCallback
-
-GetCookieCallback::GetCookieCallback() : did_run_(false) {}
-
-#pragma mark -
-#pragma mark GetCookieCallback methods
-
-bool GetCookieCallback::did_run() {
-  return did_run_;
-}
-
-const std::string& GetCookieCallback::cookie_line() {
-  return cookie_line_;
-}
-
-void GetCookieCallback::Run(const std::string& cookie_line) {
-  ASSERT_FALSE(did_run_);
-  did_run_ = true;
-  cookie_line_ = cookie_line;
-}
-
-#pragma mark -
 #pragma mark TestCookieStoreIOSClient
 
 TestCookieStoreIOSClient::TestCookieStoreIOSClient() {}
@@ -147,11 +126,11 @@ ScopedTestingCookieStoreIOSClient::~ScopedTestingCookieStoreIOSClient() {
 void RecordCookieChanges(std::vector<net::CanonicalCookie>* out_cookies,
                          std::vector<bool>* out_removes,
                          const net::CanonicalCookie& cookie,
-                         net::CookieStore::ChangeCause cause) {
+                         net::CookieChangeCause cause) {
   DCHECK(out_cookies);
   out_cookies->push_back(cookie);
   if (out_removes)
-    out_removes->push_back(net::CookieStore::ChangeCauseIsDeletion(cause));
+    out_removes->push_back(net::CookieChangeCauseIsDeletion(cause));
 }
 
 void SetCookie(const std::string& cookie_line,

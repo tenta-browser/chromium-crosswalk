@@ -28,7 +28,7 @@ cast_source_set("net") {
 
   deps = [
     "//base",
-    "//chromecast:chromecast_features",
+    "//chromecast:chromecast_buildflags",
     "//chromecast/base:cast_sys_info",
     "//chromecast/base/metrics",
     "//chromecast/public",
@@ -67,6 +67,7 @@ test("cast_net_unittests") {
     "//base",
     "//base/test:run_all_unittests",
     "//net",
+    "//net:test_support",
     "//testing/gtest",
   ]
 }

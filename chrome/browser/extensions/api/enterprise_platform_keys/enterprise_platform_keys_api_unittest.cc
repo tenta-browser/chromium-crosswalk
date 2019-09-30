@@ -109,7 +109,9 @@ void GetCertificateCallbackTrue(
     const chromeos::attestation::AttestationFlow::CertificateCallback&
         callback) {
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::BindOnce(callback, true, "certificate"));
+      FROM_HERE,
+      base::BindOnce(callback, chromeos::attestation::ATTESTATION_SUCCESS,
+                     "certificate"));
 }
 
 void GetCertificateCallbackFalse(
@@ -120,7 +122,10 @@ void GetCertificateCallbackFalse(
     const chromeos::attestation::AttestationFlow::CertificateCallback&
         callback) {
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::BindOnce(callback, false, ""));
+      FROM_HERE,
+      base::BindOnce(callback,
+                     chromeos::attestation::ATTESTATION_UNSPECIFIED_FAILURE,
+                     ""));
 }
 
 class EPKChallengeKeyTestBase : public BrowserWithTestWindowTest {
@@ -176,7 +181,8 @@ class EPKChallengeKeyTestBase : public BrowserWithTestWindowTest {
   std::string RunFunctionAndReturnError(UIThreadExtensionFunction* function,
                                         std::unique_ptr<base::ListValue> args,
                                         Browser* browser) {
-    utils::RunFunction(function, std::move(args), browser, utils::NONE);
+    utils::RunFunction(function, std::move(args), browser,
+                       extensions::api_test_utils::NONE);
     EXPECT_EQ(ExtensionFunction::FAILED, *function->response_type());
     return function->GetError();
   }
@@ -190,7 +196,8 @@ class EPKChallengeKeyTestBase : public BrowserWithTestWindowTest {
     scoped_refptr<ExtensionFunction> function_owner(function);
     // Without a callback the function will not generate a result.
     function->set_has_callback(true);
-    utils::RunFunction(function, std::move(args), browser, utils::NONE);
+    utils::RunFunction(function, std::move(args), browser,
+                       extensions::api_test_utils::NONE);
     EXPECT_TRUE(function->GetError().empty()) << "Unexpected error: "
                                               << function->GetError();
     const base::Value* single_result = NULL;
@@ -235,11 +242,11 @@ class EPKChallengeMachineKeyTest : public EPKChallengeKeyTestBase {
   }
 
   std::unique_ptr<base::ListValue> CreateArgsNoRegister() {
-    return CreateArgsInternal(base::MakeUnique<bool>(false));
+    return CreateArgsInternal(std::make_unique<bool>(false));
   }
 
   std::unique_ptr<base::ListValue> CreateArgsRegister() {
-    return CreateArgsInternal(base::MakeUnique<bool>(true));
+    return CreateArgsInternal(std::make_unique<bool>(true));
   }
 
   std::unique_ptr<base::ListValue> CreateArgsInternal(
@@ -319,16 +326,16 @@ TEST_F(EPKChallengeMachineKeyTest, KeyExists) {
   // GetCertificate must not be called if the key exists.
   EXPECT_CALL(mock_attestation_flow_, GetCertificate(_, _, _, _, _)).Times(0);
 
-  EXPECT_TRUE(
-      utils::RunFunction(func_.get(), CreateArgs(), browser(), utils::NONE));
+  EXPECT_TRUE(utils::RunFunction(func_.get(), CreateArgs(), browser(),
+                                 extensions::api_test_utils::NONE));
 }
 
 TEST_F(EPKChallengeMachineKeyTest, KeyNotRegisteredByDefault) {
   EXPECT_CALL(mock_async_method_caller_, TpmAttestationRegisterKey(_, _, _, _))
       .Times(0);
 
-  EXPECT_TRUE(
-      utils::RunFunction(func_.get(), CreateArgs(), browser(), utils::NONE));
+  EXPECT_TRUE(utils::RunFunction(func_.get(), CreateArgs(), browser(),
+                                 extensions::api_test_utils::NONE));
 }
 
 TEST_F(EPKChallengeMachineKeyTest, KeyNotRegistered) {
@@ -336,7 +343,7 @@ TEST_F(EPKChallengeMachineKeyTest, KeyNotRegistered) {
       .Times(0);
 
   EXPECT_TRUE(utils::RunFunction(func_.get(), CreateArgsNoRegister(), browser(),
-                                 utils::NONE));
+                                 extensions::api_test_utils::NONE));
 }
 
 TEST_F(EPKChallengeMachineKeyTest, Success) {
@@ -509,8 +516,8 @@ TEST_F(EPKChallengeUserKeyTest, KeyExists) {
   // GetCertificate must not be called if the key exists.
   EXPECT_CALL(mock_attestation_flow_, GetCertificate(_, _, _, _, _)).Times(0);
 
-  EXPECT_TRUE(
-      utils::RunFunction(func_.get(), CreateArgs(), browser(), utils::NONE));
+  EXPECT_TRUE(utils::RunFunction(func_.get(), CreateArgs(), browser(),
+                                 extensions::api_test_utils::NONE));
 }
 
 TEST_F(EPKChallengeUserKeyTest, KeyNotRegistered) {
@@ -518,7 +525,7 @@ TEST_F(EPKChallengeUserKeyTest, KeyNotRegistered) {
       .Times(0);
 
   EXPECT_TRUE(utils::RunFunction(func_.get(), CreateArgsNoRegister(), browser(),
-                                 utils::NONE));
+                                 extensions::api_test_utils::NONE));
 }
 
 TEST_F(EPKChallengeUserKeyTest, PersonalDevice) {

@@ -70,9 +70,9 @@ class NET_EXPORT_PRIVATE BufferedSpdyFramerVisitorInterface {
   // Called when a SETTINGS frame is received.
   virtual void OnSettings() = 0;
 
-  // Called when an individual setting within a SETTINGS frame has been parsed
-  // and validated.
-  virtual void OnSetting(SpdySettingsIds id, uint32_t value) = 0;
+  // Called when an individual setting within a SETTINGS frame has been parsed.
+  // Note that |id| may or may not be a SETTINGS ID defined in the HTTP/2 spec.
+  virtual void OnSetting(SpdySettingsId id, uint32_t value) = 0;
 
   // Called when a SETTINGS frame is received with the ACK flag set.
   virtual void OnSettingsAck() = 0;
@@ -152,12 +152,14 @@ class NET_EXPORT_PRIVATE BufferedSpdyFramer
                          const char* data,
                          size_t len) override;
   void OnStreamEnd(SpdyStreamId stream_id) override;
+  void OnStreamPadLength(SpdyStreamId stream_id, size_t value) override;
   void OnStreamPadding(SpdyStreamId stream_id, size_t len) override;
   SpdyHeadersHandlerInterface* OnHeaderFrameStart(
       SpdyStreamId stream_id) override;
   void OnHeaderFrameEnd(SpdyStreamId stream_id) override;
   void OnSettings() override;
-  void OnSetting(SpdySettingsIds id, uint32_t value) override;
+  void OnSettingOld(SpdyKnownSettingsId id, uint32_t value) override;
+  void OnSetting(SpdySettingsId id, uint32_t value) override;
   void OnSettingsAck() override;
   void OnSettingsEnd() override;
   void OnPing(SpdyPingId unique_id, bool is_ack) override;

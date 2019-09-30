@@ -11,7 +11,7 @@
 #include "base/macros.h"
 #include "content/child/service_factory.h"
 #include "services/service_manager/public/cpp/binder_registry.h"
-#include "services/service_manager/public/interfaces/service.mojom.h"
+#include "services/service_manager/public/mojom/service.mojom.h"
 
 namespace content {
 
@@ -23,8 +23,10 @@ class UtilityServiceFactory : public ServiceFactory {
   ~UtilityServiceFactory() override;
 
   // ServiceFactory overrides:
-  void CreateService(service_manager::mojom::ServiceRequest request,
-                     const std::string& name) override;
+  void CreateService(
+      service_manager::mojom::ServiceRequest request,
+      const std::string& name,
+      service_manager::mojom::PIDReceiverPtr pid_receiver) override;
   void RegisterServices(ServiceMap* services) override;
   void OnServiceQuit() override;
 

@@ -13,6 +13,7 @@ import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.when;
 
 import android.content.Context;
+import android.os.Build;
 import android.os.Handler;
 import android.view.View;
 import android.view.inputmethod.EditorInfo;
@@ -34,18 +35,18 @@ import org.robolectric.shadow.api.Shadow;
 import org.robolectric.shadows.ShadowLooper;
 
 import org.chromium.base.ThreadUtils;
+import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.base.test.util.Feature;
-import org.chromium.testing.local.LocalRobolectricTestRunner;
+import org.chromium.content_public.browser.InputMethodManagerWrapper;
 
 import java.util.concurrent.Callable;
 
 /**
  * Unit tests for {@ThreadedInputConnectionFactory}.
  */
-@RunWith(LocalRobolectricTestRunner.class)
-@Config(manifest = Config.NONE)
+@RunWith(BaseRobolectricTestRunner.class)
+@Config(manifest = Config.NONE, sdk = Build.VERSION_CODES.LOLLIPOP)
 public class ThreadedInputConnectionFactoryTest {
-
     /**
      * A testable version of ThreadedInputConnectionFactory.
      */
@@ -95,7 +96,7 @@ public class ThreadedInputConnectionFactoryTest {
     }
 
     @Mock
-    private ImeAdapter mImeAdapter;
+    private ImeAdapterImpl mImeAdapter;
     @Mock
     private View mContainerView;
     @Mock
@@ -123,10 +124,10 @@ public class ThreadedInputConnectionFactoryTest {
 
         mContext = Mockito.mock(Context.class);
         mContainerView = Mockito.mock(View.class);
-        mImeAdapter = Mockito.mock(ImeAdapter.class);
+        mImeAdapter = Mockito.mock(ImeAdapterImpl.class);
         mInputMethodManager = Mockito.mock(InputMethodManager.class);
 
-        mFactory = new TestFactory(new InputMethodManagerWrapper(mContext));
+        mFactory = new TestFactory(new InputMethodManagerWrapperImpl(mContext));
         mFactory.onWindowFocusChanged(true);
         mImeHandler = mFactory.getHandler();
         mImeShadowLooper = (ShadowLooper) Shadow.extract(mImeHandler.getLooper());

@@ -4,11 +4,11 @@
 
 #include "media/capture/video/chromeos/camera_device_delegate.h"
 
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include "base/memory/ptr_util.h"
 #include "media/base/bind_to_current_loop.h"
 #include "media/capture/video/chromeos/camera_buffer_factory.h"
 #include "media/capture/video/chromeos/camera_device_context.h"
@@ -32,9 +32,9 @@ class CameraDeviceDelegate::StreamCaptureInterfaceImpl final
       : camera_device_delegate_(std::move(camera_device_delegate)) {}
 
   void RegisterBuffer(uint64_t buffer_id,
-                      arc::mojom::Camera3DeviceOps::BufferType type,
+                      cros::mojom::Camera3DeviceOps::BufferType type,
                       uint32_t drm_format,
-                      arc::mojom::HalPixelFormat hal_pixel_format,
+                      cros::mojom::HalPixelFormat hal_pixel_format,
                       uint32_t width,
                       uint32_t height,
                       std::vector<StreamCaptureInterface::Plane> planes,
@@ -46,7 +46,7 @@ class CameraDeviceDelegate::StreamCaptureInterfaceImpl final
     }
   }
 
-  void ProcessCaptureRequest(arc::mojom::Camera3CaptureRequestPtr request,
+  void ProcessCaptureRequest(cros::mojom::Camera3CaptureRequestPtr request,
                              base::OnceCallback<void(int32_t)> callback) final {
     if (camera_device_delegate_) {
       camera_device_delegate_->ProcessCaptureRequest(std::move(request),
@@ -86,20 +86,23 @@ void CameraDeviceDelegate::AllocateAndStart(
 }
 
 void CameraDeviceDelegate::StopAndDeAllocate(
-    base::Closure device_close_callback) {
+    base::OnceClosure device_close_callback) {
   DCHECK(ipc_task_runner_->BelongsToCurrentThread());
-  // StopAndDeAllocate may be called at any state except
-  // CameraDeviceContext::State::kStopping.
-  DCHECK_NE(device_context_->GetState(), CameraDeviceContext::State::kStopping);
 
-  if (device_context_->GetState() == CameraDeviceContext::State::kStopped ||
-      !stream_buffer_manager_) {
+  if (!device_context_ ||
+      device_context_->GetState() == CameraDeviceContext::State::kStopped ||
+      (device_context_->GetState() == CameraDeviceContext::State::kError &&
+       !stream_buffer_manager_)) {
     // In case of Mojo connection error the device may be stopped before
     // StopAndDeAllocate is called; in case of device open failure, the state
     // is set to kError and |stream_buffer_manager_| is uninitialized.
     std::move(device_close_callback).Run();
     return;
   }
+
+  // StopAndDeAllocate may be called at any state except
+  // CameraDeviceContext::State::kStopping.
+  DCHECK_NE(device_context_->GetState(), CameraDeviceContext::State::kStopping);
 
   device_close_callback_ = std::move(device_close_callback);
   device_context_->SetState(CameraDeviceContext::State::kStopping);
@@ -136,7 +139,7 @@ void CameraDeviceDelegate::SetPhotoOptions(
 void CameraDeviceDelegate::SetRotation(int rotation) {
   DCHECK(ipc_task_runner_->BelongsToCurrentThread());
   DCHECK(rotation >= 0 && rotation < 360 && rotation % 90 == 0);
-  device_context_->SetRotation(rotation);
+  device_context_->SetScreenRotation(rotation);
 }
 
 base::WeakPtr<CameraDeviceDelegate> CameraDeviceDelegate::GetWeakPtr() {
@@ -188,7 +191,7 @@ void CameraDeviceDelegate::ResetMojoInterface() {
 
 void CameraDeviceDelegate::OnGotCameraInfo(
     int32_t result,
-    arc::mojom::CameraInfoPtr camera_info) {
+    cros::mojom::CameraInfoPtr camera_info) {
   DCHECK(ipc_task_runner_->BelongsToCurrentThread());
 
   if (device_context_->GetState() != CameraDeviceContext::State::kStarting) {
@@ -203,8 +206,22 @@ void CameraDeviceDelegate::OnGotCameraInfo(
     return;
   }
   static_metadata_ = std::move(camera_info->static_camera_characteristics);
+
+  const cros::mojom::CameraMetadataEntryPtr* sensor_orientation =
+      GetMetadataEntry(
+          static_metadata_,
+          cros::mojom::CameraMetadataTag::ANDROID_SENSOR_ORIENTATION);
+  if (sensor_orientation) {
+    device_context_->SetSensorOrientation(
+        *reinterpret_cast<int32_t*>((*sensor_orientation)->data.data()));
+  } else {
+    device_context_->SetErrorState(
+        FROM_HERE, "Camera is missing required sensor orientation info");
+    return;
+  }
+
   // |device_ops_| is bound after the MakeRequest call.
-  arc::mojom::Camera3DeviceOpsRequest device_ops_request =
+  cros::mojom::Camera3DeviceOpsRequest device_ops_request =
       mojo::MakeRequest(&device_ops_);
   device_ops_.set_connection_error_handler(
       base::Bind(&CameraDeviceDelegate::OnMojoConnectionError, GetWeakPtr()));
@@ -240,13 +257,13 @@ void CameraDeviceDelegate::Initialize() {
   DCHECK(ipc_task_runner_->BelongsToCurrentThread());
   DCHECK_EQ(device_context_->GetState(), CameraDeviceContext::State::kStarting);
 
-  arc::mojom::Camera3CallbackOpsPtr callback_ops_ptr;
-  arc::mojom::Camera3CallbackOpsRequest callback_ops_request =
+  cros::mojom::Camera3CallbackOpsPtr callback_ops_ptr;
+  cros::mojom::Camera3CallbackOpsRequest callback_ops_request =
       mojo::MakeRequest(&callback_ops_ptr);
-  stream_buffer_manager_ = base::MakeUnique<StreamBufferManager>(
+  stream_buffer_manager_ = std::make_unique<StreamBufferManager>(
       std::move(callback_ops_request),
-      base::MakeUnique<StreamCaptureInterfaceImpl>(GetWeakPtr()),
-      device_context_, base::MakeUnique<CameraBufferFactory>(),
+      std::make_unique<StreamCaptureInterfaceImpl>(GetWeakPtr()),
+      device_context_, std::make_unique<CameraBufferFactory>(),
       ipc_task_runner_);
   device_ops_->Initialize(
       std::move(callback_ops_ptr),
@@ -277,26 +294,26 @@ void CameraDeviceDelegate::ConfigureStreams() {
             CameraDeviceContext::State::kInitialized);
 
   // Set up context for preview stream.
-  arc::mojom::Camera3StreamPtr preview_stream =
-      arc::mojom::Camera3Stream::New();
+  cros::mojom::Camera3StreamPtr preview_stream =
+      cros::mojom::Camera3Stream::New();
   preview_stream->id = static_cast<uint64_t>(
-      arc::mojom::Camera3RequestTemplate::CAMERA3_TEMPLATE_PREVIEW);
+      cros::mojom::Camera3RequestTemplate::CAMERA3_TEMPLATE_PREVIEW);
   preview_stream->stream_type =
-      arc::mojom::Camera3StreamType::CAMERA3_STREAM_OUTPUT;
+      cros::mojom::Camera3StreamType::CAMERA3_STREAM_OUTPUT;
   preview_stream->width =
       chrome_capture_params_.requested_format.frame_size.width();
   preview_stream->height =
       chrome_capture_params_.requested_format.frame_size.height();
   preview_stream->format =
-      arc::mojom::HalPixelFormat::HAL_PIXEL_FORMAT_YCbCr_420_888;
+      cros::mojom::HalPixelFormat::HAL_PIXEL_FORMAT_YCbCr_420_888;
   preview_stream->data_space = 0;
   preview_stream->rotation =
-      arc::mojom::Camera3StreamRotation::CAMERA3_STREAM_ROTATION_0;
+      cros::mojom::Camera3StreamRotation::CAMERA3_STREAM_ROTATION_0;
 
-  arc::mojom::Camera3StreamConfigurationPtr stream_config =
-      arc::mojom::Camera3StreamConfiguration::New();
+  cros::mojom::Camera3StreamConfigurationPtr stream_config =
+      cros::mojom::Camera3StreamConfiguration::New();
   stream_config->streams.push_back(std::move(preview_stream));
-  stream_config->operation_mode = arc::mojom::Camera3StreamConfigurationMode::
+  stream_config->operation_mode = cros::mojom::Camera3StreamConfigurationMode::
       CAMERA3_STREAM_CONFIGURATION_NORMAL_MODE;
   device_ops_->ConfigureStreams(
       std::move(stream_config),
@@ -305,7 +322,7 @@ void CameraDeviceDelegate::ConfigureStreams() {
 
 void CameraDeviceDelegate::OnConfiguredStreams(
     int32_t result,
-    arc::mojom::Camera3StreamConfigurationPtr updated_config) {
+    cros::mojom::Camera3StreamConfigurationPtr updated_config) {
   DCHECK(ipc_task_runner_->BelongsToCurrentThread());
 
   if (device_context_->GetState() != CameraDeviceContext::State::kInitialized) {
@@ -329,9 +346,9 @@ void CameraDeviceDelegate::OnConfiguredStreams(
   // The partial result count metadata is optional; defaults to 1 in case it
   // is not set in the static metadata.
   uint32_t partial_result_count = 1;
-  const arc::mojom::CameraMetadataEntryPtr* partial_count = GetMetadataEntry(
+  const cros::mojom::CameraMetadataEntryPtr* partial_count = GetMetadataEntry(
       static_metadata_,
-      arc::mojom::CameraMetadataTag::ANDROID_REQUEST_PARTIAL_RESULT_COUNT);
+      cros::mojom::CameraMetadataTag::ANDROID_REQUEST_PARTIAL_RESULT_COUNT);
   if (partial_count) {
     partial_result_count =
         *reinterpret_cast<int32_t*>((*partial_count)->data.data());
@@ -350,13 +367,13 @@ void CameraDeviceDelegate::ConstructDefaultRequestSettings() {
             CameraDeviceContext::State::kStreamConfigured);
 
   device_ops_->ConstructDefaultRequestSettings(
-      arc::mojom::Camera3RequestTemplate::CAMERA3_TEMPLATE_PREVIEW,
+      cros::mojom::Camera3RequestTemplate::CAMERA3_TEMPLATE_PREVIEW,
       base::Bind(&CameraDeviceDelegate::OnConstructedDefaultRequestSettings,
                  GetWeakPtr()));
 }
 
 void CameraDeviceDelegate::OnConstructedDefaultRequestSettings(
-    arc::mojom::CameraMetadataPtr settings) {
+    cros::mojom::CameraMetadataPtr settings) {
   DCHECK(ipc_task_runner_->BelongsToCurrentThread());
 
   if (device_context_->GetState() !=
@@ -376,9 +393,9 @@ void CameraDeviceDelegate::OnConstructedDefaultRequestSettings(
 
 void CameraDeviceDelegate::RegisterBuffer(
     uint64_t buffer_id,
-    arc::mojom::Camera3DeviceOps::BufferType type,
+    cros::mojom::Camera3DeviceOps::BufferType type,
     uint32_t drm_format,
-    arc::mojom::HalPixelFormat hal_pixel_format,
+    cros::mojom::HalPixelFormat hal_pixel_format,
     uint32_t width,
     uint32_t height,
     std::vector<StreamCaptureInterface::Plane> planes,
@@ -405,7 +422,7 @@ void CameraDeviceDelegate::RegisterBuffer(
 }
 
 void CameraDeviceDelegate::ProcessCaptureRequest(
-    arc::mojom::Camera3CaptureRequestPtr request,
+    cros::mojom::Camera3CaptureRequestPtr request,
     base::OnceCallback<void(int32_t)> callback) {
   DCHECK(ipc_task_runner_->BelongsToCurrentThread());
 

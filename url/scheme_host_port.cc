@@ -51,7 +51,7 @@ bool IsValidInput(const base::StringPiece& scheme,
                   const base::StringPiece& host,
                   uint16_t port,
                   SchemeHostPort::ConstructPolicy policy) {
-  SchemeType scheme_type = SCHEME_WITH_PORT;
+  SchemeType scheme_type = SCHEME_WITH_HOST_PORT_AND_USER_INFORMATION;
   bool is_standard = GetStandardSchemeType(
       scheme.data(),
       Component(0, base::checked_cast<int>(scheme.length())),
@@ -60,7 +60,8 @@ bool IsValidInput(const base::StringPiece& scheme,
     return false;
 
   switch (scheme_type) {
-    case SCHEME_WITH_PORT:
+    case SCHEME_WITH_HOST_AND_PORT:
+    case SCHEME_WITH_HOST_PORT_AND_USER_INFORMATION:
       // A URL with |scheme| is required to have the host and port (may be
       // omitted in a serialization if it's the same as the default value).
       // Return an invalid instance if either of them is not given.
@@ -78,7 +79,7 @@ bool IsValidInput(const base::StringPiece& scheme,
 
       return true;
 
-    case SCHEME_WITHOUT_PORT:
+    case SCHEME_WITH_HOST:
       if (port != 0) {
         // Return an invalid object if a URL with the scheme never represents
         // the port data but the given |port| is non-zero.
@@ -140,8 +141,12 @@ SchemeHostPort::SchemeHostPort(const GURL& url) : port_(0) {
 
   // A valid GURL never returns PORT_INVALID.
   int port = url.EffectiveIntPort();
-  if (port == PORT_UNSPECIFIED)
+  if (port == PORT_UNSPECIFIED) {
     port = 0;
+  } else {
+    DCHECK_GE(port, 0);
+    DCHECK_LE(port, 65535);
+  }
 
   if (!IsValidInput(scheme, host, port, ALREADY_CANONICALIZED))
     return;
@@ -170,6 +175,12 @@ GURL SchemeHostPort::GetURL() const {
 
   if (IsInvalid())
     return GURL(std::move(serialized), parsed, false);
+
+  // SchemeHostPort does not have enough information to determine if an empty
+  // host is valid or not for the given scheme. Force re-parsing.
+  DCHECK(!scheme_.empty());
+  if (host_.empty())
+    return GURL(serialized);
 
   // If the serialized string is passed to GURL for parsing, it will append an
   // empty path "/". Add that here. Note: per RFC 6454 we cannot do this for

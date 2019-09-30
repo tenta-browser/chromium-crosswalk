@@ -7,7 +7,6 @@
 #include "base/command_line.h"
 #include "base/feature_list.h"
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/task_scheduler/post_task.h"
 #include "build/build_config.h"
@@ -121,11 +120,11 @@ class ChromeMetricsServicesManagerClient::ChromeEnabledStateProvider
   ChromeEnabledStateProvider() {}
   ~ChromeEnabledStateProvider() override {}
 
-  bool IsConsentGiven() override {
+  bool IsConsentGiven() const override {
     return ChromeMetricsServiceAccessor::IsMetricsAndCrashReportingEnabled();
   }
 
-  bool IsReportingEnabled() override {
+  bool IsReportingEnabled() const override {
     return IsConsentGiven() &&
            ChromeMetricsServicesManagerClient::IsClientInSample();
   }
@@ -135,17 +134,9 @@ class ChromeMetricsServicesManagerClient::ChromeEnabledStateProvider
 
 ChromeMetricsServicesManagerClient::ChromeMetricsServicesManagerClient(
     PrefService* local_state)
-    : enabled_state_provider_(new ChromeEnabledStateProvider()),
+    : enabled_state_provider_(std::make_unique<ChromeEnabledStateProvider>()),
       local_state_(local_state) {
   DCHECK(local_state);
-
-#if defined(OS_CHROMEOS)
-  cros_settings_observer_ = chromeos::CrosSettings::Get()->AddSettingsObserver(
-      chromeos::kStatsReportingPref,
-      base::Bind(&OnCrosMetricsReportingSettingChange));
-  // Invoke the callback once initially to set the metrics reporting state.
-  OnCrosMetricsReportingSettingChange();
-#endif
 }
 
 ChromeMetricsServicesManagerClient::~ChromeMetricsServicesManagerClient() {}
@@ -224,10 +215,20 @@ bool ChromeMetricsServicesManagerClient::GetSamplingRatePerMille(int* rate) {
   return true;
 }
 
+#if defined(OS_CHROMEOS)
+void ChromeMetricsServicesManagerClient::OnCrosSettingsCreated() {
+  cros_settings_observer_ = chromeos::CrosSettings::Get()->AddSettingsObserver(
+      chromeos::kStatsReportingPref,
+      base::Bind(&OnCrosMetricsReportingSettingChange));
+  // Invoke the callback once initially to set the metrics reporting state.
+  OnCrosMetricsReportingSettingChange();
+}
+#endif
+
 std::unique_ptr<rappor::RapporServiceImpl>
 ChromeMetricsServicesManagerClient::CreateRapporServiceImpl() {
   DCHECK(thread_checker_.CalledOnValidThread());
-  return base::MakeUnique<rappor::RapporServiceImpl>(
+  return std::make_unique<rappor::RapporServiceImpl>(
       local_state_, base::Bind(&chrome::IsIncognitoSessionActive));
 }
 
@@ -235,7 +236,7 @@ std::unique_ptr<variations::VariationsService>
 ChromeMetricsServicesManagerClient::CreateVariationsService() {
   DCHECK(thread_checker_.CalledOnValidThread());
   return variations::VariationsService::Create(
-      base::MakeUnique<ChromeVariationsServiceClient>(), local_state_,
+      std::make_unique<ChromeVariationsServiceClient>(), local_state_,
       GetMetricsStateManager(), switches::kDisableBackgroundNetworking,
       chrome_variations::CreateUIStringOverrider());
 }

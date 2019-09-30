@@ -10,9 +10,6 @@
 namespace app_list {
 
 const SkColor kContentsBackgroundColor = SkColorSetRGB(0xF2, 0xF2, 0xF2);
-const SkColor kSearchBoxBackgroundDefault = SK_ColorWHITE;
-
-const SkColor kSearchTextColor = SkColorSetRGB(0x33, 0x33, 0x33);
 
 const SkColor kLabelBackgroundColor = SK_ColorTRANSPARENT;
 
@@ -24,8 +21,6 @@ const SkColor kDialogSeparatorColor = SkColorSetRGB(0xD1, 0xD1, 0xD1);
 
 // The mouse hover colour (3% black).
 const SkColor kHighlightedColor = SkColorSetARGB(8, 0, 0, 0);
-// The keyboard select colour (6% black).
-const SkColor kSelectedColor = SkColorSetARGB(15, 0, 0, 0);
 // The keyboard select color for grid views, which are on top of a black shield
 // view for new design (12% white).
 const SkColor kGridSelectedColor = SkColorSetARGB(0x1F, 0xFF, 0xFF, 0xFF);
@@ -52,12 +47,16 @@ const int kGridTitleHorizontalPadding = 8;
 const int kGridSelectedSize = 64;
 const int kGridSelectedCornerRadius = 8;
 
+// The preferred height for horizontal pages. For page #01 in the apps grid, it
+// includes the top/bottom 24px padding. For page #02 and all the followings,
+// it includes top 24px padding and bottom 56px padding.
+const int kHorizontalPagePreferredHeight = 623;
+
 const SkColor kFolderTitleColor = SkColorSetRGB(0x33, 0x33, 0x33);
 const SkColor kFolderTitleHintTextColor = SkColorSetRGB(0xA0, 0xA0, 0xA0);
 // Color of the folder bubble shadow.
 const SkColor kFolderShadowColor = SkColorSetRGB(0xBF, 0xBF, 0xBF);
 const float kFolderBubbleOpacity = 0.12f;
-const int kFolderBackgroundBubbleRadius = 288;
 
 const SkColor kCardBackgroundColor = SkColorSetRGB(0xFA, 0xFA, 0xFC);
 
@@ -73,7 +72,7 @@ const int kOverscrollPageTransitionDurationMs = 50;
 // Duration in milliseconds for fading in the target page when opening
 // or closing a folder, and the duration for the top folder icon animation
 // for flying in or out the folder.
-const int kFolderTransitionInDurationMs = 400;
+const int kFolderTransitionInDurationMs = 250;
 
 // Duration in milliseconds for fading out the old page when opening or closing
 // a folder.
@@ -115,7 +114,7 @@ const SkColor kIconColor = gfx::kChromeIconGrey;
 const float kDragDropAppIconScale = 1.2f;
 
 // The drag and drop icon scaling up or down animation transition duration.
-const int kDragDropAppIconScaleTransitionInMs = 20;
+const int kDragDropAppIconScaleTransitionInMs = 200;
 
 // The number of apps shown in the start page app grid.
 const int kNumStartPageTiles = 5;
@@ -154,20 +153,17 @@ const int kSearchBoxPeekingBottomPadding = 12;
 // Bottom padding of search box.
 const int kSearchBoxBottomPadding = 24;
 
-// The background border corner radius of the search box.
-const int kSearchBoxBorderCornerRadius = 24;
-
-// Preferred height of search box.
-const int kSearchBoxPreferredHeight = 48;
-
 // The height of the peeking app list from the bottom of the screen.
 const int kPeekingAppListHeight = 320;
 
 // The height/width of the shelf from the bottom/side of the screen.
 const int kShelfSize = 48;
 
-// Max items allowed in a folder.
-const size_t kMaxFolderItems = 20;
+// Max pages allowed in a folder.
+const size_t kMaxFolderPages = 3;
+
+// Max items per page allowed in a folder.
+const size_t kMaxFolderItemsPerPage = 16;
 
 // Maximum length of the folder name in chars.
 const size_t kMaxFolderNameChars = 80;
@@ -175,6 +171,11 @@ const size_t kMaxFolderNameChars = 80;
 // Font style for app item labels.
 const ui::ResourceBundle::FontStyle kItemTextFontStyle =
     ui::ResourceBundle::SmallFont;
+
+// Range of the height of centerline above screen bottom that all apps should
+// change opacity. NOTE: this is used to change page switcher's opacity as well.
+const float kAllAppsOpacityStartPx = 8.0f;
+const float kAllAppsOpacityEndPx = 144.0f;
 
 // The UMA histogram that logs usage of suggested and regular apps.
 const char kAppListAppLaunched[] = "Apps.AppListAppLaunched";
@@ -233,14 +234,6 @@ const char kSearchResultDistanceFromOrigin[] =
 
 // The height of tiles in search result.
 const int kSearchTileHeight = 90;
-
-// The size of the search icon in the search box.
-const int kSearchIconSize = 24;
-
-// Default color used when wallpaper customized color is not available for
-// searchbox, #000 at 87% opacity.
-const SkColor kDefaultSearchboxColor =
-    SkColorSetARGBMacro(0xDE, 0x00, 0x00, 0x00);
 
 gfx::ShadowValue GetShadowForZHeight(int z_height) {
   if (z_height <= 0)

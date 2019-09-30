@@ -14,17 +14,25 @@
 #include "ash/public/interfaces/shelf.mojom.h"
 #include "ash/session/session_observer.h"
 #include "ash/wm/tablet_mode/tablet_mode_observer.h"
+#include "base/scoped_observer.h"
 #include "mojo/public/cpp/bindings/binding_set.h"
 #include "mojo/public/cpp/bindings/interface_ptr_set.h"
+#include "ui/message_center/message_center_observer.h"
 
 class PrefChangeRegistrar;
 class PrefRegistrySimple;
+
+namespace message_center {
+class MessageCenter;
+}
 
 namespace ash {
 
 // Ash's ShelfController owns the ShelfModel and implements interface functions
 // that allow Chrome to modify and observe the Shelf and ShelfModel state.
-class ASH_EXPORT ShelfController : public mojom::ShelfController,
+// Chrome keeps its own ShelfModel copy in sync with Ash's ShelfModel.
+class ASH_EXPORT ShelfController : public message_center::MessageCenterObserver,
+                                   public mojom::ShelfController,
                                    public ShelfModelObserver,
                                    public SessionObserver,
                                    public TabletModeObserver,
@@ -33,16 +41,15 @@ class ASH_EXPORT ShelfController : public mojom::ShelfController,
   ShelfController();
   ~ShelfController() override;
 
+  // Removes observers from this object's dependencies.
+  void Shutdown();
+
   static void RegisterProfilePrefs(PrefRegistrySimple* registry);
 
   // Binds the mojom::ShelfController interface request to this object.
   void BindRequest(mojom::ShelfControllerRequest request);
 
   ShelfModel* model() { return &model_; }
-
-  bool should_synchronize_shelf_models() const {
-    return should_synchronize_shelf_models_;
-  }
 
   // mojom::ShelfController:
   void AddObserver(mojom::ShelfObserverAssociatedPtrInfo observer) override;
@@ -61,6 +68,11 @@ class ASH_EXPORT ShelfController : public mojom::ShelfController,
   void ShelfItemDelegateChanged(const ShelfID& id,
                                 ShelfItemDelegate* old_delegate,
                                 ShelfItemDelegate* delegate) override;
+
+  // MessageCenterObserver:
+  void OnNotificationAdded(const std::string& notification_id) override;
+  void OnNotificationRemoved(const std::string& notification_id,
+                             bool by_user) override;
 
   void FlushForTesting();
 
@@ -86,12 +98,17 @@ class ASH_EXPORT ShelfController : public mojom::ShelfController,
   // Bindings for the ShelfController interface.
   mojo::BindingSet<mojom::ShelfController> bindings_;
 
-  // True if Ash and Chrome should synchronize separate ShelfModel instances.
-  bool should_synchronize_shelf_models_ = false;
-
   // True when applying changes from the remote ShelfModel owned by Chrome.
   // Changes to the local ShelfModel should not be reported during this time.
   bool applying_remote_shelf_model_changes_ = false;
+
+  // Whether touchable context menus have been enabled for app icons on the
+  // shelf.
+  const bool is_touchable_app_context_menu_enabled_;
+
+  ScopedObserver<message_center::MessageCenter,
+                 message_center::MessageCenterObserver>
+      message_center_observer_;
 
   // The set of shelf observers notified about state and model changes.
   mojo::AssociatedInterfacePtrSet<mojom::ShelfObserver> observers_;

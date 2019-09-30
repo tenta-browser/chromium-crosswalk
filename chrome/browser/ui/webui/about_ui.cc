@@ -42,8 +42,6 @@
 #include "chrome/browser/net/predictor.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
-#include "chrome/browser/resource_coordinator/tab_manager.h"
-#include "chrome/browser/resource_coordinator/tab_stats.h"
 #include "chrome/browser/ui/browser_dialogs.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/url_constants.h"
@@ -53,6 +51,7 @@
 #include "components/about_ui/credit_utils.h"
 #include "components/grit/components_resources.h"
 #include "components/strings/grit/components_locale_settings.h"
+#include "components/strings/grit/components_strings.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/render_view_host.h"
@@ -85,10 +84,7 @@
 #include "chrome/browser/chromeos/customization/customization_document.h"
 #endif
 
-using base::Time;
-using base::TimeDelta;
 using content::BrowserThread;
-using content::WebContents;
 
 namespace {
 

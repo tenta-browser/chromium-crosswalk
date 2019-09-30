@@ -48,8 +48,8 @@ class CONTENT_EXPORT ServiceWorkerContextWrapper
       public ServiceWorkerContextCoreObserver,
       public base::RefCountedThreadSafe<ServiceWorkerContextWrapper> {
  public:
-  using StatusCallback = base::Callback<void(ServiceWorkerStatusCode)>;
-  using BoolCallback = base::Callback<void(bool)>;
+  using StatusCallback = base::OnceCallback<void(ServiceWorkerStatusCode)>;
+  using BoolCallback = base::OnceCallback<void(bool)>;
   using FindRegistrationCallback =
       ServiceWorkerStorage::FindRegistrationCallback;
   using GetRegistrationsInfosCallback =
@@ -82,7 +82,7 @@ class CONTENT_EXPORT ServiceWorkerContextWrapper
   void DeleteAndStartOver();
 
   // The StoragePartition should only be used on the UI thread.
-  // Can be null before/during init and during/after shutdown.
+  // Can be null before/during init and during/after shutdown (and in tests).
   StoragePartitionImpl* storage_partition() const;
 
   void set_storage_partition(StoragePartitionImpl* storage_partition);
@@ -104,9 +104,10 @@ class CONTENT_EXPORT ServiceWorkerContextWrapper
   // ServiceWorkerContext implementation:
   void AddObserver(ServiceWorkerContextObserver* observer) override;
   void RemoveObserver(ServiceWorkerContextObserver* observer) override;
-  void RegisterServiceWorker(const GURL& scope,
-                             const GURL& script_url,
-                             ResultCallback callback) override;
+  void RegisterServiceWorker(
+      const GURL& script_url,
+      const blink::mojom::ServiceWorkerRegistrationOptions& options,
+      ResultCallback callback) override;
   void UnregisterServiceWorker(const GURL& scope,
                                ResultCallback callback) override;
   bool StartingExternalRequest(int64_t service_worker_version_id,
@@ -139,7 +140,7 @@ class CONTENT_EXPORT ServiceWorkerContextWrapper
 
   // Must be called from the IO thread.
   void HasMainFrameProviderHost(const GURL& origin,
-                                const BoolCallback& callback) const;
+                                BoolCallback callback) const;
 
   // Returns all render process ids and frame ids for the given |origin|.
   std::unique_ptr<
@@ -157,9 +158,8 @@ class CONTENT_EXPORT ServiceWorkerContextWrapper
   //    activated.
   //
   // Must be called from the IO thread.
-  void FindReadyRegistrationForDocument(
-      const GURL& document_url,
-      const FindRegistrationCallback& callback);
+  void FindReadyRegistrationForDocument(const GURL& document_url,
+                                        FindRegistrationCallback callback);
 
   // Returns the registration for |scope|. It is guaranteed that the returned
   // registration has the activated worker.
@@ -172,9 +172,8 @@ class CONTENT_EXPORT ServiceWorkerContextWrapper
   //    activated.
   //
   // Must be called from the IO thread.
-  void FindReadyRegistrationForPattern(
-      const GURL& scope,
-      const FindRegistrationCallback& callback);
+  void FindReadyRegistrationForPattern(const GURL& scope,
+                                       FindRegistrationCallback callback);
 
   // Returns the registration for |registration_id|. It is guaranteed that the
   // returned registration has the activated worker.
@@ -189,7 +188,7 @@ class CONTENT_EXPORT ServiceWorkerContextWrapper
   // Must be called from the IO thread.
   void FindReadyRegistrationForId(int64_t registration_id,
                                   const GURL& origin,
-                                  const FindRegistrationCallback& callback);
+                                  FindRegistrationCallback callback);
 
   // Returns the registration for |registration_id|. It is guaranteed that the
   // returned registration has the activated worker.
@@ -207,42 +206,42 @@ class CONTENT_EXPORT ServiceWorkerContextWrapper
   //
   // Must be called from the IO thread.
   void FindReadyRegistrationForIdOnly(int64_t registration_id,
-                                      const FindRegistrationCallback& callback);
+                                      FindRegistrationCallback callback);
 
   // All these methods must be called from the IO thread.
-  void GetAllRegistrations(const GetRegistrationsInfosCallback& callback);
+  void GetAllRegistrations(GetRegistrationsInfosCallback callback);
   void GetRegistrationUserData(int64_t registration_id,
                                const std::vector<std::string>& keys,
-                               const GetUserDataCallback& callback);
+                               GetUserDataCallback callback);
   void GetRegistrationUserDataByKeyPrefix(int64_t registration_id,
                                           const std::string& key_prefix,
-                                          const GetUserDataCallback& callback);
+                                          GetUserDataCallback callback);
   void GetRegistrationUserKeysAndDataByKeyPrefix(
       int64_t registration_id,
       const std::string& key_prefix,
-      const GetUserKeysAndDataCallback& callback);
+      GetUserKeysAndDataCallback callback);
   void StoreRegistrationUserData(
       int64_t registration_id,
       const GURL& origin,
       const std::vector<std::pair<std::string, std::string>>& key_value_pairs,
-      const StatusCallback& callback);
+      StatusCallback callback);
   void ClearRegistrationUserData(int64_t registration_id,
                                  const std::vector<std::string>& keys,
-                                 const StatusCallback& callback);
+                                 StatusCallback callback);
   void ClearRegistrationUserDataByKeyPrefixes(
       int64_t registration_id,
       const std::vector<std::string>& key_prefixes,
-      const StatusCallback& callback);
+      StatusCallback callback);
   void GetUserDataForAllRegistrations(
       const std::string& key,
-      const GetUserDataForAllRegistrationsCallback& callback);
+      GetUserDataForAllRegistrationsCallback callback);
   void GetUserDataForAllRegistrationsByKeyPrefix(
       const std::string& key_prefix,
-      const GetUserDataForAllRegistrationsCallback& callback);
+      GetUserDataForAllRegistrationsCallback callback);
 
   // This function can be called from any thread, but the callback will always
   // be called on the UI thread.
-  void StartServiceWorker(const GURL& pattern, const StatusCallback& callback);
+  void StartServiceWorker(const GURL& pattern, StatusCallback callback);
 
   // These methods can be called from any thread.
   void SkipWaitingWorker(const GURL& pattern);
@@ -254,6 +253,17 @@ class CONTENT_EXPORT ServiceWorkerContextWrapper
   void RemoveObserver(ServiceWorkerContextCoreObserver* observer);
 
   bool is_incognito() const { return is_incognito_; }
+
+  // S13nServiceWorker:
+  // Used for starting a shared worker. Returns a provider host for the shared
+  // worker and fills |out_provider_info| with info to send to the renderer to
+  // connect to the host. The host stays alive as long as this info stays alive
+  // (namely, as long as |out_provider_info->host_ptr_info| stays alive).
+  //
+  // Must be called on the IO thread.
+  base::WeakPtr<ServiceWorkerProviderHost> PreCreateHostForSharedWorker(
+      int process_id,
+      mojom::ServiceWorkerProviderInfoForSharedWorkerPtr* out_provider_info);
 
  private:
   friend class BackgroundSyncManagerTest;
@@ -280,11 +290,11 @@ class CONTENT_EXPORT ServiceWorkerContextWrapper
   void ShutdownOnIO();
 
   void DidFindRegistrationForFindReady(
-      const FindRegistrationCallback& callback,
+      FindRegistrationCallback callback,
       ServiceWorkerStatusCode status,
       scoped_refptr<ServiceWorkerRegistration> registration);
   void OnStatusChangedForFindReadyRegistration(
-      const FindRegistrationCallback& callback,
+      FindRegistrationCallback callback,
       scoped_refptr<ServiceWorkerRegistration> registration);
 
   void DidDeleteAndStartOver(ServiceWorkerStatusCode status);

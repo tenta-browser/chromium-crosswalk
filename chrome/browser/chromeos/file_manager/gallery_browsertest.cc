@@ -22,26 +22,21 @@ class GalleryBrowserTestBase : public FileManagerBrowserTestBase {
   void set_test_case_name(const std::string& name) { test_case_name_ = name; }
 
  private:
-  base::ListValue scripts_;
   std::string test_case_name_;
 };
 
 typedef GalleryBrowserTestBase<NOT_IN_GUEST_MODE> GalleryBrowserTest;
 typedef GalleryBrowserTestBase<IN_GUEST_MODE> GalleryBrowserTestInGuestMode;
 
-// http://crbug.com/508949
-#if defined(MEMORY_SANITIZER)
-#define MAYBE_OpenSingleImageOnDownloads DISABLED_OpenSingleImageOnDownloads
-#else
-#define MAYBE_OpenSingleImageOnDownloads OpenSingleImageOnDownloads
-#endif
-IN_PROC_BROWSER_TEST_F(GalleryBrowserTest, MAYBE_OpenSingleImageOnDownloads) {
+// http://crbug.com/804413.
+IN_PROC_BROWSER_TEST_F(GalleryBrowserTest,
+                       DISABLED_OpenSingleImageOnDownloads) {
   set_test_case_name("openSingleImageOnDownloads");
   StartTest();
 }
 
 IN_PROC_BROWSER_TEST_F(GalleryBrowserTestInGuestMode,
-                       MAYBE_OpenSingleImageOnDownloads) {
+                       OpenSingleImageOnDownloads) {
   set_test_case_name("openSingleImageOnDownloads");
   StartTest();
 }
@@ -56,7 +51,15 @@ IN_PROC_BROWSER_TEST_F(GalleryBrowserTest, MAYBE_OpenSingleImageOnDrive) {
   StartTest();
 }
 
-IN_PROC_BROWSER_TEST_F(GalleryBrowserTest, OpenMultipleImagesOnDownloads) {
+// http://crbug.com/803505 : Flaky due to crash on linux-chromeos-dbg
+#if !defined(NDEBUG)
+#define MAYBE_OpenMultipleImagesOnDownloads \
+  DISABLED_OpenMultipleImagesOnDownloads
+#else
+#define MAYBE_OpenMultipleImagesOnDownloads OpenMultipleImagesOnDownloads
+#endif
+IN_PROC_BROWSER_TEST_F(GalleryBrowserTest,
+                       MAYBE_OpenMultipleImagesOnDownloads) {
   set_test_case_name("openMultipleImagesOnDownloads");
   StartTest();
 }
@@ -99,8 +102,10 @@ IN_PROC_BROWSER_TEST_F(GalleryBrowserTest, MAYBE_OpenMultipleImagesOnDrive) {
 #else
 #define MAYBE_TraverseSlideImagesOnDownloads TraverseSlideImagesOnDownloads
 #endif
+// TODO(yamaguchi):Enable after removing root cause of the test flakiness.
+// http://crbug.com/804413.
 IN_PROC_BROWSER_TEST_F(GalleryBrowserTest,
-                       MAYBE_TraverseSlideImagesOnDownloads) {
+                       DISABLED_TraverseSlideImagesOnDownloads) {
   set_test_case_name("traverseSlideImagesOnDownloads");
   StartTest();
 }
@@ -117,7 +122,10 @@ IN_PROC_BROWSER_TEST_F(GalleryBrowserTestInGuestMode,
 #else
 #define MAYBE_TraverseSlideImagesOnDrive TraverseSlideImagesOnDrive
 #endif
-IN_PROC_BROWSER_TEST_F(GalleryBrowserTest, MAYBE_TraverseSlideImagesOnDrive) {
+// TODO(yamaguchi):Enable after removing root cause of the test flakiness.
+// https://crbug.com/804413.
+IN_PROC_BROWSER_TEST_F(GalleryBrowserTest,
+                       DISABLED_TraverseSlideImagesOnDrive) {
   set_test_case_name("traverseSlideImagesOnDrive");
   StartTest();
 }
@@ -147,19 +155,14 @@ IN_PROC_BROWSER_TEST_F(GalleryBrowserTest, TraverseSlideThumbnailsOnDrive) {
   StartTest();
 }
 
-IN_PROC_BROWSER_TEST_F(GalleryBrowserTest, RenameImageOnDownloads) {
+// TODO(yamaguchi):Enable after removing root cause of the test flakiness.
+// https://crbug.com/804413.
+IN_PROC_BROWSER_TEST_F(GalleryBrowserTest, DISABLED_RenameImageOnDownloads) {
   set_test_case_name("renameImageOnDownloads");
   StartTest();
 }
 
-// http://crbug.com/508949
-#if defined(MEMORY_SANITIZER)
-#define MAYBE_RenameImageOnDownloads DISABLED_RenameImageOnDownloads
-#else
-#define MAYBE_RenameImageOnDownloads RenameImageOnDownloads
-#endif
-IN_PROC_BROWSER_TEST_F(GalleryBrowserTestInGuestMode,
-                       MAYBE_RenameImageOnDownloads) {
+IN_PROC_BROWSER_TEST_F(GalleryBrowserTestInGuestMode, RenameImageOnDownloads) {
   set_test_case_name("renameImageOnDownloads");
   StartTest();
 }
@@ -215,7 +218,7 @@ IN_PROC_BROWSER_TEST_F(GalleryBrowserTest,
 }
 
 IN_PROC_BROWSER_TEST_F(GalleryBrowserTestInGuestMode,
-                       MAYBE_CheckAvailabilityOfShareButtonOnDownloads) {
+                       CheckAvailabilityOfShareButtonOnDownloads) {
   set_test_case_name("checkAvailabilityOfShareButtonOnDownloads");
   StartTest();
 }
@@ -282,7 +285,9 @@ IN_PROC_BROWSER_TEST_F(GalleryBrowserTestInGuestMode, CropImageOnDownloads) {
 #else
 #define MAYBE_CropImageOnDrive CropImageOnDrive
 #endif
-IN_PROC_BROWSER_TEST_F(GalleryBrowserTest, MAYBE_CropImageOnDrive) {
+// TODO(yamaguchi):Enable after removing root cause of the test flakiness.
+// https://crbug.com/804413.
+IN_PROC_BROWSER_TEST_F(GalleryBrowserTest, DISABLED_CropImageOnDrive) {
   set_test_case_name("cropImageOnDrive");
   StartTest();
 }
@@ -323,8 +328,7 @@ IN_PROC_BROWSER_TEST_F(GalleryBrowserTest, MAYBE_ResizeImageOnDownloads) {
   StartTest();
 }
 
-IN_PROC_BROWSER_TEST_F(GalleryBrowserTestInGuestMode,
-                       MAYBE_ResizeImageOnDownloads) {
+IN_PROC_BROWSER_TEST_F(GalleryBrowserTestInGuestMode, ResizeImageOnDownloads) {
   set_test_case_name("resizeImageOnDownloads");
   StartTest();
 }
@@ -493,8 +497,10 @@ IN_PROC_BROWSER_TEST_F(GalleryBrowserTest,
 #define MAYBE_SelectAllImagesAfterImageDeletionOnDownloads \
   SelectAllImagesAfterImageDeletionOnDownloads
 #endif
+// TODO(yamaguchi):Enable after removing root cause of the test flakiness.
+// http://crbug.com/804413.
 IN_PROC_BROWSER_TEST_F(GalleryBrowserTest,
-                       SelectAllImagesAfterImageDeletionOnDownloads) {
+                       DISABLED_SelectAllImagesAfterImageDeletionOnDownloads) {
   set_test_case_name("selectAllImagesAfterImageDeletionOnDownloads");
   StartTest();
 }
@@ -505,12 +511,17 @@ IN_PROC_BROWSER_TEST_F(GalleryBrowserTestInGuestMode,
   StartTest();
 }
 
-IN_PROC_BROWSER_TEST_F(GalleryBrowserTest, SlideshowTraversalOnDownloads) {
+// TODO(yamaguchi):Enable after removing root cause of the test flakiness.
+// http://crbug.com/804413.
+IN_PROC_BROWSER_TEST_F(GalleryBrowserTest,
+                       DISABLED_SlideshowTraversalOnDownloads) {
   set_test_case_name("slideshowTraversalOnDownloads");
   StartTest();
 }
 
-IN_PROC_BROWSER_TEST_F(GalleryBrowserTest, SlideshowTraversalOnDrive) {
+// TODO(yamaguchi):Enable after removing root cause of the test flakiness.
+// http://crbug.com/804413.
+IN_PROC_BROWSER_TEST_F(GalleryBrowserTest, DISABLED_SlideshowTraversalOnDrive) {
   set_test_case_name("slideshowTraversalOnDrive");
   StartTest();
 }
@@ -528,19 +539,16 @@ IN_PROC_BROWSER_TEST_F(GalleryBrowserTestInGuestMode,
 #else
 #define MAYBE_StopStartSlideshowOnDownloads StopStartSlideshowOnDownloads
 #endif
+// TODO(yamaguchi):Enable after removing root cause of the test flakiness.
+// http://crbug.com/804413.
 IN_PROC_BROWSER_TEST_F(GalleryBrowserTest,
-                       MAYBE_StopStartSlideshowOnDownloads) {
+                       DISABLED_StopStartSlideshowOnDownloads) {
   set_test_case_name("stopStartSlideshowOnDownloads");
   StartTest();
 }
 
-// http://crbug.com/508949
-#if defined(MEMORY_SANITIZER)
-#define MAYBE_StopStartSlideshowOnDrive DISABLED_StopStartSlideshowOnDrive
-#else
-#define MAYBE_StopStartSlideshowOnDrive StopStartSlideshowOnDrive
-#endif
-IN_PROC_BROWSER_TEST_F(GalleryBrowserTest, MAYBE_StopStartSlideshowOnDrive) {
+// http://crbug.com/804413
+IN_PROC_BROWSER_TEST_F(GalleryBrowserTest, DISABLED_StopStartSlideshowOnDrive) {
   set_test_case_name("stopStartSlideshowOnDrive");
   StartTest();
 }

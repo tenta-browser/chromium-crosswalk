@@ -266,7 +266,7 @@ bool WebThreadImpl::PostTaskHelper(WebThread::ID identifier,
 
 // static
 bool WebThread::IsThreadInitialized(ID identifier) {
-  if (g_globals == nullptr)
+  if (!g_globals.IsCreated())
     return false;
 
   WebThreadGlobals& globals = g_globals.Get();
@@ -297,18 +297,6 @@ std::string WebThread::GetDCheckCurrentlyOnErrorMessage(ID expected) {
   result += actual_name;
   result += ".";
   return result;
-}
-
-// static
-bool WebThread::IsMessageLoopValid(ID identifier) {
-  if (g_globals == nullptr)
-    return false;
-
-  WebThreadGlobals& globals = g_globals.Get();
-  base::AutoLock lock(globals.lock);
-  DCHECK(identifier >= 0 && identifier < ID_COUNT);
-  return globals.threads[identifier] &&
-         globals.threads[identifier]->message_loop();
 }
 
 // static
@@ -356,7 +344,7 @@ bool WebThread::PostTaskAndReply(ID identifier,
 
 // static
 bool WebThread::GetCurrentThreadIdentifier(ID* identifier) {
-  if (g_globals == nullptr)
+  if (!g_globals.IsCreated())
     return false;
 
   base::MessageLoop* cur_message_loop = base::MessageLoop::current();

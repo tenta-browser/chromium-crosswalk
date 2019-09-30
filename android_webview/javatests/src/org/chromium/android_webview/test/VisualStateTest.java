@@ -29,8 +29,9 @@ import org.chromium.android_webview.test.util.JavascriptEventObserver;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.CallbackHelper;
 import org.chromium.base.test.util.Feature;
-import org.chromium.content.browser.ContentViewCore;
 import org.chromium.content.browser.test.util.DOMUtils;
+import org.chromium.content_public.browser.ContentViewCore;
+import org.chromium.content_public.browser.JavascriptInjector;
 import org.chromium.content_public.browser.LoadUrlParams;
 
 import java.io.ByteArrayInputStream;
@@ -298,7 +299,7 @@ public class VisualStateTest {
         final AwContents awContents = testView.getAwContents();
         awContentsRef.set(awContents);
         final ContentViewCore contentViewCore = testView.getContentViewCore();
-        mActivityTestRule.enableJavaScriptOnUiThread(awContents);
+        AwActivityTestRule.enableJavaScriptOnUiThread(awContents);
 
         // JS will notify this observer once it has changed the background color of the page.
         final JavascriptEventObserver jsObserver = new JavascriptEventObserver();
@@ -365,7 +366,7 @@ public class VisualStateTest {
         final AwContents awContents = testView.getAwContents();
         awContentsRef.set(awContents);
         final ContentViewCore contentViewCore = testView.getContentViewCore();
-        mActivityTestRule.enableJavaScriptOnUiThread(awContents);
+        AwActivityTestRule.enableJavaScriptOnUiThread(awContents);
         awContents.getSettings().setFullscreenSupported(true);
 
         // JS will notify this observer once it has entered fullscreen.
@@ -421,7 +422,7 @@ public class VisualStateTest {
                 createDetachedTestContainerViewOnMainSync(awContentsClient);
         final AwContents awContents = testView.getAwContents();
 
-        mActivityTestRule.enableJavaScriptOnUiThread(awContents);
+        AwActivityTestRule.enableJavaScriptOnUiThread(awContents);
 
         // JS will notify this observer once it has changed the background color of the page.
         final Object pageChangeNotifier = new Object() {
@@ -440,8 +441,8 @@ public class VisualStateTest {
         };
 
         InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
-            awContents.getWebContents().addPossiblyUnsafeJavascriptInterface(
-                    pageChangeNotifier, "pageChangeNotifier", null);
+            JavascriptInjector.fromWebContents(awContents.getWebContents())
+                    .addPossiblyUnsafeInterface(pageChangeNotifier, "pageChangeNotifier", null);
             awContents.loadUrl(WAIT_FOR_JS_DETACHED_TEST_URL);
         });
 

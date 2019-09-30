@@ -149,7 +149,7 @@ class DecryptingDemuxerStreamTest : public testing::Test {
 
   void ReadAndExpectBufferReadyWith(
       DemuxerStream::Status status,
-      const scoped_refptr<DecoderBuffer>& decrypted_buffer) {
+      scoped_refptr<DecoderBuffer> decrypted_buffer) {
     if (status != DemuxerStream::kOk)
       EXPECT_CALL(*this, BufferReady(status, IsNull()));
     else if (decrypted_buffer->end_of_stream())
@@ -254,8 +254,8 @@ class DecryptingDemuxerStreamTest : public testing::Test {
     base::RunLoop().RunUntilIdle();
   }
 
-  MOCK_METHOD2(BufferReady, void(DemuxerStream::Status,
-                                 const scoped_refptr<DecoderBuffer>&));
+  MOCK_METHOD2(BufferReady,
+               void(DemuxerStream::Status, scoped_refptr<DecoderBuffer>));
   MOCK_METHOD0(OnWaitingForDecryptionKey, void(void));
 
   base::MessageLoop message_loop_;
@@ -313,7 +313,6 @@ TEST_F(DecryptingDemuxerStreamTest, Initialize_CdmWithoutDecryptor) {
   AudioDecoderConfig input_config(kCodecVorbis, kSampleFormatPlanarF32,
                                   CHANNEL_LAYOUT_STEREO, 44100,
                                   EmptyExtraData(), AesCtrEncryptionScheme());
-  EXPECT_MEDIA_LOG(HasSubstr("DecryptingDemuxerStream: no decryptor"));
   InitializeAudioAndExpectStatus(input_config, DECODER_ERROR_NOT_SUPPORTED);
 }
 

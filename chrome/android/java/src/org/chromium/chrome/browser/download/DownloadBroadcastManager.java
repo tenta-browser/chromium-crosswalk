@@ -12,6 +12,7 @@ import static org.chromium.chrome.browser.download.DownloadNotificationService2.
 import static org.chromium.chrome.browser.download.DownloadNotificationService2.ACTION_DOWNLOAD_RESUME;
 import static org.chromium.chrome.browser.download.DownloadNotificationService2.EXTRA_DOWNLOAD_CONTENTID_ID;
 import static org.chromium.chrome.browser.download.DownloadNotificationService2.EXTRA_DOWNLOAD_CONTENTID_NAMESPACE;
+import static org.chromium.chrome.browser.download.DownloadNotificationService2.EXTRA_DOWNLOAD_STATE_AT_CANCEL;
 import static org.chromium.chrome.browser.download.DownloadNotificationService2.EXTRA_IS_OFF_THE_RECORD;
 import static org.chromium.chrome.browser.download.DownloadNotificationService2.clearResumptionAttemptLeft;
 
@@ -39,6 +40,7 @@ import org.chromium.chrome.browser.init.EmptyBrowserParts;
 import org.chromium.chrome.browser.util.IntentUtils;
 import org.chromium.components.offline_items_collection.ContentId;
 import org.chromium.components.offline_items_collection.LegacyHelpers;
+import org.chromium.components.offline_items_collection.PendingState;
 
 /**
  * Class that spins up native when an interaction with a notification happens and passes the
@@ -129,7 +131,8 @@ public class DownloadBroadcastManager extends Service {
         switch (action) {
             case ACTION_DOWNLOAD_PAUSE:
                 mDownloadNotificationService.notifyDownloadPaused(entry.id, entry.fileName, true,
-                        false, entry.isOffTheRecord, entry.isTransient, null, true, false);
+                        false, entry.isOffTheRecord, entry.isTransient, null, true, false,
+                        PendingState.NOT_PENDING);
                 break;
 
             case ACTION_DOWNLOAD_CANCEL:
@@ -149,7 +152,7 @@ public class DownloadBroadcastManager extends Service {
 
                 mDownloadNotificationService.notifyDownloadPending(entry.id, entry.fileName,
                         entry.isOffTheRecord, entry.canDownloadWhileMetered, entry.isTransient,
-                        null, true);
+                        null, true, PendingState.PENDING_NETWORK);
                 break;
 
             default:
@@ -222,6 +225,9 @@ public class DownloadBroadcastManager extends Service {
         // Handle all remaining actions.
         switch (action) {
             case ACTION_DOWNLOAD_CANCEL:
+                DownloadNotificationUmaHelper.recordStateAtCancelHistogram(
+                        LegacyHelpers.isLegacyDownload(id),
+                        intent.getIntExtra(EXTRA_DOWNLOAD_STATE_AT_CANCEL, -1));
                 downloadServiceDelegate.cancelDownload(id, isOffTheRecord);
                 break;
 
@@ -324,7 +330,8 @@ public class DownloadBroadcastManager extends Service {
         String originalUrl = IntentUtils.safeGetStringExtra(intent, Intent.EXTRA_ORIGINATING_URI);
         String referrer = IntentUtils.safeGetStringExtra(intent, Intent.EXTRA_REFERRER);
         DownloadManagerService.openDownloadedContent(context, downloadFilename, isSupportedMimeType,
-                isOffTheRecord, contentId.id, id, originalUrl, referrer);
+                isOffTheRecord, contentId.id, id, originalUrl, referrer,
+                DownloadMetrics.NOTIFICATION);
     }
 
     @Nullable

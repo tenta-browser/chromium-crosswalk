@@ -8,6 +8,15 @@
 
 login.createScreen('EulaScreen', 'eula', function() {
   var CONTEXT_KEY_USAGE_STATS_ENABLED = 'usageStatsEnabled';
+  var CLEAR_ANCHORS_CONTENT_SCRIPT = {
+    code: 'A=Array.from(document.getElementsByTagName("a"));' +
+        'for(var i = 0; i < A.length; ++i) {' +
+        '  const el = A[i];' +
+        '  let e = document.createElement("span");' +
+        '  e.textContent=el.textContent;' +
+        '  el.parentNode.replaceChild(e,el);' +
+        '}'
+  };
 
   /**
    * Load text/html contents from the given url into the given webview. The
@@ -307,6 +316,25 @@ login.createScreen('EulaScreen', 'eula', function() {
     },
 
     /**
+     * Sets TPM password.
+     * @param {text} password TPM password to be shown.
+     */
+    setTpmPassword: function(password) {
+      if (loadTimeData.getString('newOobeUI') == 'on') {
+        $('oobe-eula-md').password = password;
+      } else {
+        $('tpm-busy').hidden = true;
+        if (password.length) {
+          $('tpm-password').textContent = password;
+          $('tpm-password').hidden = false;
+        } else {
+          $('tpm-desc').hidden = true;
+          $('tpm-desc-powerwash').hidden = false;
+        }
+      }
+    },
+
+    /**
      * Load Eula into the given webview. Online version is attempted first with
      * a timeout. If it fails to load, fallback to chrome://terms. The loaded
      * terms contents is then set to the webview via data url. Webview is
@@ -335,6 +363,15 @@ login.createScreen('EulaScreen', 'eula', function() {
         loadUrlToWebview(webview, TERMS_URL);
       };
 
+      webview.addContentScripts([{
+        name: 'clearAnchors',
+        matches: ['<all_urls>'],
+        js: CLEAR_ANCHORS_CONTENT_SCRIPT,
+      }]);
+      webview.addEventListener('contentload', () => {
+        webview.executeScript(CLEAR_ANCHORS_CONTENT_SCRIPT);
+      });
+
       var onlineEulaUrl = loadTimeData.getString('eulaOnlineUrl');
       if (!onlineEulaUrl) {
         loadBundledEula();
@@ -346,6 +383,17 @@ login.createScreen('EulaScreen', 'eula', function() {
           webview, onlineEulaUrl, ONLINE_EULA_LOAD_TIMEOUT_IN_MS,
           loadBundledEula);
       pendingLoad.start();
+    },
+
+    /**
+     * Called when focus is returned.
+     */
+    onFocusReturned: function() {
+      if ($('oobe-eula') && !$('oobe-eula').hidden) {
+        $('oobe-eula').focus();
+      } else if ($('oobe-eula-md') && !$('oobe-eula-md').hidden) {
+        $('oobe-eula-md').focus();
+      }
     },
   };
 });

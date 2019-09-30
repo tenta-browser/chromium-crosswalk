@@ -10,13 +10,12 @@
 #include <utility>
 #include <vector>
 
-#include "base/memory/ptr_util.h"
 #include "base/values.h"
 #include "extensions/browser/api/api_resource_manager.h"
 #include "extensions/browser/api/device_permissions_prompt.h"
 #include "extensions/browser/api/extensions_api_client.h"
 #include "extensions/common/api/hid.h"
-#include "extensions/utility/scoped_callback_runner.h"
+#include "mojo/public/cpp/bindings/callback_helpers.h"
 #include "services/device/public/cpp/hid/hid_device_filter.h"
 
 namespace hid = extensions::api::hid;
@@ -248,7 +247,7 @@ bool HidReceiveFunction::ReadParameters() {
 }
 
 void HidReceiveFunction::StartWork(device::mojom::HidConnection* connection) {
-  connection->Read(ScopedCallbackRunner(
+  connection->Read(mojo::WrapCallbackWithDefaultInvokeIfNotRun(
       base::BindOnce(&HidReceiveFunction::OnFinished, this), false, 0,
       base::nullopt));
 }
@@ -286,8 +285,8 @@ void HidSendFunction::StartWork(device::mojom::HidConnection* connection) {
 
   connection->Write(
       static_cast<uint8_t>(parameters_->report_id), buffer,
-      ScopedCallbackRunner(base::BindOnce(&HidSendFunction::OnFinished, this),
-                           false));
+      mojo::WrapCallbackWithDefaultInvokeIfNotRun(
+          base::BindOnce(&HidSendFunction::OnFinished, this), false));
 }
 
 void HidSendFunction::OnFinished(bool success) {
@@ -314,7 +313,7 @@ void HidReceiveFeatureReportFunction::StartWork(
     device::mojom::HidConnection* connection) {
   connection->GetFeatureReport(
       static_cast<uint8_t>(parameters_->report_id),
-      ScopedCallbackRunner(
+      mojo::WrapCallbackWithDefaultInvokeIfNotRun(
           base::BindOnce(&HidReceiveFeatureReportFunction::OnFinished, this),
           false, base::nullopt));
 }
@@ -350,7 +349,7 @@ void HidSendFeatureReportFunction::StartWork(
 
   connection->SendFeatureReport(
       static_cast<uint8_t>(parameters_->report_id), buffer,
-      ScopedCallbackRunner(
+      mojo::WrapCallbackWithDefaultInvokeIfNotRun(
           base::BindOnce(&HidSendFeatureReportFunction::OnFinished, this),
           false));
 }

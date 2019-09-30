@@ -4,6 +4,8 @@
 
 #include "base/memory/ref_counted_memory.h"
 
+#include <utility>
+
 #include "base/logging.h"
 
 namespace base {
@@ -38,9 +40,11 @@ RefCountedBytes::RefCountedBytes(const std::vector<unsigned char>& initializer)
 RefCountedBytes::RefCountedBytes(const unsigned char* p, size_t size)
     : data_(p, p + size) {}
 
+RefCountedBytes::RefCountedBytes(size_t size) : data_(size, 0) {}
+
 scoped_refptr<RefCountedBytes> RefCountedBytes::TakeVector(
     std::vector<unsigned char>* to_destroy) {
-  scoped_refptr<RefCountedBytes> bytes(new RefCountedBytes);
+  auto bytes = MakeRefCounted<RefCountedBytes>();
   bytes->data_.swap(*to_destroy);
   return bytes;
 }
@@ -64,7 +68,7 @@ RefCountedString::~RefCountedString() = default;
 // static
 scoped_refptr<RefCountedString> RefCountedString::TakeString(
     std::string* to_destroy) {
-  scoped_refptr<RefCountedString> self(new RefCountedString);
+  auto self = MakeRefCounted<RefCountedString>();
   to_destroy->swap(self->data_);
   return self;
 }
@@ -76,6 +80,26 @@ const unsigned char* RefCountedString::front() const {
 
 size_t RefCountedString::size() const {
   return data_.size();
+}
+
+RefCountedSharedMemory::RefCountedSharedMemory(
+    std::unique_ptr<SharedMemory> shm,
+    size_t size)
+    : shm_(std::move(shm)), size_(size) {
+  DCHECK(shm_);
+  DCHECK(shm_->memory());
+  DCHECK_GT(size_, 0U);
+  DCHECK_LE(size_, shm_->mapped_size());
+}
+
+RefCountedSharedMemory::~RefCountedSharedMemory() = default;
+
+const unsigned char* RefCountedSharedMemory::front() const {
+  return reinterpret_cast<const unsigned char*>(shm_->memory());
+}
+
+size_t RefCountedSharedMemory::size() const {
+  return size_;
 }
 
 }  //  namespace base

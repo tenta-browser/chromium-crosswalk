@@ -33,11 +33,11 @@ import org.mockito.stubbing.Answer;
 import org.robolectric.annotation.Config;
 import org.robolectric.shadows.ShadowLog;
 
+import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.base.test.util.Feature;
 import org.chromium.chrome.browser.media.router.cast.CastMessageHandler.RequestRecord;
 import org.chromium.chrome.browser.media.router.cast.JSONTestUtils.JSONObjectLike;
 import org.chromium.chrome.browser.media.router.cast.JSONTestUtils.JSONStringLike;
-import org.chromium.testing.local.LocalRobolectricTestRunner;
 
 import java.util.ArrayDeque;
 import java.util.HashMap;
@@ -48,7 +48,7 @@ import java.util.Set;
 /**
  * Robolectric tests for CastSession.
  */
-@RunWith(LocalRobolectricTestRunner.class)
+@RunWith(BaseRobolectricTestRunner.class)
 @Config(manifest = Config.NONE)
 public class CastMessageHandlerTest {
     private static final String TAG = "MediaRouter";
@@ -60,7 +60,7 @@ public class CastMessageHandlerTest {
     private static final String INVALID_CLIENT_ID = "xxxxxxxxxxxxxxxxx";
     private static final String NAMESPACE1 = "namespace1";
     private static final String NAMESPACE2 = "namespace2";
-    private static final String MEDIA_NAMESPACE = CastMessageHandler.MEDIA_NAMESPACE;
+    private static final String MEDIA_NAMESPACE = CastSessionUtil.MEDIA_NAMESPACE;
     private static final int SEQUENCE_NUMBER1 = 1;
     private static final int SEQUENCE_NUMBER2 = 2;
     private static final int REQUEST_ID1 = 1;
@@ -280,10 +280,10 @@ public class CastMessageHandlerTest {
             } else {
                 expected.put("type", messageType);
             }
-            verify(mMessageHandler).sendJsonCastMessage(
-                    argThat(new JSONObjectLike(expected)),
-                    eq(CastMessageHandler.MEDIA_NAMESPACE),
-                    eq(CLIENT_ID1), eq(SEQUENCE_NUMBER1));
+            verify(mMessageHandler)
+                    .sendJsonCastMessage(argThat(new JSONObjectLike(expected)),
+                            eq(CastSessionUtil.MEDIA_NAMESPACE), eq(CLIENT_ID1),
+                            eq(SEQUENCE_NUMBER1));
         }
     }
 

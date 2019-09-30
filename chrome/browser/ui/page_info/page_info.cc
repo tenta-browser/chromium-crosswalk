@@ -15,7 +15,6 @@
 #include "base/command_line.h"
 #include "base/i18n/time_formatting.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/metrics/field_trial.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/metrics/user_metrics.h"
@@ -104,6 +103,7 @@ ContentSettingsType kPermissionType[] = {
     CONTENT_SETTINGS_TYPE_GEOLOCATION,
     CONTENT_SETTINGS_TYPE_MEDIASTREAM_CAMERA,
     CONTENT_SETTINGS_TYPE_MEDIASTREAM_MIC,
+    CONTENT_SETTINGS_TYPE_SENSORS,
     CONTENT_SETTINGS_TYPE_NOTIFICATIONS,
     CONTENT_SETTINGS_TYPE_JAVASCRIPT,
 #if !defined(OS_ANDROID)
@@ -118,6 +118,7 @@ ContentSettingsType kPermissionType[] = {
     CONTENT_SETTINGS_TYPE_AUTOPLAY,
     CONTENT_SETTINGS_TYPE_MIDI_SYSEX,
     CONTENT_SETTINGS_TYPE_CLIPBOARD_READ,
+    CONTENT_SETTINGS_TYPE_USB_GUARD,
 };
 
 // Checks whether this permission is currently the factory default, as set by
@@ -140,10 +141,12 @@ bool IsPermissionFactoryDefault(HostContentSettingsMap* content_settings,
 
 // Determines whether to show permission |type| in the Page Info UI. Only
 // applies to permissions listed in |kPermissionType|.
-bool ShouldShowPermission(const PageInfoUI::PermissionInfo& info,
-                          const GURL& site_url,
-                          HostContentSettingsMap* content_settings,
-                          content::WebContents* web_contents) {
+bool ShouldShowPermission(
+    const PageInfoUI::PermissionInfo& info,
+    const GURL& site_url,
+    HostContentSettingsMap* content_settings,
+    content::WebContents* web_contents,
+    TabSpecificContentSettings* tab_specific_content_settings) {
   // Note |CONTENT_SETTINGS_TYPE_ADS| will show up regardless of its default
   // value when it has been activated on the current origin.
   if (info.type == CONTENT_SETTINGS_TYPE_ADS) {
@@ -180,15 +183,14 @@ bool ShouldShowPermission(const PageInfoUI::PermissionInfo& info,
   if (info.type == CONTENT_SETTINGS_TYPE_GEOLOCATION)
     return true;
 #else
-  // Flash will always be shown. See https://crbug.com/791142.
-  if (info.type == CONTENT_SETTINGS_TYPE_PLUGINS)
+  // Flash is shown if the user has ever changed its setting for |site_url|.
+  if (info.type == CONTENT_SETTINGS_TYPE_PLUGINS &&
+      content_settings->GetWebsiteSetting(site_url, site_url,
+                                          CONTENT_SETTINGS_TYPE_PLUGINS_DATA,
+                                          std::string(), nullptr) != nullptr) {
     return true;
-#endif
-
-  // All other content settings only show when they are non-factory-default.
-  if (IsPermissionFactoryDefault(content_settings, info)) {
-    return false;
   }
+#endif
 
 #if !defined(OS_ANDROID)
   // Autoplay is Android-only at the moment.
@@ -196,7 +198,18 @@ bool ShouldShowPermission(const PageInfoUI::PermissionInfo& info,
     return false;
 #endif
 
-  return true;
+  // Show the content setting if it has been changed by the user since the last
+  // page load.
+  if (tab_specific_content_settings->HasContentSettingChangedViaPageInfo(
+          info.type)) {
+    return true;
+  }
+
+  // Show the content setting when it has a non-default value.
+  if (!IsPermissionFactoryDefault(content_settings, info))
+    return true;
+
+  return false;
 }
 
 void CheckContentStatus(security_state::ContentStatus content_status,
@@ -267,38 +280,6 @@ void ReportAnyInsecureContent(const security_state::SecurityInfo& security_info,
   }
 }
 
-void GetSiteIdentityByMaliciousContentStatus(
-    security_state::MaliciousContentStatus malicious_content_status,
-    PageInfo::SiteIdentityStatus* status,
-    base::string16* details) {
-  switch (malicious_content_status) {
-    case security_state::MALICIOUS_CONTENT_STATUS_NONE:
-      NOTREACHED();
-      break;
-    case security_state::MALICIOUS_CONTENT_STATUS_MALWARE:
-      *status = PageInfo::SITE_IDENTITY_STATUS_MALWARE;
-      *details = l10n_util::GetStringUTF16(IDS_PAGE_INFO_MALWARE_DETAILS);
-      break;
-    case security_state::MALICIOUS_CONTENT_STATUS_SOCIAL_ENGINEERING:
-      *status = PageInfo::SITE_IDENTITY_STATUS_SOCIAL_ENGINEERING;
-      *details =
-          l10n_util::GetStringUTF16(IDS_PAGE_INFO_SOCIAL_ENGINEERING_DETAILS);
-      break;
-    case security_state::MALICIOUS_CONTENT_STATUS_UNWANTED_SOFTWARE:
-      *status = PageInfo::SITE_IDENTITY_STATUS_UNWANTED_SOFTWARE;
-      *details =
-          l10n_util::GetStringUTF16(IDS_PAGE_INFO_UNWANTED_SOFTWARE_DETAILS);
-      break;
-    case security_state::MALICIOUS_CONTENT_STATUS_PASSWORD_REUSE:
-#if defined(SAFE_BROWSING_DB_LOCAL)
-      *status = PageInfo::SITE_IDENTITY_STATUS_PASSWORD_REUSE;
-      *details =
-          l10n_util::GetStringUTF16(IDS_PAGE_INFO_CHANGE_PASSWORD_DETAILS);
-#endif
-      break;
-  }
-}
-
 base::string16 GetSimpleSiteName(const GURL& url) {
   return url_formatter::FormatUrlForSecurityDisplay(
       url, url_formatter::SchemeDisplay::OMIT_HTTP_AND_HTTPS);
@@ -313,7 +294,7 @@ ChooserContextBase* GetUsbChooserContext(Profile* profile) {
 // email security-dev@chromium.org.
 const PageInfo::ChooserUIInfo kChooserUIInfo[] = {
     {CONTENT_SETTINGS_TYPE_USB_CHOOSER_DATA, &GetUsbChooserContext,
-     IDR_BLOCKED_USB, IDR_ALLOWED_USB, IDS_PAGE_INFO_USB_DEVICE_LABEL,
+     IDS_PAGE_INFO_USB_DEVICE_LABEL, IDS_PAGE_INFO_USB_DEVICE_SECONDARY_LABEL,
      IDS_PAGE_INFO_DELETE_USB_DEVICE, "name"},
 };
 
@@ -375,9 +356,11 @@ void PageInfo::RecordPageInfoAction(PageInfoAction action) {
 
   std::string histogram_name;
   if (site_url_.SchemeIsCryptographic()) {
-    if (security_level_ == security_state::SECURE ||
-        security_level_ == security_state::EV_SECURE) {
-      UMA_HISTOGRAM_ENUMERATION("Security.PageInfo.Action.HttpsUrl.Valid",
+    if (security_level_ == security_state::SECURE) {
+      UMA_HISTOGRAM_ENUMERATION("Security.PageInfo.Action.HttpsUrl.ValidNonEV",
+                                action, PAGE_INFO_COUNT);
+    } else if (security_level_ == security_state::EV_SECURE) {
+      UMA_HISTOGRAM_ENUMERATION("Security.PageInfo.Action.HttpsUrl.ValidEV",
                                 action, PAGE_INFO_COUNT);
     } else if (security_level_ == security_state::NONE) {
       UMA_HISTOGRAM_ENUMERATION("Security.PageInfo.Action.HttpsUrl.Downgraded",
@@ -403,6 +386,8 @@ void PageInfo::RecordPageInfoAction(PageInfoAction action) {
 
 void PageInfo::OnSitePermissionChanged(ContentSettingsType type,
                                        ContentSetting setting) {
+  tab_specific_content_settings()->ContentSettingChangedViaPageInfo(type);
+
   // Count how often a permission for a specific content type is changed using
   // the Page Info UI.
   size_t num_values;
@@ -836,15 +821,14 @@ void PageInfo::PresentSitePermissions() {
 
       // If under embargo, update |permission_info| to reflect that.
       if (permission_result.content_setting == CONTENT_SETTING_BLOCK &&
-          (permission_result.source ==
-               PermissionStatusSource::MULTIPLE_DISMISSALS ||
-           permission_result.source ==
-               PermissionStatusSource::SAFE_BROWSING_BLACKLIST))
+          permission_result.source ==
+              PermissionStatusSource::MULTIPLE_DISMISSALS) {
         permission_info.setting = permission_result.content_setting;
+      }
     }
 
     if (ShouldShowPermission(permission_info, site_url_, content_settings_,
-                             web_contents())) {
+                             web_contents(), tab_specific_content_settings())) {
       permission_info_list.push_back(permission_info);
     }
   }
@@ -852,10 +836,16 @@ void PageInfo::PresentSitePermissions() {
   for (const ChooserUIInfo& ui_info : kChooserUIInfo) {
     ChooserContextBase* context = ui_info.get_context(profile_);
     const GURL origin = site_url_.GetOrigin();
+
+    // Hide individual object permissions because when the chooser is blocked
+    // previously granted device permissions are also ignored.
+    if (!context->CanRequestObjectPermission(origin, origin))
+      continue;
+
     auto chosen_objects = context->GetGrantedObjects(origin, origin);
     for (std::unique_ptr<base::DictionaryValue>& object : chosen_objects) {
       chosen_object_info_list.push_back(
-          base::MakeUnique<PageInfoUI::ChosenObjectInfo>(ui_info,
+          std::make_unique<PageInfoUI::ChosenObjectInfo>(ui_info,
                                                          std::move(object)));
     }
   }
@@ -925,4 +915,37 @@ std::vector<ContentSettingsType> PageInfo::GetAllPermissionsForTesting() {
     permission_list.push_back(kPermissionType[i]);
   }
   return permission_list;
+}
+
+void PageInfo::GetSiteIdentityByMaliciousContentStatus(
+    security_state::MaliciousContentStatus malicious_content_status,
+    PageInfo::SiteIdentityStatus* status,
+    base::string16* details) {
+  switch (malicious_content_status) {
+    case security_state::MALICIOUS_CONTENT_STATUS_NONE:
+      NOTREACHED();
+      break;
+    case security_state::MALICIOUS_CONTENT_STATUS_MALWARE:
+      *status = PageInfo::SITE_IDENTITY_STATUS_MALWARE;
+      *details = l10n_util::GetStringUTF16(IDS_PAGE_INFO_MALWARE_DETAILS);
+      break;
+    case security_state::MALICIOUS_CONTENT_STATUS_SOCIAL_ENGINEERING:
+      *status = PageInfo::SITE_IDENTITY_STATUS_SOCIAL_ENGINEERING;
+      *details =
+          l10n_util::GetStringUTF16(IDS_PAGE_INFO_SOCIAL_ENGINEERING_DETAILS);
+      break;
+    case security_state::MALICIOUS_CONTENT_STATUS_UNWANTED_SOFTWARE:
+      *status = PageInfo::SITE_IDENTITY_STATUS_UNWANTED_SOFTWARE;
+      *details =
+          l10n_util::GetStringUTF16(IDS_PAGE_INFO_UNWANTED_SOFTWARE_DETAILS);
+      break;
+    case security_state::MALICIOUS_CONTENT_STATUS_PASSWORD_REUSE:
+#if defined(SAFE_BROWSING_DB_LOCAL)
+      *status = PageInfo::SITE_IDENTITY_STATUS_PASSWORD_REUSE;
+      *details = safe_browsing::ChromePasswordProtectionService::
+                     GetPasswordProtectionService(profile_)
+                         ->GetWarningDetailText();
+#endif
+      break;
+  }
 }

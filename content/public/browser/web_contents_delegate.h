@@ -21,9 +21,10 @@
 #include "content/public/common/media_stream_request.h"
 #include "content/public/common/previews_state.h"
 #include "content/public/common/window_container_type.mojom.h"
-#include "third_party/WebKit/public/platform/WebDisplayMode.h"
-#include "third_party/WebKit/public/platform/WebDragOperation.h"
-#include "third_party/WebKit/public/platform/WebSecurityStyle.h"
+#include "third_party/blink/public/mojom/color_chooser/color_chooser.mojom.h"
+#include "third_party/blink/public/platform/web_display_mode.h"
+#include "third_party/blink/public/platform/web_drag_operation.h"
+#include "third_party/blink/public/platform/web_security_style.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/base/window_open_disposition.h"
 #include "ui/gfx/geometry/rect_f.h"
@@ -43,12 +44,12 @@ namespace content {
 class ColorChooser;
 class JavaScriptDialogManager;
 class RenderFrameHost;
+class RenderProcessHost;
 class RenderWidgetHost;
 class SessionStorageNamespace;
 class SiteInstance;
 class WebContents;
 class WebContentsImpl;
-struct ColorSuggestion;
 struct ContextMenuParams;
 struct DropData;
 struct FileChooserParams;
@@ -66,6 +67,10 @@ namespace url {
 class Origin;
 }
 
+namespace viz {
+class SurfaceId;
+}  // namespace viz
+
 namespace blink {
 class WebGestureEvent;
 }
@@ -73,7 +78,6 @@ class WebGestureEvent;
 namespace content {
 
 struct OpenURLParams;
-struct WebContentsUnresponsiveState;
 
 enum class KeyboardEventProcessingResult;
 
@@ -317,13 +321,24 @@ class CONTENT_EXPORT WebContentsDelegate {
                                   const GURL& target_url,
                                   WebContents* new_contents) {}
 
-  // Notification that the tab is hung.
-  virtual void RendererUnresponsive(
-      WebContents* source,
-      const WebContentsUnresponsiveState& unresponsive_state) {}
+  // Notification that one of the frames in the WebContents is hung. |source| is
+  // the WebContents that is hung, and |render_widget_host| is the
+  // RenderWidgetHost that, while routing events to it, discovered the hang.
+  //
+  // Useful member functions on |render_widget_host|:
+  // - Getting the hung render process: GetProcess()
+  // - Querying whether the process is still hung: IsCurrentlyUnresponsive()
+  // - Waiting for the process to recover on its own:
+  //     RestartHangMonitorTimeoutIfNecessary()
+  virtual void RendererUnresponsive(WebContents* source,
+                                    RenderWidgetHost* render_widget_host) {}
 
-  // Notification that the tab is no longer hung.
-  virtual void RendererResponsive(WebContents* source) {}
+  // Notification that a process in the WebContents is no longer hung. |source|
+  // is the WebContents that was hung, and |render_widget_host| is the
+  // RenderWidgetHost that was passed in an earlier call to
+  // RendererUnresponsive().
+  virtual void RendererResponsive(WebContents* source,
+                                  RenderWidgetHost* render_widget_host) {}
 
   // Invoked when a main fram navigation occurs.
   virtual void DidNavigateMainFramePostCommit(WebContents* source) {}
@@ -340,7 +355,7 @@ class CONTENT_EXPORT WebContentsDelegate {
   virtual ColorChooser* OpenColorChooser(
       WebContents* web_contents,
       SkColor color,
-      const std::vector<ColorSuggestion>& suggestions);
+      const std::vector<blink::mojom::ColorSuggestionPtr>& suggestions);
 
   // Called when a file selection is to be done.
   virtual void RunFileChooser(RenderFrameHost* render_frame_host,
@@ -439,6 +454,14 @@ class CONTENT_EXPORT WebContentsDelegate {
   // Notification that the page has lost the mouse lock.
   virtual void LostMouseLock() {}
 
+  // Requests keyboard lock. Once the request is approved or rejected,
+  // GotResponseToKeyboardLockRequest() will be called on |web_contents|.
+  virtual void RequestKeyboardLock(WebContents* web_contents,
+                                   bool esc_key_locked) {}
+
+  // Notification that the keyboard lock request has been canceled.
+  virtual void CancelKeyboardLockRequest(WebContents* web_contents) {}
+
   // Asks permission to use the camera and/or microphone. If permission is
   // granted, a call should be made to |callback| with the devices. If the
   // request is denied, a call should be made to |callback| with an empty list
@@ -452,7 +475,7 @@ class CONTENT_EXPORT WebContentsDelegate {
   // Checks if we have permission to access the microphone or camera. Note that
   // this does not query the user. |type| must be MEDIA_DEVICE_AUDIO_CAPTURE
   // or MEDIA_DEVICE_VIDEO_CAPTURE.
-  virtual bool CheckMediaAccessPermission(WebContents* web_contents,
+  virtual bool CheckMediaAccessPermission(RenderFrameHost* render_frame_host,
                                           const GURL& security_origin,
                                           MediaStreamType type);
 
@@ -541,8 +564,30 @@ class CONTENT_EXPORT WebContentsDelegate {
   virtual bool DoBrowserControlsShrinkBlinkSize() const;
 
   // Give WebContentsDelegates the opportunity to adjust the previews state.
-  virtual void AdjustPreviewsStateForNavigation(PreviewsState* previews_state) {
+  virtual void AdjustPreviewsStateForNavigation(
+      content::WebContents* web_contents,
+      PreviewsState* previews_state) {}
+
+  // Requests to print an out-of-process subframe for the specified WebContents.
+  // |rect| is the rectangular area where its content resides in its parent
+  // frame. |document_cookie| is a unique id for a printed document associated
+  // with
+  //                   a print job.
+  // |subframe_host| is the render frame host of the subframe to be printed.
+  virtual void PrintCrossProcessSubframe(WebContents* web_contents,
+                                         const gfx::Rect& rect,
+                                         int document_cookie,
+                                         RenderFrameHost* subframe_host) const {
   }
+
+  // Updates the Picture-in-Picture controller with the relevant viz::SurfaceId
+  // and natural size of the video to be in Picture-in-Picture mode.
+  virtual void UpdatePictureInPictureSurfaceId(const viz::SurfaceId& surface_id,
+                                               const gfx::Size& natural_size);
+
+  // Updates the Picture-in-Picture controller with a signal that
+  // Picture-in-Picture mode has ended.
+  virtual void ExitPictureInPicture();
 
  protected:
   virtual ~WebContentsDelegate();

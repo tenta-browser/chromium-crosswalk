@@ -9,7 +9,7 @@
 
 #include "base/command_line.h"
 #include "base/macros.h"
-#include "content/browser/loader/url_loader_request_handler.h"
+#include "content/browser/loader/navigation_loader_interceptor.h"
 #include "content/browser/service_worker/service_worker_context_core.h"
 #include "content/browser/service_worker/service_worker_context_wrapper.h"
 #include "content/browser/service_worker/service_worker_navigation_handle_core.h"
@@ -24,12 +24,12 @@
 #include "content/public/common/content_features.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/common/origin_util.h"
-#include "content/public/common/resource_request_body.h"
-#include "content/public/common/service_worker_modes.h"
+#include "content/public/common/url_constants.h"
 #include "ipc/ipc_message.h"
 #include "net/base/url_util.h"
 #include "net/url_request/url_request.h"
 #include "net/url_request/url_request_interceptor.h"
+#include "services/network/public/cpp/resource_request_body.h"
 #include "storage/browser/blob/blob_storage_context.h"
 
 namespace content {
@@ -58,6 +58,14 @@ class ServiceWorkerRequestInterceptor
   DISALLOW_COPY_AND_ASSIGN(ServiceWorkerRequestInterceptor);
 };
 
+bool SchemeMaySupportRedirectingToHTTPS(const GURL& url) {
+#if defined(OS_CHROMEOS)
+  return url.SchemeIs(kExternalFileScheme);
+#else   // OS_CHROMEOS
+  return false;
+#endif  // OS_CHROMEOS
+}
+
 }  // namespace
 
 // static
@@ -72,11 +80,20 @@ void ServiceWorkerRequestHandler::InitializeForNavigation(
     bool skip_service_worker,
     ResourceType resource_type,
     RequestContextType request_context_type,
-    RequestContextFrameType frame_type,
+    network::mojom::RequestContextFrameType frame_type,
     bool is_parent_frame_secure,
-    scoped_refptr<ResourceRequestBody> body,
+    scoped_refptr<network::ResourceRequestBody> body,
     const base::Callback<WebContents*(void)>& web_contents_getter) {
   CHECK(IsBrowserSideNavigationEnabled());
+
+  // S13nServiceWorker enabled, NetworkService disabled:
+  // To start the navigation, InitializeForNavigationNetworkService() is called
+  // instead of this, but when that request handler falls back to network,
+  // InitializeForNavigation() is called.
+  // Since we already determined to fall back to network, don't create another
+  // handler.
+  if (ServiceWorkerUtils::IsServicificationEnabled())
+    return;
 
   // Only create a handler when there is a ServiceWorkerNavigationHandlerCore
   // to take ownership of a pre-created SeviceWorkerProviderHost.
@@ -86,7 +103,8 @@ void ServiceWorkerRequestHandler::InitializeForNavigation(
   // Create the handler even for insecure HTTP since it's used in the
   // case of redirect to HTTPS.
   if (!request->url().SchemeIsHTTPOrHTTPS() &&
-      !OriginCanAccessServiceWorkers(request->url())) {
+      !OriginCanAccessServiceWorkers(request->url()) &&
+      !SchemeMaySupportRedirectingToHTTPS(request->url())) {
     return;
   }
 
@@ -105,10 +123,10 @@ void ServiceWorkerRequestHandler::InitializeForNavigation(
       provider_host->CreateRequestHandler(
           network::mojom::FetchRequestMode::kNavigate,
           network::mojom::FetchCredentialsMode::kInclude,
-          FetchRedirectMode::MANUAL_MODE, std::string() /* integrity */,
-          false /* keepalive */, resource_type, request_context_type,
-          frame_type, blob_storage_context->AsWeakPtr(), body,
-          skip_service_worker));
+          network::mojom::FetchRedirectMode::kManual,
+          std::string() /* integrity */, false /* keepalive */, resource_type,
+          request_context_type, frame_type, blob_storage_context->AsWeakPtr(),
+          body, skip_service_worker));
   if (handler)
     request->SetUserData(&user_data_key_, std::move(handler));
 
@@ -122,18 +140,18 @@ void ServiceWorkerRequestHandler::InitializeForNavigation(
 
 // S13nServiceWorker:
 // static
-std::unique_ptr<URLLoaderRequestHandler>
+std::unique_ptr<NavigationLoaderInterceptor>
 ServiceWorkerRequestHandler::InitializeForNavigationNetworkService(
-    const ResourceRequest& resource_request,
+    const network::ResourceRequest& resource_request,
     ResourceContext* resource_context,
     ServiceWorkerNavigationHandleCore* navigation_handle_core,
     storage::BlobStorageContext* blob_storage_context,
     bool skip_service_worker,
     ResourceType resource_type,
     RequestContextType request_context_type,
-    RequestContextFrameType frame_type,
+    network::mojom::RequestContextFrameType frame_type,
     bool is_parent_frame_secure,
-    scoped_refptr<ResourceRequestBody> body,
+    scoped_refptr<network::ResourceRequestBody> body,
     const base::Callback<WebContents*(void)>& web_contents_getter) {
   DCHECK(ServiceWorkerUtils::IsServicificationEnabled());
   DCHECK(navigation_handle_core);
@@ -160,10 +178,10 @@ ServiceWorkerRequestHandler::InitializeForNavigationNetworkService(
       provider_host->CreateRequestHandler(
           network::mojom::FetchRequestMode::kNavigate,
           network::mojom::FetchCredentialsMode::kInclude,
-          FetchRedirectMode::MANUAL_MODE, std::string() /* integrity */,
-          false /* keepalive */, resource_type, request_context_type,
-          frame_type, blob_storage_context->AsWeakPtr(), body,
-          skip_service_worker));
+          network::mojom::FetchRedirectMode::kManual,
+          std::string() /* integrity */, false /* keepalive */, resource_type,
+          request_context_type, frame_type, blob_storage_context->AsWeakPtr(),
+          body, skip_service_worker));
 
   // Transfer ownership to the ServiceWorkerNavigationHandleCore.
   // In the case of a successful navigation, the SWProviderHost will be
@@ -172,7 +190,35 @@ ServiceWorkerRequestHandler::InitializeForNavigationNetworkService(
   // ServiceWorkerNavigationHandleCore.
   navigation_handle_core->DidPreCreateProviderHost(std::move(provider_host));
 
-  return base::WrapUnique<URLLoaderRequestHandler>(handler.release());
+  return base::WrapUnique<NavigationLoaderInterceptor>(handler.release());
+}
+
+// static
+std::unique_ptr<NavigationLoaderInterceptor>
+ServiceWorkerRequestHandler::InitializeForSharedWorker(
+    const network::ResourceRequest& resource_request,
+    base::WeakPtr<ServiceWorkerProviderHost> host) {
+  DCHECK(ServiceWorkerUtils::IsServicificationEnabled());
+
+  // Create the handler even for insecure HTTP since it's used in the
+  // case of redirect to HTTPS.
+  if (!resource_request.url.SchemeIsHTTPOrHTTPS() &&
+      !OriginCanAccessServiceWorkers(resource_request.url)) {
+    return nullptr;
+  }
+
+  std::unique_ptr<ServiceWorkerRequestHandler> handler(
+      host->CreateRequestHandler(
+          resource_request.fetch_request_mode,
+          resource_request.fetch_credentials_mode,
+          resource_request.fetch_redirect_mode,
+          resource_request.fetch_integrity, resource_request.keepalive,
+          RESOURCE_TYPE_SHARED_WORKER, REQUEST_CONTEXT_TYPE_SHARED_WORKER,
+          resource_request.fetch_frame_type,
+          nullptr /* blob_storage_context: unused in S13n */,
+          resource_request.request_body, resource_request.skip_service_worker));
+
+  return base::WrapUnique<NavigationLoaderInterceptor>(handler.release());
 }
 
 // static
@@ -185,13 +231,13 @@ void ServiceWorkerRequestHandler::InitializeHandler(
     bool skip_service_worker,
     network::mojom::FetchRequestMode request_mode,
     network::mojom::FetchCredentialsMode credentials_mode,
-    FetchRedirectMode redirect_mode,
+    network::mojom::FetchRedirectMode redirect_mode,
     const std::string& integrity,
     bool keepalive,
     ResourceType resource_type,
     RequestContextType request_context_type,
-    RequestContextFrameType frame_type,
-    scoped_refptr<ResourceRequestBody> body) {
+    network::mojom::RequestContextFrameType frame_type,
+    scoped_refptr<network::ResourceRequestBody> body) {
   // Create the handler even for insecure HTTP since it's used in the
   // case of redirect to HTTPS.
   if (!request->url().SchemeIsHTTPOrHTTPS() &&
@@ -251,44 +297,26 @@ ServiceWorkerProviderHost* ServiceWorkerRequestHandler::GetProviderHost(
 }
 
 void ServiceWorkerRequestHandler::MaybeCreateLoader(
-    const ResourceRequest& request,
+    const network::ResourceRequest& request,
     ResourceContext* resource_context,
     LoaderCallback callback) {
   NOTREACHED();
-  std::move(callback).Run(StartLoaderCallback());
+  std::move(callback).Run({});
 }
 
 void ServiceWorkerRequestHandler::PrepareForCrossSiteTransfer(
     int old_process_id) {
   CHECK(!IsBrowserSideNavigationEnabled());
-  if (!provider_host_ || !context_)
-    return;
-  old_process_id_ = old_process_id;
-  old_provider_id_ = provider_host_->provider_id();
-  host_for_cross_site_transfer_ = context_->TransferProviderHostOut(
-      old_process_id, provider_host_->provider_id());
-  DCHECK_EQ(provider_host_.get(), host_for_cross_site_transfer_.get());
 }
 
 void ServiceWorkerRequestHandler::CompleteCrossSiteTransfer(
     int new_process_id, int new_provider_id) {
   CHECK(!IsBrowserSideNavigationEnabled());
-  if (!host_for_cross_site_transfer_.get() || !context_)
-    return;
-  DCHECK_EQ(provider_host_.get(), host_for_cross_site_transfer_.get());
-  context_->TransferProviderHostIn(new_process_id, new_provider_id,
-                                   std::move(host_for_cross_site_transfer_));
-  DCHECK_EQ(provider_host_->provider_id(), new_provider_id);
 }
 
 void ServiceWorkerRequestHandler::MaybeCompleteCrossSiteTransferInOldProcess(
     int old_process_id) {
   CHECK(!IsBrowserSideNavigationEnabled());
-  if (!host_for_cross_site_transfer_.get() || !context_ ||
-      old_process_id_ != old_process_id) {
-    return;
-  }
-  CompleteCrossSiteTransfer(old_process_id_, old_provider_id_);
 }
 
 bool ServiceWorkerRequestHandler::SanityCheckIsSameContext(
@@ -309,9 +337,6 @@ ServiceWorkerRequestHandler::ServiceWorkerRequestHandler(
     : context_(context),
       provider_host_(provider_host),
       blob_storage_context_(blob_storage_context),
-      resource_type_(resource_type),
-      old_process_id_(0),
-      old_provider_id_(kInvalidServiceWorkerProviderId) {
-}
+      resource_type_(resource_type) {}
 
 }  // namespace content

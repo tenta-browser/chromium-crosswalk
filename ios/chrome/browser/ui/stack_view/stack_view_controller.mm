@@ -12,10 +12,10 @@
 
 #include "base/format_macros.h"
 #import "base/ios/block_types.h"
+#include "base/ios/ios_util.h"
 #include "base/logging.h"
 #import "base/mac/bundle_locations.h"
 #import "base/mac/foundation_util.h"
-
 #include "base/mac/scoped_block.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/metrics/user_metrics.h"
@@ -27,6 +27,7 @@
 #include "ios/chrome/browser/experimental_flags.h"
 #include "ios/chrome/browser/feature_engagement/tracker_factory.h"
 #include "ios/chrome/browser/feature_engagement/tracker_util.h"
+#import "ios/chrome/browser/snapshots/snapshot_tab_helper.h"
 #import "ios/chrome/browser/tabs/tab.h"
 #import "ios/chrome/browser/tabs/tab_model.h"
 #import "ios/chrome/browser/tabs/tab_model_observer.h"
@@ -36,6 +37,7 @@
 #import "ios/chrome/browser/ui/commands/command_dispatcher.h"
 #import "ios/chrome/browser/ui/commands/open_new_tab_command.h"
 #import "ios/chrome/browser/ui/keyboard/UIKeyCommand+Chrome.h"
+#include "ios/chrome/browser/ui/main/main_feature_flags.h"
 #import "ios/chrome/browser/ui/ntp/new_tab_page_toolbar_controller.h"
 #import "ios/chrome/browser/ui/reversed_animation.h"
 #import "ios/chrome/browser/ui/rtl_geometry.h"
@@ -43,15 +45,15 @@
 #import "ios/chrome/browser/ui/stack_view/card_stack_pinch_gesture_recognizer.h"
 #import "ios/chrome/browser/ui/stack_view/card_view.h"
 #import "ios/chrome/browser/ui/stack_view/close_button.h"
+#import "ios/chrome/browser/ui/stack_view/new_tab_button.h"
 #import "ios/chrome/browser/ui/stack_view/page_animation_util.h"
 #import "ios/chrome/browser/ui/stack_view/stack_card.h"
 #import "ios/chrome/browser/ui/stack_view/stack_view_controller_private.h"
 #import "ios/chrome/browser/ui/stack_view/stack_view_toolbar_controller.h"
 #import "ios/chrome/browser/ui/stack_view/title_label.h"
-#import "ios/chrome/browser/ui/toolbar/new_tab_button.h"
+#import "ios/chrome/browser/ui/toolbar/legacy/toolbar_controller_constants.h"
+#import "ios/chrome/browser/ui/toolbar/legacy/toolbar_utils.h"
 #import "ios/chrome/browser/ui/toolbar/public/toolbar_controller_base_feature.h"
-#import "ios/chrome/browser/ui/toolbar/public/toolbar_controller_constants.h"
-#import "ios/chrome/browser/ui/toolbar/public/toolbar_utils.h"
 #import "ios/chrome/browser/ui/toolbar/toolbar_owner.h"
 #import "ios/chrome/browser/ui/toolbar/toolbar_snapshot_providing.h"
 #import "ios/chrome/browser/ui/tools_menu/public/tools_menu_configuration_provider.h"
@@ -206,7 +208,8 @@ NSString* const kTransitionToolbarAnimationKey =
 
 @end
 
-@interface StackViewController ()<ToolsMenuConfigurationProvider>
+@interface StackViewController ()<StackViewToolbarControllerDelegate,
+                                  ToolsMenuConfigurationProvider>
 
 // Clears the internal state of the object. Should only be called when the
 // object is not being shown. After this method is called, a call to
@@ -220,8 +223,6 @@ NSString* const kTransitionToolbarAnimationKey =
 // scroll to one of its boundaries without also having reached the
 // corresponding boundary of the stack being scrolled.
 - (void)updateScrollViewContentSize;
-// Deregisters for the notifications |registerForNotifications| specifies.
-- (void)deregisterForNotifications;
 // Eliminates the ability for the user to perform any further interactions
 // with the stack view. Should be called when the stack view starts being
 // dismissed.
@@ -251,9 +252,14 @@ NSString* const kTransitionToolbarAnimationKey =
 // (including the active set itself changing).
 - (void)activeCardCountChanged;
 // Computes and stores the initial card size information that will decide how
-// layout is done for the remainder of the stack view's lifetime, and configures
-// the card sets accordingly.
-- (void)setInitialCardSizing;
+// layout is done for the remainder of the stack view's lifetime.
+- (void)setInitialCardSizingForSize:(CGSize)size;
+// Configures the card sets based on the initial card size and the current size
+// of the scroll view.
+- (void)configureCardSets;
+// Returns |YES| if |viewWillAppear| should perform steps to display cards for
+// the first time.
+- (BOOL)needsInitialDisplay;
 // Updates the card sizing and layout for the current device orientation.
 // If |animates| is true, the size change will be animated, otherwise it will be
 // done synchronously.
@@ -296,9 +302,10 @@ NSString* const kTransitionToolbarAnimationKey =
 // Returns the size of a single card (at normal zoom).
 - (CGSize)cardSize;
 // Returns the size that should be used for cards being displayed in a viewport
-// with breadth |breadth|, taking margins into account and preserving the
-// content area aspect ratio.
-- (CGSize)cardSizeForBreadth:(CGFloat)breadth;
+// with breadth |breadth| and a scrollview of size |scrollViewSize|, taking
+// margins into account and preserving the content area aspect ratio.
+- (CGSize)cardSizeForBreadth:(CGFloat)breadth
+              scrollViewSize:(CGSize)scrollViewSize;
 // Returns the amount that |point| is offset on the current scroll axis.
 - (CGFloat)scrollOffsetAmountForPoint:(CGPoint)point;
 // Returns the amount that |position| is offset on the current scroll axis.
@@ -396,10 +403,6 @@ NSString* const kTransitionToolbarAnimationKey =
 // so this should *not* be called frequently.
 - (StackCard*)cardForView:(CardView*)view;
 
-// All local tab state is cleared, and |currentlyClosingAllTabs_| is set to
-// |NO|.
-- (void)allModelTabsHaveClosed:(NSNotification*)notify;
-
 // Updates the display views so that they are aligned to the scroll view's
 // viewport. Should be called any time the scroll view's content offset
 // changes.
@@ -463,7 +466,6 @@ NSString* const kTransitionToolbarAnimationKey =
   CardSet* _otrCardSet;
   // The currently active card set; one of _mainCardSet or _otrCardSet.
   __weak CardSet* _activeCardSet;
-  __weak id<TabSwitcherDelegate> _delegate;
   __weak id<StackViewControllerTestDelegate> _testDelegate;
   // Controller for the stack view toolbar.
   StackViewToolbarController* _toolbarController;
@@ -499,6 +501,10 @@ NSString* const kTransitionToolbarAnimationKey =
   // |YES| if the stack view has been told to restore internal state, but has
   // not yet become active.
   BOOL _preparingForActive;
+  // |YES| if initial card sizes have been computed but cards have not yet been
+  // laid out for the first time.  This is only used when the
+  // TabSwitcherPresentsBVC experiment is enabled.
+  BOOL _needsInitialDisplay;
   // Records whether a memory warning occurred in the current session.
   BOOL _receivedMemoryWarningInSession;
   // |YES| if there is card set animation being processed. For testing only.
@@ -514,12 +520,12 @@ NSString* const kTransitionToolbarAnimationKey =
 @synthesize dummyToolbarBackgroundView = _dummyToolbarBackgroundView;
 @synthesize inActiveDeckChangeAnimation = _inActiveDeckChangeAnimation;
 @synthesize testDelegate = _testDelegate;
+@synthesize toolsMenuCoordinator = _toolsMenuCoordinator;
 @synthesize transitionStyle = _transitionStyle;
 @synthesize transitionTappedCard = _transitionTappedCard;
 @synthesize transitionToolbarOwner = _transitionToolbarOwner;
 @synthesize transitionToolbarSnapshot = _transitionToolbarSnapshot;
 @synthesize transitionWasCancelled = _transitionWasCancelled;
-@synthesize toolsMenuCoordinator = _toolsMenuCoordinator;
 
 - (instancetype)initWithMainCardSet:(CardSet*)mainCardSet
                          otrCardSet:(CardSet*)otrCardSet
@@ -555,10 +561,10 @@ NSString* const kTransitionToolbarAnimationKey =
     [_dispatcher startDispatchingToTarget:applicationCommandEndpoint
                               forProtocol:@protocol(ApplicationCommands)];
 
-    _toolsMenuCoordinator =
-        [[ToolsMenuCoordinator alloc] initWithBaseViewController:self];
+    _toolsMenuCoordinator = [[ToolsMenuCoordinator alloc] init];
     _toolsMenuCoordinator.dispatcher = _dispatcher;
     _toolsMenuCoordinator.configurationProvider = self;
+    [_toolsMenuCoordinator start];
   }
   return self;
 }
@@ -592,8 +598,9 @@ NSString* const kTransitionToolbarAnimationKey =
   return nil;
 }
 
-- (id<ApplicationCommands, BrowserCommands>)dispatcher {
-  return static_cast<id<ApplicationCommands, BrowserCommands>>(_dispatcher);
+- (id<ApplicationCommands, BrowserCommands, ToolbarCommands>)dispatcher {
+  return static_cast<id<ApplicationCommands, BrowserCommands, ToolbarCommands>>(
+      _dispatcher);
 }
 
 - (void)setUpWithMainCardSet:(CardSet*)mainCardSet
@@ -615,6 +622,10 @@ NSString* const kTransitionToolbarAnimationKey =
       [[UITapGestureRecognizer alloc] initWithTarget:self
                                               action:@selector(handleTapFrom:)];
   [_modeSwitchRecognizer setDelegate:self];
+}
+
+- (UIViewController*)viewController {
+  return self;
 }
 
 - (void)restoreInternalStateWithMainTabModel:(TabModel*)mainModel
@@ -656,11 +667,6 @@ NSString* const kTransitionToolbarAnimationKey =
   DCHECK(!_isActive);
   [[_mainCardSet displayView] removeFromSuperview];
   [[_otrCardSet displayView] removeFromSuperview];
-
-  // Only deregister from the specific notifications for which this class
-  // registered. Do not use the blanket |removeObserver|, otherwise the low
-  // memory notification is not received and the view is never unloaded.
-  [self deregisterForNotifications];
 
   [_mainCardSet disconnect];
   _mainCardSet = nil;
@@ -740,8 +746,6 @@ NSString* const kTransitionToolbarAnimationKey =
             ? UIInterfaceOrientationPortrait
             : UIInterfaceOrientationLandscapeRight;
   }
-  [self registerForNotifications];
-
   // TODO(blundell): Why isn't this recognizer initialized with the
   // pinch and mode switch recognizers?
   UIPanGestureRecognizer* panGestureRecognizer =
@@ -761,6 +765,7 @@ NSString* const kTransitionToolbarAnimationKey =
 
   _toolbarController =
       [[StackViewToolbarController alloc] initWithDispatcher:self.dispatcher];
+  _toolbarController.delegate = self;
   [self addChildViewController:_toolbarController];
   self.toolsMenuCoordinator.presentationProvider = _toolbarController;
   CGRect toolbarFrame = [self.view bounds];
@@ -770,21 +775,18 @@ NSString* const kTransitionToolbarAnimationKey =
   [self.view addSubview:[_toolbarController view]];
   [_toolbarController didMoveToParentViewController:self];
 
-  if (IsSafeAreaCompatibleToolbarEnabled()) {
-    [[_toolbarController view].leadingAnchor
-        constraintEqualToAnchor:self.view.leadingAnchor]
-        .active = YES;
-    [[_toolbarController view].trailingAnchor
-        constraintEqualToAnchor:self.view.trailingAnchor]
-        .active = YES;
-    [[_toolbarController view].topAnchor
-        constraintEqualToAnchor:self.view.topAnchor]
-        .active = YES;
-    [_toolbarController heightConstraint].constant =
-        ToolbarHeightWithTopOfScreenOffset(
-            [_toolbarController statusBarOffset]);
-    [_toolbarController heightConstraint].active = YES;
-  }
+  [[_toolbarController view].leadingAnchor
+      constraintEqualToAnchor:self.view.leadingAnchor]
+      .active = YES;
+  [[_toolbarController view].trailingAnchor
+      constraintEqualToAnchor:self.view.trailingAnchor]
+      .active = YES;
+  [[_toolbarController view].topAnchor
+      constraintEqualToAnchor:self.view.topAnchor]
+      .active = YES;
+  [_toolbarController heightConstraint].constant =
+      ToolbarHeightWithTopOfScreenOffset([_toolbarController statusBarOffset]);
+  [_toolbarController heightConstraint].active = YES;
 
   [self updateToolbarAppearanceWithAnimation:NO];
 
@@ -808,21 +810,15 @@ NSString* const kTransitionToolbarAnimationKey =
   }
   [self.view addSubview:_scrollView];
 
-  if (IsSafeAreaCompatibleToolbarEnabled()) {
-    [_scrollView setTranslatesAutoresizingMaskIntoConstraints:NO];
-    [NSLayoutConstraint activateConstraints:@[
-      [_scrollView.topAnchor
-          constraintEqualToAnchor:[_toolbarController view].bottomAnchor],
-      [_scrollView.leadingAnchor
-          constraintEqualToAnchor:self.view.leadingAnchor],
-      [_scrollView.trailingAnchor
-          constraintEqualToAnchor:self.view.trailingAnchor],
-      [_scrollView.bottomAnchor constraintEqualToAnchor:self.view.bottomAnchor]
-    ]];
-  } else {
-    [_scrollView setAutoresizingMask:(UIViewAutoresizingFlexibleHeight |
-                                      UIViewAutoresizingFlexibleWidth)];
-  }
+  [_scrollView setTranslatesAutoresizingMaskIntoConstraints:NO];
+  [NSLayoutConstraint activateConstraints:@[
+    [_scrollView.topAnchor
+        constraintEqualToAnchor:[_toolbarController view].bottomAnchor],
+    [_scrollView.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor],
+    [_scrollView.trailingAnchor
+        constraintEqualToAnchor:self.view.trailingAnchor],
+    [_scrollView.bottomAnchor constraintEqualToAnchor:self.view.bottomAnchor]
+  ]];
 
   [_scrollView setBounces:NO];
   [_scrollView setScrollsToTop:NO];
@@ -838,12 +834,9 @@ NSString* const kTransitionToolbarAnimationKey =
 
 - (void)viewSafeAreaInsetsDidChange {
   [super viewSafeAreaInsetsDidChange];
-  if (IsSafeAreaCompatibleToolbarEnabled()) {
-    [_toolbarController heightConstraint].constant =
-        ToolbarHeightWithTopOfScreenOffset(
-            [_toolbarController statusBarOffset]);
-    [[_toolbarController view] setNeedsLayout];
-  }
+  [_toolbarController heightConstraint].constant =
+      ToolbarHeightWithTopOfScreenOffset([_toolbarController statusBarOffset]);
+  [[_toolbarController view] setNeedsLayout];
 }
 
 - (void)viewWillAppear:(BOOL)animated {
@@ -858,18 +851,25 @@ NSString* const kTransitionToolbarAnimationKey =
   // rest of the time refreshing is necessary because the card views may have
   // been purged and recreated or the orientation might have changed while in
   // a modal view.
-  BOOL isInitialDisplay = _initialCardSize.height == 0.0;
-  if (isInitialDisplay) {
+  if ([self needsInitialDisplay]) {
+    _needsInitialDisplay = NO;
+
     // Calls like -viewportSizeWasChanged should instead be called in
     // viewDidLayoutSubviews, but since stack_view_controller is going away in
     // the near future, it's easier to put this here instead of refactoring.
-    if (IsSafeAreaCompatibleToolbarEnabled()) {
-      [self.view layoutIfNeeded];
+    [self.view layoutIfNeeded];
+
+    // If cards haven't been sized yet, size them now.
+    if (_initialCardSize.height == 0.0) {
+      DCHECK(!TabSwitcherPresentsBVCEnabled());
+      [self setInitialCardSizingForSize:_scrollView.bounds.size];
+    } else {
+      DCHECK(TabSwitcherPresentsBVCEnabled());
     }
 
     [_mainCardSet setObserver:self];
     [_otrCardSet setObserver:self];
-    [self setInitialCardSizing];
+    [self configureCardSets];
     [self viewportSizeWasChanged];
   } else {
     [self refreshCardDisplayWithAnimation:NO];
@@ -1014,21 +1014,6 @@ NSString* const kTransitionToolbarAnimationKey =
                    completion:nil];
 }
 
-- (void)registerForNotifications {
-  NSNotificationCenter* defaultCenter = [NSNotificationCenter defaultCenter];
-  [defaultCenter addObserver:self
-                    selector:@selector(allModelTabsHaveClosed:)
-                        name:kTabModelAllTabsDidCloseNotification
-                      object:nil];
-}
-
-- (void)deregisterForNotifications {
-  NSNotificationCenter* defaultCenter = [NSNotificationCenter defaultCenter];
-  [defaultCenter removeObserver:self
-                           name:kTabModelAllTabsDidCloseNotification
-                         object:nil];
-}
-
 - (void)prepareForDismissal {
   UIView* activeView = [_activeCardSet displayView];
   [activeView removeGestureRecognizer:_pinchRecognizer];
@@ -1067,12 +1052,9 @@ NSString* const kTransitionToolbarAnimationKey =
 }
 
 - (void)prepareForDisplayAtSize:(CGSize)size {
-  if (!CGSizeEqualToSize(size, self.view.bounds.size) &&
-      !IsSafeAreaCompatibleToolbarEnabled()) {
-    CGRect newBounds = self.view.bounds;
-    newBounds.size = size;
-    self.view.bounds = newBounds;
-  }
+  DCHECK(TabSwitcherPresentsBVCEnabled());
+  _needsInitialDisplay = YES;
+  [self setInitialCardSizingForSize:size];
 }
 
 #pragma mark -
@@ -1151,6 +1133,7 @@ NSString* const kTransitionToolbarAnimationKey =
       void (^toDoWhenDone)(void) = NULL;
       if (card == lastVisibleCard) {
         toDoWhenDone = ^{
+          [cardSet setIgnoresTabModelChanges:NO];
           [cardSet.tabModel closeAllTabs];
         };
       }
@@ -1199,11 +1182,14 @@ NSString* const kTransitionToolbarAnimationKey =
   [self enableGestureHandlers];
 }
 
-- (void)setInitialCardSizing {
+- (void)setInitialCardSizingForSize:(CGSize)size {
   DCHECK(_initialCardSize.height == 0.0);
-  CGFloat viewportBreadth = [self scrollBreadth:[_scrollView bounds].size];
-  _initialCardSize = [self cardSizeForBreadth:viewportBreadth];
+  CGFloat viewportBreadth = [self scrollBreadth:size];
+  _initialCardSize =
+      [self cardSizeForBreadth:viewportBreadth scrollViewSize:size];
+}
 
+- (void)configureCardSets {
   // Configure the stack layout behaviors. This is done only once because the
   // fan-out, margins, etc. should stay the same even if the cards change size
   // due to rotation.
@@ -1212,6 +1198,14 @@ NSString* const kTransitionToolbarAnimationKey =
       configureLayoutParametersWithMargin:page_animation_util::kCardMargin];
   [_otrCardSet
       configureLayoutParametersWithMargin:page_animation_util::kCardMargin];
+}
+
+- (BOOL)needsInitialDisplay {
+  if (TabSwitcherPresentsBVCEnabled()) {
+    return _needsInitialDisplay;
+  } else {
+    return _initialCardSize.height == 0.0;
+  }
 }
 
 - (void)updateDeckOrientationWithAnimation:(BOOL)animates {
@@ -1446,21 +1440,21 @@ NSString* const kTransitionToolbarAnimationKey =
   CGFloat availableBreadth = [self scrollBreadth:[_scrollView bounds].size];
   if ([self bothDecksShouldBeDisplayed])
     availableBreadth *= kActiveDeckDisplayFraction;
-  CGSize idealCardSize = [self cardSizeForBreadth:availableBreadth];
+  CGSize idealCardSize = [self cardSizeForBreadth:availableBreadth
+                                   scrollViewSize:[_scrollView bounds].size];
 
   // Crop the ideal size so that it's no bigger than the initial size.
   return CGSizeMake(std::min(idealCardSize.width, _initialCardSize.width),
                     std::min(idealCardSize.height, _initialCardSize.height));
 }
 
-- (CGSize)cardSizeForBreadth:(CGFloat)breadth {
+- (CGSize)cardSizeForBreadth:(CGFloat)breadth scrollViewSize:(CGSize)viewSize {
   BOOL isPortrait = IsPortrait();
   CGFloat cardBreadth = breadth - 2 * page_animation_util::kCardMargin;
   CGFloat contentBreadthInset =
       isPortrait ? kCardImageInsets.left + kCardImageInsets.right
                  : kCardImageInsets.top + kCardImageInsets.bottom;
   CGFloat contentBreadth = cardBreadth - contentBreadthInset;
-  CGSize viewSize = [_scrollView bounds].size;
   CGFloat aspectRatio =
       [self scrollLength:viewSize] / [self scrollBreadth:viewSize];
   CGFloat contentLength = std::floor(aspectRatio * contentBreadth);
@@ -1657,7 +1651,6 @@ NSString* const kTransitionToolbarAnimationKey =
   if (self.transitionStyle == STACK_TRANSITION_STYLE_PRESENTING) {
     [_testDelegate stackViewControllerShowWithSelectedTabAnimationDidEnd];
     [_animationDelegate tabSwitcherPresentationAnimationDidEnd:self];
-    [_delegate tabSwitcherPresentationTransitionDidEnd:self];
   } else {
     [_animationDelegate tabSwitcherDismissalAnimationDidEnd:self];
     [_delegate tabSwitcherDismissTransitionDidEnd:self];
@@ -1684,6 +1677,21 @@ NSString* const kTransitionToolbarAnimationKey =
   self.dummyToolbarBackgroundView = [[UIView alloc] initWithFrame:CGRectZero];
   [self.dummyToolbarBackgroundView setClipsToBounds:YES];
 
+  if (TabSwitcherPresentsBVCEnabled()) {
+    if (!CGSizeEqualToSize(self.view.frame.size,
+                           self.view.superview.bounds.size)) {
+      // Forcibly mark the view as needing layout if it is a different size from
+      // its superview.
+      [self.view setNeedsLayout];
+    }
+
+    // Forces a layout because the views may not yet be sized and positioned
+    // correctly for their initial layout.
+    [self.view layoutIfNeeded];
+    [self refreshCardDisplayWithAnimation:NO];
+    [self updateToolbarAppearanceWithAnimation:NO];
+  }
+
   // Set the transition completion block.
   [CATransaction begin];
   [CATransaction setCompletionBlock:^{
@@ -1704,11 +1712,9 @@ NSString* const kTransitionToolbarAnimationKey =
   CGRect currentCardFrame =
       AlignRectOriginAndSizeToPixels(LayoutRectGetRect(currentCardLayout));
 
-  if (IsSafeAreaCompatibleToolbarEnabled()) {
-    // Forces a layout because the views may not yet be positioned correctly
-    // due to a screen rotation.
-    [self.view layoutIfNeeded];
-  }
+  // Forces a layout because the views may not yet be positioned correctly
+  // due to a screen rotation.
+  [self.view layoutIfNeeded];
 
   // Animate the dummy toolbar background view.
   [self animateDummyToolbarForCardFrame:currentCardFrame
@@ -2078,7 +2084,7 @@ NSString* const kTransitionToolbarAnimationKey =
   [NSObject cancelPreviousPerformRequestsWithTarget:self];
 
   [_delegate tabSwitcher:self
-      dismissTransitionWillStartWithActiveModel:_activeCardSet.tabModel];
+      shouldFinishWithActiveModel:_activeCardSet.tabModel];
 
   [self animateTransitionWithStyle:STACK_TRANSITION_STYLE_DISMISSING];
 }
@@ -2193,7 +2199,7 @@ NSString* const kTransitionToolbarAnimationKey =
   [_activeCardSet.tabModel setCurrentTab:tab];
 
   [_delegate tabSwitcher:self
-      dismissTransitionWillStartWithActiveModel:_activeCardSet.tabModel];
+      shouldFinishWithActiveModel:_activeCardSet.tabModel];
 
   CGFloat statusBarHeight = StatusBarHeight();
   CGRect viewBounds, remainder;
@@ -2204,7 +2210,9 @@ NSString* const kTransitionToolbarAnimationKey =
   // generating a snapshot, but then restore the original frame.
   CGRect originalTabFrame = [tab view].frame;
   [tab view].frame = viewBounds;
-  newCard.image = [tab updateSnapshotWithOverlay:YES visibleFrameOnly:YES];
+  newCard.image =
+      SnapshotTabHelper::FromWebState(tab.webState)
+          ->UpdateSnapshot(/*with_overlays=*/true, /*visible_frame_only=*/true);
   [tab view].frame = originalTabFrame;
   newCard.center =
       CGPointMake(CGRectGetMidX(viewBounds), CGRectGetMidY(viewBounds));
@@ -2284,8 +2292,11 @@ NSString* const kTransitionToolbarAnimationKey =
     cardView = card.view;
   } else {
     // The recognizer is one of those attached to the card.
-    DCHECK([recognizer.view isKindOfClass:[CardView class]]);
-    cardView = (CardView*)recognizer.view;
+    // See https://crbug.com/393230 where recognizer.view may not be a CardView
+    // type. In that case, early return with a NO to avoid unnecessary crash.
+    cardView = base::mac::ObjCCastStrict<CardView>(recognizer.view);
+    if (!cardView)
+      return NO;
     card = [self cardForView:cardView];
   }
 
@@ -2824,6 +2835,13 @@ NSString* const kTransitionToolbarAnimationKey =
   return nil;
 }
 
+#pragma mark - StackViewToolbarControllerDelegate
+
+- (void)stackViewToolbarControllerShouldDismiss:
+    (StackViewToolbarController*)stackViewToolbarController {
+  [self dismissWithSelectedTabAnimation];
+}
+
 #pragma mark - ToolsMenuCoordinator Configuration
 
 - (ToolsMenuConfiguration*)menuConfigurationForToolsMenuCoordinator:
@@ -2876,27 +2894,17 @@ NSString* const kTransitionToolbarAnimationKey =
 
 #pragma mark Notification Handlers
 
-- (void)allModelTabsHaveClosed:(NSNotification*)notify {
+- (void)cardSetDidCloseAllTabs:(CardSet*)cardSet {
   // Early return if the stack view is not active.  This can sometimes occur if
   // |clearInternalState| triggers the deletion of a tab model.
   if (!_isActive)
     return;
 
-  CardSet* closedSet =
-      (notify.object == [_mainCardSet tabModel]) ? _mainCardSet : _otrCardSet;
-
-  // If the tabModel that send the notification is not one handled by one of
-  // the two card sets, just return. This will happen when the otr tab model is
-  // deleted because the incognito profile is deleted.
-  if (notify.object != [closedSet tabModel])
-    return;
-
-  if (closedSet == _activeCardSet)
+  if (cardSet == _activeCardSet)
     [self activeCardCountChanged];
-  for (UIView* card in [closedSet.displayView subviews]) {
+  for (UIView* card in [cardSet.displayView subviews]) {
     [card removeFromSuperview];
   }
-  [closedSet setIgnoresTabModelChanges:NO];
   // No need to re-sync with the card set here, since the tab model (and thus
   // the card set) is known to be empty.
 
@@ -2905,8 +2913,8 @@ NSString* const kTransitionToolbarAnimationKey =
   // finishes closing while the main set is still animating (in the case of
   // closing all cards at once) wait until the main set finishes before updating
   // the display (necessary so the state is right if a new tab is opened).
-  if ((closedSet == _otrCardSet && ![_mainCardSet ignoresTabModelChanges]) ||
-      (closedSet == _mainCardSet && [[_otrCardSet cards] count] == 0)) {
+  if ((cardSet == _otrCardSet && ![_mainCardSet ignoresTabModelChanges]) ||
+      (cardSet == _mainCardSet && [[_otrCardSet cards] count] == 0)) {
     [self displayMainCardSetOnly];
   }
 
@@ -3024,6 +3032,13 @@ NSString* const kTransitionToolbarAnimationKey =
 - (void)cardSet:(CardSet*)cardSet
     didRemoveCard:(StackCard*)removedCard
           atIndex:(NSUInteger)index {
+  // If card was tapped during a transition, but its WebState was closed before
+  // the animation finishes, reset |transitionTappedCard|, as attempting to
+  // show that Tab upon finishing the animation will result in a crash since its
+  // WebState is destroyed.
+  if (removedCard == self.transitionTappedCard)
+    self.transitionTappedCard = nil;
+
   if (cardSet == _activeCardSet) {
     // Reenable the gesture handlers (disabled in
     // -cardSet:willRemoveCard:atIndex). It is now safe to do so as the card
@@ -3155,10 +3170,18 @@ NSString* const kTransitionToolbarAnimationKey =
 }
 
 - (void)alignDisplayViewsToViewport {
-  DCHECK(CGSizeEqualToSize([_mainCardSet displayView].frame.size,
-                           [_scrollView frame].size));
-  DCHECK(CGSizeEqualToSize([_otrCardSet displayView].frame.size,
-                           [_scrollView frame].size));
+  // TODO(crbug.com/789975): The iPhoneX iOS 11.0.0 simulator was a beta release
+  // and has a bug that causes this DCHECK to fire incorrectly.  Disable the
+  // DCHECK on iPhoneX 11.0.0, until the bots are updated to a newer simulator
+  // version.
+  if (!IsIPhoneX() || base::ios::IsRunningOnOrLater(11, 0, 1)) {
+    DCHECK(CGSizeEqualToSize(
+        AlignRectOriginAndSizeToPixels([_mainCardSet displayView].frame).size,
+        [_scrollView frame].size));
+    DCHECK(CGSizeEqualToSize(
+        AlignRectOriginAndSizeToPixels([_otrCardSet displayView].frame).size,
+        [_scrollView frame].size));
+  }
   CGRect newDisplayViewFrame = CGRectMake(
       [_scrollView contentOffset].x, [_scrollView contentOffset].y,
       [_scrollView frame].size.width, [_scrollView frame].size.height);

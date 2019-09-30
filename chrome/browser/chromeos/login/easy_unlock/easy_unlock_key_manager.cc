@@ -9,12 +9,11 @@
 
 #include "base/bind.h"
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/values.h"
 #include "chrome/browser/chromeos/login/easy_unlock/easy_unlock_tpm_key_manager.h"
 #include "chrome/browser/chromeos/login/easy_unlock/easy_unlock_tpm_key_manager_factory.h"
-#include "components/proximity_auth/logging/logging.h"
+#include "chromeos/components/proximity_auth/logging/logging.h"
 #include "components/signin/core/account_id/account_id.h"
 
 namespace chromeos {
@@ -90,7 +89,7 @@ void EasyUnlockKeyManager::RefreshKeysWithTpmKeyPresent(
     devices.clear();
 
   write_operation_queue_.push_back(
-      base::MakeUnique<EasyUnlockRefreshKeysOperation>(
+      std::make_unique<EasyUnlockRefreshKeysOperation>(
           user_context, tpm_public_key, devices,
           base::Bind(&EasyUnlockKeyManager::OnKeysRefreshed,
                      weak_ptr_factory_.GetWeakPtr(), callback)));
@@ -100,7 +99,7 @@ void EasyUnlockKeyManager::RefreshKeysWithTpmKeyPresent(
 void EasyUnlockKeyManager::GetDeviceDataList(
     const UserContext& user_context,
     const GetDeviceDataListCallback& callback) {
-  read_operation_queue_.push_back(base::MakeUnique<EasyUnlockGetKeysOperation>(
+  read_operation_queue_.push_back(std::make_unique<EasyUnlockGetKeysOperation>(
       user_context, base::Bind(&EasyUnlockKeyManager::OnKeysFetched,
                                weak_ptr_factory_.GetWeakPtr(), callback)));
   RunNextOperation();

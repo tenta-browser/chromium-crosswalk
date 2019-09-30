@@ -8,9 +8,7 @@
 #include <stdint.h>
 #include <algorithm>
 #include <limits>
-#include <string>
 #include <utility>
-#include <vector>
 
 #include "base/bind.h"
 #include "base/logging.h"
@@ -19,13 +17,42 @@
 #include "net/base/io_buffer.h"
 #include "net/base/net_errors.h"
 #include "net/socket/client_socket_handle.h"
+#include "net/websockets/websocket_basic_stream_adapters.h"
 #include "net/websockets/websocket_errors.h"
 #include "net/websockets/websocket_frame.h"
-#include "net/websockets/websocket_frame_parser.h"
 
 namespace net {
 
 namespace {
+
+// Please refer to the comment in class header if the usage changes.
+constexpr net::NetworkTrafficAnnotationTag kTrafficAnnotation =
+    net::DefineNetworkTrafficAnnotation("websocket_basic_stream", R"(
+      semantics {
+        sender: "WebSocket Basic Stream"
+        description:
+          "Implementation of WebSocket API from web content (a page the user "
+          "visits)."
+        trigger: "Website calls the WebSocket API."
+        data:
+          "Any data provided by web content, masked and framed in accordance "
+          "with RFC6455."
+        destination: OTHER
+        destination_other:
+          "The address that the website has chosen to communicate to."
+      }
+      policy {
+        cookies_allowed: YES
+        cookies_store: "user"
+        setting: "These requests cannot be disabled."
+        policy_exception_justification:
+          "Not implemented. WebSocket is a core web platform API."
+      }
+      comments:
+        "The browser will never add cookies to a WebSocket message. But the "
+        "handshake that was performed when the WebSocket connection was "
+        "established may have contained cookies."
+      )");
 
 // This uses type uint64_t to match the definition of
 // WebSocketFrameHeader::payload_length in websocket_frame.h.
@@ -68,11 +95,11 @@ int CalculateSerializedSizeAndTurnOnMaskBit(
 }  // namespace
 
 WebSocketBasicStream::WebSocketBasicStream(
-    std::unique_ptr<ClientSocketHandle> connection,
+    std::unique_ptr<Adapter> connection,
     const scoped_refptr<GrowableIOBuffer>& http_read_buffer,
     const std::string& sub_protocol,
     const std::string& extensions)
-    : read_buffer_(new IOBufferWithSize(kReadBufferSize)),
+    : read_buffer_(base::MakeRefCounted<IOBufferWithSize>(kReadBufferSize)),
       connection_(std::move(connection)),
       http_read_buffer_(http_read_buffer),
       sub_protocol_(sub_protocol),
@@ -117,13 +144,10 @@ int WebSocketBasicStream::ReadFrames(
     // call any callbacks after Disconnect(), which we call from the
     // destructor. The caller of ReadFrames() is required to keep |frames|
     // valid.
-    int result = connection_->socket()->Read(
-        read_buffer_.get(),
-        read_buffer_->size(),
+    int result = connection_->Read(
+        read_buffer_.get(), read_buffer_->size(),
         base::Bind(&WebSocketBasicStream::OnReadComplete,
-                   base::Unretained(this),
-                   base::Unretained(frames),
-                   callback));
+                   base::Unretained(this), base::Unretained(frames), callback));
     if (result == ERR_IO_PENDING)
       return result;
     result = HandleReadResult(result, frames);
@@ -142,8 +166,7 @@ int WebSocketBasicStream::WriteFrames(
   //
   // First calculate the size of the buffer we need to allocate.
   int total_size = CalculateSerializedSizeAndTurnOnMaskBit(frames);
-  scoped_refptr<IOBufferWithSize> combined_buffer(
-      new IOBufferWithSize(total_size));
+  auto combined_buffer = base::MakeRefCounted<IOBufferWithSize>(total_size);
 
   char* dest = combined_buffer->data();
   int remaining_size = total_size;
@@ -171,12 +194,14 @@ int WebSocketBasicStream::WriteFrames(
   }
   DCHECK_EQ(0, remaining_size) << "Buffer size calculation was wrong; "
                                << remaining_size << " bytes left over.";
-  scoped_refptr<DrainableIOBuffer> drainable_buffer(
-      new DrainableIOBuffer(combined_buffer.get(), total_size));
+  auto drainable_buffer = base::MakeRefCounted<DrainableIOBuffer>(
+      combined_buffer.get(), total_size);
   return WriteEverything(drainable_buffer, callback);
 }
 
-void WebSocketBasicStream::Close() { connection_->socket()->Disconnect(); }
+void WebSocketBasicStream::Close() {
+  connection_->Disconnect();
+}
 
 std::string WebSocketBasicStream::GetSubProtocol() const {
   return sub_protocol_;
@@ -192,8 +217,10 @@ WebSocketBasicStream::CreateWebSocketBasicStreamForTesting(
     const std::string& sub_protocol,
     const std::string& extensions,
     WebSocketMaskingKeyGeneratorFunction key_generator_function) {
-  std::unique_ptr<WebSocketBasicStream> stream(new WebSocketBasicStream(
-      std::move(connection), http_read_buffer, sub_protocol, extensions));
+  auto stream = std::make_unique<WebSocketBasicStream>(
+      std::make_unique<WebSocketClientSocketHandleAdapter>(
+          std::move(connection)),
+      http_read_buffer, sub_protocol, extensions);
   stream->generate_websocket_masking_key_ = key_generator_function;
   return stream;
 }
@@ -204,13 +231,11 @@ int WebSocketBasicStream::WriteEverything(
   while (buffer->BytesRemaining() > 0) {
     // The use of base::Unretained() here is safe because on destruction we
     // disconnect the socket, preventing any further callbacks.
-    int result = connection_->socket()->Write(
-        buffer.get(),
-        buffer->BytesRemaining(),
-        base::Bind(&WebSocketBasicStream::OnWriteComplete,
-                   base::Unretained(this),
-                   buffer,
-                   callback));
+    int result =
+        connection_->Write(buffer.get(), buffer->BytesRemaining(),
+                           base::Bind(&WebSocketBasicStream::OnWriteComplete,
+                                      base::Unretained(this), buffer, callback),
+                           kTrafficAnnotation);
     if (result > 0) {
       UMA_HISTOGRAM_COUNTS_100000("Net.WebSocket.DataUse.Upstream", result);
       buffer->DidConsume(result);
@@ -322,7 +347,8 @@ int WebSocketBasicStream::ConvertChunkToFrame(
         AddToIncompleteControlFrameBody(data_buffer);
       } else {
         DVLOG(3) << "Creating new storage for an incomplete control frame.";
-        incomplete_control_frame_body_ = new GrowableIOBuffer();
+        incomplete_control_frame_body_ =
+            base::MakeRefCounted<GrowableIOBuffer>();
         // This method checks for oversize control frames above, so as long as
         // the frame parser is working correctly, this won't overflow. If a bug
         // does cause it to overflow, it will CHECK() in
@@ -338,7 +364,7 @@ int WebSocketBasicStream::ConvertChunkToFrame(
       const int body_size = incomplete_control_frame_body_->offset();
       DCHECK_EQ(body_size,
                 static_cast<int>(current_frame_header_->payload_length));
-      scoped_refptr<IOBufferWithSize> body = new IOBufferWithSize(body_size);
+      auto body = base::MakeRefCounted<IOBufferWithSize>(body_size);
       memcpy(body->data(),
              incomplete_control_frame_body_->StartOfBuffer(),
              body_size);
@@ -376,7 +402,7 @@ std::unique_ptr<WebSocketFrame> WebSocketBasicStream::CreateFrame(
   if (is_final_chunk_in_message || data_size > 0 ||
       current_frame_header_->opcode !=
           WebSocketFrameHeader::kOpCodeContinuation) {
-    result_frame.reset(new WebSocketFrame(opcode));
+    result_frame = std::make_unique<WebSocketFrame>(opcode);
     result_frame->header.CopyFrom(*current_frame_header_);
     result_frame->header.final = is_final_chunk_in_message;
     result_frame->header.payload_length = data_size;

@@ -12,10 +12,11 @@
 #include "chrome/browser/chromeos/login/users/fake_chrome_user_manager.h"
 #include "chrome/browser/chromeos/login/users/multi_profile_user_controller.h"
 #include "chrome/browser/chromeos/login/users/multi_profile_user_controller_delegate.h"
-#include "chrome/browser/chromeos/login/users/wallpaper/wallpaper_manager.h"
+#include "chrome/browser/chromeos/settings/cros_settings.h"
+#include "chrome/browser/chromeos/settings/device_settings_service.h"
 #include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile_manager.h"
-#include "components/proximity_auth/screenlock_bridge.h"
+#include "chromeos/components/proximity_auth/screenlock_bridge.h"
 #include "components/signin/core/account_id/account_id.h"
 #include "components/user_manager/scoped_user_manager.h"
 #include "components/user_manager/user.h"
@@ -64,11 +65,11 @@ class SigninPrepareUserListTest : public ash::AshTestBase,
 
     fake_user_manager_->set_owner_id(AccountId::FromUserEmail(kOwner));
 
-    chromeos::WallpaperManager::Initialize();
+    chromeos::DeviceSettingsService::Initialize();
+    chromeos::CrosSettings::Initialize();
   }
 
   void TearDown() override {
-    chromeos::WallpaperManager::Shutdown();
     controller_.reset();
     profile_manager_.reset();
     ash::AshTestBase::TearDown();

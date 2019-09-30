@@ -34,6 +34,9 @@ id<GREYMatcher> StaticTextWithAccessibilityLabel(NSString* label);
 // Returns matcher for a cancel button.
 id<GREYMatcher> CancelButton();
 
+// Returns matcher for a close button.
+id<GREYMatcher> CloseButton();
+
 // Matcher for the navigate forward button.
 id<GREYMatcher> ForwardButton();
 
@@ -49,6 +52,9 @@ id<GREYMatcher> StopButton();
 // Returns a matcher for the omnibox.
 id<GREYMatcher> Omnibox();
 
+// Returns a matcher for the location view.
+id<GREYMatcher> DefocusedLocationView();
+
 // Returns a matcher for the page security info button.
 id<GREYMatcher> PageSecurityInfoButton();
 
@@ -58,6 +64,10 @@ id<GREYMatcher> OmniboxText(std::string text);
 
 // Returns matcher for |text| being a substring of the text in the omnibox.
 id<GREYMatcher> OmniboxContainingText(std::string text);
+
+// Returns matcher for |text| being a substring of the text in the location
+// view.
+id<GREYMatcher> LocationViewContainingText(std::string text);
 
 // Matcher for Tools menu button.
 id<GREYMatcher> ToolsMenuButton();
@@ -69,15 +79,16 @@ id<GREYMatcher> ShareButton();
 id<GREYMatcher> ShowTabsButton();
 
 // Matcher for CollectionViewSwitchCell.
-// TODO(crbug.com/684139): Update |isOn| to something more obvious from
-// callsites.
 id<GREYMatcher> CollectionViewSwitchCell(NSString* accessibilityIdentifier,
-                                         BOOL isOn);
+                                         BOOL isToggledOn);
+
+// Matcher for CollectionViewSwitchCell.
+id<GREYMatcher> CollectionViewSwitchCell(NSString* accessibilityIdentifier,
+                                         BOOL isToggledOn,
+                                         BOOL isEnabled);
 
 // Matcher for SyncSwitchCell.
-// TODO(crbug.com/684139): Update |is_on| to something more obvious from
-// callsites.
-id<GREYMatcher> SyncSwitchCell(NSString* accessibilityLabel, BOOL is_on);
+id<GREYMatcher> SyncSwitchCell(NSString* accessibilityLabel, BOOL isToggledOn);
 
 // Matcher for the Open in New Tab option in the context menu when long pressing
 // a link.
@@ -103,6 +114,9 @@ id<GREYMatcher> ClearBrowsingDataCollectionView();
 
 // Returns matcher for the settings button in the tools menu.
 id<GREYMatcher> SettingsMenuButton();
+
+// Returns matcher for the "Done" button in the settings' navigation bar.
+id<GREYMatcher> SettingsDoneButton();
 
 // Returns matcher for the tools menu table view.
 id<GREYMatcher> ToolsMenuView();
@@ -193,6 +207,15 @@ id<GREYMatcher> BookmarksMenuButton();
 
 // Returns matcher for the recent tabs button on the Tools menu.
 id<GREYMatcher> RecentTabsMenuButton();
+
+// Returns matcher for the system selection callout.
+id<GREYMatcher> SystemSelectionCallout();
+
+// Returns matcher for the copy button on the system selection callout.
+id<GREYMatcher> SystemSelectionCalloutCopyButton();
+
+// Returns matcher for the Copy item on the context menu.
+id<GREYMatcher> ContextMenuCopyButton();
 
 }  // namespace chrome_test_util
 

@@ -25,7 +25,6 @@
 #include "chrome/browser/content_settings/host_content_settings_map_factory.h"
 #include "chrome/browser/engagement/site_engagement_score.h"
 #include "chrome/browser/engagement/site_engagement_service.h"
-#include "chrome/browser/gcm/fake_gcm_profile_service.h"
 #include "chrome/browser/gcm/gcm_profile_service_factory.h"
 #include "chrome/browser/gcm/instance_id/instance_id_profile_service.h"
 #include "chrome/browser/gcm/instance_id/instance_id_profile_service_factory.h"
@@ -39,14 +38,15 @@
 #include "chrome/browser/push_messaging/push_messaging_service_impl.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
+#include "chrome/common/buildflags.h"
 #include "chrome/common/chrome_switches.h"
-#include "chrome/common/features.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "components/content_settings/core/browser/host_content_settings_map.h"
 #include "components/content_settings/core/common/content_settings.h"
 #include "components/content_settings/core/common/content_settings_types.h"
 #include "components/gcm_driver/common/gcm_messages.h"
+#include "components/gcm_driver/fake_gcm_profile_service.h"
 #include "components/gcm_driver/gcm_client.h"
 #include "components/gcm_driver/instance_id/fake_gcm_driver_for_instance_id.h"
 #include "components/gcm_driver/instance_id/instance_id_driver.h"
@@ -64,9 +64,9 @@
 #include "net/test/embedded_test_server/embedded_test_server.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "ui/base/window_open_disposition.h"
-#include "ui/message_center/notification.h"
+#include "ui/message_center/public/cpp/notification.h"
 
-#if BUILDFLAG(ENABLE_BACKGROUND)
+#if BUILDFLAG(ENABLE_BACKGROUND_MODE)
 #include "chrome/browser/background/background_mode_manager.h"
 #endif
 
@@ -186,7 +186,7 @@ class PushMessagingBrowserTest : public InProcessBrowserTest {
   // Returns true when KeepAlives are not supported by the platform, or when
   // the registration state is equal to the expectation.
   bool IsRegisteredKeepAliveEqualTo(bool expectation) {
-#if BUILDFLAG(ENABLE_BACKGROUND)
+#if BUILDFLAG(ENABLE_BACKGROUND_MODE)
     return expectation ==
            KeepAliveRegistry::GetInstance()->IsOriginRegistered(
                KeepAliveOrigin::IN_FLIGHT_PUSH_MESSAGE);
@@ -293,15 +293,11 @@ class PushMessagingBrowserTest : public InProcessBrowserTest {
 
   PushMessagingServiceImpl* push_service() const { return push_service_; }
 
-  void SetSiteEngagementScore(const GURL& url,
-                              double score,
-                              double expected_score) {
-    // There will be a bonus of 5.0 points for having notification permission
-    // granted, so we assert that the final score is as expected.
+  void SetSiteEngagementScore(const GURL& url, double score) {
     SiteEngagementService* service =
         SiteEngagementService::Get(GetBrowser()->profile());
     service->ResetBaseScoreForURL(url, score);
-    EXPECT_EQ(expected_score, service->GetScore(url));
+    EXPECT_EQ(score, service->GetScore(url));
   }
 
   // Matches |tag| against the notification's ID to see if the notification's
@@ -598,6 +594,37 @@ IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTest,
       RunScript("documentSubscribePushWithEmptyOptions()", &script_result));
   EXPECT_EQ("NotAllowedError - Registration failed - permission denied",
             script_result);
+}
+
+IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTest, SubscribeWithInvalidation) {
+  std::string token1, token2, token3;
+
+  ASSERT_NO_FATAL_FAILURE(SubscribeSuccessfully(true /* use_key */, &token1));
+  ASSERT_FALSE(token1.empty());
+
+  // Repeated calls to |subscribe()| should yield the same token.
+  ASSERT_NO_FATAL_FAILURE(SubscribeSuccessfully(true /* use_key */, &token2));
+  ASSERT_EQ(token1, token2);
+
+  PushMessagingAppIdentifier app_identifier =
+      PushMessagingAppIdentifier::FindByServiceWorker(
+          GetBrowser()->profile(), https_server()->GetURL("/").GetOrigin(),
+          0LL /* service_worker_registration_id */);
+
+  ASSERT_FALSE(app_identifier.is_null());
+  EXPECT_EQ(app_identifier.app_id(), gcm_driver_->last_gettoken_app_id());
+
+  // Delete the InstanceID. This captures two scenarios: either the database was
+  // corrupted, or the subscription was invalidated by the server.
+  ASSERT_NO_FATAL_FAILURE(
+      DeleteInstanceIDAsIfGCMStoreReset(app_identifier.app_id()));
+
+  EXPECT_EQ(app_identifier.app_id(), gcm_driver_->last_deletetoken_app_id());
+
+  // Repeated calls to |subscribe()| will now (silently) result in a new token.
+  ASSERT_NO_FATAL_FAILURE(SubscribeSuccessfully(true /* use_key */, &token3));
+  ASSERT_FALSE(token3.empty());
+  EXPECT_NE(token1, token3);
 }
 
 IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTest, SubscribeWorker) {
@@ -994,10 +1021,6 @@ IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTest, SubscribePersisted) {
   // Now test that the Service Worker registration IDs and push subscription IDs
   // generated above were persisted to SW storage, by checking that they are
   // unchanged despite requesting them in a different order.
-  // TODO(johnme): Ideally we would restart the browser at this point to check
-  // they were persisted to disk, but that's not currently possible since the
-  // test server uses random port numbers for each test (even PRE_Foo and Foo),
-  // so we wouldn't be able to load the test pages with the same origin.
 
   LoadTestPage("/push_messaging/subscope1/test.html");
   std::string token4;
@@ -1009,13 +1032,13 @@ IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTest, SubscribePersisted) {
   std::string token5;
   ASSERT_NO_FATAL_FAILURE(SubscribeSuccessfully(true /* use_key */, &token5));
   EXPECT_EQ(token2, token5);
-  EXPECT_EQ(sw1_identifier.app_id(), gcm_driver_->last_gettoken_app_id());
+  EXPECT_EQ(sw2_identifier.app_id(), gcm_driver_->last_gettoken_app_id());
 
   LoadTestPage();
   std::string token6;
   ASSERT_NO_FATAL_FAILURE(SubscribeSuccessfully(true /* use_key */, &token6));
   EXPECT_EQ(token1, token6);
-  EXPECT_EQ(sw1_identifier.app_id(), gcm_driver_->last_gettoken_app_id());
+  EXPECT_EQ(sw0_identifier.app_id(), gcm_driver_->last_gettoken_app_id());
 }
 
 IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTest, AppHandlerOnlyIfSubscribed) {
@@ -1333,7 +1356,7 @@ IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTest,
   // Set the site engagement score for the site. Setting it to 10 means it
   // should have a budget of 4, enough for two non-shown notification, which
   // cost 2 each.
-  SetSiteEngagementScore(web_contents->GetURL(), 5.0, 10.0);
+  SetSiteEngagementScore(web_contents->GetURL(), 10.0);
 
   // If the site is visible in an active tab, we should not force a notification
   // to be shown. Try it twice, since we allow one mistake per 10 push events.
@@ -1436,7 +1459,7 @@ IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTest,
   content::WebContents* web_contents =
       GetBrowser()->tab_strip_model()->GetActiveWebContents();
 
-  SetSiteEngagementScore(web_contents->GetURL(), 0.0, 5.0);
+  SetSiteEngagementScore(web_contents->GetURL(), 5.0);
 
   ui_test_utils::NavigateToURLWithDisposition(
       GetBrowser(), GURL("about:blank"),
@@ -1949,53 +1972,6 @@ IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTest,
   EXPECT_TRUE(app_identifier3.is_null());
 }
 
-IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTest, InvalidSubscribeUnsubscribes) {
-  std::string script_result;
-
-  std::string token1;
-  ASSERT_NO_FATAL_FAILURE(SubscribeSuccessfully(true /* use_key */, &token1));
-
-  GURL origin = https_server()->GetURL("/").GetOrigin();
-  PushMessagingAppIdentifier app_identifier1 =
-      PushMessagingAppIdentifier::FindByServiceWorker(
-          GetBrowser()->profile(), origin,
-          0LL /* service_worker_registration_id */);
-  ASSERT_FALSE(app_identifier1.is_null());
-
-  ASSERT_NO_FATAL_FAILURE(
-      DeleteInstanceIDAsIfGCMStoreReset(app_identifier1.app_id()));
-
-  // Push messaging should not yet be aware of the InstanceID being deleted.
-  histogram_tester_.ExpectTotalCount("PushMessaging.UnregistrationReason", 0);
-  // We should still be able to look up the app id.
-  PushMessagingAppIdentifier app_identifier2 =
-      PushMessagingAppIdentifier::FindByServiceWorker(
-          GetBrowser()->profile(), origin,
-          0LL /* service_worker_registration_id */);
-  EXPECT_FALSE(app_identifier2.is_null());
-  EXPECT_EQ(app_identifier1.app_id(), app_identifier2.app_id());
-
-  // Now call PushManager.subscribe() again. It should succeed, but with a
-  // *different* token, indicating that it unsubscribed and re-subscribed.
-  std::string token2;
-  ASSERT_NO_FATAL_FAILURE(SubscribeSuccessfully(true /* use_key */, &token2));
-  EXPECT_NE(token1, token2);
-
-  // This should have unsubscribed the original push subscription.
-  histogram_tester_.ExpectUniqueSample(
-      "PushMessaging.UnregistrationReason",
-      static_cast<int>(
-          content::mojom::PushUnregistrationReason::SUBSCRIBE_STORAGE_CORRUPT),
-      1);
-  // Looking up the app id should return a different id.
-  PushMessagingAppIdentifier app_identifier3 =
-      PushMessagingAppIdentifier::FindByServiceWorker(
-          GetBrowser()->profile(), origin,
-          0LL /* service_worker_registration_id */);
-  EXPECT_FALSE(app_identifier3.is_null());
-  EXPECT_NE(app_identifier2.app_id(), app_identifier3.app_id());
-}
-
 IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTest,
                        GlobalResetPushPermissionUnsubscribes) {
   std::string script_result;
@@ -2401,8 +2377,7 @@ IN_PROC_BROWSER_TEST_F(PushMessagingIncognitoBrowserTest,
   ASSERT_EQ("false - not subscribed", script_result);
 }
 
-// None of the following should matter on ChromeOS: crbug.com/527045
-#if BUILDFLAG(ENABLE_BACKGROUND) && !defined(OS_CHROMEOS)
+#if BUILDFLAG(ENABLE_BACKGROUND_MODE)
 // Push background mode is disabled by default.
 IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTest,
                        BackgroundModeDisabledByDefault) {
@@ -2501,4 +2476,4 @@ IN_PROC_BROWSER_TEST_F(PushMessagingBackgroundModeDisabledBrowserTest,
   run_loop.Run();
   ASSERT_FALSE(background_mode_manager->IsBackgroundModeActive());
 }
-#endif  // BUILDFLAG(ENABLE_BACKGROUND) && !defined(OS_CHROMEOS)
+#endif  // BUILDFLAG(ENABLE_BACKGROUND_MODE)

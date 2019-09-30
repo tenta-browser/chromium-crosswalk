@@ -5,7 +5,6 @@
 #include "chrome/browser/plugins/flash_download_interception.h"
 
 #include "base/bind.h"
-#include "base/memory/ptr_util.h"
 #include "chrome/browser/content_settings/host_content_settings_map_factory.h"
 #include "chrome/browser/content_settings/tab_specific_content_settings.h"
 #include "chrome/browser/permissions/permission_manager.h"
@@ -19,7 +18,7 @@
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/web_contents.h"
-#include "third_party/WebKit/public/platform/modules/permissions/permission_status.mojom.h"
+#include "third_party/blink/public/platform/modules/permissions/permission_status.mojom.h"
 #include "third_party/re2/src/re2/re2.h"
 #include "url/origin.h"
 
@@ -41,8 +40,6 @@ const char kGetFlashURLSecondaryDownloadRegex[] =
     "(?i)(www\\.)?(adobe|macromedia)\\.com/shockwave/download/download.cgi";
 const char kGetFlashURLSecondaryDownloadQuery[] =
     "P1_Prod_Version=ShockwaveFlash";
-
-void DoNothing(ContentSetting result) {}
 
 bool InterceptNavigation(
     const GURL& source_url,
@@ -75,7 +72,7 @@ void FlashDownloadInterception::InterceptFlashDownloadNavigation(
     PermissionManager* manager = PermissionManager::Get(profile);
     manager->RequestPermission(
         CONTENT_SETTINGS_TYPE_PLUGINS, web_contents->GetMainFrame(),
-        web_contents->GetLastCommittedURL(), true, base::Bind(&DoNothing));
+        web_contents->GetLastCommittedURL(), true, base::DoNothing());
   } else if (flash_setting == CONTENT_SETTING_BLOCK) {
     auto* settings = TabSpecificContentSettings::FromWebContents(web_contents);
     if (settings)
@@ -107,11 +104,18 @@ bool FlashDownloadInterception::ShouldStopFlashDownloadAction(
   // intercept the download. The user may be trying to download Flash.
   std::string source_url_str =
       source_url.ReplaceComponents(replacements).GetContent();
-  if (RE2::PartialMatch(source_url_str, kGetFlashURLCanonicalRegex))
-    return false;
 
   std::string target_url_str =
       target_url.ReplaceComponents(replacements).GetContent();
+
+  // Early optimization since RE2 is expensive. http://crbug.com/809775
+  if (target_url_str.find("adobe.com") == std::string::npos &&
+      target_url_str.find("macromedia.com") == std::string::npos)
+    return false;
+
+  if (RE2::PartialMatch(source_url_str, kGetFlashURLCanonicalRegex))
+    return false;
+
   if (RE2::FullMatch(target_url_str, kGetFlashURLCanonicalRegex) ||
       RE2::FullMatch(target_url_str, kGetFlashURLSecondaryGoRegex) ||
       (RE2::FullMatch(target_url_str, kGetFlashURLSecondaryDownloadRegex) &&
@@ -160,6 +164,6 @@ FlashDownloadInterception::MaybeCreateThrottleFor(NavigationHandle* handle) {
     return nullptr;
   }
 
-  return base::MakeUnique<navigation_interception::InterceptNavigationThrottle>(
+  return std::make_unique<navigation_interception::InterceptNavigationThrottle>(
       handle, base::Bind(&InterceptNavigation, source_url));
 }

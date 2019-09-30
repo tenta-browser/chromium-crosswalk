@@ -182,10 +182,10 @@ source_set("automation_client_lib") {
     "//base",
     "//base/third_party/dynamic_annotations",
     "//net",
-    "//third_party/WebKit/public:features",
+    "//third_party/blink/public:buildflags",
     "//third_party/zlib:minizip",
     "//third_party/zlib/google:zip",
-    "//ui/accessibility:ax_gen",
+    "//ui/accessibility:ax_enums_mojo",
     "//ui/base",
     "//ui/gfx",
     "//ui/gfx/geometry",
@@ -198,6 +198,11 @@ action("embed_version_in_cpp") {
   inputs = [
     "cpp_source.py",
     "VERSION",
+
+    # We don't actually use LASTCHANGE as an input file. It is updated
+    # whenever a different Git revision is checked out, at which point
+    # version.cc needs to be updated with the new revision info.
+    "//build/util/LASTCHANGE",
   ]
   outputs = [
     "$target_gen_dir/version.cc",
@@ -319,6 +324,37 @@ executable("chromedriver") {
     "//build/config:exe_and_shlib_deps",
     "//build/win:default_exe_manifest",
   ]
+}
+
+group("chromedriver_py_tests") {
+  testonly = true
+  deps = [
+    ":chromedriver",
+    "//chrome:chrome",
+  ]
+
+  _py_files = read_file("test/run_py_tests.pydeps", "list lines")
+
+  # Filter out comments.
+  set_sources_assignment_filter([ "#*" ])
+  sources = _py_files
+  data = sources + [
+           "test/run_py_tests.pydeps",
+           "//chrome/test/data/chromedriver/",
+           "//testing/xvfb.py",
+         ]
+
+  data_deps = [
+    "//chrome/test/chromedriver",
+  ]
+  if (is_component_build && is_mac) {
+    data_deps += [ "//chrome:chrome_framework" ]
+  }
+
+  if (is_win) {
+    # On Windows, the following target produces the final chrome.exe
+    data_deps += [ "//chrome:reorder_imports" ]
+  }
 }
 
 test("chromedriver_unittests") {

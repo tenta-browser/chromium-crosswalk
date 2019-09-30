@@ -8,6 +8,7 @@
 #include <stdint.h>
 
 #include <memory>
+#include <utility>
 
 #include "base/bind.h"
 #include "base/lazy_instance.h"
@@ -23,8 +24,8 @@
 #include "components/webcrypto/crypto_data.h"
 #include "components/webcrypto/generate_key_result.h"
 #include "components/webcrypto/status.h"
-#include "third_party/WebKit/public/platform/WebCryptoKeyAlgorithm.h"
-#include "third_party/WebKit/public/platform/WebString.h"
+#include "third_party/blink/public/platform/web_crypto_key_algorithm.h"
+#include "third_party/blink/public/platform/web_string.h"
 
 namespace webcrypto {
 
@@ -78,8 +79,7 @@ class CryptoThreadPool {
     worker_thread_.StartWithOptions(options);
   }
 
-  static bool PostTask(const base::Location& from_here,
-                       const base::Closure& task);
+  static bool PostTask(const base::Location& from_here, base::OnceClosure task);
 
  private:
   // TODO(gab): the pool is currently using a single non-joinable thread to
@@ -96,9 +96,9 @@ base::LazyInstance<CryptoThreadPool>::Leaky crypto_thread_pool =
     LAZY_INSTANCE_INITIALIZER;
 
 bool CryptoThreadPool::PostTask(const base::Location& from_here,
-                                const base::Closure& task) {
+                                base::OnceClosure task) {
   return crypto_thread_pool.Get().worker_thread_.task_runner()->PostTask(
-      from_here, task);
+      from_here, std::move(task));
 }
 
 void CompleteWithThreadPoolError(blink::WebCryptoResult* result) {
@@ -140,12 +140,6 @@ void CompleteWithKeyOrError(const Status& status,
   }
 }
 
-// Gets a task runner for the current thread.
-scoped_refptr<base::TaskRunner> GetCurrentBlinkThread() {
-  DCHECK(base::ThreadTaskRunnerHandle::IsSet());
-  return base::ThreadTaskRunnerHandle::Get();
-}
-
 // --------------------------------------------------------------------
 // State
 // --------------------------------------------------------------------
@@ -164,8 +158,9 @@ scoped_refptr<base::TaskRunner> GetCurrentBlinkThread() {
 // has vanished (which can happen for Blink web worker threads).
 
 struct BaseState {
-  explicit BaseState(const blink::WebCryptoResult& result)
-      : origin_thread(GetCurrentBlinkThread()), result(result) {}
+  BaseState(const blink::WebCryptoResult& result,
+            scoped_refptr<base::SingleThreadTaskRunner> task_runner)
+      : origin_thread(task_runner), result(result) {}
 
   bool cancelled() { return result.Cancelled(); }
 
@@ -184,8 +179,9 @@ struct EncryptState : public BaseState {
   EncryptState(const blink::WebCryptoAlgorithm& algorithm,
                const blink::WebCryptoKey& key,
                blink::WebVector<unsigned char> data,
-               const blink::WebCryptoResult& result)
-      : BaseState(result),
+               const blink::WebCryptoResult& result,
+               scoped_refptr<base::SingleThreadTaskRunner> task_runner)
+      : BaseState(result, std::move(task_runner)),
         algorithm(algorithm),
         key(key),
         data(std::move(data)) {}
@@ -204,8 +200,9 @@ struct GenerateKeyState : public BaseState {
   GenerateKeyState(const blink::WebCryptoAlgorithm& algorithm,
                    bool extractable,
                    blink::WebCryptoKeyUsageMask usages,
-                   const blink::WebCryptoResult& result)
-      : BaseState(result),
+                   const blink::WebCryptoResult& result,
+                   scoped_refptr<base::SingleThreadTaskRunner> task_runner)
+      : BaseState(result, std::move(task_runner)),
         algorithm(algorithm),
         extractable(extractable),
         usages(usages) {}
@@ -223,8 +220,9 @@ struct ImportKeyState : public BaseState {
                  const blink::WebCryptoAlgorithm& algorithm,
                  bool extractable,
                  blink::WebCryptoKeyUsageMask usages,
-                 const blink::WebCryptoResult& result)
-      : BaseState(result),
+                 const blink::WebCryptoResult& result,
+                 scoped_refptr<base::SingleThreadTaskRunner> task_runner)
+      : BaseState(result, std::move(task_runner)),
         format(format),
         key_data(std::move(key_data)),
         algorithm(algorithm),
@@ -243,8 +241,9 @@ struct ImportKeyState : public BaseState {
 struct ExportKeyState : public BaseState {
   ExportKeyState(blink::WebCryptoKeyFormat format,
                  const blink::WebCryptoKey& key,
-                 const blink::WebCryptoResult& result)
-      : BaseState(result), format(format), key(key) {}
+                 const blink::WebCryptoResult& result,
+                 scoped_refptr<base::SingleThreadTaskRunner> task_runner)
+      : BaseState(result, std::move(task_runner)), format(format), key(key) {}
 
   const blink::WebCryptoKeyFormat format;
   const blink::WebCryptoKey key;
@@ -259,8 +258,9 @@ struct VerifySignatureState : public BaseState {
                        const blink::WebCryptoKey& key,
                        blink::WebVector<unsigned char> signature,
                        blink::WebVector<unsigned char> data,
-                       const blink::WebCryptoResult& result)
-      : BaseState(result),
+                       const blink::WebCryptoResult& result,
+                       scoped_refptr<base::SingleThreadTaskRunner> task_runner)
+      : BaseState(result, std::move(task_runner)),
         algorithm(algorithm),
         key(key),
         signature(std::move(signature)),
@@ -280,8 +280,9 @@ struct WrapKeyState : public BaseState {
                const blink::WebCryptoKey& key,
                const blink::WebCryptoKey& wrapping_key,
                const blink::WebCryptoAlgorithm& wrap_algorithm,
-               const blink::WebCryptoResult& result)
-      : BaseState(result),
+               const blink::WebCryptoResult& result,
+               scoped_refptr<base::SingleThreadTaskRunner> task_runner)
+      : BaseState(result, std::move(task_runner)),
         format(format),
         key(key),
         wrapping_key(wrapping_key),
@@ -303,8 +304,9 @@ struct UnwrapKeyState : public BaseState {
                  const blink::WebCryptoAlgorithm& unwrapped_key_algorithm,
                  bool extractable,
                  blink::WebCryptoKeyUsageMask usages,
-                 const blink::WebCryptoResult& result)
-      : BaseState(result),
+                 const blink::WebCryptoResult& result,
+                 scoped_refptr<base::SingleThreadTaskRunner> task_runner)
+      : BaseState(result, std::move(task_runner)),
         format(format),
         wrapped_key(std::move(wrapped_key)),
         wrapping_key(wrapping_key),
@@ -328,8 +330,9 @@ struct DeriveBitsState : public BaseState {
   DeriveBitsState(const blink::WebCryptoAlgorithm& algorithm,
                   const blink::WebCryptoKey& base_key,
                   unsigned int length_bits,
-                  const blink::WebCryptoResult& result)
-      : BaseState(result),
+                  const blink::WebCryptoResult& result,
+                  scoped_refptr<base::SingleThreadTaskRunner> task_runner)
+      : BaseState(result, std::move(task_runner)),
         algorithm(algorithm),
         base_key(base_key),
         length_bits(length_bits) {}
@@ -348,8 +351,9 @@ struct DeriveKeyState : public BaseState {
                  const blink::WebCryptoAlgorithm& key_length_algorithm,
                  bool extractable,
                  blink::WebCryptoKeyUsageMask usages,
-                 const blink::WebCryptoResult& result)
-      : BaseState(result),
+                 const blink::WebCryptoResult& result,
+                 scoped_refptr<base::SingleThreadTaskRunner> task_runner)
+      : BaseState(result, std::move(task_runner)),
         algorithm(algorithm),
         base_key(base_key),
         import_algorithm(import_algorithm),
@@ -389,7 +393,7 @@ void DoEncrypt(std::unique_ptr<EncryptState> passed_state) {
       webcrypto::Encrypt(state->algorithm, state->key,
                          webcrypto::CryptoData(state->data), &state->buffer);
   state->origin_thread->PostTask(
-      FROM_HERE, base::Bind(DoEncryptReply, base::Passed(&passed_state)));
+      FROM_HERE, base::BindOnce(DoEncryptReply, std::move(passed_state)));
 }
 
 void DoDecryptReply(std::unique_ptr<DecryptState> state) {
@@ -407,7 +411,7 @@ void DoDecrypt(std::unique_ptr<DecryptState> passed_state) {
       webcrypto::Decrypt(state->algorithm, state->key,
                          webcrypto::CryptoData(state->data), &state->buffer);
   state->origin_thread->PostTask(
-      FROM_HERE, base::Bind(DoDecryptReply, base::Passed(&passed_state)));
+      FROM_HERE, base::BindOnce(DoDecryptReply, std::move(passed_state)));
 }
 
 void DoDigestReply(std::unique_ptr<DigestState> state) {
@@ -423,7 +427,7 @@ void DoDigest(std::unique_ptr<DigestState> passed_state) {
   state->status = webcrypto::Digest(
       state->algorithm, webcrypto::CryptoData(state->data), &state->buffer);
   state->origin_thread->PostTask(
-      FROM_HERE, base::Bind(DoDigestReply, base::Passed(&passed_state)));
+      FROM_HERE, base::BindOnce(DoDigestReply, std::move(passed_state)));
 }
 
 void DoGenerateKeyReply(std::unique_ptr<GenerateKeyState> state) {
@@ -445,7 +449,7 @@ void DoGenerateKey(std::unique_ptr<GenerateKeyState> passed_state) {
       webcrypto::GenerateKey(state->algorithm, state->extractable,
                              state->usages, &state->generate_key_result);
   state->origin_thread->PostTask(
-      FROM_HERE, base::Bind(DoGenerateKeyReply, base::Passed(&passed_state)));
+      FROM_HERE, base::BindOnce(DoGenerateKeyReply, std::move(passed_state)));
 }
 
 void DoImportKeyReply(std::unique_ptr<ImportKeyState> state) {
@@ -469,7 +473,7 @@ void DoImportKey(std::unique_ptr<ImportKeyState> passed_state) {
   }
 
   state->origin_thread->PostTask(
-      FROM_HERE, base::Bind(DoImportKeyReply, base::Passed(&passed_state)));
+      FROM_HERE, base::BindOnce(DoImportKeyReply, std::move(passed_state)));
 }
 
 void DoExportKeyReply(std::unique_ptr<ExportKeyState> state) {
@@ -497,7 +501,7 @@ void DoExportKey(std::unique_ptr<ExportKeyState> passed_state) {
   state->status =
       webcrypto::ExportKey(state->format, state->key, &state->buffer);
   state->origin_thread->PostTask(
-      FROM_HERE, base::Bind(DoExportKeyReply, base::Passed(&passed_state)));
+      FROM_HERE, base::BindOnce(DoExportKeyReply, std::move(passed_state)));
 }
 
 void DoSignReply(std::unique_ptr<SignState> state) {
@@ -515,7 +519,7 @@ void DoSign(std::unique_ptr<SignState> passed_state) {
                       webcrypto::CryptoData(state->data), &state->buffer);
 
   state->origin_thread->PostTask(
-      FROM_HERE, base::Bind(DoSignReply, base::Passed(&passed_state)));
+      FROM_HERE, base::BindOnce(DoSignReply, std::move(passed_state)));
 }
 
 void DoVerifyReply(std::unique_ptr<VerifySignatureState> state) {
@@ -537,7 +541,7 @@ void DoVerify(std::unique_ptr<VerifySignatureState> passed_state) {
       webcrypto::CryptoData(state->data), &state->verify_result);
 
   state->origin_thread->PostTask(
-      FROM_HERE, base::Bind(DoVerifyReply, base::Passed(&passed_state)));
+      FROM_HERE, base::BindOnce(DoVerifyReply, std::move(passed_state)));
 }
 
 void DoWrapKeyReply(std::unique_ptr<WrapKeyState> state) {
@@ -556,7 +560,7 @@ void DoWrapKey(std::unique_ptr<WrapKeyState> passed_state) {
                          state->wrap_algorithm, &state->buffer);
 
   state->origin_thread->PostTask(
-      FROM_HERE, base::Bind(DoWrapKeyReply, base::Passed(&passed_state)));
+      FROM_HERE, base::BindOnce(DoWrapKeyReply, std::move(passed_state)));
 }
 
 void DoUnwrapKeyReply(std::unique_ptr<UnwrapKeyState> state) {
@@ -577,7 +581,7 @@ void DoUnwrapKey(std::unique_ptr<UnwrapKeyState> passed_state) {
       &state->unwrapped_key);
 
   state->origin_thread->PostTask(
-      FROM_HERE, base::Bind(DoUnwrapKeyReply, base::Passed(&passed_state)));
+      FROM_HERE, base::BindOnce(DoUnwrapKeyReply, std::move(passed_state)));
 }
 
 void DoDeriveBitsReply(std::unique_ptr<DeriveBitsState> state) {
@@ -596,7 +600,7 @@ void DoDeriveBits(std::unique_ptr<DeriveBitsState> passed_state) {
       webcrypto::DeriveBits(state->algorithm, state->base_key,
                             state->length_bits, &state->derived_bytes);
   state->origin_thread->PostTask(
-      FROM_HERE, base::Bind(DoDeriveBitsReply, base::Passed(&passed_state)));
+      FROM_HERE, base::BindOnce(DoDeriveBitsReply, std::move(passed_state)));
 }
 
 void DoDeriveKeyReply(std::unique_ptr<DeriveKeyState> state) {
@@ -615,7 +619,7 @@ void DoDeriveKey(std::unique_ptr<DeriveKeyState> passed_state) {
       state->key_length_algorithm, state->extractable, state->usages,
       &state->derived_key);
   state->origin_thread->PostTask(
-      FROM_HERE, base::Bind(DoDeriveKeyReply, base::Passed(&passed_state)));
+      FROM_HERE, base::BindOnce(DoDeriveKeyReply, std::move(passed_state)));
 }
 
 }  // namespace
@@ -626,120 +630,142 @@ WebCryptoImpl::WebCryptoImpl() {
 WebCryptoImpl::~WebCryptoImpl() {
 }
 
-void WebCryptoImpl::Encrypt(const blink::WebCryptoAlgorithm& algorithm,
-                            const blink::WebCryptoKey& key,
-                            blink::WebVector<unsigned char> data,
-                            blink::WebCryptoResult result) {
+void WebCryptoImpl::Encrypt(
+    const blink::WebCryptoAlgorithm& algorithm,
+    const blink::WebCryptoKey& key,
+    blink::WebVector<unsigned char> data,
+    blink::WebCryptoResult result,
+    scoped_refptr<base::SingleThreadTaskRunner> task_runner) {
   DCHECK(!algorithm.IsNull());
 
-  std::unique_ptr<EncryptState> state(
-      new EncryptState(algorithm, key, std::move(data), result));
+  std::unique_ptr<EncryptState> state(new EncryptState(
+      algorithm, key, std::move(data), result, std::move(task_runner)));
   if (!CryptoThreadPool::PostTask(
-          FROM_HERE, base::Bind(DoEncrypt, base::Passed(&state)))) {
+          FROM_HERE, base::BindOnce(DoEncrypt, std::move(state)))) {
     CompleteWithThreadPoolError(&result);
   }
 }
 
-void WebCryptoImpl::Decrypt(const blink::WebCryptoAlgorithm& algorithm,
-                            const blink::WebCryptoKey& key,
-                            blink::WebVector<unsigned char> data,
-                            blink::WebCryptoResult result) {
+void WebCryptoImpl::Decrypt(
+    const blink::WebCryptoAlgorithm& algorithm,
+    const blink::WebCryptoKey& key,
+    blink::WebVector<unsigned char> data,
+    blink::WebCryptoResult result,
+    scoped_refptr<base::SingleThreadTaskRunner> task_runner) {
   DCHECK(!algorithm.IsNull());
 
-  std::unique_ptr<DecryptState> state(
-      new DecryptState(algorithm, key, std::move(data), result));
+  std::unique_ptr<DecryptState> state(new DecryptState(
+      algorithm, key, std::move(data), result, std::move(task_runner)));
   if (!CryptoThreadPool::PostTask(
-          FROM_HERE, base::Bind(DoDecrypt, base::Passed(&state)))) {
+          FROM_HERE, base::BindOnce(DoDecrypt, std::move(state)))) {
     CompleteWithThreadPoolError(&result);
   }
 }
 
-void WebCryptoImpl::Digest(const blink::WebCryptoAlgorithm& algorithm,
-                           blink::WebVector<unsigned char> data,
-                           blink::WebCryptoResult result) {
+void WebCryptoImpl::Digest(
+    const blink::WebCryptoAlgorithm& algorithm,
+    blink::WebVector<unsigned char> data,
+    blink::WebCryptoResult result,
+    scoped_refptr<base::SingleThreadTaskRunner> task_runner) {
   DCHECK(!algorithm.IsNull());
 
-  std::unique_ptr<DigestState> state(new DigestState(
-      algorithm, blink::WebCryptoKey::CreateNull(), std::move(data), result));
+  std::unique_ptr<DigestState> state(
+      new DigestState(algorithm, blink::WebCryptoKey::CreateNull(),
+                      std::move(data), result, std::move(task_runner)));
   if (!CryptoThreadPool::PostTask(FROM_HERE,
-                                  base::Bind(DoDigest, base::Passed(&state)))) {
+                                  base::BindOnce(DoDigest, std::move(state)))) {
     CompleteWithThreadPoolError(&result);
   }
 }
 
-void WebCryptoImpl::GenerateKey(const blink::WebCryptoAlgorithm& algorithm,
-                                bool extractable,
-                                blink::WebCryptoKeyUsageMask usages,
-                                blink::WebCryptoResult result) {
+void WebCryptoImpl::GenerateKey(
+    const blink::WebCryptoAlgorithm& algorithm,
+    bool extractable,
+    blink::WebCryptoKeyUsageMask usages,
+    blink::WebCryptoResult result,
+    scoped_refptr<base::SingleThreadTaskRunner> task_runner) {
   DCHECK(!algorithm.IsNull());
 
-  std::unique_ptr<GenerateKeyState> state(
-      new GenerateKeyState(algorithm, extractable, usages, result));
+  std::unique_ptr<GenerateKeyState> state(new GenerateKeyState(
+      algorithm, extractable, usages, result, std::move(task_runner)));
   if (!CryptoThreadPool::PostTask(
-          FROM_HERE, base::Bind(DoGenerateKey, base::Passed(&state)))) {
+          FROM_HERE, base::BindOnce(DoGenerateKey, std::move(state)))) {
     CompleteWithThreadPoolError(&result);
   }
 }
 
-void WebCryptoImpl::ImportKey(blink::WebCryptoKeyFormat format,
-                              blink::WebVector<unsigned char> key_data,
-                              const blink::WebCryptoAlgorithm& algorithm,
-                              bool extractable,
-                              blink::WebCryptoKeyUsageMask usages,
-                              blink::WebCryptoResult result) {
-  std::unique_ptr<ImportKeyState> state(new ImportKeyState(
-      format, std::move(key_data), algorithm, extractable, usages, result));
+void WebCryptoImpl::ImportKey(
+    blink::WebCryptoKeyFormat format,
+    blink::WebVector<unsigned char> key_data,
+    const blink::WebCryptoAlgorithm& algorithm,
+    bool extractable,
+    blink::WebCryptoKeyUsageMask usages,
+    blink::WebCryptoResult result,
+    scoped_refptr<base::SingleThreadTaskRunner> task_runner) {
+  std::unique_ptr<ImportKeyState> state(
+      new ImportKeyState(format, std::move(key_data), algorithm, extractable,
+                         usages, result, std::move(task_runner)));
   if (!CryptoThreadPool::PostTask(
-          FROM_HERE, base::Bind(DoImportKey, base::Passed(&state)))) {
+          FROM_HERE, base::BindOnce(DoImportKey, std::move(state)))) {
     CompleteWithThreadPoolError(&result);
   }
 }
 
-void WebCryptoImpl::ExportKey(blink::WebCryptoKeyFormat format,
-                              const blink::WebCryptoKey& key,
-                              blink::WebCryptoResult result) {
+void WebCryptoImpl::ExportKey(
+    blink::WebCryptoKeyFormat format,
+    const blink::WebCryptoKey& key,
+    blink::WebCryptoResult result,
+    scoped_refptr<base::SingleThreadTaskRunner> task_runner) {
   std::unique_ptr<ExportKeyState> state(
-      new ExportKeyState(format, key, result));
+      new ExportKeyState(format, key, result, std::move(task_runner)));
   if (!CryptoThreadPool::PostTask(
-          FROM_HERE, base::Bind(DoExportKey, base::Passed(&state)))) {
+          FROM_HERE, base::BindOnce(DoExportKey, std::move(state)))) {
     CompleteWithThreadPoolError(&result);
   }
 }
 
-void WebCryptoImpl::Sign(const blink::WebCryptoAlgorithm& algorithm,
-                         const blink::WebCryptoKey& key,
-                         blink::WebVector<unsigned char> data,
-                         blink::WebCryptoResult result) {
-  std::unique_ptr<SignState> state(
-      new SignState(algorithm, key, std::move(data), result));
+void WebCryptoImpl::Sign(
+    const blink::WebCryptoAlgorithm& algorithm,
+    const blink::WebCryptoKey& key,
+    blink::WebVector<unsigned char> data,
+    blink::WebCryptoResult result,
+    scoped_refptr<base::SingleThreadTaskRunner> task_runner) {
+  std::unique_ptr<SignState> state(new SignState(
+      algorithm, key, std::move(data), result, std::move(task_runner)));
   if (!CryptoThreadPool::PostTask(FROM_HERE,
-                                  base::Bind(DoSign, base::Passed(&state)))) {
+                                  base::BindOnce(DoSign, std::move(state)))) {
     CompleteWithThreadPoolError(&result);
   }
 }
 
-void WebCryptoImpl::VerifySignature(const blink::WebCryptoAlgorithm& algorithm,
-                                    const blink::WebCryptoKey& key,
-                                    blink::WebVector<unsigned char> signature,
-                                    blink::WebVector<unsigned char> data,
-                                    blink::WebCryptoResult result) {
+void WebCryptoImpl::VerifySignature(
+    const blink::WebCryptoAlgorithm& algorithm,
+    const blink::WebCryptoKey& key,
+    blink::WebVector<unsigned char> signature,
+    blink::WebVector<unsigned char> data,
+    blink::WebCryptoResult result,
+    scoped_refptr<base::SingleThreadTaskRunner> task_runner) {
   std::unique_ptr<VerifySignatureState> state(new VerifySignatureState(
-      algorithm, key, std::move(signature), std::move(data), result));
+      algorithm, key, std::move(signature), std::move(data), result,
+      std::move(task_runner)));
   if (!CryptoThreadPool::PostTask(FROM_HERE,
-                                  base::Bind(DoVerify, base::Passed(&state)))) {
+                                  base::BindOnce(DoVerify, std::move(state)))) {
     CompleteWithThreadPoolError(&result);
   }
 }
 
-void WebCryptoImpl::WrapKey(blink::WebCryptoKeyFormat format,
-                            const blink::WebCryptoKey& key,
-                            const blink::WebCryptoKey& wrapping_key,
-                            const blink::WebCryptoAlgorithm& wrap_algorithm,
-                            blink::WebCryptoResult result) {
+void WebCryptoImpl::WrapKey(
+    blink::WebCryptoKeyFormat format,
+    const blink::WebCryptoKey& key,
+    const blink::WebCryptoKey& wrapping_key,
+    const blink::WebCryptoAlgorithm& wrap_algorithm,
+    blink::WebCryptoResult result,
+    scoped_refptr<base::SingleThreadTaskRunner> task_runner) {
   std::unique_ptr<WrapKeyState> state(
-      new WrapKeyState(format, key, wrapping_key, wrap_algorithm, result));
+      new WrapKeyState(format, key, wrapping_key, wrap_algorithm, result,
+                       std::move(task_runner)));
   if (!CryptoThreadPool::PostTask(
-          FROM_HERE, base::Bind(DoWrapKey, base::Passed(&state)))) {
+          FROM_HERE, base::BindOnce(DoWrapKey, std::move(state)))) {
     CompleteWithThreadPoolError(&result);
   }
 }
@@ -752,24 +778,28 @@ void WebCryptoImpl::UnwrapKey(
     const blink::WebCryptoAlgorithm& unwrapped_key_algorithm,
     bool extractable,
     blink::WebCryptoKeyUsageMask usages,
-    blink::WebCryptoResult result) {
-  std::unique_ptr<UnwrapKeyState> state(new UnwrapKeyState(
-      format, std::move(wrapped_key), wrapping_key, unwrap_algorithm,
-      unwrapped_key_algorithm, extractable, usages, result));
+    blink::WebCryptoResult result,
+    scoped_refptr<base::SingleThreadTaskRunner> task_runner) {
+  std::unique_ptr<UnwrapKeyState> state(
+      new UnwrapKeyState(format, std::move(wrapped_key), wrapping_key,
+                         unwrap_algorithm, unwrapped_key_algorithm, extractable,
+                         usages, result, std::move(task_runner)));
   if (!CryptoThreadPool::PostTask(
-          FROM_HERE, base::Bind(DoUnwrapKey, base::Passed(&state)))) {
+          FROM_HERE, base::BindOnce(DoUnwrapKey, std::move(state)))) {
     CompleteWithThreadPoolError(&result);
   }
 }
 
-void WebCryptoImpl::DeriveBits(const blink::WebCryptoAlgorithm& algorithm,
-                               const blink::WebCryptoKey& base_key,
-                               unsigned int length_bits,
-                               blink::WebCryptoResult result) {
-  std::unique_ptr<DeriveBitsState> state(
-      new DeriveBitsState(algorithm, base_key, length_bits, result));
+void WebCryptoImpl::DeriveBits(
+    const blink::WebCryptoAlgorithm& algorithm,
+    const blink::WebCryptoKey& base_key,
+    unsigned int length_bits,
+    blink::WebCryptoResult result,
+    scoped_refptr<base::SingleThreadTaskRunner> task_runner) {
+  std::unique_ptr<DeriveBitsState> state(new DeriveBitsState(
+      algorithm, base_key, length_bits, result, std::move(task_runner)));
   if (!CryptoThreadPool::PostTask(
-          FROM_HERE, base::Bind(DoDeriveBits, base::Passed(&state)))) {
+          FROM_HERE, base::BindOnce(DoDeriveBits, std::move(state)))) {
     CompleteWithThreadPoolError(&result);
   }
 }
@@ -781,12 +811,13 @@ void WebCryptoImpl::DeriveKey(
     const blink::WebCryptoAlgorithm& key_length_algorithm,
     bool extractable,
     blink::WebCryptoKeyUsageMask usages,
-    blink::WebCryptoResult result) {
-  std::unique_ptr<DeriveKeyState> state(
-      new DeriveKeyState(algorithm, base_key, import_algorithm,
-                         key_length_algorithm, extractable, usages, result));
+    blink::WebCryptoResult result,
+    scoped_refptr<base::SingleThreadTaskRunner> task_runner) {
+  std::unique_ptr<DeriveKeyState> state(new DeriveKeyState(
+      algorithm, base_key, import_algorithm, key_length_algorithm, extractable,
+      usages, result, std::move(task_runner)));
   if (!CryptoThreadPool::PostTask(
-          FROM_HERE, base::Bind(DoDeriveKey, base::Passed(&state)))) {
+          FROM_HERE, base::BindOnce(DoDeriveKey, std::move(state)))) {
     CompleteWithThreadPoolError(&result);
   }
 }

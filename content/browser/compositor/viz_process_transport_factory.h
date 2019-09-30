@@ -11,8 +11,10 @@
 #include "base/macros.h"
 #include "build/build_config.h"
 #include "components/viz/common/display/renderer_settings.h"
+#include "components/viz/common/gpu/context_lost_observer.h"
 #include "components/viz/common/surfaces/frame_sink_id_allocator.h"
 #include "content/browser/compositor/image_transport_factory.h"
+#include "content/browser/compositor/in_process_display_client.h"
 #include "mojo/public/cpp/bindings/binding.h"
 #include "services/viz/privileged/interfaces/compositing/frame_sink_manager.mojom.h"
 #include "services/viz/public/interfaces/compositing/compositing_mode_watcher.mojom.h"
@@ -36,10 +38,13 @@ class ContextProviderCommandBuffer;
 }
 
 namespace viz {
-class ForwardingCompositingModeReporterImpl;
+class CompositingModeReporterImpl;
+class RasterContextProvider;
 }
 
 namespace content {
+
+class ExternalBeginFrameControllerClientImpl;
 
 // A replacement for GpuProcessTransportFactory to be used when running viz. In
 // this configuration the display compositor is located in the viz process
@@ -48,12 +53,13 @@ namespace content {
 class VizProcessTransportFactory : public ui::ContextFactory,
                                    public ui::ContextFactoryPrivate,
                                    public ImageTransportFactory,
-                                   public viz::mojom::CompositingModeWatcher {
+                                   public viz::mojom::CompositingModeWatcher,
+                                   public viz::ContextLostObserver {
  public:
   VizProcessTransportFactory(
       gpu::GpuChannelEstablishFactory* gpu_channel_establish_factory,
       scoped_refptr<base::SingleThreadTaskRunner> resize_task_runner,
-      viz::ForwardingCompositingModeReporterImpl* forwarding_mode_reporter);
+      viz::CompositingModeReporterImpl* compositing_mode_reporter);
   ~VizProcessTransportFactory() override;
 
   // Connects HostFrameSinkManager to FrameSinkManagerImpl in viz process.
@@ -68,7 +74,6 @@ class VizProcessTransportFactory : public ui::ContextFactory,
   double GetRefreshRate() const override;
   gpu::GpuMemoryBufferManager* GetGpuMemoryBufferManager() override;
   cc::TaskGraphRunner* GetTaskGraphRunner() override;
-  const viz::ResourceSettings& GetResourceSettings() const override;
   void AddObserver(ui::ContextFactoryObserver* observer) override;
   void RemoveObserver(ui::ContextFactoryObserver* observer) override;
 
@@ -81,6 +86,8 @@ class VizProcessTransportFactory : public ui::ContextFactory,
   void SetDisplayVisible(ui::Compositor* compositor, bool visible) override;
   void ResizeDisplay(ui::Compositor* compositor,
                      const gfx::Size& size) override;
+  void SetDisplayColorMatrix(ui::Compositor* compositor,
+                             const SkMatrix44& matrix) override;
   void SetDisplayColorSpace(ui::Compositor* compositor,
                             const gfx::ColorSpace& blending_color_space,
                             const gfx::ColorSpace& output_color_space) override;
@@ -107,6 +114,9 @@ class VizProcessTransportFactory : public ui::ContextFactory,
   // viz::mojom::CompositingModeWatcher implementation.
   void CompositingModeFallbackToSoftware() override;
 
+  // viz::ContextLostObserver implementation.
+  void OnContextLost() override;
+
  private:
   struct CompositorData {
     CompositorData();
@@ -117,6 +127,12 @@ class VizProcessTransportFactory : public ui::ContextFactory,
     // Privileged interface that controls the display for a root
     // CompositorFrameSink.
     viz::mojom::DisplayPrivateAssociatedPtr display_private;
+    std::unique_ptr<InProcessDisplayClient> display_client;
+
+    // Controls external BeginFrames for the display. Only set if external
+    // BeginFrames are enabled for the compositor.
+    std::unique_ptr<ExternalBeginFrameControllerClientImpl>
+        external_begin_frame_controller_client;
 
    private:
     DISALLOW_COPY_AND_ASSIGN(CompositorData);
@@ -141,31 +157,26 @@ class VizProcessTransportFactory : public ui::ContextFactory,
 
   gpu::GpuChannelEstablishFactory* const gpu_channel_establish_factory_;
   scoped_refptr<base::SingleThreadTaskRunner> const resize_task_runner_;
-  // Acts as a proxy from the mojo connection to the authoritive
-  // |compositing_mode_reporter_|. This will forward the state on to clients of
-  // the browser process (eg the renderers). Since the browser process is not
-  // restartable, it prevents these clients from having to reconnect to their
-  // CompositingModeReporter.
-  viz::ForwardingCompositingModeReporterImpl* const forwarding_mode_reporter_;
+
+  // Controls the compositing mode based on what mode the display compositors
+  // are using.
+  viz::CompositingModeReporterImpl* const compositing_mode_reporter_;
 
   base::flat_map<ui::Compositor*, CompositorData> compositor_data_map_;
   bool is_gpu_compositing_disabled_ = false;
 
-  // TODO(kylechar): Call OnContextLost() on observers when GPU crashes.
   base::ObserverList<ui::ContextFactoryObserver> observer_list_;
 
-  scoped_refptr<ui::ContextProviderCommandBuffer>
-      shared_worker_context_provider_;
-  scoped_refptr<ui::ContextProviderCommandBuffer> compositor_context_provider_;
+  // ContextProvider used on worker threads for rasterization.
+  scoped_refptr<viz::RasterContextProvider> worker_context_provider_;
+
+  // ContextProvider used on the main thread. Shared by ui::Compositors and also
+  // returned from GetSharedMainThreadContextProvider().
+  scoped_refptr<ui::ContextProviderCommandBuffer> main_context_provider_;
 
   viz::FrameSinkIdAllocator frame_sink_id_allocator_;
   std::unique_ptr<cc::SingleThreadTaskGraphRunner> task_graph_runner_;
   const viz::RendererSettings renderer_settings_;
-
-  // The class is a CompositingModeWatcher, which is bound to mojo through
-  // this member.
-  mojo::Binding<viz::mojom::CompositingModeWatcher>
-      compositing_mode_watcher_binding_;
 
   base::WeakPtrFactory<VizProcessTransportFactory> weak_ptr_factory_;
 

@@ -7,7 +7,6 @@
 
 #include "base/containers/circular_deque.h"
 #include "base/optional.h"
-#include "base/single_thread_task_runner.h"
 #include "base/threading/thread_checker.h"
 #include "base/timer/elapsed_timer.h"
 #include "gpu/command_buffer/service/gpu_preferences.h"
@@ -21,7 +20,6 @@
 #include "media/gpu/android/surface_chooser_helper.h"
 #include "media/gpu/android/video_frame_factory.h"
 #include "media/gpu/media_gpu_export.h"
-#include "services/service_manager/public/cpp/service_context_ref.h"
 
 namespace media {
 
@@ -56,23 +54,23 @@ class MEDIA_GPU_EXPORT MediaCodecVideoDecoder
  public:
   MediaCodecVideoDecoder(
       const gpu::GpuPreferences& gpu_preferences,
-      VideoFrameFactory::OutputWithReleaseMailboxCB output_cb,
       DeviceInfo* device_info,
       AVDACodecAllocator* codec_allocator,
       std::unique_ptr<AndroidVideoSurfaceChooser> surface_chooser,
       AndroidOverlayMojoFactoryCB overlay_factory_cb,
       RequestOverlayInfoCB request_overlay_info_cb,
-      std::unique_ptr<VideoFrameFactory> video_frame_factory,
-      std::unique_ptr<service_manager::ServiceContextRef> connection_ref);
+      std::unique_ptr<VideoFrameFactory> video_frame_factory);
 
   // VideoDecoder implementation:
   std::string GetDisplayName() const override;
-  void Initialize(const VideoDecoderConfig& config,
-                  bool low_delay,
-                  CdmContext* cdm_context,
-                  const InitCB& init_cb,
-                  const OutputCB& output_cb) override;
-  void Decode(const scoped_refptr<DecoderBuffer>& buffer,
+  void Initialize(
+      const VideoDecoderConfig& config,
+      bool low_delay,
+      CdmContext* cdm_context,
+      const InitCB& init_cb,
+      const OutputCB& output_cb,
+      const WaitingForDecryptionKeyCB& waiting_for_decryption_key_cb) override;
+  void Decode(scoped_refptr<DecoderBuffer> buffer,
               const DecodeCB& decode_cb) override;
   void Reset(const base::Closure& closure) override;
   bool NeedsBitstreamConversion() const override;
@@ -169,7 +167,6 @@ class MEDIA_GPU_EXPORT MediaCodecVideoDecoder
   // Forwards |frame| via |output_cb_| if |reset_generation| matches
   // |reset_generation_|.
   void ForwardVideoFrame(int reset_generation,
-                         VideoFrameFactory::ReleaseMailboxCB release_cb,
                          const scoped_refptr<VideoFrame>& frame);
 
   // Starts draining the codec by queuing an EOS if required. It skips the drain
@@ -226,7 +223,7 @@ class MEDIA_GPU_EXPORT MediaCodecVideoDecoder
   // when the EOS is output.
   VideoDecoder::DecodeCB eos_decode_cb_;
 
-  VideoFrameFactory::OutputWithReleaseMailboxCB output_cb_;
+  VideoDecoder::OutputCB output_cb_;
   VideoDecoderConfig decoder_config_;
 
   // Codec specific data (SPS and PPS for H264). Some MediaCodecs initialize
@@ -274,9 +271,8 @@ class MEDIA_GPU_EXPORT MediaCodecVideoDecoder
 
   // CDM related stuff.
 
-  // CDM context that knowns about MediaCrypto. Owned by CDM which is external
-  // to this decoder.
-  MediaDrmBridgeCdmContext* media_drm_bridge_cdm_context_ = nullptr;
+  // Owned by CDM which is external to this decoder.
+  MediaCryptoContext* media_crypto_context_ = nullptr;
 
   // MediaDrmBridge requires registration/unregistration of the player, this
   // registration id is used for this.
@@ -288,9 +284,6 @@ class MEDIA_GPU_EXPORT MediaCodecVideoDecoder
   // Optional crypto object from the Cdm.
   base::android::ScopedJavaGlobalRef<jobject> media_crypto_;
 
-  // If we're running in a service context this ref lets us keep the service
-  // thread alive until destruction.
-  std::unique_ptr<service_manager::ServiceContextRef> context_ref_;
   base::WeakPtrFactory<MediaCodecVideoDecoder> weak_factory_;
   base::WeakPtrFactory<MediaCodecVideoDecoder> codec_allocator_weak_factory_;
 

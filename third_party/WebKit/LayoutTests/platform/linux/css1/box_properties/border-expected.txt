@@ -69,17 +69,17 @@ layer at (0,0) size 785x1475 backgroundClip at (0,0) size 785x600 clip at (0,0) 
             text run at (0,0) width 25: "The"
         LayoutText {#text} at (25,0) size 715x19
           text run at (25,0) width 715: " following image is also an anchor which points to a target on this page, but it should not have a border around it: "
-        LayoutInline {A} at (0,0) size 16x19 [color=#0000FF]
-          LayoutImage {IMG} at (739.70,0) size 15x15
-        LayoutText {#text} at (754,0) size 5x19
-          text run at (754,0) width 5: "."
+        LayoutInline {A} at (0,0) size 15x19 [color=#0000FF]
+          LayoutImage {IMG} at (740,0) size 15x15
+        LayoutText {#text} at (755,0) size 4x19
+          text run at (755,0) width 4: "."
       LayoutTable {TABLE} at (0,629) size 769x121 [border: (1px outset #808080)]
         LayoutTableSection {TBODY} at (1,1) size 767x119
           LayoutTableRow {TR} at (0,5) size 767x46
             LayoutTableCell {TD} at (5,5) size 757x46 [border: (2px solid #008000)] [r=0 c=0 rs=1 cs=2]
-              LayoutText {#text} at (3,3) size 711x39
-                text run at (3,3) width 405: "Every cell in this table should have a 2-pixel solid green border. "
-                text run at (407,3) width 307: "This is also true of the table-testing section in the"
+              LayoutText {#text} at (3,3) size 710x39
+                text run at (3,3) width 404: "Every cell in this table should have a 2-pixel solid green border. "
+                text run at (407,3) width 306: "This is also true of the table-testing section in the"
                 text run at (3,23) width 175: "second half of the test page."
           LayoutTableRow {TR} at (0,56) size 767x58
             LayoutTableCell {TD} at (5,72) size 194x26 [border: (2px solid #008000)] [r=1 c=0 rs=1 cs=1]
@@ -162,9 +162,9 @@ layer at (0,0) size 785x1475 backgroundClip at (0,0) size 785x600 clip at (0,0) 
                 LayoutTableSection {TBODY} at (1,1) size 741x119
                   LayoutTableRow {TR} at (0,5) size 741x46
                     LayoutTableCell {TD} at (5,5) size 731x46 [border: (2px solid #008000)] [r=0 c=0 rs=1 cs=2]
-                      LayoutText {#text} at (3,3) size 711x39
-                        text run at (3,3) width 405: "Every cell in this table should have a 2-pixel solid green border. "
-                        text run at (407,3) width 307: "This is also true of the table-testing section in the"
+                      LayoutText {#text} at (3,3) size 710x39
+                        text run at (3,3) width 404: "Every cell in this table should have a 2-pixel solid green border. "
+                        text run at (407,3) width 306: "This is also true of the table-testing section in the"
                         text run at (3,23) width 175: "second half of the test page."
                   LayoutTableRow {TR} at (0,56) size 741x58
                     LayoutTableCell {TD} at (5,72) size 187x26 [border: (2px solid #008000)] [r=1 c=0 rs=1 cs=1]

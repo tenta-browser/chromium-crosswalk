@@ -153,7 +153,7 @@ SkColor NativeThemeGtk2::GetSystemColor(ColorId color_id) const {
 
     case kColorId_EnabledMenuItemForegroundColor:
       return GetTextColor(GetMenuItem(), NORMAL);
-    case kColorId_MenuItemSubtitleColor:
+    case kColorId_MenuItemMinorTextColor:
     case kColorId_DisabledMenuItemForegroundColor:
       return GetTextColor(GetMenuItem(), INSENSITIVE);
     case kColorId_MenuBorderColor:
@@ -218,6 +218,14 @@ SkColor NativeThemeGtk2::GetSystemColor(ColorId color_id) const {
       return GetTextColor(GetLabel(), SELECTED);
     case kColorId_ButtonPressedShade:
       return SK_ColorTRANSPARENT;
+
+    // TabbedPane
+    case ui::NativeTheme::kColorId_TabTitleColorActive:
+      return GetTextColor(GetEntry(), NORMAL);
+    case ui::NativeTheme::kColorId_TabTitleColorInactive:
+      return GetTextColor(GetLabel(), INSENSITIVE);
+    case ui::NativeTheme::kColorId_TabBottomBorder:
+      return GetTextColor(GetEntry(), NORMAL);
 
     // Textfield
     case kColorId_TextfieldDefaultColor:

@@ -14,7 +14,7 @@
 #include "chrome/browser/chromeos/ash_config.h"
 #include "chrome/browser/chromeos/login/existing_user_controller.h"
 #include "chrome/browser/chromeos/login/test/oobe_base_test.h"
-#include "chrome/browser/chromeos/login/ui/webui_login_display.h"
+#include "chrome/browser/chromeos/login/ui/login_display_webui.h"
 #include "chrome/browser/chromeos/login/wizard_controller.h"
 #include "chrome/browser/ui/webui/chromeos/login/signin_screen_handler.h"
 #include "chrome/common/chrome_switches.h"
@@ -22,6 +22,7 @@
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chromeos/chromeos_switches.h"
 #include "components/prefs/pref_service.h"
+#include "content/public/browser/browser_thread.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/test/test_utils.h"
 #include "google_apis/gaia/fake_gaia.h"
@@ -29,7 +30,7 @@
 #include "google_apis/gaia/gaia_urls.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
 #include "net/test/embedded_test_server/http_response.h"
-#include "rlz/features/features.h"
+#include "rlz/buildflags/buildflags.h"
 
 #if BUILDFLAG(ENABLE_RLZ)
 #include "base/task_scheduler/post_task.h"
@@ -66,8 +67,8 @@ class LoginUtilsTest : public OobeBaseTest {
     ExistingUserController* controller =
         ExistingUserController::current_controller();
     ASSERT_TRUE(controller);
-    WebUILoginDisplay* login_display =
-        static_cast<WebUILoginDisplay*>(controller->login_display());
+    LoginDisplayWebUI* login_display =
+        static_cast<LoginDisplayWebUI*>(controller->login_display());
     ASSERT_TRUE(login_display);
 
     login_display->ShowSigninScreenForCreds(username, "password");

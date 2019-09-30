@@ -8,6 +8,7 @@
 #include "base/macros.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
+#include "content/public/browser/web_contents_observer.h"
 #include "ui/views/bubble/bubble_dialog_delegate.h"
 #include "ui/views/event_monitor.h"
 
@@ -21,7 +22,8 @@ class WebContents;
 // will automatically close when the browser transitions in or out of fullscreen
 // mode.
 class LocationBarBubbleDelegateView : public views::BubbleDialogDelegateView,
-                                      public content::NotificationObserver {
+                                      public content::NotificationObserver,
+                                      public content::WebContentsObserver {
  public:
   enum DisplayReason {
     // The bubble appears as a direct result of a user action (clicking on the
@@ -42,9 +44,6 @@ class LocationBarBubbleDelegateView : public views::BubbleDialogDelegateView,
                                 const gfx::Point& anchor_point,
                                 content::WebContents* web_contents);
 
-  // TODO(varkha): Delete this override and use the constructor above.
-  LocationBarBubbleDelegateView(views::View* anchor_view,
-                                content::WebContents* web_contents);
   ~LocationBarBubbleDelegateView() override;
 
   // Displays the bubble with appearance and behavior tailored for |reason|.
@@ -54,6 +53,16 @@ class LocationBarBubbleDelegateView : public views::BubbleDialogDelegateView,
   void Observe(int type,
                const content::NotificationSource& source,
                const content::NotificationDetails& details) override;
+
+  // content::WebContentsObserver:
+  void OnVisibilityChanged(content::Visibility visibility) override;
+  void WebContentsDestroyed() override;
+
+  // If the bubble is not anchored to a view, places the bubble in the top right
+  // (left in RTL) of the |screen_bounds| that contain web contents's browser
+  // window. Because the positioning is based on the size of the bubble, this
+  // must be called after the bubble is created.
+  void AdjustForFullscreen(const gfx::Rect& screen_bounds);
 
  protected:
   // The class listens for WebContentsView events and closes the bubble. Useful
@@ -79,12 +88,6 @@ class LocationBarBubbleDelegateView : public views::BubbleDialogDelegateView,
 
   // Closes the bubble.
   virtual void CloseBubble();
-
-  // If the bubble is not anchored to a view, places the bubble in the top right
-  // (left in RTL) of the |screen_bounds| that contain web contents's browser
-  // window. Because the positioning is based on the size of the bubble, this
-  // must be called after the bubble is created.
-  void AdjustForFullscreen(const gfx::Rect& screen_bounds);
 
  private:
   // Used to register for fullscreen change notifications.

@@ -17,13 +17,12 @@
     setTimeout(step2);
   }
 
-  function step2() {
+  async function step2() {
     panel.searchableView().showSearchField();
     TestRunner.addResult('Search controller: \'' + panel.searchableView()._searchInputElement.value + '\'');
-    var action = new Sources.AdvancedSearchView.ActionDelegate();
-    action._showSearch();
-    var searchView =
-        /** @type {!Sources.AdvancedSearchView} */ (self.runtime.sharedInstance(Sources.AdvancedSearchView));
+    var action = new Sources.SearchSourcesView.ActionDelegate();
+    await action._showSearch();
+    var searchView = /** @type {!Search.SearchView} */ (self.runtime.sharedInstance(Sources.SearchSourcesView));
     TestRunner.addResult('Advanced search controller: \'' + searchView._search.value + '\'');
     TestRunner.completeTest();
   }

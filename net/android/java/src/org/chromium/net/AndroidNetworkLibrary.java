@@ -5,7 +5,6 @@
 package org.chromium.net;
 
 import android.annotation.TargetApi;
-import android.content.ActivityNotFoundException;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
@@ -18,8 +17,8 @@ import android.net.TrafficStats;
 import android.net.wifi.WifiInfo;
 import android.net.wifi.WifiManager;
 import android.os.Build;
+import android.os.Build.VERSION_CODES;
 import android.os.ParcelFileDescriptor;
-import android.security.KeyChain;
 import android.security.NetworkSecurityPolicy;
 import android.telephony.TelephonyManager;
 import android.util.Log;
@@ -29,6 +28,7 @@ import org.chromium.base.VisibleForTesting;
 import org.chromium.base.annotations.CalledByNative;
 import org.chromium.base.annotations.CalledByNativeUnchecked;
 
+import java.io.FileDescriptor;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -53,35 +53,6 @@ import java.util.List;
 class AndroidNetworkLibrary {
 
     private static final String TAG = "AndroidNetworkLibrary";
-
-    /**
-     * Stores the key pair through the CertInstaller activity.
-     * @param publicKey The public key bytes as DER-encoded SubjectPublicKeyInfo (X.509)
-     * @param privateKey The private key as DER-encoded PrivateKeyInfo (PKCS#8).
-     * @return: true on success, false on failure.
-     *
-     * Note that failure means that the function could not launch the CertInstaller
-     * activity. Whether the keys are valid or properly installed will be indicated
-     * by the CertInstaller UI itself.
-     */
-    @CalledByNative
-    public static boolean storeKeyPair(byte[] publicKey, byte[] privateKey) {
-        // TODO(digit): Use KeyChain official extra values to pass the public and private
-        // keys when they're available. The "KEY" and "PKEY" hard-coded constants were taken
-        // from the platform sources, since there are no official KeyChain.EXTRA_XXX definitions
-        // for them. b/5859651
-        try {
-            Intent intent = KeyChain.createInstallIntent();
-            intent.putExtra("PKEY", privateKey);
-            intent.putExtra("KEY", publicKey);
-            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-            ContextUtils.getApplicationContext().startActivity(intent);
-            return true;
-        } catch (ActivityNotFoundException e) {
-            Log.w(TAG, "could not store key pair: " + e);
-        }
-        return false;
-    }
 
     /**
      * @return the mime type (if any) that is associated with the file
@@ -242,8 +213,11 @@ class AndroidNetworkLibrary {
     }
 
     /**
-     * Gets the SSID of the currently associated WiFi access point if there is one. Otherwise,
-     * returns empty string.
+     * Gets the SSID of the currently associated WiFi access point if there is one, and it is
+     * available. SSID may not be available if the app does not have permissions to access it. On
+     * Android M+, the app accessing SSID needs to have ACCESS_COARSE_LOCATION or
+     * ACCESS_FINE_LOCATION. If there is no WiFi access point or its SSID is unavailable, an empty
+     * string is returned.
      */
     @CalledByNative
     public static String getWifiSSID() {
@@ -253,7 +227,9 @@ class AndroidNetworkLibrary {
             final WifiInfo wifiInfo = intent.getParcelableExtra(WifiManager.EXTRA_WIFI_INFO);
             if (wifiInfo != null) {
                 final String ssid = wifiInfo.getSSID();
-                if (ssid != null) {
+                // On Android M+, the platform APIs may return "<unknown ssid>" as the SSID if the
+                // app does not have sufficient permissions. In that case, return an empty string.
+                if (ssid != null && !ssid.equals("<unknown ssid>")) {
                     return ssid;
                 }
             }
@@ -330,117 +306,132 @@ class AndroidNetworkLibrary {
         return dnsServers;
     }
 
-    /** Socket that exists only to provide a file descriptor when queried. */
-    private static class SocketFd extends Socket {
-        /** SocketImpl that exists only to provide a file descriptor when queried. */
-        private static class SocketImplFd extends SocketImpl {
-            private final ParcelFileDescriptor mPfd;
+    /**
+     * Class to wrap FileDescriptor.setInt$() which is hidden and so must be accessed via
+     * reflection.
+     */
+    private static class SetFileDescriptor {
+        // Reference to FileDescriptor.setInt$(int fd).
+        private static final Method sFileDescriptorSetInt;
 
+        // Get reference to FileDescriptor.setInt$(int fd) via reflection.
+        static {
+            try {
+                sFileDescriptorSetInt = FileDescriptor.class.getMethod("setInt$", Integer.TYPE);
+            } catch (NoSuchMethodException | SecurityException e) {
+                throw new RuntimeException("Unable to get FileDescriptor.setInt$", e);
+            }
+        }
+
+        /** Creates a FileDescriptor and calls FileDescriptor.setInt$(int fd) on it. */
+        public static FileDescriptor createWithFd(int fd) {
+            try {
+                FileDescriptor fileDescriptor = new FileDescriptor();
+                sFileDescriptorSetInt.invoke(fileDescriptor, fd);
+                return fileDescriptor;
+            } catch (IllegalAccessException e) {
+                throw new RuntimeException("FileDescriptor.setInt$() failed", e);
+            } catch (InvocationTargetException e) {
+                throw new RuntimeException("FileDescriptor.setInt$() failed", e);
+            }
+        }
+    }
+
+    /**
+     * This class provides an implementation of {@link java.net.Socket} that serves only as a
+     * conduit to pass a file descriptor integer to {@link android.net.TrafficStats#tagSocket}
+     * when called by {@link #tagSocket}. This class does not take ownership of the file descriptor,
+     * so calling {@link #close} will not actually close the file descriptor.
+     */
+    private static class SocketFd extends Socket {
+        /**
+         * This class provides an implementation of {@link java.net.SocketImpl} that serves only as
+         * a conduit to pass a file descriptor integer to {@link android.net.TrafficStats#tagSocket}
+         * when called by {@link #tagSocket}. This class does not take ownership of the file
+         * descriptor, so calling {@link #close} will not actually close the file descriptor.
+         */
+        private static class SocketImplFd extends SocketImpl {
             /**
-             * Create a {@link SocketImpl} that sets {@code fd} as the underlying file descriptor.
-             * Does not take ownership of {@code fd}, i.e. {@link #close()} is a no-op.
+             * Create a {@link java.net.SocketImpl} that sets {@code fd} as the underlying file
+             * descriptor. Does not take ownership of the file descriptor, so calling {@link #close}
+             * will not actually close the file descriptor.
              */
-            SocketImplFd(int fd) {
-                mPfd = ParcelFileDescriptor.adoptFd(fd);
-                this.fd = mPfd.getFileDescriptor();
+            SocketImplFd(FileDescriptor fd) {
+                this.fd = fd;
             }
 
+            @Override
             protected void accept(SocketImpl s) {
                 throw new RuntimeException("accept not implemented");
             }
+            @Override
             protected int available() {
                 throw new RuntimeException("accept not implemented");
             }
+            @Override
             protected void bind(InetAddress host, int port) {
                 throw new RuntimeException("accept not implemented");
             }
-            protected void close() {
-                // Detach from |fd| to avoid leak detection false positives without closing |fd|.
-                mPfd.detachFd();
-            }
+            @Override
+            protected void close() {}
+            @Override
             protected void connect(InetAddress address, int port) {
                 throw new RuntimeException("connect not implemented");
             }
+            @Override
             protected void connect(SocketAddress address, int timeout) {
                 throw new RuntimeException("connect not implemented");
             }
+            @Override
             protected void connect(String host, int port) {
                 throw new RuntimeException("connect not implemented");
             }
-            protected void create(boolean stream) {
-                throw new RuntimeException("create not implemented");
-            }
+            @Override
+            protected void create(boolean stream) {}
+            @Override
             protected InputStream getInputStream() {
                 throw new RuntimeException("getInputStream not implemented");
             }
+            @Override
             protected OutputStream getOutputStream() {
                 throw new RuntimeException("getOutputStream not implemented");
             }
+            @Override
             protected void listen(int backlog) {
                 throw new RuntimeException("listen not implemented");
             }
+            @Override
             protected void sendUrgentData(int data) {
                 throw new RuntimeException("sendUrgentData not implemented");
             }
+            @Override
             public Object getOption(int optID) {
                 throw new RuntimeException("getOption not implemented");
             }
+            @Override
             public void setOption(int optID, Object value) {
                 throw new RuntimeException("setOption not implemented");
             }
         }
 
         /**
-         * Creates a {@link Socket} that sets {@code fd} as the underlying file descriptor.
-         * Does not take ownership of {@code fd}, i.e. {@link #close()} is a no-op.
+         * Create a {@link java.net.Socket} that sets {@code fd} as the underlying file
+         * descriptor. Does not take ownership of the file descriptor, so calling {@link #close}
+         * will not actually close the file descriptor.
          */
-        SocketFd(int fd) throws IOException {
+        SocketFd(FileDescriptor fd) throws IOException {
             super(new SocketImplFd(fd));
         }
     }
 
     /**
-     * Class to wrap TrafficStats.setThreadStatsUid(int uid) and TrafficStats.clearThreadStatsUid()
-     * which are hidden and so must be accessed via reflection.
-     */
-    private static class ThreadStatsUid {
-        // Reference to TrafficStats.setThreadStatsUid(int uid).
-        private static final Method sSetThreadStatsUid;
-        // Reference to TrafficStats.clearThreadStatsUid().
-        private static final Method sClearThreadStatsUid;
-
-        // Get reference to TrafficStats.setThreadStatsUid(int uid) and
-        // TrafficStats.clearThreadStatsUid() via reflection.
-        static {
-            try {
-                sSetThreadStatsUid =
-                        TrafficStats.class.getMethod("setThreadStatsUid", Integer.TYPE);
-                sClearThreadStatsUid = TrafficStats.class.getMethod("clearThreadStatsUid");
-            } catch (NoSuchMethodException | SecurityException e) {
-                throw new RuntimeException("Unable to get TrafficStats methods", e);
-            }
-        }
-
-        /** Calls TrafficStats.setThreadStatsUid(uid) */
-        public static void set(int uid) throws IllegalAccessException, InvocationTargetException {
-            sSetThreadStatsUid.invoke(null, uid); // Pass null for "this" as it's a static method.
-        }
-
-        /** Calls TrafficStats.clearThreadStatsUid() */
-        public static void clear() throws IllegalAccessException, InvocationTargetException {
-            sClearThreadStatsUid.invoke(null); // Pass null for "this" as it's a static method.
-        }
-    }
-
-    /**
-     * Tag socket referenced by {@code fd} with {@code tag} for UID {@code uid}.
+     * Tag socket referenced by {@code ifd} with {@code tag} for UID {@code uid}.
      *
      * Assumes thread UID tag isn't set upon entry, and ensures thread UID tag isn't set upon exit.
      * Unfortunately there is no TrafficStatis.getThreadStatsUid().
      */
     @CalledByNative
-    private static void tagSocket(int fd, int uid, int tag)
-            throws IOException, IllegalAccessException, InvocationTargetException {
+    private static void tagSocket(int ifd, int uid, int tag) throws IOException {
         // Set thread tags.
         int oldTag = TrafficStats.getThreadStatsTag();
         if (tag != oldTag) {
@@ -451,9 +442,32 @@ class AndroidNetworkLibrary {
         }
 
         // Apply thread tags to socket.
-        SocketFd s = new SocketFd(fd);
+
+        // First, convert integer file descriptor (ifd) to FileDescriptor.
+        final ParcelFileDescriptor pfd;
+        final FileDescriptor fd;
+        // The only supported way to generate a FileDescriptor from an integer file
+        // descriptor is via ParcelFileDescriptor.adoptFd(). Unfortunately prior to Android
+        // Marshmallow ParcelFileDescriptor.detachFd() didn't actually detach from the
+        // FileDescriptor, so use reflection to set {@code fd} into the FileDescriptor for
+        // versions prior to Marshmallow. Here's the fix that went into Marshmallow:
+        // https://android.googlesource.com/platform/frameworks/base/+/b30ad6f
+        if (Build.VERSION.SDK_INT < VERSION_CODES.M) {
+            pfd = null;
+            fd = SetFileDescriptor.createWithFd(ifd);
+        } else {
+            pfd = ParcelFileDescriptor.adoptFd(ifd);
+            fd = pfd.getFileDescriptor();
+        }
+        // Second, convert FileDescriptor to Socket.
+        Socket s = new SocketFd(fd);
+        // Third, tag the Socket.
         TrafficStats.tagSocket(s);
-        s.close(); // No-op, just to avoid leak detection false positives.
+        s.close(); // No-op but always good to close() Closeables.
+        // Have ParcelFileDescriptor relinquish ownership of the file descriptor.
+        if (pfd != null) {
+            pfd.detachFd();
+        }
 
         // Restore prior thread tags.
         if (tag != oldTag) {

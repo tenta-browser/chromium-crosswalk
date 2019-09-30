@@ -19,17 +19,19 @@
 #include "base/test/mock_entropy_provider.h"
 #include "base/test/simple_test_clock.h"
 #include "base/time/clock.h"
+#include "base/time/default_clock.h"
 #include "components/data_reduction_proxy/core/browser/data_reduction_proxy_compression_stats.h"
 #include "components/data_reduction_proxy/core/browser/data_reduction_proxy_config.h"
 #include "components/data_reduction_proxy/core/browser/data_reduction_proxy_config_test_utils.h"
 #include "components/data_reduction_proxy/core/browser/data_reduction_proxy_settings_test_utils.h"
 #include "components/data_reduction_proxy/core/browser/data_reduction_proxy_test_utils.h"
+#include "components/data_reduction_proxy/core/browser/network_properties_manager.h"
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_params.h"
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_params_test_utils.h"
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_pref_names.h"
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_switches.h"
 #include "components/prefs/pref_registry_simple.h"
-#include "net/proxy/proxy_server.h"
+#include "net/base/proxy_server.h"
 #include "net/socket/socket_test_util.h"
 #include "net/url_request/url_request_test_util.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -63,6 +65,12 @@ class DataReductionProxySettingsTest
 
 TEST_F(DataReductionProxySettingsTest, TestIsProxyEnabledOrManaged) {
   InitPrefMembers();
+  NetworkPropertiesManager network_properties_manager(
+      base::DefaultClock::GetInstance(), test_context_->pref_service(),
+      test_context_->task_runner());
+  test_context_->config()->SetNetworkPropertiesManagerForTesting(
+      &network_properties_manager);
+
   // The proxy is disabled initially.
   test_context_->config()->UpdateConfigForTesting(false, true, true);
 
@@ -82,6 +90,12 @@ TEST_F(DataReductionProxySettingsTest, TestIsProxyEnabledOrManaged) {
 
 TEST_F(DataReductionProxySettingsTest, TestCanUseDataReductionProxy) {
   InitPrefMembers();
+  NetworkPropertiesManager network_properties_manager(
+      base::DefaultClock::GetInstance(), test_context_->pref_service(),
+      test_context_->task_runner());
+  test_context_->config()->SetNetworkPropertiesManagerForTesting(
+      &network_properties_manager);
+
   // The proxy is disabled initially.
   test_context_->config()->UpdateConfigForTesting(false, true, true);
 
@@ -248,6 +262,12 @@ TEST(DataReductionProxySettingsStandaloneTest, TestOnProxyEnabledPrefChange) {
           .SkipSettingsInitialization()
           .Build();
 
+  NetworkPropertiesManager network_properties_manager(
+      base::DefaultClock::GetInstance(), drp_test_context->pref_service(),
+      drp_test_context->task_runner());
+  drp_test_context->config()->SetNetworkPropertiesManagerForTesting(
+      &network_properties_manager);
+
   // The proxy is enabled initially.
   drp_test_context->config()->UpdateConfigForTesting(true, true, true);
   drp_test_context->InitSettings();
@@ -269,6 +289,12 @@ TEST_F(DataReductionProxySettingsTest, TestMaybeActivateDataReductionProxy) {
   // Initialize the pref member in |settings_| without the usual callback
   // so it won't trigger MaybeActivateDataReductionProxy when the pref value
   // is set.
+  NetworkPropertiesManager network_properties_manager(
+      base::DefaultClock::GetInstance(), test_context_->pref_service(),
+      test_context_->task_runner());
+  test_context_->config()->SetNetworkPropertiesManagerForTesting(
+      &network_properties_manager);
+
   settings_->spdy_proxy_auth_enabled_.Init(
       test_context_->GetDataReductionProxyEnabledPrefName(),
       settings_->GetOriginalProfilePrefs());
@@ -364,12 +390,11 @@ TEST_F(DataReductionProxySettingsTest, TestSettingsEnabledStateHistograms) {
 // enables the data reduction proxy.
 TEST_F(DataReductionProxySettingsTest, TestDaysSinceEnabledWithTestClock) {
   const char kUMAEnabledState[] = "DataReductionProxy.DaysSinceEnabled";
-  std::unique_ptr<base::SimpleTestClock> clock(new base::SimpleTestClock());
-  base::SimpleTestClock* clock_ptr = clock.get();
-  clock_ptr->Advance(base::TimeDelta::FromDays(1));
-  ResetSettings(std::move(clock));
+  base::SimpleTestClock clock;
+  clock.Advance(base::TimeDelta::FromDays(1));
+  ResetSettings(&clock);
 
-  base::Time last_enabled_time = clock_ptr->Now();
+  base::Time last_enabled_time = clock.Now();
 
   InitPrefMembers();
   {
@@ -384,7 +409,7 @@ TEST_F(DataReductionProxySettingsTest, TestDaysSinceEnabledWithTestClock) {
     settings_->SetDataReductionProxyEnabled(true /* enabled */);
     test_context_->RunUntilIdle();
 
-    last_enabled_time = clock_ptr->Now();
+    last_enabled_time = clock.Now();
 
     EXPECT_EQ(
         last_enabled_time,
@@ -397,9 +422,9 @@ TEST_F(DataReductionProxySettingsTest, TestDaysSinceEnabledWithTestClock) {
     // Simulate turning off and on of data reduction proxy while Chromium is
     // running.
     settings_->SetDataReductionProxyEnabled(false /* enabled */);
-    clock_ptr->Advance(base::TimeDelta::FromDays(1));
+    clock.Advance(base::TimeDelta::FromDays(1));
     base::HistogramTester histogram_tester;
-    last_enabled_time = clock_ptr->Now();
+    last_enabled_time = clock.Now();
 
     settings_->spdy_proxy_auth_enabled_.SetValue(true);
     settings_->MaybeActivateDataReductionProxy(false);
@@ -414,7 +439,7 @@ TEST_F(DataReductionProxySettingsTest, TestDaysSinceEnabledWithTestClock) {
   {
     // Advance clock by a random number of days.
     int advance_clock_days = 42;
-    clock_ptr->Advance(base::TimeDelta::FromDays(advance_clock_days));
+    clock.Advance(base::TimeDelta::FromDays(advance_clock_days));
     base::HistogramTester histogram_tester;
     // Simulate Chromium start up. Data reduction proxy was enabled
     // |advance_clock_days| ago.
@@ -448,22 +473,21 @@ TEST_F(DataReductionProxySettingsTest, TestDaysSinceEnabledExistingUser) {
 }
 
 TEST_F(DataReductionProxySettingsTest, TestDaysSinceSavingsCleared) {
-  std::unique_ptr<base::SimpleTestClock> clock(new base::SimpleTestClock());
-  base::SimpleTestClock* clock_ptr = clock.get();
-  clock_ptr->Advance(base::TimeDelta::FromDays(1));
-  ResetSettings(std::move(clock));
+  base::SimpleTestClock clock;
+  clock.Advance(base::TimeDelta::FromDays(1));
+  ResetSettings(&clock);
 
   InitPrefMembers();
   base::HistogramTester histogram_tester;
   test_context_->pref_service()->SetInt64(
       prefs::kDataReductionProxySavingsClearedNegativeSystemClock,
-      clock_ptr->Now().ToInternalValue());
+      clock.Now().ToInternalValue());
 
   settings_->data_reduction_proxy_service_->SetIOData(
       test_context_->io_data()->GetWeakPtr());
   test_context_->RunUntilIdle();
 
-  clock_ptr->Advance(base::TimeDelta::FromDays(100));
+  clock.Advance(base::TimeDelta::FromDays(100));
 
   // Simulate Chromium startup with data reduction proxy already enabled.
   settings_->spdy_proxy_auth_enabled_.SetValue(true);

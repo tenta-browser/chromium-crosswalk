@@ -14,6 +14,7 @@
 #include "content/public/test/test_browser_context.h"
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "content/public/test/test_web_contents_factory.h"
+#include "services/network/public/cpp/shared_url_loader_factory.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -43,7 +44,7 @@ class MockThreatDetailsFactory : public ThreatDetailsFactory {
       BaseUIManager* ui_manager,
       content::WebContents* web_contents,
       const security_interstitials::UnsafeResource& unsafe_resource,
-      net::URLRequestContextGetter* request_context_getter,
+      scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
       history::HistoryService* history_service,
       bool trim_to_ad_tags,
       ThreatDetailsDoneCallback done_callback) override {
@@ -80,6 +81,10 @@ class TriggerManagerTest : public ::testing::Test {
 
   void SetPref(const std::string& pref, bool value) {
     pref_service_.SetBoolean(pref, value);
+  }
+
+  void SetManagedPref(const std::string& pref, bool value) {
+    pref_service_.SetManagedPref(pref, std::make_unique<base::Value>(value));
   }
 
   bool GetPref(const std::string& pref) {
@@ -338,6 +343,20 @@ TEST_F(TriggerManagerTest, NoCollectionWhenOutOfQuota) {
   EXPECT_FALSE(
       StartCollectingThreatDetails(TriggerType::AD_SAMPLE, web_contents));
   EXPECT_EQ(nullptr, data_collectors_map().at(web_contents).threat_details);
+}
+
+TEST_F(TriggerManagerTest, NoCollectionWhenSBERDisabledByPolicy) {
+  // Confirm that disabling SBER through an enterprise policy does disable
+  // triggers.
+  content::WebContents* web_contents = CreateWebContents();
+
+  SetManagedPref(prefs::kSafeBrowsingScoutReportingEnabled, false);
+  EXPECT_FALSE(
+      StartCollectingThreatDetails(TriggerType::AD_SAMPLE, web_contents));
+  EXPECT_TRUE(data_collectors_map().empty());
+  EXPECT_FALSE(FinishCollectingThreatDetails(TriggerType::AD_SAMPLE,
+                                             web_contents, false));
+  EXPECT_TRUE(data_collectors_map().empty());
 }
 
 TEST_F(TriggerManagerTest, AdSamplerTrigger) {

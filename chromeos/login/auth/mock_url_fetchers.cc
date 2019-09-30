@@ -33,8 +33,9 @@ ExpectCanceledFetcher::~ExpectCanceledFetcher() = default;
 
 void ExpectCanceledFetcher::Start() {
   base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
-      FROM_HERE, base::Bind(&ExpectCanceledFetcher::CompleteFetch,
-                            weak_factory_.GetWeakPtr()),
+      FROM_HERE,
+      base::BindOnce(&ExpectCanceledFetcher::CompleteFetch,
+                     weak_factory_.GetWeakPtr()),
       base::TimeDelta::FromMilliseconds(100));
 }
 
@@ -77,6 +78,12 @@ SuccessFetcher::SuccessFetcher(bool success,
 SuccessFetcher::~SuccessFetcher() = default;
 
 void SuccessFetcher::Start() {
+  base::ThreadTaskRunnerHandle::Get()->PostTask(
+      FROM_HERE,
+      base::BindOnce(&SuccessFetcher::RunDelegate, weak_factory_.GetWeakPtr()));
+}
+
+void SuccessFetcher::RunDelegate() {
   delegate()->OnURLFetchComplete(this);
 }
 

@@ -16,9 +16,10 @@ import android.os.RemoteException;
 import android.os.StrictMode;
 
 import org.chromium.android_webview.command_line.CommandLineUtil;
-import org.chromium.android_webview.crash.CrashReceiverService;
-import org.chromium.android_webview.crash.ICrashReceiverService;
 import org.chromium.android_webview.policy.AwPolicyProvider;
+import org.chromium.android_webview.services.CrashReceiverService;
+import org.chromium.android_webview.services.ICrashReceiverService;
+import org.chromium.base.BuildInfo;
 import org.chromium.base.CommandLine;
 import org.chromium.base.ContextUtils;
 import org.chromium.base.Log;
@@ -46,9 +47,9 @@ import java.nio.channels.FileLock;
  */
 @JNINamespace("android_webview")
 public final class AwBrowserProcess {
-    public static final String PRIVATE_DATA_DIRECTORY_SUFFIX = "webview";
-
     private static final String TAG = "AwBrowserProcess";
+
+    private static final String WEBVIEW_DIR_BASENAME = "webview";
     private static final String EXCLUSIVE_LOCK_FILE = "webview_data.lock";
     private static RandomAccessFile sLockFile;
     private static FileLock sExclusiveFileLock;
@@ -58,9 +59,17 @@ public final class AwBrowserProcess {
      * Loads the native library, and performs basic static construction of objects needed
      * to run webview in this process. Does not create threads; safe to call from zygote.
      * Note: it is up to the caller to ensure this is only called once.
+     *
+     * @param processDataDirSuffix The suffix to use when setting the data directory for this
+     *                             process; null to use no suffix.
      */
-    public static void loadLibrary() {
-        PathUtils.setPrivateDataDirectorySuffix(PRIVATE_DATA_DIRECTORY_SUFFIX);
+    public static void loadLibrary(String processDataDirSuffix) {
+        if (processDataDirSuffix == null) {
+            PathUtils.setPrivateDataDirectorySuffix(WEBVIEW_DIR_BASENAME, null);
+        } else {
+            String processDataDirName = WEBVIEW_DIR_BASENAME + "_" + processDataDirSuffix;
+            PathUtils.setPrivateDataDirectorySuffix(processDataDirName, processDataDirName);
+        }
         StrictMode.ThreadPolicy oldPolicy = StrictMode.allowThreadDiskReads();
         try {
             LibraryLoader libraryLoader = LibraryLoader.get(LibraryProcessType.PROCESS_WEBVIEW);
@@ -80,11 +89,11 @@ public final class AwBrowserProcess {
      * Configures child process launcher. This is required only if child services are used in
      * WebView.
      */
-    public static void configureChildProcessLauncher(String packageName,
-            boolean isExternalService) {
+    public static void configureChildProcessLauncher() {
+        final boolean isExternalService = true;
         final boolean bindToCaller = true;
         final boolean ignoreVisibilityForImportance = true;
-        ChildProcessCreationParams.registerDefault(new ChildProcessCreationParams(packageName,
+        ChildProcessCreationParams.set(new ChildProcessCreationParams(getWebViewPackageName(),
                 isExternalService, LibraryProcessType.PROCESS_WEBVIEW_CHILD, bindToCaller,
                 ignoreVisibilityForImportance));
     }
@@ -96,7 +105,7 @@ public final class AwBrowserProcess {
      */
     public static void start() {
         final Context appContext = ContextUtils.getApplicationContext();
-        tryObtainingDataDirLock(appContext);
+        tryObtainingDataDirLock();
         // We must post to the UI thread to cover the case that the user
         // has invoked Chromium startup by using the (thread-safe)
         // CookieManager rather than creating a WebView.
@@ -138,10 +147,10 @@ public final class AwBrowserProcess {
         }
     }
 
-    private static void tryObtainingDataDirLock(Context context) {
-        // Too many apps rely on this at present to make this fatal,
-        // even though it's known to be unsafe.
-        boolean dieOnFailure = false;
+    private static void tryObtainingDataDirLock() {
+        // Many existing apps rely on this even though it's known to be unsafe.
+        // Make it fatal when on P for apps that target P or higher
+        boolean dieOnFailure = BuildInfo.isAtLeastP() && BuildInfo.targetsAtLeastP();
 
         StrictMode.ThreadPolicy oldPolicy = StrictMode.allowThreadDiskWrites();
         try {
@@ -157,8 +166,8 @@ public final class AwBrowserProcess {
                 Log.w(TAG, "Failed to create lock file " + lockFile, e);
             }
             if (!success) {
-                final String error = "Using WebView from more than one process at once in a single "
-                        + "app is not supported. https://crbug.com/558377";
+                final String error = "Using WebView from more than one process at once with the "
+                        + "same data directory is not supported. https://crbug.com/558377";
                 if (dieOnFailure) {
                     throw new RuntimeException(error);
                 } else {
@@ -185,7 +194,7 @@ public final class AwBrowserProcess {
      */
     @CalledByNative
     private static void triggerMinidumpUploading() {
-        handleMinidumpsAndSetMetricsConsent(sWebViewPackageName, false /* updateMetricsConsent */);
+        handleMinidumpsAndSetMetricsConsent(false /* updateMetricsConsent */);
     }
 
     /**
@@ -194,12 +203,11 @@ public final class AwBrowserProcess {
      * @param updateMetricsConsent whether to update the metrics-consent value to represent the
      * Android Checkbox toggle.
      */
-    public static void handleMinidumpsAndSetMetricsConsent(
-            final String webViewPackageName, final boolean updateMetricsConsent) {
+    public static void handleMinidumpsAndSetMetricsConsent(final boolean updateMetricsConsent) {
         final boolean enableMinidumpUploadingForTesting = CommandLine.getInstance().hasSwitch(
                 CommandLineUtil.CRASH_UPLOADS_ENABLED_FOR_TESTING_SWITCH);
         if (enableMinidumpUploadingForTesting) {
-            AwBrowserProcess.handleMinidumps(webViewPackageName, true /* enabled */);
+            handleMinidumps(true /* enabled */);
         }
 
         PlatformServiceBridge.getInstance().queryMetricsSetting(enabled -> {
@@ -210,7 +218,7 @@ public final class AwBrowserProcess {
             }
 
             if (!enableMinidumpUploadingForTesting) {
-                AwBrowserProcess.handleMinidumps(webViewPackageName, enabled);
+                handleMinidumps(enabled);
             }
         });
     }
@@ -222,8 +230,7 @@ public final class AwBrowserProcess {
      * @param userApproved whether we have user consent to upload crash data - if we do, copy the
      * minidumps, if we don't, delete them.
      */
-    public static void handleMinidumps(
-            final String webViewPackageName, final boolean userApproved) {
+    public static void handleMinidumps(final boolean userApproved) {
         new AsyncTask<Void, Void, Void>() {
             @Override
             protected Void doInBackground(Void... params) {
@@ -249,7 +256,7 @@ public final class AwBrowserProcess {
                 }
 
                 final Intent intent = new Intent();
-                intent.setClassName(webViewPackageName, CrashReceiverService.class.getName());
+                intent.setClassName(getWebViewPackageName(), CrashReceiverService.class.getName());
 
                 ServiceConnection connection = new ServiceConnection() {
                     @Override

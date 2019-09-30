@@ -6,7 +6,7 @@
 #define CONTENT_SHELL_TEST_RUNNER_WEB_VIEW_TEST_CLIENT_H_
 
 #include "base/macros.h"
-#include "third_party/WebKit/public/web/WebViewClient.h"
+#include "third_party/blink/public/web/web_view_client.h"
 
 namespace blink {
 class WebView;
@@ -30,7 +30,6 @@ class WebViewTestClient : public blink::WebViewClient {
   ~WebViewTestClient() override;
 
   // WebViewClient overrides needed by WebViewTestProxy.
-  void DidChangeContents() override;
   blink::WebView* CreateView(blink::WebLocalFrame* creator,
                              const blink::WebURLRequest& request,
                              const blink::WebWindowFeatures& features,
@@ -39,9 +38,8 @@ class WebViewTestClient : public blink::WebViewClient {
                              bool suppress_opener,
                              blink::WebSandboxFlags) override;
   void PrintPage(blink::WebLocalFrame* frame) override;
-  blink::WebSpeechRecognizer* SpeechRecognizer() override;
   blink::WebString AcceptLanguages() override;
-  void DidFocus() override;
+  void DidFocus(blink::WebLocalFrame* calling_frame) override;
   bool CanHandleGestureEvent() override;
   bool CanUpdateLayout() override;
 

@@ -38,11 +38,11 @@ class ReportingNetworkChangeObserverImpl
     if (type != NetworkChangeNotifier::ConnectionType::CONNECTION_NONE)
       return;
 
-    if (context_->policy().clear_reports_on_network_changes)
+    if (!context_->policy().persist_reports_across_network_changes)
       context_->cache()->RemoveAllReports(
           ReportingReport::Outcome::ERASED_NETWORK_CHANGED);
 
-    if (context_->policy().clear_clients_on_network_changes)
+    if (!context_->policy().persist_clients_across_network_changes)
       context_->cache()->RemoveAllClients();
   }
 
@@ -60,6 +60,6 @@ ReportingNetworkChangeObserver::Create(ReportingContext* context) {
   return std::make_unique<ReportingNetworkChangeObserverImpl>(context);
 }
 
-ReportingNetworkChangeObserver::~ReportingNetworkChangeObserver() {}
+ReportingNetworkChangeObserver::~ReportingNetworkChangeObserver() = default;
 
 }  // namespace net

@@ -12,7 +12,6 @@
 #include "base/files/scoped_temp_dir.h"
 #include "base/json/json_string_value_serializer.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/optional.h"
 #include "base/path_service.h"
 #include "base/strings/string_util.h"
@@ -298,7 +297,7 @@ TEST_F(FileUtilTest, LoadExtensionGivesHelpfullErrorOnMissingManifest) {
       install_dir, Manifest::UNPACKED, Extension::NO_FLAGS, &error));
   ASSERT_TRUE(extension.get() == NULL);
   ASSERT_FALSE(error.empty());
-  ASSERT_STREQ("Manifest file is missing or unreadable.", error.c_str());
+  ASSERT_EQ(manifest_errors::kManifestUnreadable, error);
 }
 
 TEST_F(FileUtilTest, LoadExtensionGivesHelpfullErrorOnBadManifest) {
@@ -312,10 +311,9 @@ TEST_F(FileUtilTest, LoadExtensionGivesHelpfullErrorOnBadManifest) {
       install_dir, Manifest::UNPACKED, Extension::NO_FLAGS, &error));
   ASSERT_TRUE(extension.get() == NULL);
   ASSERT_FALSE(error.empty());
-  ASSERT_STREQ(
-      "Manifest is not valid JSON.  "
-      "Line: 2, column: 16, Syntax error.",
-      error.c_str());
+  ASSERT_EQ(manifest_errors::kManifestParseError +
+                std::string("  Line: 2, column: 16, Syntax error."),
+            error);
 }
 
 TEST_F(FileUtilTest, ValidateThemeUTF8) {
@@ -351,7 +349,7 @@ TEST_F(FileUtilTest, BackgroundScriptsMustExist) {
   std::unique_ptr<base::DictionaryValue> value(new base::DictionaryValue());
   value->SetString("name", "test");
   value->SetString("version", "1");
-  value->SetInteger("manifest_version", 1);
+  value->SetInteger("manifest_version", 2);
 
   base::ListValue* scripts =
       value->SetList("background.scripts", std::make_unique<base::ListValue>());

@@ -57,6 +57,8 @@ class PasswordGenerationInteractiveTest :
     public PasswordManagerBrowserTestBase {
  public:
   void SetUpCommandLine(base::CommandLine* command_line) override {
+    PasswordManagerBrowserTestBase::SetUpCommandLine(command_line);
+
     // Make sure the feature is enabled.
     command_line->AppendSwitch(autofill::switches::kEnablePasswordGeneration);
 
@@ -121,7 +123,7 @@ class PasswordGenerationInteractiveTest :
     content::NativeWebKeyboardEvent event(
         blink::WebKeyboardEvent::kRawKeyDown,
         blink::WebInputEvent::kNoModifiers,
-        blink::WebInputEvent::kTimeStampForTesting);
+        blink::WebInputEvent::GetStaticTimeStampForTests());
     event.windows_key_code = key;
     RenderViewHost()->GetWidget()->ForwardKeyboardEvent(event);
   }
@@ -196,8 +198,9 @@ IN_PROC_BROWSER_TEST_F(PasswordGenerationInteractiveTest,
   EXPECT_TRUE(GenerationPopupShowing());
 }
 
+// https://crbug.com/791389
 IN_PROC_BROWSER_TEST_F(PasswordGenerationInteractiveTest,
-                       AutoSavingGeneratedPassword) {
+                       DISABLED_AutoSavingGeneratedPassword) {
   scoped_refptr<password_manager::TestPasswordStore> password_store =
       static_cast<password_manager::TestPasswordStore*>(
           PasswordStoreFactory::GetForProfile(

@@ -7,8 +7,8 @@
 #include <string>
 
 #include "base/command_line.h"
-#include "base/feature_list.h"
 #include "base/metrics/field_trial.h"
+#include "base/metrics/field_trial_params.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
@@ -16,9 +16,11 @@
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
 #include "content/public/common/content_switches.h"
+#include "content/public/common/use_zoom_for_dsf_policy.h"
 
 #if defined(OS_ANDROID)
 #include "base/debug/debugger.h"
+#include "base/feature_list.h"
 #endif
 
 #if defined(OS_POSIX) && !defined(OS_ANDROID)
@@ -34,27 +36,8 @@ namespace content {
 
 namespace {
 
-#if defined(OS_WIN)
-const base::Feature kUseZoomForDsfEnabledByDefault {
-  "use-zoom-for-dsf enabled by default", base::FEATURE_ENABLED_BY_DEFAULT
-};
-#endif
-
-bool IsUseZoomForDSFEnabledByDefault() {
-#if defined(OS_LINUX)
-  return true;
-#elif defined(OS_WIN)
-  return base::FeatureList::IsEnabled(kUseZoomForDsfEnabledByDefault);
-#else
-  return false;
-#endif
-}
-
-#if defined(ANDROID)
-const base::Feature kProgressBarCompletionResourcesBeforeDOMContentLoaded {
-    "progress-bar-completion-resources-before-domContentLoaded",
-    base::FEATURE_DISABLED_BY_DEFAULT};
-#endif
+const base::Feature kSavePreviousDocumentResources{
+    "SavePreviousDocumentResources", base::FEATURE_DISABLED_BY_DEFAULT};
 
 #if defined(OS_WIN)
 
@@ -97,52 +80,11 @@ V8CacheOptions GetV8CacheOptions() {
     v8_cache_options = base::FieldTrialList::FindFullName("V8CacheOptions");
   if (v8_cache_options == "none") {
     return V8_CACHE_OPTIONS_NONE;
-  } else if (v8_cache_options == "parse") {
-    return V8_CACHE_OPTIONS_PARSE;
   } else if (v8_cache_options == "code") {
     return V8_CACHE_OPTIONS_CODE;
   } else {
     return V8_CACHE_OPTIONS_DEFAULT;
   }
-}
-
-bool IsUseZoomForDSFEnabled() {
-  static bool use_zoom_for_dsf_enabled_by_default =
-      IsUseZoomForDSFEnabledByDefault();
-  base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
-  bool enabled =
-      (command_line->HasSwitch(switches::kEnableUseZoomForDSF) ||
-       use_zoom_for_dsf_enabled_by_default) &&
-      command_line->GetSwitchValueASCII(
-          switches::kEnableUseZoomForDSF) != "false";
-
-  return enabled;
-}
-
-ProgressBarCompletion GetProgressBarCompletionPolicy() {
-#if defined(OS_ANDROID)
-  const base::CommandLine& command_line =
-      *base::CommandLine::ForCurrentProcess();
-  std::string progress_bar_completion =
-      command_line.GetSwitchValueASCII(switches::kProgressBarCompletion);
-  if (progress_bar_completion == "loadEvent")
-    return ProgressBarCompletion::LOAD_EVENT;
-  if (progress_bar_completion == "resourcesBeforeDOMContentLoaded")
-    return ProgressBarCompletion::RESOURCES_BEFORE_DCL;
-  if (progress_bar_completion == "domContentLoaded")
-    return ProgressBarCompletion::DOM_CONTENT_LOADED;
-  if (progress_bar_completion ==
-      "resourcesBeforeDOMContentLoadedAndSameOriginIframes") {
-    return ProgressBarCompletion::RESOURCES_BEFORE_DCL_AND_SAME_ORIGIN_IFRAMES;
-  }
-  // The command line, which is set by the user, takes priority. Otherwise,
-  // fall back to the feature flag.
-  if (base::FeatureList::IsEnabled(
-          kProgressBarCompletionResourcesBeforeDOMContentLoaded)) {
-    return ProgressBarCompletion::RESOURCES_BEFORE_DCL;
-  }
-#endif
-  return ProgressBarCompletion::LOAD_EVENT;
 }
 
 SavePreviousDocumentResources GetSavePreviousDocumentResources() {
@@ -156,6 +98,14 @@ SavePreviousDocumentResources GetSavePreviousDocumentResources() {
   if (save_previous_document_resources == "onDOMContentLoaded")
     return SavePreviousDocumentResources::UNTIL_ON_DOM_CONTENT_LOADED;
   if (save_previous_document_resources == "onload")
+    return SavePreviousDocumentResources::UNTIL_ON_LOAD;
+  // The command line, which is set by the user, takes priority. Otherwise,
+  // fall back to the field trial.
+  std::string until = base::GetFieldTrialParamValueByFeature(
+      kSavePreviousDocumentResources, "until");
+  if (until == "onDOMContentLoaded")
+    return SavePreviousDocumentResources::UNTIL_ON_DOM_CONTENT_LOADED;
+  if (until == "onload")
     return SavePreviousDocumentResources::UNTIL_ON_LOAD;
   return SavePreviousDocumentResources::NEVER;
 }

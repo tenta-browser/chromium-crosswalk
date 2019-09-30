@@ -7,7 +7,6 @@
 #include <vector>
 
 #include "base/bind.h"
-#include "base/bind_helpers.h"
 #include "base/callback.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
@@ -100,10 +99,12 @@ void ComponentUnpackerTest::UnpackComplete(
 }
 
 TEST_F(ComponentUnpackerTest, UnpackFullCrx) {
+  auto config = base::MakeRefCounted<TestConfigurator>();
   scoped_refptr<ComponentUnpacker> component_unpacker =
       base::MakeRefCounted<ComponentUnpacker>(
           std::vector<uint8_t>(std::begin(jebg_hash), std::end(jebg_hash)),
-          test_file("jebgalgnebhfojomionfpkfelancnnkf.crx"), nullptr, nullptr);
+          test_file("jebgalgnebhfojomionfpkfelancnnkf.crx"), nullptr,
+          config->CreateServiceManagerConnector());
   component_unpacker->Unpack(base::BindOnce(
       &ComponentUnpackerTest::UnpackComplete, base::Unretained(this)));
   RunThreads();

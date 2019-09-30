@@ -17,16 +17,12 @@
 #include "chrome/browser/permissions/permission_request.h"
 #include "chrome/browser/permissions/permission_util.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/safe_browsing/safe_browsing_service.h"
-#include "chrome/browser/safe_browsing/ui_manager.h"
-#include "chrome/browser/sync/profile_sync_service_factory.h"
-#include "chrome/common/chrome_switches.h"
-#include "chrome/common/pref_names.h"
-#include "components/browser_sync/profile_sync_service.h"
-#include "components/prefs/pref_service.h"
+#include "components/ukm/content/source_url_recorder.h"
 #include "content/public/browser/permission_type.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/origin_util.h"
+#include "services/metrics/public/cpp/ukm_builders.h"
+#include "services/metrics/public/cpp/ukm_recorder.h"
 #include "url/gurl.h"
 
 #if defined(OS_ANDROID)
@@ -66,7 +62,7 @@ using content::PermissionType;
 
 namespace {
 
-static bool gIsFakeOfficialBuildForTest = false;
+const int kPriorCountCap = 10;
 
 std::string GetPermissionRequestString(PermissionRequestType type) {
   switch (type) {
@@ -92,6 +88,12 @@ std::string GetPermissionRequestString(PermissionRequestType type) {
       return "AudioCapture";
     case PermissionRequestType::PERMISSION_MEDIASTREAM_CAMERA:
       return "VideoCapture";
+    case PermissionRequestType::PERMISSION_CLIPBOARD_READ:
+      return "ClipboardRead";
+    case PermissionRequestType::PERMISSION_SECURITY_KEY_ATTESTATION:
+      return "SecurityKeyAttestation";
+    case PermissionRequestType::PERMISSION_PAYMENT_HANDLER:
+      return "PaymentHandler";
     default:
       NOTREACHED();
       return "";
@@ -104,11 +106,6 @@ void RecordEngagementMetric(const std::vector<PermissionRequest*>& requests,
   PermissionRequestType type = requests[0]->GetPermissionRequestType();
   if (requests.size() > 1)
     type = PermissionRequestType::MULTIPLE;
-
-  // This is only hit if kUsePermissionManagerForMediaRequests is off, since it
-  // is now on by default we'll just silenty drop this.
-  if (type == PermissionRequestType::MEDIA_STREAM)
-    return;
 
   DCHECK(action == "Accepted" || action == "Denied" || action == "Dismissed" ||
          action == "Ignored");
@@ -124,23 +121,6 @@ void RecordEngagementMetric(const std::vector<PermissionRequest*>& requests,
 }
 
 }  // anonymous namespace
-
-// PermissionReportInfo -------------------------------------------------------
-PermissionReportInfo::PermissionReportInfo(
-    const GURL& origin,
-    ContentSettingsType permission,
-    PermissionAction action,
-    PermissionSourceUI source_ui,
-    PermissionRequestGestureType gesture_type,
-    int num_prior_dismissals,
-    int num_prior_ignores)
-    : origin(origin), permission(permission), action(action),
-      source_ui(source_ui), gesture_type(gesture_type),
-      num_prior_dismissals(num_prior_dismissals),
-      num_prior_ignores(num_prior_ignores) {}
-
-PermissionReportInfo::PermissionReportInfo(
-    const PermissionReportInfo& other) = default;
 
 // PermissionUmaUtil ----------------------------------------------------------
 
@@ -162,30 +142,6 @@ const char PermissionUmaUtil::kPermissionsPromptDeniedGesture[] =
     "Permissions.Prompt.Denied.Gesture";
 const char PermissionUmaUtil::kPermissionsPromptDeniedNoGesture[] =
     "Permissions.Prompt.Denied.NoGesture";
-const char
-    PermissionUmaUtil::kPermissionsPromptAcceptedPriorDismissCountPrefix[] =
-        "Permissions.Prompt.Accepted.PriorDismissCount.";
-const char
-    PermissionUmaUtil::kPermissionsPromptAcceptedPriorIgnoreCountPrefix[] =
-        "Permissions.Prompt.Accepted.PriorIgnoreCount.";
-const char
-    PermissionUmaUtil::kPermissionsPromptDeniedPriorDismissCountPrefix[] =
-        "Permissions.Prompt.Denied.PriorDismissCount.";
-const char
-    PermissionUmaUtil::kPermissionsPromptDeniedPriorIgnoreCountPrefix[] =
-        "Permissions.Prompt.Denied.PriorIgnoreCount.";
-const char
-    PermissionUmaUtil::kPermissionsPromptDismissedPriorDismissCountPrefix[] =
-        "Permissions.Prompt.Dismissed.PriorDismissCount.";
-const char
-    PermissionUmaUtil::kPermissionsPromptDismissedPriorIgnoreCountPrefix[] =
-        "Permissions.Prompt.Dismissed.PriorIgnoreCount.";
-const char
-    PermissionUmaUtil::kPermissionsPromptIgnoredPriorDismissCountPrefix[] =
-        "Permissions.Prompt.Ignored.PriorDismissCount.";
-const char
-    PermissionUmaUtil::kPermissionsPromptIgnoredPriorIgnoreCountPrefix[] =
-        "Permissions.Prompt.Ignored.PriorIgnoreCount.";
 
 // Make sure you update histograms.xml permission histogram_suffix if you
 // add new permission
@@ -209,72 +165,6 @@ void PermissionUmaUtil::PermissionRequested(ContentSettingsType content_type,
   }
 }
 
-void PermissionUmaUtil::PermissionGranted(
-    ContentSettingsType permission,
-    PermissionRequestGestureType gesture_type,
-    const GURL& requesting_origin,
-    Profile* profile) {
-  PermissionDecisionAutoBlocker* autoblocker =
-      PermissionDecisionAutoBlocker::GetForProfile(profile);
-  RecordPermissionAction(permission, PermissionAction::GRANTED,
-                         PermissionSourceUI::PROMPT, gesture_type,
-                         requesting_origin, profile);
-  RecordPermissionPromptPriorCount(
-      permission, kPermissionsPromptAcceptedPriorDismissCountPrefix,
-      autoblocker->GetDismissCount(requesting_origin, permission));
-  RecordPermissionPromptPriorCount(
-      permission, kPermissionsPromptAcceptedPriorIgnoreCountPrefix,
-      autoblocker->GetIgnoreCount(requesting_origin, permission));
-#if defined(OS_ANDROID)
-  if (permission == CONTENT_SETTINGS_TYPE_GEOLOCATION)
-    RecordWithBatteryBucket("Permissions.BatteryLevel.Accepted.Geolocation");
-#endif
-}
-
-void PermissionUmaUtil::PermissionDenied(
-    ContentSettingsType permission,
-    PermissionRequestGestureType gesture_type,
-    const GURL& requesting_origin,
-    Profile* profile) {
-  PermissionDecisionAutoBlocker* autoblocker =
-      PermissionDecisionAutoBlocker::GetForProfile(profile);
-  RecordPermissionAction(permission, PermissionAction::DENIED,
-                         PermissionSourceUI::PROMPT, gesture_type,
-                         requesting_origin, profile);
-  RecordPermissionPromptPriorCount(
-      permission, kPermissionsPromptDeniedPriorDismissCountPrefix,
-      autoblocker->GetDismissCount(requesting_origin, permission));
-  RecordPermissionPromptPriorCount(
-      permission, kPermissionsPromptDeniedPriorIgnoreCountPrefix,
-      autoblocker->GetIgnoreCount(requesting_origin, permission));
-#if defined(OS_ANDROID)
-  if (permission == CONTENT_SETTINGS_TYPE_GEOLOCATION)
-    RecordWithBatteryBucket("Permissions.BatteryLevel.Denied.Geolocation");
-#endif
-}
-
-void PermissionUmaUtil::PermissionDismissed(
-    ContentSettingsType permission,
-    PermissionRequestGestureType gesture_type,
-    const GURL& requesting_origin,
-    Profile* profile) {
-  PermissionDecisionAutoBlocker* autoblocker =
-      PermissionDecisionAutoBlocker::GetForProfile(profile);
-  RecordPermissionAction(permission, PermissionAction::DISMISSED,
-                         PermissionSourceUI::PROMPT, gesture_type,
-                         requesting_origin, profile);
-  RecordPermissionPromptPriorCount(
-      permission, kPermissionsPromptDismissedPriorDismissCountPrefix,
-      autoblocker->GetDismissCount(requesting_origin, permission));
-  RecordPermissionPromptPriorCount(
-      permission, kPermissionsPromptDismissedPriorIgnoreCountPrefix,
-      autoblocker->GetIgnoreCount(requesting_origin, permission));
-#if defined(OS_ANDROID)
-  if (permission == CONTENT_SETTINGS_TYPE_GEOLOCATION)
-    RecordWithBatteryBucket("Permissions.BatteryLevel.Dismissed.Geolocation");
-#endif
-}
-
 void PermissionUmaUtil::PermissionRevoked(ContentSettingsType permission,
                                           PermissionSourceUI source_ui,
                                           const GURL& revoked_origin,
@@ -289,7 +179,7 @@ void PermissionUmaUtil::PermissionRevoked(ContentSettingsType permission,
     // applicable in prompt UIs where revocations are not possible.
     RecordPermissionAction(permission, PermissionAction::REVOKED, source_ui,
                            PermissionRequestGestureType::UNKNOWN,
-                           revoked_origin, profile);
+                           revoked_origin, /*web_contents=*/nullptr, profile);
   }
 }
 
@@ -312,10 +202,6 @@ void PermissionUmaUtil::RecordEmbargoPromptSuppressionFromSource(
       PermissionUmaUtil::RecordEmbargoPromptSuppression(
           PermissionEmbargoStatus::REPEATED_IGNORES);
       break;
-    case PermissionStatusSource::SAFE_BROWSING_BLACKLIST:
-      PermissionUmaUtil::RecordEmbargoPromptSuppression(
-          PermissionEmbargoStatus::PERMISSIONS_BLACKLISTING);
-      break;
     case PermissionStatusSource::UNSPECIFIED:
     case PermissionStatusSource::KILL_SWITCH:
     case PermissionStatusSource::INSECURE_ORIGIN:
@@ -332,82 +218,89 @@ void PermissionUmaUtil::RecordEmbargoStatus(
                             embargo_status, PermissionEmbargoStatus::NUM);
 }
 
-void PermissionUmaUtil::RecordSafeBrowsingResponse(
-    base::TimeDelta response_time,
-    SafeBrowsingResponse response) {
-  UMA_HISTOGRAM_TIMES("Permissions.AutoBlocker.SafeBrowsingResponseTime",
-                      response_time);
-  UMA_HISTOGRAM_ENUMERATION("Permissions.AutoBlocker.SafeBrowsingResponse",
-                            response, SafeBrowsingResponse::NUM);
-}
-
 void PermissionUmaUtil::PermissionPromptShown(
     const std::vector<PermissionRequest*>& requests) {
   DCHECK(!requests.empty());
 
-  PermissionRequestType permission_prompt_type =
-      PermissionRequestType::MULTIPLE;
-  PermissionRequestGestureType permission_gesture_type =
+  PermissionRequestType request_type = PermissionRequestType::MULTIPLE;
+  PermissionRequestGestureType gesture_type =
       PermissionRequestGestureType::UNKNOWN;
   if (requests.size() == 1) {
-    permission_prompt_type = requests[0]->GetPermissionRequestType();
-    permission_gesture_type = requests[0]->GetGestureType();
+    request_type = requests[0]->GetPermissionRequestType();
+    gesture_type = requests[0]->GetGestureType();
   }
 
-  RecordPermissionPromptShown(permission_prompt_type, permission_gesture_type);
+  PERMISSION_BUBBLE_TYPE_UMA(kPermissionsPromptShown, request_type);
+  PERMISSION_BUBBLE_GESTURE_TYPE_UMA(kPermissionsPromptShownGesture,
+                                     kPermissionsPromptShownNoGesture,
+                                     gesture_type, request_type);
 }
 
 void PermissionUmaUtil::PermissionPromptResolved(
     const std::vector<PermissionRequest*>& requests,
     const content::WebContents* web_contents,
     PermissionAction permission_action) {
+  std::string action_string;
+
   switch (permission_action) {
     case PermissionAction::GRANTED:
       RecordPromptDecided(requests, /*accepted=*/true);
-      RecordEngagementMetric(requests, web_contents, "Accepted");
+      action_string = "Accepted";
       break;
     case PermissionAction::DENIED:
       RecordPromptDecided(requests, /*accepted=*/false);
-      RecordEngagementMetric(requests, web_contents, "Denied");
+      action_string = "Denied";
       break;
     case PermissionAction::DISMISSED:
-      RecordEngagementMetric(requests, web_contents, "Dismissed");
+      action_string = "Dismissed";
       break;
     case PermissionAction::IGNORED:
-      RecordEngagementMetric(requests, web_contents, "Ignored");
-      PermissionIgnored(requests, web_contents);
+      action_string = "Ignored";
       break;
     default:
       NOTREACHED();
       break;
   }
-}
+  RecordEngagementMetric(requests, web_contents, action_string);
 
-void PermissionUmaUtil::RecordPermissionPromptShown(
-    PermissionRequestType request_type,
-    PermissionRequestGestureType gesture_type) {
-  PERMISSION_BUBBLE_TYPE_UMA(kPermissionsPromptShown, request_type);
-  PERMISSION_BUBBLE_GESTURE_TYPE_UMA(
-      kPermissionsPromptShownGesture, kPermissionsPromptShownNoGesture,
-      gesture_type, request_type);
-}
+  Profile* profile =
+      Profile::FromBrowserContext(web_contents->GetBrowserContext());
+  PermissionDecisionAutoBlocker* autoblocker =
+      PermissionDecisionAutoBlocker::GetForProfile(profile);
 
-void PermissionUmaUtil::RecordPermissionPromptAccepted(
-    PermissionRequestType request_type,
-    PermissionRequestGestureType gesture_type) {
-  PERMISSION_BUBBLE_TYPE_UMA(kPermissionsPromptAccepted, request_type);
-  PERMISSION_BUBBLE_GESTURE_TYPE_UMA(kPermissionsPromptAcceptedGesture,
-                                     kPermissionsPromptAcceptedNoGesture,
-                                     gesture_type, request_type);
-}
+  for (PermissionRequest* request : requests) {
+    ContentSettingsType permission = request->GetContentSettingsType();
+    // TODO(timloh): We only record these metrics for permissions which use
+    // PermissionRequestImpl as the other subclasses don't support
+    // GetGestureType and GetContentSettingsType.
+    if (permission == CONTENT_SETTINGS_TYPE_DEFAULT)
+      continue;
 
-void PermissionUmaUtil::RecordPermissionPromptDenied(
-    PermissionRequestType request_type,
-    PermissionRequestGestureType gesture_type) {
-  PERMISSION_BUBBLE_TYPE_UMA(kPermissionsPromptDenied, request_type);
-  PERMISSION_BUBBLE_GESTURE_TYPE_UMA(kPermissionsPromptDeniedGesture,
-                                     kPermissionsPromptDeniedNoGesture,
-                                     gesture_type, request_type);
+    PermissionRequestGestureType gesture_type = request->GetGestureType();
+    const GURL& requesting_origin = request->GetOrigin();
+
+    RecordPermissionAction(permission, permission_action,
+                           PermissionSourceUI::PROMPT, gesture_type,
+                           requesting_origin, web_contents, profile);
+
+    std::string priorDismissPrefix =
+        "Permissions.Prompt." + action_string + ".PriorDismissCount.";
+    std::string priorIgnorePrefix =
+        "Permissions.Prompt." + action_string + ".PriorIgnoreCount.";
+    RecordPermissionPromptPriorCount(
+        permission, priorDismissPrefix,
+        autoblocker->GetDismissCount(requesting_origin, permission));
+    RecordPermissionPromptPriorCount(
+        permission, priorIgnorePrefix,
+        autoblocker->GetIgnoreCount(requesting_origin, permission));
+#if defined(OS_ANDROID)
+    if (permission == CONTENT_SETTINGS_TYPE_GEOLOCATION &&
+        permission_action != PermissionAction::IGNORED) {
+      RecordWithBatteryBucket("Permissions.BatteryLevel." + action_string +
+                              ".Geolocation");
+    }
+#endif
+  }
 }
 
 void PermissionUmaUtil::RecordPermissionPromptPriorCount(
@@ -434,80 +327,39 @@ void PermissionUmaUtil::RecordWithBatteryBucket(const std::string& histogram) {
 }
 #endif
 
-void PermissionUmaUtil::FakeOfficialBuildForTest() {
-  gIsFakeOfficialBuildForTest = true;
-}
-
-bool PermissionUmaUtil::IsOptedIntoPermissionActionReporting(Profile* profile) {
-  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kDisablePermissionActionReporting)) {
-    return false;
-  }
-
-  bool official_build = gIsFakeOfficialBuildForTest;
-#if defined(OFFICIAL_BUILD) && defined(GOOGLE_CHROME_BUILD)
-  official_build = true;
-#endif
-
-  if (!official_build)
-    return false;
-
-  DCHECK(profile);
-  if (profile->GetProfileType() == Profile::INCOGNITO_PROFILE)
-    return false;
-  if (!profile->GetPrefs()->GetBoolean(prefs::kSafeBrowsingEnabled))
-    return false;
-
-  browser_sync::ProfileSyncService* profile_sync_service =
-      ProfileSyncServiceFactory::GetForProfile(profile);
-
-  // Do not report if profile can't get a profile sync service or sync cannot
-  // start.
-  if (!(profile_sync_service && profile_sync_service->CanSyncStart()))
-    return false;
-
-  // Do not report for users with a Custom passphrase set. We need to wait for
-  // Sync to be active in order to check the passphrase, so we don't report if
-  // Sync is not active yet.
-  if (!profile_sync_service->IsSyncActive() ||
-      profile_sync_service->IsUsingSecondaryPassphrase()) {
-    return false;
-  }
-
-  syncer::ModelTypeSet preferred_data_types =
-      profile_sync_service->GetPreferredDataTypes();
-  if (!(preferred_data_types.Has(syncer::PROXY_TABS) &&
-        preferred_data_types.Has(syncer::PRIORITY_PREFERENCES))) {
-    return false;
-  }
-
-  return true;
-}
-
 void PermissionUmaUtil::RecordPermissionAction(
     ContentSettingsType permission,
     PermissionAction action,
     PermissionSourceUI source_ui,
     PermissionRequestGestureType gesture_type,
     const GURL& requesting_origin,
+    const content::WebContents* web_contents,
     Profile* profile) {
-  if (IsOptedIntoPermissionActionReporting(profile)) {
-    PermissionDecisionAutoBlocker* autoblocker =
-        PermissionDecisionAutoBlocker::GetForProfile(profile);
-    PermissionReportInfo report_info(
-        requesting_origin, permission, action, source_ui, gesture_type,
-        autoblocker->GetDismissCount(requesting_origin, permission),
-        autoblocker->GetIgnoreCount(requesting_origin, permission));
-    g_browser_process->safe_browsing_service()
-        ->ui_manager()->ReportPermissionAction(report_info);
+  PermissionDecisionAutoBlocker* autoblocker =
+      PermissionDecisionAutoBlocker::GetForProfile(profile);
+  int dismiss_count =
+      autoblocker->GetDismissCount(requesting_origin, permission);
+  int ignore_count = autoblocker->GetIgnoreCount(requesting_origin, permission);
+
+  if (web_contents) {
+    ukm::SourceId source_id =
+        ukm::GetSourceIdForWebContentsDocument(web_contents);
+    ukm::builders::Permission(source_id)
+        .SetAction(static_cast<int64_t>(action))
+        .SetGesture(static_cast<int64_t>(gesture_type))
+        .SetPermissionType(permission)
+        .SetPriorDismissals(std::min(kPriorCountCap, dismiss_count))
+        .SetPriorIgnores(std::min(kPriorCountCap, ignore_count))
+        .SetSource(static_cast<int64_t>(source_ui))
+        .Record(ukm::UkmRecorder::Get());
   }
 
   bool secure_origin = content::IsOriginSecure(requesting_origin);
 
   switch (permission) {
-    // Geolocation, MidiSysEx, Push, and Media permissions are disabled on
-    // insecure origins, so there's no need to record separate metrics for
-    // secure/insecure.
+    // Geolocation, MidiSysEx, Push, Media and Clipboard permissions are
+    // disabled on insecure origins, so there's no need to record separate
+    // metrics for secure/insecure.
     case CONTENT_SETTINGS_TYPE_GEOLOCATION:
       UMA_HISTOGRAM_ENUMERATION("Permissions.Action.Geolocation", action,
                                 PermissionAction::NUM);
@@ -541,6 +393,14 @@ void PermissionUmaUtil::RecordPermissionAction(
                             "Permissions.Action.SecureOrigin.Flash",
                             "Permissions.Action.InsecureOrigin.Flash", action);
       break;
+    case CONTENT_SETTINGS_TYPE_CLIPBOARD_READ:
+      UMA_HISTOGRAM_ENUMERATION("Permissions.Action.ClipboardRead", action,
+                                PermissionAction::NUM);
+      break;
+    case CONTENT_SETTINGS_TYPE_PAYMENT_HANDLER:
+      UMA_HISTOGRAM_ENUMERATION("Permissions.Action.PaymentHandler", action,
+                                PermissionAction::NUM);
+      break;
     // The user is not prompted for these permissions, thus there is no
     // permission action recorded for them.
     default:
@@ -556,52 +416,23 @@ void PermissionUmaUtil::RecordPromptDecided(
     bool accepted) {
   DCHECK(!requests.empty());
 
-  PermissionRequestType permission_prompt_type =
-      requests[0]->GetPermissionRequestType();
-  PermissionRequestGestureType permission_gesture_type =
-      requests[0]->GetGestureType();
-  if (requests.size() > 1) {
-    permission_prompt_type = PermissionRequestType::MULTIPLE;
-    permission_gesture_type = PermissionRequestGestureType::UNKNOWN;
+  PermissionRequestType request_type = PermissionRequestType::MULTIPLE;
+  PermissionRequestGestureType gesture_type =
+      PermissionRequestGestureType::UNKNOWN;
+  if (requests.size() == 1) {
+    request_type = requests[0]->GetPermissionRequestType();
+    gesture_type = requests[0]->GetGestureType();
   }
 
   if (accepted) {
-    RecordPermissionPromptAccepted(permission_prompt_type,
-                                   permission_gesture_type);
+    PERMISSION_BUBBLE_TYPE_UMA(kPermissionsPromptAccepted, request_type);
+    PERMISSION_BUBBLE_GESTURE_TYPE_UMA(kPermissionsPromptAcceptedGesture,
+                                       kPermissionsPromptAcceptedNoGesture,
+                                       gesture_type, request_type);
   } else {
-    RecordPermissionPromptDenied(permission_prompt_type,
-                                 permission_gesture_type);
-  }
-}
-
-// static
-void PermissionUmaUtil::PermissionIgnored(
-    const std::vector<PermissionRequest*>& requests,
-    const content::WebContents* web_contents) {
-  Profile* profile =
-      Profile::FromBrowserContext(web_contents->GetBrowserContext());
-  PermissionDecisionAutoBlocker* autoblocker =
-      PermissionDecisionAutoBlocker::GetForProfile(profile);
-
-  for (PermissionRequest* request : requests) {
-    ContentSettingsType permission = request->GetContentSettingsType();
-    // TODO(timloh): We only record ignore metrics for permissions which use
-    // PermissionRequestImpl as the other subclasses don't support
-    // GetGestureType and GetContentSettingsType.
-    if (permission == CONTENT_SETTINGS_TYPE_DEFAULT)
-      continue;
-
-    PermissionRequestGestureType gesture_type = request->GetGestureType();
-    const GURL& requesting_origin = request->GetOrigin();
-
-    RecordPermissionAction(permission, PermissionAction::IGNORED,
-                           PermissionSourceUI::PROMPT, gesture_type,
-                           requesting_origin, profile);
-    RecordPermissionPromptPriorCount(
-        permission, kPermissionsPromptIgnoredPriorDismissCountPrefix,
-        autoblocker->GetDismissCount(requesting_origin, permission));
-    RecordPermissionPromptPriorCount(
-        permission, kPermissionsPromptIgnoredPriorIgnoreCountPrefix,
-        autoblocker->GetIgnoreCount(requesting_origin, permission));
+    PERMISSION_BUBBLE_TYPE_UMA(kPermissionsPromptDenied, request_type);
+    PERMISSION_BUBBLE_GESTURE_TYPE_UMA(kPermissionsPromptDeniedGesture,
+                                       kPermissionsPromptDeniedNoGesture,
+                                       gesture_type, request_type);
   }
 }

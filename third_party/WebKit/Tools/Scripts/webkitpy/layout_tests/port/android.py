@@ -29,12 +29,11 @@
 import itertools
 import logging
 import os
+import posixpath
 import re
 import sys
 import threading
 import time
-
-from multiprocessing.pool import ThreadPool
 
 from webkitpy.common import exit_codes
 from webkitpy.common.system.executive import ScriptError
@@ -114,69 +113,16 @@ KPTR_RESTRICT_PATH = '/proc/sys/kernel/kptr_restrict'
 # but we use a file-to-http feature to bridge the file request to host's http
 # server to get the real test files and corresponding resources.
 # See webkit/support/platform_support_android.cc for the other side of this bridge.
-PERF_TEST_PATH_PREFIX = '/all-perf-tests'
-LAYOUT_TEST_PATH_PREFIX = '/all-tests'
-
-# All ports the Android forwarder to forward.
-# 8000, 8080 and 8443 are for http/https tests;
-# 8880 is for websocket tests (see apache_http.py and pywebsocket.py).
-# 8001, 8081 and 8444 are for http/https WPT;
-# 9001 and 9444 are for websocket WPT (see wptserve.py).
-FORWARD_PORTS = '8000 8001 8080 8081 8443 8444 8880 9001 9444'
+PERF_TEST_PATH_PREFIX = '/PerformanceTests'
+LAYOUT_TEST_PATH_PREFIX = '/LayoutTests'
 
 # We start netcat processes for each of the three stdio streams. In doing so,
 # we attempt to use ports starting from 10201. This starting value is
 # completely arbitrary.
 FIRST_NETCAT_PORT = 10201
 
-MS_TRUETYPE_FONTS_DIR = '/usr/share/fonts/truetype/msttcorefonts/'
-MS_TRUETYPE_FONTS_PACKAGE = 'ttf-mscorefonts-installer'
-
 # Timeout in seconds to wait for starting/stopping the driver.
 DRIVER_START_STOP_TIMEOUT_SECS = 10
-
-HOST_FONT_FILES = [
-    [[MS_TRUETYPE_FONTS_DIR], 'Arial.ttf', MS_TRUETYPE_FONTS_PACKAGE],
-    [[MS_TRUETYPE_FONTS_DIR], 'Arial_Bold.ttf', MS_TRUETYPE_FONTS_PACKAGE],
-    [[MS_TRUETYPE_FONTS_DIR], 'Arial_Bold_Italic.ttf', MS_TRUETYPE_FONTS_PACKAGE],
-    [[MS_TRUETYPE_FONTS_DIR], 'Arial_Italic.ttf', MS_TRUETYPE_FONTS_PACKAGE],
-    [[MS_TRUETYPE_FONTS_DIR], 'Comic_Sans_MS.ttf', MS_TRUETYPE_FONTS_PACKAGE],
-    [[MS_TRUETYPE_FONTS_DIR], 'Comic_Sans_MS_Bold.ttf', MS_TRUETYPE_FONTS_PACKAGE],
-    [[MS_TRUETYPE_FONTS_DIR], 'Courier_New.ttf', MS_TRUETYPE_FONTS_PACKAGE],
-    [[MS_TRUETYPE_FONTS_DIR], 'Courier_New_Bold.ttf', MS_TRUETYPE_FONTS_PACKAGE],
-    [[MS_TRUETYPE_FONTS_DIR], 'Courier_New_Bold_Italic.ttf', MS_TRUETYPE_FONTS_PACKAGE],
-    [[MS_TRUETYPE_FONTS_DIR], 'Courier_New_Italic.ttf', MS_TRUETYPE_FONTS_PACKAGE],
-    [[MS_TRUETYPE_FONTS_DIR], 'Georgia.ttf', MS_TRUETYPE_FONTS_PACKAGE],
-    [[MS_TRUETYPE_FONTS_DIR], 'Georgia_Bold.ttf', MS_TRUETYPE_FONTS_PACKAGE],
-    [[MS_TRUETYPE_FONTS_DIR], 'Georgia_Bold_Italic.ttf', MS_TRUETYPE_FONTS_PACKAGE],
-    [[MS_TRUETYPE_FONTS_DIR], 'Georgia_Italic.ttf', MS_TRUETYPE_FONTS_PACKAGE],
-    [[MS_TRUETYPE_FONTS_DIR], 'Impact.ttf', MS_TRUETYPE_FONTS_PACKAGE],
-    [[MS_TRUETYPE_FONTS_DIR], 'Trebuchet_MS.ttf', MS_TRUETYPE_FONTS_PACKAGE],
-    [[MS_TRUETYPE_FONTS_DIR], 'Trebuchet_MS_Bold.ttf', MS_TRUETYPE_FONTS_PACKAGE],
-    [[MS_TRUETYPE_FONTS_DIR], 'Trebuchet_MS_Bold_Italic.ttf', MS_TRUETYPE_FONTS_PACKAGE],
-    [[MS_TRUETYPE_FONTS_DIR], 'Trebuchet_MS_Italic.ttf', MS_TRUETYPE_FONTS_PACKAGE],
-    [[MS_TRUETYPE_FONTS_DIR], 'Times_New_Roman.ttf', MS_TRUETYPE_FONTS_PACKAGE],
-    [[MS_TRUETYPE_FONTS_DIR], 'Times_New_Roman_Bold.ttf', MS_TRUETYPE_FONTS_PACKAGE],
-    [[MS_TRUETYPE_FONTS_DIR], 'Times_New_Roman_Bold_Italic.ttf', MS_TRUETYPE_FONTS_PACKAGE],
-    [[MS_TRUETYPE_FONTS_DIR], 'Times_New_Roman_Italic.ttf', MS_TRUETYPE_FONTS_PACKAGE],
-    [[MS_TRUETYPE_FONTS_DIR], 'Verdana.ttf', MS_TRUETYPE_FONTS_PACKAGE],
-    [[MS_TRUETYPE_FONTS_DIR], 'Verdana_Bold.ttf', MS_TRUETYPE_FONTS_PACKAGE],
-    [[MS_TRUETYPE_FONTS_DIR], 'Verdana_Bold_Italic.ttf', MS_TRUETYPE_FONTS_PACKAGE],
-    [[MS_TRUETYPE_FONTS_DIR], 'Verdana_Italic.ttf', MS_TRUETYPE_FONTS_PACKAGE],
-    # The Microsoft font EULA
-    [['/usr/share/doc/ttf-mscorefonts-installer/'], 'READ_ME!.gz', MS_TRUETYPE_FONTS_PACKAGE],
-    # Other fonts: Arabic, CJK, Indic, Thai, etc.
-    [['/usr/share/fonts/truetype/ttf-dejavu/'], 'DejaVuSans.ttf', 'ttf-dejavu'],
-    [['/usr/share/fonts/truetype/kochi/'], 'kochi-mincho.ttf', 'ttf-kochi-mincho'],
-    [['/usr/share/fonts/truetype/ttf-indic-fonts-core/'], 'lohit_hi.ttf', 'ttf-indic-fonts-core'],
-    [['/usr/share/fonts/truetype/ttf-indic-fonts-core/'], 'lohit_ta.ttf', 'ttf-indic-fonts-core'],
-    [['/usr/share/fonts/truetype/ttf-indic-fonts-core/'], 'MuktiNarrow.ttf', 'ttf-indic-fonts-core'],
-    [['/usr/share/fonts/truetype/thai/', '/usr/share/fonts/truetype/tlwg/'], 'Garuda.ttf', 'fonts-tlwg-garuda'],
-    [['/usr/share/fonts/truetype/ttf-indic-fonts-core/',
-      '/usr/share/fonts/truetype/ttf-punjabi-fonts/'],
-     'lohit_pa.ttf',
-     'ttf-indic-fonts-core'],
-]
 
 # Test resources that need to be accessed as files directly.
 # Each item can be the relative path of a directory or a file.
@@ -217,9 +163,6 @@ class ContentShellDriverDetails():
 
     def library_name(self):
         return 'libcontent_shell_content_view.so'
-
-    def additional_resources(self):
-        return []
 
     def command_line_file(self):
         return '/data/local/tmp/content-shell-command-line'
@@ -374,50 +317,126 @@ class AndroidPort(base.Port):
         return self._check_devices(printer)
 
     def _check_devices(self, printer):
-        # Printer objects aren't threadsafe, so we need to protect calls to them.
-        lock = threading.Lock()
-        pool = None
 
         # Push the executables and other files to the devices; doing this now
         # means we can do this in parallel in the manager process and not mix
         # this in with starting and stopping workers.
-        def setup_device(worker_number):
-            d = self.create_driver(worker_number)
-            serial = d._device.serial  # pylint: disable=protected-access
 
-            def log_safely(msg, throttled=True):
-                if throttled:
-                    callback = printer.write_throttled_update
-                else:
-                    callback = printer.write_update
-                with lock:
-                    callback('[%s] %s' % (serial, msg))
+        lock = threading.Lock()
 
+        def log_safely(msg, throttled=True):
+            if throttled:
+                callback = printer.write_throttled_update
+            else:
+                callback = printer.write_update
+            with lock:
+                callback('%s' % msg)
+
+        def _setup_device_impl(device):
             log_safely('preparing device', throttled=False)
+
+            if self._devices.is_device_prepared(device.serial):
+                return
+
+            device.EnableRoot()
+            perf_control.PerfControl(device).SetPerfProfilingMode()
+
+            # Required by webkit_support::GetWebKitRootDirFilePath().
+            # Other directories will be created automatically by adb push.
+            device.RunShellCommand(
+                ['mkdir', '-p', DEVICE_SOURCE_ROOT_DIR + 'chrome'],
+                check_return=True)
+
+            # Allow the test driver to get full read and write access to the directory on the device,
+            # as well as for the FIFOs. We'll need a world writable directory.
+            device.RunShellCommand(
+                ['mkdir', '-p', self._driver_details.device_directory()],
+                check_return=True)
+
+            # Make sure that the disk cache on the device resets to a clean state.
+            device.RunShellCommand(
+                ['rm', '-rf', self._driver_details.device_cache_directory()],
+                check_return=True)
+
+            device.EnableRoot()
+            perf_control.PerfControl(device).SetPerfProfilingMode()
+
+            # Required by webkit_support::GetWebKitRootDirFilePath().
+            # Other directories will be created automatically by adb push.
+            device.RunShellCommand(
+                ['mkdir', '-p', DEVICE_SOURCE_ROOT_DIR + 'chrome'],
+                check_return=True)
+
+            # Allow the test driver to get full read and write access to the directory on the device,
+            # as well as for the FIFOs. We'll need a world writable directory.
+            device.RunShellCommand(
+                ['mkdir', '-p', self._driver_details.device_directory()],
+                check_return=True)
+
+            # Make sure that the disk cache on the device resets to a clean state.
+            device.RunShellCommand(
+                ['rm', '-rf', self._driver_details.device_cache_directory()],
+                check_return=True)
+
+            device_path = lambda *p: posixpath.join(
+                self._driver_details.device_directory(), *p)
+
+            device.Install(self._path_to_driver())
+
+            # Build up a list of what we want to push, including:
+            host_device_tuples = []
+
+            # - the custom font files
+            # TODO(sergeyu): Rename these files, they can be used on platforms
+            # other than Android.
+            host_device_tuples.append(
+                (self._build_path('test_fonts/android_main_fonts.xml'),
+                 device_path('android_main_fonts.xml')))
+            host_device_tuples.append(
+                (self._build_path('test_fonts/android_fallback_fonts.xml'),
+                 device_path('android_fallback_fonts.xml')))
+            for font_file in self._get_font_files():
+                host_device_tuples.append(
+                    (font_file, device_path('fonts', os.path.basename(font_file))))
+
+            # - the test resources
+            host_device_tuples.extend(
+                (self.host.filesystem.join(self.layout_tests_dir(), resource),
+                 posixpath.join(DEVICE_LAYOUT_TESTS_DIR, resource))
+                for resource in TEST_RESOURCES_TO_PUSH)
+
+            # ... and then push them to the device.
+            device.PushChangedFiles(host_device_tuples)
+
+            device.RunShellCommand(
+                ['mkdir', '-p', self._driver_details.device_fifo_directory()],
+                check_return=True)
+
+            device.RunShellCommand(
+                ['chmod', '-R', '777', self._driver_details.device_directory()],
+                check_return=True)
+            device.RunShellCommand(
+                ['chmod', '-R', '777', self._driver_details.device_fifo_directory()],
+                check_return=True)
+
+            # Mark this device as having been set up.
+            self._devices.set_device_prepared(device.serial)
+
+            log_safely('device prepared', throttled=False)
+
+        def setup_device(device):
             try:
-                d._setup_test(log_safely)
-                log_safely('device prepared', throttled=False)
-            except (ScriptError, driver.DeviceFailure) as error:
+                _setup_device_impl(device)
+            except (ScriptError,
+                    driver.DeviceFailure,
+                    device_errors.CommandFailedError,
+                    device_errors.CommandTimeoutError,
+                    device_errors.DeviceUnreachableError) as error:
                 with lock:
                     _log.warning('[%s] failed to prepare_device: %s', serial, error)
-            except KeyboardInterrupt:
-                if pool:
-                    pool.terminate()
 
-        # FIXME: It would be nice if we knew how many workers we needed.
-        num_workers = self.default_child_processes()
-        num_child_processes = int(self.get_option('child_processes'))
-        if num_child_processes:
-            num_workers = min(num_workers, num_child_processes)
-        if num_workers > 1:
-            pool = ThreadPool(num_workers)
-            try:
-                pool.map(setup_device, range(num_workers))
-            except KeyboardInterrupt:
-                pool.terminate()
-                raise
-        else:
-            setup_device(0)
+        devices = self._devices.usable_devices(self.host.executive)
+        device_utils.DeviceUtils.parallel(devices).pMap(setup_device)
 
         if not self._devices.prepared_devices():
             _log.error('Could not prepare any devices for testing.')
@@ -439,17 +458,8 @@ class AndroidPort(base.Port):
         return min(len(self._options.prepared_devices), requested_num_workers)
 
     def check_sys_deps(self, needs_http):
-        for (font_dirs, font_file, package) in HOST_FONT_FILES:
-            exists = False
-            for font_dir in font_dirs:
-                font_path = font_dir + font_file
-                if self._check_file_exists(font_path, '', more_logging=False):
-                    exists = True
-                    break
-            if not exists:
-                _log.error('You are missing %s under %s. Try installing %s. See build instructions.',
-                           font_file, font_dirs, package)
-                return exit_codes.SYS_DEPS_EXIT_STATUS
+        # _get_font_files() will throw if any of the required fonts is missing.
+        self._get_font_files()
         return exit_codes.OK_EXIT_STATUS
 
     def requires_http_server(self):
@@ -711,55 +721,6 @@ class ChromiumAndroidDriver(driver.Driver):
 
         return symfs_path
 
-    def _push_data_if_needed(self, log_callback):
-        self._push_executable(log_callback)
-        self._push_fonts(log_callback)
-        self._push_test_resources(log_callback)
-
-    def _setup_test(self, log_callback):
-        # FIXME: Move this routine and its subroutines off of the AndroidDriver
-        # class and onto some other helper class, so that we
-        # can initialize the device without needing to create a driver.
-
-        if self._android_devices.is_device_prepared(self._device.serial):
-            return
-
-        self._device.EnableRoot()
-        self._setup_performance()
-
-        # Required by webkit_support::GetWebKitRootDirFilePath().
-        # Other directories will be created automatically by adb push.
-        self._device.RunShellCommand(
-            ['mkdir', '-p', DEVICE_SOURCE_ROOT_DIR + 'chrome'],
-            check_return=True)
-
-        # Allow the test driver to get full read and write access to the directory on the device,
-        # as well as for the FIFOs. We'll need a world writable directory.
-        self._device.RunShellCommand(
-            ['mkdir', '-p', self._driver_details.device_directory()],
-            check_return=True)
-
-        # Make sure that the disk cache on the device resets to a clean state.
-        self._device.RunShellCommand(
-            ['rm', '-rf', self._driver_details.device_cache_directory()],
-            check_return=True)
-
-        self._push_data_if_needed(log_callback)
-
-        self._device.RunShellCommand(
-            ['mkdir', '-p', self._driver_details.device_fifo_directory()],
-            check_return=True)
-
-        self._device.RunShellCommand(
-            ['chmod', '-R', '777', self._driver_details.device_directory()],
-            check_return=True)
-        self._device.RunShellCommand(
-            ['chmod', '-R', '777', self._driver_details.device_fifo_directory()],
-            check_return=True)
-
-        # Mark this device as having been set up.
-        self._android_devices.set_device_prepared(self._device.serial)
-
     def _log_error(self, message):
         _log.error('[%s] %s', self._device.serial, message)
 
@@ -773,45 +734,6 @@ class ChromiumAndroidDriver(driver.Driver):
     def _abort(self, message):
         self._device_failed = True
         raise driver.DeviceFailure('[%s] %s' % (self._device.serial, message))
-
-    def _push_file_if_needed(self, host_file, device_file, log_callback):
-        basename = self._port.host.filesystem.basename(host_file)
-        log_callback('checking %s' % basename)
-        self._device.PushChangedFiles([(host_file, device_file)])
-
-    def _push_executable(self, log_callback):
-        for resource in self._driver_details.additional_resources():
-            self._push_file_if_needed(self._port._build_path(
-                resource), self._driver_details.device_directory() + resource, log_callback)
-
-        self._push_file_if_needed(self._port._build_path('android_main_fonts.xml'),
-                                  self._driver_details.device_directory() + 'android_main_fonts.xml', log_callback)
-        self._push_file_if_needed(self._port._build_path('android_fallback_fonts.xml'),
-                                  self._driver_details.device_directory() + 'android_fallback_fonts.xml', log_callback)
-
-        try:
-            driver_host_path = self._port._path_to_driver()  # pylint: disable=protected-access
-            log_callback('installing apk if necessary')
-            self._device.Install(driver_host_path)
-        except (device_errors.CommandFailedError,
-                device_errors.CommandTimeoutError,
-                device_errors.DeviceUnreachableError) as exc:
-            self._abort('Failed to install %s onto device: %s' % (driver_host_path, str(exc)))
-
-    def _push_fonts(self, log_callback):
-        path_to_ahem_font = self._port._build_path('AHEM____.TTF')
-        self._push_file_if_needed(path_to_ahem_font, self._driver_details.device_fonts_directory() + 'AHEM____.TTF', log_callback)
-        for (host_dirs, font_file, _) in HOST_FONT_FILES:
-            for host_dir in host_dirs:
-                host_font_path = host_dir + font_file
-                if self._port._check_file_exists(host_font_path, '', more_logging=False):
-                    self._push_file_if_needed(
-                        host_font_path, self._driver_details.device_fonts_directory() + font_file, log_callback)
-
-    def _push_test_resources(self, log_callback):
-        for resource in TEST_RESOURCES_TO_PUSH:
-            self._push_file_if_needed(self._port.layout_tests_dir() + '/' + resource,
-                                      DEVICE_LAYOUT_TESTS_DIR + resource, log_callback)
 
     def _get_last_stacktrace(self):
         try:
@@ -853,10 +775,6 @@ class ChromiumAndroidDriver(driver.Driver):
 
     def _get_logcat(self):
         return '\n'.join(self._device.adb.Logcat(dump=True, logcat_format='threadtime'))
-
-    def _setup_performance(self):
-        # Disable CPU scaling and drop ram cache to reduce noise in tests
-        perf_control.PerfControl(self._device).SetPerfProfilingMode()
 
     def _teardown_performance(self):
         perf_control.PerfControl(self._device).SetDefaultPerfMode()
@@ -965,7 +883,7 @@ class ChromiumAndroidDriver(driver.Driver):
 
         self._log_debug('Starting forwarder')
         forwarder.Forwarder.Map(
-            [(p, p) for p in FORWARD_PORTS.split()],
+            [(p, p) for p in base.Port.SERVER_PORTS],
             self._device)
         forwarder.Forwarder.Map(
             [(forwarder.DYNAMIC_DEVICE_PORT, p)
@@ -1121,10 +1039,8 @@ class ChromiumAndroidDriver(driver.Driver):
     def _command_from_driver_input(self, driver_input):
         command = super(ChromiumAndroidDriver, self)._command_from_driver_input(driver_input)
         if command.startswith('/'):
-            fs = self._port.host.filesystem
-            # FIXME: what happens if command lies outside of the layout_tests_dir on the host?
-            relative_test_filename = fs.relpath(command, fs.dirname(self._port.layout_tests_dir()))
-            command = DEVICE_WEBKIT_BASE_DIR + relative_test_filename
+            command = 'http://127.0.0.1:8000' + LAYOUT_TEST_PATH_PREFIX + \
+                '/' + self._port.relative_test_filename(command)
         return command
 
     def _read_prompt(self, deadline):

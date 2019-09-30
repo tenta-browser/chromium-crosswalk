@@ -9,7 +9,7 @@
 #include "base/bind.h"
 #include "base/numerics/safe_conversions.h"
 #include "content/public/renderer/renderer_ppapi_host.h"
-#include "content/renderer/media/video_track_to_pepper_adapter.h"
+#include "content/renderer/media/pepper/video_track_to_pepper_adapter.h"
 #include "content/renderer/pepper/ppb_image_data_impl.h"
 #include "content/renderer/render_thread_impl.h"
 #include "media/base/video_util.h"
@@ -62,13 +62,13 @@ void PepperVideoSourceHost::FrameReceiver::GotFrame(
     return;
 
   if (!(video_frame->format() == media::PIXEL_FORMAT_I420 ||
-        video_frame->format() == media::PIXEL_FORMAT_YV12A)) {
+        video_frame->format() == media::PIXEL_FORMAT_I420A)) {
     NOTREACHED();
     return;
   }
   scoped_refptr<media::VideoFrame> frame = video_frame;
   // Drop alpha channel since we do not support it yet.
-  if (frame->format() == media::PIXEL_FORMAT_YV12A)
+  if (frame->format() == media::PIXEL_FORMAT_I420A)
     frame = media::WrapAsI420VideoFrame(video_frame);
 
   // Hold a reference to the new frame and release the previous.

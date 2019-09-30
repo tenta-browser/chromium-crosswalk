@@ -11,7 +11,6 @@
 #include <memory>
 
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "base/trace_event/trace_event.h"
 #include "gpu/command_buffer/common/cmd_buffer_common.h"
 #include "gpu/command_buffer/common/command_buffer_shared.h"
@@ -27,7 +26,7 @@ class MemoryBufferBacking : public BufferBacking {
  public:
   explicit MemoryBufferBacking(size_t size)
       : memory_(new char[size]), size_(size) {}
-  ~MemoryBufferBacking() override {}
+  ~MemoryBufferBacking() override = default;
   void* GetMemory() const override { return memory_.get(); }
   size_t GetSize() const override { return size_; }
 
@@ -48,7 +47,7 @@ CommandBufferService::CommandBufferService(
   state_.token = 0;
 }
 
-CommandBufferService::~CommandBufferService() {}
+CommandBufferService::~CommandBufferService() = default;
 
 void CommandBufferService::UpdateState() {
   ++state_.generation;

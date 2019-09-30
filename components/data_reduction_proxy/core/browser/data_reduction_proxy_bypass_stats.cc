@@ -5,18 +5,18 @@
 #include "components/data_reduction_proxy/core/browser/data_reduction_proxy_bypass_stats.h"
 
 #include "base/callback.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
-#include "base/metrics/sparse_histogram.h"
 #include "components/data_reduction_proxy/core/browser/data_reduction_proxy_config.h"
+#include "components/data_reduction_proxy/core/browser/data_reduction_proxy_util.h"
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_headers.h"
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_params.h"
-#include "components/data_reduction_proxy/core/common/data_reduction_proxy_util.h"
 #include "net/base/load_flags.h"
 #include "net/base/net_errors.h"
+#include "net/base/proxy_server.h"
 #include "net/http/http_response_headers.h"
 #include "net/http/http_status_code.h"
-#include "net/proxy/proxy_server.h"
-#include "net/proxy/proxy_service.h"
+#include "net/proxy_resolution/proxy_resolution_service.h"
 #include "net/url_request/url_request.h"
 #include "net/url_request/url_request_context.h"
 
@@ -35,14 +35,12 @@ void RecordDataReductionProxyBypassOnNetworkError(
     const net::ProxyServer& proxy_server,
     int net_error) {
   if (is_primary) {
-    UMA_HISTOGRAM_SPARSE_SLOWLY(
-        "DataReductionProxy.BypassOnNetworkErrorPrimary",
-        std::abs(net_error));
+    base::UmaHistogramSparse("DataReductionProxy.BypassOnNetworkErrorPrimary",
+                             std::abs(net_error));
     return;
   }
-  UMA_HISTOGRAM_SPARSE_SLOWLY(
-      "DataReductionProxy.BypassOnNetworkErrorFallback",
-      std::abs(net_error));
+  base::UmaHistogramSparse("DataReductionProxy.BypassOnNetworkErrorFallback",
+                           std::abs(net_error));
 }
 
 }  // namespace
@@ -82,11 +80,11 @@ void DataReductionProxyBypassStats::DetectAndRecordMissingViaHeaderResponseCode(
   }
 
   if (is_primary) {
-    UMA_HISTOGRAM_SPARSE_SLOWLY(
+    base::UmaHistogramSparse(
         "DataReductionProxy.MissingViaHeader.ResponseCode.Primary",
         headers.response_code());
   } else {
-    UMA_HISTOGRAM_SPARSE_SLOWLY(
+    base::UmaHistogramSparse(
         "DataReductionProxy.MissingViaHeader.ResponseCode.Fallback",
         headers.response_code());
   }

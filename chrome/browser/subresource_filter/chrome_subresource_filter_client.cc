@@ -8,7 +8,6 @@
 #include <utility>
 
 #include "base/feature_list.h"
-#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
@@ -75,7 +74,7 @@ void ChromeSubresourceFilterClient::MaybeAppendNavigationThrottles(
     std::vector<std::unique_ptr<content::NavigationThrottle>>* throttles) {
   if (navigation_handle->IsInMainFrame()) {
     throttles->push_back(
-        base::MakeUnique<subresource_filter::
+        std::make_unique<subresource_filter::
                              SubresourceFilterSafeBrowsingActivationThrottle>(
             navigation_handle, this,
             content::BrowserThread::GetTaskRunnerForThread(
@@ -107,13 +106,6 @@ void ChromeSubresourceFilterClient::OnReloadRequested() {
 }
 
 void ChromeSubresourceFilterClient::ShowNotification() {
-  // Do not show the UI if we're forcing activation due to a devtools toggle.
-  // This complicates the meaning of our persistent storage (e.g. our metadata
-  // that assumes showing UI implies site is blacklisted).
-  if (activated_via_devtools_) {
-    LogAction(kActionForcedActivationNoUIResourceBlocked);
-    return;
-  }
   if (did_show_ui_for_navigation_)
     return;
 

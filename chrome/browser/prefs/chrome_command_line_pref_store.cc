@@ -13,7 +13,6 @@
 #include "ash/public/cpp/ash_switches.h"
 #include "base/files/file_path.h"
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
 #include "base/values.h"
@@ -29,6 +28,7 @@
 #include "components/ssl_config/ssl_config_switches.h"
 #include "components/sync/base/pref_names.h"
 #include "content/public/common/content_switches.h"
+#include "services/network/public/cpp/network_switches.h"
 #include "ui/base/ui_base_switches.h"
 #include "ui/display/display_switches.h"
 
@@ -68,10 +68,8 @@ const CommandLinePrefStore::BooleanSwitchToPreferenceMapEntry
         {switches::kEnableCloudPrintProxy, prefs::kCloudPrintProxyEnabled,
          true},
         {switches::kAllowOutdatedPlugins, prefs::kPluginsAllowOutdated, true},
-        {switches::kAlwaysAuthorizePlugins, prefs::kPluginsAlwaysAuthorize,
-         true},
         {switches::kNoPings, prefs::kEnableHyperlinkAuditing, false},
-        {switches::kNoReferrers, prefs::kEnableReferrers, false},
+        {network::switches::kNoReferrers, prefs::kEnableReferrers, false},
         {switches::kAllowRunningInsecureContent,
          prefs::kWebKitAllowRunningInsecureContent, true},
         {switches::kAllowCrossOriginAuthPrompt,
@@ -176,7 +174,7 @@ void ChromeCommandLinePrefStore::ApplySSLSwitches() {
       command_line()->GetSwitchValueASCII(switches::kTLS13Variant) !=
           switches::kTLS13VariantDisabled) {
     SetValue(ssl_config::prefs::kSSLVersionMax,
-             base::MakeUnique<base::Value>(switches::kSSLVersionTLSv13),
+             std::make_unique<base::Value>(switches::kSSLVersionTLSv13),
              WriteablePrefStore::DEFAULT_PREF_WRITE_FLAGS);
   }
 }
@@ -184,7 +182,7 @@ void ChromeCommandLinePrefStore::ApplySSLSwitches() {
 void ChromeCommandLinePrefStore::ApplyBackgroundModeSwitches() {
   if (command_line()->HasSwitch(switches::kDisableExtensions)) {
     SetValue(prefs::kBackgroundModeEnabled,
-             base::MakeUnique<base::Value>(false),
+             std::make_unique<base::Value>(false),
              WriteablePrefStore::DEFAULT_PREF_WRITE_FLAGS);
   }
 }

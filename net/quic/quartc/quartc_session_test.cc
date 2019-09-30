@@ -7,6 +7,10 @@
 #include "net/quic/core/crypto/crypto_server_config_protobuf.h"
 #include "net/quic/core/quic_simple_buffer_allocator.h"
 #include "net/quic/core/quic_types.h"
+#include "net/quic/core/tls_client_handshaker.h"
+#include "net/quic/core/tls_server_handshaker.h"
+#include "net/quic/platform/api/quic_ptr_util.h"
+#include "net/quic/platform/api/quic_test_mem_slice_vector.h"
 #include "net/quic/quartc/quartc_factory.h"
 #include "net/quic/quartc/quartc_factory_interface.h"
 #include "net/quic/quartc/quartc_packet_writer.h"
@@ -300,8 +304,6 @@ class FakeTransport : public QuartcSessionInterface::PacketTransport {
  public:
   explicit FakeTransport(FakeTransportChannel* channel) : channel_(channel) {}
 
-  bool CanWrite() override { return true; }
-
   int Write(const char* buffer, size_t buf_len) override {
     DCHECK(channel_);
     return channel_->SendPacket(buffer, buf_len);
@@ -350,7 +352,7 @@ class FakeQuartcStreamDelegate : public QuartcStreamInterface::Delegate {
 
   void OnClose(QuartcStreamInterface* stream) override {}
 
-  void OnCanWrite(QuartcStreamInterface* stream) override {}
+  void OnBufferChanged(QuartcStreamInterface* stream) override {}
 
   string data() { return last_received_data_; }
 
@@ -373,9 +375,9 @@ class QuartcSessionForTest : public QuartcSession,
                       perspective,
                       helper,
                       clock) {
-    stream_delegate_.reset(new FakeQuartcStreamDelegate);
-    session_delegate_.reset(
-        new FakeQuartcSessionDelegate(stream_delegate_.get()));
+    stream_delegate_ = QuicMakeUnique<FakeQuartcStreamDelegate>();
+    session_delegate_ =
+        QuicMakeUnique<FakeQuartcSessionDelegate>((stream_delegate_.get()));
 
     SetDelegate(session_delegate_.get());
   }
@@ -408,20 +410,25 @@ class QuartcSessionTest : public ::testing::Test,
   void Init() {
     // Quic crashes if packets are sent at time 0, and the clock defaults to 0.
     clock_.AdvanceTime(QuicTime::Delta::FromMilliseconds(1000));
-    client_channel_.reset(new FakeTransportChannel(&task_runner_, &clock_));
-    server_channel_.reset(new FakeTransportChannel(&task_runner_, &clock_));
+    client_channel_ =
+        QuicMakeUnique<FakeTransportChannel>(&task_runner_, &clock_);
+    server_channel_ =
+        QuicMakeUnique<FakeTransportChannel>(&task_runner_, &clock_);
     // Make the channel asynchronous so that two peer will not keep calling each
     // other when they exchange information.
     client_channel_->SetAsync(true);
     client_channel_->SetDestination(server_channel_.get());
 
-    client_transport_.reset(new FakeTransport(client_channel_.get()));
-    server_transport_.reset(new FakeTransport(server_channel_.get()));
+    client_transport_ = QuicMakeUnique<FakeTransport>(client_channel_.get());
+    server_transport_ = QuicMakeUnique<FakeTransport>(server_channel_.get());
 
-    client_writer_.reset(
-        new QuartcPacketWriter(client_transport_.get(), kDefaultMaxPacketSize));
-    server_writer_.reset(
-        new QuartcPacketWriter(server_transport_.get(), kDefaultMaxPacketSize));
+    client_writer_ = QuicMakeUnique<QuartcPacketWriter>(client_transport_.get(),
+                                                        kDefaultMaxPacketSize);
+    server_writer_ = QuicMakeUnique<QuartcPacketWriter>(server_transport_.get(),
+                                                        kDefaultMaxPacketSize);
+
+    client_writer_->SetWritable();
+    server_writer_->SetWritable();
   }
 
   // The parameters are used to control whether the handshake will success or
@@ -435,14 +442,16 @@ class QuartcSessionTest : public ::testing::Test,
     client_channel_->SetObserver(client_peer_.get());
     server_channel_->SetObserver(server_peer_.get());
 
-    client_peer_->SetClientCryptoConfig(
-        new QuicCryptoClientConfig(std::unique_ptr<ProofVerifier>(
-            new FakeProofVerifier(client_handshake_success))));
+    client_peer_->SetClientCryptoConfig(new QuicCryptoClientConfig(
+        std::unique_ptr<ProofVerifier>(
+            new FakeProofVerifier(client_handshake_success)),
+        TlsClientHandshaker::CreateSslCtx()));
 
     QuicCryptoServerConfig* server_config = new QuicCryptoServerConfig(
         "TESTING", QuicRandom::GetInstance(),
         std::unique_ptr<FakeProofSource>(
-            new FakeProofSource(server_handshake_success)));
+            new FakeProofSource(server_handshake_success)),
+        TlsServerHandshaker::CreateSslCtx());
     // Provide server with serialized config string to prove ownership.
     QuicCryptoServerConfig::ConfigOptions options;
     std::unique_ptr<QuicServerConfigProtobuf> primary_config(
@@ -476,12 +485,12 @@ class QuartcSessionTest : public ::testing::Test,
       QuartcFactoryConfig config;
       config.clock = &quartc_clock_;
       config.task_runner = &task_runner_;
-      alarm_factory_.reset(new QuartcFactory(config));
+      alarm_factory_ = QuicMakeUnique<QuartcFactory>(config);
     }
     return std::unique_ptr<QuicConnection>(new QuicConnection(
         0, QuicSocketAddress(ip, 0), this /*QuicConnectionHelperInterface*/,
         alarm_factory_.get(), writer, owns_writer, perspective,
-        AllSupportedTransportVersions()));
+        AllSupportedVersions()));
   }
 
   // Runs all tasks scheduled in the next 200 ms.
@@ -523,9 +532,10 @@ class QuartcSessionTest : public ::testing::Test,
     outgoing_stream->SetDelegate(server_peer_->stream_delegate());
 
     // Send a test message from peer 1 to peer 2.
-    const char kTestMessage[] = "Hello";
-    outgoing_stream->Write(kTestMessage, strlen(kTestMessage),
-                           kDefaultWriteParam);
+    char kTestMessage[] = "Hello";
+    test::QuicTestMemSliceVector data(
+        {std::make_pair(kTestMessage, strlen(kTestMessage))});
+    outgoing_stream->Write(data.span(), kDefaultWriteParam);
     RunTasks();
 
     // Wait for peer 2 to receive messages.
@@ -538,8 +548,10 @@ class QuartcSessionTest : public ::testing::Test,
 
     EXPECT_EQ(client_peer_->data(), kTestMessage);
     // Send a test message from peer 2 to peer 1.
-    const char kTestResponse[] = "Response";
-    incoming->Write(kTestResponse, strlen(kTestResponse), kDefaultWriteParam);
+    char kTestResponse[] = "Response";
+    test::QuicTestMemSliceVector response(
+        {std::make_pair(kTestResponse, strlen(kTestResponse))});
+    incoming->Write(response.span(), kDefaultWriteParam);
     RunTasks();
     // Wait for peer 1 to receive messages.
     ASSERT_TRUE(server_peer_->has_data());

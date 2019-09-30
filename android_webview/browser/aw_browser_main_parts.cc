@@ -4,12 +4,12 @@
 
 #include "android_webview/browser/aw_browser_main_parts.h"
 
+#include <memory>
+
 #include "android_webview/browser/aw_browser_context.h"
 #include "android_webview/browser/aw_browser_terminator.h"
 #include "android_webview/browser/aw_content_browser_client.h"
 #include "android_webview/browser/aw_metrics_service_client.h"
-#include "android_webview/browser/aw_result_codes.h"
-#include "android_webview/browser/deferred_gpu_command_service.h"
 #include "android_webview/browser/net/aw_network_change_notifier_factory.h"
 #include "android_webview/common/aw_descriptors.h"
 #include "android_webview/common/aw_paths.h"
@@ -27,14 +27,20 @@
 #include "base/path_service.h"
 #include "components/crash/content/browser/crash_dump_manager_android.h"
 #include "components/crash/content/browser/crash_dump_observer_android.h"
+#include "components/services/heap_profiling/public/cpp/controller.h"
+#include "components/services/heap_profiling/public/cpp/settings.h"
+#include "components/services/heap_profiling/public/mojom/heap_profiling_client.mojom.h"
 #include "content/public/browser/android/synchronous_compositor.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/common/content_client.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/common/result_codes.h"
+#include "content/public/common/service_manager_connection.h"
+#include "content/public/common/service_names.mojom.h"
 #include "net/android/network_change_notifier_factory_android.h"
 #include "net/base/network_change_notifier.h"
+#include "services/service_manager/public/cpp/connector.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/layout.h"
 #include "ui/base/resource/resource_bundle.h"
@@ -51,14 +57,24 @@ AwBrowserMainParts::AwBrowserMainParts(AwContentBrowserClient* browser_client)
 AwBrowserMainParts::~AwBrowserMainParts() {
 }
 
-void AwBrowserMainParts::PreEarlyInitialization() {
-  net::NetworkChangeNotifier::SetFactory(new AwNetworkChangeNotifierFactory());
+int AwBrowserMainParts::PreEarlyInitialization() {
+  // Network change notifier factory must be singleton, only set factory
+  // instance while it is not been created.
+  // In most cases, this check is not necessary because SetFactory should be
+  // called only once, but both webview and native cronet calls this function,
+  // in case of building both webview and cronet to one app, it is required to
+  // avoid crashing the app.
+  if (!net::NetworkChangeNotifier::GetFactory()) {
+    net::NetworkChangeNotifier::SetFactory(
+        new AwNetworkChangeNotifierFactory());
+  }
 
   // Android WebView does not use default MessageLoop. It has its own
   // Android specific MessageLoop. Also see MainMessageLoopRun.
   DCHECK(!main_message_loop_.get());
   main_message_loop_.reset(new base::MessageLoopForUI);
   base::MessageLoopForUI::current()->Start();
+  return content::RESULT_CODE_NORMAL_EXIT;
 }
 
 int AwBrowserMainParts::PreCreateThreads() {
@@ -79,7 +95,7 @@ int AwBrowserMainParts::PreCreateThreads() {
   pak_file_path = pak_file_path.AppendASCII("resources.pak");
   ui::LoadMainAndroidPackFile("assets/resources.pak", pak_file_path);
 
-  base::android::MemoryPressureListenerAndroid::RegisterSystemCallback(
+  base::android::MemoryPressureListenerAndroid::Initialize(
       base::android::AttachCurrentThread());
   breakpad::CrashDumpObserver::Create();
 
@@ -106,7 +122,7 @@ int AwBrowserMainParts::PreCreateThreads() {
           switches::kWebViewSandboxedRenderer)) {
     // Create the renderers crash manager on the UI thread.
     breakpad::CrashDumpObserver::GetInstance()->RegisterClient(
-        base::MakeUnique<AwBrowserTerminator>(crash_dir));
+        std::make_unique<AwBrowserTerminator>(crash_dir));
   }
 
   if (base::CommandLine::ForCurrentProcess()->HasSwitch(
@@ -118,22 +134,47 @@ int AwBrowserMainParts::PreCreateThreads() {
 }
 
 void AwBrowserMainParts::PreMainMessageLoopRun() {
-  browser_client_->InitBrowserContext()->PreMainMessageLoopRun();
+  browser_client_->InitBrowserContext()->PreMainMessageLoopRun(
+      browser_client_->GetNetLog());
 
   content::RenderFrameHost::AllowInjectingJavaScriptForAndroidWebView();
-
-  // TODO(meacer): Remove when PlzNavigate ships.
-  content::RenderFrameHost::AllowDataUrlNavigationForAndroidWebView();
-
-  // This only works because webview uses in-process gpu
-  // which is not started up early by BrowserMainLoop.
-  DeferredGpuCommandService::SetInstance();
 }
 
 bool AwBrowserMainParts::MainMessageLoopRun(int* result_code) {
   // Android WebView does not use default MessageLoop. It has its own
   // Android specific MessageLoop.
   return true;
+}
+
+void AwBrowserMainParts::ServiceManagerConnectionStarted(
+    content::ServiceManagerConnection* connection) {
+  heap_profiling::Mode mode = heap_profiling::GetModeForStartup();
+  // TODO: Add support for heap-profiling other process types if it's deemed to
+  // provide utility. https://crbug.com/827545.
+  if (mode == heap_profiling::Mode::kBrowser) {
+    // Create a Connector that is not bound to any sequence.
+    std::unique_ptr<service_manager::Connector> connector =
+        connection->GetConnector()->Clone();
+
+    // Use it to generate a ProfilingClient for the browser process. This binds
+    // the Connector to the current sequence.
+    heap_profiling::mojom::ProfilingClientPtr profiling_client;
+    heap_profiling::mojom::ProfilingClientRequest request(
+        mojo::MakeRequest(&profiling_client));
+    connector->BindInterface(content::mojom::kBrowserServiceName,
+                             std::move(request));
+
+    // Start the HeapProfilingService and start profiling the browser process.
+    // It's okay to pass the Connector to HeapProfilingService, since both are
+    // bound to the current sequence.
+    heap_profiling_controller_.reset(new heap_profiling::Controller(
+        connection->GetConnector()->Clone(),
+        heap_profiling::GetStackModeForStartup(),
+        heap_profiling::GetSamplingRateForStartup()));
+    heap_profiling_controller_->StartProfilingClient(
+        std::move(profiling_client), getpid(),
+        heap_profiling::mojom::ProcessType::BROWSER);
+  }
 }
 
 }  // namespace android_webview

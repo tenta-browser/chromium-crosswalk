@@ -6,8 +6,10 @@
 #define CONTENT_SHELL_BROWSER_SHELL_DEVTOOLS_BINDINGS_H_
 
 #include <memory>
+#include <set>
 
 #include "base/compiler_specific.h"
+#include "base/containers/unique_ptr_adapters.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
@@ -46,6 +48,7 @@ class ShellDevToolsBindings : public WebContentsObserver,
                         ShellDevToolsDelegate* delegate);
 
   void InspectElementAt(int x, int y);
+  virtual void Attach();
 
   void CallClientFunction(const std::string& function_name,
                           const base::Value* arg1,
@@ -55,19 +58,16 @@ class ShellDevToolsBindings : public WebContentsObserver,
 
   WebContents* inspected_contents() { return inspected_contents_; }
 
- protected:
+ private:
   // content::DevToolsAgentHostClient implementation.
   void AgentHostClosed(DevToolsAgentHost* agent_host) override;
   void DispatchProtocolMessage(DevToolsAgentHost* agent_host,
                                const std::string& message) override;
 
-  void SetPreferences(const std::string& json);
-  virtual void HandleMessageFromDevToolsFrontend(const std::string& message);
+  void HandleMessageFromDevToolsFrontend(const std::string& message);
 
- private:
   // WebContentsObserver overrides
   void ReadyToCommitNavigation(NavigationHandle* navigation_handle) override;
-  void DocumentAvailableInMainFrame() override;
   void WebContentsDestroyed() override;
 
   // net::URLFetcherDelegate overrides.
@@ -85,7 +85,13 @@ class ShellDevToolsBindings : public WebContentsObserver,
 #endif
   using PendingRequestsMap = std::map<const net::URLFetcher*, int>;
   PendingRequestsMap pending_requests_;
+
+  class NetworkResourceLoader;
+  std::set<std::unique_ptr<NetworkResourceLoader>, base::UniquePtrComparator>
+      loaders_;
+
   base::DictionaryValue preferences_;
+
   using ExtensionsAPIs = std::map<std::string, std::string>;
   ExtensionsAPIs extensions_api_;
   base::WeakPtrFactory<ShellDevToolsBindings> weak_factory_;

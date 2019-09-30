@@ -99,17 +99,17 @@ SearchProvider::Providers::Providers(TemplateURLService* template_url_service)
     : template_url_service_(template_url_service) {}
 
 const TemplateURL* SearchProvider::Providers::GetDefaultProviderURL() const {
-  return default_provider_.empty()
-             ? nullptr
-             : template_url_service_->GetTemplateURLForKeyword(
-                   default_provider_);
+  if (default_provider_.empty())
+    return nullptr;
+  DCHECK(template_url_service_);
+  return template_url_service_->GetTemplateURLForKeyword(default_provider_);
 }
 
 const TemplateURL* SearchProvider::Providers::GetKeywordProviderURL() const {
-  return keyword_provider_.empty()
-             ? nullptr
-             : template_url_service_->GetTemplateURLForKeyword(
-                   keyword_provider_);
+  if (keyword_provider_.empty())
+    return nullptr;
+  DCHECK(template_url_service_);
+  return template_url_service_->GetTemplateURLForKeyword(keyword_provider_);
 }
 
 
@@ -943,12 +943,13 @@ std::unique_ptr<net::URLFetcher> SearchProvider::CreateSuggestFetcher(
   fetcher->SetLoadFlags(net::LOAD_DO_NOT_SAVE_COOKIES);
   // Add Chrome experiment state to the request headers.
   net::HttpRequestHeaders headers;
-  // Note: It's OK to pass |is_signed_in| false if it's unknown, as it does
-  // not affect transmission of experiments coming from the variations server.
-  bool is_signed_in = false;
+  // Note: It's OK to pass SignedIn::kNo if it's unknown, as it does not affect
+  // transmission of experiments coming from the variations server.
   variations::AppendVariationHeaders(fetcher->GetOriginalURL(),
-                                     client()->IsOffTheRecord(), false,
-                                     is_signed_in, &headers);
+                                     client()->IsOffTheRecord()
+                                         ? variations::InIncognito::kYes
+                                         : variations::InIncognito::kNo,
+                                     variations::SignedIn::kNo, &headers);
   fetcher->SetExtraRequestHeaders(headers.ToString());
   fetcher->Start();
   return fetcher;
@@ -959,7 +960,6 @@ void SearchProvider::ConvertResultsToAutocompleteMatches() {
   // the most relevant match for each result.
   base::TimeTicks start_time(base::TimeTicks::Now());
   MatchMap map;
-  const base::Time no_time;
   int did_not_accept_keyword_suggestion =
       keyword_results_.suggest_results.empty() ?
       TemplateURLRef::NO_SUGGESTIONS_AVAILABLE :
@@ -996,10 +996,17 @@ void SearchProvider::ConvertResultsToAutocompleteMatches() {
     }
 
     SearchSuggestionParser::SuggestResult verbatim(
-        trimmed_verbatim, AutocompleteMatchType::SEARCH_WHAT_YOU_TYPED, 0,
-        trimmed_verbatim, base::string16(), base::string16(), answer_contents,
-        answer_type, std::move(answer), std::string(), std::string(), false,
-        verbatim_relevance, relevance_from_server, false, trimmed_verbatim);
+        /*suggestion=*/trimmed_verbatim,
+        AutocompleteMatchType::SEARCH_WHAT_YOU_TYPED,
+        /*subtype_identifier=*/0,
+        /*match_contents=*/trimmed_verbatim,
+        /*match_contents_prefix=*/base::string16(),
+        /*annotation=*/base::string16(), answer_contents, answer_type,
+        std::move(answer), /*suggest_query_params=*/std::string(),
+        /*deletion_url=*/std::string(),
+        /*from_keyword_provider=*/false, verbatim_relevance,
+        relevance_from_server, /*should_prefetch=*/false,
+        /*input_text=*/trimmed_verbatim);
     AddMatchToMap(verbatim, std::string(), did_not_accept_default_suggestion,
                   false, keyword_url != nullptr, &map);
   }
@@ -1019,11 +1026,21 @@ void SearchProvider::ConvertResultsToAutocompleteMatches() {
         const base::string16& trimmed_verbatim =
             base::CollapseWhitespace(keyword_input_.text(), false);
         SearchSuggestionParser::SuggestResult verbatim(
-            trimmed_verbatim, AutocompleteMatchType::SEARCH_OTHER_ENGINE, 0,
-            trimmed_verbatim, base::string16(), base::string16(),
-            base::string16(), base::string16(), nullptr, std::string(),
-            std::string(), true, keyword_verbatim_relevance,
-            keyword_relevance_from_server, false, trimmed_verbatim);
+            /*suggestion=*/trimmed_verbatim,
+            AutocompleteMatchType::SEARCH_OTHER_ENGINE,
+            /*subtype_identifier=*/0,
+            /*match_contents=*/trimmed_verbatim,
+            /*match_contents_prefix=*/base::string16(),
+            /*annotation=*/base::string16(),
+            /*answer_contents=*/base::string16(),
+            /*answer_type=*/base::string16(),
+            /*answer=*/nullptr,
+            /*suggest_query_params=*/std::string(),
+            /*deletion_url=*/std::string(),
+            /*from_keyword_provider=*/true, keyword_verbatim_relevance,
+            keyword_relevance_from_server,
+            /*should_prefetch=*/false,
+            /*input_text=*/trimmed_verbatim);
         AddMatchToMap(verbatim, std::string(),
                       did_not_accept_keyword_suggestion, false, true, &map);
       }
@@ -1205,10 +1222,19 @@ SearchProvider::ScoreHistoryResultsHelper(const HistoryResults& results,
       insertion_position = scored_results.begin();
     }
     SearchSuggestionParser::SuggestResult history_suggestion(
-        trimmed_suggestion, AutocompleteMatchType::SEARCH_HISTORY, 0,
-        trimmed_suggestion, base::string16(), base::string16(),
-        base::string16(), base::string16(), nullptr, std::string(),
-        std::string(), is_keyword, relevance, false, false, trimmed_input);
+        /*suggestion=*/trimmed_suggestion,
+        AutocompleteMatchType::SEARCH_HISTORY,
+        /*subtype_identifier=*/0,
+        /*match_contents=*/trimmed_suggestion,
+        /*match_contents_prefix=*/base::string16(),
+        /*annotation=*/base::string16(),
+        /*answer_contents=*/base::string16(),
+        /*answer_type=*/base::string16(),
+        /*answer=*/nullptr,
+        /*suggest_query_params=*/std::string(),
+        /*deletion_url=*/std::string(), is_keyword, relevance,
+        /*relevance_from_server=*/false,
+        /*should_prefetch=*/false, /*input_text=*/trimmed_input);
     // History results are synchronous; they are received on the last keystroke.
     history_suggestion.set_received_after_last_keystroke(false);
     scored_results.insert(insertion_position, history_suggestion);
@@ -1473,7 +1499,7 @@ AutocompleteMatch SearchProvider::NavigationToMatch(
           url_formatter::FormatUrl(navigation.url(), format_types,
                                    net::UnescapeRule::SPACES, nullptr, nullptr,
                                    &inline_autocomplete_offset),
-          client()->GetSchemeClassifier());
+          client()->GetSchemeClassifier(), &inline_autocomplete_offset);
   if (inline_autocomplete_offset != base::string16::npos) {
     DCHECK(inline_autocomplete_offset <= match.fill_into_edit.length());
     match.inline_autocompletion =

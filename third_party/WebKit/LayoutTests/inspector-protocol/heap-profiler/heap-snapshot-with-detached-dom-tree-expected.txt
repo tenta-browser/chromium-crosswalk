@@ -1,7 +1,5 @@
-Test that all nodes from the detached DOM tree will get into one group in the heap snapshot. Bug 107819.
+Test that all nodes from the detached DOM tree will be marked as detached.
 Took heap snapshot
 Parsed snapshot
-SUCCESS: found (Detached DOM trees)
-SUCCESS: found Detached DOM tree / 3 entries
-SUCCESS: found 3 DIVs in Detached DOM tree / 3 entries
+SUCCESS: found 3 detached DIV elements
 

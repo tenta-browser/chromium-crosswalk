@@ -89,6 +89,7 @@
                shortcut="c|Ctrl">
       <command id="paste" i18n-values="label:PASTE_BUTTON_LABEL"
                shortcut="v|Ctrl">
+      <command id="paste-into-current-folder" i18n-values="label:PASTE_BUTTON_LABEL">
       <command id="paste-into-folder"
                i18n-values="label:PASTE_INTO_FOLDER_BUTTON_LABEL">
       <command id="get-info" i18n-values="label:GET_INFO_BUTTON_LABEL"
@@ -130,6 +131,7 @@
       <command id="configure" i18n-values="label:CONFIGURE_VOLUME_BUTTON_LABEL">
 
       <command id="volume-help" i18n-values="label:DRIVE_MENU_HELP">
+      <command id="volume-storage">
       <command id="drive-buy-more-space"
                i18n-values="label:DRIVE_BUY_MORE_SPACE">
       <command id="drive-go-to-drive"
@@ -169,6 +171,7 @@
       <command id="install-new-extension"
                i18n-values="label:INSTALL_NEW_EXTENSION_LABEL">
       <command id="open-gear-menu" shortcut="e|Alt f|Alt">
+      <command id="browser-back" shortcut="BrowserBack">
     </commands>
 
     <cr-menu id="file-context-menu" class="chrome-menu files-menu"
@@ -233,6 +236,8 @@
 
     <cr-menu id="gear-menu" class="chrome-menu files-menu" showShortcuts
              menu-item-selector="cr-menu-item, hr">
+      <cr-menu-item command="#paste-into-current-folder" visibleif="full-page"></cr-menu-item>
+      <hr visibleif="full-page">
       <cr-menu-item id="gear-menu-newwindow" command="#new-window"></cr-menu-item>
       <cr-menu-item id="gear-menu-newfolder" command="#new-folder"></cr-menu-item>
       <hr>
@@ -251,14 +256,14 @@
       <cr-menu-item id="gear-menu-volume-help"
                     command="#volume-help"></cr-menu-item>
       <hr id="volume-space-info-separator">
-      <div id="volume-space-info">
+      <cr-menu-item id="volume-space-info" command="#volume-storage">
         <div id="volume-space-info-contents">
           <span id="volume-space-info-label"></span>
           <div class="progress-bar" aria-hidden="true">
             <div class="progress-track" id="volume-space-info-bar"></div>
           </div>
         </div>
-      </div>
+      </cr-menu-item>
     </cr-menu>
 
     <cr-menu id="tasks-menu" class="chrome-menu files-menu"
@@ -322,9 +327,9 @@
       </button>
       <div id="search-box">
         <paper-input-container no-label-float>
-          <input is="iron-input" type="search" tabindex="14"
+          <input is="iron-input" type="search" tabindex="14" slot="input"
                  i18n-values="aria-label:SEARCH_TEXT_LABEL;placeholder:SEARCH_TEXT_LABEL">
-          <span class="clear" suffix></span>
+          <span class="clear" slot="suffix"></span>
         </paper-input-container>
       </div>
       <button id="refresh-button" class="icon-button" tabindex="15" hidden
@@ -487,7 +492,7 @@
           <paper-input-container no-label-float>
             <input id="filename-input-textbox" is="iron-input" tabindex="5"
                    class="entry-name" type="text" spellcheck="false"
-                   i18n-values="placeholder:FILENAME_LABEL">
+                   slot="input" i18n-values="placeholder:FILENAME_LABEL">
           </paper-input-container>
         </div>
         <div class="preparing-label" i18n-content="PREPARING_LABEL"></div>

@@ -9,7 +9,6 @@
 #include <memory>
 
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/test/mock_callback.h"
@@ -34,13 +33,13 @@ class MojoDecoderBufferConverter {
       uint32_t data_pipe_capacity_bytes = kDefaultDataPipeCapacityBytes) {
     mojo::DataPipe data_pipe(data_pipe_capacity_bytes);
 
-    writer = base::MakeUnique<MojoDecoderBufferWriter>(
+    writer = std::make_unique<MojoDecoderBufferWriter>(
         std::move(data_pipe.producer_handle));
-    reader = base::MakeUnique<MojoDecoderBufferReader>(
+    reader = std::make_unique<MojoDecoderBufferReader>(
         std::move(data_pipe.consumer_handle));
   }
 
-  void ConvertAndVerify(const scoped_refptr<DecoderBuffer>& media_buffer) {
+  void ConvertAndVerify(scoped_refptr<DecoderBuffer> media_buffer) {
     base::RunLoop run_loop;
     base::MockCallback<MojoDecoderBufferReader::ReadCB> mock_cb;
     EXPECT_CALL(mock_cb, Run(MatchesDecoderBuffer(media_buffer)))
@@ -125,14 +124,14 @@ TEST(MojoDecoderBufferConverterTest, ConvertDecoderBuffer_EncryptedBuffer) {
   scoped_refptr<DecoderBuffer> buffer(DecoderBuffer::CopyFrom(
       reinterpret_cast<const uint8_t*>(&kData), kDataSize));
   buffer->set_decrypt_config(
-      base::MakeUnique<DecryptConfig>(kKeyId, kIv, subsamples));
+      std::make_unique<DecryptConfig>(kKeyId, kIv, subsamples));
   {
     MojoDecoderBufferConverter converter;
     converter.ConvertAndVerify(buffer);
   }
 
   // Test empty IV. This is used for clear buffer in an encrypted stream.
-  buffer->set_decrypt_config(base::MakeUnique<DecryptConfig>(
+  buffer->set_decrypt_config(std::make_unique<DecryptConfig>(
       kKeyId, "", std::vector<SubsampleEntry>()));
   {
     MojoDecoderBufferConverter converter;

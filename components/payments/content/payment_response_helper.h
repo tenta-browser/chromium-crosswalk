@@ -10,7 +10,7 @@
 #include "components/autofill/core/browser/address_normalizer.h"
 #include "components/autofill/core/browser/autofill_profile.h"
 #include "components/payments/core/payment_instrument.h"
-#include "third_party/WebKit/public/platform/modules/payments/payment_request.mojom.h"
+#include "third_party/blink/public/platform/modules/payments/payment_request.mojom.h"
 
 namespace payments {
 
@@ -39,12 +39,6 @@ class PaymentResponseHelper
                         autofill::AutofillProfile* selected_contact_profile,
                         Delegate* delegate);
   ~PaymentResponseHelper() override;
-
-  // Returns a new mojo PaymentAddress based on the specified
-  // |profile| and |app_locale|.
-  static mojom::PaymentAddressPtr GetMojomPaymentAddressFromAutofillProfile(
-      const autofill::AutofillProfile& profile,
-      const std::string& app_locale);
 
   // PaymentInstrument::Delegate
   void OnInstrumentDetailsReady(

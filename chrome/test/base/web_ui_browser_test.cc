@@ -38,7 +38,7 @@
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/test_navigation_observer.h"
 #include "net/base/filename_util.h"
-#include "printing/features/features.h"
+#include "printing/buildflags/buildflags.h"
 #include "ui/base/resource/resource_handle.h"
 
 #if BUILDFLAG(ENABLE_PRINT_PREVIEW)
@@ -223,11 +223,10 @@ void WebUIBrowserTest::BrowsePreload(const GURL& browse_to) {
   WebUIJsInjectionReadyObserver injection_observer(
       web_contents, this, preload_test_fixture_, preload_test_name_);
   content::TestNavigationObserver navigation_observer(web_contents);
-  chrome::NavigateParams params(
-      browser(), GURL(browse_to), ui::PAGE_TRANSITION_TYPED);
+  NavigateParams params(browser(), GURL(browse_to), ui::PAGE_TRANSITION_TYPED);
   params.disposition = WindowOpenDisposition::CURRENT_TAB;
 
-  chrome::Navigate(&params);
+  Navigate(&params);
   navigation_observer.Wait();
 }
 

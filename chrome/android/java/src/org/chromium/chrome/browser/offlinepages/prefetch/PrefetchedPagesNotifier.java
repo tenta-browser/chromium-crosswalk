@@ -4,13 +4,13 @@
 
 package org.chromium.chrome.browser.offlinepages.prefetch;
 
-import android.app.Notification;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.os.Build;
+import android.support.v4.app.NotificationCompat;
 
 import org.chromium.base.ContextUtils;
 import org.chromium.base.annotations.CalledByNative;
@@ -67,7 +67,7 @@ public class PrefetchedPagesNotifier {
             // TODO(dewittj): Handle the case where we somehow get this broadcast but the Chrome
             // download manager is unavailable.  Today, if this happens then the Android download
             // manager will be launched, and that will not contain any prefetched content.
-            DownloadUtils.showDownloadManager(null, null);
+            DownloadUtils.showDownloadManager(null, null, true /*showPrefetchedContent*/);
         }
     }
 
@@ -121,7 +121,7 @@ public class PrefetchedPagesNotifier {
                         .setContentTitle(title)
                         .setContentText(text)
                         .setGroup(NOTIFICATION_TAG)
-                        .setPriority(Notification.PRIORITY_LOW)
+                        .setPriorityBeforeO(NotificationCompat.PRIORITY_LOW)
                         .setSmallIcon(R.drawable.ic_chrome);
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
             PendingIntent settingsIntent = getPendingBroadcastFor(context, SettingsReceiver.class);

@@ -10,8 +10,6 @@
 #include "base/command_line.h"
 #include "base/files/file_path.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
-#include "base/metrics/statistics_recorder.h"
 #include "base/path_service.h"
 #include "base/test/launcher/unit_test_launcher.h"
 #include "base/test/test_suite.h"
@@ -31,6 +29,10 @@
 #include "ui/gl/test/gl_surface_test_support.h"
 #endif
 
+#if defined(OS_WIN)
+#include "base/win/scoped_com_initializer.h"
+#endif
+
 namespace {
 
 // Not using kExtensionScheme and kChromeSearchScheme to avoid the dependency
@@ -48,10 +50,8 @@ class ComponentsTestSuite : public base::TestSuite {
 
     mojo::edk::Init();
 
-    // Initialize the histograms subsystem, so that any histograms hit in tests
-    // are correctly registered with the statistics recorder and can be queried
-    // by tests.
-    base::StatisticsRecorder::Initialize();
+    // Before registering any schemes, clear GURL's internal state.
+    url::Shutdown();
 
 #if !defined(OS_IOS)
     gl::GLSurfaceTestSupport::InitializeOneOff();
@@ -82,10 +82,10 @@ class ComponentsTestSuite : public base::TestSuite {
 
     // These schemes need to be added globally to pass tests of
     // autocomplete_input_unittest.cc and content_settings_pattern*
-    url::AddStandardScheme("chrome", url::SCHEME_WITHOUT_PORT);
-    url::AddStandardScheme("chrome-extension", url::SCHEME_WITHOUT_PORT);
-    url::AddStandardScheme("chrome-devtools", url::SCHEME_WITHOUT_PORT);
-    url::AddStandardScheme("chrome-search", url::SCHEME_WITHOUT_PORT);
+    url::AddStandardScheme("chrome", url::SCHEME_WITH_HOST);
+    url::AddStandardScheme("chrome-extension", url::SCHEME_WITH_HOST);
+    url::AddStandardScheme("chrome-devtools", url::SCHEME_WITH_HOST);
+    url::AddStandardScheme("chrome-search", url::SCHEME_WITH_HOST);
 
     ContentSettingsPattern::SetNonWildcardDomainNonPortSchemes(
         kNonWildcardDomainNonPortSchemes,
@@ -94,9 +94,12 @@ class ComponentsTestSuite : public base::TestSuite {
 
   void Shutdown() override {
     ui::ResourceBundle::CleanupSharedInstance();
-
     base::TestSuite::Shutdown();
   }
+
+#if defined(OS_WIN)
+  base::win::ScopedCOMInitializer com_initializer_;
+#endif
 
   DISALLOW_COPY_AND_ASSIGN(ComponentsTestSuite);
 };
@@ -130,10 +133,10 @@ class ComponentsUnitTestEventListener : public testing::EmptyTestEventListener {
 
 base::RunTestSuiteCallback GetLaunchCallback(int argc, char** argv) {
 #if !defined(OS_IOS)
-  auto test_suite = base::MakeUnique<content::UnitTestTestSuite>(
+  auto test_suite = std::make_unique<content::UnitTestTestSuite>(
       new ComponentsTestSuite(argc, argv));
 #else
-  auto test_suite = base::MakeUnique<ComponentsTestSuite>(argc, argv);
+  auto test_suite = std::make_unique<ComponentsTestSuite>(argc, argv);
 #endif
 
   // The listener will set up common test environment for all components unit

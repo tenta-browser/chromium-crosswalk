@@ -254,6 +254,21 @@ TEST_F(RuntimeHooksDelegateTest, SendMessage) {
                          R"("string message")", other_target, false,
                          SendMessageTester::CLOSED);
 
+  // The sender could omit the ID by passing null or undefined explicitly.
+  // Regression tests for https://crbug.com/828664.
+  tester.TestSendMessage("null, {data: 'hello'}, function() {}",
+                         kStandardMessage, self_target, false,
+                         SendMessageTester::OPEN);
+  tester.TestSendMessage("null, 'test', function() {}",
+                         R"("test")", self_target, false,
+                         SendMessageTester::OPEN);
+  tester.TestSendMessage("null, 'test'",
+                         R"("test")", self_target, false,
+                         SendMessageTester::CLOSED);
+  tester.TestSendMessage("undefined, 'test', function() {}",
+                         R"("test")", self_target, false,
+                         SendMessageTester::OPEN);
+
   // Funny case. The only required argument is `message`, which can be any type.
   // This means that if an extension provides a <string, object> pair for the
   // first three arguments, it could apply to either the target id and the
@@ -288,6 +303,52 @@ TEST_F(RuntimeHooksDelegateTest, SendMessageErrors) {
   send_message("{data: 'hi'}, {unknownProp: true}");
   send_message("'some id', 'some message', 'some other string'");
   send_message("'some id', 'some message', {}, {}");
+}
+
+TEST_F(RuntimeHooksDelegateTest, SendMessageWithTrickyOptions) {
+  v8::HandleScope handle_scope(isolate());
+  v8::Local<v8::Context> context = MainContext();
+
+  SendMessageTester tester(ipc_message_sender(), script_context(), 0,
+                           "runtime");
+
+  MessageTarget self_target = MessageTarget::ForExtension(extension()->id());
+  constexpr char kStandardMessage[] = R"({"data":"hello"})";
+  {
+    // Even though we parse the message options separately, we do a conversion
+    // of the object passed into the API. This means that something subtle like
+    // this, which throws on the second access of a property, shouldn't trip us
+    // up.
+    constexpr char kTrickyConnectOptions[] =
+        R"({data: 'hello'},
+           {
+             get includeTlsChannelId() {
+               if (this.checkedOnce)
+                 throw new Error('tricked!');
+               this.checkedOnce = true;
+               return true;
+             }
+           })";
+    tester.TestSendMessage(kTrickyConnectOptions, kStandardMessage, self_target,
+                           true, SendMessageTester::CLOSED);
+  }
+  {
+    // A different form of trickiness: the options object doesn't have the
+    // includeTlsChannelId key (which is acceptable, since its optional), but
+    // any attempt to access the key on an object without a value for it results
+    // in an error. Our argument parsing code should protect us from this.
+    constexpr const char kMessWithObjectPrototype[] =
+        R"((function() {
+             Object.defineProperty(
+                 Object.prototype, 'includeTlsChannelId',
+                 { get() { throw new Error('tricked!'); } });
+           }))";
+    v8::Local<v8::Function> mess_with_proto =
+        FunctionFromString(context, kMessWithObjectPrototype);
+    RunFunction(mess_with_proto, context, 0, nullptr);
+    tester.TestSendMessage("{data: 'hello'}, {}", kStandardMessage, self_target,
+                           false, SendMessageTester::CLOSED);
+  }
 }
 
 class RuntimeHooksDelegateNativeMessagingTest
@@ -379,11 +440,13 @@ TEST_F(RuntimeHooksDelegateNativeMessagingTest, SendNativeMessage) {
     EXPECT_CALL(
         *ipc_message_sender(),
         SendPostMessageToPort(MSG_ROUTING_NONE, expected_port_id, message));
-    if (expected_port_status == CLOSED) {
-      EXPECT_CALL(
-          *ipc_message_sender(),
-          SendCloseMessagePort(MSG_ROUTING_NONE, expected_port_id, true));
-    }
+    // Note: we don't close native message ports immediately. See comment in
+    // OneTimeMessageSender.
+    // if (expected_port_status == CLOSED) {
+    //   EXPECT_CALL(
+    //       *ipc_message_sender(),
+    //       SendCloseMessagePort(MSG_ROUTING_NONE, expected_port_id, true));
+    // }
     v8::Local<v8::Function> send_message = FunctionFromString(
         context, base::StringPrintf(kSendMessageTemplate, args));
     RunFunction(send_message, context, 0, nullptr);

@@ -12,18 +12,23 @@
 
 #include "base/memory/weak_ptr.h"
 #include "gpu/config/gpu_driver_bug_workarounds.h"
-#include "gpu/gpu_export.h"
 #include "gpu/ipc/service/child_window_win.h"
+#include "gpu/ipc/service/gpu_ipc_service_export.h"
 #include "gpu/ipc/service/image_transport_surface_delegate.h"
 #include "ui/gl/gl_image.h"
 #include "ui/gl/gl_surface_egl.h"
+
+namespace gl {
+class GLSurfacePresentationHelper;
+}
 
 namespace gpu {
 
 class DCLayerTree;
 class DirectCompositionChildSurfaceWin;
 
-class GPU_EXPORT DirectCompositionSurfaceWin : public gl::GLSurfaceEGL {
+class GPU_IPC_SERVICE_EXPORT DirectCompositionSurfaceWin
+    : public gl::GLSurfaceEGL {
  public:
   DirectCompositionSurfaceWin(
       std::unique_ptr<gfx::VSyncProvider> vsync_provider,
@@ -106,6 +111,7 @@ class GPU_EXPORT DirectCompositionSurfaceWin : public gl::GLSurfaceEGL {
   bool is_hdr_ = false;
   bool has_alpha_ = true;
   std::unique_ptr<gfx::VSyncProvider> vsync_provider_;
+  std::unique_ptr<gl::GLSurfacePresentationHelper> presentation_helper_;
   scoped_refptr<DirectCompositionChildSurfaceWin> root_surface_;
   std::unique_ptr<DCLayerTree> layer_tree_;
 

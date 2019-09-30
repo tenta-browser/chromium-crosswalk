@@ -6,9 +6,6 @@
   TestRunner.addResult(`Tests that dataReceived is called on NetworkDispatcher for XHR with responseType="blob".\n`);
   await TestRunner.loadModule('network_test_runner');
   await TestRunner.showPanel('network');
-  await TestRunner.loadHTML(`
-      <p>Tests that dataReceived is called on NetworkDispatcher for XHR with responseType=&quot;blob&quot;.</p>
-    `);
 
   TestRunner.addSniffer(SDK.NetworkDispatcher.prototype, 'dataReceived', dataReceived);
 
@@ -17,7 +14,7 @@
       'GET', 'resources/resource.php', true, undefined, undefined, [], false, undefined, 'blob', function() {});
 
   function dataReceived(requestId, time, dataLength, encodedDataLength) {
-    var request = NetworkLog.networkLog.requestByManagerAndId(TestRunner.networkManager, requestId);
+    var request = BrowserSDK.networkLog.requestByManagerAndId(TestRunner.networkManager, requestId);
     if (/resource\.php/.exec(request.url())) {
       TestRunner.addResult('Received data for resource.php');
       TestRunner.addResult('SUCCESS');

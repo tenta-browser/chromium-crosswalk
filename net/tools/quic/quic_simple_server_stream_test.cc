@@ -10,6 +10,8 @@
 
 #include "net/quic/core/quic_utils.h"
 #include "net/quic/core/spdy_utils.h"
+#include "net/quic/core/tls_server_handshaker.h"
+#include "net/quic/platform/api/quic_arraysize.h"
 #include "net/quic/platform/api/quic_ptr_util.h"
 #include "net/quic/platform/api/quic_socket_address.h"
 #include "net/quic/platform/api/quic_test.h"
@@ -24,12 +26,12 @@
 #include "testing/gtest/include/gtest/gtest.h"
 
 using std::string;
+using testing::_;
 using testing::AnyNumber;
 using testing::InSequence;
 using testing::Invoke;
 using testing::Return;
 using testing::StrictMock;
-using testing::_;
 
 namespace net {
 namespace test {
@@ -164,19 +166,19 @@ class MockQuicSimpleServerSession : public QuicSimpleServerSession {
   DISALLOW_COPY_AND_ASSIGN(MockQuicSimpleServerSession);
 };
 
-class QuicSimpleServerStreamTest
-    : public QuicTestWithParam<QuicTransportVersion> {
+class QuicSimpleServerStreamTest : public QuicTestWithParam<ParsedQuicVersion> {
  public:
   QuicSimpleServerStreamTest()
-      : connection_(new StrictMock<MockQuicConnection>(
-            &helper_,
-            &alarm_factory_,
-            Perspective::IS_SERVER,
-            SupportedTransportVersions(GetParam()))),
+      : connection_(
+            new StrictMock<MockQuicConnection>(&helper_,
+                                               &alarm_factory_,
+                                               Perspective::IS_SERVER,
+                                               SupportedVersions(GetParam()))),
         crypto_config_(new QuicCryptoServerConfig(
             QuicCryptoServerConfig::TESTING,
             QuicRandom::GetInstance(),
-            crypto_test_utils::ProofSourceForTesting())),
+            crypto_test_utils::ProofSourceForTesting(),
+            TlsServerHandshaker::CreateSslCtx())),
         compressed_certs_cache_(
             QuicCompressedCertsCache::kQuicCompressedCertsCacheSize),
         session_(connection_,
@@ -232,12 +234,12 @@ class QuicSimpleServerStreamTest
 
 INSTANTIATE_TEST_CASE_P(Tests,
                         QuicSimpleServerStreamTest,
-                        ::testing::ValuesIn(AllSupportedTransportVersions()));
+                        ::testing::ValuesIn(AllSupportedVersions()));
 
 TEST_P(QuicSimpleServerStreamTest, TestFraming) {
   EXPECT_CALL(session_, WritevData(_, _, _, _, _))
       .Times(AnyNumber())
-      .WillRepeatedly(Invoke(MockQuicSession::ConsumeAllData));
+      .WillRepeatedly(Invoke(MockQuicSession::ConsumeData));
   stream_->OnStreamHeaderList(false, kFakeFrameLen, header_list_);
   stream_->OnStreamFrame(
       QuicStreamFrame(stream_->id(), /*fin=*/false, /*offset=*/0, body_));
@@ -250,7 +252,7 @@ TEST_P(QuicSimpleServerStreamTest, TestFraming) {
 TEST_P(QuicSimpleServerStreamTest, TestFramingOnePacket) {
   EXPECT_CALL(session_, WritevData(_, _, _, _, _))
       .Times(AnyNumber())
-      .WillRepeatedly(Invoke(MockQuicSession::ConsumeAllData));
+      .WillRepeatedly(Invoke(MockQuicSession::ConsumeData));
 
   stream_->OnStreamHeaderList(false, kFakeFrameLen, header_list_);
   stream_->OnStreamFrame(
@@ -264,7 +266,7 @@ TEST_P(QuicSimpleServerStreamTest, TestFramingOnePacket) {
 TEST_P(QuicSimpleServerStreamTest, SendQuicRstStreamNoErrorInStopReading) {
   EXPECT_CALL(session_, WritevData(_, _, _, _, _))
       .Times(AnyNumber())
-      .WillRepeatedly(Invoke(MockQuicSession::ConsumeAllData));
+      .WillRepeatedly(Invoke(MockQuicSession::ConsumeData));
 
   EXPECT_FALSE(stream_->fin_received());
   EXPECT_FALSE(stream_->rst_received());
@@ -282,7 +284,7 @@ TEST_P(QuicSimpleServerStreamTest, TestFramingExtraData) {
   // We'll automatically write out an error (headers + body)
   EXPECT_CALL(session_, WriteHeadersMock(_, _, _, _, _));
   EXPECT_CALL(session_, WritevData(_, _, _, _, _))
-      .WillOnce(Invoke(MockQuicSession::ConsumeAllData));
+      .WillOnce(Invoke(MockQuicSession::ConsumeData));
   EXPECT_CALL(session_, SendRstStream(_, QUIC_STREAM_NO_ERROR, _)).Times(0);
 
   stream_->OnStreamHeaderList(false, kFakeFrameLen, header_list_);
@@ -421,7 +423,8 @@ TEST_P(QuicSimpleServerStreamTest, SendReponseWithPushResources) {
   string request_path = "/foo";
   string body = "Yummm";
   QuicHttpResponseCache::ServerPushInfo push_info(
-      QuicUrl(host, "/bar"), SpdyHeaderBlock(), kDefaultPriority, "Push body");
+      QuicUrl(host, "/bar"), SpdyHeaderBlock(), QuicStream::kDefaultPriority,
+      "Push body");
   std::list<QuicHttpResponseCache::ServerPushInfo> push_resources;
   push_resources.push_back(push_info);
   response_cache_.AddSimpleResponseWithServerPushResources(
@@ -526,7 +529,7 @@ TEST_P(QuicSimpleServerStreamTest, InvalidMultipleContentLength) {
   EXPECT_CALL(session_, WriteHeadersMock(_, _, _, _, _));
   EXPECT_CALL(session_, WritevData(_, _, _, _, _))
       .Times(AnyNumber())
-      .WillRepeatedly(Invoke(MockQuicSession::ConsumeAllData));
+      .WillRepeatedly(Invoke(MockQuicSession::ConsumeData));
   stream_->OnStreamHeaderList(true, kFakeFrameLen, header_list_);
 
   EXPECT_TRUE(QuicStreamPeer::read_side_closed(stream_));
@@ -544,7 +547,7 @@ TEST_P(QuicSimpleServerStreamTest, InvalidLeadingNullContentLength) {
   EXPECT_CALL(session_, WriteHeadersMock(_, _, _, _, _));
   EXPECT_CALL(session_, WritevData(_, _, _, _, _))
       .Times(AnyNumber())
-      .WillRepeatedly(Invoke(MockQuicSession::ConsumeAllData));
+      .WillRepeatedly(Invoke(MockQuicSession::ConsumeData));
   stream_->OnStreamHeaderList(true, kFakeFrameLen, header_list_);
 
   EXPECT_TRUE(QuicStreamPeer::read_side_closed(stream_));
@@ -604,7 +607,7 @@ TEST_P(QuicSimpleServerStreamTest, InvalidHeadersWithFin) {
       0x54, 0x54, 0x50, 0x2f,  // TTP/
       0x31, 0x2e, 0x31,        // 1.1
   };
-  QuicStringPiece data(arr, arraysize(arr));
+  QuicStringPiece data(arr, QUIC_ARRAYSIZE(arr));
   QuicStreamFrame frame(stream_->id(), true, 0, data);
   // Verify that we don't crash when we get a invalid headers in stream frame.
   stream_->OnStreamFrame(frame);

@@ -6,10 +6,11 @@
 
 #include <stddef.h>
 
+#include <memory>
+
 #include "base/android/jni_android.h"
 #include "base/android/jni_string.h"
 #include "base/command_line.h"
-#include "base/memory/ptr_util.h"
 #include "base/optional.h"
 #include "chrome/browser/android/chrome_feature_list.h"
 #include "chrome/browser/android/feature_utilities.h"
@@ -50,7 +51,7 @@
 #include "content/public/common/file_chooser_params.h"
 #include "content/public/common/media_stream_request.h"
 #include "jni/TabWebContentsDelegateAndroid_jni.h"
-#include "ppapi/features/features.h"
+#include "ppapi/buildflags/buildflags.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/rect_f.h"
 
@@ -100,6 +101,14 @@ infobars::InfoBar* FindHungRendererInfoBar(InfoBarService* infobar_service) {
   return nullptr;
 }
 
+void ShowFramebustBlockInfobarInternal(content::WebContents* web_contents,
+                                       const GURL& url) {
+  FramebustBlockInfoBar::Show(
+      web_contents,
+      std::make_unique<FramebustBlockMessageDelegate>(
+          web_contents, url, FramebustBlockMessageDelegate::OutcomeCallback()));
+}
+
 }  // anonymous namespace
 
 namespace android {
@@ -116,9 +125,9 @@ TabWebContentsDelegateAndroid::~TabWebContentsDelegateAndroid() {
 void TabWebContentsDelegateAndroid::RunFileChooser(
     content::RenderFrameHost* render_frame_host,
     const FileChooserParams& params) {
-  if (vr::VrTabHelper::IsInVr(
-          WebContents::FromRenderFrameHost(render_frame_host))) {
-    vr::VrTabHelper::UISuppressed(vr::UiSuppressedElement::kFileChooser);
+  if (vr::VrTabHelper::IsUiSuppressedInVr(
+          WebContents::FromRenderFrameHost(render_frame_host),
+          vr::UiSuppressedElement::kFileChooser)) {
     return;
   }
   FileSelectHelper::RunFileChooser(render_frame_host, params);
@@ -128,11 +137,12 @@ std::unique_ptr<BluetoothChooser>
 TabWebContentsDelegateAndroid::RunBluetoothChooser(
     content::RenderFrameHost* frame,
     const BluetoothChooser::EventHandler& event_handler) {
-  if (vr::VrTabHelper::IsInVr(WebContents::FromRenderFrameHost(frame))) {
-    vr::VrTabHelper::UISuppressed(vr::UiSuppressedElement::kBluetoothChooser);
+  if (vr::VrTabHelper::IsUiSuppressedInVr(
+          WebContents::FromRenderFrameHost(frame),
+          vr::UiSuppressedElement::kBluetoothChooser)) {
     return nullptr;
   }
-  return base::MakeUnique<BluetoothChooserAndroid>(frame, event_handler);
+  return std::make_unique<BluetoothChooserAndroid>(frame, event_handler);
 }
 
 void TabWebContentsDelegateAndroid::CloseContents(
@@ -264,24 +274,33 @@ void TabWebContentsDelegateAndroid::FindMatchRectsReply(
 content::JavaScriptDialogManager*
 TabWebContentsDelegateAndroid::GetJavaScriptDialogManager(
     WebContents* source) {
-  if (vr::VrTabHelper::IsInVr(source)) {
-    vr::VrTabHelper::UISuppressed(vr::UiSuppressedElement::kJavascriptDialog);
+  if (vr::VrTabHelper::IsUiSuppressedInVr(
+          source, vr::UiSuppressedElement::kJavascriptDialog)) {
     return nullptr;
   }
-  if (base::FeatureList::IsEnabled(chrome::android::kTabModalJsDialog)) {
+  if (base::FeatureList::IsEnabled(chrome::android::kTabModalJsDialog) ||
+      vr::VrTabHelper::IsInVr(source)) {
     return JavaScriptDialogTabHelper::FromWebContents(source);
   }
   return app_modal::JavaScriptDialogManager::GetInstance();
+}
+
+void TabWebContentsDelegateAndroid::AdjustPreviewsStateForNavigation(
+    content::WebContents* web_contents,
+    content::PreviewsState* previews_state) {
+  if (GetDisplayMode(web_contents) != blink::kWebDisplayModeBrowser) {
+    *previews_state = content::PREVIEWS_OFF;
+  }
 }
 
 void TabWebContentsDelegateAndroid::RequestMediaAccessPermission(
     content::WebContents* web_contents,
     const content::MediaStreamRequest& request,
     const content::MediaResponseCallback& callback) {
-  if (vr::VrTabHelper::IsInVr(web_contents)) {
+  if (vr::VrTabHelper::IsUiSuppressedInVr(
+          web_contents, vr::UiSuppressedElement::kMediaPermission)) {
     callback.Run(content::MediaStreamDevices(),
                  content::MEDIA_DEVICE_NOT_SUPPORTED, nullptr);
-    vr::VrTabHelper::UISuppressed(vr::UiSuppressedElement::kMediaPermission);
     return;
   }
   MediaCaptureDevicesDispatcher::GetInstance()->ProcessMediaAccessRequest(
@@ -289,11 +308,11 @@ void TabWebContentsDelegateAndroid::RequestMediaAccessPermission(
 }
 
 bool TabWebContentsDelegateAndroid::CheckMediaAccessPermission(
-    content::WebContents* web_contents,
+    content::RenderFrameHost* render_frame_host,
     const GURL& security_origin,
     content::MediaStreamType type) {
   return MediaCaptureDevicesDispatcher::GetInstance()
-      ->CheckMediaAccessPermission(web_contents, security_origin, type);
+      ->CheckMediaAccessPermission(render_frame_host, security_origin, type);
 }
 
 void TabWebContentsDelegateAndroid::SetOverlayMode(bool use_overlay_mode) {
@@ -334,12 +353,10 @@ WebContents* TabWebContentsDelegateAndroid::OpenURLFromTab(
   }
 
   Profile* profile = Profile::FromBrowserContext(source->GetBrowserContext());
-  chrome::NavigateParams nav_params(profile,
-                                    params.url,
-                                    params.transition);
-  FillNavigateParamsFromOpenURLParams(&nav_params, params);
+  NavigateParams nav_params(profile, params.url, params.transition);
+  nav_params.FillNavigateParamsFromOpenURLParams(params);
   nav_params.source_contents = source;
-  nav_params.window_action = chrome::NavigateParams::SHOW_WINDOW;
+  nav_params.window_action = NavigateParams::SHOW_WINDOW;
   nav_params.user_gesture = params.user_gesture;
   if ((params.disposition == WindowOpenDisposition::NEW_POPUP ||
        params.disposition == WindowOpenDisposition::NEW_FOREGROUND_TAB ||
@@ -437,10 +454,7 @@ void TabWebContentsDelegateAndroid::OnAudioStateChanged(
 void TabWebContentsDelegateAndroid::OnDidBlockFramebust(
     content::WebContents* web_contents,
     const GURL& url) {
-  FramebustBlockInfoBar::Show(
-      web_contents,
-      base::MakeUnique<FramebustBlockMessageDelegate>(
-          web_contents, url, FramebustBlockMessageDelegate::OutcomeCallback()));
+  ShowFramebustBlockInfobarInternal(web_contents, url);
 }
 
 }  // namespace android
@@ -528,4 +542,15 @@ void JNI_TabWebContentsDelegateAndroid_NotifyStopped(
       MediaCaptureDevicesDispatcher::GetInstance()
           ->GetMediaStreamCaptureIndicator();
   indicator->NotifyStopped(web_contents);
+}
+
+void JNI_TabWebContentsDelegateAndroid_ShowFramebustBlockInfoBar(
+    JNIEnv* env,
+    const JavaParamRef<jclass>& clazz,
+    const JavaParamRef<jobject>& java_web_contents,
+    const JavaParamRef<jstring>& java_url) {
+  GURL url(base::android::ConvertJavaStringToUTF16(env, java_url));
+  content::WebContents* web_contents =
+      content::WebContents::FromJavaWebContents(java_web_contents);
+  ShowFramebustBlockInfobarInternal(web_contents, url);
 }

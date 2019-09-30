@@ -1,3 +1,4 @@
+*.bak
 *.gypcmd
 *.mk
 *.ncb
@@ -68,6 +69,8 @@ vs-chromium-project.txt
 /c
 /cdm
 /ceee/internal/
+/chrome/android/profiles/afdo.prof
+/chrome/android/profiles/local.txt
 /chrome/angle_unittests_run.xml
 /chrome/build/chrome.x64.orderfile
 /chrome/build/chrome.x86.orderfile
@@ -83,20 +86,27 @@ vs-chromium-project.txt
 /chrome/app/theme/google_chrome
 /chrome/browser/autofill/internal
 /chrome/browser/chromeos/arc/voice_interaction/internal
+/chrome/browser/chromeos/assistant/internal
 /chrome/browser/chromeos/login/screenshot_testing/golden_screenshots/*.png
 /chrome/browser/chromeos/login/screenshot_testing/artifacts
 /chrome/browser/extensions/api/ledger/
 /chrome/browser/extensions/default_extensions/chromeos
 /chrome/browser/google/linkdoctor_internal
 /chrome/browser/internal
+/chrome/browser/media/engagement_internal
 /chrome/browser/performance_monitor/performance_monitor.xml
 /chrome/browser/protector/internal
 /chrome/browser/resources/chromeos/quickoffice
 /chrome/browser/resources/pdf/html_office
+/chrome/browser/resources/media_router/extension/src/
 /chrome/browser/resources/media_router_internal/
 /chrome/browser/resources/settings_internal/
 /chrome/browser/resources/software_rendering_list
+# Asset files downloaded by gclient runhooks.
+/chrome/browser/resources/vr/assets/google_chrome/*.png
+/chrome/browser/resources/vr/assets/google_chrome/*.wav
 /chrome/browser/spellchecker/internal
+/chrome/browser/ui/media_router/internal
 /chrome/browser_tests_run.xml
 /chrome/chrome_run.xml
 /chrome/chrome_user32_delay_imports.xml
@@ -109,9 +119,7 @@ vs-chromium-project.txt
 /chrome/installer/mini_installer.xml
 /chrome/installer/mini_installer/mini_installer.aps
 /chrome/installer/mini_installer/support
-/chrome/installer/mini_installer_syzygy.xml
 /chrome/installer/mini_installer_tests_run.xml
-/chrome/installer/zucchini/testdata/*.exe
 /chrome/installer_util_strings.xml
 /chrome/interactive_ui_tests_run.xml
 /chrome/setup.xml
@@ -147,6 +155,7 @@ vs-chromium-project.txt
 /chrome/web_ui_mojo_bindings.xml
 /chrome_elf/chrome_elf_resources.xml
 /chromecast/internal
+/chromeos/assistant/internal
 /clank
 /cloud_print/cloud_print_version_resources.xml
 /components/chrome_settings_proto_generated_compile.xml
@@ -160,6 +169,7 @@ vs-chromium-project.txt
 /components/search_engines/prepopulated_engines.xml
 /components/suggestions.xml
 /components/variations.xml
+/components/zucchini/testdata/*.exe
 /content/browser/service_worker/proto.xml
 /content/content_browsertests_run.xml
 /content/content_common_mojo_bindings.xml
@@ -186,7 +196,9 @@ vs-chromium-project.txt
 /ios/third_party/material_roboto_font_loader_ios/src
 /ios/third_party/material_sprited_animation_view_ios/src
 /ios/third_party/material_text_accessibility_ios/src
+/ios/third_party/motion_animator_objc/src
 /ios/third_party/motion_interchange_objc/src
+/ios/third_party/motion_transitioning_objc/src
 /ios/third_party/ochamcrest/src
 /ios_internal
 /libassistant

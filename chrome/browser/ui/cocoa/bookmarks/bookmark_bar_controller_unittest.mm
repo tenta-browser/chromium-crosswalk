@@ -10,7 +10,6 @@
 #include "base/mac/mac_util.h"
 #include "base/mac/scoped_nsobject.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
 #include "base/strings/string16.h"
 #include "base/strings/string_util.h"
@@ -28,6 +27,7 @@
 #import "chrome/browser/ui/cocoa/bookmarks/bookmark_button_cell.h"
 #include "chrome/browser/ui/cocoa/test/cocoa_profile_test.h"
 #import "chrome/browser/ui/cocoa/view_resizer_pong.h"
+#include "chrome/browser/ui/layout_constants.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/test/base/testing_profile.h"
 #include "components/bookmarks/browser/bookmark_model.h"
@@ -734,13 +734,13 @@ TEST_F(BookmarkBarControllerTest, LayoutManagedAppsButton) {
 
   // Hide the apps shortcut by policy, via the managed pref.
   prefs->SetManagedPref(bookmarks::prefs::kShowAppsShortcutInBookmarkBar,
-                        base::MakeUnique<base::Value>(false));
+                        std::make_unique<base::Value>(false));
   layout = [bar_ layoutFromCurrentState];
   EXPECT_FALSE(layout.IsAppsButtonVisible());
 
   // And try showing it via policy too.
   prefs->SetManagedPref(bookmarks::prefs::kShowAppsShortcutInBookmarkBar,
-                        base::MakeUnique<base::Value>(true));
+                        std::make_unique<base::Value>(true));
   layout = [bar_ layoutFromCurrentState];
   EXPECT_TRUE(layout.IsAppsButtonVisible());
 }
@@ -1262,7 +1262,7 @@ TEST_F(BookmarkBarControllerTest, BookmarkButtonSizing) {
   EXPECT_GT([buttons count], 0u);
 
   for (NSButton* button in buttons) {
-    EXPECT_FLOAT_EQ((chrome::kMinimumBookmarkBarHeight +
+    EXPECT_FLOAT_EQ((GetLayoutConstant(BOOKMARK_BAR_HEIGHT_NO_OVERLAP) +
                      bookmarks::kMaterialVisualHeightOffset) -
                         2 * bookmarks::kBookmarkVerticalPadding,
                     [button frame].size.height);
@@ -1462,9 +1462,7 @@ TEST_F(BookmarkBarControllerTest, TestClearOnDealloc) {
     EXPECT_TRUE([button action]);
   }
 
-  // This should dealloc. In production code, this is typically achieved more
-  // reliably by using -[HasWeakBrowserPointer browserWillBeDestroyed].
-  bar_.reset();
+  [bar_ browserWillBeDestroyed];
 
   // Make sure that everything is cleared.
   for (BookmarkButton* button in buttons.get()) {

@@ -14,7 +14,6 @@
 
 #include "base/logging.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/numerics/safe_math.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/utility/safe_browsing/mac/convert_big_endian.h"
@@ -316,7 +315,7 @@ std::unique_ptr<ReadStream> HFSIterator::GetReadStream() {
     return nullptr;
 
   DCHECK_EQ(kHFSPlusFileRecord, catalog_->current_record()->record_type);
-  return base::MakeUnique<HFSForkReadStream>(
+  return std::make_unique<HFSForkReadStream>(
       this, catalog_->current_record()->file->dataFork);
 }
 
@@ -501,8 +500,8 @@ bool HFSBTreeIterator::Init(ReadStream* stream) {
   }
   ConvertBigEndian(&header_);
 
-  if (header_.nodeSize == 0) {
-    DLOG(ERROR) << "Invalid header: zero node size";
+  if (header_.nodeSize < sizeof(BTNodeDescriptor)) {
+    DLOG(ERROR) << "Invalid header: node size smaller than BTNodeDescriptor";
     return false;
   }
 

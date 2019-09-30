@@ -5,6 +5,7 @@
 #include <memory>
 
 #include "base/macros.h"
+#include "base/test/scoped_feature_list.h"
 #include "build/build_config.h"
 #include "chrome/browser/ui/autofill/autofill_popup_view.h"
 #include "chrome/browser/ui/browser.h"
@@ -13,67 +14,37 @@
 #include "chrome/test/base/in_process_browser_test.h"
 #include "components/autofill/content/browser/content_autofill_driver.h"
 #include "components/autofill/content/browser/content_autofill_driver_factory.h"
+#include "components/autofill/core/browser/autofill_experiments.h"
 #include "components/autofill/core/browser/autofill_manager.h"
+#include "components/autofill/core/browser/autofill_test_utils.h"
 #include "components/autofill/core/browser/test_autofill_external_delegate.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_observer.h"
-#include "content/public/test/test_utils.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/vector2d.h"
 
 namespace autofill {
 namespace {
 
-class TestAutofillExternalDelegate : public AutofillExternalDelegate {
- public:
-  TestAutofillExternalDelegate(content::WebContents* web_contents,
-                               AutofillManager* autofill_manager,
-                               AutofillDriver* autofill_driver)
-      : AutofillExternalDelegate(autofill_manager, autofill_driver),
-        popup_hidden_(true) {}
-  ~TestAutofillExternalDelegate() override {}
-
-  void OnPopupShown() override {
-    popup_hidden_ = false;
-
-    AutofillExternalDelegate::OnPopupShown();
-  }
-
-  void OnPopupHidden() override {
-    popup_hidden_ = true;
-
-    if (message_loop_runner_.get())
-      message_loop_runner_->Quit();
-  }
-
-  void WaitForPopupHidden() {
-    if (popup_hidden_)
-      return;
-
-    message_loop_runner_ = new content::MessageLoopRunner;
-    message_loop_runner_->Run();
-  }
-
-  bool popup_hidden() const { return popup_hidden_; }
-
- private:
-  bool popup_hidden_;
-  scoped_refptr<content::MessageLoopRunner> message_loop_runner_;
-
-  DISALLOW_COPY_AND_ASSIGN(TestAutofillExternalDelegate);
-};
-
 }  // namespace
 
+// Test params:
+//  - bool popup_views_enabled: whether feature AutofillExpandedPopupViews
+//        is enabled for testing.
 class AutofillPopupControllerBrowserTest
     : public InProcessBrowserTest,
-      public content::WebContentsObserver {
+      public content::WebContentsObserver,
+      public ::testing::WithParamInterface<bool> {
  public:
   AutofillPopupControllerBrowserTest() {}
   ~AutofillPopupControllerBrowserTest() override {}
 
   void SetUpOnMainThread() override {
+    const bool popup_views_enabled = GetParam();
+    scoped_feature_list_.InitWithFeatureState(kAutofillExpandedPopupViews,
+                                              popup_views_enabled);
+
     content::WebContents* web_contents =
         browser()->tab_strip_model()->GetActiveWebContents();
     ASSERT_TRUE(web_contents != NULL);
@@ -82,11 +53,10 @@ class AutofillPopupControllerBrowserTest
     ContentAutofillDriver* driver =
         ContentAutofillDriverFactory::FromWebContents(web_contents)
             ->DriverForFrame(web_contents->GetMainFrame());
-    autofill_external_delegate_.reset(
-       new TestAutofillExternalDelegate(
-           web_contents,
-           driver->autofill_manager(),
-           driver));
+    autofill_external_delegate_ =
+        std::make_unique<TestAutofillExternalDelegate>(
+            driver->autofill_manager(), driver,
+            /*call_parent_methods=*/true);
   }
 
   // Normally the WebContents will automatically delete the delegate, but here
@@ -98,6 +68,8 @@ class AutofillPopupControllerBrowserTest
 
  protected:
   std::unique_ptr<TestAutofillExternalDelegate> autofill_external_delegate_;
+
+  base::test::ScopedFeatureList scoped_feature_list_;
 };
 
 #if defined(OS_MACOSX)
@@ -106,9 +78,9 @@ class AutofillPopupControllerBrowserTest
 #else
 #define MAYBE_HidePopupOnWindowMove HidePopupOnWindowMove
 #endif
-IN_PROC_BROWSER_TEST_F(AutofillPopupControllerBrowserTest,
+IN_PROC_BROWSER_TEST_P(AutofillPopupControllerBrowserTest,
                        MAYBE_HidePopupOnWindowMove) {
-  GenerateTestAutofillPopup(autofill_external_delegate_.get());
+  test::GenerateTestAutofillPopup(autofill_external_delegate_.get());
 
   EXPECT_FALSE(autofill_external_delegate_->popup_hidden());
 
@@ -120,9 +92,9 @@ IN_PROC_BROWSER_TEST_F(AutofillPopupControllerBrowserTest,
   EXPECT_TRUE(autofill_external_delegate_->popup_hidden());
 }
 
-IN_PROC_BROWSER_TEST_F(AutofillPopupControllerBrowserTest,
+IN_PROC_BROWSER_TEST_P(AutofillPopupControllerBrowserTest,
                        HidePopupOnWindowResize) {
-  GenerateTestAutofillPopup(autofill_external_delegate_.get());
+  test::GenerateTestAutofillPopup(autofill_external_delegate_.get());
 
   EXPECT_FALSE(autofill_external_delegate_->popup_hidden());
 
@@ -144,14 +116,18 @@ IN_PROC_BROWSER_TEST_F(AutofillPopupControllerBrowserTest,
 #else
 #define MAYBE_DeleteDelegateBeforePopupHidden DeleteDelegateBeforePopupHidden
 #endif
-IN_PROC_BROWSER_TEST_F(AutofillPopupControllerBrowserTest,
+IN_PROC_BROWSER_TEST_P(AutofillPopupControllerBrowserTest,
                        MAYBE_DeleteDelegateBeforePopupHidden) {
-  GenerateTestAutofillPopup(autofill_external_delegate_.get());
+  test::GenerateTestAutofillPopup(autofill_external_delegate_.get());
 
   // Delete the external delegate here so that is gets deleted before popup is
   // hidden. This can happen if the web_contents are destroyed before the popup
   // is hidden. See http://crbug.com/232475
   autofill_external_delegate_.reset();
 }
+
+INSTANTIATE_TEST_CASE_P(All,
+                        AutofillPopupControllerBrowserTest,
+                        ::testing::Bool());
 
 }  // namespace autofill

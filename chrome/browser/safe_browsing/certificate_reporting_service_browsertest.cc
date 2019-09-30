@@ -16,15 +16,17 @@
 #include "chrome/browser/safe_browsing/certificate_reporting_service_factory.h"
 #include "chrome/browser/safe_browsing/certificate_reporting_service_test_utils.h"
 #include "chrome/browser/ssl/cert_report_helper.h"
+#include "chrome/browser/ssl/certificate_error_report.h"
 #include "chrome/browser/ssl/certificate_reporting_test_utils.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
+#include "chrome/common/chrome_switches.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/ui_test_utils.h"
-#include "components/certificate_reporting/error_report.h"
 #include "components/prefs/pref_service.h"
 #include "components/safe_browsing/common/safe_browsing_prefs.h"
 #include "components/variations/variations_params_manager.h"
+#include "content/public/browser/browser_thread.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/test_utils.h"
@@ -63,7 +65,9 @@ namespace safe_browsing {
 // - If a report is expected to hang, the test waits for the corresponding URL
 //   request job to be created. Only after resuming the hung request job the
 //   test waits for the request to be destroyed.
-class CertificateReportingServiceBrowserTest : public InProcessBrowserTest {
+class CertificateReportingServiceBrowserTest
+    : public InProcessBrowserTest,
+      public testing::WithParamInterface<bool> {
  public:
   CertificateReportingServiceBrowserTest()
       : https_server_(net::EmbeddedTestServer::TYPE_HTTPS) {
@@ -78,7 +82,8 @@ class CertificateReportingServiceBrowserTest : public InProcessBrowserTest {
     https_server_.ServeFilesFromSourceDirectory("chrome/test/data");
     ASSERT_TRUE(https_server_.Start());
 
-    test_helper()->SetUpInterceptor();
+    test_helper_ =
+        base::MakeRefCounted<CertificateReportingServiceTestHelper>();
 
     CertificateReportingServiceFactory::GetInstance()
         ->SetReportEncryptionParamsForTesting(
@@ -88,6 +93,8 @@ class CertificateReportingServiceBrowserTest : public InProcessBrowserTest {
         ->SetServiceResetCallbackForTesting(
             base::Bind(&CertificateReportingServiceObserver::OnServiceReset,
                        base::Unretained(&service_observer_)));
+    CertificateReportingServiceFactory::GetInstance()
+        ->SetURLLoaderFactoryForTesting(test_helper_);
 
     event_histogram_tester_.reset(new EventHistogramTester());
     InProcessBrowserTest::SetUpOnMainThread();
@@ -117,9 +124,28 @@ class CertificateReportingServiceBrowserTest : public InProcessBrowserTest {
     variations::testing::VariationParamsManager::AppendVariationParams(
         "ReportCertificateErrors", "ShowAndPossiblySend",
         {{"sendingThreshold", "1.0"}}, command_line);
+    if (GetParam()) {
+      command_line->AppendSwitch(switches::kCommittedInterstitials);
+    }
   }
 
-  CertificateReportingServiceTestHelper* test_helper() { return &test_helper_; }
+  CertificateReportingServiceTestHelper* test_helper() {
+    return test_helper_.get();
+  }
+
+  void WaitForNoReports() {
+    if (!service()->GetReporterForTesting() ||
+        !service()
+             ->GetReporterForTesting()
+             ->inflight_report_count_for_testing())
+      return;
+
+    base::RunLoop run_loop;
+    service()
+        ->GetReporterForTesting()
+        ->SetClosureWhenNoInflightReportsForTesting(run_loop.QuitClosure());
+    run_loop.Run();
+  }
 
  protected:
   CertificateReportingServiceFactory* factory() {
@@ -138,14 +164,22 @@ class CertificateReportingServiceBrowserTest : public InProcessBrowserTest {
     TabStripModel* tab_strip_model = browser()->tab_strip_model();
     content::WebContents* contents = tab_strip_model->GetActiveWebContents();
     ui_test_utils::NavigateToURL(browser(), kCertErrorURL);
-    content::WaitForInterstitialAttach(contents);
+    // When GetParam() is true, committed interstitials are enabled. In this
+    // case, no interstitial attaches; once a navigation commits, the error page
+    // is present.
+    if (!GetParam())
+      content::WaitForInterstitialAttach(contents);
 
     // Navigate away from the interstitial to trigger report upload.
     ui_test_utils::NavigateToURL(browser(), GURL("about:blank"));
-    content::WaitForInterstitialDetach(contents);
+    if (!GetParam())
+      content::WaitForInterstitialDetach(contents);
   }
 
-  void SendPendingReports() { service()->SendPending(); }
+  void SendPendingReports() {
+    WaitForNoReports();
+    service()->SendPending();
+  }
 
   // Changes opt-in status and waits for the cert reporting service to reset.
   // Can only be used after the service is initialized. When changing the
@@ -192,7 +226,7 @@ class CertificateReportingServiceBrowserTest : public InProcessBrowserTest {
                     const std::string type) {
     std::set<std::string> received_hostnames;
     for (const std::string& serialized_report : received_reports) {
-      certificate_reporting::ErrorReport report;
+      CertificateErrorReport report;
       ASSERT_TRUE(report.InitializeFromString(serialized_report));
       received_hostnames.insert(report.hostname());
     }
@@ -204,7 +238,7 @@ class CertificateReportingServiceBrowserTest : public InProcessBrowserTest {
 
   int num_expected_failed_report_ = -1;
 
-  CertificateReportingServiceTestHelper test_helper_;
+  scoped_refptr<CertificateReportingServiceTestHelper> test_helper_;
 
   CertificateReportingServiceObserver service_observer_;
 
@@ -218,9 +252,13 @@ class CertificateReportingServiceBrowserTest : public InProcessBrowserTest {
   DISALLOW_COPY_AND_ASSIGN(CertificateReportingServiceBrowserTest);
 };
 
+INSTANTIATE_TEST_CASE_P(,
+                        CertificateReportingServiceBrowserTest,
+                        ::testing::Values(false, true));
+
 // Tests that report send attempt should be cancelled when extended
 // reporting is not opted in.
-IN_PROC_BROWSER_TEST_F(CertificateReportingServiceBrowserTest,
+IN_PROC_BROWSER_TEST_P(CertificateReportingServiceBrowserTest,
                        NotOptedIn_ShouldNotSendReports) {
   SetExpectedHistogramCountOnTeardown(0);
 
@@ -237,7 +275,7 @@ IN_PROC_BROWSER_TEST_F(CertificateReportingServiceBrowserTest,
 // Tests that report send attempts are not cancelled when extended reporting is
 // opted in. Goes to an interstitial page and navigates away to force a report
 // send event.
-IN_PROC_BROWSER_TEST_F(CertificateReportingServiceBrowserTest,
+IN_PROC_BROWSER_TEST_P(CertificateReportingServiceBrowserTest,
                        OptedIn_ShouldSendSuccessfulReport) {
   SetExpectedHistogramCountOnTeardown(0);
 
@@ -261,7 +299,7 @@ IN_PROC_BROWSER_TEST_F(CertificateReportingServiceBrowserTest,
 // Tests that report send attempts are not cancelled when extended reporting is
 // opted in. Goes to an interstitial page and navigate away to force a report
 // send event. Repeats this three times and checks expected number of reports.
-IN_PROC_BROWSER_TEST_F(CertificateReportingServiceBrowserTest,
+IN_PROC_BROWSER_TEST_P(CertificateReportingServiceBrowserTest,
                        OptedIn_ShouldQueueFailedReport) {
   SetExpectedHistogramCountOnTeardown(2);
 
@@ -310,7 +348,7 @@ IN_PROC_BROWSER_TEST_F(CertificateReportingServiceBrowserTest,
 
 // Opting in then opting out of extended reporting should clear the pending
 // report queue.
-IN_PROC_BROWSER_TEST_F(CertificateReportingServiceBrowserTest,
+IN_PROC_BROWSER_TEST_P(CertificateReportingServiceBrowserTest,
                        OptedIn_ThenOptedOut) {
   SetExpectedHistogramCountOnTeardown(1);
 
@@ -338,7 +376,7 @@ IN_PROC_BROWSER_TEST_F(CertificateReportingServiceBrowserTest,
 }
 
 // Opting out, then in, then out of extended reporting should work as expected.
-IN_PROC_BROWSER_TEST_F(CertificateReportingServiceBrowserTest,
+IN_PROC_BROWSER_TEST_P(CertificateReportingServiceBrowserTest,
                        OptedOut_ThenOptedIn_ThenOptedOut) {
   SetExpectedHistogramCountOnTeardown(1);
 
@@ -383,7 +421,7 @@ IN_PROC_BROWSER_TEST_F(CertificateReportingServiceBrowserTest,
 
 // Disabling SafeBrowsing should clear pending reports queue in
 // CertificateReportingService.
-IN_PROC_BROWSER_TEST_F(CertificateReportingServiceBrowserTest,
+IN_PROC_BROWSER_TEST_P(CertificateReportingServiceBrowserTest,
                        DisableSafebrowsing) {
   SetExpectedHistogramCountOnTeardown(2);
 
@@ -418,6 +456,8 @@ IN_PROC_BROWSER_TEST_F(CertificateReportingServiceBrowserTest,
   test_helper()->WaitForRequestsDestroyed(
       ReportExpectation::Successful({{"report1", RetryStatus::RETRIED}}));
 
+  WaitForNoReports();
+
   // report0 was submitted once, failed once, then cleared.
   // report1 was submitted twice, failed once, succeeded once.
   event_histogram_tester()->SetExpectedValues(
@@ -425,14 +465,14 @@ IN_PROC_BROWSER_TEST_F(CertificateReportingServiceBrowserTest,
 }
 
 // CertificateReportingService should ignore reports older than the report TTL.
-IN_PROC_BROWSER_TEST_F(CertificateReportingServiceBrowserTest,
+IN_PROC_BROWSER_TEST_P(CertificateReportingServiceBrowserTest,
                        DontSendOldReports) {
   SetExpectedHistogramCountOnTeardown(5);
 
-  base::SimpleTestClock* clock = new base::SimpleTestClock();
+  base::SimpleTestClock clock;
   base::Time reference_time = base::Time::Now();
-  clock->SetNow(reference_time);
-  factory()->SetClockForTesting(std::unique_ptr<base::Clock>(clock));
+  clock.SetNow(reference_time);
+  factory()->SetClockForTesting(&clock);
 
   // The service should ignore reports older than 24 hours.
   factory()->SetQueuedReportTTLForTesting(base::TimeDelta::FromHours(24));
@@ -450,14 +490,14 @@ IN_PROC_BROWSER_TEST_F(CertificateReportingServiceBrowserTest,
       ReportExpectation::Failed({{"report0", RetryStatus::NOT_RETRIED}}));
 
   // Advance the clock a bit and trigger another failed report.
-  clock->Advance(base::TimeDelta::FromHours(5));
+  clock.Advance(base::TimeDelta::FromHours(5));
   SendReport("report1");
   test_helper()->WaitForRequestsDestroyed(
       ReportExpectation::Failed({{"report1", RetryStatus::NOT_RETRIED}}));
 
   // Advance the clock to 20 hours, putting it 25 hours ahead of the reference
   // time. This makes report0 older than 24 hours. report1 is now 20 hours.
-  clock->Advance(base::TimeDelta::FromHours(20));
+  clock.Advance(base::TimeDelta::FromHours(20));
 
   // Send pending reports. report0 should be discarded since it's too old.
   // report1 should be queued again.
@@ -471,7 +511,7 @@ IN_PROC_BROWSER_TEST_F(CertificateReportingServiceBrowserTest,
       ReportExpectation::Failed({{"report2", RetryStatus::NOT_RETRIED}}));
 
   // Advance the clock 5 hours. report1 will now be 25 hours old.
-  clock->Advance(base::TimeDelta::FromHours(5));
+  clock.Advance(base::TimeDelta::FromHours(5));
 
   // Send pending reports. report1 should be discarded since it's too old.
   // report2 should be queued again.
@@ -481,7 +521,7 @@ IN_PROC_BROWSER_TEST_F(CertificateReportingServiceBrowserTest,
 
   // Advance the clock 20 hours again so that report2 is 25 hours old and is
   // older than max age (24 hours).
-  clock->Advance(base::TimeDelta::FromHours(20));
+  clock.Advance(base::TimeDelta::FromHours(20));
 
   // Send pending reports. report2 should be discarded since it's too old. No
   // other reports remain. If any report is sent, test teardown will catch it.
@@ -496,6 +536,8 @@ IN_PROC_BROWSER_TEST_F(CertificateReportingServiceBrowserTest,
   test_helper()->WaitForRequestsDestroyed(
       ReportExpectation::Successful({{"report3", RetryStatus::NOT_RETRIED}}));
 
+  WaitForNoReports();
+
   // report0 was submitted once, failed once, dropped once.
   // report1 was submitted twice, failed twice, dropped once.
   // report2 was submitted twice, failed twice, dropped once.
@@ -506,14 +548,14 @@ IN_PROC_BROWSER_TEST_F(CertificateReportingServiceBrowserTest,
 
 // CertificateReportingService should drop old reports from its pending report
 // queue, if the queue is full.
-IN_PROC_BROWSER_TEST_F(CertificateReportingServiceBrowserTest,
+IN_PROC_BROWSER_TEST_P(CertificateReportingServiceBrowserTest,
                        DropOldReportsFromQueue) {
   SetExpectedHistogramCountOnTeardown(7);
 
-  base::SimpleTestClock* clock = new base::SimpleTestClock();
+  base::SimpleTestClock clock;
   base::Time reference_time = base::Time::Now();
-  clock->SetNow(reference_time);
-  factory()->SetClockForTesting(std::unique_ptr<base::Clock>(clock));
+  clock.SetNow(reference_time);
+  factory()->SetClockForTesting(&clock);
 
   // The service should queue a maximum of 3 reports and ignore reports older
   // than 24 hours.
@@ -537,13 +579,13 @@ IN_PROC_BROWSER_TEST_F(CertificateReportingServiceBrowserTest,
   // report1 is 5 hours after reference time (10 hours old).
   // report2 is 10 hours after reference time (5 hours old).
   // report3 is 15 hours after reference time (0 hours old).
-  clock->Advance(base::TimeDelta::FromHours(5));
+  clock.Advance(base::TimeDelta::FromHours(5));
   SendReport("report1");
 
-  clock->Advance(base::TimeDelta::FromHours(5));
+  clock.Advance(base::TimeDelta::FromHours(5));
   SendReport("report2");
 
-  clock->Advance(base::TimeDelta::FromHours(5));
+  clock.Advance(base::TimeDelta::FromHours(5));
   SendReport("report3");
 
   test_helper()->WaitForRequestsDestroyed(
@@ -569,13 +611,15 @@ IN_PROC_BROWSER_TEST_F(CertificateReportingServiceBrowserTest,
   // report1 is 25 hours old.
   // report2 is 20 hours old.
   // report3 is 15 hours old.
-  clock->Advance(base::TimeDelta::FromHours(15));
+  clock.Advance(base::TimeDelta::FromHours(15));
 
   // Send pending reports. Only reports 2 and 3 should be sent, report 1
   // should be ignored because it's too old.
   SendPendingReports();
   test_helper()->WaitForRequestsDestroyed(ReportExpectation::Successful(
       {{"report2", RetryStatus::RETRIED}, {"report3", RetryStatus::RETRIED}}));
+
+  WaitForNoReports();
 
   // report0 was submitted once, failed once, dropped once.
   // report1 was submitted twice, failed twice, dropped once.
@@ -585,7 +629,7 @@ IN_PROC_BROWSER_TEST_F(CertificateReportingServiceBrowserTest,
       9 /* submitted */, 7 /* failed */, 2 /* successful */, 2 /* dropped */);
 }
 
-IN_PROC_BROWSER_TEST_F(CertificateReportingServiceBrowserTest,
+IN_PROC_BROWSER_TEST_P(CertificateReportingServiceBrowserTest,
                        Delayed_Resumed) {
   SetExpectedHistogramCountOnTeardown(0);
 
@@ -607,6 +651,8 @@ IN_PROC_BROWSER_TEST_F(CertificateReportingServiceBrowserTest,
   test_helper()->WaitForRequestsDestroyed(
       ReportExpectation::Delayed({{"report0", RetryStatus::NOT_RETRIED}}));
 
+  WaitForNoReports();
+
   // report0 was submitted once and succeeded once.
   event_histogram_tester()->SetExpectedValues(
       1 /* submitted */, 0 /* failed */, 1 /* successful */, 0 /* dropped */);
@@ -614,7 +660,7 @@ IN_PROC_BROWSER_TEST_F(CertificateReportingServiceBrowserTest,
 
 // Same as above, but the service is shut down before resuming the delayed
 // request. Should not crash.
-IN_PROC_BROWSER_TEST_F(CertificateReportingServiceBrowserTest,
+IN_PROC_BROWSER_TEST_P(CertificateReportingServiceBrowserTest,
                        Delayed_Resumed_ServiceShutdown) {
   SetExpectedHistogramCountOnTeardown(0);
 
@@ -642,7 +688,7 @@ IN_PROC_BROWSER_TEST_F(CertificateReportingServiceBrowserTest,
 
 // Trigger a delayed report, then disable Safebrowsing. Certificate reporting
 // service should clear its in-flight reports list.
-IN_PROC_BROWSER_TEST_F(CertificateReportingServiceBrowserTest, Delayed_Reset) {
+IN_PROC_BROWSER_TEST_P(CertificateReportingServiceBrowserTest, Delayed_Reset) {
   SetExpectedHistogramCountOnTeardown(0);
 
   certificate_reporting_test_utils::SetCertReportingOptIn(
@@ -658,6 +704,11 @@ IN_PROC_BROWSER_TEST_F(CertificateReportingServiceBrowserTest, Delayed_Reset) {
 
   // Disable SafeBrowsing. This should clear all pending reports.
   ToggleSafeBrowsingAndWaitForServiceReset(false);
+
+  // In production, the request would have already went out to the network. For
+  // this test, we manually resume it which will cause it to be cancelled.
+  test_helper()->ResumeDelayedRequest();
+
   test_helper()->WaitForRequestsDestroyed(
       ReportExpectation::Delayed({{"report0", RetryStatus::NOT_RETRIED}}));
 
@@ -678,6 +729,8 @@ IN_PROC_BROWSER_TEST_F(CertificateReportingServiceBrowserTest, Delayed_Reset) {
   test_helper()->ResumeDelayedRequest();
   test_helper()->WaitForRequestsDestroyed(
       ReportExpectation::Delayed({{"report1", RetryStatus::NOT_RETRIED}}));
+
+  WaitForNoReports();
 
   // report0 was submitted once and delayed, then cleared.
   // report1 was submitted once and delayed, then succeeded.

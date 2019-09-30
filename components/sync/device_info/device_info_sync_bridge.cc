@@ -11,6 +11,7 @@
 #include <utility>
 
 #include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/location.h"
 #include "base/strings/string_util.h"
 #include "components/sync/base/time.h"
@@ -31,7 +32,6 @@ using sync_pb::ModelTypeState;
 
 using Record = ModelTypeStore::Record;
 using RecordList = ModelTypeStore::RecordList;
-using Result = ModelTypeStore::Result;
 using WriteBatch = ModelTypeStore::WriteBatch;
 
 namespace {
@@ -84,9 +84,9 @@ std::unique_ptr<DeviceInfoSpecifics> ModelToSpecifics(
 
 DeviceInfoSyncBridge::DeviceInfoSyncBridge(
     LocalDeviceInfoProvider* local_device_info_provider,
-    const ModelTypeStoreFactory& store_factory,
-    const ChangeProcessorFactory& change_processor_factory)
-    : ModelTypeSyncBridge(change_processor_factory, DEVICE_INFO),
+    OnceModelTypeStoreFactory store_factory,
+    std::unique_ptr<ModelTypeChangeProcessor> change_processor)
+    : ModelTypeSyncBridge(std::move(change_processor)),
       local_device_info_provider_(local_device_info_provider) {
   DCHECK(local_device_info_provider);
 
@@ -96,13 +96,13 @@ DeviceInfoSyncBridge::DeviceInfoSyncBridge(
     OnProviderInitialized();
   } else {
     subscription_ = local_device_info_provider->RegisterOnInitializedCallback(
-        base::Bind(&DeviceInfoSyncBridge::OnProviderInitialized,
-                   base::Unretained(this)));
+        base::BindRepeating(&DeviceInfoSyncBridge::OnProviderInitialized,
+                            base::Unretained(this)));
   }
 
-  store_factory.Run(
-      DEVICE_INFO,
-      base::Bind(&DeviceInfoSyncBridge::OnStoreCreated, base::AsWeakPtr(this)));
+  std::move(store_factory)
+      .Run(DEVICE_INFO, base::BindOnce(&DeviceInfoSyncBridge::OnStoreCreated,
+                                       base::AsWeakPtr(this)));
 }
 
 DeviceInfoSyncBridge::~DeviceInfoSyncBridge() {}
@@ -161,7 +161,7 @@ base::Optional<ModelError> DeviceInfoSyncBridge::MergeSyncData(
                             metadata_change_list.get());
   }
 
-  batch->TransferMetadataChanges(std::move(metadata_change_list));
+  batch->TakeMetadataChangesFrom(std::move(metadata_change_list));
   CommitAndNotify(std::move(batch), has_changes);
   return {};
 }
@@ -200,7 +200,7 @@ base::Optional<ModelError> DeviceInfoSyncBridge::ApplySyncChanges(
     }
   }
 
-  batch->TransferMetadataChanges(std::move(metadata_change_list));
+  batch->TakeMetadataChangesFrom(std::move(metadata_change_list));
   CommitAndNotify(std::move(batch), has_changes);
   return {};
 }
@@ -215,7 +215,7 @@ void DeviceInfoSyncBridge::GetData(StorageKeyList storage_keys,
       batch->Put(key, CopyToEntityData(*iter->second));
     }
   }
-  callback.Run(std::move(batch));
+  std::move(callback).Run(std::move(batch));
 }
 
 void DeviceInfoSyncBridge::GetAllData(DataCallback callback) {
@@ -223,7 +223,7 @@ void DeviceInfoSyncBridge::GetAllData(DataCallback callback) {
   for (const auto& kv : all_data_) {
     batch->Put(kv.first, CopyToEntityData(*kv.second));
   }
-  callback.Run(std::move(batch));
+  std::move(callback).Run(std::move(batch));
 }
 
 std::string DeviceInfoSyncBridge::GetClientTag(const EntityData& entity_data) {
@@ -236,26 +236,15 @@ std::string DeviceInfoSyncBridge::GetStorageKey(const EntityData& entity_data) {
   return entity_data.specifics.device_info().cache_guid();
 }
 
-void DeviceInfoSyncBridge::DisableSync() {
+void DeviceInfoSyncBridge::ApplyDisableSyncChanges(
+    std::unique_ptr<MetadataChangeList> delete_metadata_change_list) {
   // TODO(skym, crbug.com/659263): Would it be reasonable to pulse_timer_.Stop()
   // or subscription_.reset() here?
 
-  // Allow deletion of metadata to happen before the deletion of data below. If
-  // we crash after removing metadata but not regular data, then merge can
-  // handle pairing everything back up.
-  ModelTypeSyncBridge::DisableSync();
-
   // Remove all local data, if sync is being disabled, the user has expressed
   // their desire to not have knowledge about other devices.
+  store_->DeleteAllDataAndMetadata(base::DoNothing());
   if (!all_data_.empty()) {
-    std::unique_ptr<WriteBatch> batch = store_->CreateWriteBatch();
-    for (const auto& kv : all_data_) {
-      batch->DeleteData(kv.first);
-    }
-    store_->CommitWriteBatch(
-        std::move(batch),
-        base::Bind(&DeviceInfoSyncBridge::OnCommit, base::AsWeakPtr(this)));
-
     all_data_.clear();
     NotifyObservers();
   }
@@ -294,6 +283,21 @@ void DeviceInfoSyncBridge::RemoveObserver(Observer* observer) {
 
 int DeviceInfoSyncBridge::CountActiveDevices() const {
   return CountActiveDevices(Time::Now());
+}
+
+// static
+std::unique_ptr<ModelTypeStore>
+DeviceInfoSyncBridge::DestroyAndStealStoreForTest(
+    std::unique_ptr<DeviceInfoSyncBridge> bridge) {
+  return std::move(bridge->store_);
+}
+
+bool DeviceInfoSyncBridge::IsPulseTimerRunningForTest() const {
+  return pulse_timer_.IsRunning();
+}
+
+void DeviceInfoSyncBridge::ForcePulseForTest() {
+  SendLocalData();
 }
 
 void DeviceInfoSyncBridge::NotifyObservers() {
@@ -335,23 +339,23 @@ void DeviceInfoSyncBridge::OnProviderInitialized() {
 }
 
 void DeviceInfoSyncBridge::OnStoreCreated(
-    Result result,
+    const base::Optional<syncer::ModelError>& error,
     std::unique_ptr<ModelTypeStore> store) {
-  if (result == Result::SUCCESS) {
-    std::swap(store_, store);
-    store_->ReadAllData(base::Bind(&DeviceInfoSyncBridge::OnReadAllData,
-                                   base::AsWeakPtr(this)));
-  } else {
-    change_processor()->ReportError(FROM_HERE,
-                                    "ModelTypeStore creation failed.");
+  if (error) {
+    change_processor()->ReportError(*error);
+    return;
   }
+
+  store_ = std::move(store);
+  store_->ReadAllData(base::BindOnce(&DeviceInfoSyncBridge::OnReadAllData,
+                                     base::AsWeakPtr(this)));
 }
 
 void DeviceInfoSyncBridge::OnReadAllData(
-    Result result,
+    const base::Optional<syncer::ModelError>& error,
     std::unique_ptr<RecordList> record_list) {
-  if (result != Result::SUCCESS) {
-    change_processor()->ReportError(FROM_HERE, "Initial load of data failed.");
+  if (error) {
+    change_processor()->ReportError(*error);
     return;
   }
 
@@ -361,8 +365,8 @@ void DeviceInfoSyncBridge::OnReadAllData(
     if (specifics->ParseFromString(r.value)) {
       all_data_[specifics->cache_guid()] = std::move(specifics);
     } else {
-      change_processor()->ReportError(FROM_HERE,
-                                      "Failed to deserialize specifics.");
+      change_processor()->ReportError(
+          {FROM_HERE, "Failed to deserialize specifics."});
       return;
     }
   }
@@ -373,26 +377,27 @@ void DeviceInfoSyncBridge::OnReadAllData(
 
 void DeviceInfoSyncBridge::LoadMetadataIfReady() {
   if (has_data_loaded_ && has_provider_initialized_) {
-    store_->ReadAllMetadata(base::Bind(&DeviceInfoSyncBridge::OnReadAllMetadata,
-                                       base::AsWeakPtr(this)));
+    store_->ReadAllMetadata(base::BindOnce(
+        &DeviceInfoSyncBridge::OnReadAllMetadata, base::AsWeakPtr(this)));
   }
 }
 
 void DeviceInfoSyncBridge::OnReadAllMetadata(
-    base::Optional<ModelError> error,
+    const base::Optional<ModelError>& error,
     std::unique_ptr<MetadataBatch> metadata_batch) {
   if (error) {
-    change_processor()->ReportError(error.value());
+    change_processor()->ReportError(*error);
     return;
   }
 
-  change_processor()->ModelReadyToSync(std::move(metadata_batch));
+  change_processor()->ModelReadyToSync(this, std::move(metadata_batch));
   ReconcileLocalAndStored();
 }
 
-void DeviceInfoSyncBridge::OnCommit(Result result) {
-  if (result != Result::SUCCESS) {
-    change_processor()->ReportError(FROM_HERE, "Failed a write to store.");
+void DeviceInfoSyncBridge::OnCommit(
+    const base::Optional<syncer::ModelError>& error) {
+  if (error) {
+    change_processor()->ReportError(*error);
   }
 }
 
@@ -412,8 +417,8 @@ void DeviceInfoSyncBridge::ReconcileLocalAndStored() {
   // it should be started when the provider re-initializes instead.
   if (current_info == nullptr) {
     pulse_timer_.Start(FROM_HERE, DeviceInfoUtil::kPulseInterval,
-                       base::Bind(&DeviceInfoSyncBridge::SendLocalData,
-                                  base::Unretained(this)));
+                       base::BindRepeating(&DeviceInfoSyncBridge::SendLocalData,
+                                           base::Unretained(this)));
     return;
   }
   auto iter = all_data_.find(current_info->guid());
@@ -424,9 +429,10 @@ void DeviceInfoSyncBridge::ReconcileLocalAndStored() {
     const TimeDelta pulse_delay(DeviceInfoUtil::CalculatePulseDelay(
         GetLastUpdateTime(*iter->second), Time::Now()));
     if (!pulse_delay.is_zero()) {
-      pulse_timer_.Start(FROM_HERE, pulse_delay,
-                         base::Bind(&DeviceInfoSyncBridge::SendLocalData,
-                                    base::Unretained(this)));
+      pulse_timer_.Start(
+          FROM_HERE, pulse_delay,
+          base::BindRepeating(&DeviceInfoSyncBridge::SendLocalData,
+                              base::Unretained(this)));
       return;
     }
   }
@@ -455,16 +461,16 @@ void DeviceInfoSyncBridge::SendLocalData() {
     CommitAndNotify(std::move(batch), true);
   }
 
-  pulse_timer_.Start(
-      FROM_HERE, DeviceInfoUtil::kPulseInterval,
-      base::Bind(&DeviceInfoSyncBridge::SendLocalData, base::Unretained(this)));
+  pulse_timer_.Start(FROM_HERE, DeviceInfoUtil::kPulseInterval,
+                     base::BindRepeating(&DeviceInfoSyncBridge::SendLocalData,
+                                         base::Unretained(this)));
 }
 
 void DeviceInfoSyncBridge::CommitAndNotify(std::unique_ptr<WriteBatch> batch,
                                            bool should_notify) {
   store_->CommitWriteBatch(
       std::move(batch),
-      base::Bind(&DeviceInfoSyncBridge::OnCommit, base::AsWeakPtr(this)));
+      base::BindOnce(&DeviceInfoSyncBridge::OnCommit, base::AsWeakPtr(this)));
   if (should_notify) {
     NotifyObservers();
   }

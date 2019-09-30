@@ -44,6 +44,10 @@ unit tests.
      This is an X.509 v1 certificate that omits the version field. Used to
      test that the certificate version gets the default value v1.
 
+- comodo.pem : A certificate chain for comodo.com which contains signed
+	    certificate timestamps that conform to Chrome's Certificate Transparency
+			policy as of December 2017.
+
 - ct-test-embedded-cert.pem
 - ct-test-embedded-with-intermediate-chain.pem
 - ct-test-embedded-with-intermediate-preca-chain.pem
@@ -57,9 +61,9 @@ unit tests.
 - twitter-chain.pem : A certificate chain for twitter.com which should be
      valid albeit expired.
 
-- tripadvisor-verisign-chain.pem: A certificate chain for www.tripadvisor.com
-  issued by VeriSign Class 3 Public Primary Certification Authority - G5.
-  Expires Apr 2 2018.
+- gms.hongleong.com.my-verisign-chain.pem: A certificate chain for
+  gms.hongleong.com.my issued by VeriSign Class 3 Public Primary Certification
+  Authority - G5. Expires Dec 30 2019.
 - verisign_class3_g5_crosssigned.pem: The SHA1 cross-signed version of
   VeriSign Class 3 Public Primary Certification Authority - G5
 - verisign_class3_g5_crosssigned-trusted.keychain: OSX Keychain set to Always
@@ -114,11 +118,16 @@ unit tests.
   NSS certificate nickname for a user certificate. This certificate's Subject
   field doesn't have a common name.
 
-- quic_intermediate.crt
-- quic_test_ecc.example.com.crt
-- quic_test.example.com.crt
-- quic_root.crt
-     These certificates are used by the ProofVerifier's unit tests of QUIC.
+===== From net/data/ssl/scripts/generate-quic-chain.sh
+- quic-chain.pem
+- quic-leaf-cert.key
+- quic-leaf-cert.key.pkcs8.pem
+- quic-root.pem
+     These certificates are used by integration tests that use QUIC.
+
+- quic-leaf-cert.key.sct
+     This isn't generated and just contains a simple text file (the contents
+     don't actually matter, just the presence of the file).
 
 ===== From net/data/ssl/scripts/generate-test-certs.sh
 - expired_cert.pem
@@ -180,11 +189,11 @@ unit tests.
 
 - pre_june_2016.pem
 - post_june_2016.pem
+- dec_2017.pem
    Certs to test that policies related to enforcing CT on Symantec are
-   properly gated on the issuance date. These files also contain legacy
-   Symantec roots to simulate a chain for testing the upcoming Symantec
-   distrust events; see https://g.co/chrome/symantecpkicerts. (Note,
-   however, that the leaf and root do not actually form a chain.)
+   properly gated on the issuance date. See
+   https://g.co/chrome/symantecpkicerts. (Note, however, that the leaf and
+   root do not actually form a chain.)
 
 - tls_feature_extension.pem
   A certificate that contains the TLS Feature Extension.

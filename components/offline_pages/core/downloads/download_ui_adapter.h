@@ -27,6 +27,8 @@ using OfflineContentAggregator =
     offline_items_collection::OfflineContentAggregator;
 
 namespace offline_pages {
+class ThumbnailDecoder;
+
 // C++ side of the UI Adapter. Mimics DownloadManager/Item/History (since we
 // share UI with Downloads).
 // An instance of this class is owned by OfflinePageModel and is shared between
@@ -64,9 +66,12 @@ class DownloadUIAdapter : public OfflineContentProvider,
     virtual void OpenItem(const OfflineItem& item, int64_t offline_id) = 0;
   };
 
+  // Create the adapter. thumbnail_decoder may be null, in which case,
+  // thumbnails will not be provided through GetVisualsForItem.
   DownloadUIAdapter(OfflineContentAggregator* aggregator,
                     OfflinePageModel* model,
                     RequestCoordinator* coordinator,
+                    std::unique_ptr<ThumbnailDecoder> thumbnail_decoder,
                     std::unique_ptr<Delegate> delegate);
   ~DownloadUIAdapter() override;
 
@@ -78,16 +83,18 @@ class DownloadUIAdapter : public OfflineContentProvider,
   int64_t GetOfflineIdByGuid(const std::string& guid) const;
 
   // OfflineContentProvider implmentation.
-  bool AreItemsAvailable() override;
   void OpenItem(const ContentId& id) override;
   void RemoveItem(const ContentId& id) override;
   void CancelDownload(const ContentId& id) override;
   void PauseDownload(const ContentId& id) override;
   void ResumeDownload(const ContentId& id, bool has_user_gesture) override;
-  const OfflineItem* GetItemById(const ContentId& id) override;
-  std::vector<OfflineItem> GetAllItems() override;
+  void GetItemById(
+      const ContentId& id,
+      OfflineContentProvider::SingleItemCallback callback) override;
+  void GetAllItems(
+      OfflineContentProvider::MultipleItemCallback callback) override;
   void GetVisualsForItem(const ContentId& id,
-                         const VisualsCallback& callback) override{};
+                         const VisualsCallback& callback) override;
   void AddObserver(OfflineContentProvider::Observer* observer) override;
   void RemoveObserver(OfflineContentProvider::Observer* observer) override;
 
@@ -97,6 +104,8 @@ class DownloadUIAdapter : public OfflineContentProvider,
                         const OfflinePageItem& added_page) override;
   void OfflinePageDeleted(
       const OfflinePageModel::DeletedPageInfo& page_info) override;
+  void ThumbnailAdded(OfflinePageModel* model,
+                      const OfflinePageThumbnail& thumbnail) override;
 
   // RequestCoordinator::Observer
   void OnAdded(const SavePageRequest& request) override;
@@ -111,6 +120,9 @@ class DownloadUIAdapter : public OfflineContentProvider,
   void TemporaryHiddenStatusChanged(const ClientId& client_id);
 
   Delegate* delegate() { return delegate_.get(); }
+
+  // Test method, to verify the internal cache is not loaded too early.
+  bool IsCacheLoadedForTest() { return (state_ != State::NOT_LOADED); }
 
  private:
   enum class State { NOT_LOADED, LOADING_PAGES, LOADING_REQUESTS, LOADED };
@@ -162,9 +174,11 @@ class DownloadUIAdapter : public OfflineContentProvider,
       const std::string& guid,
       std::vector<std::unique_ptr<SavePageRequest>> requests);
   void OnOfflinePagesLoaded(const MultipleOfflinePageItemResult& pages);
+  void OnThumbnailLoaded(const ContentId& content_id,
+                         const VisualsCallback& visuals_callback,
+                         std::unique_ptr<OfflinePageThumbnail>);
   void OnRequestsLoaded(std::vector<std::unique_ptr<SavePageRequest>> requests);
 
-  void NotifyItemsLoaded(OfflineContentProvider::Observer* observer);
   void OnDeletePagesDone(DeletePageResult result);
 
   void AddItemHelper(std::unique_ptr<ItemInfo> item_info);
@@ -172,6 +186,11 @@ class DownloadUIAdapter : public OfflineContentProvider,
   // while it runs, so that functions such as |GetOfflineIdByGuid| will work
   // during the |ItemDeleted| callback.
   void DeleteItemHelper(const std::string& guid);
+
+  void ReplyWithAllItems(OfflineContentProvider::MultipleItemCallback callback);
+
+  void OpenItemByGuid(const std::string& guid);
+  void RemoveItemByGuid(const std::string& guid);
 
   // A valid offline content aggregator, supplied at construction.
   OfflineContentAggregator* aggregator_;
@@ -182,6 +201,9 @@ class DownloadUIAdapter : public OfflineContentProvider,
   // Always valid, a service.
   RequestCoordinator* request_coordinator_;
 
+  // May be null if thumbnails are not required.
+  std::unique_ptr<ThumbnailDecoder> thumbnail_decoder_;
+
   // A delegate, supplied at construction.
   std::unique_ptr<Delegate> delegate_;
 
@@ -190,11 +212,18 @@ class DownloadUIAdapter : public OfflineContentProvider,
   // The cache of UI items. The key is OfflineItem.guid.
   OfflineItems items_;
 
+  // The callbacks for GetAllItems waiting for cache initialization.
+  std::vector<OfflineContentProvider::MultipleItemCallback>
+      postponed_callbacks_;
+
+  // The requests for operations with items waiting for cache initialization.
+  // std::vector<base::OnceCallback<const std::string&>> postponed_operations_;
+  std::vector<base::OnceClosure> postponed_operations_;
+
   std::unique_ptr<ItemInfo> deleting_item_;
 
   // The observers.
   base::ObserverList<OfflineContentProvider::Observer> observers_;
-  int observers_count_;
 
   base::WeakPtrFactory<DownloadUIAdapter> weak_ptr_factory_;
 

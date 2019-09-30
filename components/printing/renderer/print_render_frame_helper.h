@@ -17,15 +17,17 @@
 #include "build/build_config.h"
 #include "content/public/renderer/render_frame_observer.h"
 #include "content/public/renderer/render_frame_observer_tracker.h"
-#include "printing/features/features.h"
+#include "printing/buildflags/buildflags.h"
 #include "printing/pdf_metafile_skia.h"
-#include "third_party/WebKit/public/platform/WebCanvas.h"
-#include "third_party/WebKit/public/web/WebNode.h"
-#include "third_party/WebKit/public/web/WebPrintParams.h"
+#include "third_party/blink/public/platform/web_canvas.h"
+#include "third_party/blink/public/web/web_node.h"
+#include "third_party/blink/public/web/web_print_params.h"
 #include "ui/gfx/geometry/size.h"
 
 struct PrintMsg_Print_Params;
 struct PrintMsg_PrintPages_Params;
+struct PrintMsg_PrintFrame_Params;
+struct PrintHostMsg_DidPrintContent_Params;
 struct PrintHostMsg_SetOptionsFromDocument_Params;
 
 // RenderViewTest-based tests crash on Android
@@ -99,10 +101,6 @@ class PrintRenderFrameHelper
 
     virtual bool IsPrintPreviewEnabled() = 0;
 
-    // If true, the user can be asked to provide print settings.
-    // The default implementation returns |true|.
-    virtual bool IsAskPrintSettingsEnabled();
-
     // If false, window.print() won't do anything.
     // The default implementation returns |true|.
     virtual bool IsScriptedPrintEnabled();
@@ -153,15 +151,17 @@ class PrintRenderFrameHelper
 #endif
   };
 
+  // These values are persisted to logs. Entries should not be renumbered and
+  // numeric values should never be reused.
   enum PrintPreviewErrorBuckets {
-    PREVIEW_ERROR_NONE,  // Always first.
-    PREVIEW_ERROR_BAD_SETTING,
-    PREVIEW_ERROR_METAFILE_COPY_FAILED,
-    PREVIEW_ERROR_METAFILE_INIT_FAILED_DEPRECATED,
-    PREVIEW_ERROR_ZERO_PAGES,
-    PREVIEW_ERROR_MAC_DRAFT_METAFILE_INIT_FAILED_DEPRECATED,
-    PREVIEW_ERROR_PAGE_RENDERED_WITHOUT_METAFILE,
-    PREVIEW_ERROR_INVALID_PRINTER_SETTINGS,
+    PREVIEW_ERROR_NONE = 0,  // Always first.
+    PREVIEW_ERROR_BAD_SETTING = 1,
+    PREVIEW_ERROR_METAFILE_COPY_FAILED = 2,
+    PREVIEW_ERROR_METAFILE_INIT_FAILED_DEPRECATED = 3,
+    PREVIEW_ERROR_ZERO_PAGES = 4,
+    PREVIEW_ERROR_MAC_DRAFT_METAFILE_INIT_FAILED_DEPRECATED = 5,
+    PREVIEW_ERROR_PAGE_RENDERED_WITHOUT_METAFILE_DEPRECATED = 6,
+    PREVIEW_ERROR_INVALID_PRINTER_SETTINGS = 7,
     PREVIEW_ERROR_LAST_ENUM  // Always last.
   };
 
@@ -185,13 +185,13 @@ class PrintRenderFrameHelper
 #if BUILDFLAG(ENABLE_BASIC_PRINTING)
   void OnPrintPages();
   void OnPrintForSystemDialog();
-  void OnPrintForPrintPreview(const base::DictionaryValue& job_settings);
 #endif  // BUILDFLAG(ENABLE_BASIC_PRINTING)
 #if BUILDFLAG(ENABLE_PRINT_PREVIEW)
   void OnInitiatePrintPreview(bool has_selection);
   void OnPrintPreview(const base::DictionaryValue& settings);
   void OnClosePrintPreviewDialog();
 #endif  // BUILDFLAG(ENABLE_PRINT_PREVIEW)
+  void OnPrintFrameContent(const PrintMsg_PrintFrame_Params& params);
   void OnPrintingDone(bool success);
 
   // Get |page_size| and |content_area| information from
@@ -308,8 +308,9 @@ class PrintRenderFrameHelper
 
   // Helper methods -----------------------------------------------------------
 
-  bool CopyMetafileDataToSharedMem(const PdfMetafileSkia& metafile,
-                                   base::SharedMemoryHandle* shared_mem_handle);
+  bool CopyMetafileDataToReadOnlySharedMem(
+      const PdfMetafileSkia& metafile,
+      PrintHostMsg_DidPrintContent_Params* params);
 
   // Helper method to get page layout in points and fit to page if needed.
   static void ComputePageLayoutInPointsForCss(
@@ -359,12 +360,13 @@ class PrintRenderFrameHelper
   // Returns true if canceling, false if continuing.
   bool CheckForCancel();
 
-  // Notifies the browser a print preview page has been rendered.
+  // Notifies the browser a print preview page has been rendered for modifiable
+  // content.
   // |page_number| is 0-based.
-  // For a valid |page_number| with modifiable content,
-  // |metafile| is the rendered page. Otherwise |metafile| is NULL.
+  // |metafile| is the rendered page and should be valid.
   // Returns true if print preview should continue, false on failure.
-  bool PreviewPageRendered(int page_number, PdfMetafileSkia* metafile);
+  bool PreviewPageRendered(int page_number,
+                           std::unique_ptr<PdfMetafileSkia> metafile);
 #endif  // BUILDFLAG(ENABLE_PRINT_PREVIEW)
 
   void SetPrintPagesParams(const PrintMsg_PrintPages_Params& settings);
@@ -383,9 +385,6 @@ class PrintRenderFrameHelper
   // Let the browser process know of a printing failure. Only set to false when
   // the failure came from the browser in the first place.
   bool notify_browser_of_print_failure_;
-
-  // True, when printing from print preview.
-  bool print_for_preview_;
 
   // Used to check the prerendering status.
   const std::unique_ptr<Delegate> delegate_;
@@ -410,7 +409,8 @@ class PrintRenderFrameHelper
     bool CreatePreviewDocument(
         std::unique_ptr<PrepareFrameAndViewForPrint> prepared_frame,
         const std::vector<int>& pages,
-        SkiaDocumentType doc_type);
+        SkiaDocumentType doc_type,
+        int document_cookie);
 
     // Called after a page gets rendered. |page_time| is how long the
     // rendering took.
@@ -437,7 +437,6 @@ class PrintRenderFrameHelper
     bool IsFinalPageRendered() const;
 
     // Setters
-    void set_generate_draft_pages(bool generate_draft_pages);
     void set_error(enum PrintPreviewErrorBuckets error);
 
     // Getters
@@ -454,7 +453,6 @@ class PrintRenderFrameHelper
     const blink::WebNode& prepared_node() const;
 
     int total_page_count() const;
-    bool generate_draft_pages() const;
     PdfMetafileSkia* metafile();
     int last_error() const;
 
@@ -486,9 +484,6 @@ class PrintRenderFrameHelper
 
     // List of page indices that need to be rendered.
     std::vector<int> pages_to_render_;
-
-    // True, when draft pages needs to be generated.
-    bool generate_draft_pages_;
 
     // True, if the document source is modifiable. e.g. HTML and not PDF.
     bool is_modifiable_;

@@ -6,7 +6,6 @@
 
 #include "base/bind.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "chrome/browser/chromeos/login/oobe_screen.h"
@@ -16,8 +15,8 @@
 #include "device/bluetooth/bluetooth_adapter_factory.h"
 #include "device/bluetooth/test/mock_bluetooth_adapter.h"
 #include "services/device/public/cpp/hid/fake_input_service_linux.h"
-#include "services/device/public/interfaces/constants.mojom.h"
-#include "services/device/public/interfaces/input_service.mojom.h"
+#include "services/device/public/mojom/constants.mojom.h"
+#include "services/device/public/mojom/input_service.mojom.h"
 #include "services/service_manager/public/cpp/service_context.h"
 #include "testing/gmock/include/gmock/gmock.h"
 

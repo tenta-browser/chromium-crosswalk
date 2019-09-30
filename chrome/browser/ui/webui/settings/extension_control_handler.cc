@@ -10,8 +10,8 @@
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/profiles/profile.h"
 #include "content/public/browser/web_ui.h"
+#include "extensions/browser/disable_reason.h"
 #include "extensions/browser/extension_system.h"
-#include "extensions/common/disable_reason.h"
 
 namespace settings {
 
@@ -19,9 +19,10 @@ ExtensionControlHandler::ExtensionControlHandler() {}
 ExtensionControlHandler::~ExtensionControlHandler() {}
 
 void ExtensionControlHandler::RegisterMessages() {
-  web_ui()->RegisterMessageCallback("disableExtension",
-      base::Bind(&ExtensionControlHandler::HandleDisableExtension,
-                 base::Unretained(this)));
+  web_ui()->RegisterMessageCallback(
+      "disableExtension",
+      base::BindRepeating(&ExtensionControlHandler::HandleDisableExtension,
+                          base::Unretained(this)));
 }
 
 void ExtensionControlHandler::HandleDisableExtension(

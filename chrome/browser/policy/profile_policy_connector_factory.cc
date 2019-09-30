@@ -153,7 +153,8 @@ ProfilePolicyConnectorFactory::CreateForBrowserContextInternal(
     PolicyServiceImpl::Providers providers;
     providers.push_back(test_providers_.front());
     test_providers_.pop_front();
-    std::unique_ptr<PolicyService> service(new PolicyServiceImpl(providers));
+    std::unique_ptr<PolicyServiceImpl> service =
+        std::make_unique<PolicyServiceImpl>(std::move(providers));
     connector->InitForTesting(std::move(service));
   }
 

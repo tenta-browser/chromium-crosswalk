@@ -123,9 +123,9 @@ class TestHttpClient {
  private:
   void Write() {
     int result = socket_->Write(
-        write_buffer_.get(),
-        write_buffer_->BytesRemaining(),
-        base::Bind(&TestHttpClient::OnWrite, base::Unretained(this)));
+        write_buffer_.get(), write_buffer_->BytesRemaining(),
+        base::Bind(&TestHttpClient::OnWrite, base::Unretained(this)),
+        TRAFFIC_ANNOTATION_FOR_TESTS);
     if (result != ERR_IO_PENDING)
       OnWrite(result);
   }
@@ -487,7 +487,8 @@ TEST_F(HttpServerTest, Send200) {
   ASSERT_THAT(client.ConnectAndWait(server_address_), IsOk());
   client.Send("GET /test HTTP/1.1\r\n\r\n");
   RunUntilRequestsReceived(1);
-  server_->Send200(GetConnectionId(0), "Response!", "text/plain");
+  server_->Send200(GetConnectionId(0), "Response!", "text/plain",
+                   TRAFFIC_ANNOTATION_FOR_TESTS);
 
   std::string response;
   ASSERT_TRUE(client.ReadResponse(&response));
@@ -502,9 +503,12 @@ TEST_F(HttpServerTest, SendRaw) {
   ASSERT_THAT(client.ConnectAndWait(server_address_), IsOk());
   client.Send("GET /test HTTP/1.1\r\n\r\n");
   RunUntilRequestsReceived(1);
-  server_->SendRaw(GetConnectionId(0), "Raw Data ");
-  server_->SendRaw(GetConnectionId(0), "More Data");
-  server_->SendRaw(GetConnectionId(0), "Third Piece of Data");
+  server_->SendRaw(GetConnectionId(0), "Raw Data ",
+                   TRAFFIC_ANNOTATION_FOR_TESTS);
+  server_->SendRaw(GetConnectionId(0), "More Data",
+                   TRAFFIC_ANNOTATION_FOR_TESTS);
+  server_->SendRaw(GetConnectionId(0), "Third Piece of Data",
+                   TRAFFIC_ANNOTATION_FOR_TESTS);
 
   const std::string expected_response("Raw Data More DataThird Piece of Data");
   std::string response;
@@ -579,6 +583,7 @@ class MockStreamSocket : public StreamSocket {
     NOTIMPLEMENTED();
     return 0;
   }
+  void ApplySocketTag(const SocketTag& tag) override {}
 
   // Socket
   int Read(IOBuffer* buf,
@@ -600,9 +605,11 @@ class MockStreamSocket : public StreamSocket {
     pending_read_data_.erase(0, read_len);
     return read_len;
   }
+
   int Write(IOBuffer* buf,
             int buf_len,
-            const CompletionCallback& callback) override {
+            const CompletionCallback& callback,
+            const NetworkTrafficAnnotationTag& traffic_annotation) override {
     return ERR_NOT_IMPLEMENTED;
   }
   int SetReceiveBufferSize(int32_t size) override {
@@ -668,7 +675,8 @@ TEST_F(HttpServerTest, MultipleRequestsOnSameConnection) {
   ASSERT_EQ(body, GetRequest(0).data);
 
   int client_connection_id = GetConnectionId(0);
-  server_->Send200(client_connection_id, "Content for /test", "text/plain");
+  server_->Send200(client_connection_id, "Content for /test", "text/plain",
+                   TRAFFIC_ANNOTATION_FOR_TESTS);
   std::string response1;
   ASSERT_TRUE(client.ReadResponse(&response1));
   ASSERT_TRUE(base::StartsWith(response1, "HTTP/1.1 200 OK",
@@ -681,7 +689,7 @@ TEST_F(HttpServerTest, MultipleRequestsOnSameConnection) {
   ASSERT_EQ("/test2", GetRequest(1).path);
 
   ASSERT_EQ(client_connection_id, GetConnectionId(1));
-  server_->Send404(client_connection_id);
+  server_->Send404(client_connection_id, TRAFFIC_ANNOTATION_FOR_TESTS);
   std::string response2;
   ASSERT_TRUE(client.ReadResponse(&response2));
   ASSERT_TRUE(base::StartsWith(response2, "HTTP/1.1 404 Not Found",
@@ -692,7 +700,8 @@ TEST_F(HttpServerTest, MultipleRequestsOnSameConnection) {
   ASSERT_EQ("/test3", GetRequest(2).path);
 
   ASSERT_EQ(client_connection_id, GetConnectionId(2));
-  server_->Send200(client_connection_id, "Content for /test3", "text/plain");
+  server_->Send200(client_connection_id, "Content for /test3", "text/plain",
+                   TRAFFIC_ANNOTATION_FOR_TESTS);
   std::string response3;
   ASSERT_TRUE(client.ReadResponse(&response3));
   ASSERT_TRUE(base::StartsWith(response3, "HTTP/1.1 200 OK",

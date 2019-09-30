@@ -25,6 +25,7 @@ namespace password_manager {
 class PasswordFormMetricsRecorder;
 }
 
+struct AccountInfo;
 class PasswordsModelDelegate;
 class Profile;
 
@@ -42,6 +43,10 @@ class ManagePasswordsBubbleModel {
                              DisplayReason reason);
   ~ManagePasswordsBubbleModel();
 
+  // The method MAY BE called to record the statistics while the bubble is being
+  // closed. Otherwise, it is called later on when the model is destroyed.
+  void OnBubbleClosing();
+
   // Called by the view code when the "Nope" button in clicked by the user in
   // update bubble.
   void OnNopeUpdateClicked();
@@ -55,20 +60,22 @@ class ManagePasswordsBubbleModel {
   void OnCredentialEdited(base::string16 new_username,
                           base::string16 new_password);
 
-  // Called by the view code when the save button is clicked by the user.
+  // Called by the view code when the save/update button is clicked by the user.
   void OnSaveClicked();
 
   // Called by the view code when the update link is clicked by the user.
+  // TODO(vasilii): remove when the cocoa bubble is gone.
   void OnUpdateClicked(const autofill::PasswordForm& password_form);
 
   // Called by the view code when the "Done" button is clicked by the user.
+  // TODO(vasilii): remove when the cocoa bubble is gone.
   void OnDoneClicked();
 
-  // Called by the view code when the "OK" button is clicked by the user.
+  // TODO(vasilii): remove when the cocoa bubble is gone.
   void OnOKClicked();
 
-  // Called by the view code when the manage link is clicked by the user.
-  void OnManageLinkClicked();
+  // Called by the view code when the manage button is clicked by the user.
+  void OnManageClicked();
 
   // Called by the view code when the navigate to passwords.google.com link is
   // clicked by the user.
@@ -86,9 +93,10 @@ class ManagePasswordsBubbleModel {
   void OnPasswordAction(const autofill::PasswordForm& password_form,
                         PasswordAction action);
 
-  // Called by the view when the "Sign in" button in the promo bubble is
-  // clicked.
-  void OnSignInToChromeClicked();
+  // Called by the view when the "Sign in" button or the "Sync to" button in the
+  // promo bubble is clicked.
+  void OnSignInToChromeClicked(const AccountInfo& account,
+                               bool is_default_promo_account);
 
   // Called by the view when the "No thanks" button in the promo bubble is
   // clicked.
@@ -116,11 +124,19 @@ class ManagePasswordsBubbleModel {
     return title_brand_link_range_;
   }
 
-#if defined(UNIT_TEST)
-  void set_hide_eye_icon(bool hide) { hide_eye_icon_ = hide; }
-#endif
+  bool are_passwords_revealed_when_bubble_is_opened() const {
+    return are_passwords_revealed_when_bubble_is_opened_;
+  }
 
-  bool hide_eye_icon() const { return hide_eye_icon_; }
+#if defined(UNIT_TEST)
+  void allow_passwords_revealing() {
+    password_revealing_requires_reauth_ = false;
+  }
+
+  bool password_revealing_requires_reauth() const {
+    return password_revealing_requires_reauth_;
+  }
+#endif
 
   bool enable_editing() const { return enable_editing_; }
 
@@ -129,29 +145,39 @@ class ManagePasswordsBubbleModel {
 
   // Returns true iff the multiple account selection prompt for account update
   // should be presented.
+  // TODO(vasilii): remove when the cocoa bubble is gone.
   bool ShouldShowMultipleAccountUpdateUI() const;
+
+  // The password bubble can switch its state between "save" and "update"
+  // depending on the user input. |state_| only captures the correct state on
+  // creation. This method returns true iff the current state is "update".
+  bool IsCurrentStateUpdate() const;
+
+  // Returns the value for the username field when the bubble is opened.
+  const base::string16& GetCurrentUsername() const;
 
   // Returns true and updates the internal state iff the Save bubble should
   // switch to show a promotion after the password was saved. Otherwise,
   // returns false and leaves the current state.
   bool ReplaceToShowPromotionIfNeeded();
 
-  void SetClockForTesting(std::unique_ptr<base::Clock> clock);
+  void SetClockForTesting(base::Clock* clock);
+
+  // Returns true if passwords revealing is not locked or re-authentication is
+  // not available on the given platform. Otherwise, the method schedules
+  // re-authentication and bubble reopen (the current bubble will be destroyed),
+  // and returns false immediately. New bubble will reveal the passwords if the
+  // re-authentication is successful.
+  bool RevealPasswords();
 
  private:
-  enum UserBehaviorOnUpdateBubble {
-    UPDATE_CLICKED,
-    NOPE_CLICKED,
-    NO_INTERACTION
-  };
   class InteractionKeeper;
   // Updates |title_| and |title_brand_link_range_| for the
   // PENDING_PASSWORD_STATE.
   void UpdatePendingStateTitle();
   // Updates |title_| for the MANAGE_STATE.
   void UpdateManageStateTitle();
-  password_manager::metrics_util::UpdatePasswordSubmissionEvent
-  GetUpdateDismissalReason(UserBehaviorOnUpdateBubble behavior) const;
+
   // URL of the page from where this bubble was triggered.
   GURL origin_;
   password_manager::ui::State state_;
@@ -160,7 +186,6 @@ class ManagePasswordsBubbleModel {
   // should point to an article. For the default title the range is empty.
   gfx::Range title_brand_link_range_;
   autofill::PasswordForm pending_password_;
-  bool password_overridden_;
   std::vector<autofill::PasswordForm> local_credentials_;
   base::string16 manage_link_;
   base::string16 save_confirmation_text_;
@@ -172,8 +197,15 @@ class ManagePasswordsBubbleModel {
   // A bridge to ManagePasswordsUIController instance.
   base::WeakPtr<PasswordsModelDelegate> delegate_;
 
-  // True iff the eye icon should be hidden for privacy reasons.
-  bool hide_eye_icon_;
+  // True if the model has already recorded all the necessary statistics when
+  // the bubble is closing.
+  bool interaction_reported_;
+
+  // True iff password revealing should require re-auth for privacy reasons.
+  bool password_revealing_requires_reauth_;
+
+  // True iff bubble should pop up with revealed password value.
+  bool are_passwords_revealed_when_bubble_is_opened_;
 
   // True iff username/password editing should be enabled.
   bool enable_editing_;

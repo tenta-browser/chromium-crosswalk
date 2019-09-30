@@ -1,6 +1,6 @@
-layer at (0,0) size 1046x799 scrollHeight 2685
+layer at (0,0) size 800x600 scrollHeight 2685
   LayoutView at (0,0) size 1046x799
-layer at (0,0) size 1046x2685 backgroundClip at (0,0) size 1046x799 clip at (0,0) size 1046x799
+layer at (0,0) size 1046x2685 backgroundClip at (0,0) size 800x600 clip at (0,0) size 800x600
   LayoutBlockFlow {HTML} at (0,0) size 1046x2685
     LayoutBlockFlow {BODY} at (8,16) size 1030x2653
       LayoutBlockFlow {P} at (0,0) size 1030x20
@@ -233,11 +233,11 @@ layer at (8,0) size 606x38
           text run at (0,0) width 606: "crbug.com/303728: Header Line is absolute positioned so should not be repeated on every page."
 layer at (8,28) size 606x2 clip at (0,0) size 0x0
   LayoutBlockFlow {HR} at (0,28) size 606x2 [border: (1px inset #EEEEEE)]
-layer at (8,761) size 601x38
+layer at (8,761) size 601x38 backgroundClip at (0,0) size 800x600 clip at (0,0) size 800x600
   LayoutBlockFlow (positioned) {DIV} at (8,761) size 601x38
     LayoutBlockFlow {DIV} at (0,8) size 601x30
       LayoutBlockFlow (anonymous) at (0,10) size 601x20
         LayoutText {#text} at (0,0) size 601x19
           text run at (0,0) width 601: "crbug.com/303728: Footer Line is absolute positioned so should not be repeated on every page."
-layer at (8,769) size 601x2 clip at (0,0) size 0x0
+layer at (8,769) size 601x2 backgroundClip at (0,0) size 0x0 clip at (0,0) size 0x0
   LayoutBlockFlow {HR} at (0,0) size 601x2 [border: (1px inset #EEEEEE)]

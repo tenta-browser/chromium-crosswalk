@@ -19,8 +19,8 @@
 #include "chrome/browser/themes/custom_theme_supplier.h"
 #include "chrome/browser/themes/theme_properties.h"
 #include "chrome/browser/themes/theme_service_factory.h"
+#include "chrome/common/buildflags.h"
 #include "chrome/common/chrome_paths.h"
-#include "chrome/common/features.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile.h"
@@ -399,6 +399,26 @@ TEST_F(ThemeServiceSupervisedUserTest, SupervisedUserThemeReplacesNativeTheme) {
   EXPECT_TRUE(get_theme_supplier(theme_service));
   EXPECT_EQ(get_theme_supplier(theme_service)->get_theme_type(),
             CustomThemeSupplier::SUPERVISED_USER_THEME);
+}
+
+TEST_F(ThemeServiceTest, UserThemeTakesPrecedenceOverSystemTheme) {
+  ThemeService* theme_service =
+      ThemeServiceFactory::GetForProfile(profile_.get());
+
+  base::ScopedTempDir temp_dir;
+  ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
+  const std::string& extension_id = LoadUnpackedThemeAt(temp_dir.GetPath());
+  ASSERT_EQ(extension_id, theme_service->GetThemeID());
+
+  // Set preference |prefs::kUsesSystemTheme| to true which conflicts with
+  // having a user theme selected.
+  profile_->GetPrefs()->SetBoolean(prefs::kUsesSystemTheme, true);
+  EXPECT_TRUE(profile_->GetPrefs()->GetBoolean(prefs::kUsesSystemTheme));
+
+  // Initialization should fix the preference inconsistency.
+  theme_service->Init(profile_.get());
+  ASSERT_EQ(extension_id, theme_service->GetThemeID());
+  EXPECT_FALSE(profile_->GetPrefs()->GetBoolean(prefs::kUsesSystemTheme));
 }
 #endif // defined(OS_LINUX) && !defined(OS_CHROMEOS)
 #endif // BUILDFLAG(ENABLE_SUPERVISED_USERS)

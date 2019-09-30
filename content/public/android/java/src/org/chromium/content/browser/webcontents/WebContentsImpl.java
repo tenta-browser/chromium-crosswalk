@@ -14,8 +14,9 @@ import android.os.Parcel;
 import android.os.ParcelUuid;
 import android.os.Parcelable;
 import android.support.annotation.Nullable;
-import android.util.Pair;
 
+import org.chromium.base.Callback;
+import org.chromium.base.Log;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.VisibleForTesting;
 import org.chromium.base.annotations.CalledByNative;
@@ -23,29 +24,28 @@ import org.chromium.base.annotations.JNINamespace;
 import org.chromium.content.browser.AppWebMessagePort;
 import org.chromium.content.browser.MediaSessionImpl;
 import org.chromium.content.browser.RenderCoordinates;
+import org.chromium.content.browser.accessibility.WebContentsAccessibilityImpl;
 import org.chromium.content.browser.framehost.RenderFrameHostDelegate;
 import org.chromium.content.browser.framehost.RenderFrameHostImpl;
+import org.chromium.content.browser.selection.SelectionPopupControllerImpl;
 import org.chromium.content_public.browser.AccessibilitySnapshotCallback;
 import org.chromium.content_public.browser.AccessibilitySnapshotNode;
 import org.chromium.content_public.browser.ChildProcessImportance;
-import org.chromium.content_public.browser.ContentBitmapCallback;
 import org.chromium.content_public.browser.ImageDownloadCallback;
 import org.chromium.content_public.browser.JavaScriptCallback;
 import org.chromium.content_public.browser.MessagePort;
 import org.chromium.content_public.browser.NavigationController;
 import org.chromium.content_public.browser.RenderFrameHost;
-import org.chromium.content_public.browser.SmartClipCallback;
 import org.chromium.content_public.browser.WebContents;
+import org.chromium.content_public.browser.WebContents.UserDataFactory;
 import org.chromium.content_public.browser.WebContentsInternals;
 import org.chromium.content_public.browser.WebContentsObserver;
 import org.chromium.ui.OverscrollRefreshHandler;
 import org.chromium.ui.base.EventForwarder;
 import org.chromium.ui.base.WindowAndroid;
 
-import java.lang.annotation.Annotation;
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -56,6 +56,8 @@ import java.util.UUID;
  */
 @JNINamespace("content")
 public class WebContentsImpl implements WebContents, RenderFrameHostDelegate {
+    private static final String TAG = "cr_WebContentsImpl";
+
     private static final String PARCEL_VERSION_KEY = "version";
     private static final String PARCEL_WEBCONTENTS_KEY = "webcontents";
     private static final String PARCEL_PROCESS_GUARD_KEY = "processguard";
@@ -117,15 +119,14 @@ public class WebContentsImpl implements WebContents, RenderFrameHostDelegate {
     // the same life time as native MediaSession.
     private MediaSessionImpl mMediaSession;
 
-    class SmartClipCallbackImpl implements SmartClipCallback {
-        public SmartClipCallbackImpl(final Handler smartClipHandler) {
+    private class SmartClipCallback {
+        public SmartClipCallback(final Handler smartClipHandler) {
             mHandler = smartClipHandler;
         }
         public void storeRequestRect(Rect rect) {
             mRect = rect;
         }
 
-        @Override
         public void onSmartClipDataExtracted(String text, String html) {
             Bundle bundle = new Bundle();
             bundle.putString("url", getVisibleUrl());
@@ -142,7 +143,7 @@ public class WebContentsImpl implements WebContents, RenderFrameHostDelegate {
         Rect mRect;
         final Handler mHandler;
     }
-    private SmartClipCallbackImpl mSmartClipCallback;
+    private SmartClipCallback mSmartClipCallback;
 
     private EventForwarder mEventForwarder;
 
@@ -166,8 +167,7 @@ public class WebContentsImpl implements WebContents, RenderFrameHostDelegate {
     private InternalsHolder mInternalsHolder;
 
     private static class WebContentsInternalsImpl implements WebContentsInternals {
-        public HashSet<Object> retainedObjects;
-        public HashMap<String, Pair<Object, Class>> injectedObjects;
+        public HashMap<Class, WebContentsUserData> userDataMap;
     }
 
     private WebContentsImpl(
@@ -179,13 +179,11 @@ public class WebContentsImpl implements WebContents, RenderFrameHostDelegate {
         // inside WebContentsImpl. It holds a strong reference until an embedder invokes
         // |setInternalsHolder| to get the internals handed over to it.
         WebContentsInternalsImpl internals = new WebContentsInternalsImpl();
-        internals.retainedObjects = new HashSet<Object>();
-        internals.injectedObjects = new HashMap<String, Pair<Object, Class>>();
+        internals.userDataMap = new HashMap<>();
 
         mRenderCoordinates = new RenderCoordinates();
         mRenderCoordinates.reset();
 
-        nativeCreateJavaBridgeDispatcherHost(mNativeWebContentsAndroid, internals.retainedObjects);
         mInternalsHolder = new DefaultInternalsHolder();
         mInternalsHolder.set(internals);
     }
@@ -308,37 +306,51 @@ public class WebContentsImpl implements WebContents, RenderFrameHostDelegate {
         nativeStop(mNativeWebContentsAndroid);
     }
 
-    @Override
+    /**
+     * Cut the selected content.
+     */
     public void cut() {
         nativeCut(mNativeWebContentsAndroid);
     }
 
-    @Override
+    /**
+     * Copy the selected content.
+     */
     public void copy() {
         nativeCopy(mNativeWebContentsAndroid);
     }
 
-    @Override
+    /**
+     * Paste content from the clipboard.
+     */
     public void paste() {
         nativePaste(mNativeWebContentsAndroid);
     }
 
-    @Override
+    /**
+     * Paste content from the clipboard without format.
+     */
     public void pasteAsPlainText() {
         nativePasteAsPlainText(mNativeWebContentsAndroid);
     }
 
-    @Override
+    /**
+     * Replace the selected text with the {@code word}.
+     */
     public void replace(String word) {
         nativeReplace(mNativeWebContentsAndroid, word);
     }
 
-    @Override
+    /**
+     * Select all content.
+     */
     public void selectAll() {
         nativeSelectAll(mNativeWebContentsAndroid);
     }
 
-    @Override
+    /**
+     * Collapse the selection to the end of selection range.
+     */
     public void collapseSelection() {
         // collapseSelection may get triggered when certain selection-related widgets
         // are destroyed. As the timing for such destruction is unpredictable,
@@ -349,12 +361,22 @@ public class WebContentsImpl implements WebContents, RenderFrameHostDelegate {
 
     @Override
     public void onHide() {
+        SelectionPopupControllerImpl controller = getSelectionPopupController();
+        if (controller != null) controller.hidePopupsAndPreserveSelection();
         nativeOnHide(mNativeWebContentsAndroid);
     }
 
     @Override
     public void onShow() {
+        WebContentsAccessibilityImpl wcax = WebContentsAccessibilityImpl.fromWebContents(this);
+        if (wcax != null) wcax.refreshState();
+        SelectionPopupControllerImpl controller = getSelectionPopupController();
+        if (controller != null) controller.restoreSelectionPopupsIfNecessary();
         nativeOnShow(mNativeWebContentsAndroid);
+    }
+
+    private SelectionPopupControllerImpl getSelectionPopupController() {
+        return SelectionPopupControllerImpl.fromWebContents(this);
     }
 
     @Override
@@ -401,13 +423,6 @@ public class WebContentsImpl implements WebContents, RenderFrameHostDelegate {
     @Override
     public void exitFullscreen() {
         nativeExitFullscreen(mNativeWebContentsAndroid);
-    }
-
-    @Override
-    public void updateBrowserControlsState(
-            boolean enableHiding, boolean enableShowing, boolean animate) {
-        nativeUpdateBrowserControlsState(
-                mNativeWebContentsAndroid, enableHiding, enableShowing, animate);
     }
 
     @Override
@@ -523,7 +538,7 @@ public class WebContentsImpl implements WebContents, RenderFrameHostDelegate {
             mSmartClipCallback = null;
             return;
         }
-        mSmartClipCallback = new SmartClipCallbackImpl(smartClipHandler);
+        mSmartClipCallback = new SmartClipCallback(smartClipHandler);
     }
 
     @CalledByNative
@@ -607,14 +622,9 @@ public class WebContentsImpl implements WebContents, RenderFrameHostDelegate {
     }
 
     @Override
-    public void getContentBitmapAsync(int width, int height, ContentBitmapCallback callback) {
-        nativeGetContentBitmap(mNativeWebContentsAndroid, width, height, callback);
-    }
-
-    @CalledByNative
-    private void onGetContentBitmapFinished(ContentBitmapCallback callback, Bitmap bitmap,
-            int response) {
-        callback.onFinishGetBitmap(bitmap, response);
+    public void getContentBitmapAsync(
+            int width, int height, String path, Callback<String> callback) {
+        nativeGetContentBitmap(mNativeWebContentsAndroid, width, height, path, callback);
     }
 
     @Override
@@ -635,12 +645,16 @@ public class WebContentsImpl implements WebContents, RenderFrameHostDelegate {
         callback.onFinishDownloadImage(id, httpStatusCode, imageUrl, bitmaps, sizes);
     }
 
-    @Override
+    /**
+     * Removes handles used in text selection.
+     */
     public void dismissTextHandles() {
         nativeDismissTextHandles(mNativeWebContentsAndroid);
     }
 
-    @Override
+    /**
+     * Shows paste popup menu at the touch handle at specified location.
+     */
     public void showContextMenuAtTouchHandle(int x, int y) {
         nativeShowContextMenuAtTouchHandle(mNativeWebContentsAndroid, x, y);
     }
@@ -656,6 +670,11 @@ public class WebContentsImpl implements WebContents, RenderFrameHostDelegate {
     }
 
     @Override
+    public boolean isPictureInPictureAllowedForFullscreenVideo() {
+        return nativeIsPictureInPictureAllowedForFullscreenVideo(mNativeWebContentsAndroid);
+    }
+
+    @Override
     public @Nullable Rect getFullscreenVideoSize() {
         return nativeGetFullscreenVideoSize(mNativeWebContentsAndroid);
     }
@@ -663,6 +682,16 @@ public class WebContentsImpl implements WebContents, RenderFrameHostDelegate {
     @Override
     public void setSize(int width, int height) {
         nativeSetSize(mNativeWebContentsAndroid, width, height);
+    }
+
+    @Override
+    public int getWidth() {
+        return nativeGetWidth(mNativeWebContentsAndroid);
+    }
+
+    @Override
+    public int getHeight() {
+        return nativeGetHeight(mNativeWebContentsAndroid);
     }
 
     @CalledByNative
@@ -695,47 +724,47 @@ public class WebContentsImpl implements WebContents, RenderFrameHostDelegate {
         return new Rect(0, 0, width, height);
     }
 
-    @Override
-    public Map<String, Pair<Object, Class>> getJavascriptInterfaces() {
-        WebContentsInternals internals = mInternalsHolder.get();
-        if (internals == null) return null;
-        return ((WebContentsInternalsImpl) internals).injectedObjects;
-    }
-
-    @Override
-    public void setAllowJavascriptInterfacesInspection(boolean allow) {
-        nativeSetAllowJavascriptInterfacesInspection(mNativeWebContentsAndroid, allow);
-    }
-
-    @Override
-    public void addPossiblyUnsafeJavascriptInterface(
-            Object object, String name, Class<? extends Annotation> requiredAnnotation) {
-        if (mNativeWebContentsAndroid != 0 && object != null) {
-            Map<String, Pair<Object, Class>> jsInterface = getJavascriptInterfaces();
-            // The interface map is available as long as the callsite is alive, which should
-            // hold true since it is the callsite that is invoking this API.
-            assert jsInterface != null;
-            jsInterface.put(name, new Pair<Object, Class>(object, requiredAnnotation));
-            nativeAddJavascriptInterface(
-                    mNativeWebContentsAndroid, object, name, requiredAnnotation);
-        }
-    }
-
-    @Override
-    public void removeJavascriptInterface(String name) {
-        Map<String, Pair<Object, Class>> jsInterface = getJavascriptInterfaces();
-        assert jsInterface != null;
-        jsInterface.remove(name);
-        if (mNativeWebContentsAndroid != 0) {
-            nativeRemoveJavascriptInterface(mNativeWebContentsAndroid, name);
-        }
-    }
-
     /**
      * Returns {@link RenderCoordinates}. This method is intended for use in content layer only.
      */
     public RenderCoordinates getRenderCoordinates() {
         return mRenderCoordinates;
+    }
+
+    @Override
+    @SuppressWarnings("unchecked")
+    public <T> T getOrSetUserData(Class key, UserDataFactory<T> userDataFactory) {
+        Map<Class, WebContentsUserData> userDataMap = getUserDataMap();
+
+        // Map can be null after WebView gets gc'ed on its way to destruction.
+        if (userDataMap == null) {
+            Log.e(TAG, "UserDataMap can't be found");
+            return null;
+        }
+
+        WebContentsUserData data = userDataMap.get(key);
+        if (data == null && userDataFactory != null) {
+            assert !userDataMap.containsKey(key); // Do not allow duplicated Data
+
+            T object = userDataFactory.create(this);
+            assert key.isInstance(object);
+            userDataMap.put(key, new WebContentsUserData(object));
+            // Retrieves from the map again to return null in case |setUserData| fails
+            // to store the object.
+            data = userDataMap.get(key);
+        }
+        // Casting Object to T is safe since we make sure the object was of type T upon creation.
+        return data != null ? (T) data.getObject() : null;
+    }
+
+    /**
+     * @return {@code UserDataMap} that contains internal user data. {@code null} if
+     *         the map is already gc'ed.
+     */
+    private Map<Class, WebContentsUserData> getUserDataMap() {
+        WebContentsInternals internals = mInternalsHolder.get();
+        if (internals == null) return null;
+        return ((WebContentsInternalsImpl) internals).userDataMap;
     }
 
     // This is static to avoid exposing a public destroy method on the native side of this class.
@@ -744,8 +773,6 @@ public class WebContentsImpl implements WebContents, RenderFrameHostDelegate {
     private static native WebContents nativeFromNativePtr(long webContentsAndroidPtr);
 
     private native WindowAndroid nativeGetTopLevelNativeWindow(long nativeWebContentsAndroid);
-    private native void nativeCreateJavaBridgeDispatcherHost(
-            long nativeWebContentsAndroid, Object retainedJavascriptObjects);
     private native RenderFrameHost nativeGetMainFrame(long nativeWebContentsAndroid);
     private native String nativeGetTitle(long nativeWebContentsAndroid);
     private native String nativeGetVisibleURL(long nativeWebContentsAndroid);
@@ -772,8 +799,6 @@ public class WebContentsImpl implements WebContents, RenderFrameHostDelegate {
     private native boolean nativeFocusLocationBarByDefault(long nativeWebContentsAndroid);
     private native boolean nativeIsRenderWidgetHostViewReady(long nativeWebContentsAndroid);
     private native void nativeExitFullscreen(long nativeWebContentsAndroid);
-    private native void nativeUpdateBrowserControlsState(long nativeWebContentsAndroid,
-            boolean enableHiding, boolean enableShowing, boolean animate);
     private native void nativeScrollFocusedEditableNodeIntoView(long nativeWebContentsAndroid);
     private native void nativeSelectWordAroundCaret(long nativeWebContentsAndroid);
     private native void nativeAdjustSelectionByCharacterOffset(long nativeWebContentsAndroid,
@@ -798,8 +823,8 @@ public class WebContentsImpl implements WebContents, RenderFrameHostDelegate {
             long nativeWebContentsAndroid, AccessibilitySnapshotCallback callback);
     private native void nativeSetOverscrollRefreshHandler(
             long nativeWebContentsAndroid, OverscrollRefreshHandler nativeOverscrollRefreshHandler);
-    private native void nativeGetContentBitmap(
-            long nativeWebContentsAndroid, int width, int height, ContentBitmapCallback callback);
+    private native void nativeGetContentBitmap(long nativeWebContentsAndroid, int width, int height,
+            String path, Callback<String> callback);
     private native void nativeReloadLoFiImages(long nativeWebContentsAndroid);
     private native int nativeDownloadImage(long nativeWebContentsAndroid,
             String url, boolean isFavicon, int maxBitmapSize,
@@ -809,12 +834,11 @@ public class WebContentsImpl implements WebContents, RenderFrameHostDelegate {
             long nativeWebContentsAndroid, int x, int y);
     private native void nativeSetHasPersistentVideo(long nativeWebContentsAndroid, boolean value);
     private native boolean nativeHasActiveEffectivelyFullscreenVideo(long nativeWebContentsAndroid);
+    private native boolean nativeIsPictureInPictureAllowedForFullscreenVideo(
+            long nativeWebContentsAndroid);
     private native Rect nativeGetFullscreenVideoSize(long nativeWebContentsAndroid);
     private native void nativeSetSize(long nativeWebContentsAndroid, int width, int height);
+    private native int nativeGetWidth(long nativeWebContentsAndroid);
+    private native int nativeGetHeight(long nativeWebContentsAndroid);
     private native EventForwarder nativeGetOrCreateEventForwarder(long nativeWebContentsAndroid);
-    private native void nativeSetAllowJavascriptInterfacesInspection(
-            long nativeWebContentsAndroid, boolean allow);
-    private native void nativeAddJavascriptInterface(
-            long nativeWebContentsAndroid, Object object, String name, Class requiredAnnotation);
-    private native void nativeRemoveJavascriptInterface(long nativeWebContentsAndroid, String name);
 }

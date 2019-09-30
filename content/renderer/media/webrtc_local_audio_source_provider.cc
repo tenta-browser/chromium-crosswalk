@@ -9,15 +9,17 @@
 #include "content/renderer/media/audio_device_factory.h"
 #include "media/base/audio_fifo.h"
 #include "media/base/audio_parameters.h"
-#include "third_party/WebKit/public/platform/WebAudioSourceProviderClient.h"
-#include "third_party/WebKit/public/platform/WebSecurityOrigin.h"
-#include "third_party/WebKit/public/web/WebLocalFrame.h"
+#include "third_party/blink/public/platform/web_audio_source_provider_client.h"
+#include "third_party/blink/public/platform/web_security_origin.h"
+#include "third_party/blink/public/web/web_local_frame.h"
 
 using blink::WebVector;
 
-namespace content {
+namespace {
+static const size_t kMaxNumberOfAudioFifoBuffers = 10;
+}
 
-static const size_t kMaxNumberOfBuffers = 10;
+namespace content {
 
 // Size of the buffer that WebAudio processes each time, it is the same value
 // as AudioNode::ProcessingSizeInFrames in WebKit.
@@ -79,7 +81,7 @@ void WebRtcLocalAudioSourceProvider::OnSetFormat(
   audio_converter_->AddInput(this);
   fifo_.reset(new media::AudioFifo(
       params.channels(),
-      kMaxNumberOfBuffers * params.frames_per_buffer()));
+      kMaxNumberOfAudioFifoBuffers * params.frames_per_buffer()));
 }
 
 void WebRtcLocalAudioSourceProvider::OnReadyStateChanged(

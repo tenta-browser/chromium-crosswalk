@@ -15,7 +15,6 @@
 #include "base/i18n/break_iterator.h"
 #include "base/i18n/rtl.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_util.h"
@@ -28,7 +27,6 @@
 #include "chrome/browser/download/download_item_model.h"
 #include "chrome/browser/download/download_stats.h"
 #include "chrome/browser/download/drag_download_item.h"
-#include "chrome/browser/extensions/api/experience_sampling_private/experience_sampling.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/safe_browsing/download_protection/download_feedback_service.h"
 #include "chrome/browser/safe_browsing/download_protection/download_protection_service.h"
@@ -40,14 +38,17 @@
 #include "chrome/browser/ui/views/frame/browser_view.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/grit/generated_resources.h"
+#include "components/download/public/common/download_danger_type.h"
 #include "components/prefs/pref_service.h"
 #include "components/safe_browsing/common/safe_browsing_prefs.h"
 #include "components/vector_icons/vector_icons.h"
-#include "content/public/browser/download_danger_type.h"
+#include "content/public/browser/download_item_utils.h"
 #include "third_party/icu/source/common/unicode/uchar.h"
 #include "ui/accessibility/ax_node_data.h"
 #include "ui/base/l10n/l10n_util.h"
+#include "ui/base/l10n/time_format.h"
 #include "ui/base/resource/resource_bundle.h"
+#include "ui/base/text/bytes_formatting.h"
 #include "ui/base/theme_provider.h"
 #include "ui/events/event.h"
 #include "ui/gfx/animation/slide_animation.h"
@@ -58,6 +59,7 @@
 #include "ui/gfx/paint_vector_icon.h"
 #include "ui/gfx/text_elider.h"
 #include "ui/gfx/text_utils.h"
+#include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/animation/flood_fill_ink_drop_ripple.h"
 #include "ui/views/animation/ink_drop_highlight.h"
 #include "ui/views/animation/ink_drop_impl.h"
@@ -71,8 +73,7 @@
 #include "ui/views/widget/root_view.h"
 #include "ui/views/widget/widget.h"
 
-using content::DownloadItem;
-using extensions::ExperienceSamplingEvent;
+using download::DownloadItem;
 
 namespace {
 
@@ -125,6 +126,10 @@ const int kInterruptedAnimationDurationMs = 2500;
 // downloaded item.
 const int kDisabledOnOpenDuration = 3000;
 
+// Amount of time between accessible alert events.
+constexpr base::TimeDelta kAccessibleAlertInterval =
+    base::TimeDelta::FromSeconds(30);
+
 // The separator is drawn as a border. It's one dp wide.
 class SeparatorBorder : public views::FocusableBorder {
  public:
@@ -161,7 +166,8 @@ class SeparatorBorder : public views::FocusableBorder {
 }  // namespace
 
 DownloadItemView::DownloadItemView(DownloadItem* download_item,
-                                   DownloadShelfView* parent)
+                                   DownloadShelfView* parent,
+                                   views::View* accessible_alert)
     : shelf_(parent),
       status_text_(l10n_util::GetStringUTF16(IDS_DOWNLOAD_STATUS_STARTING)),
       dropdown_state_(NORMAL),
@@ -177,11 +183,16 @@ DownloadItemView::DownloadItemView(DownloadItem* download_item,
       disabled_while_opening_(false),
       creation_time_(base::Time::Now()),
       time_download_warning_shown_(base::Time()),
+      accessible_alert_(accessible_alert),
+      announce_accessible_alert_soon_(false),
       weak_ptr_factory_(this) {
   SetInkDropMode(InkDropMode::ON_NO_GESTURE_HANDLER);
   DCHECK(download());
   download()->AddObserver(this);
   set_context_menu_controller(this);
+
+  dropdown_button_->SetAccessibleName(l10n_util::GetStringUTF16(
+      IDS_DOWNLOAD_ITEM_DROPDOWN_BUTTON_ACCESSIBLE_TEXT));
 
   dropdown_button_->SetBorder(
       views::CreateEmptyBorder(gfx::Insets(kDropdownBorderWidth)));
@@ -207,12 +218,6 @@ DownloadItemView::DownloadItemView(DownloadItem* download_item,
 DownloadItemView::~DownloadItemView() {
   StopDownloadProgress();
   download()->RemoveObserver(this);
-
-  // ExperienceSampling: If the user took no action to remove the warning
-  // before it disappeared, then the user effectively dismissed the download
-  // without keeping it.
-  if (sampling_event_)
-    sampling_event_->CreateUserDecisionEvent(ExperienceSamplingEvent::kIgnore);
 }
 
 // Progress animation handlers.
@@ -228,6 +233,7 @@ void DownloadItemView::StartDownloadProgress() {
 }
 
 void DownloadItemView::StopDownloadProgress() {
+  accessible_alert_timer_.AbandonAndStop();
   if (!progress_timer_.IsRunning())
     return;
   previous_progress_elapsed_ += base::TimeTicks::Now() - progress_start_time_;
@@ -273,6 +279,7 @@ void DownloadItemView::MaybeSubmitDownloadToFeedbackService(
 
 // Update the progress graphic on the icon and our text status label
 // to reflect our current bytes downloaded, time remaining.
+// Also updates the accessible status view for screen reader users.
 void DownloadItemView::OnDownloadUpdated(DownloadItem* download_item) {
   DCHECK_EQ(download(), download_item);
 
@@ -284,13 +291,27 @@ void DownloadItemView::OnDownloadUpdated(DownloadItem* download_item) {
   if (IsShowingWarningDialog() != model_.IsDangerous()) {
     ToggleWarningDialog();
   } else {
+    status_text_ = model_.GetStatusText();
     switch (download()->GetState()) {
       case DownloadItem::IN_PROGRESS:
+        // No need to send accessible alert for "paused", as the button ends
+        // up being refocused in the actual use case, and the name of the
+        // button reports that the download has been paused.
+        // Reset the status counter so that user receives immediate feedback
+        // once the download is resumed.
+        if (!download()->IsPaused())
+          UpdateAccessibleAlert(GetInProgressAccessibleAlertText(), false);
         download()->IsPaused() ? StopDownloadProgress()
                                : StartDownloadProgress();
         LoadIconIfItemPathChanged();
         break;
       case DownloadItem::INTERRUPTED:
+        download()->GetFileNameToReportUser().LossyDisplayName();
+        UpdateAccessibleAlert(
+            l10n_util::GetStringFUTF16(
+                IDS_DOWNLOAD_FAILED_ACCESSIBLE_ALERT,
+                download()->GetFileNameToReportUser().LossyDisplayName()),
+            true);
         StopDownloadProgress();
         complete_animation_.reset(new gfx::SlideAnimation(this));
         complete_animation_->SetSlideDuration(kInterruptedAnimationDurationMs);
@@ -299,6 +320,11 @@ void DownloadItemView::OnDownloadUpdated(DownloadItem* download_item) {
         LoadIcon();
         break;
       case DownloadItem::COMPLETE:
+        UpdateAccessibleAlert(
+            l10n_util::GetStringFUTF16(
+                IDS_DOWNLOAD_COMPLETE_ACCESSIBLE_ALERT,
+                download()->GetFileNameToReportUser().LossyDisplayName()),
+            true);
         if (model_.ShouldRemoveFromShelfWhenComplete()) {
           shelf_->RemoveDownloadView(this);  // This will delete us!
           return;
@@ -311,6 +337,11 @@ void DownloadItemView::OnDownloadUpdated(DownloadItem* download_item) {
         LoadIcon();
         break;
       case DownloadItem::CANCELLED:
+        UpdateAccessibleAlert(
+            l10n_util::GetStringFUTF16(
+                IDS_DOWNLOAD_CANCELLED_ACCESSIBLE_ALERT,
+                download()->GetFileNameToReportUser().LossyDisplayName()),
+            true);
         StopDownloadProgress();
         if (complete_animation_)
           complete_animation_->Stop();
@@ -319,7 +350,6 @@ void DownloadItemView::OnDownloadUpdated(DownloadItem* download_item) {
       default:
         NOTREACHED();
     }
-    status_text_ = model_.GetStatusText();
     SchedulePaint();
   }
 
@@ -493,13 +523,13 @@ bool DownloadItemView::GetTooltipText(const gfx::Point& p,
 
 void DownloadItemView::GetAccessibleNodeData(ui::AXNodeData* node_data) {
   node_data->SetName(accessible_name_);
-  node_data->role = ui::AX_ROLE_BUTTON;
-  if (model_.IsDangerous()) {
-    node_data->AddIntAttribute(ui::AX_ATTR_RESTRICTION,
-                               ui::AX_RESTRICTION_DISABLED);
-  } else {
-    node_data->AddState(ui::AX_STATE_HASPOPUP);
-  }
+  node_data->role = ax::mojom::Role::kButton;
+  if (model_.IsDangerous())
+    node_data->SetRestriction(ax::mojom::Restriction::kDisabled);
+
+  // Set the description to the empty string, otherwise the tooltip will be
+  // used, which is redundant with the accessible name.
+  node_data->SetDescription(base::string16());
 }
 
 void DownloadItemView::OnThemeChanged() {
@@ -530,7 +560,7 @@ std::unique_ptr<views::InkDrop> DownloadItemView::CreateInkDrop() {
 
 std::unique_ptr<views::InkDropRipple> DownloadItemView::CreateInkDropRipple()
     const {
-  return base::MakeUnique<views::FloodFillInkDropRipple>(
+  return std::make_unique<views::FloodFillInkDropRipple>(
       size(), GetInkDropCenterBasedOnLastEvent(),
       color_utils::DeriveDefaultIconColor(GetTextColor()),
       ink_drop_visible_opacity());
@@ -539,7 +569,7 @@ std::unique_ptr<views::InkDropRipple> DownloadItemView::CreateInkDropRipple()
 std::unique_ptr<views::InkDropHighlight>
 DownloadItemView::CreateInkDropHighlight() const {
   gfx::Size size = GetPreferredSize();
-  return base::MakeUnique<views::InkDropHighlight>(
+  return std::make_unique<views::InkDropHighlight>(
       size, kInkDropSmallCornerRadius,
       gfx::RectF(gfx::SizeF(size)).CenterPoint(),
       color_utils::DeriveDefaultIconColor(GetTextColor()));
@@ -596,12 +626,6 @@ void DownloadItemView::ButtonPressed(views::Button* sender,
     // The user has confirmed a dangerous download.  We'd record how quickly the
     // user did this to detect whether we're being clickjacked.
     UMA_HISTOGRAM_LONG_TIMES("clickjacking.save_download", warning_duration);
-    // ExperienceSampling: User chose to proceed with a dangerous download.
-    if (sampling_event_) {
-      sampling_event_->CreateUserDecisionEvent(
-          ExperienceSamplingEvent::kProceed);
-      sampling_event_.reset();
-    }
     // This will call ValidateDangerousDownload(), change download state and
     // notify us.
     MaybeSubmitDownloadToFeedbackService(DownloadCommands::KEEP);
@@ -765,7 +789,8 @@ void DownloadItemView::OpenDownload() {
   UMA_HISTOGRAM_LONG_TIMES("clickjacking.open_download",
                            base::Time::Now() - creation_time_);
 
-  UpdateAccessibleName();
+  // If this is still around for the next status update, it will be read.
+  announce_accessible_alert_soon_ = true;
 
   // Calling download()->OpenDownload may delete this, so this must be
   // the last thing we do.
@@ -824,7 +849,7 @@ void DownloadItemView::UpdateColorsFromTheme() {
   if (!GetThemeProvider())
     return;
 
-  SetBorder(base::MakeUnique<SeparatorBorder>(GetThemeProvider()->GetColor(
+  SetBorder(std::make_unique<SeparatorBorder>(GetThemeProvider()->GetColor(
       ThemeProperties::COLOR_TOOLBAR_VERTICAL_SEPARATOR)));
 
   if (dangerous_download_label_)
@@ -930,17 +955,12 @@ void DownloadItemView::ToggleWarningDialog() {
 
 void DownloadItemView::ClearWarningDialog() {
   DCHECK(download()->GetDangerType() ==
-         content::DOWNLOAD_DANGER_TYPE_USER_VALIDATED);
+         download::DOWNLOAD_DANGER_TYPE_USER_VALIDATED);
   DCHECK(IsShowingWarningDialog());
 
   SetMode(NORMAL_MODE);
   dropdown_state_ = NORMAL;
 
-  // ExperienceSampling: User proceeded through the warning.
-  if (sampling_event_) {
-    sampling_event_->CreateUserDecisionEvent(ExperienceSamplingEvent::kProceed);
-    sampling_event_.reset();
-  }
   // Remove the views used by the warning dialog.
   delete save_button_;
   save_button_ = nullptr;
@@ -959,7 +979,7 @@ void DownloadItemView::ClearWarningDialog() {
 void DownloadItemView::ShowWarningDialog() {
   DCHECK(!IsShowingWarningDialog());
   time_download_warning_shown_ = base::Time::Now();
-  content::DownloadDangerType danger_type = download()->GetDangerType();
+  download::DownloadDangerType danger_type = download()->GetDangerType();
   RecordDangerousDownloadWarningShown(danger_type);
 #if defined(FULL_SAFE_BROWSING)
   if (model_.ShouldAllowDownloadFeedback()) {
@@ -968,15 +988,6 @@ void DownloadItemView::ShowWarningDialog() {
   }
 #endif
   SetMode(model_.MightBeMalicious() ? MALICIOUS_MODE : DANGEROUS_MODE);
-
-  // ExperienceSampling: Dangerous or malicious download warning is being shown
-  // to the user, so we start a new SamplingEvent and track it.
-  std::string event_name = model_.MightBeMalicious()
-                               ? ExperienceSamplingEvent::kMaliciousDownload
-                               : ExperienceSamplingEvent::kDangerousDownload;
-  sampling_event_.reset(new ExperienceSamplingEvent(
-      event_name, download()->GetURL(), download()->GetReferrerUrl(),
-      download()->GetBrowserContext()));
 
   dropdown_state_ = NORMAL;
   if (mode_ == DANGEROUS_MODE) {
@@ -1002,19 +1013,19 @@ void DownloadItemView::ShowWarningDialog() {
 
 gfx::ImageSkia DownloadItemView::GetWarningIcon() {
   switch (download()->GetDangerType()) {
-    case content::DOWNLOAD_DANGER_TYPE_DANGEROUS_URL:
-    case content::DOWNLOAD_DANGER_TYPE_DANGEROUS_CONTENT:
-    case content::DOWNLOAD_DANGER_TYPE_UNCOMMON_CONTENT:
-    case content::DOWNLOAD_DANGER_TYPE_DANGEROUS_HOST:
-    case content::DOWNLOAD_DANGER_TYPE_POTENTIALLY_UNWANTED:
-    case content::DOWNLOAD_DANGER_TYPE_DANGEROUS_FILE:
+    case download::DOWNLOAD_DANGER_TYPE_DANGEROUS_URL:
+    case download::DOWNLOAD_DANGER_TYPE_DANGEROUS_CONTENT:
+    case download::DOWNLOAD_DANGER_TYPE_UNCOMMON_CONTENT:
+    case download::DOWNLOAD_DANGER_TYPE_DANGEROUS_HOST:
+    case download::DOWNLOAD_DANGER_TYPE_POTENTIALLY_UNWANTED:
+    case download::DOWNLOAD_DANGER_TYPE_DANGEROUS_FILE:
       return gfx::CreateVectorIcon(vector_icons::kWarningIcon, kWarningIconSize,
                                    gfx::kGoogleRed700);
 
-    case content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS:
-    case content::DOWNLOAD_DANGER_TYPE_MAYBE_DANGEROUS_CONTENT:
-    case content::DOWNLOAD_DANGER_TYPE_USER_VALIDATED:
-    case content::DOWNLOAD_DANGER_TYPE_MAX:
+    case download::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS:
+    case download::DOWNLOAD_DANGER_TYPE_MAYBE_DANGEROUS_CONTENT:
+    case download::DOWNLOAD_DANGER_TYPE_USER_VALIDATED:
+    case download::DOWNLOAD_DANGER_TYPE_MAX:
       NOTREACHED();
       break;
   }
@@ -1106,6 +1117,8 @@ void DownloadItemView::Reenable() {
 
 void DownloadItemView::ReleaseDropdown() {
   SetDropdownState(NORMAL);
+  // Make sure any new status from activating a context menu option is read.
+  announce_accessible_alert_soon_ = true;
 }
 
 void DownloadItemView::UpdateAccessibleName() {
@@ -1117,12 +1130,74 @@ void DownloadItemView::UpdateAccessibleName() {
                download()->GetFileNameToReportUser().LossyDisplayName();
   }
 
-  // If the name has changed, notify assistive technology that the name
-  // has changed so they can announce it immediately.
-  if (new_name != accessible_name_) {
-    accessible_name_ = new_name;
-    NotifyAccessibilityEvent(ui::AX_EVENT_TEXT_CHANGED, true);
+  // Do not fire text changed notifications. Screen readers are notified of
+  // status changes via the accessible alert notifications, and text change
+  // notifications would be redundant.
+  accessible_name_ = new_name;
+}
+
+base::string16 DownloadItemView::GetInProgressAccessibleAlertText() {
+  // If opening when complete or there is a warning, use the full status text.
+  if (download()->GetOpenWhenComplete() || IsShowingWarningDialog()) {
+    UpdateAccessibleName();
+    return accessible_name_;
   }
+
+  // Prefer to announce the time remaining, if known.
+  base::TimeDelta remaining;
+  if (download()->TimeRemaining(&remaining)) {
+    // If complete, skip this round: a completion status update is coming soon.
+    if (remaining.is_zero())
+      return base::string16();
+    base::string16 remaining_string =
+        ui::TimeFormat::Simple(ui::TimeFormat::FORMAT_REMAINING,
+                               ui::TimeFormat::LENGTH_SHORT, remaining);
+    return l10n_util::GetStringFUTF16(
+        IDS_DOWNLOAD_STATUS_TIME_REMAINING_ACCESSIBLE_ALERT, remaining_string);
+  }
+
+  // Time remaining is unknown, try to announce percent remaining.
+  if (model_.PercentComplete() > 0) {
+    DCHECK_LE(model_.PercentComplete(), 100);
+    return l10n_util::GetStringFUTF16Int(
+        IDS_DOWNLOAD_STATUS_PERCENT_COMPLETE_ACCESSIBLE_ALERT,
+        100 - model_.PercentComplete());
+  }
+
+  // Percent remaining is also unknown, announce bytes to download.
+  base::string16 file_name =
+      download()->GetFileNameToReportUser().LossyDisplayName();
+  return l10n_util::GetStringFUTF16(
+      IDS_DOWNLOAD_STATUS_IN_PROGRESS_ACCESSIBLE_ALERT,
+      ui::FormatBytes(model_.GetTotalBytes()), file_name);
+}
+
+void DownloadItemView::UpdateAccessibleAlert(
+    const base::string16& accessible_alert_text,
+    bool is_last_update) {
+  views::ViewAccessibility& ax = accessible_alert_->GetViewAccessibility();
+  ax.OverrideRole(ax::mojom::Role::kAlert);
+  ax.OverrideName(accessible_alert_text);
+  if (is_last_update) {
+    // Last update: stop the announcement interval timer and make the last
+    // announcement immediately.
+    accessible_alert_timer_.AbandonAndStop();
+    AnnounceAccessibleAlert();
+  } else if (!accessible_alert_timer_.IsRunning()) {
+    // First update: start the announcement interval timer and make the first
+    // announcement immediately.
+    accessible_alert_timer_.Start(FROM_HERE, kAccessibleAlertInterval, this,
+                                  &DownloadItemView::AnnounceAccessibleAlert);
+    AnnounceAccessibleAlert();
+  } else if (announce_accessible_alert_soon_) {
+    accessible_alert_timer_.Reset();
+    AnnounceAccessibleAlert();
+  }
+}
+
+void DownloadItemView::AnnounceAccessibleAlert() {
+  accessible_alert_->NotifyAccessibilityEvent(ax::mojom::Event::kAlert, true);
+  announce_accessible_alert_soon_ = false;
 }
 
 void DownloadItemView::AnimateStateTransition(State from,

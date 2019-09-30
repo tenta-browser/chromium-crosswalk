@@ -4,6 +4,7 @@
 
 #include "components/offline_pages/core/prefetch/suggested_articles_observer.h"
 
+#include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/test_simple_task_runner.h"
@@ -45,12 +46,12 @@ class OfflinePageSuggestedArticlesObserverTest : public testing::Test {
         task_runner_handle_(task_runner_) {}
 
   void SetUp() override {
-    prefetch_service_test_taco_ = base::MakeUnique<PrefetchServiceTestTaco>();
+    prefetch_service_test_taco_ = std::make_unique<PrefetchServiceTestTaco>();
     test_prefetch_dispatcher_ = new TestPrefetchDispatcher();
     prefetch_service_test_taco_->SetPrefetchDispatcher(
         base::WrapUnique(test_prefetch_dispatcher_));
     prefetch_service_test_taco_->SetSuggestedArticlesObserver(
-        base::MakeUnique<SuggestedArticlesObserver>());
+        std::make_unique<SuggestedArticlesObserver>());
     prefetch_service_test_taco_->CreatePrefetchService();
   }
 

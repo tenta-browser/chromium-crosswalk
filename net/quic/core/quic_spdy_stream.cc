@@ -12,36 +12,39 @@
 #include "net/quic/core/spdy_utils.h"
 #include "net/quic/platform/api/quic_bug_tracker.h"
 #include "net/quic/platform/api/quic_logging.h"
+#include "net/quic/platform/api/quic_string.h"
 #include "net/quic/platform/api/quic_string_piece.h"
 #include "net/quic/platform/api/quic_text_utils.h"
 #include "net/spdy/core/spdy_protocol.h"
 
 using base::IntToString;
-using std::string;
 
 namespace net {
-#define ENDPOINT                                                               \
-  (session()->perspective() == Perspective::IS_SERVER ? "Server: " : "Client:" \
-                                                                     " ")
+#define ENDPOINT                                                   \
+  (session()->perspective() == Perspective::IS_SERVER ? "Server: " \
+                                                      : "Client:"  \
+                                                        " ")
 
 QuicSpdyStream::QuicSpdyStream(QuicStreamId id, QuicSpdySession* spdy_session)
-    : QuicStream(id, spdy_session),
+    : QuicStream(id, spdy_session, /*is_static=*/false),
       spdy_session_(spdy_session),
       visitor_(nullptr),
       headers_decompressed_(false),
-      priority_(kDefaultPriority),
       trailers_decompressed_(false),
       trailers_consumed_(false) {
   DCHECK_NE(kCryptoStreamId, id);
   // Don't receive any callbacks from the sequencer until headers
   // are complete.
   sequencer()->SetBlockedUntilFlush();
-  spdy_session_->RegisterStreamPriority(id, priority_);
+  if (!session()->register_streams_early()) {
+    spdy_session_->RegisterStreamPriority(id, /*is_static=*/false, priority());
+  }
 }
 
 QuicSpdyStream::~QuicSpdyStream() {
-  if (spdy_session_ != nullptr) {
-    spdy_session_->UnregisterStreamPriority(id());
+  if (spdy_session_ != nullptr && !session()->register_streams_early()) {
+    spdy_session_->UnregisterStreamPriority(id(),
+                                            /*is_static=*/false);
   }
 }
 
@@ -50,7 +53,7 @@ size_t QuicSpdyStream::WriteHeaders(
     bool fin,
     QuicReferenceCountedPointer<QuicAckListenerInterface> ack_listener) {
   size_t bytes_written = spdy_session_->WriteHeaders(
-      id(), std::move(header_block), fin, priority_, std::move(ack_listener));
+      id(), std::move(header_block), fin, priority(), std::move(ack_listener));
   if (fin) {
     // TODO(rch): Add test to ensure fin_sent_ is set whenever a fin is sent.
     set_fin_sent(true);
@@ -60,7 +63,7 @@ size_t QuicSpdyStream::WriteHeaders(
 }
 
 void QuicSpdyStream::WriteOrBufferBody(
-    const string& data,
+    const QuicString& data,
     bool fin,
     QuicReferenceCountedPointer<QuicAckListenerInterface> ack_listener) {
   WriteOrBufferData(data, fin, std::move(ack_listener));
@@ -86,8 +89,9 @@ size_t QuicSpdyStream::WriteTrailers(
   // Write the trailing headers with a FIN, and close stream for writing:
   // trailers are the last thing to be sent on a stream.
   const bool kFin = true;
-  size_t bytes_written = spdy_session_->WriteHeaders(
-      id(), std::move(trailer_block), kFin, priority_, std::move(ack_listener));
+  size_t bytes_written =
+      spdy_session_->WriteHeaders(id(), std::move(trailer_block), kFin,
+                                  priority(), std::move(ack_listener));
   set_fin_sent(kFin);
 
   // Trailers are the last thing to be sent on a stream, but if there is still
@@ -134,12 +138,6 @@ void QuicSpdyStream::ConsumeHeaderList() {
   if (FinishedReadingHeaders()) {
     sequencer()->SetUnblocked();
   }
-}
-
-void QuicSpdyStream::SetPriority(SpdyPriority priority) {
-  DCHECK_EQ(0u, stream_bytes_written());
-  spdy_session_->UpdateStreamPriority(id(), priority);
-  priority_ = priority;
 }
 
 void QuicSpdyStream::OnStreamHeadersPriority(SpdyPriority priority) {
@@ -232,6 +230,11 @@ void QuicSpdyStream::OnTrailingHeadersComplete(
       QuicStreamFrame(id(), fin, final_byte_offset, QuicStringPiece()));
 }
 
+void QuicSpdyStream::OnPriorityFrame(SpdyPriority priority) {
+  DCHECK_EQ(Perspective::IS_SERVER, session()->connection()->perspective());
+  SetPriority(priority);
+}
+
 void QuicSpdyStream::OnStreamReset(const QuicRstStreamFrame& frame) {
   if (frame.error_code != QUIC_STREAM_NO_ERROR) {
     QuicStream::OnStreamReset(frame);
@@ -300,10 +303,6 @@ bool QuicSpdyStream::FinishedReadingTrailers() const {
   } else {
     return trailers_consumed_;
   }
-}
-
-SpdyPriority QuicSpdyStream::priority() const {
-  return priority_;
 }
 
 void QuicSpdyStream::ClearSession() {

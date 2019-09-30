@@ -11,10 +11,10 @@
 #include <stddef.h>
 
 #include "build/build_config.h"
-#include "chrome/common/features.h"
+#include "chrome/common/buildflags.h"
 #include "content/public/common/url_constants.h"
-#include "media/media_features.h"
-#include "printing/features/features.h"
+#include "media/media_buildflags.h"
+#include "printing/buildflags/buildflags.h"
 
 namespace chrome {
 
@@ -26,13 +26,11 @@ namespace chrome {
 extern const char kChromeUIAboutHost[];
 extern const char kChromeUIAboutURL[];
 extern const char kChromeUIAppLauncherPageHost[];
-extern const char kChromeUIAppListStartPageHost[];
 extern const char kChromeUIAppListStartPageURL[];
 extern const char kChromeUIAppsURL[];
 extern const char kChromeUIBluetoothInternalsHost[];
 extern const char kChromeUIBookmarksHost[];
 extern const char kChromeUIBookmarksURL[];
-extern const char kChromeUICacheHost[];
 extern const char kChromeUICertificateViewerDialogHost[];
 extern const char kChromeUICertificateViewerDialogURL[];
 extern const char kChromeUICertificateViewerHost[];
@@ -98,6 +96,8 @@ extern const char kChromeUIMdUserManagerUrl[];
 extern const char kChromeUIMediaEngagementHost[];
 extern const char kChromeUIMediaRouterHost[];
 extern const char kChromeUIMediaRouterURL[];
+extern const char kChromeUIMediaRouterInternalsHost[];
+extern const char kChromeUIMediaRouterInternalsURL[];
 extern const char kChromeUIMemoryInternalsHost[];
 extern const char kChromeUINTPTilesInternalsHost[];
 extern const char kChromeUINaClHost[];
@@ -194,6 +194,8 @@ extern const char kChromeUIKeyboardOverlayHost[];
 extern const char kChromeUIKeyboardOverlayURL[];
 extern const char kChromeUIMobileSetupHost[];
 extern const char kChromeUIMobileSetupURL[];
+extern const char kChromeUIMultiDeviceSetupHost[];
+extern const char kChromeUIMultiDeviceSetupUrl[];
 extern const char kChromeUINetworkHost[];
 extern const char kChromeUIOSCreditsHost[];
 extern const char kChromeUIOSCreditsURL[];
@@ -211,6 +213,8 @@ extern const char kChromeUISysInternalsHost[];
 extern const char kChromeUITermsOemURL[];
 extern const char kChromeUIUserImageHost[];
 extern const char kChromeUIUserImageURL[];
+extern const char kChromeUIAssistantOptInHost[];
+extern const char kChromeUIAssistantOptInURL[];
 #endif  // defined(OS_CHROMEOS)
 
 #if defined(OS_WIN)
@@ -275,6 +279,9 @@ extern const char kInternetSubPage[];
 extern const char kNetworkDetailSubPage[];
 extern const char kPowerSubPage[];
 extern const char kStylusSubPage[];
+#endif
+#if defined(OS_WIN)
+extern const char kCleanupSubPage[];
 #endif
 
 // Extensions sub pages.

@@ -16,6 +16,7 @@
 #include "base/memory/memory_pressure_listener.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
+#include "base/optional.h"
 #include "base/single_thread_task_runner.h"
 #include "build/build_config.h"
 #include "gpu/command_buffer/common/activity_flags.h"
@@ -25,16 +26,12 @@
 #include "gpu/command_buffer/service/shader_translator_cache.h"
 #include "gpu/config/gpu_driver_bug_workarounds.h"
 #include "gpu/config/gpu_feature_info.h"
-#include "gpu/gpu_export.h"
+#include "gpu/ipc/service/gpu_ipc_service_export.h"
 #include "gpu/ipc/service/gpu_memory_manager.h"
 #include "ui/gfx/gpu_memory_buffer.h"
 #include "ui/gfx/native_widget_types.h"
 #include "ui/gl/gl_surface.h"
 #include "url/gurl.h"
-
-#if defined(OS_ANDROID)
-#include "base/android/application_status_listener.h"
-#endif
 
 namespace gl {
 class GLShareGroup;
@@ -48,11 +45,11 @@ class GpuChannel;
 class GpuChannelManagerDelegate;
 class GpuMemoryBufferFactory;
 class GpuWatchdogThread;
+class MailboxManager;
 class Scheduler;
 class SyncPointManager;
 
 namespace gles2 {
-class MailboxManager;
 class Outputter;
 class ProgramCache;
 }  // namespace gles2
@@ -60,7 +57,7 @@ class ProgramCache;
 // A GpuChannelManager is a thread responsible for issuing rendering commands
 // managing the lifetimes of GPU channels and forwarding IPC requests from the
 // browser process to them based on the corresponding renderer ID.
-class GPU_EXPORT GpuChannelManager {
+class GPU_IPC_SERVICE_EXPORT GpuChannelManager {
  public:
   GpuChannelManager(const GpuPreferences& gpu_preferences,
                     GpuChannelManagerDelegate* delegate,
@@ -125,19 +122,12 @@ class GPU_EXPORT GpuChannelManager {
 
 #if defined(OS_ANDROID)
   void DidAccessGpu();
-
-  void OnApplicationStateChange(base::android::ApplicationState state);
-
-  void set_low_end_mode_for_testing(bool mode) {
-    is_running_on_low_end_mode_ = mode;
-  }
-
-  void OnApplicationBackgroundedForTesting();
+  void OnApplicationBackgrounded();
 #endif
 
   bool is_exiting_for_lost_context() { return exiting_for_lost_context_; }
 
-  gles2::MailboxManager* mailbox_manager() { return mailbox_manager_.get(); }
+  MailboxManager* mailbox_manager() { return mailbox_manager_.get(); }
 
   gl::GLShareGroup* share_group() const { return share_group_.get(); }
 
@@ -150,8 +140,6 @@ class GPU_EXPORT GpuChannelManager {
 #if defined(OS_ANDROID)
   void ScheduleWakeUpGpu();
   void DoWakeUpGpu();
-
-  void OnApplicationBackgrounded();
 #endif
 
   void HandleMemoryPressure(
@@ -174,7 +162,7 @@ class GPU_EXPORT GpuChannelManager {
 
   scoped_refptr<gl::GLShareGroup> share_group_;
 
-  std::unique_ptr<gles2::MailboxManager> mailbox_manager_;
+  std::unique_ptr<MailboxManager> mailbox_manager_;
   std::unique_ptr<gles2::Outputter> outputter_;
   GpuMemoryManager gpu_memory_manager_;
   Scheduler* scheduler_;
@@ -192,10 +180,6 @@ class GPU_EXPORT GpuChannelManager {
   // transport surfaces.
   base::TimeTicks last_gpu_access_time_;
   base::TimeTicks begin_wake_up_time_;
-
-  base::android::ApplicationStatusListener application_status_listener_;
-  bool is_running_on_low_end_mode_;
-  bool is_backgrounded_for_testing_;
 #endif
 
   // Set during intentional GPU process shutdown.

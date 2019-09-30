@@ -4,6 +4,8 @@
 
 #include "chrome/browser/media/router/discovery/discovery_network_monitor_metric_observer.h"
 
+#include <memory>
+
 #include "base/test/simple_test_tick_clock.h"
 #include "base/test/test_mock_time_task_runner.h"
 #include "base/threading/thread_task_runner_handle.h"
@@ -75,12 +77,11 @@ class DiscoveryNetworkMonitorMetricObserverTest : public ::testing::Test {
  public:
   DiscoveryNetworkMonitorMetricObserverTest()
       : mock_network_change_notifier_(
-            base::MakeUnique<MockNetworkChangeNotifier>()),
+            std::make_unique<MockNetworkChangeNotifier>()),
         task_runner_(new base::TestMockTimeTaskRunner()),
         task_runner_handle_(task_runner_),
-        mock_clock_(task_runner_->GetMockTickClock()),
-        start_ticks_(mock_clock_->NowTicks()),
-        metrics_(base::MakeUnique<MockMetrics>()),
+        start_ticks_(task_runner_->NowTicks()),
+        metrics_(std::make_unique<MockMetrics>()),
         mock_metrics_(metrics_.get()),
         metric_observer_(task_runner_->GetMockTickClock(),
                          std::move(metrics_)) {}
@@ -90,10 +91,10 @@ class DiscoveryNetworkMonitorMetricObserverTest : public ::testing::Test {
   std::unique_ptr<MockNetworkChangeNotifier> mock_network_change_notifier_;
   scoped_refptr<base::TestMockTimeTaskRunner> task_runner_;
   base::ThreadTaskRunnerHandle task_runner_handle_;
-  std::unique_ptr<base::TickClock> mock_clock_;
   const base::TimeTicks start_ticks_;
   std::unique_ptr<MockMetrics> metrics_;
   MockMetrics* mock_metrics_;
+
   DiscoveryNetworkMonitorMetricObserver metric_observer_;
 };
 
@@ -304,7 +305,7 @@ TEST_F(DiscoveryNetworkMonitorMetricObserverTest,
   metric_observer_.OnNetworksChanged("network1");
 
   task_runner_->FastForwardBy(time_advance_);
-  const auto disconnect_ticks = mock_clock_->NowTicks();
+  const auto disconnect_ticks = task_runner_->NowTicks();
   mock_network_change_notifier_->SetConnectionType(
       net::NetworkChangeNotifier::CONNECTION_NONE);
   metric_observer_.OnNetworksChanged(
@@ -322,7 +323,7 @@ TEST_F(DiscoveryNetworkMonitorMetricObserverTest,
   task_runner_->RunUntilIdle();
 
   task_runner_->FastForwardBy(time_advance_);
-  const auto second_ethernet_ticks = mock_clock_->NowTicks();
+  const auto second_ethernet_ticks = task_runner_->NowTicks();
   EXPECT_CALL(*mock_metrics_, RecordTimeBetweenNetworkChangeEvents(
                                   second_ethernet_ticks - disconnect_ticks));
   EXPECT_CALL(

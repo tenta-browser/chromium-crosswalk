@@ -10,18 +10,17 @@
 
 #include "base/macros.h"
 #include "cc/test/test_image_factory.h"
-#include "cc/test/test_shared_bitmap_manager.h"
 #include "cc/test/test_task_graph_runner.h"
 #include "components/viz/common/surfaces/frame_sink_id_allocator.h"
 #include "components/viz/service/display/display.h"
 #include "components/viz/service/frame_sinks/frame_sink_manager_impl.h"
 #include "components/viz/test/test_gpu_memory_buffer_manager.h"
+#include "components/viz/test/test_shared_bitmap_manager.h"
 #include "gpu/ipc/common/surface_handle.h"
 #include "ui/compositor/compositor.h"
 
 namespace cc {
 class FrameSinkManagerImpl;
-class ResourceSettings;
 }
 
 namespace viz {
@@ -74,6 +73,8 @@ class InProcessContextFactory : public ContextFactory,
   void SetDisplayVisible(ui::Compositor* compositor, bool visible) override;
   void ResizeDisplay(ui::Compositor* compositor,
                      const gfx::Size& size) override;
+  void SetDisplayColorMatrix(ui::Compositor* compositor,
+                             const SkMatrix44& matrix) override;
   void SetDisplayColorSpace(
       ui::Compositor* compositor,
       const gfx::ColorSpace& blending_color_space,
@@ -86,10 +87,12 @@ class InProcessContextFactory : public ContextFactory,
   void IssueExternalBeginFrame(ui::Compositor* compositor,
                                const viz::BeginFrameArgs& args) override {}
   void SetOutputIsSecure(ui::Compositor* compositor, bool secure) override {}
-  const viz::ResourceSettings& GetResourceSettings() const override;
   void AddObserver(ContextFactoryObserver* observer) override;
   void RemoveObserver(ContextFactoryObserver* observer) override;
   viz::FrameSinkManagerImpl* GetFrameSinkManager() override;
+
+  SkMatrix44 GetOutputColorMatrix(Compositor* compositor) const;
+  void ResetOutputColorMatrixToIdentity(ui::Compositor* compositor);
 
  private:
   struct PerCompositorData;
@@ -98,7 +101,7 @@ class InProcessContextFactory : public ContextFactory,
 
   scoped_refptr<InProcessContextProvider> shared_main_thread_contexts_;
   scoped_refptr<InProcessContextProvider> shared_worker_context_provider_;
-  cc::TestSharedBitmapManager shared_bitmap_manager_;
+  viz::TestSharedBitmapManager shared_bitmap_manager_;
   viz::TestGpuMemoryBufferManager gpu_memory_buffer_manager_;
   cc::TestImageFactory image_factory_;
   cc::TestTaskGraphRunner task_graph_runner_;

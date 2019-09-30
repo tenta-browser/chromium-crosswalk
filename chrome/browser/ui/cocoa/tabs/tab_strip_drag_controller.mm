@@ -71,7 +71,8 @@ static BOOL PointIsInsideView(NSPoint screenPoint, NSView* view) {
 
   sourceWindowFrame_ = [sourceWindow_ frame];
   sourceTabFrame_ = [[tab view] frame];
-  sourceController_ = [sourceWindow_ windowController];
+  sourceController_ =
+      [TabWindowController tabWindowControllerForWindow:sourceWindow_];
   draggedTab_ = tab;
   tabWasDragged_ = NO;
   tearTime_ = 0.0;
@@ -185,9 +186,12 @@ static BOOL PointIsInsideView(NSPoint screenPoint, NSView* view) {
     // and call insertPlaceholderForTab:frame:.
     if (outOfTabHorizDeadZone_ || fabs(vertOffset) > kVertTearDistance) {
       tabWasDragged_ = YES;
-      [sourceController_ insertPlaceholderForTab:[draggedTab_ tabView]
-                                           frame:NSOffsetRect(sourceTabFrame_,
-                                                              horizOffset, 0)];
+      TabView* tabView = [draggedTab_ tabView];
+      [sourceController_
+          insertPlaceholderForTab:tabView
+                            frame:[tabView centerScanRect:NSOffsetRect(
+                                                              sourceTabFrame_,
+                                                              horizOffset, 0)]];
     }
 
     // Check if the tab has been pulled out of the tab strip. Emulate the
@@ -470,7 +474,7 @@ static BOOL PointIsInsideView(NSPoint screenPoint, NSView* view) {
     // Force redraw to avoid flashes of old content before returning to event
     // loop.
     [[targetController_ window] display];
-    [targetController_ showWindow:nil];
+    [[targetController_ nsWindowController] showWindow:nil];
     [draggedController_ removeOverlay];
   } else {
     // Only move the window around on screen. Make sure it's set back to
@@ -520,12 +524,11 @@ static BOOL PointIsInsideView(NSPoint screenPoint, NSView* view) {
       return NO;
   }
 
-  NSWindowController* controller = [sourceWindow_ windowController];
-  if ([controller isKindOfClass:[TabWindowController class]]) {
-    TabWindowController* realController =
-        static_cast<TabWindowController*>(controller);
+  TabWindowController* controller =
+      [TabWindowController tabWindowControllerForWindow:sourceWindow_];
+  if (controller) {
     for (TabView* tabView in tabs) {
-      if (![realController isTabDraggable:tabView])
+      if (![controller isTabDraggable:tabView])
         return NO;
     }
   }
@@ -556,13 +559,15 @@ static BOOL PointIsInsideView(NSPoint screenPoint, NSView* view) {
     // Skip windows on the wrong space.
     if (![window isOnActiveSpace])
       continue;
-    NSWindowController* controller = [window windowController];
-    if ([controller isKindOfClass:[TabWindowController class]]) {
-      TabWindowController* realController =
-          static_cast<TabWindowController*>(controller);
-      if ([realController canReceiveFrom:dragController])
-        [targets addObject:controller];
-    }
+    TabWindowController* controller =
+        [TabWindowController tabWindowControllerForWindow:window];
+    // +tabWindowControllerForWindow: moves from a window to its parent
+    // looking for a TabWindowController. This means in some cases
+    // window != dragWindow but the returned controller == dragController.
+    if (dragController == controller)
+      continue;
+    if ([controller canReceiveFrom:dragController])
+      [targets addObject:controller];
   }
   return targets;
 }

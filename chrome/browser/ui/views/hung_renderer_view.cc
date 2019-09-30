@@ -4,11 +4,11 @@
 
 #include "chrome/browser/ui/views/hung_renderer_view.h"
 
+#include <memory>
 #include <utility>
 #include <vector>
 
 #include "base/i18n/rtl.h"
-#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
@@ -17,18 +17,20 @@
 #include "chrome/browser/ui/browser_dialogs.h"
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/chrome_web_modal_dialog_manager_delegate.h"
+#include "chrome/browser/ui/hung_renderer/hung_renderer_core.h"
 #include "chrome/browser/ui/tab_contents/core_tab_helper.h"
 #include "chrome/browser/ui/tab_contents/tab_contents_iterator.h"
 #include "chrome/browser/ui/views/harmony/chrome_layout_provider.h"
 #include "chrome/browser/ui/views/harmony/chrome_typography.h"
 #include "chrome/common/chrome_constants.h"
-#include "chrome/common/crash_keys.h"
 #include "chrome/common/logging_chrome.h"
 #include "chrome/grit/generated_resources.h"
 #include "chrome/grit/theme_resources.h"
 #include "components/constrained_window/constrained_window_views.h"
 #include "components/favicon/content/content_favicon_driver.h"
 #include "components/web_modal/web_contents_modal_dialog_host.h"
+#include "content/public/browser/notification_source.h"
+#include "content/public/browser/notification_types.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/render_view_host.h"
@@ -43,7 +45,6 @@
 #include "ui/views/controls/label.h"
 #include "ui/views/layout/grid_layout.h"
 #include "ui/views/widget/widget.h"
-#include "ui/views/window/client_view.h"
 
 #if defined(OS_WIN)
 #include "chrome/browser/hang_monitor/hang_crash_dump_win.h"
@@ -58,48 +59,44 @@
 #endif
 
 using content::WebContents;
-using content::WebContentsUnresponsiveState;
 
-HungRendererDialogView* HungRendererDialogView::g_instance_ = NULL;
+HungRendererDialogView* HungRendererDialogView::g_instance_ = nullptr;
 
 ///////////////////////////////////////////////////////////////////////////////
 // HungPagesTableModel, public:
 
 HungPagesTableModel::HungPagesTableModel(Delegate* delegate)
-    : observer_(NULL),
-      delegate_(delegate) {
+    : delegate_(delegate), process_observer_(this) {}
+
+HungPagesTableModel::~HungPagesTableModel() {}
+
+content::RenderWidgetHost* HungPagesTableModel::GetRenderWidgetHost() {
+  return render_widget_host_;
 }
 
-HungPagesTableModel::~HungPagesTableModel() {
-}
-
-content::RenderProcessHost* HungPagesTableModel::GetRenderProcessHost() {
-  return tab_observers_.empty()
-             ? NULL
-             : tab_observers_[0]->web_contents()->GetMainFrame()->GetProcess();
-}
-
-content::RenderViewHost* HungPagesTableModel::GetRenderViewHost() {
-  return tab_observers_.empty() ? NULL :
-      tab_observers_[0]->web_contents()->GetRenderViewHost();
-}
-
-void HungPagesTableModel::InitForWebContents(WebContents* hung_contents) {
+void HungPagesTableModel::InitForWebContents(
+    WebContents* contents,
+    content::RenderWidgetHost* render_widget_host) {
+  process_observer_.RemoveAll();
+  notification_registrar_.RemoveAll();
+  render_widget_host_ = render_widget_host;
   tab_observers_.clear();
-  if (hung_contents) {
-    // Force hung_contents to be first.
-    if (hung_contents) {
+
+  if (contents) {
+    for (auto* hung_contents :
+         GetHungWebContentsList(contents, render_widget_host->GetProcess())) {
       tab_observers_.push_back(
-          base::MakeUnique<WebContentsObserverImpl>(this, hung_contents));
-    }
-    for (TabContentsIterator it; !it.done(); it.Next()) {
-      if (*it != hung_contents &&
-          it->GetMainFrame()->GetProcess() ==
-              hung_contents->GetMainFrame()->GetProcess())
-        tab_observers_.push_back(
-            base::MakeUnique<WebContentsObserverImpl>(this, *it));
+          std::make_unique<WebContentsObserverImpl>(this, hung_contents));
     }
   }
+
+  if (render_widget_host_) {
+    process_observer_.Add(render_widget_host_->GetProcess());
+    notification_registrar_.Add(
+        this, content::NOTIFICATION_RENDER_WIDGET_HOST_DESTROYED,
+        content::Source<content::RenderWidgetHost>(render_widget_host_));
+  }
+
   // The world is different.
   if (observer_)
     observer_->OnModelChanged();
@@ -114,14 +111,8 @@ int HungPagesTableModel::RowCount() {
 
 base::string16 HungPagesTableModel::GetText(int row, int column_id) {
   DCHECK(row >= 0 && row < RowCount());
-  base::string16 title = tab_observers_[row]->web_contents()->GetTitle();
-  if (title.empty())
-    title = CoreTabHelper::GetDefaultTitle();
-  // TODO(xji): Consider adding a special case if the title text is a URL,
-  // since those should always have LTR directionality. Please refer to
-  // http://crbug.com/6726 for more information.
-  base::i18n::AdjustStringForLocaleDirection(&title);
-  return title;
+  return GetHungWebContentsTitle(tab_observers_[row]->web_contents(),
+                                 render_widget_host_->GetProcess());
 }
 
 gfx::ImageSkia HungPagesTableModel::GetIcon(int row) {
@@ -134,6 +125,29 @@ gfx::ImageSkia HungPagesTableModel::GetIcon(int row) {
 
 void HungPagesTableModel::SetObserver(ui::TableModelObserver* observer) {
   observer_ = observer;
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// HungPagesTableModel, RenderProcessHostObserver implementation:
+
+void HungPagesTableModel::RenderProcessExited(content::RenderProcessHost* host,
+                                              base::TerminationStatus status,
+                                              int exit_code) {
+  // Notify the delegate.
+  delegate_->TabDestroyed();
+  // WARNING: we've likely been deleted.
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// HungPagesTableModel, NotificationObserver implementation:
+
+void HungPagesTableModel::Observe(int type,
+                                  const content::NotificationSource& source,
+                                  const content::NotificationDetails& details) {
+  DCHECK_EQ(content::NOTIFICATION_RENDER_WIDGET_HOST_DESTROYED, type);
+  // Notify the delegate.
+  delegate_->TabDestroyed();
+  // WARNING: we've likely been deleted.
 }
 
 void HungPagesTableModel::TabDestroyed(WebContentsObserverImpl* tab) {
@@ -161,11 +175,6 @@ HungPagesTableModel::WebContentsObserverImpl::WebContentsObserverImpl(
     HungPagesTableModel* model, WebContents* tab)
     : content::WebContentsObserver(tab),
       model_(model) {
-}
-
-void HungPagesTableModel::WebContentsObserverImpl::RenderProcessGone(
-    base::TerminationStatus status) {
-  model_->TabDestroyed(this);
 }
 
 void HungPagesTableModel::WebContentsObserverImpl::RenderViewHostChanged(
@@ -202,7 +211,7 @@ HungRendererDialogView* HungRendererDialogView::Create(
     gfx::NativeWindow context) {
   if (!g_instance_) {
     g_instance_ = new HungRendererDialogView;
-    views::DialogDelegate::CreateDialogWidget(g_instance_, context, NULL);
+    views::DialogDelegate::CreateDialogWidget(g_instance_, context, nullptr);
   }
   return g_instance_;
 }
@@ -215,7 +224,7 @@ HungRendererDialogView* HungRendererDialogView::GetInstance() {
 // static
 void HungRendererDialogView::Show(
     WebContents* contents,
-    const WebContentsUnresponsiveState& unresponsive_state) {
+    content::RenderWidgetHost* render_widget_host) {
   if (logging::DialogsAreSuppressed())
     return;
 
@@ -229,13 +238,16 @@ void HungRendererDialogView::Show(
     return;
 #endif
   HungRendererDialogView* view = HungRendererDialogView::Create(window);
-  view->ShowForWebContents(contents, unresponsive_state);
+  view->ShowForWebContents(contents, render_widget_host);
 }
 
 // static
-void HungRendererDialogView::Hide(WebContents* contents) {
+void HungRendererDialogView::Hide(
+    WebContents* contents,
+    content::RenderWidgetHost* render_widget_host) {
   if (!logging::DialogsAreSuppressed() && HungRendererDialogView::GetInstance())
-    HungRendererDialogView::GetInstance()->EndForWebContents(contents);
+    HungRendererDialogView::GetInstance()->EndForWebContents(
+        contents, render_widget_host);
 }
 
 // static
@@ -253,12 +265,12 @@ HungRendererDialogView::HungRendererDialogView()
 }
 
 HungRendererDialogView::~HungRendererDialogView() {
-  hung_pages_table_->SetModel(NULL);
+  hung_pages_table_->SetModel(nullptr);
 }
 
 void HungRendererDialogView::ShowForWebContents(
     WebContents* contents,
-    const content::WebContentsUnresponsiveState& unresponsive_state) {
+    content::RenderWidgetHost* render_widget_host) {
   DCHECK(contents && GetWidget());
 
   // Don't show the warning unless the foreground window is the frame, or this
@@ -300,30 +312,21 @@ void HungRendererDialogView::ShowForWebContents(
     // renderer may hang while this one is showing, and we don't want to reset
     // the list of hung pages for a potentially unrelated renderer while this
     // one is showing.
-    hung_pages_table_model_->InitForWebContents(contents);
+    hung_pages_table_model_->InitForWebContents(contents, render_widget_host);
 
-    info_label_->SetText(
-        l10n_util::GetPluralStringFUTF16(IDS_BROWSER_HANGMONITOR_RENDERER,
-                                         hung_pages_table_model_->RowCount()));
-    Layout();
-
-    unresponsive_state_ = unresponsive_state;
-    // Make Widget ask for the window title again.
-    GetWidget()->UpdateWindowTitle();
+    UpdateLabels();
 
     GetWidget()->Show();
   }
 }
 
-void HungRendererDialogView::EndForWebContents(WebContents* contents) {
+void HungRendererDialogView::EndForWebContents(
+    WebContents* contents,
+    content::RenderWidgetHost* render_widget_host) {
   DCHECK(contents);
   if (hung_pages_table_model_->RowCount() == 0 ||
-      hung_pages_table_model_->GetRenderProcessHost() ==
-          contents->GetMainFrame()->GetProcess()) {
-    GetWidget()->Close();
-    // Close is async, make sure we drop our references to the tab immediately
-    // (it may be going away).
-    hung_pages_table_model_->InitForWebContents(NULL);
+      hung_pages_table_model_->GetRenderWidgetHost() == render_widget_host) {
+    CloseDialogWithNoAction();
   }
 }
 
@@ -345,7 +348,7 @@ bool HungRendererDialogView::ShouldShowCloseButton() const {
 
 void HungRendererDialogView::WindowClosing() {
   // We are going to be deleted soon, so make sure our instance is destroyed.
-  g_instance_ = NULL;
+  g_instance_ = nullptr;
 }
 
 int HungRendererDialogView::GetDialogButtons() const {
@@ -354,39 +357,29 @@ int HungRendererDialogView::GetDialogButtons() const {
 
 base::string16 HungRendererDialogView::GetDialogButtonLabel(
     ui::DialogButton button) const {
-  return l10n_util::GetStringUTF16(button == ui::DIALOG_BUTTON_OK
-                                       ? IDS_BROWSER_HANGMONITOR_RENDERER_WAIT
-                                       : IDS_BROWSER_HANGMONITOR_RENDERER_END);
+  if (button == ui::DIALOG_BUTTON_CANCEL) {
+    return l10n_util::GetPluralStringFUTF16(
+        IDS_BROWSER_HANGMONITOR_RENDERER_END,
+        hung_pages_table_model_->RowCount());
+  }
+  return l10n_util::GetStringUTF16(IDS_BROWSER_HANGMONITOR_RENDERER_WAIT);
 }
 
 bool HungRendererDialogView::Cancel() {
-  auto* render_view_host = hung_pages_table_model_->GetRenderViewHost();
+  auto* render_widget_host = hung_pages_table_model_->GetRenderWidgetHost();
   bool currently_unresponsive =
-      render_view_host &&
-      render_view_host->GetWidget()->IsCurrentlyUnresponsive();
+      render_widget_host && render_widget_host->IsCurrentlyUnresponsive();
   UMA_HISTOGRAM_BOOLEAN("Stability.RendererUnresponsiveBeforeTermination",
                         currently_unresponsive);
 
   content::RenderProcessHost* rph =
-      hung_pages_table_model_->GetRenderProcessHost();
+      hung_pages_table_model_->GetRenderWidgetHost()->GetProcess();
   if (rph) {
 #if defined(OS_WIN)
-    base::StringPairs crash_keys;
-
-    crash_keys.push_back(std::make_pair(
-        crash_keys::kHungRendererOutstandingAckCount,
-        base::IntToString(unresponsive_state_.outstanding_ack_count)));
-    crash_keys.push_back(std::make_pair(
-        crash_keys::kHungRendererOutstandingEventType,
-        base::IntToString(unresponsive_state_.outstanding_event_type)));
-    crash_keys.push_back(
-        std::make_pair(crash_keys::kHungRendererLastEventType,
-                       base::IntToString(unresponsive_state_.last_event_type)));
-
     // Try to generate a crash report for the hung process.
-    CrashDumpAndTerminateHungChildProcess(rph->GetHandle(), crash_keys);
+    CrashDumpAndTerminateHungChildProcess(rph->GetHandle());
 #else
-    rph->Shutdown(content::RESULT_CODE_HUNG, false);
+    rph->Shutdown(content::RESULT_CODE_HUNG);
 #endif
   }
   return true;
@@ -419,7 +412,7 @@ void HungRendererDialogView::TabUpdated() {
 }
 
 void HungRendererDialogView::TabDestroyed() {
-  GetWidget()->Close();
+  CloseDialogWithNoAction();
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -449,7 +442,8 @@ void HungRendererDialogView::Init() {
 
   using views::GridLayout;
 
-  GridLayout* layout = GridLayout::CreateAndInstall(this);
+  GridLayout* layout =
+      SetLayoutManager(std::make_unique<views::GridLayout>(this));
   ChromeLayoutProvider* provider = ChromeLayoutProvider::Get();
 
   constexpr int kColumnSetId = 0;
@@ -473,7 +467,24 @@ void HungRendererDialogView::Init() {
 
 void HungRendererDialogView::RestartHangTimer() {
   // Start waiting again for responsiveness.
-  auto* render_view_host = hung_pages_table_model_->GetRenderViewHost();
-  if (render_view_host)
-    render_view_host->GetWidget()->RestartHangMonitorTimeoutIfNecessary();
+  auto* render_widget_host = hung_pages_table_model_->GetRenderWidgetHost();
+  if (render_widget_host)
+    render_widget_host->RestartHangMonitorTimeoutIfNecessary();
+}
+
+void HungRendererDialogView::UpdateLabels() {
+  GetWidget()->UpdateWindowTitle();
+  info_label_->SetText(l10n_util::GetPluralStringFUTF16(
+      IDS_BROWSER_HANGMONITOR_RENDERER, hung_pages_table_model_->RowCount()));
+  // Update the "Exit" button.
+  DialogModelChanged();
+}
+
+void HungRendererDialogView::CloseDialogWithNoAction() {
+  // Drop references to the tab immediately because
+  // - Close is async and we don't want hanging references, and
+  // - While the dialog is active, [X] maps to restarting the hang timer, but
+  //   while closing we don't want that action.
+  hung_pages_table_model_->InitForWebContents(nullptr, nullptr);
+  GetWidget()->Close();
 }

@@ -6,7 +6,6 @@
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
-#include "base/memory/ptr_util.h"
 #include "chrome/browser/signin/signin_manager_factory.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
@@ -20,7 +19,7 @@ class ForcedReauthenticationDialogViewBrowserTest : public DialogBrowserTest {
   ForcedReauthenticationDialogViewBrowserTest() {}
 
   // override DialogBrowserTest
-  void ShowDialog(const std::string& name) override {
+  void ShowUi(const std::string& name) override {
     Profile* profile = browser()->profile();
     SigninManager* manager = SigninManagerFactory::GetForProfile(profile);
     manager->SetAuthenticatedAccountInfo("test1", "test@xyz.com");
@@ -35,8 +34,8 @@ class ForcedReauthenticationDialogViewBrowserTest : public DialogBrowserTest {
 };
 
 IN_PROC_BROWSER_TEST_F(ForcedReauthenticationDialogViewBrowserTest,
-                       InvokeDialog_default) {
-  RunDialog();
+                       InvokeUi_default) {
+  ShowAndVerifyUi();
 }
 
 // Dialog will not be display if there is no valid browser window.

@@ -26,7 +26,6 @@ import org.chromium.chrome.browser.autofill.CardType;
 import org.chromium.chrome.browser.autofill.PersonalDataManager.AutofillProfile;
 import org.chromium.chrome.browser.autofill.PersonalDataManager.CreditCard;
 import org.chromium.chrome.browser.payments.PaymentRequestTestRule.MainActivityStartCallback;
-import org.chromium.chrome.test.ChromeActivityTestRule;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 
 import java.util.concurrent.ExecutionException;
@@ -36,10 +35,7 @@ import java.util.concurrent.TimeoutException;
  * A payment integration test for a merchant that requests payment via Bob Pay or cards.
  */
 @RunWith(ChromeJUnit4ClassRunner.class)
-@CommandLineFlags.Add({
-        ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE,
-        ChromeActivityTestRule.DISABLE_NETWORK_PREDICTION_FLAG,
-})
+@CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
 public class PaymentRequestPaymentAppAndCardsTest implements MainActivityStartCallback {
     @Rule
     public PaymentRequestTestRule mPaymentRequestTestRule =
@@ -191,8 +187,8 @@ public class PaymentRequestPaymentAppAndCardsTest implements MainActivityStartCa
                     R.id.card_unmask_input, "123", mPaymentRequestTestRule.getReadyToUnmask());
             mPaymentRequestTestRule.clickCardUnmaskButtonAndWait(
                     DialogInterface.BUTTON_POSITIVE, mPaymentRequestTestRule.getDismissed());
-            mPaymentRequestTestRule.expectResultContains(
-                    new String[] {"Jon Doe", "4111111111111111", "12", "2050", "visa", "123"});
+            mPaymentRequestTestRule.expectResultContains(new String[] {
+                    "Jon Doe", "4111111111111111", "12", "2050", "basic-card", "123"});
         }
     }
 }

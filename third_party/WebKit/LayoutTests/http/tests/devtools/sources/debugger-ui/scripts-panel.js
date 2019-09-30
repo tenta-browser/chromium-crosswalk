@@ -14,7 +14,7 @@
   }
 
   function createNavigatorView() {
-    var navigatorView = new Sources.SourcesNavigatorView();
+    var navigatorView = new Sources.NetworkNavigatorView();
     navigatorView.show(UI.inspectorView.element);
     return navigatorView;
   }
@@ -25,7 +25,7 @@
     TestRunner.addResult('Source requested for ' + this.url());
   }
 
-  Bindings.NetworkProject.forTarget(TestRunner.mainTarget)._resetForTest();
+  Bindings.debuggerWorkspaceBinding._resetForTest(TestRunner.mainTarget);
   Bindings.resourceMapping._resetForTest(TestRunner.mainTarget);
   var page = new SDKTestRunner.PageMock('http://example.com');
   SDKTestRunner.connectToPage('mock-page', page, true /* makeMainTarget */);

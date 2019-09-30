@@ -17,13 +17,11 @@
 #include "chrome/browser/devtools/protocol/protocol.h"
 #include "content/public/browser/devtools_agent_host_observer.h"
 #include "content/public/browser/devtools_manager_delegate.h"
-#include "net/base/host_port_pair.h"
 
 class ChromeDevToolsSession;
+using RemoteLocations = std::set<net::HostPortPair>;
 
-class ChromeDevToolsManagerDelegate :
-    public content::DevToolsManagerDelegate,
-    public content::DevToolsAgentHostObserver {
+class ChromeDevToolsManagerDelegate : public content::DevToolsManagerDelegate {
  public:
   static const char kTypeApp[];
   static const char kTypeBackgroundPage[];
@@ -31,45 +29,34 @@ class ChromeDevToolsManagerDelegate :
   ChromeDevToolsManagerDelegate();
   ~ChromeDevToolsManagerDelegate() override;
 
+  static ChromeDevToolsManagerDelegate* GetInstance();
+  void UpdateDeviceDiscovery();
+
  private:
-  class HostData;
   friend class DevToolsManagerDelegateTest;
-  using RemoteLocations = std::set<net::HostPortPair>;
 
   // content::DevToolsManagerDelegate implementation.
   void Inspect(content::DevToolsAgentHost* agent_host) override;
   bool HandleCommand(content::DevToolsAgentHost* agent_host,
-                     int session_id,
+                     content::DevToolsAgentHostClient* client,
                      base::DictionaryValue* command_dict) override;
   std::string GetTargetType(content::WebContents* web_contents) override;
   std::string GetTargetTitle(content::WebContents* web_contents) override;
-  void SessionCreated(content::DevToolsAgentHost* agent_host,
-                      int session_id) override;
-  void SessionDestroyed(content::DevToolsAgentHost* agent_host,
-                        int session_id) override;
+  void ClientAttached(content::DevToolsAgentHost* agent_host,
+                      content::DevToolsAgentHostClient* client) override;
+  void ClientDetached(content::DevToolsAgentHost* agent_host,
+                      content::DevToolsAgentHostClient* client) override;
   scoped_refptr<content::DevToolsAgentHost> CreateNewTarget(
       const GURL& url) override;
   std::string GetDiscoveryPageHTML() override;
-  std::string GetFrontendResource(const std::string& path) override;
+  bool HasBundledFrontendResources() override;
 
-  // content::DevToolsAgentHostObserver overrides.
-  void DevToolsAgentHostAttached(
-      content::DevToolsAgentHost* agent_host) override;
-  void DevToolsAgentHostDetached(
-      content::DevToolsAgentHost* agent_host) override;
-
-  void UpdateDeviceDiscovery();
   void DevicesAvailable(
       const DevToolsDeviceDiscovery::CompleteDevices& devices);
 
-  std::unique_ptr<base::DictionaryValue> SetRemoteLocations(
-      content::DevToolsAgentHost* agent_host,
-      int command_id,
-      base::DictionaryValue* params);
-
-  std::map<content::DevToolsAgentHost*, std::unique_ptr<HostData>> host_data_;
-
-  std::map<int, std::unique_ptr<ChromeDevToolsSession>> sessions_;
+  std::map<content::DevToolsAgentHostClient*,
+           std::unique_ptr<ChromeDevToolsSession>>
+      sessions_;
 
   std::unique_ptr<AndroidDeviceManager> device_manager_;
   std::unique_ptr<DevToolsDeviceDiscovery> device_discovery_;

@@ -14,7 +14,6 @@
 #include "components/cryptauth/device_to_device_authenticator.h"
 #include "components/cryptauth/remote_device.h"
 #include "components/cryptauth/secure_context.h"
-#include "components/cryptauth/secure_message_delegate.h"
 
 namespace cryptauth {
 
@@ -37,12 +36,15 @@ class SecureChannel : public ConnectionObserver {
   //       process of authenticating via a 3-message authentication handshake.
   //   AUTHENTICATED: The connection has been authenticated, and arbitrary
   //       messages can be sent/received to/from the device.
+  //   DISCONNECTING: The connection has started disconnecting but has not yet
+  //       finished.
   enum class Status {
     DISCONNECTED,
     CONNECTING,
     CONNECTED,
     AUTHENTICATING,
     AUTHENTICATED,
+    DISCONNECTING
   };
 
   static std::string StatusToString(const Status& status);

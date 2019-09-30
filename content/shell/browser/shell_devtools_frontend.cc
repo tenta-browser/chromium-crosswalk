@@ -19,8 +19,8 @@ namespace content {
 namespace {
 static GURL GetFrontendURL() {
   int port = ShellDevToolsManagerDelegate::GetHttpHandlerPort();
-  return GURL(
-      base::StringPrintf("http://127.0.0.1:%d/devtools/inspector.html", port));
+  return GURL(base::StringPrintf(
+      "http://127.0.0.1:%d/devtools/devtools_app.html", port));
 }
 }  // namespace
 
@@ -49,6 +49,10 @@ void ShellDevToolsFrontend::InspectElementAt(int x, int y) {
 
 void ShellDevToolsFrontend::Close() {
   frontend_shell_->Close();
+}
+
+void ShellDevToolsFrontend::DocumentAvailableInMainFrame() {
+  devtools_bindings_->Attach();
 }
 
 void ShellDevToolsFrontend::WebContentsDestroyed() {

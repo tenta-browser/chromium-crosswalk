@@ -14,7 +14,6 @@
 #include "ash/system/date/date_view.h"
 #include "ash/system/power/battery_notification.h"
 #include "ash/system/power/dual_role_notification.h"
-#include "ash/system/system_notifier.h"
 #include "ash/system/tray/tray_constants.h"
 #include "ash/system/tray/tray_item_view.h"
 #include "ash/system/tray/tray_utils.h"
@@ -28,8 +27,8 @@
 #include "ui/gfx/image/image_skia_source.h"
 #include "ui/gfx/paint_vector_icon.h"
 #include "ui/message_center/message_center.h"
-#include "ui/message_center/notification.h"
-#include "ui/message_center/notification_delegate.h"
+#include "ui/message_center/public/cpp/notification.h"
+#include "ui/message_center/public/cpp/notification_delegate.h"
 #include "ui/views/controls/image_view.h"
 #include "ui/views/view.h"
 
@@ -37,6 +36,8 @@ using message_center::MessageCenter;
 using message_center::Notification;
 
 namespace ash {
+
+const char kNotifierPower[] = "ash.power";
 
 // Informs the TrayPower instance when a USB notification is closed.
 class UsbNotificationDelegate : public message_center::NotificationDelegate {
@@ -105,7 +106,7 @@ class PowerTrayView : public TrayItemView {
   // Overridden from views::View.
   void GetAccessibleNodeData(ui::AXNodeData* node_data) override {
     node_data->SetName(accessible_name_);
-    node_data->role = ui::AX_ROLE_BUTTON;
+    node_data->role = ax::mojom::Role::kButton;
   }
 
   void UpdateStatus(bool battery_alert) {
@@ -114,7 +115,7 @@ class PowerTrayView : public TrayItemView {
 
     if (battery_alert) {
       accessible_name_ = PowerStatus::Get()->GetAccessibleNameString(true);
-      NotifyAccessibilityEvent(ui::AX_EVENT_ALERT, true);
+      NotifyAccessibilityEvent(ax::mojom::Event::kAlert, true);
     }
   }
 
@@ -148,13 +149,7 @@ const int TrayPower::kNoWarningPercentage = 15;
 const char TrayPower::kUsbNotificationId[] = "usb-charger";
 
 TrayPower::TrayPower(SystemTray* system_tray, MessageCenter* message_center)
-    : SystemTrayItem(system_tray, UMA_POWER),
-      message_center_(message_center),
-      power_tray_(nullptr),
-      notification_state_(NOTIFICATION_NONE),
-      usb_charger_was_connected_(false),
-      line_power_was_connected_(false),
-      usb_notification_dismissed_(false) {
+    : SystemTrayItem(system_tray, UMA_POWER), message_center_(message_center) {
   PowerStatus::Get()->AddObserver(this);
 }
 
@@ -209,6 +204,7 @@ void TrayPower::OnPowerStatusChanged() {
     battery_notification_->Update(notification_state_);
   }
 
+  battery_was_full_ = PowerStatus::Get()->IsBatteryFull();
   usb_charger_was_connected_ = PowerStatus::Get()->IsUsbChargerConnected();
   line_power_was_connected_ = PowerStatus::Get()->IsLinePowerConnected();
 }
@@ -217,33 +213,31 @@ bool TrayPower::MaybeShowUsbChargerNotification() {
   ui::ResourceBundle& rb = ui::ResourceBundle::GetSharedInstance();
   const PowerStatus& status = *PowerStatus::Get();
 
-  bool usb_charger_is_connected = status.IsUsbChargerConnected();
+  // We show the notification if a USB charger is connected but the battery
+  // isn't full (since some ECs may choose to use a lower power rail when the
+  // battery is full even when a high-power charger is connected).
+  const bool show = status.IsUsbChargerConnected() && !status.IsBatteryFull();
 
-  // Check for a USB charger being connected.
-  if (usb_charger_is_connected && !usb_charger_was_connected_ &&
-      !usb_notification_dismissed_) {
+  // Check if the notification needs to be created.
+  if (show && !usb_charger_was_connected_ && !usb_notification_dismissed_) {
     std::unique_ptr<Notification> notification =
-        system_notifier::CreateSystemNotification(
+        Notification::CreateSystemNotification(
             message_center::NOTIFICATION_TYPE_SIMPLE, kUsbNotificationId,
             rb.GetLocalizedString(IDS_ASH_STATUS_TRAY_LOW_POWER_CHARGER_TITLE),
             ui::SubstituteChromeOSDeviceType(
                 IDS_ASH_STATUS_TRAY_LOW_POWER_CHARGER_MESSAGE_SHORT),
-            rb.GetImageNamed(IDR_AURA_NOTIFICATION_LOW_POWER_CHARGER),
-            base::string16(), GURL(),
+            gfx::Image(), base::string16(), GURL(),
             message_center::NotifierId(
-                message_center::NotifierId::SYSTEM_COMPONENT,
-                system_notifier::kNotifierPower),
+                message_center::NotifierId::SYSTEM_COMPONENT, kNotifierPower),
             message_center::RichNotificationData(),
-            new UsbNotificationDelegate(this), kNotificationLowPowerBatteryIcon,
+            new UsbNotificationDelegate(this), kNotificationLowPowerChargerIcon,
             message_center::SystemNotificationWarningLevel::WARNING);
-    // TODO(tetsui): Workaround of https://crbug.com/757724. Remove after the
-    // bug is fixed.
-    notification->set_vector_small_image(gfx::kNoneIcon);
+    notification->set_priority(message_center::SYSTEM_PRIORITY);
     message_center_->AddNotification(std::move(notification));
     return true;
-  } else if (!usb_charger_is_connected && usb_charger_was_connected_) {
-    // USB charger was unplugged or was identified as a different type while
-    // the USB charger notification was showing.
+  } else if (!show && usb_charger_was_connected_ && !battery_was_full_) {
+    // USB charger was unplugged or identified as a different type or battery
+    // reached the full state while the notification was showing.
     message_center_->RemoveNotification(kUsbNotificationId, false);
     if (!status.IsLinePowerConnected())
       usb_notification_dismissed_ = false;

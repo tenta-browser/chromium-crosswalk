@@ -5,11 +5,13 @@
 #include "ui/app_list/views/search_result_answer_card_view.h"
 
 #include <memory>
+#include <utility>
 
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/unguessable_token.h"
 #include "ui/accessibility/ax_node_data.h"
+#include "ui/app_list/answer_card_contents_registry.h"
 #include "ui/app_list/app_list_constants.h"
 #include "ui/app_list/test/app_list_test_view_delegate.h"
 #include "ui/app_list/test/test_search_result.h"
@@ -37,22 +39,24 @@ class SearchResultAnswerCardViewTest : public views::ViewsTestBase {
 
     result_container_view_ = new SearchResultAnswerCardView(&view_delegate_);
     search_card_view_->AddChildView(result_container_view_);
-    result_container_view_->SetResults(view_delegate_.GetModel()->results());
+    result_container_view_->SetResults(
+        view_delegate_.GetSearchModel()->results());
 
     result_view_ = std::make_unique<views::View>();
     result_view_->set_owned_by_client();
+    token_ = contents_registry_.Register(result_view_.get());
 
     SetUpSearchResult();
   }
 
  protected:
   void SetUpSearchResult() {
-    AppListModel::SearchResults* results = GetResults();
+    SearchModel::SearchResults* results = GetResults();
     std::unique_ptr<TestSearchResult> result =
         std::make_unique<TestSearchResult>();
-    result->set_display_type(SearchResult::DISPLAY_CARD);
+    result->set_display_type(ash::SearchResultDisplayType::kCard);
     result->set_title(base::UTF8ToUTF16(kResultTitle));
-    result->set_view(result_view_.get());
+    result->set_answer_card_contents_token(token_);
     result->set_relevance(kRelevance);
     results->Add(std::move(result));
 
@@ -80,8 +84,8 @@ class SearchResultAnswerCardViewTest : public views::ViewsTestBase {
     return result_container_view_->OnKeyPressed(event);
   }
 
-  AppListModel::SearchResults* GetResults() {
-    return view_delegate_.GetModel()->results();
+  SearchModel::SearchResults* GetResults() {
+    return view_delegate_.GetSearchModel()->results();
   }
 
   views::View* search_card_view() const { return search_card_view_.get(); }
@@ -115,6 +119,9 @@ class SearchResultAnswerCardViewTest : public views::ViewsTestBase {
   // result_container_view_. Has set_owned_by_client() called.
   std::unique_ptr<views::View> result_view_;
 
+  AnswerCardContentsRegistry contents_registry_;
+  base::UnguessableToken token_;
+
   DISALLOW_COPY_AND_ASSIGN(SearchResultAnswerCardViewTest);
 };
 
@@ -129,14 +136,6 @@ TEST_F(SearchResultAnswerCardViewTest, Basic) {
 
   EXPECT_EQ(0, GetSelectedIndex());
   EXPECT_EQ(1, GetYSize());
-}
-
-TEST_F(SearchResultAnswerCardViewTest, ButtonBackground) {
-  views::View* button = result_view()->parent();
-  EXPECT_EQ(kAnswerCardSelectedColor, button->background()->get_color());
-
-  ClearSelectedIndex();
-  EXPECT_EQ(nullptr, button->background());
 }
 
 TEST_F(SearchResultAnswerCardViewTest, KeyboardEvents) {
@@ -158,8 +157,9 @@ TEST_F(SearchResultAnswerCardViewTest, KeyboardEvents) {
 TEST_F(SearchResultAnswerCardViewTest, SpokenFeedback) {
   ui::AXNodeData node_data;
   GetAccessibleNodeData(&node_data);
-  EXPECT_EQ(ui::AX_ROLE_GENERIC_CONTAINER, node_data.role);
-  EXPECT_EQ(kResultTitle, node_data.GetStringAttribute(ui::AX_ATTR_NAME));
+  EXPECT_EQ(ax::mojom::Role::kGenericContainer, node_data.role);
+  EXPECT_EQ(kResultTitle,
+            node_data.GetStringAttribute(ax::mojom::StringAttribute::kName));
 }
 
 TEST_F(SearchResultAnswerCardViewTest, DeleteResult) {

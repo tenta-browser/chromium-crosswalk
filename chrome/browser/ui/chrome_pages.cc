@@ -6,6 +6,8 @@
 
 #include <stddef.h>
 
+#include <memory>
+
 #include "base/feature_list.h"
 #include "base/logging.h"
 #include "base/macros.h"
@@ -18,6 +20,7 @@
 #include "chrome/browser/extensions/launch_util.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
+#include "chrome/browser/signin/account_consistency_mode_manager.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/browser_navigator_params.h"
@@ -169,13 +172,37 @@ std::string GenerateContentSettingsExceptionsSubPage(ContentSettingsType type) {
   return std::string(kContentSettingsSubPage) + "/" + content_type_path;
 }
 
+void ShowSiteSettingsImpl(Browser* browser, Profile* profile, const GURL& url) {
+  // If a valid non-file origin, open a settings page specific to the current
+  // origin of the page. Otherwise, open Content Settings.
+  url::Origin site_origin = url::Origin::Create(url);
+  std::string link_destination(chrome::kChromeUIContentSettingsURL);
+  // TODO(https://crbug.com/444047): Site Details should work with file:// urls
+  // when this bug is fixed, so add it to the whitelist when that happens.
+  if (!site_origin.unique() && (url.SchemeIsHTTPOrHTTPS() ||
+                                url.SchemeIs(extensions::kExtensionScheme))) {
+    std::string origin_string = site_origin.Serialize();
+    url::RawCanonOutputT<char> percent_encoded_origin;
+    url::EncodeURIComponent(origin_string.c_str(), origin_string.length(),
+                            &percent_encoded_origin);
+    link_destination = chrome::kChromeUISiteDetailsPrefixURL +
+                       std::string(percent_encoded_origin.data(),
+                                   percent_encoded_origin.length());
+  }
+  NavigateParams params(profile, GURL(link_destination),
+                        ui::PAGE_TRANSITION_TYPED);
+  params.disposition = WindowOpenDisposition::NEW_FOREGROUND_TAB;
+  params.browser = browser;
+  Navigate(&params);
+}
+
 }  // namespace
 
 void ShowBookmarkManager(Browser* browser) {
   base::RecordAction(UserMetricsAction("ShowBookmarkManager"));
   NavigateParams params(
       GetSingletonTabNavigateParams(browser, GURL(kChromeUIBookmarksURL)));
-  params.path_behavior = NavigateParams::IGNORE_AND_STAY_PUT;
+  params.path_behavior = NavigateParams::IGNORE_AND_NAVIGATE;
   ShowSingletonTabOverwritingNTP(browser, params);
 }
 
@@ -318,26 +345,12 @@ void ShowContentSettingsExceptionsForProfile(
 }
 
 void ShowSiteSettings(Browser* browser, const GURL& url) {
-  // If a valid non-file origin, open a settings page specific to the current
-  // origin of the page. Otherwise, open Content Settings.
-  url::Origin site_origin = url::Origin::Create(url);
-  std::string link_destination(chrome::kChromeUIContentSettingsURL);
-  // TODO(https://crbug.com/444047): Site Details should work with file:// urls
-  // when this bug is fixed, so add it to the whitelist when that happens.
-  if (!site_origin.unique() && (url.SchemeIsHTTPOrHTTPS() ||
-                                url.SchemeIs(extensions::kExtensionScheme))) {
-    std::string origin_string = site_origin.Serialize();
-    url::RawCanonOutputT<char> percent_encoded_origin;
-    url::EncodeURIComponent(origin_string.c_str(), origin_string.length(),
-                            &percent_encoded_origin);
-    link_destination = chrome::kChromeUISiteDetailsPrefixURL +
-                       std::string(percent_encoded_origin.data(),
-                                   percent_encoded_origin.length());
-  }
-  browser->OpenURL(
-      content::OpenURLParams(GURL(link_destination), content::Referrer(),
-                             WindowOpenDisposition::NEW_FOREGROUND_TAB,
-                             ui::PAGE_TRANSITION_TYPED, false));
+  ShowSiteSettingsImpl(browser, browser->profile(), url);
+}
+
+void ShowSiteSettings(Profile* profile, const GURL& url) {
+  DCHECK(profile);
+  ShowSiteSettingsImpl(nullptr, profile, url);
 }
 
 void ShowContentSettings(Browser* browser,
@@ -393,36 +406,41 @@ void ShowBrowserSignin(Browser* browser,
   // a browser window from the original profile. The user cannot sign in
   // from an incognito window.
   auto displayer =
-      base::MakeUnique<ScopedTabbedBrowserDisplayer>(original_profile);
+      std::make_unique<ScopedTabbedBrowserDisplayer>(original_profile);
   browser = displayer->browser();
 
 #if defined(OS_CHROMEOS)
   // ChromeOS doesn't have the avatar bubble.
-  const bool can_show_avatar_bubble = false;
+  const bool show_full_tab_chrome_signin_page = true;
 #else
-  // The sign-in modal dialog is presented as a tab-modal dialog (which is
-  // automatically dismissed when the page navigates). Displaying the dialog on
-  // a new tab that loads any page will lead to it being dismissed as soon as
-  // the new tab is loaded. So the sign-in dialog must only be presented on top
-  // of an existing tab.
+  // When Desktop Identity Consistency (aka DICE) is not enabled, Chrome uses
+  // a modal sign-in dialog for signing in. This sign-in modal dialog is
+  // presented as a tab-modal dialog (which is automatically dismissed when
+  // the page navigates). Displaying the dialog on a new tab that loads any
+  // page will lead to it being dismissed as soon as the new tab is loaded.
+  // So the sign-in dialog must only be presented on top of an existing tab.
   //
   // If ScopedTabbedBrowserDisplayer had to create a (non-incognito) Browser*,
   // it won't have any tabs yet. Fallback to the full-tab sign-in flow in this
   // case.
-  const bool can_show_avatar_bubble = !browser->tab_strip_model()->empty();
+  const bool show_full_tab_chrome_signin_page =
+      !signin::DiceMethodGreaterOrEqual(
+          AccountConsistencyModeManager::GetMethodForProfile(
+              browser->profile()),
+          signin::AccountConsistencyMethod::kDicePrepareMigration) &&
+      browser->tab_strip_model()->empty();
 #endif  // defined(OS_CHROMEOS)
-
-  if (can_show_avatar_bubble) {
-    browser->window()->ShowAvatarBubbleFromAvatarButton(
-        BrowserWindow::AVATAR_BUBBLE_MODE_SIGNIN,
-        signin::ManageAccountsParams(), access_point, false);
-  } else {
+  if (show_full_tab_chrome_signin_page) {
     NavigateToSingletonTab(
         browser,
         signin::GetPromoURLForTab(
             access_point, signin_metrics::Reason::REASON_SIGNIN_PRIMARY_ACCOUNT,
             false));
     DCHECK_GT(browser->tab_strip_model()->count(), 0);
+  } else {
+    browser->window()->ShowAvatarBubbleFromAvatarButton(
+        BrowserWindow::AVATAR_BUBBLE_MODE_SIGNIN,
+        signin::ManageAccountsParams(), access_point, false);
   }
 }
 

@@ -2,9 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include <cstdio>
-
 #include "net/quic/chromium/quic_proxy_client_socket.h"
+
+#include <cstdio>
+#include <utility>
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
@@ -16,6 +17,7 @@
 #include "net/log/net_log_source.h"
 #include "net/log/net_log_source_type.h"
 #include "net/spdy/chromium/spdy_http_utils.h"
+#include "net/traffic_annotation/network_traffic_annotation.h"
 
 namespace net {
 
@@ -30,6 +32,7 @@ QuicProxyClientSocket::QuicProxyClientSocket(
       stream_(std::move(stream)),
       session_(std::move(session)),
       read_buf_(nullptr),
+      write_buf_len_(0),
       endpoint_(endpoint),
       auth_(auth_controller),
       user_agent_(user_agent),
@@ -67,7 +70,7 @@ QuicProxyClientSocket::GetAuthController() const {
   return auth_;
 }
 
-int QuicProxyClientSocket::RestartWithAuth(const CompletionCallback& callback) {
+int QuicProxyClientSocket::RestartWithAuth(CompletionOnceCallback callback) {
   // A QUIC Stream can only handle a single request, so the underlying
   // stream may not be reused and a new QuicProxyClientSocket must be
   // created (possibly on top of the same QUIC Session).
@@ -108,6 +111,7 @@ void QuicProxyClientSocket::Disconnect() {
   read_callback_.Reset();
   read_buf_ = nullptr;
   write_callback_.Reset();
+  write_buf_len_ = 0;
 
   next_state_ = STATE_DISCONNECTED;
 
@@ -159,6 +163,11 @@ int64_t QuicProxyClientSocket::GetTotalReceivedBytes() const {
   return stream_->NumBytesConsumed();
 }
 
+void QuicProxyClientSocket::ApplySocketTag(const SocketTag& tag) {
+  // |session_| can be tagged, but |stream_| cannot.
+  CHECK(false);
+}
+
 int QuicProxyClientSocket::Read(IOBuffer* buf,
                                 int buf_len,
                                 const CompletionCallback& callback) {
@@ -205,9 +214,11 @@ void QuicProxyClientSocket::OnReadComplete(int rv) {
   }
 }
 
-int QuicProxyClientSocket::Write(IOBuffer* buf,
-                                 int buf_len,
-                                 const CompletionCallback& callback) {
+int QuicProxyClientSocket::Write(
+    IOBuffer* buf,
+    int buf_len,
+    const CompletionCallback& callback,
+    const NetworkTrafficAnnotationTag& traffic_annotation) {
   DCHECK(connect_callback_.is_null());
   DCHECK(write_callback_.is_null());
 
@@ -221,16 +232,24 @@ int QuicProxyClientSocket::Write(IOBuffer* buf,
       QuicStringPiece(buf->data(), buf_len), false,
       base::Bind(&QuicProxyClientSocket::OnWriteComplete,
                  weak_factory_.GetWeakPtr()));
+  if (rv == OK)
+    return buf_len;
 
-  if (rv == ERR_IO_PENDING)
+  if (rv == ERR_IO_PENDING) {
     write_callback_ = callback;
+    write_buf_len_ = buf_len;
+  }
 
   return rv;
 }
 
 void QuicProxyClientSocket::OnWriteComplete(int rv) {
-  if (!write_callback_.is_null())
+  if (!write_callback_.is_null()) {
+    if (rv == OK)
+      rv = write_buf_len_;
+    write_buf_len_ = 0;
     base::ResetAndReturn(&write_callback_).Run(rv);
+  }
 }
 
 int QuicProxyClientSocket::SetReceiveBufferSize(int32_t size) {
@@ -345,8 +364,7 @@ int QuicProxyClientSocket::DoSendRequest() {
                  base::Unretained(&request_.extra_headers), &request_line));
 
   SpdyHeaderBlock headers;
-  CreateSpdyHeadersFromHttpRequest(request_, request_.extra_headers, true,
-                                   &headers);
+  CreateSpdyHeadersFromHttpRequest(request_, request_.extra_headers, &headers);
 
   return stream_->WriteHeaders(std::move(headers), false, nullptr);
 }

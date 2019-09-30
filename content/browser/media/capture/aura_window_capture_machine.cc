@@ -20,8 +20,8 @@
 #include "media/capture/content/thread_safe_capture_oracle.h"
 #include "media/capture/content/video_capture_oracle.h"
 #include "media/capture/video_capture_types.h"
-#include "services/device/public/interfaces/constants.mojom.h"
-#include "services/device/public/interfaces/wake_lock_provider.mojom.h"
+#include "services/device/public/mojom/constants.mojom.h"
+#include "services/device/public/mojom/wake_lock_provider.mojom.h"
 #include "services/service_manager/public/cpp/connector.h"
 #include "skia/ext/image_operations.h"
 #include "ui/aura/client/screen_position_client.h"
@@ -102,7 +102,7 @@ bool AuraWindowCaptureMachine::InternalStart(
                              mojo::MakeRequest(&wake_lock_provider));
     wake_lock_provider->GetWakeLockWithoutContext(
         device::mojom::WakeLockType::kPreventDisplaySleep,
-        device::mojom::WakeLockReason::kOther, "Desktop capturer is running",
+        device::mojom::WakeLockReason::kOther, "Aura window or desktop capture",
         mojo::MakeRequest(&wake_lock_));
 
     wake_lock_->RequestWakeLock();
@@ -189,7 +189,9 @@ void AuraWindowCaptureMachine::SetWindow(aura::Window* window) {
 
   DCHECK(!desktop_window_);
   desktop_window_ = window;
-  cursor_renderer_.reset(new CursorRendererAura(window, kCursorAlwaysEnabled));
+  cursor_renderer_.reset(
+      new CursorRendererAura(CursorRenderer::CURSOR_DISPLAYED_ALWAYS));
+  cursor_renderer_->SetTargetView(window);
 
   // Start observing window events.
   desktop_window_->AddObserver(this);
@@ -208,7 +210,6 @@ void AuraWindowCaptureMachine::UpdateCaptureSize() {
      oracle_proxy_->UpdateCaptureSize(ui::ConvertSizeToPixel(
          layer, layer->bounds().size()));
   }
-  cursor_renderer_->Clear();
 }
 
 void AuraWindowCaptureMachine::Capture(base::TimeTicks event_time) {
@@ -227,7 +228,7 @@ void AuraWindowCaptureMachine::Capture(base::TimeTicks event_time) {
   const base::TimeTicks start_time = base::TimeTicks::Now();
   media::VideoCaptureOracle::Event event;
   if (event_time.is_null()) {
-    event = media::VideoCaptureOracle::kActiveRefreshRequest;
+    event = media::VideoCaptureOracle::kRefreshRequest;
     event_time = start_time;
   } else {
     event = media::VideoCaptureOracle::kCompositorUpdate;
@@ -347,14 +348,14 @@ bool AuraWindowCaptureMachine::ProcessCopyOutputResponse(
     if (scaler)
       yuv_readback_pipeline_->SetScaler(nullptr);
   } else if (!scaler || !scaler->IsSameScaleRatio(scale_from, scale_to)) {
-    std::unique_ptr<viz::GLHelper::ScalerInterface> scaler =
+    std::unique_ptr<viz::GLHelper::ScalerInterface> fast_scaler =
         gl_helper->CreateScaler(viz::GLHelper::SCALER_QUALITY_FAST, scale_from,
                                 scale_to, false, false, false);
-    DCHECK(scaler);  // Arguments to CreateScaler() should never be invalid.
-    yuv_readback_pipeline_->SetScaler(std::move(scaler));
+    DCHECK(
+        fast_scaler);  // Arguments to CreateScaler() should never be invalid.
+    yuv_readback_pipeline_->SetScaler(std::move(fast_scaler));
   }
 
-  cursor_renderer_->SnapshotCursorState(region_in_frame);
   yuv_readback_pipeline_->ReadbackYUV(
       mailbox, sync_token, result->size(), gfx::Rect(region_in_frame.size()),
       video_frame->stride(media::VideoFrame::kYPlane),
@@ -364,9 +365,9 @@ bool AuraWindowCaptureMachine::ProcessCopyOutputResponse(
       video_frame->stride(media::VideoFrame::kVPlane),
       video_frame->data(media::VideoFrame::kVPlane), region_in_frame.origin(),
       base::Bind(&CopyOutputFinishedForVideo, weak_factory_.GetWeakPtr(),
-                 event_time, capture_frame_cb, video_frame,
+                 event_time, capture_frame_cb, video_frame, region_in_frame,
                  base::Passed(&release_callback)));
-  media::LetterboxYUV(video_frame.get(), region_in_frame);
+  media::LetterboxVideoFrame(video_frame.get(), region_in_frame);
   return true;
 }
 
@@ -378,6 +379,7 @@ void AuraWindowCaptureMachine::CopyOutputFinishedForVideo(
     base::TimeTicks event_time,
     const CaptureFrameCallback& capture_frame_cb,
     scoped_refptr<media::VideoFrame> target,
+    const gfx::Rect& region_in_frame,
     std::unique_ptr<viz::SingleReleaseCallback> release_callback,
     bool result) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
@@ -389,7 +391,8 @@ void AuraWindowCaptureMachine::CopyOutputFinishedForVideo(
   // still valid).
   if (machine) {
     if (machine->cursor_renderer_ && result)
-      machine->cursor_renderer_->RenderOnVideoFrame(target.get());
+      machine->cursor_renderer_->RenderOnVideoFrame(target.get(),
+                                                    region_in_frame, nullptr);
   } else {
     VLOG(1) << "Aborting capture: AuraWindowCaptureMachine has gone away.";
     result = false;
@@ -416,7 +419,7 @@ void AuraWindowCaptureMachine::OnWindowBoundsChanged(
 void AuraWindowCaptureMachine::OnWindowDestroying(aura::Window* window) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
-  InternalStop(base::Bind(&base::DoNothing));
+  InternalStop(base::DoNothing());
 
   oracle_proxy_->ReportError(FROM_HERE, "OnWindowDestroying()");
 }

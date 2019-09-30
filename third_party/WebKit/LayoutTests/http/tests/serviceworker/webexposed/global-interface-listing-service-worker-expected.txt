@@ -1,8 +1,19 @@
 [INTERFACES]
+interface AbortController
+    attribute @@toStringTag
+    getter signal
+    method abort
+    method constructor
 interface AbortPaymentEvent : ExtendableEvent
     attribute @@toStringTag
     method constructor
     method respondWith
+interface AbortSignal : EventTarget
+    attribute @@toStringTag
+    getter aborted
+    getter onabort
+    method constructor
+    setter onabort
 interface BackgroundFetchClickEvent : BackgroundFetchEvent
     attribute @@toStringTag
     getter state
@@ -31,16 +42,28 @@ interface BackgroundFetchRegistration : EventTarget
     getter downloaded
     getter id
     getter onprogress
-    getter totalDownloadSize
     getter uploadTotal
     getter uploaded
     method abort
     method constructor
     setter onprogress
+interface BackgroundFetchSettledEvent : BackgroundFetchEvent
+    attribute @@toStringTag
+    getter fetches
+    method constructor
 interface BackgroundFetchSettledFetch : BackgroundFetchFetch
     attribute @@toStringTag
     getter response
     method constructor
+interface BackgroundFetchSettledFetches
+    attribute @@toStringTag
+    method constructor
+    method match
+    method values
+interface BackgroundFetchUpdateEvent : BackgroundFetchSettledEvent
+    attribute @@toStringTag
+    method constructor
+    method updateUI
 interface BackgroundFetchedEvent : BackgroundFetchEvent
     attribute @@toStringTag
     getter fetches
@@ -134,6 +157,21 @@ interface CloseEvent : Event
     getter reason
     getter wasClean
     method constructor
+interface CookieChangeEvent : Event
+    attribute @@toStringTag
+    getter changed
+    getter deleted
+    method constructor
+interface CookieStore : EventTarget
+    attribute @@toStringTag
+    getter onchange
+    method constructor
+    method delete
+    method get
+    method getAll
+    method has
+    method set
+    setter onchange
 interface CountQueuingStrategy
     method constructor
     method size
@@ -352,28 +390,6 @@ interface DOMStringList
     method constructor
     method contains
     method item
-interface DataView
-    attribute @@toStringTag
-    getter buffer
-    getter byteLength
-    getter byteOffset
-    method constructor
-    method getFloat32
-    method getFloat64
-    method getInt16
-    method getInt32
-    method getInt8
-    method getUint16
-    method getUint32
-    method getUint8
-    method setFloat32
-    method setFloat64
-    method setInt16
-    method setInt32
-    method setInt8
-    method setUint16
-    method setUint32
-    method setUint8
 interface Event
     attribute @@toStringTag
     attribute AT_TARGET
@@ -695,6 +711,16 @@ interface ImageData
 interface InstallEvent : ExtendableEvent
     attribute @@toStringTag
     method constructor
+interface Lock
+    attribute @@toStringTag
+    getter mode
+    getter name
+    method constructor
+interface LockManager
+    attribute @@toStringTag
+    method constructor
+    method query
+    method request
 interface MessageChannel
     attribute @@toStringTag
     getter port1
@@ -707,7 +733,6 @@ interface MessageEvent : Event
     getter origin
     getter ports
     getter source
-    getter suborigin
     method constructor
     method initMessageEvent
 interface MessagePort : EventTarget
@@ -967,6 +992,7 @@ interface PerformanceObserver
     method constructor
     method disconnect
     method observe
+    method takeRecords
 interface PerformanceObserverEntryList
     attribute @@toStringTag
     method constructor
@@ -994,6 +1020,7 @@ interface PerformanceResourceTiming : PerformanceEntry
     getter transferSize
     getter workerStart
     method constructor
+    method toJSON
 interface PerformanceServerTiming
     attribute @@toStringTag
     getter description
@@ -1064,6 +1091,7 @@ interface Request
     getter bodyUsed
     getter cache
     getter credentials
+    getter destination
     getter headers
     getter integrity
     getter keepalive
@@ -1072,6 +1100,7 @@ interface Request
     getter redirect
     getter referrer
     getter referrerPolicy
+    getter signal
     getter url
     method arrayBuffer
     method blob
@@ -1952,6 +1981,7 @@ interface WebGL2RenderingContext
     method samplerParameterf
     method samplerParameteri
     method scissor
+    method setCompatibleXRDevice
     method shaderSource
     method stencilFunc
     method stencilFuncSeparate
@@ -2418,6 +2448,7 @@ interface WebGLRenderingContext
     method renderbufferStorage
     method sampleCoverage
     method scissor
+    method setCompatibleXRDevice
     method shaderSource
     method stencilFunc
     method stencilFuncSeparate
@@ -2540,7 +2571,9 @@ interface WorkerNavigator
     getter appVersion
     getter budget
     getter connection
+    getter deviceMemory
     getter hardwareConcurrency
+    getter locks
     getter onLine
     getter permissions
     getter platform
@@ -2557,6 +2590,7 @@ interface WritableStream
     attribute console
     attribute internals
     getter clients
+    getter cookieStore
     getter onabortpayment
     getter onactivate
     getter onbackgroundfetchabort
@@ -2576,6 +2610,7 @@ interface WritableStream
     method fetch
     method gc
     method skipWaiting
+    setter cookieStore
     setter onabortpayment
     setter onactivate
     setter onbackgroundfetchabort

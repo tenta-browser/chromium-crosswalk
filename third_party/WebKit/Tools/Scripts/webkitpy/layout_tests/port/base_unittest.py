@@ -38,7 +38,7 @@ from webkitpy.common.system.platform_info_mock import MockPlatformInfo
 from webkitpy.common.system.system_host import SystemHost
 from webkitpy.common.system.system_host_mock import MockSystemHost
 from webkitpy.common.path_finder import PathFinder
-from webkitpy.layout_tests.models.test_expectations import TestExpectations
+from webkitpy.layout_tests.models.test_input import TestInput
 from webkitpy.layout_tests.port.base import Port, VirtualTestSuite
 from webkitpy.layout_tests.port.test import add_unit_tests_to_mock_filesystem, LAYOUT_TEST_DIR, TestPort
 
@@ -87,23 +87,6 @@ class PortTest(unittest.TestCase):
         self.assertIn('canvas', dirs)
         self.assertIn('css2.1', dirs)
 
-    def test_skipped_perf_tests(self):
-        port = self.make_port()
-
-        def add_text_file(dirname, filename, content='some content'):
-            dirname = port.host.filesystem.join(
-                PathFinder(port.host.filesystem).perf_tests_dir(), dirname)
-            port.host.filesystem.maybe_make_directory(dirname)
-            port.host.filesystem.write_text_file(port.host.filesystem.join(dirname, filename), content)
-
-        add_text_file('inspector', 'test1.html')
-        add_text_file('inspector', 'unsupported_test1.html')
-        add_text_file('inspector', 'test2.html')
-        add_text_file('inspector/resources', 'resource_file.html')
-        add_text_file('unsupported', 'unsupported_test2.html')
-        add_text_file('', 'Skipped', '\n'.join(['Layout', '', 'SunSpider', 'Supported/some-test.html']))
-        self.assertEqual(port.skipped_perf_tests(), ['Layout', 'SunSpider', 'Supported/some-test.html'])
-
     def test_get_option__set(self):
         options, _ = optparse.OptionParser().parse_args([])
         options.foo = 'bar'
@@ -118,6 +101,23 @@ class PortTest(unittest.TestCase):
         port = self.make_port()
         self.assertEqual(port.get_option('foo', 'bar'), 'bar')
 
+    def test_output_filename(self):
+        port = self.make_port()
+
+        # Normal test filename
+        test_file = 'fast/test.html'
+        self.assertEqual(port.output_filename(test_file, '-expected', '.txt'),
+                         'fast/test-expected.txt')
+        self.assertEqual(port.output_filename(test_file, '-expected-mismatch', '.png'),
+                         'fast/test-expected-mismatch.png')
+
+        # Test filename with query string
+        test_file = 'fast/test.html?wss&run_type=1'
+        self.assertEqual(port.output_filename(test_file, '-expected', '.txt'),
+                         'fast/test_wss_run_type=1-expected.txt')
+        self.assertEqual(port.output_filename(test_file, '-actual', '.png'),
+                         'fast/test_wss_run_type=1-actual.png')
+
     def test_expected_baselines(self):
         port = self.make_port(port_name='foo')
         port.FALLBACK_PATHS = {'': ['foo']}
@@ -130,6 +130,12 @@ class PortTest(unittest.TestCase):
         self.assertEqual(port.expected_filename(test_file, '.txt', return_default=False), None)
         self.assertEqual(port.expected_filename(test_file, '.txt'),
                          '/mock-checkout/third_party/WebKit/LayoutTests/fast/test-expected.txt')
+
+        # Mismatch baseline
+        self.assertEqual(port.expected_baselines(test_file, '.txt', match=False),
+                         [(None, 'fast/test-expected-mismatch.txt')])
+        self.assertEqual(port.expected_filename(test_file, '.txt', match=False),
+                         '/mock-checkout/third_party/WebKit/LayoutTests/fast/test-expected-mismatch.txt')
 
         # Platform-specific baseline
         self.assertEqual(port.baseline_version_dir(),
@@ -531,7 +537,7 @@ class PortTest(unittest.TestCase):
         self.assertTrue(is_test_file('', 'foo.html'))
         self.assertTrue(is_test_file('', 'foo.svg'))
         self.assertTrue(is_test_file('', 'test-ref-test.html'))
-        self.assertFalse(is_test_file('inspector', 'devtools.js'))
+        self.assertTrue(is_test_file('devtools', 'a.js'))
         self.assertFalse(is_test_file('', 'foo.png'))
         self.assertFalse(is_test_file('', 'foo-expected.html'))
         self.assertFalse(is_test_file('', 'foo-expected.svg'))
@@ -564,14 +570,42 @@ class PortTest(unittest.TestCase):
         self.assertTrue(port.is_test_file(filesystem, LAYOUT_TEST_DIR + '/external/wpt_automation', 'foo.html'))
 
     def test_is_wpt_test(self):
-        port = self.make_port(with_tests=True)
-        filesystem = port.host.filesystem
-        PortTest._add_manifest_to_mock_file_system(filesystem)
+        self.assertTrue(Port.is_wpt_test('external/wpt/dom/ranges/Range-attributes.html'))
+        self.assertTrue(Port.is_wpt_test('external/wpt/html/dom/elements/global-attributes/dir_auto-EN-L.html'))
+        self.assertFalse(Port.is_wpt_test('dom/domparsing/namespaces-1.html'))
+        self.assertFalse(Port.is_wpt_test('rutabaga'))
 
-        self.assertTrue(port.is_wpt_test('external/wpt/dom/ranges/Range-attributes.html'))
-        self.assertTrue(port.is_wpt_test('external/wpt/html/dom/elements/global-attributes/dir_auto-EN-L.html'))
-        self.assertFalse(port.is_wpt_test('dom/domparsing/namespaces-1.html'))
-        self.assertFalse(port.is_wpt_test('rutabaga'))
+        self.assertTrue(Port.is_wpt_test('virtual/a-name/external/wpt/baz/qux.htm'))
+        self.assertFalse(Port.is_wpt_test('virtual/external/wpt/baz/qux.htm'))
+        self.assertFalse(Port.is_wpt_test('not-virtual/a-name/external/wpt/baz/qux.htm'))
+
+    def test_should_use_wptserve(self):
+        self.assertTrue(Port.should_use_wptserve('external/wpt/dom/interfaces.html'))
+        self.assertTrue(Port.should_use_wptserve('virtual/a-name/external/wpt/dom/interfaces.html'))
+        self.assertFalse(Port.should_use_wptserve('harness-tests/wpt/console_logging.html'))
+        self.assertFalse(Port.should_use_wptserve('dom/domparsing/namespaces-1.html'))
+
+    def test_should_run_as_pixel_test_with_no_pixel_tests_in_args(self):
+        # With the --no-pixel-tests flag, no tests should run as pixel tests.
+        options = optparse.Values({'pixel_tests': False})
+        port = self.make_port(options=options)
+        self.assertFalse(port.should_run_as_pixel_test(TestInput('fast/css/001.html')))
+
+    def test_should_run_as_pixel_test_with_pixel_test_directories(self):
+        # When --pixel-test-directory is supplied, only tests in those
+        # directories are allowed to run as pixel tests.
+        options = optparse.Values({'pixel_tests': True, 'pixel_test_directories': ['foo']})
+        port = self.make_port(options=options)
+        self.assertTrue(port.should_run_as_pixel_test(TestInput('foo/bar.html')))
+        self.assertFalse(port.should_run_as_pixel_test(TestInput('bar/baz.html')))
+
+    def test_should_run_as_pixel_test_default(self):
+        options = optparse.Values({'pixel_tests': True, 'pixel_test_directories': None})
+        port = self.make_port(options=options)
+        self.assertFalse(port.should_run_as_pixel_test(TestInput('external/wpt/dom/interfaces.html')))
+        self.assertFalse(port.should_run_as_pixel_test(TestInput('virtual/a-name/external/wpt/dom/interfaces.html')))
+        self.assertFalse(port.should_run_as_pixel_test(TestInput('harness-tests/wpt/console_logging.html')))
+        self.assertTrue(port.should_run_as_pixel_test(TestInput('fast/css/001.html')))
 
     def test_is_slow_wpt_test(self):
         port = self.make_port(with_tests=True)
@@ -775,14 +809,6 @@ class PortTest(unittest.TestCase):
         port = self.make_port()
         self.assertRaises(AssertionError, port.virtual_test_suites)
 
-    def test_is_wpt_test(self):
-        port = self.make_port()
-        self.assertTrue(port.is_wpt_test('external/wpt/foo/bar.html'))
-        self.assertTrue(port.is_wpt_test('virtual/a-name/external/wpt/baz/qux.htm'))
-        self.assertFalse(port.is_wpt_test('http/wpt/foo.html'))
-        self.assertFalse(port.is_wpt_test('virtual/external/wpt/baz/qux.htm'))
-        self.assertFalse(port.is_wpt_test('not-virtual/a-name/external/wpt/baz/qux.htm'))
-
     def test_default_results_directory(self):
         port = self.make_port(options=optparse.Values({'target': 'Default', 'configuration': 'Release'}))
         # By default the results directory is in the build directory: out/<target>.
@@ -808,6 +834,7 @@ class PortTest(unittest.TestCase):
         self._assert_config_file_for_platform(port, 'linux', 'apache2-httpd-2.2.conf')
         self._assert_config_file_for_linux_distribution(port, 'arch', 'arch-httpd-2.2.conf')
         self._assert_config_file_for_linux_distribution(port, 'debian', 'debian-httpd-2.2.conf')
+        self._assert_config_file_for_linux_distribution(port, 'fedora', 'fedora-httpd-2.2.conf')
         self._assert_config_file_for_linux_distribution(port, 'slackware', 'apache2-httpd-2.2.conf')
         self._assert_config_file_for_linux_distribution(port, 'redhat', 'redhat-httpd-2.2.conf')
 

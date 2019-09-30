@@ -65,7 +65,6 @@ class NET_EXPORT_PRIVATE SimpleBackendImpl : public Backend,
       SimpleFileTracker* file_tracker,
       int max_bytes,
       net::CacheType cache_type,
-      const scoped_refptr<base::SequencedTaskRunner>& cache_runner,
       net::NetLog* net_log);
 
   ~SimpleBackendImpl() override;
@@ -150,6 +149,17 @@ class NET_EXPORT_PRIVATE SimpleBackendImpl : public Backend,
     int net_error;
   };
 
+  struct PostDoomWaiter {
+    PostDoomWaiter();
+    // Also initializes |time_queued|.
+    explicit PostDoomWaiter(const base::Closure& to_run_post_doom);
+    explicit PostDoomWaiter(const PostDoomWaiter& other);
+    ~PostDoomWaiter();
+
+    base::TimeTicks time_queued;
+    base::Closure run_post_doom;
+  };
+
   void InitializeIndex(const CompletionCallback& callback,
                        const DiskStatResult& result);
 
@@ -187,7 +197,7 @@ class NET_EXPORT_PRIVATE SimpleBackendImpl : public Backend,
   scoped_refptr<SimpleEntryImpl> CreateOrFindActiveOrDoomedEntry(
       uint64_t entry_hash,
       const std::string& key,
-      std::vector<base::Closure>** post_doom);
+      std::vector<PostDoomWaiter>** post_doom);
 
   // Given a hash, will try to open the corresponding Entry. If we have an Entry
   // corresponding to |hash| in the map of active entries, opens it. Otherwise,
@@ -235,7 +245,12 @@ class NET_EXPORT_PRIVATE SimpleBackendImpl : public Backend,
   const base::FilePath path_;
   const net::CacheType cache_type_;
   std::unique_ptr<SimpleIndex> index_;
+
+  // This is only used for initial open (including potential format upgrade)
+  // and index load/save.
   const scoped_refptr<base::SequencedTaskRunner> cache_runner_;
+
+  // This is used for all the entry I/O.
   scoped_refptr<base::TaskRunner> worker_pool_;
 
   int orig_max_size_;
@@ -245,9 +260,9 @@ class NET_EXPORT_PRIVATE SimpleBackendImpl : public Backend,
 
   // The set of all entries which are currently being doomed. To avoid races,
   // these entries cannot have Doom/Create/Open operations run until the doom
-  // is complete. The base::Closure map target is used to store deferred
-  // operations to be run at the completion of the Doom.
-  std::unordered_map<uint64_t, std::vector<base::Closure>>
+  // is complete. The base::Closure |PostDoomWaiter::run_post_doom| field is
+  // used to store deferred operations to be run at the completion of the Doom.
+  std::unordered_map<uint64_t, std::vector<PostDoomWaiter>>
       entries_pending_doom_;
 
   net::NetLog* const net_log_;

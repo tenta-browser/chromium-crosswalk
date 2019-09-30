@@ -10,13 +10,17 @@
 #include <map>
 #include <set>
 #include <string>
+#include <utility>
+#include <vector>
 
 #include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
 #include "base/strings/string_util.h"
+#include "chromeos/dbus/cros_disks_client.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
 #include "chromeos/disks/suspend_unmount_manager.h"
 
@@ -25,14 +29,15 @@ namespace disks {
 
 namespace {
 
-const char kDefaultFormattedDeviceName[] = "UNTITLED";
-const char kDefaultFormatVFAT[] = "vfat";
-const char kDeviceNotFound[] = "Device could not be found";
-
+constexpr char kDefaultFormattedDeviceName[] = "UNTITLED";
+constexpr char kDefaultFormatVFAT[] = "vfat";
+constexpr char kDeviceNotFound[] = "Device could not be found";
+constexpr char kStatefulPartition[] = "/mnt/stateful_partition";
 DiskMountManager* g_disk_mount_manager = NULL;
 
 // The DiskMountManager implementation.
-class DiskMountManagerImpl : public DiskMountManager {
+class DiskMountManagerImpl : public DiskMountManager,
+                             public CrosDisksClient::Observer {
  public:
   DiskMountManagerImpl() :
     already_refreshed_(false),
@@ -43,29 +48,18 @@ class DiskMountManagerImpl : public DiskMountManager {
         dbus_thread_manager->GetPowerManagerClient();
     suspend_unmount_manager_.reset(
         new SuspendUnmountManager(this, power_manager_client));
-    cros_disks_client_->SetMountEventHandler(
-        base::Bind(&DiskMountManagerImpl::OnMountEvent,
-                   weak_ptr_factory_.GetWeakPtr()));
-    cros_disks_client_->SetMountCompletedHandler(
-        base::Bind(&DiskMountManagerImpl::OnMountCompleted,
-                   weak_ptr_factory_.GetWeakPtr()));
-    cros_disks_client_->SetFormatCompletedHandler(
-        base::Bind(&DiskMountManagerImpl::OnFormatCompleted,
-                   weak_ptr_factory_.GetWeakPtr()));
-    cros_disks_client_->SetRenameCompletedHandler(
-        base::Bind(&DiskMountManagerImpl::OnRenameCompleted,
-                   weak_ptr_factory_.GetWeakPtr()));
+    cros_disks_client_->AddObserver(this);
   }
 
-  ~DiskMountManagerImpl() override = default;
+  ~DiskMountManagerImpl() override { cros_disks_client_->RemoveObserver(this); }
 
   // DiskMountManager override.
-  void AddObserver(Observer* observer) override {
+  void AddObserver(DiskMountManager::Observer* observer) override {
     observers_.AddObserver(observer);
   }
 
   // DiskMountManager override.
-  void RemoveObserver(Observer* observer) override {
+  void RemoveObserver(DiskMountManager::Observer* observer) override {
     observers_.RemoveObserver(observer);
   }
 
@@ -87,12 +81,8 @@ class DiskMountManagerImpl : public DiskMountManager {
     cros_disks_client_->Mount(
         source_path, source_format, mount_label, access_mode,
         REMOUNT_OPTION_MOUNT_NEW_DEVICE,
-        // When succeeds, OnMountCompleted will be called by
-        // "MountCompleted" signal instead.
-        base::Bind(&base::DoNothing),
-        base::Bind(&DiskMountManagerImpl::OnMountCompleted,
-                   weak_ptr_factory_.GetWeakPtr(),
-                   MountEntry(MOUNT_ERROR_INTERNAL, source_path, type, "")));
+        base::BindOnce(&DiskMountManagerImpl::OnMount,
+                       weak_ptr_factory_.GetWeakPtr(), source_path, type));
 
     // Record the access mode option passed to CrosDisks.
     // This is needed because CrosDisks service methods doesn't return the info
@@ -105,17 +95,10 @@ class DiskMountManagerImpl : public DiskMountManager {
                    UnmountOptions options,
                    const UnmountPathCallback& callback) override {
     UnmountChildMounts(mount_path);
-    cros_disks_client_->Unmount(mount_path, options,
-                                base::Bind(&DiskMountManagerImpl::OnUnmountPath,
-                                           weak_ptr_factory_.GetWeakPtr(),
-                                           callback,
-                                           true,
-                                           mount_path),
-                                base::Bind(&DiskMountManagerImpl::OnUnmountPath,
-                                           weak_ptr_factory_.GetWeakPtr(),
-                                           callback,
-                                           false,
-                                           mount_path));
+    cros_disks_client_->Unmount(
+        mount_path, options,
+        base::BindOnce(&DiskMountManagerImpl::OnUnmountPath,
+                       weak_ptr_factory_.GetWeakPtr(), callback, mount_path));
   }
 
   void RemountAllRemovableDrives(MountAccessMode mode) override {
@@ -241,18 +224,10 @@ class DiskMountManagerImpl : public DiskMountManager {
             callback, devices_to_unmount.size());
     for (size_t i = 0; i < devices_to_unmount.size(); ++i) {
       cros_disks_client_->Unmount(
-          devices_to_unmount[i],
-          UNMOUNT_OPTIONS_NONE,
-          base::Bind(&DiskMountManagerImpl::OnUnmountDeviceRecursively,
-                     weak_ptr_factory_.GetWeakPtr(),
-                     cb_data,
-                     true,
-                     devices_to_unmount[i]),
-          base::Bind(&DiskMountManagerImpl::OnUnmountDeviceRecursively,
-                     weak_ptr_factory_.GetWeakPtr(),
-                     cb_data,
-                     false,
-                     devices_to_unmount[i]));
+          devices_to_unmount[i], UNMOUNT_OPTIONS_NONE,
+          base::BindOnce(&DiskMountManagerImpl::OnUnmountDeviceRecursively,
+                         weak_ptr_factory_.GetWeakPtr(), cb_data,
+                         devices_to_unmount[i]));
     }
   }
 
@@ -268,7 +243,7 @@ class DiskMountManagerImpl : public DiskMountManager {
     refresh_callbacks_.push_back(callback);
     if (refresh_callbacks_.size() == 1) {
       // If there's no in-flight refreshing task, start it.
-      cros_disks_client_->EnumerateAutoMountableDevices(
+      cros_disks_client_->EnumerateDevices(
           base::Bind(&DiskMountManagerImpl::RefreshAfterEnumerateDevices,
                      weak_ptr_factory_.GetWeakPtr()),
           base::Bind(&DiskMountManagerImpl::RefreshCompleted,
@@ -348,6 +323,17 @@ class DiskMountManagerImpl : public DiskMountManager {
     size_t num_pending_callbacks;
   };
 
+  // Called on D-Bus CrosDisksClient::Mount() is done.
+  void OnMount(const std::string& source_path, MountType type, bool result) {
+    // When succeeds, OnMountCompleted will be called by "MountCompleted",
+    // signal instead. Do nothing now.
+    if (result)
+      return;
+
+    OnMountCompleted(
+        MountEntry(MOUNT_ERROR_INTERNAL, source_path, type, std::string()));
+  }
+
   void RemountRemovableDrive(const Disk& disk,
                              MountAccessMode access_mode) {
     const std::string& mount_path = disk.mount_path();
@@ -372,13 +358,9 @@ class DiskMountManagerImpl : public DiskMountManager {
     cros_disks_client_->Mount(
         mount_point->second.source_path, std::string(), std::string(),
         access_mode, REMOUNT_OPTION_REMOUNT_EXISTING_DEVICE,
-        // When succeeds, OnMountCompleted will be called by
-        // "MountCompleted" signal instead.
-        base::Bind(&base::DoNothing),
-        base::Bind(&DiskMountManagerImpl::OnMountCompleted,
-                   weak_ptr_factory_.GetWeakPtr(),
-                   MountEntry(MOUNT_ERROR_INTERNAL, source_path,
-                              mount_point->second.mount_type, "")));
+        base::BindOnce(&DiskMountManagerImpl::OnMount,
+                       weak_ptr_factory_.GetWeakPtr(), source_path,
+                       mount_point->second.mount_type));
   }
 
   // Unmounts all mount points whose source path is transitively parented by
@@ -403,13 +385,12 @@ class DiskMountManagerImpl : public DiskMountManager {
   }
 
   // Callback for UnmountDeviceRecursively.
-  void OnUnmountDeviceRecursively(
-      UnmountDeviceRecursivelyCallbackData* cb_data,
-      bool success,
-      const std::string& mount_path) {
+  void OnUnmountDeviceRecursively(UnmountDeviceRecursivelyCallbackData* cb_data,
+                                  const std::string& mount_path,
+                                  bool success) {
     if (success) {
       // Do standard processing for Unmount event.
-      OnUnmountPath(UnmountPathCallback(), true, mount_path);
+      OnUnmountPath(UnmountPathCallback(), mount_path, true /* success */);
       VLOG(1) << mount_path <<  " unmounted.";
     }
     // This is safe as long as all callbacks are called on the same thread as
@@ -425,8 +406,8 @@ class DiskMountManagerImpl : public DiskMountManager {
     }
   }
 
-  // Callback to handle MountCompleted signal and Mount method call failure.
-  void OnMountCompleted(const MountEntry& entry) {
+  // CrosDisksClient::Observer override.
+  void OnMountCompleted(const MountEntry& entry) override {
     MountCondition mount_condition = MOUNT_CONDITION_NONE;
     if (entry.mount_type() == MOUNT_TYPE_DEVICE) {
       if (entry.error_code() == MOUNT_ERROR_UNKNOWN_FILESYSTEM) {
@@ -481,8 +462,8 @@ class DiskMountManagerImpl : public DiskMountManager {
 
   // Callback for UnmountPath.
   void OnUnmountPath(const UnmountPathCallback& callback,
-                     bool success,
-                     const std::string& mount_path) {
+                     const std::string& mount_path,
+                     bool success) {
     MountPointMap::iterator mount_points_it = mount_points_.find(mount_path);
     if (mount_points_it == mount_points_.end()) {
       // The path was unmounted, but not as a result of this unmount request,
@@ -535,21 +516,23 @@ class DiskMountManagerImpl : public DiskMountManager {
 
     cros_disks_client_->Format(
         device_path, kDefaultFormatVFAT,
-        base::Bind(&DiskMountManagerImpl::OnFormatStarted,
-                   weak_ptr_factory_.GetWeakPtr(), device_path),
-        base::Bind(&DiskMountManagerImpl::OnFormatCompleted,
-                   weak_ptr_factory_.GetWeakPtr(), FORMAT_ERROR_UNKNOWN,
-                   device_path));
+        base::BindOnce(&DiskMountManagerImpl::OnFormatStarted,
+                       weak_ptr_factory_.GetWeakPtr(), device_path));
   }
 
   // Callback for Format.
-  void OnFormatStarted(const std::string& device_path) {
+  void OnFormatStarted(const std::string& device_path, bool success) {
+    if (!success) {
+      OnFormatCompleted(FORMAT_ERROR_UNKNOWN, device_path);
+      return;
+    }
+
     NotifyFormatStatusUpdate(FORMAT_STARTED, FORMAT_ERROR_NONE, device_path);
   }
 
-  // Callback to handle FormatCompleted signal and Format method call failure.
+  // CrosDisksClient::Observer override.
   void OnFormatCompleted(FormatError error_code,
-                         const std::string& device_path) {
+                         const std::string& device_path) override {
     auto iter = disks_.find(device_path);
 
     // disk might have been removed by now?
@@ -591,21 +574,23 @@ class DiskMountManagerImpl : public DiskMountManager {
     pending_rename_changes_[device_path] = volume_name;
     cros_disks_client_->Rename(
         device_path, volume_name,
-        base::Bind(&DiskMountManagerImpl::OnRenameStarted,
-                   weak_ptr_factory_.GetWeakPtr(), device_path),
-        base::Bind(&DiskMountManagerImpl::OnRenameCompleted,
-                   weak_ptr_factory_.GetWeakPtr(), RENAME_ERROR_UNKNOWN,
-                   device_path));
+        base::BindOnce(&DiskMountManagerImpl::OnRenameStarted,
+                       weak_ptr_factory_.GetWeakPtr(), device_path));
   }
 
   // Callback for Rename.
-  void OnRenameStarted(const std::string& device_path) {
+  void OnRenameStarted(const std::string& device_path, bool success) {
+    if (!success) {
+      OnRenameCompleted(RENAME_ERROR_UNKNOWN, device_path);
+      return;
+    }
+
     NotifyRenameStatusUpdate(RENAME_STARTED, RENAME_ERROR_NONE, device_path);
   }
 
-  // Callback to handle RenameCompleted signal and Rename method call failure.
+  // CrosDisksClient::Observer override.
   void OnRenameCompleted(RenameError error_code,
-                         const std::string& device_path) {
+                         const std::string& device_path) override {
     auto iter = disks_.find(device_path);
 
     // disk might have been removed by now?
@@ -626,10 +611,7 @@ class DiskMountManagerImpl : public DiskMountManager {
 
   // Callback for GetDeviceProperties.
   void OnGetDeviceProperties(const DiskInfo& disk_info) {
-    // TODO(zelidrag): Find a better way to filter these out before we
-    // fetch the properties:
-    // Ignore disks coming from the device we booted the system from.
-    if (disk_info.on_boot_device())
+    if (disk_info.is_virtual())
       return;
 
     LOG(WARNING) << "Found disk " << disk_info.device_path();
@@ -650,6 +632,8 @@ class DiskMountManagerImpl : public DiskMountManager {
     auto access_mode = access_modes_.find(disk_info.device_path());
     bool write_disabled_by_policy = access_mode != access_modes_.end()
         && access_mode->second == chromeos::MOUNT_ACCESS_MODE_READ_ONLY;
+    // TODO(agawronska): Add constructor for Disk from DiskInfo. Introduce Disk
+    // builder class for tests.
     Disk* disk = new Disk(
         disk_info.device_path(), disk_info.mount_path(),
         write_disabled_by_policy, disk_info.system_path(),
@@ -663,7 +647,7 @@ class DiskMountManagerImpl : public DiskMountManager {
         disk_info.is_hidden(), disk_info.file_system_type(), base_mount_path);
     disks_.insert(
         std::make_pair(disk_info.device_path(), base::WrapUnique(disk)));
-    NotifyDiskStatusUpdate(is_new ? DISK_ADDED : DISK_CHANGED, disk);
+    NotifyDiskStatusUpdate(is_new ? DISK_ADDED : DISK_CHANGED, *disk);
   }
 
   // Part of EnsureMountInfoRefreshed(). Called after the list of devices are
@@ -725,8 +709,9 @@ class DiskMountManagerImpl : public DiskMountManager {
     refresh_callbacks_.clear();
   }
 
-  // Callback to handle mount event signals.
-  void OnMountEvent(MountEventType event, const std::string& device_path_arg) {
+  // CrosDisksClient::Observer override.
+  void OnMountEvent(MountEventType event,
+                    const std::string& device_path_arg) override {
     // Take a copy of the argument so we can modify it below.
     std::string device_path = device_path_arg;
     switch (event) {
@@ -735,7 +720,7 @@ class DiskMountManagerImpl : public DiskMountManager {
             device_path,
             base::Bind(&DiskMountManagerImpl::OnGetDeviceProperties,
                        weak_ptr_factory_.GetWeakPtr()),
-            base::Bind(&base::DoNothing));
+            base::DoNothing());
         break;
       }
       case CROS_DISKS_DISK_REMOVED: {
@@ -743,7 +728,7 @@ class DiskMountManagerImpl : public DiskMountManager {
         DiskMountManager::DiskMap::iterator iter = disks_.find(device_path);
         if (iter != disks_.end()) {
           Disk* disk = iter->second.get();
-          NotifyDiskStatusUpdate(DISK_REMOVED, disk);
+          NotifyDiskStatusUpdate(DISK_REMOVED, *disk);
           disks_.erase(iter);
         }
         break;
@@ -769,10 +754,11 @@ class DiskMountManagerImpl : public DiskMountManager {
   }
 
   // Notifies all observers about disk status update.
-  void NotifyDiskStatusUpdate(DiskEvent event,
-                              const Disk* disk) {
-    for (auto& observer : observers_)
-      observer.OnDiskEvent(event, disk);
+  void NotifyDiskStatusUpdate(DiskEvent event, const Disk& disk) {
+    for (auto& observer : observers_) {
+      disk.IsAutoMountable() ? observer.OnAutoMountableDiskEvent(event, disk)
+                             : observer.OnBootDeviceDiskEvent(event, disk);
+    }
   }
 
   // Notifies all observers about device status update.
@@ -819,7 +805,7 @@ class DiskMountManagerImpl : public DiskMountManager {
   }
 
   // Mount event change observers.
-  base::ObserverList<Observer> observers_;
+  base::ObserverList<DiskMountManager::Observer> observers_;
 
   CrosDisksClient* cros_disks_client_;
 
@@ -904,6 +890,19 @@ void DiskMountManager::Disk::SetMountPath(const std::string& mount_path) {
 
   if (base_mount_path_.empty())
     base_mount_path_ = mount_path;
+}
+
+bool DiskMountManager::Disk::IsAutoMountable() const {
+  // Disks are considered auto-mountable if they are:
+  // 1. Non-virtual
+  // 2. Not on boot device
+  // Only the second condition is checked here, because Disks are created from
+  // non-virtual mount devices only.
+  return !on_boot_device_;
+}
+
+bool DiskMountManager::Disk::IsStatefulPartition() const {
+  return mount_path_ == kStatefulPartition;
 }
 
 bool DiskMountManager::AddDiskForTest(std::unique_ptr<Disk> disk) {

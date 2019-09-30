@@ -26,6 +26,7 @@
 #include "net/base/net_error_details.h"
 #include "net/base/net_export.h"
 #include "net/base/network_delegate.h"
+#include "net/base/proxy_server.h"
 #include "net/base/request_priority.h"
 #include "net/base/upload_progress.h"
 #include "net/cookies/canonical_cookie.h"
@@ -34,9 +35,9 @@
 #include "net/http/http_response_headers.h"
 #include "net/http/http_response_info.h"
 #include "net/log/net_log_with_source.h"
-#include "net/net_features.h"
-#include "net/proxy/proxy_server.h"
+#include "net/net_buildflags.h"
 #include "net/socket/connection_attempts.h"
+#include "net/socket/socket_tag.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
 #include "net/url_request/url_request_status.h"
 #include "url/gurl.h"
@@ -283,6 +284,13 @@ class NET_EXPORT URLRequest : public base::SupportsUserData {
   const GURL& site_for_cookies() const { return site_for_cookies_; }
   // This method may only be called before Start().
   void set_site_for_cookies(const GURL& site_for_cookies);
+
+  // Indicate whether SameSite cookies should be attached even though the
+  // request is cross-site.
+  bool attach_same_site_cookies() const { return attach_same_site_cookies_; }
+  void set_attach_same_site_cookies(bool attach) {
+    attach_same_site_cookies_ = attach;
+  }
 
   // The first-party URL policy to apply when updating the first party URL
   // during redirects. The first-party URL policy may only be changed before
@@ -662,6 +670,15 @@ class NET_EXPORT URLRequest : public base::SupportsUserData {
   // encryption, 0 for cached responses.
   int raw_header_size() const { return raw_header_size_; }
 
+  // True if this request was issued by the proxy service subsystem in order to
+  // probe/fetch a Proxy Auto Config script.
+  // TODO(mmenke): See if there's a way to not need this.
+  bool is_pac_request() const { return is_pac_request_; }
+  // Sets whether this is a request for a PAC script. Defaults to false.
+  void set_is_pac_request(bool is_pac_request) {
+    is_pac_request_ = is_pac_request;
+  }
+
   // Returns the error status of the request.
   // Do not use! Going to be protected!
   const URLRequestStatus& status() const { return status_; }
@@ -683,6 +700,17 @@ class NET_EXPORT URLRequest : public base::SupportsUserData {
   // request, the latter will return cached headers, while the callback will be
   // called with a response from the server.
   void SetResponseHeadersCallback(ResponseHeadersCallback callback);
+
+  // Sets socket tag to be applied to all sockets used to execute this request.
+  // Must be set before Start() is called.  Only currently supported for HTTP
+  // and HTTPS requests on Android; UID tagging requires
+  // MODIFY_NETWORK_ACCOUNTING permission.
+  // NOTE(pauljensen): Setting a tag disallows sharing of sockets with requests
+  // with other tags, which may adversely effect performance by prohibiting
+  // connection sharing. In other words use of multiplexed sockets (e.g. HTTP/2
+  // and QUIC) will only be allowed if all requests have the same socket tag.
+  void set_socket_tag(const SocketTag& socket_tag);
+  const SocketTag& socket_tag() const { return socket_tag_; }
 
  protected:
   // Allow the URLRequestJob class to control the is_pending() flag.
@@ -794,6 +822,7 @@ class NET_EXPORT URLRequest : public base::SupportsUserData {
 
   std::vector<GURL> url_chain_;
   GURL site_for_cookies_;
+  bool attach_same_site_cookies_;
   base::Optional<url::Origin> initiator_;
   GURL delegate_redirect_url_;
   std::string method_;  // "GET", "POST", etc. Should be all uppercase.
@@ -890,7 +919,12 @@ class NET_EXPORT URLRequest : public base::SupportsUserData {
   // The raw header size of the response.
   int raw_header_size_;
 
+  // True if this is a request for a PAC script.
+  bool is_pac_request_;
+
   const NetworkTrafficAnnotationTag traffic_annotation_;
+
+  SocketTag socket_tag_;
 
   // See Set{Request|Response}HeadersCallback() above for details.
   RequestHeadersCallback request_headers_callback_;

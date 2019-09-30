@@ -13,10 +13,9 @@
 #import "base/mac/foundation_util.h"
 #include "base/mac/mac_util.h"
 #import "base/mac/sdk_forward_declarations.h"
-#include "base/memory/ptr_util.h"
-#include "base/scoped_observer.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/strings/utf_string_conversions.h"
+#include "build/buildflag.h"
 #include "chrome/app/chrome_command_ids.h"  // IDC_*
 #include "chrome/browser/bookmarks/bookmark_model_factory.h"
 #include "chrome/browser/bookmarks/managed_bookmark_service_factory.h"
@@ -61,7 +60,6 @@
 #import "chrome/browser/ui/cocoa/framed_browser_window.h"
 #import "chrome/browser/ui/cocoa/fullscreen/fullscreen_toolbar_controller.h"
 #import "chrome/browser/ui/cocoa/fullscreen/fullscreen_toolbar_visibility_lock_controller.h"
-#include "chrome/browser/ui/cocoa/fullscreen_low_power_coordinator.h"
 #include "chrome/browser/ui/cocoa/fullscreen_placeholder_view.h"
 #import "chrome/browser/ui/cocoa/fullscreen_window.h"
 #import "chrome/browser/ui/cocoa/infobars/infobar_container_controller.h"
@@ -69,7 +67,6 @@
 #import "chrome/browser/ui/cocoa/location_bar/autocomplete_text_field_editor.h"
 #import "chrome/browser/ui/cocoa/location_bar/location_bar_view_mac.h"
 #import "chrome/browser/ui/cocoa/location_bar/star_decoration.h"
-#include "chrome/browser/ui/cocoa/permission_bubble/permission_bubble_cocoa.h"
 #import "chrome/browser/ui/cocoa/profiles/avatar_base_controller.h"
 #import "chrome/browser/ui/cocoa/profiles/avatar_button_controller.h"
 #import "chrome/browser/ui/cocoa/profiles/avatar_icon_controller.h"
@@ -97,7 +94,6 @@
 #include "components/bookmarks/managed/managed_bookmark_service.h"
 #include "components/omnibox/browser/omnibox_edit_model.h"
 #include "components/omnibox/browser/omnibox_popup_model.h"
-#include "components/omnibox/browser/omnibox_popup_model_observer.h"
 #include "components/signin/core/browser/profile_management_switches.h"
 #include "components/translate/core/browser/translate_manager.h"
 #include "components/translate/core/browser/translate_ui_delegate.h"
@@ -109,6 +105,7 @@
 #import "ui/base/cocoa/cocoa_base_utils.h"
 #import "ui/base/cocoa/nsview_additions.h"
 #import "ui/base/cocoa/touch_bar_forward_declarations.h"
+#include "ui/base/ui_features.h"
 #include "ui/display/screen.h"
 #import "ui/gfx/mac/coordinate_conversion.h"
 #include "ui/gfx/mac/scoped_cocoa_disable_screen_updates.h"
@@ -196,43 +193,6 @@ using content::WebContents;
 
 namespace {
 
-// This class shows or hides the top arrow of the infobar in accordance with the
-// visibility of the omnibox popup. It hides the top arrow when the omnibox
-// popup is shown, and vice versa.
-class OmniboxPopupModelObserverBridge final : public OmniboxPopupModelObserver {
- public:
-  explicit OmniboxPopupModelObserverBridge(BrowserWindowController* controller)
-      : controller_(controller),
-        omnibox_popup_model_([controller_ locationBarBridge]
-                                 ->GetOmniboxView()
-                                 ->model()
-                                 ->popup_model()),
-        omnibox_popup_model_observer_(this) {
-    DCHECK(omnibox_popup_model_);
-    omnibox_popup_model_observer_.Add(omnibox_popup_model_);
-  }
-
-  void OnOmniboxPopupShownOrHidden() override {
-    int max_top_arrow_height = 0;
-    if (!omnibox_popup_model_->IsOpen()) {
-      base::scoped_nsobject<BrowserWindowLayout> layout(
-          [[BrowserWindowLayout alloc] init]);
-      [controller_ updateLayoutParameters:layout];
-      max_top_arrow_height = [layout computeLayout].infoBarMaxTopArrowHeight;
-    }
-    [[controller_ infoBarContainerController]
-        setMaxTopArrowHeight:max_top_arrow_height];
-  }
-
- private:
-  BrowserWindowController* controller_;
-  OmniboxPopupModel* omnibox_popup_model_;
-  ScopedObserver<OmniboxPopupModel, OmniboxPopupModelObserver>
-      omnibox_popup_model_observer_;
-
-  DISALLOW_COPY_AND_ASSIGN(OmniboxPopupModelObserverBridge);
-};
-
 void SetUpBrowserWindowCommandHandler(NSWindow* window) {
   // Make the window handle browser window commands.
   [base::mac::ObjCCastStrict<ChromeEventProcessingWindow>(window)
@@ -252,13 +212,8 @@ bool IsTabDetachingInFullscreenEnabled() {
 @implementation BrowserWindowController
 
 + (BrowserWindowController*)browserWindowControllerForWindow:(NSWindow*)window {
-  while (window) {
-    id controller = [window windowController];
-    if ([controller isKindOfClass:[BrowserWindowController class]])
-      return (BrowserWindowController*)controller;
-    window = [window parentWindow];
-  }
-  return nil;
+  return base::mac::ObjCCast<BrowserWindowController>(
+      [TabWindowController tabWindowControllerForWindow:window]);
 }
 
 + (BrowserWindowController*)browserWindowControllerForView:(NSView*)view {
@@ -390,7 +345,6 @@ bool IsTabDetachingInFullscreenEnabled() {
     // ToolbarController.
     infoBarContainerController_.reset(
         [[InfoBarContainerController alloc] initWithResizeDelegate:self]);
-    [self updateInfoBarTipVisibility];
 
     // We don't want to try and show the bar before it gets placed in its parent
     // view, so this step shoudn't be inside the bookmark bar controller's
@@ -437,9 +391,6 @@ bool IsTabDetachingInFullscreenEnabled() {
             extensions::ExtensionKeybindingRegistry::ALL_EXTENSIONS,
             windowShim_.get()));
 
-    omniboxPopupModelObserverBridge_ =
-        base::MakeUnique<OmniboxPopupModelObserverBridge>(self);
-
     blockLayoutSubviews_ = NO;
 
     // We are done initializing now.
@@ -468,10 +419,6 @@ bool IsTabDetachingInFullscreenEnabled() {
     ignore_result(browser_.release());
 
   [[NSNotificationCenter defaultCenter] removeObserver:self];
-
-  // Explicitly release |omniboxPopupModelObserverBridge_| before sending
-  // |browserWillBeDestroyed| to prevent it from UAFing OmniboxPopupModel.
-  omniboxPopupModelObserverBridge_.reset();
 
   // Inform reference counted objects that the Browser will be destroyed. This
   // ensures they invalidate their weak Browser* to prevent use-after-free.
@@ -666,9 +613,10 @@ bool IsTabDetachingInFullscreenEnabled() {
 
 // Called right after our window became the main window.
 - (void)windowDidBecomeMain:(NSNotification*)notification {
-  // Set this window as active even if the previously active windows was the
+  // Set this window as active even if the previously active window was the
   // same one. This is needed for tracking visibility changes of a browser.
-  BrowserList::SetLastActive(browser_.get());
+  if (browser_->window())
+    BrowserList::SetLastActive(browser_.get());
 
   // Always saveWindowPositionIfNeeded when becoming main, not just
   // when |browser_| is not the last active browser. See crbug.com/536280 .
@@ -694,7 +642,8 @@ bool IsTabDetachingInFullscreenEnabled() {
   extensions::ExtensionCommandsGlobalRegistry::Get(browser_->profile())
       ->set_registry_for_active_window(nullptr);
 
-  BrowserList::NotifyBrowserNoLongerActive(browser_.get());
+  if (browser_->window())
+    BrowserList::NotifyBrowserNoLongerActive(browser_.get());
 }
 
 // Called when we have been minimized.
@@ -751,10 +700,9 @@ bool IsTabDetachingInFullscreenEnabled() {
 
   WebContents* contents = browser_->tab_strip_model()->GetActiveWebContents();
   if (contents) {
+    CGFloat intrinsicWidth =
+        static_cast<CGFloat>(contents->GetPreferredSize().width());
     // If the intrinsic width is bigger, then make it the zoomed width.
-    const int kScrollbarWidth = 16;  // TODO(viettrungluu): ugh.
-    CGFloat intrinsicWidth = static_cast<CGFloat>(
-        contents->GetPreferredSize().width() + kScrollbarWidth);
     zoomedWidth = std::max(zoomedWidth,
                            std::min(intrinsicWidth, NSWidth(frame)));
   }
@@ -777,7 +725,7 @@ bool IsTabDetachingInFullscreenEnabled() {
 }
 
 - (void)activate {
-  [BrowserWindowUtils activateWindowForController:self];
+  [BrowserWindowUtils activateWindowForController:[self nsWindowController]];
 }
 
 // Determine whether we should let a window zoom/unzoom to the given |newFrame|.
@@ -1289,9 +1237,8 @@ bool IsTabDetachingInFullscreenEnabled() {
       CreateNewStripWithContents(contentses, browserRect, false);
 
   // Get the new controller by asking the new window for its delegate.
-  BrowserWindowController* controller =
-      reinterpret_cast<BrowserWindowController*>(
-          [newBrowser->window()->GetNativeWindow() delegate]);
+  BrowserWindowController* controller = [BrowserWindowController
+      browserWindowControllerForWindow:newBrowser->window()->GetNativeWindow()];
   DCHECK(controller && [controller isKindOfClass:[TabWindowController class]]);
 
   // Ensure that the window will appear on top of the source window in
@@ -1395,13 +1342,9 @@ bool IsTabDetachingInFullscreenEnabled() {
     return YES;
 
   ProfileAttributesEntry* entry;
-  if (!g_browser_process->profile_manager()->GetProfileAttributesStorage().
-          GetProfileAttributesWithPath(browser_->profile()->GetPath(),
-                                       &entry)) {
-    return NO;
-  }
-
-  return AvatarMenu::ShouldShowAvatarMenu();
+  return g_browser_process->profile_manager()
+      ->GetProfileAttributesStorage()
+      .GetProfileAttributesWithPath(browser_->profile()->GetPath(), &entry);
 }
 
 - (BOOL)shouldUseNewAvatarButton {
@@ -1617,6 +1560,9 @@ bool IsTabDetachingInFullscreenEnabled() {
         browser_.get(), url, alreadyMarked,
         [self locationBarBridge]->star_decoration());
   } else {
+#if BUILDFLAG(MAC_VIEWS_BROWSER)
+    NOTREACHED() << "MacViews Browser can't show cocoa dialogs";
+#else
     BookmarkModel* model =
         BookmarkModelFactory::GetForBrowserContext(browser_->profile());
     bookmarks::ManagedBookmarkService* managed =
@@ -1630,6 +1576,7 @@ bool IsTabDetachingInFullscreenEnabled() {
                         node:node
            alreadyBookmarked:alreadyMarked];
     [bookmarkBubbleController_ showWindow:self];
+#endif
   }
   DCHECK(bookmarkBubbleObserver_);
 }
@@ -2043,7 +1990,7 @@ willAnimateFromState:(BookmarkBar::State)oldState
   // TODO(erikchen): Fullscreen modes should stack. Should be able to exit
   // Immersive Fullscreen and still be in AppKit Fullscreen.
   if ([self isInAppKitFullscreen])
-    [self exitAppKitFullscreen];
+    [self exitAppKitFullscreenAsync:NO];
   if ([self isInImmersiveFullscreen])
     [self exitImmersiveFullscreen];
 }

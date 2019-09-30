@@ -7,6 +7,7 @@
 #include <android/bitmap.h>
 #include <stddef.h>
 
+#include <memory>
 #include <utility>
 
 #include "base/android/jni_android.h"
@@ -15,13 +16,11 @@
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "cc/layers/layer.h"
 #include "chrome/browser/android/compositor/layer/thumbnail_layer.h"
 #include "chrome/browser/android/tab_android.h"
 #include "chrome/browser/android/thumbnail/thumbnail.h"
 #include "content/public/browser/interstitial_page.h"
-#include "content/public/browser/readback_types.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/render_widget_host.h"
@@ -29,6 +28,7 @@
 #include "content/public/browser/web_contents.h"
 #include "jni/TabContentManager_jni.h"
 #include "ui/android/resources/ui_resource_provider.h"
+#include "ui/android/view_android.h"
 #include "ui/gfx/android/java_bitmap.h"
 #include "ui/gfx/geometry/dip_util.h"
 #include "ui/gfx/geometry/rect.h"
@@ -56,23 +56,26 @@ class TabContentManager::TabReadbackRequest {
         drop_after_readback_(false),
         weak_factory_(this) {
     DCHECK(rwhv);
-    content::ReadbackRequestCallback result_callback =
-        base::Bind(&TabReadbackRequest::OnFinishGetTabThumbnailBitmap,
-                   weak_factory_.GetWeakPtr());
+    auto result_callback =
+        base::BindOnce(&TabReadbackRequest::OnFinishGetTabThumbnailBitmap,
+                       weak_factory_.GetWeakPtr());
 
-    SkColorType color_type = kN32_SkColorType;
-    gfx::Size view_size_on_screen = rwhv->GetViewBounds().size();
+    gfx::Size view_size_in_pixels =
+        rwhv->GetNativeView()->GetPhysicalBackingSize();
+    if (view_size_in_pixels.IsEmpty()) {
+      std::move(result_callback).Run(SkBitmap());
+      return;
+    }
     gfx::Size thumbnail_size(
-        gfx::ScaleToCeiledSize(view_size_on_screen, thumbnail_scale_));
-    rwhv->CopyFromSurface(gfx::Rect(), thumbnail_size, result_callback,
-                          color_type);
+        gfx::ScaleToCeiledSize(view_size_in_pixels, thumbnail_scale_));
+    rwhv->CopyFromSurface(gfx::Rect(), thumbnail_size,
+                          std::move(result_callback));
   }
 
   virtual ~TabReadbackRequest() {}
 
-  void OnFinishGetTabThumbnailBitmap(const SkBitmap& bitmap,
-                                     content::ReadbackResponse response) {
-    if (response != content::READBACK_SUCCESS || drop_after_readback_) {
+  void OnFinishGetTabThumbnailBitmap(const SkBitmap& bitmap) {
+    if (bitmap.drawsNothing() || drop_after_readback_) {
       end_callback_.Run(0.f, SkBitmap());
       return;
     }
@@ -112,7 +115,7 @@ TabContentManager::TabContentManager(JNIEnv* env,
                                      jint write_queue_max_size,
                                      jboolean use_approximation_thumbnail)
     : weak_java_tab_content_manager_(env, obj), weak_factory_(this) {
-  thumbnail_cache_ = base::MakeUnique<ThumbnailCache>(
+  thumbnail_cache_ = std::make_unique<ThumbnailCache>(
       static_cast<size_t>(default_cache_size),
       static_cast<size_t>(approximation_cache_size),
       static_cast<size_t>(compression_queue_max_size),
@@ -191,18 +194,6 @@ void TabContentManager::DetachLiveLayer(int tab_id,
   }
 }
 
-void TabContentManager::OnFinishDecompressThumbnail(int tab_id,
-                                                    bool success,
-                                                    SkBitmap bitmap) {
-  JNIEnv* env = base::android::AttachCurrentThread();
-  ScopedJavaLocalRef<jobject> java_bitmap;
-  if (success)
-    java_bitmap = gfx::ConvertToJavaBitmap(&bitmap);
-
-  Java_TabContentManager_notifyDecompressBitmapFinished(
-      env, weak_java_tab_content_manager_.get(env), tab_id, java_bitmap);
-}
-
 jboolean TabContentManager::HasFullCachedThumbnail(
     JNIEnv* env,
     const JavaParamRef<jobject>& obj,
@@ -246,7 +237,7 @@ void TabContentManager::CacheTab(JNIEnv* env,
     TabReadbackCallback readback_done_callback =
         base::Bind(&TabContentManager::PutThumbnailIntoCache,
                    weak_factory_.GetWeakPtr(), tab_id);
-    pending_tab_readbacks_[tab_id] = base::MakeUnique<TabReadbackRequest>(
+    pending_tab_readbacks_[tab_id] = std::make_unique<TabReadbackRequest>(
         rwhv, thumbnail_scale, readback_done_callback);
   }
 }

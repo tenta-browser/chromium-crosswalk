@@ -60,6 +60,7 @@ class SyncBackendHostImpl : public SyncEngine, public InvalidationHandler {
   void Initialize(InitParams params) override;
   void TriggerRefresh(const ModelTypeSet& types) override;
   void UpdateCredentials(const SyncCredentials& credentials) override;
+  void InvalidateCredentials() override;
   void StartConfiguration() override;
   void StartSyncingWithServer() override;
   void SetEncryptionPassphrase(const std::string& passphrase,
@@ -88,7 +89,6 @@ class SyncBackendHostImpl : public SyncEngine, public InvalidationHandler {
   void DisableProtocolEventForwarding() override;
   void EnableDirectoryTypeDebugInfoForwarding() override;
   void DisableDirectoryTypeDebugInfoForwarding() override;
-  void RefreshTypesForTest(ModelTypeSet types) override;
   void ClearServerData(const base::Closure& callback) override;
   void OnCookieJarChanged(bool account_mismatch,
                           bool empty_jar,

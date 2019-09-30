@@ -41,7 +41,7 @@ ExtensionAppResult::ExtensionAppResult(Profile* profile,
 
   is_platform_app_ = extension->is_platform_app();
   icon_ = extensions::ChromeAppIconService::Get(profile)->CreateIcon(
-      this, app_id, GetPreferredIconDimension(this));
+      this, app_id, GetPreferredIconDimension(display_type()));
 
   StartObservingExtensionRegistry();
 }
@@ -65,11 +65,10 @@ void ExtensionAppResult::Open(int event_flags) {
   if (RunExtensionEnableFlow())
     return;
 
-  // Record the search metrics if the SearchResult is not a suggested app.
-  if (display_type() != DISPLAY_RECOMMENDATION) {
+  // Record the search metrics if the ChromeSearchResult is not a suggested app.
+  if (display_type() != ash::SearchResultDisplayType::kRecommendation) {
     RecordHistogram(APP_SEARCH_RESULT);
     extensions::RecordAppListSearchLaunch(extension);
-    base::RecordAction(base::UserMetricsAction("AppList_ClickOnAppFromSearch"));
   }
 
   controller()->ActivateApp(
@@ -79,10 +78,11 @@ void ExtensionAppResult::Open(int event_flags) {
       event_flags);
 }
 
-std::unique_ptr<SearchResult> ExtensionAppResult::Duplicate() const {
-  std::unique_ptr<SearchResult> copy = base::MakeUnique<ExtensionAppResult>(
-      profile(), app_id(), controller(),
-      display_type() == DISPLAY_RECOMMENDATION);
+std::unique_ptr<ChromeSearchResult> ExtensionAppResult::Duplicate() const {
+  std::unique_ptr<ChromeSearchResult> copy =
+      std::make_unique<ExtensionAppResult>(
+          profile(), app_id(), controller(),
+          display_type() == ash::SearchResultDisplayType::kRecommendation);
   copy->set_title(title());
   copy->set_title_tags(title_tags());
   copy->set_relevance(relevance());
@@ -122,8 +122,7 @@ bool ExtensionAppResult::RunExtensionEnableFlow() {
 
     extension_enable_flow_.reset(new ExtensionEnableFlow(
         profile(), app_id(), this));
-    extension_enable_flow_->StartForNativeWindow(
-        controller()->GetAppListWindow());
+    extension_enable_flow_->StartForNativeWindow(nullptr);
   }
   return true;
 }

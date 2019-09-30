@@ -4,14 +4,12 @@
 
 #import "ios/chrome/browser/ui/main/browser_view_wrangler.h"
 
+#include "base/files/file_path.h"
 #include "base/strings/sys_string_conversions.h"
 #include "ios/chrome/browser/application_context.h"
 #include "ios/chrome/browser/browser_state/chrome_browser_state.h"
-#import "ios/chrome/browser/browsing_data/browsing_data_removal_controller.h"
-#include "ios/chrome/browser/browsing_data/ios_chrome_browsing_data_remover.h"
 #include "ios/chrome/browser/crash_report/crash_report_helper.h"
 #import "ios/chrome/browser/device_sharing/device_sharing_manager.h"
-#import "ios/chrome/browser/physical_web/start_physical_web_discovery.h"
 #import "ios/chrome/browser/sessions/session_ios.h"
 #import "ios/chrome/browser/sessions/session_service_ios.h"
 #import "ios/chrome/browser/sessions/session_window_ios.h"
@@ -78,11 +76,6 @@
     _applicationCommandEndpoint = applicationCommandEndpoint;
   }
   return self;
-}
-
-- (instancetype)init {
-  NOTREACHED();
-  return nil;
 }
 
 - (void)dealloc {
@@ -213,12 +206,6 @@
 
   // The internal state of the Handoff Manager depends on the current BVC.
   [self updateDeviceSharingManager];
-
-  // By default, Physical Web discovery will not be started if the browser
-  // launches into an Incognito tab. On switching modes, check if discovery
-  // should be started.
-  StartPhysicalWebDiscovery(GetApplicationContext()->GetLocalState(),
-                            [self currentBrowserState]);
 }
 
 #pragma mark - BrowserViewInformation methods
@@ -229,11 +216,6 @@
 
 - (ios::ChromeBrowserState*)currentBrowserState {
   return self.currentBVC.browserState;
-}
-
-- (void)haltAllTabs {
-  [self.mainTabModel haltAllTabs];
-  [self.otrTabModel haltAllTabs];
 }
 
 - (void)cleanDeviceSharingManager {
@@ -270,8 +252,7 @@
   [self.deviceSharingManager updateActiveURL:activeURL];
 }
 
-- (void)deleteIncognitoTabModelState:
-    (BrowsingDataRemovalController*)removalController {
+- (void)deleteIncognitoTabModelState {
   // It is theoretically possible that a Tab has been added to |_otrTabModel|
   // since the deletion has been scheduled. It is unlikely to happen for real
   // because it would require superhuman speed.
@@ -286,9 +267,6 @@
   // following code.
   BOOL otrBVCIsCurrent = self.currentBVC == _otrBVC;
   @autoreleasepool {
-    ios::ChromeBrowserState* otrBrowserState =
-        _browserState->GetOffTheRecordChromeBrowserState();
-    [removalController browserStateDestroyed:otrBrowserState];
     self.otrBVC = nil;
     // There's no guarantee the tab model was ever added to the BVC (or even
     // that the BVC was created), so ensure the tab model gets notified.

@@ -123,6 +123,11 @@ public class MockDocumentTabModel implements DocumentTabModel {
     }
 
     @Override
+    public boolean isCurrentModel() {
+        return false;
+    }
+
+    @Override
     public int index() {
         Assert.fail();
         return 0;
@@ -160,12 +165,4 @@ public class MockDocumentTabModel implements DocumentTabModel {
 
     @Override
     public void openMostRecentlyClosedTab() {}
-
-    @Override
-    public void setIsPendingTabAdd(boolean isPendingTabAdd) {}
-
-    @Override
-    public boolean isPendingTabAdd() {
-        return false;
-    }
 }

@@ -11,8 +11,12 @@
           "app_list::mojom::AppList",
           "ash::mojom::AcceleratorController",
           "ash::mojom::AccessibilityController",
+          "ash::mojom::AccessibilityFocusRingController",
+          "ash::mojom::AppListController",
+          "ash::mojom::AshAssistantController",
           "ash::mojom::AshMessageCenterController",
           "ash::mojom::CastConfig",
+          "ash::mojom::DockedMagnifierController",
           "ash::mojom::HighlighterController",
           "ash::mojom::ImeController",
           "ash::mojom::LocaleNotificationController",
@@ -21,9 +25,11 @@
           "ash::mojom::NewWindowController",
           "ash::mojom::NightLightController",
           "ash::mojom::NoteTakingController",
+          "ash::mojom::ProcessCreationTimeRecorder",
           "ash::mojom::SessionController",
           "ash::mojom::ShelfController",
           "ash::mojom::ShutdownController",
+          "ash::mojom::SplitViewController",
           "ash::mojom::SystemTray",
           "ash::mojom::TabletModeController",
           "ash::mojom::TrayAction",
@@ -34,7 +40,9 @@
         // Test-only interfaces.
         "test": [
           "ash::mojom::ShelfTestApi",
-          "ash::mojom::SystemTrayTestApi"
+          "ash::mojom::ShellTestApi",
+          "ash::mojom::SystemTrayTestApi",
+          "ash::mojom::TimeToFirstPresentRecorderTestApi"
         ],
         // Only chrome is allowed to use this (required as dbus runs in Chrome).
         "display": [
@@ -44,11 +52,17 @@
       },
       "requires": {
         "*": [ "accessibility", "app" ],
+        "autoclick_app": [
+          "chromeos:autoclick",
+          "mash:launchable"
+        ],
         "ash_pref_connector": [ "pref_connector" ],
         "catalog": [ "directory" ],
         "local_state": [ "pref_client" ],
+        "quick_launch_app": [ "mash:launchable" ],
         "ui": [ "display_dev", "window_manager", "video_detector" ],
-        "touch_hud": [ "mash:launchable" ]
+        "touch_hud_app": [ "mash:launchable" ],
+        "data_decoder": [ "image_decoder" ]
       }
     }
   }

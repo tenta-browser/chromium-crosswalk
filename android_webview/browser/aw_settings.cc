@@ -4,6 +4,8 @@
 
 #include "android_webview/browser/aw_settings.h"
 
+#include <memory>
+
 #include "android_webview/browser/aw_content_browser_client.h"
 #include "android_webview/browser/aw_contents.h"
 #include "android_webview/browser/renderer_host/aw_render_view_host_ext.h"
@@ -11,7 +13,6 @@
 #include "base/android/jni_android.h"
 #include "base/android/jni_string.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/supports_user_data.h"
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/navigation_entry.h"
@@ -83,7 +84,7 @@ AwSettings::AwSettings(JNIEnv* env,
       javascript_can_open_windows_automatically_(false),
       aw_settings_(env, obj) {
   web_contents->SetUserData(kAwSettingsUserDataKey,
-                            base::MakeUnique<AwSettingsUserData>(this));
+                            std::make_unique<AwSettingsUserData>(this));
 }
 
 AwSettings::~AwSettings() {
@@ -109,6 +110,11 @@ void AwSettings::Destroy(JNIEnv* env, const JavaParamRef<jobject>& obj) {
 
 AwSettings* AwSettings::FromWebContents(content::WebContents* web_contents) {
   return AwSettingsUserData::GetSettings(web_contents);
+}
+
+bool AwSettings::GetAllowSniffingFileUrls() {
+  JNIEnv* env = base::android::AttachCurrentThread();
+  return Java_AwSettings_getAllowSniffingFileUrls(env);
 }
 
 AwRenderViewHostExt* AwSettings::GetAwRenderViewHostExt() {
@@ -160,7 +166,7 @@ void AwSettings::UpdateUserAgentLocked(JNIEnv* env,
 
   if (ua_overidden) {
     std::string override = base::android::ConvertJavaStringToUTF8(str);
-    web_contents()->SetUserAgentOverride(override);
+    web_contents()->SetUserAgentOverride(override, true);
   }
 
   const content::NavigationController& controller =
@@ -411,7 +417,7 @@ void AwSettings::PopulateWebPreferencesLocked(JNIEnv* env,
   web_prefs->ignore_main_frame_overflow_hidden_quirk = support_quirks;
   web_prefs->report_screen_size_in_physical_pixels_quirk = support_quirks;
 
-  web_prefs->resue_global_for_unowned_main_frame =
+  web_prefs->reuse_global_for_unowned_main_frame =
       Java_AwSettings_getAllowEmptyDocumentPersistenceLocked(env, obj);
 
   web_prefs->password_echo_enabled =

@@ -106,6 +106,8 @@ QuartcFactory::~QuartcFactory() {}
 std::unique_ptr<QuartcSessionInterface> QuartcFactory::CreateQuartcSession(
     const QuartcSessionConfig& quartc_session_config) {
   DCHECK(quartc_session_config.packet_transport);
+  SetQuicReloadableFlag(quic_better_crypto_retransmission, true);
+  SetQuicReloadableFlag(quic_is_write_blocked, true);
 
   Perspective perspective = quartc_session_config.is_server
                                 ? Perspective::IS_SERVER
@@ -113,13 +115,15 @@ std::unique_ptr<QuartcSessionInterface> QuartcFactory::CreateQuartcSession(
   std::unique_ptr<QuicConnection> quic_connection =
       CreateQuicConnection(quartc_session_config, perspective);
   QuicTagVector copt;
+  copt.push_back(kNSTP);
   if (quartc_session_config.congestion_control ==
       QuartcCongestionControl::kBBR) {
     copt.push_back(kTBBR);
 
-    FLAGS_quic_reloadable_flag_quic_bbr_slower_startup = true;
-    FLAGS_quic_reloadable_flag_quic_bbr_fully_drain_queue = true;
-    FLAGS_quic_reloadable_flag_quic_bbr_less_probe_rtt = true;
+    // Note: These settings have no effect for Exoblaze builds since
+    // SetQuicReloadableFlag() gets stubbed out.
+    SetQuicReloadableFlag(quic_bbr_less_probe_rtt, true);
+    SetQuicReloadableFlag(quic_unified_iw_options, true);
     for (const auto option : quartc_session_config.bbr_options) {
       switch (option) {
         case (QuartcBbrOptions::kSlowerStartup):
@@ -139,6 +143,24 @@ std::unique_ptr<QuartcSessionInterface> QuartcFactory::CreateQuartcSession(
           break;
         case (QuartcBbrOptions::kFillUpLinkDuringProbing):
           quic_connection->set_fill_up_link_during_probing(true);
+          break;
+        case (QuartcBbrOptions::kInitialWindow3):
+          copt.push_back(kIW03);
+          break;
+        case (QuartcBbrOptions::kInitialWindow10):
+          copt.push_back(kIW10);
+          break;
+        case (QuartcBbrOptions::kInitialWindow20):
+          copt.push_back(kIW20);
+          break;
+        case (QuartcBbrOptions::kInitialWindow50):
+          copt.push_back(kIW50);
+          break;
+        case (QuartcBbrOptions::kStartup1RTT):
+          copt.push_back(k1RTT);
+          break;
+        case (QuartcBbrOptions::kStartup2RTT):
+          copt.push_back(k2RTT);
           break;
       }
     }
@@ -176,7 +198,7 @@ std::unique_ptr<QuicConnection> QuartcFactory::CreateQuicConnection(
   return std::unique_ptr<QuicConnection>(new QuicConnection(
       dummy_id, dummy_address, this, /*QuicConnectionHelperInterface*/
       this /*QuicAlarmFactory*/, writer.release(), true /*own the writer*/,
-      perspective, AllSupportedTransportVersions()));
+      perspective, AllSupportedVersions()));
 }
 
 QuicAlarm* QuartcFactory::CreateAlarm(QuicAlarm::Delegate* delegate) {

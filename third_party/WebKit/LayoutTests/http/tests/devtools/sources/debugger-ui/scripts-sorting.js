@@ -14,10 +14,10 @@
     return navigatorView;
   }
 
-  sourcesNavigatorView = createNavigatorView(Sources.SourcesNavigatorView);
+  sourcesNavigatorView = createNavigatorView(Sources.NetworkNavigatorView);
   contentScriptsNavigatorView = createNavigatorView(Sources.ContentScriptsNavigatorView);
 
-  Bindings.NetworkProject.forTarget(TestRunner.mainTarget)._resetForTest();
+  Bindings.debuggerWorkspaceBinding._resetForTest(TestRunner.mainTarget);
   Bindings.resourceMapping._resetForTest(TestRunner.mainTarget);
 
   var pageMock = new SDKTestRunner.PageMock('http://example.com');

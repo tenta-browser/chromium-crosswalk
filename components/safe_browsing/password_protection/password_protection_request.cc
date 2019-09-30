@@ -4,8 +4,10 @@
 
 #include "components/safe_browsing/password_protection/password_protection_request.h"
 
-#include "base/memory/ptr_util.h"
+#include <memory>
+
 #include "base/memory/weak_ptr.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
 #include "components/data_use_measurement/core/data_use_user_data.h"
 #include "components/password_manager/core/browser/password_reuse_detector.h"
@@ -17,6 +19,7 @@
 #include "net/base/url_util.h"
 #include "net/http/http_status_code.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
+#include "services/network/public/cpp/simple_url_loader.h"
 #include "url/origin.h"
 
 using content::BrowserThread;
@@ -62,7 +65,7 @@ PasswordProtectionRequest::PasswordProtectionRequest(
       password_field_exists_(password_field_exists),
       password_protection_service_(pps),
       request_timeout_in_ms_(request_timeout_in_ms),
-      request_proto_(base::MakeUnique<LoginReputationClientRequest>()),
+      request_proto_(std::make_unique<LoginReputationClientRequest>()),
       is_modal_warning_showing_(false),
       weakptr_factory_(this) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
@@ -125,7 +128,7 @@ void PasswordProtectionRequest::CheckCachedVerdicts() {
   }
 
   std::unique_ptr<LoginReputationClientResponse> cached_response =
-      base::MakeUnique<LoginReputationClientResponse>();
+      std::make_unique<LoginReputationClientResponse>();
   auto verdict = password_protection_service_->GetCachedVerdict(
       main_frame_url_, trigger_type_, cached_response.get());
   if (verdict != LoginReputationClientResponse::VERDICT_TYPE_UNSPECIFIED)
@@ -146,7 +149,7 @@ void PasswordProtectionRequest::FillRequestProto() {
   main_frame->set_url(main_frame_url_.spec());
   main_frame->set_frame_index(0 /* main frame */);
   password_protection_service_->FillReferrerChain(
-      main_frame_url_, -1 /* tab id not available */, main_frame);
+      main_frame_url_, SessionID::InvalidValue(), main_frame);
   bool clicked_through_interstitial =
       password_protection_service_->UserClickedThroughSBInterstitial(
           web_contents_);
@@ -264,18 +267,20 @@ void PasswordProtectionRequest::SendRequest() {
             }
           }
         })");
-  fetcher_ = net::URLFetcher::Create(
-      0, PasswordProtectionService::GetPasswordProtectionRequestUrl(),
-      net::URLFetcher::POST, this, traffic_annotation);
-  data_use_measurement::DataUseUserData::AttachToFetcher(
-      fetcher_.get(), data_use_measurement::DataUseUserData::SAFE_BROWSING);
-  fetcher_->SetLoadFlags(net::LOAD_DISABLE_CACHE);
-  fetcher_->SetAutomaticallyRetryOn5xx(false);
-  fetcher_->SetRequestContext(
-      password_protection_service_->request_context_getter().get());
-  fetcher_->SetUploadData("application/octet-stream", serialized_request);
+  auto resource_request = std::make_unique<network::ResourceRequest>();
+  resource_request->url =
+      PasswordProtectionService::GetPasswordProtectionRequestUrl();
+  resource_request->method = "POST";
+  resource_request->load_flags = net::LOAD_DISABLE_CACHE;
+  url_loader_ = network::SimpleURLLoader::Create(std::move(resource_request),
+                                                 traffic_annotation);
+  url_loader_->AttachStringForUpload(serialized_request,
+                                     "application/octet-stream");
   request_start_time_ = base::TimeTicks::Now();
-  fetcher_->Start();
+  url_loader_->DownloadToStringOfUnboundedSizeUntilCrashAndDie(
+      password_protection_service_->url_loader_factory().get(),
+      base::BindOnce(&PasswordProtectionRequest::OnURLLoaderComplete,
+                     base::Unretained(this)));
 }
 
 void PasswordProtectionRequest::StartTimeout() {
@@ -291,16 +296,18 @@ void PasswordProtectionRequest::StartTimeout() {
       base::TimeDelta::FromMilliseconds(request_timeout_in_ms_));
 }
 
-void PasswordProtectionRequest::OnURLFetchComplete(
-    const net::URLFetcher* source) {
+void PasswordProtectionRequest::OnURLLoaderComplete(
+    std::unique_ptr<std::string> response_body) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  net::URLRequestStatus status = source->GetStatus();
-  const bool is_success = status.is_success();
-  const int response_code = source->GetResponseCode();
+  int response_code = 0;
+  if (url_loader_->ResponseInfo() && url_loader_->ResponseInfo()->headers)
+    response_code = url_loader_->ResponseInfo()->headers->response_code();
 
-  UMA_HISTOGRAM_SPARSE_SLOWLY(
+  const bool is_success = url_loader_->NetError() == net::OK;
+
+  base::UmaHistogramSparse(
       "PasswordProtection.PasswordProtectionResponseOrErrorCode",
-      is_success ? response_code : status.error());
+      is_success ? response_code : url_loader_->NetError());
 
   if (!is_success || net::HTTP_OK != response_code) {
     Finish(PasswordProtectionService::FETCH_FAILED, nullptr);
@@ -308,14 +315,12 @@ void PasswordProtectionRequest::OnURLFetchComplete(
   }
 
   std::unique_ptr<LoginReputationClientResponse> response =
-      base::MakeUnique<LoginReputationClientResponse>();
-  std::string response_body;
-  bool received_data = source->GetResponseAsString(&response_body);
-  DCHECK(received_data);
-  fetcher_.reset();  // We don't need it anymore.
+      std::make_unique<LoginReputationClientResponse>();
+  DCHECK(response_body.get());
+  url_loader_.reset();  // We don't need it anymore.
   UMA_HISTOGRAM_TIMES("PasswordProtection.RequestNetworkDuration",
                       base::TimeTicks::Now() - request_start_time_);
-  if (response->ParseFromString(response_body))
+  if (response_body.get() && response->ParseFromString(*response_body.get()))
     Finish(PasswordProtectionService::SUCCEEDED, std::move(response));
   else
     Finish(PasswordProtectionService::RESPONSE_MALFORMED, nullptr);
@@ -371,7 +376,7 @@ void PasswordProtectionRequest::Finish(
 
 void PasswordProtectionRequest::Cancel(bool timed_out) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  fetcher_.reset();
+  url_loader_.reset();
   // If request is canceled because |password_protection_service_| is shutting
   // down, ignore all these deferred navigations.
   if (!timed_out)

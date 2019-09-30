@@ -15,7 +15,8 @@
 #include "content/public/browser/web_contents.h"
 #include "ipc/ipc_message_macros.h"
 #include "mojo/public/cpp/bindings/interface_request.h"
-#include "services/device/public/interfaces/wake_lock_context.mojom.h"
+#include "services/device/public/mojom/wake_lock_context.mojom.h"
+#include "third_party/blink/public/platform/web_fullscreen_video_status.h"
 #include "ui/gfx/geometry/size.h"
 
 namespace content {
@@ -40,12 +41,21 @@ void CheckFullscreenDetectionEnabled(WebContents* web_contents) {
 #endif  // defined(OS_ANDROID)
 }
 
+// Returns true if |player_id| exists in |player_map|.
+bool MediaPlayerEntryExists(
+    const WebContentsObserver::MediaPlayerId& player_id,
+    const MediaWebContentsObserver::ActiveMediaPlayerMap& player_map) {
+  const auto& players = player_map.find(player_id.first);
+  if (players == player_map.end())
+    return false;
+
+  return players->second.find(player_id.second) != players->second.end();
+}
+
 }  // anonymous namespace
 
 MediaWebContentsObserver::MediaWebContentsObserver(WebContents* web_contents)
     : WebContentsObserver(web_contents),
-      has_audio_wake_lock_for_testing_(false),
-      has_video_wake_lock_for_testing_(false),
       session_controllers_manager_(this) {}
 
 MediaWebContentsObserver::~MediaWebContentsObserver() = default;
@@ -59,8 +69,10 @@ void MediaWebContentsObserver::RenderFrameDeleted(
   ClearWakeLocks(render_frame_host);
   session_controllers_manager_.RenderFrameDeleted(render_frame_host);
 
-  if (fullscreen_player_ && fullscreen_player_->first == render_frame_host)
+  if (fullscreen_player_ && fullscreen_player_->first == render_frame_host) {
+    picture_in_picture_allowed_in_fullscreen_.reset();
     fullscreen_player_.reset();
+  }
 }
 
 void MediaWebContentsObserver::MaybeUpdateAudibleState() {
@@ -82,19 +94,25 @@ bool MediaWebContentsObserver::HasActiveEffectivelyFullscreenVideo() const {
     return false;
 
   // Check that the player is active.
-  const auto& players = active_video_players_.find(fullscreen_player_->first);
-  if (players == active_video_players_.end())
-    return false;
-  if (players->second.find(fullscreen_player_->second) == players->second.end())
-    return false;
+  return MediaPlayerEntryExists(*fullscreen_player_, active_video_players_);
+}
 
-  return true;
+bool MediaWebContentsObserver::IsPictureInPictureAllowedForFullscreenVideo()
+    const {
+  DCHECK(picture_in_picture_allowed_in_fullscreen_.has_value());
+
+  return *picture_in_picture_allowed_in_fullscreen_;
 }
 
 const base::Optional<WebContentsObserver::MediaPlayerId>&
 MediaWebContentsObserver::GetFullscreenVideoMediaPlayerId() const {
   CheckFullscreenDetectionEnabled(web_contents_impl());
   return fullscreen_player_;
+}
+
+const base::Optional<WebContentsObserver::MediaPlayerId>&
+MediaWebContentsObserver::GetPictureInPictureVideoMediaPlayerId() const {
+  return pip_player_;
 }
 
 bool MediaWebContentsObserver::OnMessageReceived(
@@ -115,23 +133,34 @@ bool MediaWebContentsObserver::OnMessageReceived(
         OnMediaEffectivelyFullscreenChanged)
     IPC_MESSAGE_HANDLER(MediaPlayerDelegateHostMsg_OnMediaSizeChanged,
                         OnMediaSizeChanged)
+    IPC_MESSAGE_HANDLER(
+        MediaPlayerDelegateHostMsg_OnPictureInPictureSourceChanged,
+        OnPictureInPictureSourceChanged)
+    IPC_MESSAGE_HANDLER(MediaPlayerDelegateHostMsg_OnPictureInPictureModeEnded,
+                        OnPictureInPictureModeEnded)
     IPC_MESSAGE_UNHANDLED(handled = false)
   IPC_END_MESSAGE_MAP()
   return handled;
 }
 
-void MediaWebContentsObserver::WasShown() {
-  // Restore wake lock if there are active video players running.
-  if (!active_video_players_.empty())
-    LockVideo();
-}
+void MediaWebContentsObserver::OnVisibilityChanged(
+    content::Visibility visibility) {
+  if (visibility == content::Visibility::HIDDEN) {
+    // If there are entities capturing screenshots or video (e.g., mirroring),
+    // don't release the wake lock.
+    if (!web_contents()->IsBeingCaptured()) {
+      GetVideoWakeLock()->CancelWakeLock();
+      has_video_wake_lock_for_testing_ = false;
+    }
+  } else {
+    // TODO(ke.he@intel.com): Determine whether a tab should be allowed to
+    // request the wake lock when it's occluded.
+    DCHECK(visibility == content::Visibility::VISIBLE ||
+           visibility == content::Visibility::OCCLUDED);
 
-void MediaWebContentsObserver::WasHidden() {
-  // If there are entities capturing screenshots or video (e.g., mirroring),
-  // don't release the wake lock.
-  if (!web_contents()->GetCapturerCount()) {
-    GetVideoWakeLock()->CancelWakeLock();
-    has_video_wake_lock_for_testing_ = false;
+    // Restore wake lock if there are active video players running.
+    if (!active_video_players_.empty())
+      LockVideo();
   }
 }
 
@@ -147,10 +176,23 @@ void MediaWebContentsObserver::RequestPersistentVideo(bool value) {
       target_frame->GetRoutingID(), delegate_id, value));
 }
 
+bool MediaWebContentsObserver::IsPlayerActive(
+    const MediaPlayerId& player_id) const {
+  if (MediaPlayerEntryExists(player_id, active_video_players_))
+    return true;
+
+  return MediaPlayerEntryExists(player_id, active_audio_players_);
+}
+
 void MediaWebContentsObserver::OnMediaDestroyed(
     RenderFrameHost* render_frame_host,
     int delegate_id) {
   OnMediaPaused(render_frame_host, delegate_id, true);
+
+  if (pip_player_ &&
+      pip_player_ == MediaPlayerId(render_frame_host, delegate_id)) {
+    pip_player_.reset();
+  }
 }
 
 void MediaWebContentsObserver::OnMediaPaused(RenderFrameHost* render_frame_host,
@@ -218,17 +260,31 @@ void MediaWebContentsObserver::OnMediaPlaying(
 void MediaWebContentsObserver::OnMediaEffectivelyFullscreenChanged(
     RenderFrameHost* render_frame_host,
     int delegate_id,
-    bool is_fullscreen) {
+    blink::WebFullscreenVideoStatus fullscreen_status) {
   const MediaPlayerId id(render_frame_host, delegate_id);
 
-  if (is_fullscreen) {
-    fullscreen_player_ = id;
-  } else {
-    if (!fullscreen_player_ || *fullscreen_player_ != id)
-      return;
+  switch (fullscreen_status) {
+    case blink::WebFullscreenVideoStatus::kFullscreenAndPictureInPictureEnabled:
+      fullscreen_player_ = id;
+      picture_in_picture_allowed_in_fullscreen_ = true;
+      break;
+    case blink::WebFullscreenVideoStatus::
+        kFullscreenAndPictureInPictureDisabled:
+      fullscreen_player_ = id;
+      picture_in_picture_allowed_in_fullscreen_ = false;
+      break;
+    case blink::WebFullscreenVideoStatus::kNotEffectivelyFullscreen:
+      if (!fullscreen_player_ || *fullscreen_player_ != id)
+        return;
 
-    fullscreen_player_.reset();
+      picture_in_picture_allowed_in_fullscreen_.reset();
+      fullscreen_player_.reset();
+      break;
   }
+
+  bool is_fullscreen =
+      (fullscreen_status !=
+       blink::WebFullscreenVideoStatus::kNotEffectivelyFullscreen);
   web_contents_impl()->MediaEffectivelyFullscreenChanged(is_fullscreen);
 }
 
@@ -238,6 +294,18 @@ void MediaWebContentsObserver::OnMediaSizeChanged(
     const gfx::Size& size) {
   const MediaPlayerId id(render_frame_host, delegate_id);
   web_contents_impl()->MediaResized(size, id);
+}
+
+void MediaWebContentsObserver::OnPictureInPictureSourceChanged(
+    RenderFrameHost* render_frame_host,
+    int delegate_id) {
+  pip_player_ = MediaPlayerId(render_frame_host, delegate_id);
+}
+
+void MediaWebContentsObserver::OnPictureInPictureModeEnded(
+    RenderFrameHost* render_frame_host,
+    int delegate_id) {
+  pip_player_.reset();
 }
 
 void MediaWebContentsObserver::ClearWakeLocks(

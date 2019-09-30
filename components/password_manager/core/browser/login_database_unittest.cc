@@ -31,8 +31,8 @@
 #include "url/origin.h"
 
 using autofill::PasswordForm;
-using autofill::PossibleUsernamePair;
-using autofill::PossibleUsernamesVector;
+using autofill::ValueElementPair;
+using autofill::ValueElementVector;
 using base::ASCIIToUTF16;
 using ::testing::Eq;
 using ::testing::Pointee;
@@ -134,9 +134,8 @@ MATCHER(IsBasicAuthAccount, "") {
 }  // namespace
 
 // Serialization routines for vectors implemented in login_database.cc.
-base::Pickle SerializePossibleUsernamePairs(const PossibleUsernamesVector& vec);
-PossibleUsernamesVector DeserializePossibleUsernamePairs(
-    const base::Pickle& pickle);
+base::Pickle SerializeValueElementPairs(const ValueElementVector& vec);
+ValueElementVector DeserializeValueElementPairs(const base::Pickle& pickle);
 
 class LoginDatabaseTest : public testing::Test {
  protected:
@@ -975,6 +974,8 @@ TEST_F(LoginDatabaseTest, ClearPrivateData_SavedPasswords) {
 
   base::Time now = base::Time::Now();
   base::TimeDelta one_day = base::TimeDelta::FromDays(1);
+  base::Time back_30_days = now - base::TimeDelta::FromDays(30);
+  base::Time back_31_days = now - base::TimeDelta::FromDays(31);
 
   // Create one with a 0 time.
   EXPECT_TRUE(
@@ -985,10 +986,13 @@ TEST_F(LoginDatabaseTest, ClearPrivateData_SavedPasswords) {
   EXPECT_TRUE(AddTimestampedLogin(&db(), "http://3.com", "foo3", now, true));
   EXPECT_TRUE(
       AddTimestampedLogin(&db(), "http://4.com", "foo4", now + one_day, true));
+  // Create one with 31 days old.
+  EXPECT_TRUE(
+      AddTimestampedLogin(&db(), "http://5.com", "foo5", back_31_days, true));
 
   // Verify inserts worked.
   EXPECT_TRUE(db().GetAutofillableLogins(&result));
-  EXPECT_EQ(4U, result.size());
+  EXPECT_EQ(5U, result.size());
   result.clear();
 
   // Get everything from today's date and on.
@@ -996,12 +1000,26 @@ TEST_F(LoginDatabaseTest, ClearPrivateData_SavedPasswords) {
   EXPECT_EQ(2U, result.size());
   result.clear();
 
+  // Get all logins created more than 30 days back.
+  EXPECT_TRUE(
+      db().GetLoginsCreatedBetween(base::Time(), back_30_days, &result));
+  EXPECT_EQ(2U, result.size());
+  result.clear();
+
   // Delete everything from today's date and on.
   db().RemoveLoginsCreatedBetween(now, base::Time());
 
-  // Should have deleted half of what we inserted.
+  // Should have deleted two logins.
   EXPECT_TRUE(db().GetAutofillableLogins(&result));
-  EXPECT_EQ(2U, result.size());
+  EXPECT_EQ(3U, result.size());
+  result.clear();
+
+  // Delete all logins created more than 30 days back.
+  db().RemoveLoginsCreatedBetween(base::Time(), back_30_days);
+
+  // Should have deleted two logins.
+  EXPECT_TRUE(db().GetAutofillableLogins(&result));
+  EXPECT_EQ(1U, result.size());
   result.clear();
 
   // Delete with 0 date (should delete all).
@@ -1149,21 +1167,18 @@ TEST_F(LoginDatabaseTest, BlacklistedLogins) {
 
 TEST_F(LoginDatabaseTest, VectorSerialization) {
   // Empty vector.
-  PossibleUsernamesVector vec;
-  base::Pickle temp = SerializePossibleUsernamePairs(vec);
-  PossibleUsernamesVector output = DeserializePossibleUsernamePairs(temp);
+  ValueElementVector vec;
+  base::Pickle temp = SerializeValueElementPairs(vec);
+  ValueElementVector output = DeserializeValueElementPairs(temp);
   EXPECT_THAT(output, Eq(vec));
 
   // Normal data.
-  vec.push_back(
-      PossibleUsernamePair(ASCIIToUTF16("first"), ASCIIToUTF16("id1")));
-  vec.push_back(
-      PossibleUsernamePair(ASCIIToUTF16("second"), ASCIIToUTF16("id2")));
-  vec.push_back(
-      PossibleUsernamePair(ASCIIToUTF16("third"), ASCIIToUTF16("id3")));
+  vec.push_back({ASCIIToUTF16("first"), ASCIIToUTF16("id1")});
+  vec.push_back({ASCIIToUTF16("second"), ASCIIToUTF16("id2")});
+  vec.push_back({ASCIIToUTF16("third"), ASCIIToUTF16("id3")});
 
-  temp = SerializePossibleUsernamePairs(vec);
-  output = DeserializePossibleUsernamePairs(temp);
+  temp = SerializeValueElementPairs(vec);
+  output = DeserializeValueElementPairs(temp);
   EXPECT_THAT(output, Eq(vec));
 }
 
@@ -1338,7 +1353,7 @@ TEST_F(LoginDatabaseTest, UpdateLogin) {
   form.action = GURL("http://accounts.google.com/login");
   form.password_value = ASCIIToUTF16("my_new_password");
   form.preferred = false;
-  form.other_possible_usernames.push_back(autofill::PossibleUsernamePair(
+  form.other_possible_usernames.push_back(autofill::ValueElementPair(
       ASCIIToUTF16("my_new_username"), ASCIIToUTF16("new_username_id")));
   form.times_used = 20;
   form.submit_element = ASCIIToUTF16("submit_element");
@@ -1502,6 +1517,8 @@ TEST_F(LoginDatabaseTest, ReportMetricsTest) {
       "PasswordManager.EmptyUsernames.WithoutCorrespondingNonempty",
       1,
       1);
+  histogram_tester.ExpectUniqueSample("PasswordManager.InaccessiblePasswords",
+                                      0, 1);
 }
 
 TEST_F(LoginDatabaseTest, PasswordReuseMetrics) {
@@ -1715,7 +1732,7 @@ class LoginDatabaseMigrationTest : public testing::TestWithParam<int> {
 
   void TearDown() override { OSCryptMocker::TearDown(); }
 
-  // Creates the databse from |sql_file|.
+  // Creates the database from |sql_file|.
   void CreateDatabase(base::StringPiece sql_file) {
     base::FilePath database_dump;
     ASSERT_TRUE(PathService::Get(base::DIR_SOURCE_ROOT, &database_dump));

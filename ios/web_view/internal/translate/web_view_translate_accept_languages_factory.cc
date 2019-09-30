@@ -4,7 +4,6 @@
 
 #include "ios/web_view/internal/translate/web_view_translate_accept_languages_factory.h"
 
-#include "base/memory/ptr_util.h"
 #include "base/memory/singleton.h"
 #include "components/keyed_service/core/keyed_service.h"
 #include "components/keyed_service/ios/browser_state_dependency_manager.h"
@@ -72,8 +71,15 @@ WebViewTranslateAcceptLanguagesFactory::BuildServiceInstanceFor(
     web::BrowserState* context) const {
   WebViewBrowserState* browser_state =
       WebViewBrowserState::FromBrowserState(context);
-  return base::MakeUnique<TranslateAcceptLanguagesService>(
+  return std::make_unique<TranslateAcceptLanguagesService>(
       browser_state->GetPrefs());
 }
+
+web::BrowserState* WebViewTranslateAcceptLanguagesFactory::GetBrowserStateToUse(
+    web::BrowserState* context) const {
+  WebViewBrowserState* browser_state =
+      WebViewBrowserState::FromBrowserState(context);
+  return browser_state->GetRecordingBrowserState();
+};
 
 }  // namespace ios_web_view

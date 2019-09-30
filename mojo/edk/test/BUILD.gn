@@ -2,8 +2,6 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-import("//testing/test.gni")
-
 static_library("test_support") {
   testonly = true
   sources = [
@@ -29,7 +27,7 @@ static_library("test_support") {
   deps = [
     "//base",
     "//base/test:test_support",
-    "//mojo/edk/system",
+    "//mojo/edk",
     "//mojo/public/cpp/system",
     "//testing/gtest",
   ]
@@ -46,7 +44,7 @@ source_set("run_all_unittests") {
     ":test_support_impl",
     "//base",
     "//base/test:test_support",
-    "//mojo/edk/system",
+    "//mojo/edk",
     "//mojo/public/c/test_support",
     "//testing/gtest",
   ]
@@ -62,7 +60,7 @@ source_set("run_all_perftests") {
     ":test_support_impl",
     "//base",
     "//base/test:test_support",
-    "//mojo/edk/system",
+    "//mojo/edk",
     "//mojo/edk/test:test_support",
     "//mojo/public/c/test_support",
   ]
@@ -88,49 +86,5 @@ static_library("test_support_impl") {
   sources = [
     "test_support_impl.cc",
     "test_support_impl.h",
-  ]
-}
-
-# Public SDK test targets follow. These targets are not defined within the
-# public SDK itself as running the unittests requires the EDK.
-# TODO(vtl): These don't really belong here. (They should be converted to
-# apptests, but even apart from that these targets belong somewhere else.)
-
-group("public_tests") {
-  testonly = true
-  deps = [
-    ":mojo_public_bindings_unittests",
-    ":mojo_public_system_perftests",
-    ":mojo_public_system_unittests",
-  ]
-}
-
-test("mojo_public_bindings_perftests") {
-  deps = [
-    ":run_all_perftests",
-    "//mojo/edk/test:test_support",
-    "//mojo/public/cpp/bindings/tests:perftests",
-  ]
-}
-
-test("mojo_public_bindings_unittests") {
-  deps = [
-    ":run_all_unittests",
-    "//mojo/edk/test:test_support",
-    "//mojo/public/cpp/bindings/tests",
-  ]
-}
-
-test("mojo_public_system_perftests") {
-  deps = [
-    ":run_all_perftests",
-    "//mojo/public/c/system/tests:perftests",
-  ]
-}
-
-test("mojo_public_system_unittests") {
-  deps = [
-    ":run_all_unittests",
-    "//mojo/public/cpp/system/tests",
   ]
 }

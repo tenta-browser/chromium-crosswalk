@@ -18,19 +18,9 @@
 #include "ui/events/system_input_injector.h"
 #include "ui/gfx/geometry/point.h"
 
-#if defined(USE_OZONE)
-#include "ui/ozone/public/client_native_pixmap_factory_ozone.h"
-#endif
-
 namespace base {
 class UnguessableToken;
 }
-
-#if defined(USE_OZONE)
-namespace gfx {
-class ClientNativePixmapFactory;
-}
-#endif
 
 namespace mojo {
 template <typename MojoInterface>
@@ -117,6 +107,17 @@ class AURA_EXPORT Env : public ui::EventTarget,
     context_factory_ = context_factory;
   }
   ui::ContextFactory* context_factory() { return context_factory_; }
+
+  // Sets |initial_throttle_input_on_resize| the next time Env is created. This
+  // is only useful in tests that need to disable input resize.
+  static void set_initial_throttle_input_on_resize_for_testing(
+      bool throttle_input) {
+    initial_throttle_input_on_resize_ = throttle_input;
+  }
+  void set_throttle_input_on_resize_for_testing(bool throttle_input) {
+    throttle_input_on_resize_ = throttle_input;
+  }
+  bool throttle_input_on_resize() const { return throttle_input_on_resize_; }
 
   void set_context_factory_private(
       ui::ContextFactoryPrivate* context_factory_private) {
@@ -209,18 +210,15 @@ class AURA_EXPORT Env : public ui::EventTarget,
   std::unique_ptr<InputStateLookup> input_state_lookup_;
   std::unique_ptr<ui::PlatformEventSource> event_source_;
 
-#if defined(USE_OZONE)
-  // Factory for pixmaps that can use be transported from the client to the GPU
-  // process using a low-level ozone-provided platform specific mechanism.
-  std::unique_ptr<gfx::ClientNativePixmapFactory> native_pixmap_factory_;
-#endif
-
   ui::ContextFactory* context_factory_;
   ui::ContextFactoryPrivate* context_factory_private_;
 
   // This is set to true when the WindowTreeClient is destroyed. It triggers
   // creating a different WindowPort implementation.
   bool in_mus_shutdown_ = false;
+
+  static bool initial_throttle_input_on_resize_;
+  bool throttle_input_on_resize_ = initial_throttle_input_on_resize_;
 
   DISALLOW_COPY_AND_ASSIGN(Env);
 };

@@ -3,15 +3,19 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
+      "backgroundColor": "#FFFFFF"
+    },
+    {
+      "name": "Scrolling Layer",
+      "bounds": [800, 600],
+      "drawsContent": false
+    },
+    {
+      "name": "Scrolling Contents Layer",
+      "bounds": [800, 600],
       "contentsOpaque": true,
-      "backgroundColor": "#FFFFFF",
-      "paintInvalidations": [
-        {
-          "object": "LayoutBlockFlow BODY",
-          "rect": [8, 8, 784, 20],
-          "reason": "geometry"
-        }
-      ]
+      "backgroundColor": "#FFFFFF"
     },
     {
       "name": "LayoutInline (relative positioned) DIV id='block'",
@@ -22,12 +26,7 @@
         {
           "object": "LayoutInline (relative positioned) DIV id='block'",
           "rect": [0, 0, 348, 21],
-          "reason": "geometry"
-        },
-        {
-          "object": "LayoutText #text",
-          "rect": [1, 1, 346, 19],
-          "reason": "geometry"
+          "reason": "paint property change"
         }
       ]
     }

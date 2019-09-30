@@ -9,14 +9,14 @@
  */
 
 /** @enum {string} */
-var LockScreenUnlockType = {
+const LockScreenUnlockType = {
   VALUE_PENDING: 'value_pending',
   PASSWORD: 'password',
   PIN_PASSWORD: 'pin+password'
 };
 
 /** @polymerBehavior */
-var LockStateBehavior = {
+const LockStateBehavior = {
   properties: {
     /**
      * The currently selected unlock type.
@@ -35,7 +35,7 @@ var LockStateBehavior = {
 
     /**
      * Interface for chrome.quickUnlockPrivate calls. May be overriden by tests.
-     * @private
+     * @private {QuickUnlockPrivate}
      */
     quickUnlockPrivate_: {type: Object, value: chrome.quickUnlockPrivate},
   },
@@ -70,5 +70,10 @@ var LockStateBehavior = {
         this.selectedUnlockType = LockScreenUnlockType.PASSWORD;
       }
     });
+  },
+
+  /** Sets the lock screen enabled state. */
+  setLockScreenEnabled(authToken, enabled) {
+    this.quickUnlockPrivate_.setLockScreenEnabled(authToken, enabled);
   },
 };

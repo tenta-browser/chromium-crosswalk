@@ -16,8 +16,8 @@
 #include "ipc/ipc_message.h"
 #include "mojo/public/cpp/bindings/interface_request.h"
 #include "net/http/http_request_headers.h"
-#include "third_party/WebKit/public/platform/WebString.h"
-#include "third_party/WebKit/public/platform/WebURL.h"
+#include "third_party/blink/public/platform/web_string.h"
+#include "third_party/blink/public/platform/web_url.h"
 
 namespace safe_browsing {
 
@@ -62,7 +62,8 @@ void WebSocketSBHandshakeThrottle::ThrottleHandshake(
   safe_browsing_->CreateCheckerAndCheck(
       render_frame_id, mojo::MakeRequest(&url_checker_), url, "GET",
       net::HttpRequestHeaders(), load_flags,
-      content::RESOURCE_TYPE_SUB_RESOURCE, false,
+      content::RESOURCE_TYPE_SUB_RESOURCE, false /* has_user_gesture */,
+      false /* originated_from_service_worker */,
       base::BindOnce(&WebSocketSBHandshakeThrottle::OnCheckResult,
                      weak_factory_.GetWeakPtr()));
 

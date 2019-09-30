@@ -11,6 +11,8 @@
 #include "build/build_config.h"
 #include "content/browser/frame_host/render_frame_host_impl.h"
 #include "content/browser/renderer_host/render_process_host_impl.h"
+#include "content/public/browser/browser_thread.h"
+#include "content/public/browser/child_process_launcher_utils.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/render_process_host_observer.h"
@@ -22,6 +24,7 @@
 #include "content/public/test/content_browser_test.h"
 #include "content/public/test/content_browser_test_utils.h"
 #include "content/public/test/test_service.mojom.h"
+#include "content/public/test/test_utils.h"
 #include "content/shell/browser/shell.h"
 #include "content/shell/browser/shell_browser_context.h"
 #include "content/shell/browser/shell_browser_main_parts.h"
@@ -30,7 +33,7 @@
 #include "media/base/bind_to_current_loop.h"
 #include "media/base/media_switches.h"
 #include "media/base/test_data_util.h"
-#include "media/mojo/features.h"
+#include "media/mojo/buildflags.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
 #include "net/test/embedded_test_server/http_request.h"
 #include "net/test/embedded_test_server/http_response.h"
@@ -41,18 +44,6 @@
 
 namespace content {
 namespace {
-
-int RenderProcessHostCount() {
-  content::RenderProcessHost::iterator hosts =
-      content::RenderProcessHost::AllHostsIterator();
-  int count = 0;
-  while (!hosts.IsAtEnd()) {
-    if (hosts.GetCurrentValue()->HasConnection())
-      count++;
-    hosts.Advance();
-  }
-  return count;
-}
 
 std::unique_ptr<net::test_server::HttpResponse> HandleBeacon(
     const net::test_server::HttpRequest& request) {
@@ -74,11 +65,9 @@ class RenderProcessHostTest : public ContentBrowserTest,
   RenderProcessHostTest() : process_exits_(0), host_destructions_(0) {}
 
   void SetUpCommandLine(base::CommandLine* command_line) override {
-    command_line->AppendSwitch(switches::kIgnoreAutoplayRestrictionsForTests);
-    // These flags are necessary to emulate camera input for getUserMedia()
-    // tests.
-    command_line->AppendSwitch(switches::kUseFakeDeviceForMediaStream);
-    command_line->AppendSwitch(switches::kUseFakeUIForMediaStream);
+    command_line->AppendSwitchASCII(
+        switches::kAutoplayPolicy,
+        switches::autoplay::kNoUserGestureRequiredPolicy);
   }
 
  protected:
@@ -125,6 +114,8 @@ class SpareRendererContentBrowserClient : public TestContentBrowserClient {
 // suitable host, but otherwise tries to reuse processes.
 class NonSpareRendererContentBrowserClient : public TestContentBrowserClient {
  public:
+  NonSpareRendererContentBrowserClient() = default;
+
   bool IsSuitableHost(RenderProcessHost* process_host,
                       const GURL& site_url) override {
     return RenderProcessHostImpl::GetSpareRenderProcessHostForTesting() !=
@@ -135,19 +126,14 @@ class NonSpareRendererContentBrowserClient : public TestContentBrowserClient {
                                          const GURL& url) override {
     return true;
   }
-};
 
-class RenderProcessHostWithKeepAliveOptionEnabledTest
-    : public RenderProcessHostTest {
- public:
-  void SetUp() override {
-    feature_list_.InitAndEnableFeature(
-        features::kKeepAliveRendererForKeepaliveRequests);
-    RenderProcessHostTest::SetUp();
+  bool ShouldUseSpareRenderProcessHost(BrowserContext* browser_context,
+                                       const GURL& site_url) override {
+    return false;
   }
 
  private:
-  base::test::ScopedFeatureList feature_list_;
+  DISALLOW_COPY_AND_ASSIGN(NonSpareRendererContentBrowserClient);
 };
 
 // Sometimes the renderer process's ShutdownRequest (corresponding to the
@@ -185,7 +171,7 @@ IN_PROC_BROWSER_TEST_F(RenderProcessHostTest,
 IN_PROC_BROWSER_TEST_F(RenderProcessHostTest,
                        GuestsAreNotSuitableHosts) {
   // Set max renderers to 1 to force running out of processes.
-  content::RenderProcessHost::SetMaxRendererProcessCount(1);
+  RenderProcessHost::SetMaxRendererProcessCount(1);
 
   ASSERT_TRUE(embedded_test_server()->Start());
 
@@ -196,7 +182,7 @@ IN_PROC_BROWSER_TEST_F(RenderProcessHostTest,
   // Make it believe it's a guest.
   reinterpret_cast<RenderProcessHostImpl*>(rph)->
       set_is_for_guests_only_for_testing(true);
-  EXPECT_EQ(1, RenderProcessHostCount());
+  EXPECT_EQ(1, RenderProcessHost::GetCurrentRenderProcessCountForTesting());
 
   // Navigate to a different page.
   GURL::Replacements replace_host;
@@ -206,7 +192,7 @@ IN_PROC_BROWSER_TEST_F(RenderProcessHostTest,
   NavigateToURL(CreateBrowser(), another_url);
 
   // Expect that we got another process (the guest renderer was not reused).
-  EXPECT_EQ(2, RenderProcessHostCount());
+  EXPECT_EQ(2, RenderProcessHost::GetCurrentRenderProcessCountForTesting());
 }
 
 IN_PROC_BROWSER_TEST_F(RenderProcessHostTest, SpareRenderProcessHostTaken) {
@@ -225,9 +211,18 @@ IN_PROC_BROWSER_TEST_F(RenderProcessHostTest, SpareRenderProcessHostTaken) {
   EXPECT_EQ(spare_renderer,
             window->web_contents()->GetMainFrame()->GetProcess());
 
-  // The spare render process host should no longer be available.
-  EXPECT_EQ(nullptr,
+  // The old spare render process host should no longer be available.
+  EXPECT_NE(spare_renderer,
             RenderProcessHostImpl::GetSpareRenderProcessHostForTesting());
+
+  // Check if a fresh spare is available (depending on the operating mode).
+  if (RenderProcessHostImpl::IsSpareProcessKeptAtAllTimes()) {
+    EXPECT_NE(nullptr,
+              RenderProcessHostImpl::GetSpareRenderProcessHostForTesting());
+  } else {
+    EXPECT_EQ(nullptr,
+              RenderProcessHostImpl::GetSpareRenderProcessHostForTesting());
+  }
 }
 
 IN_PROC_BROWSER_TEST_F(RenderProcessHostTest, SpareRenderProcessHostNotTaken) {
@@ -245,11 +240,16 @@ IN_PROC_BROWSER_TEST_F(RenderProcessHostTest, SpareRenderProcessHostNotTaken) {
   EXPECT_NE(spare_renderer,
             window->web_contents()->GetMainFrame()->GetProcess());
 
-  // The spare RenderProcessHost should have been cleaned up. Note this
-  // behavior is identical to what would have happened if the RenderProcessHost
-  // were taken.
-  EXPECT_EQ(nullptr,
-            RenderProcessHostImpl::GetSpareRenderProcessHostForTesting());
+  // Check if a fresh spare is available (depending on the operating mode).
+  // Note this behavior is identical to what would have happened if the
+  // RenderProcessHost were taken.
+  if (RenderProcessHostImpl::IsSpareProcessKeptAtAllTimes()) {
+    EXPECT_NE(nullptr,
+              RenderProcessHostImpl::GetSpareRenderProcessHostForTesting());
+  } else {
+    EXPECT_EQ(nullptr,
+              RenderProcessHostImpl::GetSpareRenderProcessHostForTesting());
+  }
 }
 
 IN_PROC_BROWSER_TEST_F(RenderProcessHostTest, SpareRenderProcessHostKilled) {
@@ -267,7 +267,7 @@ IN_PROC_BROWSER_TEST_F(RenderProcessHostTest, SpareRenderProcessHostKilled) {
   spare_renderer->AddObserver(this);  // For process_exit_callback.
 
   // Should reply with a bad message and cause process death.
-  service->DoSomething(base::BindOnce(&base::DoNothing));
+  service->DoSomething(base::DoNothing());
   run_loop.Run();
 
   // The spare RenderProcessHost should disappear when its process dies.
@@ -308,8 +308,10 @@ IN_PROC_BROWSER_TEST_F(RenderProcessHostTest,
   GURL test_url = embedded_test_server()->GetURL("/simple_page.html");
   Shell* new_window = CreateBrowser();
   NavigateToURL(new_window, test_url);
-  // The spare RPH should have been dropped during CreateBrowser() and given to
-  // the new window.
+  // Outside of RenderProcessHostImpl::IsSpareProcessKeptAtAllTimes mode, the
+  // spare RPH should have been dropped during CreateBrowser() and given to the
+  // new window.  OTOH, even in the IsSpareProcessKeptAtAllTimes mode, the spare
+  // shouldn't be created because of the low process limit.
   EXPECT_EQ(nullptr,
             RenderProcessHostImpl::GetSpareRenderProcessHostForTesting());
   EXPECT_EQ(spare_renderer,
@@ -334,28 +336,256 @@ IN_PROC_BROWSER_TEST_F(RenderProcessHostTest, SpareRendererOnProcessReuse) {
       RenderProcessHostImpl::GetSpareRenderProcessHostForTesting();
   EXPECT_NE(nullptr, spare_renderer);
 
-  // This should resuse the existing process and cause the spare renderer to be
-  // dropped.
+  // This should reuse the existing process.
   Shell* new_browser = CreateBrowser();
   EXPECT_EQ(shell()->web_contents()->GetMainFrame()->GetProcess(),
             new_browser->web_contents()->GetMainFrame()->GetProcess());
   EXPECT_NE(spare_renderer,
             new_browser->web_contents()->GetMainFrame()->GetProcess());
-  EXPECT_EQ(nullptr,
-            RenderProcessHostImpl::GetSpareRenderProcessHostForTesting());
+  if (RenderProcessHostImpl::IsSpareProcessKeptAtAllTimes()) {
+    EXPECT_NE(nullptr,
+              RenderProcessHostImpl::GetSpareRenderProcessHostForTesting());
+  } else {
+    EXPECT_EQ(nullptr,
+              RenderProcessHostImpl::GetSpareRenderProcessHostForTesting());
+  }
 
   // The launcher thread reads state from browser_client, need to wait for it to
   // be done before resetting the browser client. crbug.com/742533.
   base::WaitableEvent launcher_thread_done(
       base::WaitableEvent::ResetPolicy::MANUAL,
       base::WaitableEvent::InitialState::NOT_SIGNALED);
-  BrowserThread::PostTask(
-      content::BrowserThread::PROCESS_LAUNCHER, FROM_HERE,
+  GetProcessLauncherTaskRunner()->PostTask(
+      FROM_HERE,
       base::BindOnce([](base::WaitableEvent* done) { done->Signal(); },
                      base::Unretained(&launcher_thread_done)));
   ASSERT_TRUE(launcher_thread_done.TimedWait(TestTimeouts::action_timeout()));
 
   SetBrowserClientForTesting(old_client);
+}
+
+// Verifies that the spare renderer maintained by SpareRenderProcessHostManager
+// is correctly destroyed during browser shutdown.  This test is an analogue
+// to the //chrome-layer FastShutdown.SpareRenderProcessHost test.
+IN_PROC_BROWSER_TEST_F(RenderProcessHostTest,
+                       SpareRenderProcessHostDuringShutdown) {
+  content::RenderProcessHost::WarmupSpareRenderProcessHost(
+      shell()->web_contents()->GetBrowserContext());
+
+  // The verification is that there are no DCHECKs anywhere during test tear
+  // down.
+}
+
+// Verifies that the spare renderer maintained by SpareRenderProcessHostManager
+// is correctly destroyed when closing the last content shell.
+IN_PROC_BROWSER_TEST_F(RenderProcessHostTest, SpareRendererDuringClosing) {
+  content::RenderProcessHost::WarmupSpareRenderProcessHost(
+      shell()->web_contents()->GetBrowserContext());
+  shell()->web_contents()->Close();
+
+  // The verification is that there are no DCHECKs or UaF anywhere during test
+  // tear down.
+}
+
+// Class that simulates the fact that some //content embedders (e.g. by
+// overriding ChromeContentBrowserClient::GetStoragePartitionConfigForSite) can
+// cause BrowserContext::GetDefaultStoragePartition(browser_context) to differ
+// from BrowserContext::GetStoragePartition(browser_context, site_instance) even
+// if |site_instance| is not for guests.
+class CustomStoragePartitionForSomeSites : public TestContentBrowserClient {
+ public:
+  explicit CustomStoragePartitionForSomeSites(const GURL& site_to_isolate)
+      : site_to_isolate_(site_to_isolate) {}
+
+  void GetStoragePartitionConfigForSite(BrowserContext* browser_context,
+                                        const GURL& site,
+                                        bool can_be_default,
+                                        std::string* partition_domain,
+                                        std::string* partition_name,
+                                        bool* in_memory) override {
+    // Default to the browser-wide storage partition and override based on
+    // |site| below.
+    partition_domain->clear();
+    partition_name->clear();
+    *in_memory = false;
+
+    // Override for |site_to_isolate_|.
+    if (site == site_to_isolate_) {
+      *partition_domain = "blah_isolated_storage";
+      *partition_name = "blah_isolated_storage";
+      *in_memory = false;
+    }
+  }
+
+  std::string GetStoragePartitionIdForSite(BrowserContext* browser_context,
+                                           const GURL& site) override {
+    if (site == site_to_isolate_)
+      return "custom";
+    return "";
+  }
+
+  bool IsValidStoragePartitionId(BrowserContext* browser_context,
+                                 const std::string& partition_id) override {
+    return partition_id == "" || partition_id == "custom";
+  }
+
+ private:
+  GURL site_to_isolate_;
+
+  DISALLOW_COPY_AND_ASSIGN(CustomStoragePartitionForSomeSites);
+};
+
+// This test verifies that SpareRenderProcessHostManager correctly accounts
+// for StoragePartition differences when handing out the spare process.
+IN_PROC_BROWSER_TEST_F(RenderProcessHostTest,
+                       SpareProcessVsCustomStoragePartition) {
+  ASSERT_TRUE(embedded_test_server()->Start());
+
+  // Provide custom storage partition for test sites.
+  GURL test_url = embedded_test_server()->GetURL("/simple_page.html");
+  BrowserContext* browser_context =
+      ShellContentBrowserClient::Get()->browser_context();
+  GURL test_site = SiteInstance::GetSiteForURL(browser_context, test_url);
+  CustomStoragePartitionForSomeSites modified_client(test_site);
+  ContentBrowserClient* old_client =
+      SetBrowserClientForTesting(&modified_client);
+  StoragePartition* default_storage =
+      BrowserContext::GetDefaultStoragePartition(browser_context);
+  StoragePartition* custom_storage =
+      BrowserContext::GetStoragePartitionForSite(browser_context, test_site);
+  EXPECT_NE(default_storage, custom_storage);
+
+  // Open a test window - it should be associated with the default storage
+  // partition.
+  Shell* window = CreateBrowser();
+  RenderProcessHost* old_process =
+      window->web_contents()->GetMainFrame()->GetProcess();
+  EXPECT_EQ(default_storage, old_process->GetStoragePartition());
+
+  // Warm up the spare process - it should be associated with the default
+  // storage partition.
+  RenderProcessHost::WarmupSpareRenderProcessHost(browser_context);
+  RenderProcessHost* spare_renderer =
+      RenderProcessHostImpl::GetSpareRenderProcessHostForTesting();
+  ASSERT_TRUE(spare_renderer);
+  EXPECT_EQ(default_storage, spare_renderer->GetStoragePartition());
+
+  // Navigate to a URL that requires a custom storage partition.
+  EXPECT_TRUE(NavigateToURL(window, test_url));
+  RenderProcessHost* new_process =
+      window->web_contents()->GetMainFrame()->GetProcess();
+  // Requirement to use a custom storage partition should force a process swap.
+  EXPECT_NE(new_process, old_process);
+  // The new process should be associated with the custom storage partition.
+  EXPECT_EQ(custom_storage, new_process->GetStoragePartition());
+  // And consequently, the spare shouldn't have been used.
+  EXPECT_NE(spare_renderer, new_process);
+
+  // Restore the original ContentBrowserClient.
+  SetBrowserClientForTesting(old_client);
+}
+
+class RenderProcessHostObserverCounter : public RenderProcessHostObserver {
+ public:
+  explicit RenderProcessHostObserverCounter(RenderProcessHost* host) {
+    host->AddObserver(this);
+    observing_ = true;
+    observed_host_ = host;
+  }
+
+  ~RenderProcessHostObserverCounter() override {
+    if (observing_)
+      observed_host_->RemoveObserver(this);
+  }
+
+  void RenderProcessExited(RenderProcessHost* host,
+                           base::TerminationStatus status,
+                           int exit_code) override {
+    DCHECK(observing_);
+    DCHECK_EQ(host, observed_host_);
+    exited_count_++;
+  }
+
+  void RenderProcessHostDestroyed(RenderProcessHost* host) override {
+    DCHECK(observing_);
+    DCHECK_EQ(host, observed_host_);
+    destroyed_count_++;
+
+    host->RemoveObserver(this);
+    observing_ = false;
+    observed_host_ = nullptr;
+  }
+
+  int exited_count() const { return exited_count_; }
+  int destroyed_count() const { return destroyed_count_; }
+
+ private:
+  int exited_count_ = 0;
+  int destroyed_count_ = 0;
+  bool observing_ = false;
+  RenderProcessHost* observed_host_ = nullptr;
+
+  DISALLOW_COPY_AND_ASSIGN(RenderProcessHostObserverCounter);
+};
+
+// Check that the spare renderer is properly destroyed via
+// DisableKeepAliveRefCount.
+IN_PROC_BROWSER_TEST_F(RenderProcessHostTest, SpareVsDisableKeepAliveRefCount) {
+  RenderProcessHost::WarmupSpareRenderProcessHost(
+      ShellContentBrowserClient::Get()->browser_context());
+  base::RunLoop().RunUntilIdle();
+
+  RenderProcessHost* spare_renderer =
+      RenderProcessHostImpl::GetSpareRenderProcessHostForTesting();
+  RenderProcessHostObserverCounter counter(spare_renderer);
+
+  RenderProcessHostWatcher process_watcher(
+      spare_renderer, RenderProcessHostWatcher::WATCH_FOR_HOST_DESTRUCTION);
+
+  spare_renderer->DisableKeepAliveRefCount();
+
+  process_watcher.Wait();
+  EXPECT_TRUE(process_watcher.did_exit_normally());
+
+  // An important part of test verification is that UaF doesn't happen in the
+  // next revolution of the message pump - without extra care in the
+  // SpareRenderProcessHostManager RenderProcessHost::Cleanup could be called
+  // twice leading to a crash caused by double-free flavour of UaF in
+  // base::DeleteHelper<...>::DoDelete.
+  base::RunLoop().RunUntilIdle();
+
+  DCHECK_EQ(1, counter.exited_count());
+  DCHECK_EQ(1, counter.destroyed_count());
+}
+
+// Check that the spare renderer is properly destroyed via
+// DisableKeepAliveRefCount.
+IN_PROC_BROWSER_TEST_F(RenderProcessHostTest, SpareVsFastShutdown) {
+  RenderProcessHost::WarmupSpareRenderProcessHost(
+      ShellContentBrowserClient::Get()->browser_context());
+  base::RunLoop().RunUntilIdle();
+
+  RenderProcessHost* spare_renderer =
+      RenderProcessHostImpl::GetSpareRenderProcessHostForTesting();
+  RenderProcessHostObserverCounter counter(spare_renderer);
+
+  RenderProcessHostWatcher process_watcher(
+      spare_renderer, RenderProcessHostWatcher::WATCH_FOR_HOST_DESTRUCTION);
+
+  spare_renderer->FastShutdownIfPossible();
+
+  process_watcher.Wait();
+  EXPECT_FALSE(process_watcher.did_exit_normally());
+
+  // An important part of test verification is that UaF doesn't happen in the
+  // next revolution of the message pump - without extra care in the
+  // SpareRenderProcessHostManager RenderProcessHost::Cleanup could be called
+  // twice leading to a crash caused by double-free flavour of UaF in
+  // base::DeleteHelper<...>::DoDelete.
+  base::RunLoop().RunUntilIdle();
+
+  DCHECK_EQ(1, counter.exited_count());
+  DCHECK_EQ(1, counter.destroyed_count());
 }
 
 class ShellCloser : public RenderProcessHostObserver {
@@ -470,7 +700,7 @@ IN_PROC_BROWSER_TEST_F(RenderProcessHostTest, KillProcessOnBadMojoMessage) {
   set_process_exit_callback(run_loop.QuitClosure());
 
   // Should reply with a bad message and cause process death.
-  service->DoSomething(base::BindOnce(&base::DoNothing));
+  service->DoSomething(base::DoNothing());
 
   run_loop.Run();
 
@@ -545,7 +775,7 @@ IN_PROC_BROWSER_TEST_F(RenderProcessHostTest, KillProcessZerosAudioStreams) {
     // must run after these notifications have been delivered.
     base::RunLoop run_loop;
     set_process_exit_callback(media::BindToCurrentLoop(run_loop.QuitClosure()));
-    service->DoSomething(base::BindOnce(&base::DoNothing));
+    service->DoSomething(base::DoNothing());
     run_loop.Run();
   }
 
@@ -566,6 +796,25 @@ IN_PROC_BROWSER_TEST_F(RenderProcessHostTest, KillProcessZerosAudioStreams) {
     rph->RemoveObserver(this);
 }
 
+// Test class instance to run specific setup steps for capture streams.
+class CaptureStreamRenderProcessHostTest : public RenderProcessHostTest {
+ public:
+  void SetUp() override {
+    // Pixel output is needed when digging pixel values out of video tags for
+    // verification in VideoCaptureStream tests.
+    EnablePixelOutput();
+    RenderProcessHostTest::SetUp();
+  }
+
+  void SetUpCommandLine(base::CommandLine* command_line) override {
+    // These flags are necessary to emulate camera input for getUserMedia()
+    // tests.
+    command_line->AppendSwitch(switches::kUseFakeDeviceForMediaStream);
+    command_line->AppendSwitch(switches::kUseFakeUIForMediaStream);
+    RenderProcessHostTest::SetUpCommandLine(command_line);
+  }
+};
+
 // These tests contain WebRTC calls and cannot be run when it isn't enabled.
 #if !BUILDFLAG(ENABLE_WEBRTC)
 #define GetUserMediaIncrementsVideoCaptureStreams \
@@ -581,7 +830,7 @@ IN_PROC_BROWSER_TEST_F(RenderProcessHostTest, KillProcessZerosAudioStreams) {
 
 // Tests that video capture stream count increments when getUserMedia() is
 // called.
-IN_PROC_BROWSER_TEST_F(RenderProcessHostTest,
+IN_PROC_BROWSER_TEST_F(CaptureStreamRenderProcessHostTest,
                        GetUserMediaIncrementsVideoCaptureStreams) {
   ASSERT_TRUE(embedded_test_server()->Start());
   NavigateToURL(shell(),
@@ -597,7 +846,8 @@ IN_PROC_BROWSER_TEST_F(RenderProcessHostTest,
 
 // Tests that video capture stream count resets when getUserMedia() is called
 // and stopped.
-IN_PROC_BROWSER_TEST_F(RenderProcessHostTest, StopResetsVideoCaptureStreams) {
+IN_PROC_BROWSER_TEST_F(CaptureStreamRenderProcessHostTest,
+                       StopResetsVideoCaptureStreams) {
   ASSERT_TRUE(embedded_test_server()->Start());
   NavigateToURL(shell(),
                 embedded_test_server()->GetURL("/media/getusermedia.html"));
@@ -613,7 +863,7 @@ IN_PROC_BROWSER_TEST_F(RenderProcessHostTest, StopResetsVideoCaptureStreams) {
 // Tests that video capture stream counts (used for process priority
 // calculations) are properly set and cleared during media playback and renderer
 // terminations.
-IN_PROC_BROWSER_TEST_F(RenderProcessHostTest,
+IN_PROC_BROWSER_TEST_F(CaptureStreamRenderProcessHostTest,
                        KillProcessZerosVideoCaptureStreams) {
   ASSERT_TRUE(embedded_test_server()->Start());
   NavigateToURL(shell(),
@@ -637,7 +887,7 @@ IN_PROC_BROWSER_TEST_F(RenderProcessHostTest,
     // Force a bad message event to occur which will terminate the renderer.
     base::RunLoop run_loop;
     set_process_exit_callback(media::BindToCurrentLoop(run_loop.QuitClosure()));
-    service->DoSomething(base::BindOnce(&base::DoNothing));
+    service->DoSomething(base::DoNothing());
     run_loop.Run();
   }
 
@@ -659,7 +909,7 @@ IN_PROC_BROWSER_TEST_F(RenderProcessHostTest,
 
 // Tests that media stream count increments when getUserMedia() is
 // called with audio only.
-IN_PROC_BROWSER_TEST_F(RenderProcessHostTest,
+IN_PROC_BROWSER_TEST_F(CaptureStreamRenderProcessHostTest,
                        GetUserMediaAudioOnlyIncrementsMediaStreams) {
   ASSERT_TRUE(embedded_test_server()->Start());
   NavigateToURL(shell(),
@@ -677,7 +927,7 @@ IN_PROC_BROWSER_TEST_F(RenderProcessHostTest,
 // Tests that media stream counts (used for process priority
 // calculations) are properly set and cleared during media playback and renderer
 // terminations for audio only streams.
-IN_PROC_BROWSER_TEST_F(RenderProcessHostTest,
+IN_PROC_BROWSER_TEST_F(CaptureStreamRenderProcessHostTest,
                        KillProcessZerosAudioCaptureStreams) {
   ASSERT_TRUE(embedded_test_server()->Start());
   NavigateToURL(shell(),
@@ -702,7 +952,7 @@ IN_PROC_BROWSER_TEST_F(RenderProcessHostTest,
     // Force a bad message event to occur which will terminate the renderer.
     base::RunLoop run_loop;
     set_process_exit_callback(media::BindToCurrentLoop(run_loop.QuitClosure()));
-    service->DoSomething(base::BindOnce(&base::DoNothing));
+    service->DoSomething(base::DoNothing());
     run_loop.Run();
   }
 
@@ -722,8 +972,7 @@ IN_PROC_BROWSER_TEST_F(RenderProcessHostTest,
     rph->RemoveObserver(this);
 }
 
-IN_PROC_BROWSER_TEST_F(RenderProcessHostWithKeepAliveOptionEnabledTest,
-                       KeepAliveRendererProcess) {
+IN_PROC_BROWSER_TEST_F(RenderProcessHostTest, KeepAliveRendererProcess) {
   embedded_test_server()->RegisterRequestHandler(
       base::BindRepeating(HandleBeacon));
   ASSERT_TRUE(embedded_test_server()->Start());
@@ -750,8 +999,7 @@ IN_PROC_BROWSER_TEST_F(RenderProcessHostWithKeepAliveOptionEnabledTest,
     rph->RemoveObserver(this);
 }
 
-IN_PROC_BROWSER_TEST_F(RenderProcessHostWithKeepAliveOptionEnabledTest,
-                       KeepAliveRendererProcess_Hung) {
+IN_PROC_BROWSER_TEST_F(RenderProcessHostTest, KeepAliveRendererProcess_Hung) {
   embedded_test_server()->RegisterRequestHandler(
       base::BindRepeating(HandleHungBeacon));
   ASSERT_TRUE(embedded_test_server()->Start());
@@ -778,7 +1026,7 @@ IN_PROC_BROWSER_TEST_F(RenderProcessHostWithKeepAliveOptionEnabledTest,
     rph->RemoveObserver(this);
 }
 
-IN_PROC_BROWSER_TEST_F(RenderProcessHostWithKeepAliveOptionEnabledTest,
+IN_PROC_BROWSER_TEST_F(RenderProcessHostTest,
                        FetchKeepAliveRendererProcess_Hung) {
   embedded_test_server()->RegisterRequestHandler(
       base::BindRepeating(HandleHungBeacon));
@@ -805,6 +1053,15 @@ IN_PROC_BROWSER_TEST_F(RenderProcessHostWithKeepAliveOptionEnabledTest,
   EXPECT_GE(base::TimeTicks::Now() - start, base::TimeDelta::FromSeconds(1));
   if (!host_destructions_)
     rph->RemoveObserver(this);
+}
+
+// This test verifies that a fast shutdown is possible for a starting process.
+IN_PROC_BROWSER_TEST_F(RenderProcessHostTest, FastShutdownForStartingProcess) {
+  RenderProcessHost* process = RenderProcessHostImpl::CreateRenderProcessHost(
+      ShellContentBrowserClient::Get()->browser_context(), nullptr, nullptr,
+      false /* is_for_guests_only */);
+  process->Init();
+  EXPECT_TRUE(process->FastShutdownIfPossible());
 }
 
 }  // namespace

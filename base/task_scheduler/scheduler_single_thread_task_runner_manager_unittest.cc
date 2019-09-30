@@ -5,6 +5,7 @@
 #include "base/task_scheduler/scheduler_single_thread_task_runner_manager.h"
 
 #include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/memory/ptr_util.h"
 #include "base/synchronization/atomic_flag.h"
 #include "base/synchronization/lock.h"
@@ -19,6 +20,7 @@
 #include "base/threading/platform_thread.h"
 #include "base/threading/simple_thread.h"
 #include "base/threading/thread.h"
+#include "base/threading/thread_restrictions.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 #if defined(OS_WIN)
@@ -65,7 +67,7 @@ class TaskSchedulerSingleThreadTaskRunnerManagerTest : public testing::Test {
 
   std::unique_ptr<SchedulerSingleThreadTaskRunnerManager>
       single_thread_task_runner_manager_;
-  TaskTracker task_tracker_;
+  TaskTracker task_tracker_ = {"Test"};
 
  private:
   Thread service_thread_;
@@ -98,12 +100,12 @@ TEST_F(TaskSchedulerSingleThreadTaskRunnerManagerTest, DifferentThreadsUsed) {
   scoped_refptr<SingleThreadTaskRunner> task_runner_1 =
       single_thread_task_runner_manager_
           ->CreateSingleThreadTaskRunnerWithTraits(
-              "A", {TaskShutdownBehavior::BLOCK_SHUTDOWN},
+              {TaskShutdownBehavior::BLOCK_SHUTDOWN},
               SingleThreadTaskRunnerThreadMode::DEDICATED);
   scoped_refptr<SingleThreadTaskRunner> task_runner_2 =
       single_thread_task_runner_manager_
           ->CreateSingleThreadTaskRunnerWithTraits(
-              "B", {TaskShutdownBehavior::BLOCK_SHUTDOWN},
+              {TaskShutdownBehavior::BLOCK_SHUTDOWN},
               SingleThreadTaskRunnerThreadMode::DEDICATED);
 
   PlatformThreadRef thread_ref_1;
@@ -124,12 +126,12 @@ TEST_F(TaskSchedulerSingleThreadTaskRunnerManagerTest, SameThreadUsed) {
   scoped_refptr<SingleThreadTaskRunner> task_runner_1 =
       single_thread_task_runner_manager_
           ->CreateSingleThreadTaskRunnerWithTraits(
-              "A", {TaskShutdownBehavior::BLOCK_SHUTDOWN},
+              {TaskShutdownBehavior::BLOCK_SHUTDOWN},
               SingleThreadTaskRunnerThreadMode::SHARED);
   scoped_refptr<SingleThreadTaskRunner> task_runner_2 =
       single_thread_task_runner_manager_
           ->CreateSingleThreadTaskRunnerWithTraits(
-              "B", {TaskShutdownBehavior::BLOCK_SHUTDOWN},
+              {TaskShutdownBehavior::BLOCK_SHUTDOWN},
               SingleThreadTaskRunnerThreadMode::SHARED);
 
   PlatformThreadRef thread_ref_1;
@@ -151,12 +153,12 @@ TEST_F(TaskSchedulerSingleThreadTaskRunnerManagerTest,
   scoped_refptr<SingleThreadTaskRunner> task_runner_1 =
       single_thread_task_runner_manager_
           ->CreateSingleThreadTaskRunnerWithTraits(
-              "A", {TaskShutdownBehavior::BLOCK_SHUTDOWN},
+              {TaskShutdownBehavior::BLOCK_SHUTDOWN},
               SingleThreadTaskRunnerThreadMode::DEDICATED);
   scoped_refptr<SingleThreadTaskRunner> task_runner_2 =
       single_thread_task_runner_manager_
           ->CreateSingleThreadTaskRunnerWithTraits(
-              "B", {TaskShutdownBehavior::BLOCK_SHUTDOWN},
+              {TaskShutdownBehavior::BLOCK_SHUTDOWN},
               SingleThreadTaskRunnerThreadMode::DEDICATED);
 
   EXPECT_FALSE(task_runner_1->RunsTasksInCurrentSequence());
@@ -189,9 +191,53 @@ TEST_F(TaskSchedulerSingleThreadTaskRunnerManagerTest,
        SharedWithBaseSyncPrimitivesDCHECKs) {
   EXPECT_DCHECK_DEATH({
     single_thread_task_runner_manager_->CreateSingleThreadTaskRunnerWithTraits(
-        "A", {WithBaseSyncPrimitives()},
-        SingleThreadTaskRunnerThreadMode::SHARED);
+        {WithBaseSyncPrimitives()}, SingleThreadTaskRunnerThreadMode::SHARED);
   });
+}
+
+// Regression test for https://crbug.com/829786
+TEST_F(TaskSchedulerSingleThreadTaskRunnerManagerTest,
+       ContinueOnShutdownDoesNotBlockBlockShutdown) {
+  WaitableEvent task_has_started(WaitableEvent::ResetPolicy::MANUAL,
+                                 WaitableEvent::InitialState::NOT_SIGNALED);
+  WaitableEvent task_can_continue(WaitableEvent::ResetPolicy::MANUAL,
+                                  WaitableEvent::InitialState::NOT_SIGNALED);
+
+  // Post a CONTINUE_ON_SHUTDOWN task that waits on
+  // |task_can_continue| to a shared SingleThreadTaskRunner.
+  single_thread_task_runner_manager_
+      ->CreateSingleThreadTaskRunnerWithTraits(
+          {TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN},
+          SingleThreadTaskRunnerThreadMode::SHARED)
+      ->PostTask(FROM_HERE, base::BindOnce(
+                                [](WaitableEvent* task_has_started,
+                                   WaitableEvent* task_can_continue) {
+                                  task_has_started->Signal();
+                                  ScopedAllowBaseSyncPrimitivesForTesting
+                                      allow_base_sync_primitives;
+                                  task_can_continue->Wait();
+                                },
+                                Unretained(&task_has_started),
+                                Unretained(&task_can_continue)));
+
+  task_has_started.Wait();
+
+  // Post a BLOCK_SHUTDOWN task to a shared SingleThreadTaskRunner.
+  single_thread_task_runner_manager_
+      ->CreateSingleThreadTaskRunnerWithTraits(
+          {TaskShutdownBehavior::BLOCK_SHUTDOWN},
+          SingleThreadTaskRunnerThreadMode::SHARED)
+      ->PostTask(FROM_HERE, DoNothing());
+
+  // Shutdown should not hang even though the first task hasn't finished.
+  task_tracker_.Shutdown();
+
+  // Let the first task finish.
+  task_can_continue.Signal();
+
+  // Tear down from the test body to prevent accesses to |task_can_continue|
+  // after it goes out of scope.
+  TearDownSingleThreadTaskRunnerManager();
 }
 
 namespace {
@@ -216,12 +262,12 @@ TEST_P(TaskSchedulerSingleThreadTaskRunnerManagerCommonTest,
   // events to determine when a task is run.
   scoped_refptr<SingleThreadTaskRunner> task_runner_background =
       single_thread_task_runner_manager_
-          ->CreateSingleThreadTaskRunnerWithTraits(
-              "Background", {TaskPriority::BACKGROUND}, GetParam());
+          ->CreateSingleThreadTaskRunnerWithTraits({TaskPriority::BACKGROUND},
+                                                   GetParam());
   scoped_refptr<SingleThreadTaskRunner> task_runner_normal =
       single_thread_task_runner_manager_
-          ->CreateSingleThreadTaskRunnerWithTraits(
-              "Normal", {TaskPriority::USER_VISIBLE}, GetParam());
+          ->CreateSingleThreadTaskRunnerWithTraits({TaskPriority::USER_VISIBLE},
+                                                   GetParam());
 
   ThreadPriority thread_priority_background;
   task_runner_background->PostTask(
@@ -246,10 +292,12 @@ TEST_P(TaskSchedulerSingleThreadTaskRunnerManagerCommonTest,
   waitable_event_background.Wait();
   waitable_event_normal.Wait();
 
-  if (Lock::HandlesMultipleThreadPriorities())
+  if (Lock::HandlesMultipleThreadPriorities() &&
+      PlatformThread::CanIncreaseCurrentThreadPriority()) {
     EXPECT_EQ(ThreadPriority::BACKGROUND, thread_priority_background);
-  else
+  } else {
     EXPECT_EQ(ThreadPriority::NORMAL, thread_priority_background);
+  }
   EXPECT_EQ(ThreadPriority::NORMAL, thread_priority_normal);
 }
 
@@ -258,8 +306,7 @@ TEST_P(TaskSchedulerSingleThreadTaskRunnerManagerCommonTest, ThreadNamesSet) {
                                      TaskShutdownBehavior::BLOCK_SHUTDOWN};
   scoped_refptr<SingleThreadTaskRunner> foo_task_runner =
       single_thread_task_runner_manager_
-          ->CreateSingleThreadTaskRunnerWithTraits("MyName", foo_traits,
-                                                   GetParam());
+          ->CreateSingleThreadTaskRunnerWithTraits(foo_traits, GetParam());
   std::string foo_captured_name;
   foo_task_runner->PostTask(FROM_HERE,
                             BindOnce(&CaptureThreadName, &foo_captured_name));
@@ -269,7 +316,7 @@ TEST_P(TaskSchedulerSingleThreadTaskRunnerManagerCommonTest, ThreadNamesSet) {
       TaskShutdownBehavior::BLOCK_SHUTDOWN};
   scoped_refptr<SingleThreadTaskRunner> user_blocking_task_runner =
       single_thread_task_runner_manager_
-          ->CreateSingleThreadTaskRunnerWithTraits("A", user_blocking_traits,
+          ->CreateSingleThreadTaskRunnerWithTraits(user_blocking_traits,
                                                    GetParam());
 
   std::string user_blocking_captured_name;
@@ -278,7 +325,6 @@ TEST_P(TaskSchedulerSingleThreadTaskRunnerManagerCommonTest, ThreadNamesSet) {
 
   task_tracker_.Shutdown();
 
-  EXPECT_NE(std::string::npos, foo_captured_name.find("MyName"));
   EXPECT_NE(std::string::npos,
             foo_captured_name.find(
                 kEnvironmentParams[GetEnvironmentIndexForTraits(foo_traits)]
@@ -300,9 +346,9 @@ TEST_P(TaskSchedulerSingleThreadTaskRunnerManagerCommonTest, ThreadNamesSet) {
 
 TEST_P(TaskSchedulerSingleThreadTaskRunnerManagerCommonTest,
        PostTaskAfterShutdown) {
-  auto task_runner = single_thread_task_runner_manager_
-                         ->CreateSingleThreadTaskRunnerWithTraits(
-                             "A", TaskTraits(), GetParam());
+  auto task_runner =
+      single_thread_task_runner_manager_
+          ->CreateSingleThreadTaskRunnerWithTraits(TaskTraits(), GetParam());
   task_tracker_.Shutdown();
   EXPECT_FALSE(task_runner->PostTask(FROM_HERE, BindOnce(&ShouldNotRun)));
 }
@@ -314,9 +360,9 @@ TEST_P(TaskSchedulerSingleThreadTaskRunnerManagerCommonTest, PostDelayedTask) {
   // Post a task with a short delay.
   WaitableEvent task_ran(WaitableEvent::ResetPolicy::MANUAL,
                          WaitableEvent::InitialState::NOT_SIGNALED);
-  auto task_runner = single_thread_task_runner_manager_
-                         ->CreateSingleThreadTaskRunnerWithTraits(
-                             "A", TaskTraits(), GetParam());
+  auto task_runner =
+      single_thread_task_runner_manager_
+          ->CreateSingleThreadTaskRunnerWithTraits(TaskTraits(), GetParam());
   EXPECT_TRUE(task_runner->PostDelayedTask(
       FROM_HERE, BindOnce(&WaitableEvent::Signal, Unretained(&task_ran)),
       TestTimeouts::tiny_timeout()));
@@ -336,10 +382,10 @@ TEST_P(TaskSchedulerSingleThreadTaskRunnerManagerCommonTest, PostDelayedTask) {
 // but doesn't crash.
 TEST_P(TaskSchedulerSingleThreadTaskRunnerManagerCommonTest,
        PostTaskAfterDestroy) {
-  auto task_runner = single_thread_task_runner_manager_
-                         ->CreateSingleThreadTaskRunnerWithTraits(
-                             "A", TaskTraits(), GetParam());
-  EXPECT_TRUE(task_runner->PostTask(FROM_HERE, BindOnce(&DoNothing)));
+  auto task_runner =
+      single_thread_task_runner_manager_
+          ->CreateSingleThreadTaskRunnerWithTraits(TaskTraits(), GetParam());
+  EXPECT_TRUE(task_runner->PostTask(FROM_HERE, DoNothing()));
   task_tracker_.Shutdown();
   TearDownSingleThreadTaskRunnerManager();
   EXPECT_FALSE(task_runner->PostTask(FROM_HERE, BindOnce(&ShouldNotRun)));
@@ -407,7 +453,7 @@ TEST_F(TaskSchedulerSingleThreadTaskRunnerManagerJoinTest, ConcurrentJoin) {
   {
     auto task_runner = single_thread_task_runner_manager_
                            ->CreateSingleThreadTaskRunnerWithTraits(
-                               "A", {WithBaseSyncPrimitives()},
+                               {WithBaseSyncPrimitives()},
                                SingleThreadTaskRunnerThreadMode::DEDICATED);
     EXPECT_TRUE(task_runner->PostTask(
         FROM_HERE,
@@ -437,14 +483,14 @@ TEST_F(TaskSchedulerSingleThreadTaskRunnerManagerJoinTest,
   {
     auto task_runner = single_thread_task_runner_manager_
                            ->CreateSingleThreadTaskRunnerWithTraits(
-                               "A", {WithBaseSyncPrimitives()},
+                               {WithBaseSyncPrimitives()},
                                SingleThreadTaskRunnerThreadMode::DEDICATED);
     EXPECT_TRUE(task_runner->PostTask(
         FROM_HERE,
         BindOnce(&WaitableEvent::Signal, Unretained(&task_running))));
     EXPECT_TRUE(task_runner->PostTask(
         FROM_HERE, BindOnce(&WaitableEvent::Wait, Unretained(&task_blocking))));
-    EXPECT_TRUE(task_runner->PostTask(FROM_HERE, BindOnce(&DoNothing)));
+    EXPECT_TRUE(task_runner->PostTask(FROM_HERE, DoNothing()));
   }
 
   task_running.Wait();
@@ -462,7 +508,7 @@ TEST_P(TaskSchedulerSingleThreadTaskRunnerManagerCommonTest,
        COMSTAInitialized) {
   scoped_refptr<SingleThreadTaskRunner> com_task_runner =
       single_thread_task_runner_manager_->CreateCOMSTATaskRunnerWithTraits(
-          "A", {TaskShutdownBehavior::BLOCK_SHUTDOWN}, GetParam());
+          {TaskShutdownBehavior::BLOCK_SHUTDOWN}, GetParam());
 
   com_task_runner->PostTask(FROM_HERE, BindOnce(&win::AssertComApartmentType,
                                                 win::ComApartmentType::STA));
@@ -473,11 +519,11 @@ TEST_P(TaskSchedulerSingleThreadTaskRunnerManagerCommonTest,
 TEST_F(TaskSchedulerSingleThreadTaskRunnerManagerTest, COMSTASameThreadUsed) {
   scoped_refptr<SingleThreadTaskRunner> task_runner_1 =
       single_thread_task_runner_manager_->CreateCOMSTATaskRunnerWithTraits(
-          "A", {TaskShutdownBehavior::BLOCK_SHUTDOWN},
+          {TaskShutdownBehavior::BLOCK_SHUTDOWN},
           SingleThreadTaskRunnerThreadMode::SHARED);
   scoped_refptr<SingleThreadTaskRunner> task_runner_2 =
       single_thread_task_runner_manager_->CreateCOMSTATaskRunnerWithTraits(
-          "B", {TaskShutdownBehavior::BLOCK_SHUTDOWN},
+          {TaskShutdownBehavior::BLOCK_SHUTDOWN},
           SingleThreadTaskRunnerThreadMode::SHARED);
 
   PlatformThreadRef thread_ref_1;
@@ -542,7 +588,7 @@ class TaskSchedulerSingleThreadTaskRunnerManagerTestWin
 TEST_F(TaskSchedulerSingleThreadTaskRunnerManagerTestWin, PumpsMessages) {
   scoped_refptr<SingleThreadTaskRunner> com_task_runner =
       single_thread_task_runner_manager_->CreateCOMSTATaskRunnerWithTraits(
-          "A", {TaskShutdownBehavior::BLOCK_SHUTDOWN},
+          {TaskShutdownBehavior::BLOCK_SHUTDOWN},
           SingleThreadTaskRunnerThreadMode::DEDICATED);
   HWND hwnd = nullptr;
   // HWNDs process messages on the thread that created them, so we have to
@@ -555,7 +601,7 @@ TEST_F(TaskSchedulerSingleThreadTaskRunnerManagerTestWin, PumpsMessages) {
              HWND* hwnd) { *hwnd = test_harness->CreateTestWindow(); },
           Unretained(this), &hwnd));
 
-  task_tracker_.Flush();
+  task_tracker_.FlushForTesting();
 
   ASSERT_NE(hwnd, nullptr);
   // If the message pump isn't running, we will hang here. This simulates how
@@ -595,7 +641,7 @@ TEST_F(TaskSchedulerSingleThreadTaskRunnerManagerStartTest,
                               WaitableEvent::InitialState::NOT_SIGNALED);
   single_thread_task_runner_manager_
       ->CreateSingleThreadTaskRunnerWithTraits(
-          "A", TaskTraits(), SingleThreadTaskRunnerThreadMode::DEDICATED)
+          TaskTraits(), SingleThreadTaskRunnerThreadMode::DEDICATED)
       ->PostTask(
           FROM_HERE,
           BindOnce(

@@ -133,7 +133,7 @@ static VideoDecoderConfig GetTestConfig(VideoCodec codec,
   gfx::Size natural_size = coded_size;
 
   return VideoDecoderConfig(
-      codec, VIDEO_CODEC_PROFILE_UNKNOWN, PIXEL_FORMAT_YV12, COLOR_SPACE_JPEG,
+      codec, VIDEO_CODEC_PROFILE_UNKNOWN, PIXEL_FORMAT_I420, COLOR_SPACE_JPEG,
       rotation, coded_size, visible_rect, natural_size, EmptyExtraData(),
       is_encrypted ? AesCtrEncryptionScheme() : Unencrypted());
 }
@@ -321,13 +321,12 @@ scoped_refptr<DecoderBuffer> CreateFakeVideoBufferForTest(
   return buffer;
 }
 
-bool VerifyFakeVideoBufferForTest(
-    const scoped_refptr<DecoderBuffer>& buffer,
-    const VideoDecoderConfig& config) {
+bool VerifyFakeVideoBufferForTest(const DecoderBuffer& buffer,
+                                  const VideoDecoderConfig& config) {
   // Check if the input |buffer| matches the |config|.
   base::PickleIterator pickle(
-      base::Pickle(reinterpret_cast<const char*>(buffer->data()),
-                   static_cast<int>(buffer->data_size())));
+      base::Pickle(reinterpret_cast<const char*>(buffer.data()),
+                   static_cast<int>(buffer.data_size())));
   std::string header;
   int width = 0;
   int height = 0;

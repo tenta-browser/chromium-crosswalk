@@ -9,8 +9,9 @@
 #include <dxgi1_6.h>
 
 #include "base/containers/circular_deque.h"
+#include "base/debug/alias.h"
 #include "base/feature_list.h"
-#include "base/memory/ptr_util.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/trace_event/trace_event.h"
@@ -33,6 +34,7 @@
 #include "ui/gl/gl_image_dxgi.h"
 #include "ui/gl/gl_image_memory.h"
 #include "ui/gl/gl_surface_egl.h"
+#include "ui/gl/gl_surface_presentation_helper.h"
 #include "ui/gl/scoped_make_current.h"
 
 #ifndef EGL_ANGLE_flexible_surface_compatibility
@@ -137,8 +139,8 @@ bool HardwareSupportsOverlays() {
                                             d3d11_device.Get(), &flags)))
       continue;
 
-    UMA_HISTOGRAM_SPARSE_SLOWLY("GPU.DirectComposition.OverlaySupportFlags",
-                                flags);
+    base::UmaHistogramSparse("GPU.DirectComposition.OverlaySupportFlags",
+                             flags);
 
     // Some new Intel drivers only claim to support unscaled overlays, but
     // scaled overlays still work. Even when scaled overlays aren't actually
@@ -211,6 +213,56 @@ class DCLayerTree {
     bool is_clipped = false;
     gfx::Rect clip_rect;
     gfx::Transform transform;
+  };
+
+  // TODO(sunnyps): Remove after fixing https://crbug.com/823498
+  struct VisualDebugInfo {
+    uintptr_t content_visual = 0;
+    uintptr_t clip_visual = 0;
+    uintptr_t swap_chain_presenter = 0;
+    uintptr_t swap_chain = 0;
+    uintptr_t surface = 0;
+    uint64_t dcomp_surface_serial = 0;
+    gfx::Rect bounds;
+    float swap_chain_scale_x = 0.0f;
+    float swap_chain_scale_y = 0.0f;
+    bool is_clipped = false;
+    gfx::Rect clip_rect;
+    gfx::Transform transform;
+
+    static VisualDebugInfo FromVisualInfo(const VisualInfo& visual_info) {
+      VisualDebugInfo debug_info;
+      debug_info.clip_visual =
+          reinterpret_cast<uintptr_t>(visual_info.clip_visual.Get());
+      debug_info.content_visual =
+          reinterpret_cast<uintptr_t>(visual_info.content_visual.Get());
+      debug_info.swap_chain_presenter =
+          reinterpret_cast<uintptr_t>(visual_info.swap_chain_presenter.get());
+      debug_info.swap_chain =
+          reinterpret_cast<uintptr_t>(visual_info.swap_chain.Get());
+      debug_info.surface =
+          reinterpret_cast<uintptr_t>(visual_info.surface.Get());
+      debug_info.dcomp_surface_serial = visual_info.dcomp_surface_serial;
+      debug_info.bounds = visual_info.bounds;
+      debug_info.swap_chain_scale_x = visual_info.swap_chain_scale_x;
+      debug_info.swap_chain_scale_y = visual_info.swap_chain_scale_y;
+      debug_info.is_clipped = visual_info.is_clipped;
+      debug_info.clip_rect = visual_info.clip_rect;
+      debug_info.transform = visual_info.transform;
+      return debug_info;
+    }
+
+    static void CopyVisuals(VisualDebugInfo debug_visuals[],
+                            const std::vector<VisualInfo>& visuals,
+                            size_t n) {
+      for (size_t i = 0; i < n; i++) {
+        if (i < visuals.size()) {
+          debug_visuals[i] = FromVisualInfo(visuals[i]);
+        } else {
+          debug_visuals[i] = VisualDebugInfo();
+        }
+      }
+    }
   };
 
   // These functions return true if the visual tree was changed.
@@ -763,8 +815,8 @@ void DCLayerTree::SwapChainPresenter::PresentToSwapChain(
   if (SUCCEEDED(swap_chain_.CopyTo(swap_chain_media.GetAddressOf()))) {
     DXGI_FRAME_STATISTICS_MEDIA stats = {};
     if (SUCCEEDED(swap_chain_media->GetFrameStatisticsMedia(&stats))) {
-      UMA_HISTOGRAM_SPARSE_SLOWLY("GPU.DirectComposition.CompositionMode",
-                                  stats.CompositionMode);
+      base::UmaHistogramSparse("GPU.DirectComposition.CompositionMode",
+                               stats.CompositionMode);
       presentation_history_.AddSample(stats.CompositionMode);
     }
   }
@@ -802,6 +854,7 @@ void DCLayerTree::SwapChainPresenter::ReallocateSwapChain(bool yuy2) {
   Microsoft::WRL::ComPtr<IDXGIFactoryMedia> media_factory;
   dxgi_factory.CopyTo(media_factory.GetAddressOf());
   DXGI_SWAP_CHAIN_DESC1 desc = {};
+  DCHECK(!swap_chain_size_.IsEmpty());
   desc.Width = swap_chain_size_.width();
   desc.Height = swap_chain_size_.height();
   desc.Format = DXGI_FORMAT_YUY2;
@@ -816,8 +869,11 @@ void DCLayerTree::SwapChainPresenter::ReallocateSwapChain(bool yuy2) {
       DXGI_SWAP_CHAIN_FLAG_YUV_VIDEO | DXGI_SWAP_CHAIN_FLAG_FULLSCREEN_VIDEO;
 
   HANDLE handle;
-  create_surface_handle_function_(COMPOSITIONOBJECT_ALL_ACCESS, nullptr,
-                                  &handle);
+  HRESULT hr = create_surface_handle_function_(COMPOSITIONOBJECT_ALL_ACCESS,
+                                               nullptr, &handle);
+  // TODO(crbug/792806): Remove Alias and CHECK after issue is fixed.
+  base::debug::Alias(&hr);
+  CHECK(SUCCEEDED(hr));
   swap_chain_handle_.Set(handle);
 
   if (is_yuy2_swapchain_ != yuy2) {
@@ -831,7 +887,6 @@ void DCLayerTree::SwapChainPresenter::ReallocateSwapChain(bool yuy2) {
   is_yuy2_swapchain_ = false;
   // The composition surface handle isn't actually used, but
   // CreateSwapChainForComposition can't create YUY2 swapchains.
-  HRESULT hr = E_FAIL;
   if (yuy2) {
     hr = media_factory->CreateSwapChainForCompositionSurfaceHandle(
         d3d11_device_.Get(), swap_chain_handle_.Get(), &desc, nullptr,
@@ -1018,6 +1073,12 @@ bool DCLayerTree::CommitAndClearPendingOverlays() {
               return a->z_order < b->z_order;
             });
 
+  // TODO(sunnyps): Remove after fixing https://crbug.com/823498
+  VisualDebugInfo previous_frame_visuals[5];
+  base::debug::Alias(previous_frame_visuals);
+  VisualDebugInfo::CopyVisuals(previous_frame_visuals, visual_info_,
+                               arraysize(previous_frame_visuals));
+
   bool changed = false;
   while (visual_info_.size() > pending_overlays_.size()) {
     visual_info_.back().clip_visual->RemoveAllVisuals();
@@ -1048,6 +1109,12 @@ bool DCLayerTree::CommitAndClearPendingOverlays() {
     changed |= UpdateVisualClip(visual_info, params);
   }
 
+  // TODO(sunnyps): Remove after fixing https://crbug.com/823498
+  VisualDebugInfo current_frame_visuals[5];
+  base::debug::Alias(current_frame_visuals);
+  VisualDebugInfo::CopyVisuals(current_frame_visuals, visual_info_,
+                               arraysize(current_frame_visuals));
+
   if (changed) {
     HRESULT hr = dcomp_device_->Commit();
     CHECK(SUCCEEDED(hr));
@@ -1058,8 +1125,11 @@ bool DCLayerTree::CommitAndClearPendingOverlays() {
 }
 
 bool DCLayerTree::ScheduleDCLayer(const ui::DCRendererLayerParams& params) {
-  pending_overlays_.push_back(
-      std::make_unique<ui::DCRendererLayerParams>(params));
+  // Skip work for zero-sized layers.
+  if (!params.rect.IsEmpty()) {
+    pending_overlays_.push_back(
+        std::make_unique<ui::DCRendererLayerParams>(params));
+  }
   return true;
 }
 
@@ -1145,8 +1215,8 @@ bool DirectCompositionSurfaceWin::IsHDRSupported() {
         continue;
       }
 
-      UMA_HISTOGRAM_SPARSE_SLOWLY("GPU.Output.ColorSpace", desc.ColorSpace);
-      UMA_HISTOGRAM_SPARSE_SLOWLY("GPU.Output.MaxLuminance", desc.MaxLuminance);
+      base::UmaHistogramSparse("GPU.Output.ColorSpace", desc.ColorSpace);
+      base::UmaHistogramSparse("GPU.Output.MaxLuminance", desc.MaxLuminance);
 
       if (desc.ColorSpace == DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020) {
         hdr_monitor_found = true;
@@ -1201,10 +1271,16 @@ bool DirectCompositionSurfaceWin::Initialize(gl::GLSurfaceFormat format) {
     return false;
   }
 
-  return RecreateRootSurface();
+  if (!RecreateRootSurface())
+    return false;
+
+  presentation_helper_ =
+      std::make_unique<gl::GLSurfacePresentationHelper>(vsync_provider_.get());
+  return true;
 }
 
 void DirectCompositionSurfaceWin::Destroy() {
+  presentation_helper_ = nullptr;
   if (default_surface_) {
     if (!eglDestroySurface(GetDisplay(), default_surface_)) {
       DLOG(ERROR) << "eglDestroySurface failed with error "
@@ -1245,20 +1321,20 @@ bool DirectCompositionSurfaceWin::Resize(const gfx::Size& size,
   size_ = size;
   is_hdr_ = is_hdr;
   has_alpha_ = has_alpha;
-  ui::ScopedReleaseCurrent release_current(this);
   return RecreateRootSurface();
 }
 
 gfx::SwapResult DirectCompositionSurfaceWin::SwapBuffers(
     const PresentationCallback& callback) {
-  {
-    ui::ScopedReleaseCurrent release_current(this);
-    root_surface_->SwapBuffers(callback);
-
-    layer_tree_->CommitAndClearPendingOverlays();
-  }
+  gl::GLSurfacePresentationHelper::ScopedSwapBuffers scoped_swap_buffers(
+      presentation_helper_.get(), callback);
+  ui::ScopedReleaseCurrent release_current;
+  root_surface_->SwapBuffers(PresentationCallback());
+  layer_tree_->CommitAndClearPendingOverlays();
   child_window_.ClearInvalidContents();
-  return gfx::SwapResult::SWAP_ACK;
+  if (!release_current.Restore())
+    scoped_swap_buffers.set_result(gfx::SwapResult::SWAP_FAILED);
+  return scoped_swap_buffers.result();
 }
 
 gfx::SwapResult DirectCompositionSurfaceWin::PostSubBuffer(
@@ -1284,11 +1360,9 @@ bool DirectCompositionSurfaceWin::ScheduleDCLayer(
 bool DirectCompositionSurfaceWin::SetEnableDCLayers(bool enable) {
   if (enable_dc_layers_ == enable)
     return true;
-  ui::ScopedReleaseCurrent release_current(this);
   enable_dc_layers_ = enable;
   return RecreateRootSurface();
 }
-
 
 bool DirectCompositionSurfaceWin::FlipsVertically() const {
   return true;
@@ -1299,6 +1373,8 @@ bool DirectCompositionSurfaceWin::SupportsPostSubBuffer() {
 }
 
 bool DirectCompositionSurfaceWin::OnMakeCurrent(gl::GLContext* context) {
+  if (presentation_helper_)
+    presentation_helper_->OnMakeCurrent(context, this);
   if (root_surface_)
     return root_surface_->OnMakeCurrent(context);
   return true;

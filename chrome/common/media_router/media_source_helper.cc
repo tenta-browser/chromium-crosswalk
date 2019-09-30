@@ -25,9 +25,6 @@ constexpr char kDesktopMediaUrn[] = "urn:x-org.chromium.media:source:desktop";
 constexpr char kTabRemotingUrnFormat[] =
     "urn:x-org.chromium.media:source:tab_content_remoting:%d";
 
-constexpr char kCastPresentationUrlDomain[] = "google.com";
-constexpr char kCastPresentationUrlPath[] = "/cast";
-
 // List of non-http(s) schemes that are allowed in a Presentation URL.
 constexpr std::array<const char* const, 5> kAllowedSchemes{
     {kCastPresentationUrlScheme, kCastDialPresentationUrlScheme,
@@ -83,13 +80,10 @@ bool IsMirroringMediaSource(const MediaSource& source) {
          IsTabMirroringMediaSource(source);
 }
 
-bool CanConnectToMediaSource(const MediaSource& source) {
-  // Compare host, port, scheme, and path prefix for source.url().
+bool IsCastPresentationUrl(const MediaSource& source) {
   const GURL& url = source.url();
   return url.SchemeIs(kCastPresentationUrlScheme) ||
-         (url.SchemeIs(url::kHttpsScheme) &&
-          url.DomainIs(kCastPresentationUrlDomain) && url.has_path() &&
-          url.path() == kCastPresentationUrlPath);
+         IsLegacyCastPresentationUrl(url);
 }
 
 int TabIdFromMediaSource(const MediaSource& source) {
@@ -108,12 +102,25 @@ bool IsValidMediaSource(const MediaSource& source) {
          IsValidPresentationUrl(GURL(source.id()));
 }
 
+bool IsLegacyCastPresentationUrl(const GURL& url) {
+  return base::StartsWith(url.spec(), kLegacyCastPresentationUrlPrefix,
+                          base::CompareCase::INSENSITIVE_ASCII);
+}
+
 bool IsValidPresentationUrl(const GURL& url) {
   return url.is_valid() && IsSchemeAllowed(url);
 }
 
 bool IsAutoJoinPresentationId(const std::string& presentation_id) {
   return presentation_id == kAutoJoinPresentationId;
+}
+
+bool IsDialMediaSource(const MediaSource& source) {
+  return source.url().SchemeIs(kCastDialPresentationUrlScheme);
+}
+
+std::string AppNameFromDialMediaSource(const MediaSource& source) {
+  return IsDialMediaSource(source) ? source.url().path() : "";
 }
 
 }  // namespace media_router

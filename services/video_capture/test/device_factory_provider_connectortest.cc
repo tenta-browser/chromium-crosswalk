@@ -8,8 +8,8 @@
 #include "base/test/scoped_task_environment.h"
 #include "media/base/media_switches.h"
 #include "services/service_manager/public/cpp/test/test_connector_factory.h"
-#include "services/video_capture/public/interfaces/constants.mojom.h"
-#include "services/video_capture/public/interfaces/device_factory_provider.mojom.h"
+#include "services/video_capture/public/mojom/constants.mojom.h"
+#include "services/video_capture/public/mojom/device_factory_provider.mojom.h"
 #include "services/video_capture/service_impl.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -34,7 +34,7 @@ class DeviceFactoryProviderConnectorTest : public ::testing::Test {
     std::unique_ptr<ServiceImpl> service_impl = std::make_unique<ServiceImpl>();
     service_impl_ = service_impl.get();
     connector_factory_ =
-        std::make_unique<service_manager::TestConnectorFactory>(
+        service_manager::TestConnectorFactory::CreateForUniqueService(
             std::move(service_impl));
     connector_ = connector_factory_->CreateConnector();
     connector_->BindInterface(mojom::kServiceName, &factory_provider_);

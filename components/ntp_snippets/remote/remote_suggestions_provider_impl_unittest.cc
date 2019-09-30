@@ -16,7 +16,6 @@
 #include "base/files/scoped_temp_dir.h"
 #include "base/json/json_reader.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
@@ -32,7 +31,7 @@
 #include "base/timer/timer.h"
 #include "components/image_fetcher/core/image_decoder.h"
 #include "components/image_fetcher/core/image_fetcher.h"
-#include "components/image_fetcher/core/image_fetcher_delegate.h"
+#include "components/image_fetcher/core/mock_image_fetcher.h"
 #include "components/image_fetcher/core/request_metadata.h"
 #include "components/ntp_snippets/breaking_news/breaking_news_listener.h"
 #include "components/ntp_snippets/category.h"
@@ -59,8 +58,6 @@
 #include "components/ntp_snippets/time_serialization.h"
 #include "components/ntp_snippets/user_classifier.h"
 #include "components/prefs/testing_pref_service.h"
-#include "components/signin/core/browser/fake_profile_oauth2_token_service.h"
-#include "components/signin/core/browser/fake_signin_manager.h"
 #include "components/variations/variations_params_manager.h"
 #include "net/traffic_annotation/network_traffic_annotation_test_helper.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -72,7 +69,7 @@
 
 using base::TestMockTimeTaskRunner;
 using image_fetcher::ImageFetcher;
-using image_fetcher::ImageFetcherDelegate;
+using image_fetcher::MockImageFetcher;
 using ntp_snippets::test::FetchedCategoryBuilder;
 using ntp_snippets::test::RemoteSuggestionBuilder;
 using testing::_;
@@ -165,22 +162,16 @@ std::unique_ptr<RemoteSuggestion> CreateTestRemoteSuggestion(
   return RemoteSuggestion::CreateFromProto(snippet_proto);
 }
 
-using ServeImageCallback = base::Callback<void(
-    const std::string&,
-    base::Callback<void(const std::string&,
-                        const gfx::Image&,
-                        const image_fetcher::RequestMetadata&)>)>;
-
 void ServeOneByOneImage(
-    image_fetcher::ImageFetcherDelegate* notify,
     const std::string& id,
-    base::Callback<void(const std::string&,
-                        const gfx::Image&,
-                        const image_fetcher::RequestMetadata&)> callback) {
+    image_fetcher::ImageFetcher::ImageDataFetcherCallback* image_data_callback,
+    image_fetcher::ImageFetcher::ImageFetcherCallback* callback) {
+  std::move(*image_data_callback)
+      .Run("1-by-1-image-data", image_fetcher::RequestMetadata());
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::Bind(callback, id, gfx::test::CreateImage(1, 1),
-                            image_fetcher::RequestMetadata()));
-  notify->OnImageDataFetched(id, "1-by-1-image-data");
+      FROM_HERE,
+      base::BindOnce(std::move(*callback), id, gfx::test::CreateImage(1, 1),
+                     image_fetcher::RequestMetadata()));
 }
 
 gfx::Image FetchImage(RemoteSuggestionsProviderImpl* provider,
@@ -198,21 +189,6 @@ gfx::Image FetchImage(RemoteSuggestionsProviderImpl* provider,
   run_loop.Run();
   return result;
 }
-
-class MockImageFetcher : public ImageFetcher {
- public:
-  MOCK_METHOD1(SetImageFetcherDelegate, void(ImageFetcherDelegate*));
-  MOCK_METHOD1(SetDataUseServiceName, void(DataUseServiceName));
-  MOCK_METHOD1(SetImageDownloadLimit,
-               void(base::Optional<int64_t> max_download_bytes));
-  MOCK_METHOD1(SetDesiredImageFrameSize, void(const gfx::Size&));
-  MOCK_METHOD4(StartOrQueueNetworkRequest,
-               void(const std::string&,
-                    const GURL&,
-                    const ImageFetcherCallback&,
-                    const net::NetworkTrafficAnnotationTag&));
-  MOCK_METHOD0(GetImageDecoder, image_fetcher::ImageDecoder*());
-};
 
 class FakeImageDecoder : public image_fetcher::ImageDecoder {
  public:
@@ -261,6 +237,7 @@ class MockRemoteSuggestionsFetcher : public RemoteSuggestionsFetcher {
                     SnippetsAvailableCallback* callback));
   MOCK_CONST_METHOD0(GetLastStatusForDebugging, const std::string&());
   MOCK_CONST_METHOD0(GetLastJsonForDebugging, const std::string&());
+  MOCK_CONST_METHOD0(WasLastFetchAuthenticatedForDebugging, bool());
   MOCK_CONST_METHOD0(GetFetchUrlForDebugging, const GURL&());
 };
 
@@ -270,13 +247,10 @@ class MockPrefetchedPagesTracker : public PrefetchedPagesTracker {
 
   // GMock does not support movable-only types (e.g. OnceCallback), therefore,
   // the call is redirected to a mock method with a pointer to the callback.
-  void AddInitializationCompletedCallback(
-      base::OnceCallback<void()> callback) override {
-    AddInitializationCompletedCallback(&callback);
+  void Initialize(base::OnceCallback<void()> callback) override {
+    Initialize(&callback);
   }
-  MOCK_METHOD1(AddInitializationCompletedCallback,
-               void(base::OnceCallback<void()>* callback));
-
+  MOCK_METHOD1(Initialize, void(base::OnceCallback<void()>* callback));
   MOCK_CONST_METHOD1(PrefetchedOfflinePageExists, bool(const GURL& url));
 };
 
@@ -317,7 +291,8 @@ class MockRemoteSuggestionsStatusService
   ~MockRemoteSuggestionsStatusService() override = default;
 
   MOCK_METHOD1(Init, void(const StatusChangeCallback& callback));
-  MOCK_METHOD0(OnSignInStateChanged, void());
+  MOCK_METHOD1(OnSignInStateChanged, void(bool));
+  MOCK_METHOD1(OnListVisibilityToggled, void(bool));
 };
 
 std::string BoolToString(bool value) {
@@ -335,12 +310,12 @@ base::Time GetDummyNow() {
 class RemoteSuggestionsProviderImplTest : public ::testing::Test {
  public:
   RemoteSuggestionsProviderImplTest()
-      : category_ranker_(base::MakeUnique<ConstantCategoryRanker>()),
+      : category_ranker_(std::make_unique<ConstantCategoryRanker>()),
         user_classifier_(/*pref_service=*/nullptr,
-                         base::MakeUnique<base::DefaultClock>()),
+                         base::DefaultClock::GetInstance()),
         mock_suggestions_fetcher_(nullptr),
         image_fetcher_(nullptr),
-        scheduler_(base::MakeUnique<NiceMock<MockScheduler>>()),
+        scheduler_(std::make_unique<NiceMock<MockScheduler>>()),
         database_(nullptr),
         timer_mock_task_runner_(
             (new TestMockTimeTaskRunner(GetDummyNow(),
@@ -348,7 +323,6 @@ class RemoteSuggestionsProviderImplTest : public ::testing::Test {
     RemoteSuggestionsProviderImpl::RegisterProfilePrefs(
         utils_.pref_service()->registry());
     RequestThrottler::RegisterProfilePrefs(utils_.pref_service()->registry());
-    tick_clock_ = timer_mock_task_runner_->GetMockTickClock();
 
     EXPECT_TRUE(database_dir_.CreateUniqueTempDir());
   }
@@ -378,23 +352,22 @@ class RemoteSuggestionsProviderImplTest : public ::testing::Test {
       bool use_mock_prefetched_pages_tracker,
       bool use_fake_breaking_news_listener,
       bool use_mock_remote_suggestions_status_service) {
-    utils_.ResetSigninManager();
     auto mock_suggestions_fetcher =
-        base::MakeUnique<StrictMock<MockRemoteSuggestionsFetcher>>();
+        std::make_unique<StrictMock<MockRemoteSuggestionsFetcher>>();
     mock_suggestions_fetcher_ = mock_suggestions_fetcher.get();
 
     std::unique_ptr<StrictMock<MockPrefetchedPagesTracker>>
         mock_prefetched_pages_tracker;
     if (use_mock_prefetched_pages_tracker) {
       mock_prefetched_pages_tracker =
-          base::MakeUnique<StrictMock<MockPrefetchedPagesTracker>>();
+          std::make_unique<StrictMock<MockPrefetchedPagesTracker>>();
     }
     mock_prefetched_pages_tracker_ = mock_prefetched_pages_tracker.get();
 
     std::unique_ptr<FakeBreakingNewsListener> fake_breaking_news_listener;
     if (use_fake_breaking_news_listener) {
       fake_breaking_news_listener =
-          base::MakeUnique<FakeBreakingNewsListener>();
+          std::make_unique<FakeBreakingNewsListener>();
     }
     fake_breaking_news_listener_ = fake_breaking_news_listener.get();
 
@@ -402,37 +375,35 @@ class RemoteSuggestionsProviderImplTest : public ::testing::Test {
         remote_suggestions_status_service;
     if (use_mock_remote_suggestions_status_service) {
       auto mock_remote_suggestions_status_service =
-          base::MakeUnique<StrictMock<MockRemoteSuggestionsStatusService>>();
+          std::make_unique<StrictMock<MockRemoteSuggestionsStatusService>>();
       EXPECT_CALL(*mock_remote_suggestions_status_service, Init(_))
           .WillOnce(SaveArg<0>(&status_change_callback_));
       remote_suggestions_status_service =
           std::move(mock_remote_suggestions_status_service);
     } else {
       remote_suggestions_status_service =
-          base::MakeUnique<RemoteSuggestionsStatusServiceImpl>(
-              utils_.fake_signin_manager(), utils_.pref_service(),
-              std::string());
+          std::make_unique<RemoteSuggestionsStatusServiceImpl>(
+              /*has_signed_in=*/false, utils_.pref_service(), std::string());
     }
     remote_suggestions_status_service_ =
         remote_suggestions_status_service.get();
 
-    auto image_fetcher = base::MakeUnique<NiceMock<MockImageFetcher>>();
+    auto image_fetcher = std::make_unique<NiceMock<MockImageFetcher>>();
 
     image_fetcher_ = image_fetcher.get();
-    EXPECT_CALL(*image_fetcher, SetImageFetcherDelegate(_));
     ON_CALL(*image_fetcher, GetImageDecoder())
         .WillByDefault(Return(&image_decoder_));
     EXPECT_FALSE(observer_);
-    observer_ = base::MakeUnique<FakeContentSuggestionsProviderObserver>();
+    observer_ = std::make_unique<FakeContentSuggestionsProviderObserver>();
     auto database =
-        base::MakeUnique<RemoteSuggestionsDatabase>(database_dir_.GetPath());
+        std::make_unique<RemoteSuggestionsDatabase>(database_dir_.GetPath());
     database_ = database.get();
 
-    auto fetch_timeout_timer =
-        base::MakeUnique<base::OneShotTimer>(tick_clock_.get());
+    auto fetch_timeout_timer = std::make_unique<base::OneShotTimer>(
+        timer_mock_task_runner_->GetMockTickClock());
     fetch_timeout_timer->SetTaskRunner(timer_mock_task_runner_);
 
-    return base::MakeUnique<RemoteSuggestionsProviderImpl>(
+    return std::make_unique<RemoteSuggestionsProviderImpl>(
         observer_.get(), utils_.pref_service(), "fr", category_ranker_.get(),
         scheduler_.get(), std::move(mock_suggestions_fetcher),
         std::move(image_fetcher), std::move(database),
@@ -444,7 +415,7 @@ class RemoteSuggestionsProviderImplTest : public ::testing::Test {
 
   std::unique_ptr<RemoteSuggestionsProviderImpl>
   MakeSuggestionsProviderWithoutInitializationWithStrictScheduler() {
-    scheduler_ = base::MakeUnique<StrictMock<MockScheduler>>();
+    scheduler_ = std::make_unique<StrictMock<MockScheduler>>();
     return MakeSuggestionsProviderWithoutInitialization(
         /*use_mock_prefetched_pages_tracker=*/false,
         /*use_fake_breaking_news_listener=*/false,
@@ -567,6 +538,19 @@ class RemoteSuggestionsProviderImplTest : public ::testing::Test {
     provider->Fetch(category, known_suggestion_ids,
                     std::move(fetch_done_callback));
     std::move(snippets_callback).Run(status, std::move(fetched_categories));
+  }
+
+  RemoteSuggestionsFetcher::SnippetsAvailableCallback
+  FetchSuggestionsAndGetResponseCallback(
+      RemoteSuggestionsProviderImpl* provider,
+      bool interactive_request) {
+    RemoteSuggestionsFetcher::SnippetsAvailableCallback snippets_callback;
+    EXPECT_CALL(*mock_suggestions_fetcher(), FetchSnippets(_, _))
+        .WillOnce(MoveSecondArgumentPointeeTo(&snippets_callback))
+        .RetiresOnSaturation();
+    provider->FetchSuggestions(
+        interactive_request, RemoteSuggestionsProvider::FetchStatusCallback());
+    return snippets_callback;
   }
 
   RemoteSuggestionsFetcher::SnippetsAvailableCallback
@@ -712,8 +696,6 @@ class RemoteSuggestionsProviderImplTest : public ::testing::Test {
   RemoteSuggestionsDatabase* database_;
 
   Logger debug_logger_;
-  std::unique_ptr<base::TickClock> tick_clock_;
-
   scoped_refptr<TestMockTimeTaskRunner> timer_mock_task_runner_;
 
   DISALLOW_COPY_AND_ASSIGN(RemoteSuggestionsProviderImplTest);
@@ -909,7 +891,7 @@ TEST_F(RemoteSuggestionsProviderImplTest, ExperimentalCategoryInfo) {
 }
 
 TEST_F(RemoteSuggestionsProviderImplTest, AddRemoteCategoriesToCategoryRanker) {
-  auto mock_ranker = base::MakeUnique<MockCategoryRanker>();
+  auto mock_ranker = std::make_unique<MockCategoryRanker>();
   MockCategoryRanker* raw_mock_ranker = mock_ranker.get();
   SetCategoryRanker(std::move(mock_ranker));
   std::vector<FetchedCategory> fetched_categories;
@@ -950,7 +932,7 @@ TEST_F(RemoteSuggestionsProviderImplTest, AddRemoteCategoriesToCategoryRanker) {
 TEST_F(RemoteSuggestionsProviderImplTest,
        AddRemoteCategoriesToCategoryRankerRelativeToArticles) {
   SetOrderNewRemoteCategoriesBasedOnArticlesCategoryParam(true);
-  auto mock_ranker = base::MakeUnique<MockCategoryRanker>();
+  auto mock_ranker = std::make_unique<MockCategoryRanker>();
   MockCategoryRanker* raw_mock_ranker = mock_ranker.get();
   SetCategoryRanker(std::move(mock_ranker));
   std::vector<FetchedCategory> fetched_categories;
@@ -1006,7 +988,7 @@ TEST_F(
     RemoteSuggestionsProviderImplTest,
     AddRemoteCategoriesToCategoryRankerRelativeToArticlesWithArticlesAbsent) {
   SetOrderNewRemoteCategoriesBasedOnArticlesCategoryParam(true);
-  auto mock_ranker = base::MakeUnique<MockCategoryRanker>();
+  auto mock_ranker = std::make_unique<MockCategoryRanker>();
   MockCategoryRanker* raw_mock_ranker = mock_ranker.get();
   SetCategoryRanker(std::move(mock_ranker));
   std::vector<FetchedCategory> fetched_categories;
@@ -1113,7 +1095,7 @@ TEST_F(RemoteSuggestionsProviderImplTest, PersistRemoteCategoryOrder) {
 
   // We manually recreate the provider to simulate Chrome restart and enforce a
   // mock ranker.
-  auto mock_ranker = base::MakeUnique<MockCategoryRanker>();
+  auto mock_ranker = std::make_unique<MockCategoryRanker>();
   MockCategoryRanker* raw_mock_ranker = mock_ranker.get();
   SetCategoryRanker(std::move(mock_ranker));
   // Ensure that the order is not fetched.
@@ -1338,10 +1320,10 @@ TEST_F(RemoteSuggestionsProviderImplTest,
               ElementsAre(Pointee(Property(&RemoteSuggestion::id, "id"))));
 
   image_decoder()->SetDecodedImage(gfx::test::CreateImage(1, 1));
-  ServeImageCallback serve_one_by_one_image_callback =
-      base::Bind(&ServeOneByOneImage, &provider->GetImageFetcherForTesting());
-  EXPECT_CALL(*image_fetcher(), StartOrQueueNetworkRequest(_, _, _, _))
-      .WillOnce(WithArgs<0, 2>(
+  auto serve_one_by_one_image_callback =
+      base::BindRepeating(&ServeOneByOneImage);
+  EXPECT_CALL(*image_fetcher(), FetchImageAndData_(_, _, _, _, _))
+      .WillOnce(WithArgs<0, 2, 3>(
           Invoke(CreateFunctor(serve_one_by_one_image_callback))));
 
   gfx::Image image = FetchImage(provider.get(), MakeArticleID("id"));
@@ -1410,10 +1392,10 @@ TEST_F(RemoteSuggestionsProviderImplTest,
       Status::Success(), std::move(fetched_categories));
 
   image_decoder()->SetDecodedImage(gfx::test::CreateImage(1, 1));
-  ServeImageCallback serve_one_by_one_image_callback =
-      base::Bind(&ServeOneByOneImage, &provider->GetImageFetcherForTesting());
-  EXPECT_CALL(*image_fetcher(), StartOrQueueNetworkRequest(_, _, _, _))
-      .WillOnce(WithArgs<0, 2>(
+  auto serve_one_by_one_image_callback =
+      base::BindRepeating(&ServeOneByOneImage);
+  EXPECT_CALL(*image_fetcher(), FetchImageAndData_(_, _, _, _, _))
+      .WillOnce(WithArgs<0, 2, 3>(
           Invoke(CreateFunctor(serve_one_by_one_image_callback))));
 
   gfx::Image image = FetchImage(provider.get(), MakeArticleID("id"));
@@ -1580,11 +1562,10 @@ TEST_F(RemoteSuggestionsProviderImplTest,
                         Status::Success(), std::move(fetched_categories));
   // Make sure images of both batches are available. This is to sanity check our
   // assumptions for the test are right.
-  ServeImageCallback cb =
-      base::Bind(&ServeOneByOneImage, &provider->GetImageFetcherForTesting());
-  EXPECT_CALL(*image_fetcher(), StartOrQueueNetworkRequest(_, _, _, _))
+  EXPECT_CALL(*image_fetcher(), FetchImageAndData_(_, _, _, _, _))
       .Times(2)
-      .WillRepeatedly(WithArgs<0, 2>(Invoke(CreateFunctor(cb))));
+      .WillRepeatedly(WithArgs<0, 2, 3>(
+          Invoke(CreateFunctor(base::BindRepeating(&ServeOneByOneImage)))));
   image_decoder()->SetDecodedImage(gfx::test::CreateImage(1, 1));
   gfx::Image image = FetchImage(provider.get(), MakeArticleID("http://id-1"));
   ASSERT_FALSE(image.IsEmpty());
@@ -1746,10 +1727,9 @@ TEST_F(RemoteSuggestionsProviderImplTest, Dismiss) {
   ASSERT_THAT(provider->GetSuggestionsForTesting(articles_category()),
               SizeIs(1));
   // Load the image to store it in the database.
-  ServeImageCallback cb =
-      base::Bind(&ServeOneByOneImage, &provider->GetImageFetcherForTesting());
-  EXPECT_CALL(*image_fetcher(), StartOrQueueNetworkRequest(_, _, _, _))
-      .WillOnce(WithArgs<0, 2>(Invoke(CreateFunctor(cb))));
+  EXPECT_CALL(*image_fetcher(), FetchImageAndData_(_, _, _, _, _))
+      .WillOnce(WithArgs<0, 2, 3>(
+          Invoke(CreateFunctor(base::BindRepeating(&ServeOneByOneImage)))));
   image_decoder()->SetDecodedImage(gfx::test::CreateImage(1, 1));
   gfx::Image image =
       FetchImage(provider.get(), MakeArticleID("http://site.com"));
@@ -1873,10 +1853,9 @@ TEST_F(RemoteSuggestionsProviderImplTest, RemoveExpiredDismissedContent) {
   // Load the image to store it in the database.
   // TODO(tschumann): Introduce some abstraction to nicely work with image
   // fetching expectations.
-  ServeImageCallback cb =
-      base::Bind(&ServeOneByOneImage, &provider->GetImageFetcherForTesting());
-  EXPECT_CALL(*image_fetcher(), StartOrQueueNetworkRequest(_, _, _, _))
-      .WillOnce(WithArgs<0, 2>(Invoke(CreateFunctor(cb))));
+  EXPECT_CALL(*image_fetcher(), FetchImageAndData_(_, _, _, _, _))
+      .WillOnce(WithArgs<0, 2, 3>(
+          Invoke(CreateFunctor(base::BindRepeating(&ServeOneByOneImage)))));
   image_decoder()->SetDecodedImage(gfx::test::CreateImage(1, 1));
   gfx::Image image = FetchImage(provider.get(), MakeArticleID("http://first/"));
   EXPECT_FALSE(image.IsEmpty());
@@ -2138,12 +2117,11 @@ TEST_F(RemoteSuggestionsProviderImplTest, ImageReturnedWithTheSameId) {
 
   gfx::Image image;
   MockFunction<void(const gfx::Image&)> image_fetched;
-  ServeImageCallback cb =
-      base::Bind(&ServeOneByOneImage, &provider->GetImageFetcherForTesting());
   {
     InSequence s;
-    EXPECT_CALL(*image_fetcher(), StartOrQueueNetworkRequest(_, _, _, _))
-        .WillOnce(WithArgs<0, 2>(Invoke(CreateFunctor(cb))));
+    EXPECT_CALL(*image_fetcher(), FetchImageAndData_(_, _, _, _, _))
+        .WillOnce(WithArgs<0, 2, 3>(
+            Invoke(CreateFunctor(base::BindRepeating(&ServeOneByOneImage)))));
     EXPECT_CALL(image_fetched, Call(_)).WillOnce(SaveArg<0>(&image));
   }
 
@@ -2276,11 +2254,10 @@ TEST_F(RemoteSuggestionsProviderImplTest, ShouldClearOrphanedImagesOnRestart) {
           .Build());
   FetchTheseSuggestions(provider.get(), /*interactive_request=*/true,
                         Status::Success(), std::move(fetched_categories));
-  ServeImageCallback cb =
-      base::Bind(&ServeOneByOneImage, &provider->GetImageFetcherForTesting());
 
-  EXPECT_CALL(*image_fetcher(), StartOrQueueNetworkRequest(_, _, _, _))
-      .WillOnce(WithArgs<0, 2>(Invoke(CreateFunctor(cb))));
+  EXPECT_CALL(*image_fetcher(), FetchImageAndData_(_, _, _, _, _))
+      .WillOnce(WithArgs<0, 2, 3>(
+          Invoke(CreateFunctor(base::BindRepeating(&ServeOneByOneImage)))));
   image_decoder()->SetDecodedImage(gfx::test::CreateImage(1, 1));
 
   gfx::Image image = FetchImage(provider.get(), MakeArticleID(kSuggestionUrl));
@@ -2346,9 +2323,8 @@ TEST_F(RemoteSuggestionsProviderImplTest,
       /*use_fake_breaking_news_listener=*/false,
       /*use_mock_remote_suggestions_status_service=*/false);
 
-  auto simple_test_clock = base::MakeUnique<base::SimpleTestClock>();
-  base::SimpleTestClock* simple_test_clock_ptr = simple_test_clock.get();
-  provider->SetClockForTesting(std::move(simple_test_clock));
+  base::SimpleTestClock simple_test_clock;
+  provider->SetClockForTesting(&simple_test_clock);
 
   // Test that the preference is correctly initialized with the default value 0.
   EXPECT_EQ(
@@ -2356,12 +2332,12 @@ TEST_F(RemoteSuggestionsProviderImplTest,
 
   WaitForSuggestionsProviderInitialization(provider.get());
   EXPECT_EQ(
-      SerializeTime(simple_test_clock_ptr->Now()),
+      SerializeTime(simple_test_clock.Now()),
       pref_service()->GetInt64(prefs::kLastSuccessfulBackgroundFetchTime));
 
   // Advance the time and check whether the time was updated correctly after the
   // background fetch.
-  simple_test_clock_ptr->Advance(base::TimeDelta::FromHours(1));
+  simple_test_clock.Advance(base::TimeDelta::FromHours(1));
 
   RemoteSuggestionsFetcher::SnippetsAvailableCallback snippets_callback;
   EXPECT_CALL(*mock_suggestions_fetcher(), FetchSnippets(_, _))
@@ -2373,7 +2349,7 @@ TEST_F(RemoteSuggestionsProviderImplTest,
   std::move(snippets_callback).Run(Status::Success(), base::nullopt);
   // TODO(jkrcal): Move together with the pref storage into the scheduler.
   EXPECT_EQ(
-      SerializeTime(simple_test_clock_ptr->Now()),
+      SerializeTime(simple_test_clock.Now()),
       pref_service()->GetInt64(prefs::kLastSuccessfulBackgroundFetchTime));
   // TODO(markusheintz): Add a test that simulates a browser restart once the
   // scheduler refactoring is done (crbug.com/672434).
@@ -2449,6 +2425,65 @@ TEST_F(RemoteSuggestionsProviderImplTest, CallsSchedulerWhenSignedOut) {
   EXPECT_CALL(*scheduler(), OnSuggestionsCleared());
   provider->OnStatusChanged(RemoteSuggestionsStatus::ENABLED_AND_SIGNED_OUT,
                             RemoteSuggestionsStatus::ENABLED_AND_SIGNED_IN);
+}
+
+TEST_F(RemoteSuggestionsProviderImplTest,
+       RestartsFetchWhenSignedInWhileFetching) {
+  auto provider =
+      MakeSuggestionsProviderWithoutInitializationWithStrictScheduler();
+  // Initiate the provider so that it is already READY.
+  EXPECT_CALL(*scheduler(), OnProviderActivated());
+  WaitForSuggestionsProviderInitialization(provider.get());
+
+  // Initiate the fetch.
+  RemoteSuggestionsFetcher::SnippetsAvailableCallback snippets_callback;
+  EXPECT_CALL(*mock_suggestions_fetcher(), FetchSnippets(_, _))
+      .WillOnce(MoveSecondArgumentPointeeTo(&snippets_callback))
+      .RetiresOnSaturation();
+  provider->FetchSuggestions(/*interactive_request=*/false,
+                             RemoteSuggestionsProvider::FetchStatusCallback());
+
+  // The scheduler should be notified of clearing the suggestions.
+  EXPECT_CALL(*scheduler(), OnSuggestionsCleared());
+  provider->OnStatusChanged(RemoteSuggestionsStatus::ENABLED_AND_SIGNED_OUT,
+                            RemoteSuggestionsStatus::ENABLED_AND_SIGNED_IN);
+
+  // Once we signal the first fetch to be finished (calling snippets_callback
+  // below), a new fetch should get triggered.
+  EXPECT_CALL(*mock_suggestions_fetcher(), FetchSnippets(_, _)).Times(1);
+  std::move(snippets_callback)
+      .Run(Status::Success(), std::vector<FetchedCategory>());
+}
+
+TEST_F(RemoteSuggestionsProviderImplTest,
+       IgnoresResultsWhenHistoryClearedWhileFetching) {
+  auto provider =
+      MakeSuggestionsProviderWithoutInitializationWithStrictScheduler();
+  // Initiate the provider so that it is already READY.
+  EXPECT_CALL(*scheduler(), OnProviderActivated());
+  WaitForSuggestionsProviderInitialization(provider.get());
+
+  // Initiate the fetch.
+  RemoteSuggestionsFetcher::SnippetsAvailableCallback snippets_callback =
+      FetchSuggestionsAndGetResponseCallback(provider.get(),
+                                             /*interactive_request=*/false);
+
+  // The scheduler should be notified of clearing the history.
+  EXPECT_CALL(*scheduler(), OnHistoryCleared());
+  provider->ClearHistory(GetDefaultCreationTime(), GetDefaultExpirationTime(),
+                         base::RepeatingCallback<bool(const GURL& url)>());
+
+  // Once the fetch finishes, the returned suggestions are ignored.
+  FetchedCategoryBuilder category_builder;
+  category_builder.SetCategory(articles_category());
+  category_builder.AddSuggestionViaBuilder(
+      RemoteSuggestionBuilder().AddId(base::StringPrintf("http://abc.com")));
+  std::vector<FetchedCategory> fetched_categories;
+  fetched_categories.push_back(category_builder.Build());
+  std::move(snippets_callback)
+      .Run(Status::Success(), std::move(fetched_categories));
+  EXPECT_THAT(observer().SuggestionsForCategory(articles_category()),
+              SizeIs(0));
 }
 
 TEST_F(RemoteSuggestionsProviderImplTest,
@@ -3122,12 +3157,11 @@ TEST_F(RemoteSuggestionsProviderImplTest,
   StrictMock<MockPrefetchedPagesTracker>* mock_tracker =
       mock_prefetched_pages_tracker();
 
-  auto wrapped_provider_clock = base::MakeUnique<base::SimpleTestClock>();
-  base::SimpleTestClock* provider_clock = wrapped_provider_clock.get();
-  provider->SetClockForTesting(std::move(wrapped_provider_clock));
+  base::SimpleTestClock provider_clock;
+  provider->SetClockForTesting(&provider_clock);
 
-  provider_clock->SetNow(GetDefaultCreationTime() +
-                         base::TimeDelta::FromHours(10));
+  provider_clock.SetNow(GetDefaultCreationTime() +
+                        base::TimeDelta::FromHours(10));
 
   WaitForSuggestionsProviderInitialization(provider.get());
   std::vector<FetchedCategory> fetched_categories;
@@ -3139,7 +3173,7 @@ TEST_F(RemoteSuggestionsProviderImplTest,
                   .AddId("http://prefetched.com")
                   .SetUrl("http://prefetched.com")
                   .SetAmpUrl("http://amp.prefetched.com")
-                  .SetFetchDate(provider_clock->Now())
+                  .SetFetchDate(provider_clock.Now())
                   .SetPublishDate(GetDefaultCreationTime()))
           .Build());
   EXPECT_CALL(*mock_tracker, IsInitialized()).WillRepeatedly(Return(true));
@@ -3148,8 +3182,8 @@ TEST_F(RemoteSuggestionsProviderImplTest,
   ASSERT_THAT(observer().SuggestionsForCategory(articles_category()),
               SizeIs(1));
 
-  provider_clock->Advance(kMaxAgeForAdditionalPrefetchedSuggestion -
-                          base::TimeDelta::FromSeconds(1));
+  provider_clock.Advance(kMaxAgeForAdditionalPrefetchedSuggestion -
+                         base::TimeDelta::FromSeconds(1));
 
   fetched_categories.clear();
   fetched_categories.push_back(
@@ -3160,7 +3194,7 @@ TEST_F(RemoteSuggestionsProviderImplTest,
                   .AddId("http://other.com")
                   .SetUrl("http://other.com")
                   .SetAmpUrl("http://amp.other.com")
-                  .SetFetchDate(provider_clock->Now())
+                  .SetFetchDate(provider_clock.Now())
                   .SetPublishDate(GetDefaultCreationTime()))
           .Build());
   EXPECT_CALL(*mock_tracker, IsInitialized()).WillRepeatedly(Return(true));
@@ -3173,7 +3207,7 @@ TEST_F(RemoteSuggestionsProviderImplTest,
   ASSERT_THAT(observer().SuggestionsForCategory(articles_category()),
               SizeIs(2));
 
-  provider_clock->Advance(base::TimeDelta::FromSeconds(2));
+  provider_clock.Advance(base::TimeDelta::FromSeconds(2));
 
   fetched_categories.clear();
   fetched_categories.push_back(
@@ -3184,7 +3218,7 @@ TEST_F(RemoteSuggestionsProviderImplTest,
                   .AddId("http://other.com")
                   .SetUrl("http://other.com")
                   .SetAmpUrl("http://amp.other.com")
-                  .SetFetchDate(provider_clock->Now())
+                  .SetFetchDate(provider_clock.Now())
                   .SetPublishDate(GetDefaultCreationTime()))
           .Build());
   EXPECT_CALL(*mock_tracker, IsInitialized()).WillRepeatedly(Return(true));
@@ -3213,7 +3247,7 @@ TEST_F(RemoteSuggestionsProviderImplTest,
 
   base::OnceCallback<void()> initialization_completed_callback;
   EXPECT_CALL(*mock_tracker, IsInitialized()).WillRepeatedly(Return(false));
-  EXPECT_CALL(*mock_tracker, AddInitializationCompletedCallback(_))
+  EXPECT_CALL(*mock_tracker, Initialize(_))
       .WillOnce(MoveFirstArgumentPointeeTo(&initialization_completed_callback));
   std::vector<FetchedCategory> fetched_categories;
   fetched_categories.push_back(
@@ -4500,6 +4534,48 @@ TEST_F(RemoteSuggestionsProviderImplTest,
             observer().StatusForCategory(articles_category()));
   EXPECT_THAT(observer().SuggestionsForCategory(articles_category()),
               SizeIs(1));
+}
+
+TEST_F(RemoteSuggestionsProviderImplTest,
+       ShouldHandleCategoryDisabledBeforeTimeout) {
+  auto provider = MakeSuggestionsProvider(
+      /*use_mock_prefetched_pages_tracker=*/false,
+      /*use_fake_breaking_news_listener=*/false,
+      /*use_mock_remote_suggestions_status_service=*/false);
+  std::vector<FetchedCategory> fetched_categories;
+  const FetchedCategoryBuilder articles_category_builder =
+      FetchedCategoryBuilder()
+          .SetCategory(articles_category())
+          .AddSuggestionViaBuilder(
+              RemoteSuggestionBuilder().SetUrl("http://articles.com"));
+  fetched_categories.push_back(articles_category_builder.Build());
+  FetchTheseSuggestions(provider.get(), /*interactive_request=*/true,
+                        Status::Success(), std::move(fetched_categories));
+  fetched_categories.clear();
+
+  ASSERT_EQ(CategoryStatus::AVAILABLE,
+            observer().StatusForCategory(articles_category()));
+
+  // No need to finish the fetch, we ignore the response callback.
+  RefetchWhileDisplayingAndGetResponseCallback(provider.get());
+
+  FastForwardBy(
+      base::TimeDelta::FromSeconds(kTimeoutForRefetchWhileDisplayingSeconds) -
+      base::TimeDelta::FromMilliseconds(1));
+
+  // Before the timeout, the status is flipped to AVAILABLE_LOADING.
+  ASSERT_EQ(CategoryStatus::AVAILABLE_LOADING,
+            observer().StatusForCategory(articles_category()));
+
+  // Disable the provider; this will put the category into the
+  // CATEGORY_EXPLICITLY_DISABLED status.
+  provider->EnterState(RemoteSuggestionsProviderImpl::State::DISABLED);
+  ASSERT_EQ(CategoryStatus::CATEGORY_EXPLICITLY_DISABLED,
+            observer().StatusForCategory(articles_category()));
+
+  // Trigger the timeout. The provider should gracefully handle(i.e. not crash
+  // because of) the category being disabled in the interim.
+  FastForwardBy(base::TimeDelta::FromMilliseconds(2));
 }
 
 TEST_F(RemoteSuggestionsProviderImplTest,

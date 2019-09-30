@@ -6,6 +6,8 @@
 
 #include <stdlib.h>
 
+#include <memory>
+
 #include "ash/public/cpp/config.h"
 #include "ash/session/session_controller.h"
 #include "ash/shell.h"
@@ -34,7 +36,7 @@ class AshTestEnvironmentWayland : public ash::AshTestEnvironment {
 
   // Overriden from ash::AshTestEnvironment:
   std::unique_ptr<ash::AshTestViewsDelegate> CreateViewsDelegate() override {
-    return base::MakeUnique<ash::AshTestViewsDelegate>();
+    return std::make_unique<ash::AshTestViewsDelegate>();
   }
 
  private:
@@ -46,7 +48,7 @@ class AshTestEnvironmentWayland : public ash::AshTestEnvironment {
 base::MessageLoop* ui_message_loop_ = nullptr;
 
 class WaylandClientTest::WaylandWatcher
-    : public base::MessagePumpLibevent::Watcher {
+    : public base::MessagePumpLibevent::FdWatcher {
  public:
   explicit WaylandWatcher(exo::wayland::Server* server)
       : controller_(FROM_HERE), server_(server) {
@@ -56,7 +58,7 @@ class WaylandClientTest::WaylandWatcher
         base::MessagePumpLibevent::WATCH_READ, &controller_, this);
   }
 
-  // base::MessagePumpLibevent::Watcher:
+  // base::MessagePumpLibevent::FdWatcher:
   void OnFileCanReadWithoutBlocking(int fd) override {
     server_->Dispatch(base::TimeDelta());
     server_->Flush();
@@ -64,7 +66,7 @@ class WaylandClientTest::WaylandWatcher
   void OnFileCanWriteWithoutBlocking(int fd) override { NOTREACHED(); }
 
  private:
-  base::MessagePumpLibevent::FileDescriptorWatcher controller_;
+  base::MessagePumpLibevent::FdWatchController controller_;
   exo::wayland::Server* const server_;
 
   DISALLOW_COPY_AND_ASSIGN(WaylandWatcher);
@@ -141,12 +143,12 @@ void WaylandClientTest::SetUpOnUIThread(base::WaitableEvent* event) {
   gesture_config->set_long_press_time_in_ms(1000);
   gesture_config->set_max_touch_move_in_pixels_for_click(5);
 
-  wm_helper_ = base::MakeUnique<WMHelper>();
+  wm_helper_ = std::make_unique<WMHelper>();
   WMHelper::SetInstance(wm_helper_.get());
-  display_ = base::MakeUnique<Display>(nullptr, nullptr);
+  display_ = std::make_unique<Display>(nullptr, nullptr);
   wayland_server_ = exo::wayland::Server::Create(display_.get());
   DCHECK(wayland_server_);
-  wayland_watcher_ = base::MakeUnique<WaylandWatcher>(wayland_server_.get());
+  wayland_watcher_ = std::make_unique<WaylandWatcher>(wayland_server_.get());
   event->Signal();
 }
 

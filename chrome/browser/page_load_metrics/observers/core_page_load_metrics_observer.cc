@@ -9,6 +9,7 @@
 #include <memory>
 #include <utility>
 
+#include "base/metrics/histogram_macros.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/page_load_metrics/page_load_metrics_util.h"
 #include "components/rappor/public/rappor_utils.h"
@@ -113,6 +114,10 @@ const char kHistogramTimeToInteractive[] =
     "PageLoad.Experimental.NavigationToInteractive";
 const char kHistogramInteractiveToInteractiveDetection[] =
     "PageLoad.Internal.InteractiveToInteractiveDetection";
+const char kHistogramFirstInputDelay[] =
+    "PageLoad.InteractiveTiming.FirstInputDelay";
+const char kHistogramFirstInputTimestamp[] =
+    "PageLoad.InteractiveTiming.FirstInputTimestamp";
 const char kHistogramParseStartToFirstMeaningfulPaint[] =
     "PageLoad.Experimental.PaintTiming.ParseStartToFirstMeaningfulPaint";
 const char kHistogramParseStartToFirstContentfulPaint[] =
@@ -187,19 +192,16 @@ const char kHistogramFirstForeground[] =
 const char kHistogramFailedProvisionalLoad[] =
     "PageLoad.PageTiming.NavigationToFailedProvisionalLoad";
 
+const char kHistogramUserGestureNavigationToForwardBack[] =
+    "PageLoad.PageTiming.ForegroundDuration.PageEndReason."
+    "ForwardBackNavigation.UserGesture";
+
 const char kHistogramForegroundToFirstPaint[] =
     "PageLoad.PaintTiming.ForegroundToFirstPaint";
 const char kHistogramForegroundToFirstContentfulPaint[] =
     "PageLoad.PaintTiming.ForegroundToFirstContentfulPaint";
 const char kHistogramForegroundToFirstMeaningfulPaint[] =
     "PageLoad.Experimental.PaintTiming.ForegroundToFirstMeaningfulPaint";
-
-const char kHistogramCacheRequestPercentParseStop[] =
-    "PageLoad.Experimental.Cache.RequestPercent.ParseStop";
-const char kHistogramCacheTotalRequestsParseStop[] =
-    "PageLoad.Experimental.Cache.TotalRequests.ParseStop";
-const char kHistogramTotalRequestsParseStop[] =
-    "PageLoad.Experimental.TotalRequests.ParseStop";
 
 const char kRapporMetricsNameCoarseTiming[] =
     "PageLoad.CoarseTiming.NavigationToFirstContentfulPaint";
@@ -221,9 +223,10 @@ const char kHistogramFirstNonScrollInputAfterFirstPaint[] =
 const char kHistogramFirstScrollInputAfterFirstPaint[] =
     "PageLoad.InputTiming.NavigationToFirstScroll.AfterPaint";
 
-const char kHistogramTotalBytes[] = "PageLoad.Experimental.Bytes.Total";
-const char kHistogramNetworkBytes[] = "PageLoad.Experimental.Bytes.Network";
-const char kHistogramCacheBytes[] = "PageLoad.Experimental.Bytes.Cache";
+const char kHistogramPageLoadTotalBytes[] = "PageLoad.Experimental.Bytes.Total";
+const char kHistogramPageLoadNetworkBytes[] =
+    "PageLoad.Experimental.Bytes.Network";
+const char kHistogramPageLoadCacheBytes[] = "PageLoad.Experimental.Bytes.Cache";
 
 const char kHistogramLoadTypeTotalBytesForwardBack[] =
     "PageLoad.Experimental.Bytes.Total.LoadType.ForwardBackNavigation";
@@ -536,6 +539,25 @@ void CorePageLoadMetricsObserver::OnPageInteractive(
   RecordTimeToInteractiveStatus(internal::TIME_TO_INTERACTIVE_RECORDED);
 }
 
+void CorePageLoadMetricsObserver::OnFirstInputInPage(
+    const page_load_metrics::mojom::PageLoadTiming& timing,
+    const page_load_metrics::PageLoadExtraInfo& extra_info) {
+  if (!WasStartedInForegroundOptionalEventInForeground(
+          timing.interactive_timing->first_input_timestamp, extra_info)) {
+    return;
+  }
+
+  // Input delay will often be ~0, and will only be > 10 seconds very
+  // rarely. Capture the range from 1ms to 60s.
+  UMA_HISTOGRAM_CUSTOM_TIMES(
+      internal::kHistogramFirstInputDelay,
+      timing.interactive_timing->first_input_delay.value(),
+      base::TimeDelta::FromMilliseconds(1), base::TimeDelta::FromSeconds(60),
+      50);
+  PAGE_LOAD_HISTOGRAM(internal::kHistogramFirstInputTimestamp,
+                      timing.interactive_timing->first_input_timestamp.value());
+}
+
 void CorePageLoadMetricsObserver::OnParseStart(
     const page_load_metrics::mojom::PageLoadTiming& timing,
     const page_load_metrics::PageLoadExtraInfo& info) {
@@ -597,28 +619,6 @@ void CorePageLoadMetricsObserver::OnParseStop(
         timing.parse_timing
             ->parse_blocked_on_script_execution_from_document_write_duration
             .value());
-
-    int total_resources = num_cache_resources_ + num_network_resources_;
-    if (total_resources) {
-      int percent_cached = (100 * num_cache_resources_) / total_resources;
-      UMA_HISTOGRAM_PERCENTAGE(internal::kHistogramCacheRequestPercentParseStop,
-                               percent_cached);
-      UMA_HISTOGRAM_COUNTS(internal::kHistogramCacheTotalRequestsParseStop,
-                           num_cache_resources_);
-      UMA_HISTOGRAM_COUNTS(internal::kHistogramTotalRequestsParseStop,
-                           num_cache_resources_ + num_network_resources_);
-
-      // Separate out parse duration based on cache percent.
-      if (percent_cached <= 50) {
-        PAGE_LOAD_HISTOGRAM(
-            "PageLoad.Experimental.ParseDuration.CachedPercent.0-50",
-            parse_duration);
-      } else {
-        PAGE_LOAD_HISTOGRAM(
-            "PageLoad.Experimental.ParseDuration.CachedPercent.51-100",
-            parse_duration);
-      }
-    }
   } else {
     PAGE_LOAD_HISTOGRAM(internal::kBackgroundHistogramParseDuration,
                         parse_duration);
@@ -782,6 +782,14 @@ void CorePageLoadMetricsObserver::RecordForegroundDurationHistograms(
         internal::kHistogramPageTimingForegroundDurationNoCommit,
         foreground_duration.value());
   }
+
+  if (info.page_end_reason == page_load_metrics::END_FORWARD_BACK &&
+      info.user_initiated_info.user_gesture &&
+      !info.user_initiated_info.browser_initiated &&
+      info.page_end_time <= foreground_duration) {
+    PAGE_LOAD_HISTOGRAM(internal::kHistogramUserGestureNavigationToForwardBack,
+                        info.page_end_time.value());
+  }
 }
 
 void CorePageLoadMetricsObserver::RecordByteAndResourceHistograms(
@@ -791,9 +799,10 @@ void CorePageLoadMetricsObserver::RecordByteAndResourceHistograms(
   DCHECK_GE(cache_bytes_, 0);
   int64_t total_bytes = network_bytes_ + cache_bytes_;
 
-  PAGE_BYTES_HISTOGRAM(internal::kHistogramNetworkBytes, network_bytes_);
-  PAGE_BYTES_HISTOGRAM(internal::kHistogramCacheBytes, cache_bytes_);
-  PAGE_BYTES_HISTOGRAM(internal::kHistogramTotalBytes, total_bytes);
+  PAGE_BYTES_HISTOGRAM(internal::kHistogramPageLoadNetworkBytes,
+                       network_bytes_);
+  PAGE_BYTES_HISTOGRAM(internal::kHistogramPageLoadCacheBytes, cache_bytes_);
+  PAGE_BYTES_HISTOGRAM(internal::kHistogramPageLoadTotalBytes, total_bytes);
 
   switch (GetPageLoadType(transition_)) {
     case LOAD_TYPE_RELOAD:

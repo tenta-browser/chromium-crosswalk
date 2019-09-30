@@ -20,13 +20,12 @@
 #include "build/build_config.h"
 #include "chrome/browser/browser_process_platform_part.h"
 #include "chrome/browser/shell_integration.h"
-#include "media/media_features.h"
+#include "media/media_buildflags.h"
 
 class BackgroundModeManager;
 class DownloadRequestLimiter;
 class DownloadStatusUpdater;
 class GpuModeManager;
-class GpuProfileCache;
 class IconManager;
 class IntranetRedirectDetector;
 class IOThread;
@@ -71,10 +70,6 @@ namespace gcm {
 class GCMDriver;
 }
 
-namespace message_center {
-class MessageCenter;
-}
-
 namespace metrics {
 class MetricsService;
 }
@@ -104,7 +99,7 @@ class PhysicalWebDataSource;
 }
 
 namespace policy {
-class BrowserPolicyConnector;
+class ChromeBrowserPolicyConnector;
 class PolicyService;
 }
 
@@ -174,9 +169,6 @@ class BrowserProcess {
   virtual NotificationUIManager* notification_ui_manager() = 0;
   virtual NotificationPlatformBridge* notification_platform_bridge() = 0;
 
-  // MessageCenter is a global list of currently displayed notifications.
-  virtual message_center::MessageCenter* message_center() = 0;
-
   // Returns the state object for the thread that we perform I/O
   // coordination on (network requests, communication with renderers,
   // etc.
@@ -201,7 +193,7 @@ class BrowserProcess {
   virtual WatchDogThread* watchdog_thread() = 0;
 
   // Starts and manages the policy system.
-  virtual policy::BrowserPolicyConnector* browser_policy_connector() = 0;
+  virtual policy::ChromeBrowserPolicyConnector* browser_policy_connector() = 0;
 
   // This is the main interface for chromium components to retrieve policy
   // information from the policy system.
@@ -211,13 +203,8 @@ class BrowserProcess {
 
   virtual GpuModeManager* gpu_mode_manager() = 0;
 
-  virtual GpuProfileCache* gpu_profile_cache() = 0;
+  virtual void CreateDevToolsProtocolHandler() = 0;
 
-  // Create and bind remote debugging server to a given |ip| and |port|.
-  // Passing empty |ip| results in binding to localhost:
-  // 127.0.0.1 or ::1 depending on the environment.
-  virtual void CreateDevToolsHttpProtocolHandler(const std::string& ip,
-                                                 uint16_t port) = 0;
   virtual void CreateDevToolsAutoOpener() = 0;
 
   virtual bool IsShuttingDown() = 0;

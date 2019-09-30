@@ -25,17 +25,18 @@ class SimpleFramerVisitor : public QuicFramerVisitorInterface {
 
   void OnError(QuicFramer* framer) override { error_ = framer->error(); }
 
-  bool OnProtocolVersionMismatch(QuicTransportVersion version) override {
+  bool OnProtocolVersionMismatch(ParsedQuicVersion version) override {
     return false;
   }
 
   void OnPacket() override {}
   void OnPublicResetPacket(const QuicPublicResetPacket& packet) override {
-    public_reset_packet_.reset(new QuicPublicResetPacket(packet));
+    public_reset_packet_ = QuicMakeUnique<QuicPublicResetPacket>((packet));
   }
   void OnVersionNegotiationPacket(
       const QuicVersionNegotiationPacket& packet) override {
-    version_negotiation_packet_.reset(new QuicVersionNegotiationPacket(packet));
+    version_negotiation_packet_ =
+        QuicMakeUnique<QuicVersionNegotiationPacket>((packet));
   }
 
   bool OnUnauthenticatedPublicHeader(const QuicPacketHeader& header) override {
@@ -64,6 +65,23 @@ class SimpleFramerVisitor : public QuicFramerVisitorInterface {
 
   bool OnAckFrame(const QuicAckFrame& frame) override {
     ack_frames_.push_back(frame);
+    return true;
+  }
+
+  bool OnAckFrameStart(QuicPacketNumber largest_acked,
+                       QuicTime::Delta ack_delay_time) override {
+    QuicAckFrame ack_frame;
+    ack_frame.largest_acked = largest_acked;
+    ack_frame.ack_delay_time = ack_delay_time;
+    ack_frames_.push_back(ack_frame);
+    return true;
+  }
+
+  bool OnAckRange(QuicPacketNumber start,
+                  QuicPacketNumber end,
+                  bool /*last_range*/) override {
+    DCHECK(!ack_frames_.empty());
+    ack_frames_[ack_frames_.size() - 1].packets.AddRange(start, end);
     return true;
   }
 
@@ -109,6 +127,16 @@ class SimpleFramerVisitor : public QuicFramerVisitorInterface {
 
   void OnPacketComplete() override {}
 
+  bool IsValidStatelessResetToken(uint128 token) const override {
+    return false;
+  }
+
+  void OnAuthenticatedIetfStatelessResetPacket(
+      const QuicIetfStatelessResetPacket& packet) override {
+    stateless_reset_packet_ =
+        QuicMakeUnique<QuicIetfStatelessResetPacket>(packet);
+  }
+
   const QuicPacketHeader& header() const { return header_; }
   const std::vector<QuicAckFrame>& ack_frames() const { return ack_frames_; }
   const std::vector<QuicConnectionCloseFrame>& connection_close_frames() const {
@@ -143,6 +171,7 @@ class SimpleFramerVisitor : public QuicFramerVisitorInterface {
   QuicPacketHeader header_;
   std::unique_ptr<QuicVersionNegotiationPacket> version_negotiation_packet_;
   std::unique_ptr<QuicPublicResetPacket> public_reset_packet_;
+  std::unique_ptr<QuicIetfStatelessResetPacket> stateless_reset_packet_;
   std::vector<QuicAckFrame> ack_frames_;
   std::vector<QuicStopWaitingFrame> stop_waiting_frames_;
   std::vector<QuicPaddingFrame> padding_frames_;
@@ -159,29 +188,29 @@ class SimpleFramerVisitor : public QuicFramerVisitorInterface {
 };
 
 SimpleQuicFramer::SimpleQuicFramer()
-    : framer_(AllSupportedTransportVersions(),
+    : framer_(AllSupportedVersions(),
               QuicTime::Zero(),
               Perspective::IS_SERVER) {}
 
 SimpleQuicFramer::SimpleQuicFramer(
-    const QuicTransportVersionVector& supported_versions)
+    const ParsedQuicVersionVector& supported_versions)
     : framer_(supported_versions, QuicTime::Zero(), Perspective::IS_SERVER) {}
 
 SimpleQuicFramer::SimpleQuicFramer(
-    const QuicTransportVersionVector& supported_versions,
+    const ParsedQuicVersionVector& supported_versions,
     Perspective perspective)
     : framer_(supported_versions, QuicTime::Zero(), perspective) {}
 
 SimpleQuicFramer::~SimpleQuicFramer() {}
 
 bool SimpleQuicFramer::ProcessPacket(const QuicEncryptedPacket& packet) {
-  visitor_.reset(new SimpleFramerVisitor);
+  visitor_ = QuicMakeUnique<SimpleFramerVisitor>();
   framer_.set_visitor(visitor_.get());
   return framer_.ProcessPacket(packet);
 }
 
 void SimpleQuicFramer::Reset() {
-  visitor_.reset(new SimpleFramerVisitor);
+  visitor_ = QuicMakeUnique<SimpleFramerVisitor>();
 }
 
 const QuicPacketHeader& SimpleQuicFramer::header() const {

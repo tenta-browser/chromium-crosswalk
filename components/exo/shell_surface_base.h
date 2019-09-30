@@ -103,6 +103,8 @@ class ShellSurfaceBase : public SurfaceTreeHost,
   // Set title for the surface.
   void SetTitle(const base::string16& title);
 
+  const base::string16& frame_title() const { return frame_title_; }
+
   // Set icon for the surface.
   void SetIcon(const gfx::ImageSkia& icon);
 
@@ -110,15 +112,26 @@ class ShellSurfaceBase : public SurfaceTreeHost,
   void SetSystemModal(bool system_modal);
 
   // Start an interactive move of surface.
+  // TODO(oshima): Move this to ShellSurface.
   void Move();
 
   // Sets the application ID for the window. The application ID identifies the
   // general class of applications to which the window belongs.
-  static void SetApplicationId(aura::Window* window, const std::string& id);
-  static const std::string* GetApplicationId(aura::Window* window);
+  static void SetApplicationId(aura::Window* window,
+                               const base::Optional<std::string>& id);
+  static const std::string* GetApplicationId(const aura::Window* window);
 
   // Set the application ID for the surface.
-  void SetApplicationId(const std::string& application_id);
+  void SetApplicationId(const char* application_id);
+
+  // Sets the startup ID for the window. The startup ID identifies the
+  // application using startup notification protocol.
+  static void SetStartupId(aura::Window* window,
+                           const base::Optional<std::string>& id);
+  static const std::string* GetStartupId(aura::Window* window);
+
+  // Set the startup ID for the surface.
+  void SetStartupId(const char* startup_id);
 
   // Signal a request to close the window. It is up to the implementation to
   // actually decide to do so though.
@@ -145,6 +158,9 @@ class ShellSurfaceBase : public SurfaceTreeHost,
 
   void SetCanMinimize(bool can_minimize);
 
+  // Prevents shell surface from being moved.
+  void DisableMovement();
+
   // Sets the main surface for the window.
   static void SetMainSurface(aura::Window* window, Surface* surface);
 
@@ -157,9 +173,12 @@ class ShellSurfaceBase : public SurfaceTreeHost,
 
   // Overridden from SurfaceDelegate:
   void OnSurfaceCommit() override;
-  bool IsTouchEnabled(Surface* surface) const override;
+  bool IsInputEnabled(Surface* surface) const override;
   void OnSetFrame(SurfaceFrameType type) override;
+  void OnSetFrameColors(SkColor active_color, SkColor inactive_color) override;
   void OnSetParent(Surface* parent, const gfx::Point& position) override;
+  void OnSetStartupId(const char* startup_id) override;
+  void OnSetApplicationId(const char* application_id) override;
 
   // Overridden from SurfaceObserver:
   void OnSurfaceDestroying(Surface* surface) override;
@@ -265,10 +284,13 @@ class ShellSurfaceBase : public SurfaceTreeHost,
 
   // Attempt to start a drag operation. The type of drag operation to start is
   // determined by |component|.
+  // TODO(oshima): Move this to ShellSurface.
   void AttemptToStartDrag(int component);
 
   // Set the parent window of this surface.
   void SetParentWindow(aura::Window* parent);
+
+  const gfx::Rect& geometry() const { return geometry_; }
 
   views::Widget* widget_ = nullptr;
   aura::Window* parent_ = nullptr;
@@ -283,12 +305,25 @@ class ShellSurfaceBase : public SurfaceTreeHost,
   gfx::Vector2d pending_origin_offset_accumulator_;
   int resize_component_ = HTCAPTION;  // HT constant (see ui/base/hit_test.h)
   int pending_resize_component_ = HTCAPTION;
+  gfx::Rect geometry_;
+  gfx::Rect pending_geometry_;
   base::Optional<gfx::Rect> shadow_bounds_;
   bool shadow_bounds_changed_ = false;
   std::unique_ptr<ash::WindowResizer> resizer_;
   base::string16 title_;
+  // The title string shown in the window frame (title bar).
+  base::string16 frame_title_;
   std::unique_ptr<ui::CompositorLock> configure_compositor_lock_;
   ConfigureCallback configure_callback_;
+  // TODO(oshima): Remove this once the transition to new drag/resize
+  // complete. https://crbug.com/801666.
+  bool client_controlled_move_resize_ = true;
+  SurfaceFrameType frame_type_ = SurfaceFrameType::NONE;
+
+  bool frame_enabled() const {
+    return frame_type_ != SurfaceFrameType::NONE &&
+           frame_type_ != SurfaceFrameType::SHADOW;
+  }
 
  private:
   struct Config;
@@ -314,18 +349,19 @@ class ShellSurfaceBase : public SurfaceTreeHost,
   // End current drag operation.
   void EndDrag(bool revert);
 
-  // Return the origin of the widget/surface taking visible bounds and current
-  // resize direction into account.
-  virtual gfx::Point GetWidgetOrigin() const;
+  // Return the bounds of the widget/origin of surface taking visible
+  // bounds and current resize direction into account.
+  virtual gfx::Rect GetWidgetBounds() const;
   virtual gfx::Point GetSurfaceOrigin() const;
 
   bool activatable_ = true;
   bool can_minimize_ = true;
-  bool frame_enabled_ = false;
+  bool has_frame_colors_ = false;
+  SkColor active_frame_color_ = SK_ColorBLACK;
+  SkColor inactive_frame_color_ = SK_ColorBLACK;
   bool pending_show_widget_ = false;
-  std::string application_id_;
-  gfx::Rect geometry_;
-  gfx::Rect pending_geometry_;
+  base::Optional<std::string> application_id_;
+  base::Optional<std::string> startup_id_;
   base::RepeatingClosure close_callback_;
   base::OnceClosure surface_destroyed_callback_;
   ScopedConfigure* scoped_configure_ = nullptr;

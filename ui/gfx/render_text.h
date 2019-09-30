@@ -50,6 +50,8 @@ class Font;
 
 namespace internal {
 
+class TextRunList;
+
 // Internal helper class used by derived classes to draw text through Skia.
 class GFX_EXPORT SkiaTextRenderer {
  public:
@@ -68,7 +70,7 @@ class GFX_EXPORT SkiaTextRenderer {
   virtual void DrawPosText(const SkPoint* pos,
                            const uint16_t* glyphs,
                            size_t glyph_count);
-  void DrawUnderline(int x, int y, int width);
+  void DrawUnderline(int x, int y, int width, SkScalar thickness_factor = 1.0);
   void DrawStrike(int x, int y, int width, SkScalar thickness_factor);
 
  private:
@@ -86,6 +88,7 @@ class StyleIterator {
  public:
   StyleIterator(const BreakList<SkColor>& colors,
                 const BreakList<BaselineStyle>& baselines,
+                const BreakList<int>& font_size_overrides,
                 const BreakList<Font::Weight>& weights,
                 const std::vector<BreakList<bool>>& styles);
   ~StyleIterator();
@@ -93,6 +96,7 @@ class StyleIterator {
   // Get the colors and styles at the current iterator position.
   SkColor color() const { return color_->second; }
   BaselineStyle baseline() const { return baseline_->second; }
+  int font_size_override() const { return font_size_override_->second; }
   bool style(TextStyle s) const { return style_[s]->second; }
   Font::Weight weight() const { return weight_->second; }
 
@@ -105,11 +109,13 @@ class StyleIterator {
  private:
   BreakList<SkColor> colors_;
   BreakList<BaselineStyle> baselines_;
+  BreakList<int> font_size_overrides_;
   BreakList<Font::Weight> weights_;
   std::vector<BreakList<bool> > styles_;
 
   BreakList<SkColor>::const_iterator color_;
   BreakList<BaselineStyle>::const_iterator baseline_;
+  BreakList<int>::const_iterator font_size_override_;
   BreakList<Font::Weight>::const_iterator weight_;
   std::vector<BreakList<bool>::const_iterator> style_;
 
@@ -191,9 +197,19 @@ class GFX_EXPORT RenderText {
 
   virtual ~RenderText();
 
-  // Creates a platform-specific or cross-platform RenderText instance.
-  static RenderText* CreateInstance();
-  static RenderText* CreateInstanceForEditing();
+  // Creates an instance that renders using HarfBuzz.
+  static std::unique_ptr<RenderText> CreateHarfBuzzInstance();
+
+  // Creates an instance by matching a gfx::Typesetter constant to the current
+  // build and runtime configuration. E.g. the result may use CoreText on Mac,
+  // which is the only supported native typesetter.
+  static std::unique_ptr<RenderText> CreateFor(Typesetter typesetter);
+
+  // Returns CreateFor(Typesetter::BROWSER), but indicates a caller that does
+  // not know whether the text will eventually be drawn by the native typesetter
+  // or by a RenderText instance.
+  // TODO(tapted): Delete this.
+  static std::unique_ptr<RenderText> CreateInstanceDeprecated();
 
   // Creates another instance of the same concrete class.
   virtual std::unique_ptr<RenderText> CreateInstanceOfSameType() const = 0;
@@ -353,10 +369,16 @@ class GFX_EXPORT RenderText {
   void SetColor(SkColor value);
   void ApplyColor(SkColor value, const Range& range);
 
+  // DEPRECATED.
   // Set the baseline style over the entire text or a logical character range.
   // The |range| should be valid, non-reversed, and within [0, text().length()].
+  // TODO(tapted): Remove this. The only client is moving to
+  // ApplyFontSizeOverride.
   void SetBaselineStyle(BaselineStyle value);
   void ApplyBaselineStyle(BaselineStyle value, const Range& range);
+
+  // Alters the font size in |range|.
+  void ApplyFontSizeOverride(int font_size_override, const Range& range);
 
   // Set various text styles over the entire text or a logical character range.
   // The respective |style| is applied if |value| is true, or removed if false.
@@ -468,8 +490,13 @@ class GFX_EXPORT RenderText {
   // chosen.
   virtual std::vector<FontSpan> GetFontSpansForTesting() = 0;
 
-  // Helper function to be used in tests for retrieving the substring bounds.
-  std::vector<Rect> GetSubstringBoundsForTesting(const gfx::Range& range);
+  // Get the visual bounds containing the logical substring within the |range|.
+  // If |range| is empty, the result is empty. These bounds could be visually
+  // discontinuous if the substring is split by a LTR/RTL level change.
+  // These bounds are in local coordinates, but may be outside the visible
+  // region if the text is longer than the textfield. Subsequent text, cursor,
+  // or bounds changes may invalidate returned values.
+  virtual std::vector<Rect> GetSubstringBounds(const Range& range) = 0;
 
   // Gets the horizontal span (relative to the left of the text, not the view)
   // of the sequence of glyphs in |text_range|, over which the cursor will
@@ -490,9 +517,19 @@ class GFX_EXPORT RenderText {
   // at the point, returns a nearby word. |baseline_point| should correspond to
   // the baseline point of the leftmost glyph of the |word| in the view's
   // coordinates. Returns false, if no word can be retrieved.
-  bool GetDecoratedWordAtPoint(const Point& point,
-                               DecoratedText* decorated_word,
-                               Point* baseline_point);
+  bool GetWordLookupDataAtPoint(const Point& point,
+                                DecoratedText* decorated_word,
+                                Point* baseline_point);
+
+  // Retrieves the text at |range| along with its styling information.
+  // |baseline_point| should correspond to the baseline point of
+  // the leftmost glyph of the text in the view's coordinates. If the text
+  // spans multiple lines, |baseline_point| will correspond with the leftmost
+  // glyph on the first line in the range. Returns false, if no text can be
+  // retrieved.
+  bool GetLookupDataForRange(const Range& range,
+                             DecoratedText* decorated_text,
+                             Point* baseline_point);
 
   // Retrieves the text in the given |range|.
   base::string16 GetTextFromRange(const Range& range) const;
@@ -510,6 +547,9 @@ class GFX_EXPORT RenderText {
 
   const BreakList<SkColor>& colors() const { return colors_; }
   const BreakList<BaselineStyle>& baselines() const { return baselines_; }
+  const BreakList<int>& font_size_overrides() const {
+    return font_size_overrides_;
+  }
   const BreakList<Font::Weight>& weights() const { return weights_; }
   const std::vector<BreakList<bool> >& styles() const { return styles_; }
   SkScalar strike_thickness_factor() const { return strike_thickness_factor_; }
@@ -574,14 +614,6 @@ class GFX_EXPORT RenderText {
 
   // Sets the selection model, |model| is assumed to be valid.
   void SetSelectionModel(const SelectionModel& model);
-
-  // Get the visual bounds containing the logical substring within the |range|.
-  // If |range| is empty, the result is empty. These bounds could be visually
-  // discontinuous if the substring is split by a LTR/RTL level change.
-  // These bounds are in local coordinates, but may be outside the visible
-  // region if the text is longer than the textfield. Subsequent text, cursor,
-  // or bounds changes may invalidate returned values.
-  virtual std::vector<Rect> GetSubstringBounds(const Range& range) = 0;
 
   // Convert between indices into |text_| and indices into
   // GetDisplayText(), which differ when the text is obscured,
@@ -694,10 +726,19 @@ class GFX_EXPORT RenderText {
   // range. Maintains directionality of |range|.
   Range ExpandRangeToWordBoundary(const Range& range) const;
 
+  // Returns an implementation-specific run list, if implemented.
+  virtual internal::TextRunList* GetRunList();
+  virtual const internal::TextRunList* GetRunList() const;
+
   // Returns the decorated text corresponding to |range|. Returns false if the
   // text cannot be retrieved, e.g. if the text is obscured.
   virtual bool GetDecoratedTextForRange(const Range& range,
                                         DecoratedText* decorated_text) = 0;
+
+  // Specify the width of a glyph for test. The width of glyphs is very
+  // platform-dependent and environment-dependent. Otherwise multiline text
+  // will become really flaky.
+  virtual void SetGlyphWidthForTest(float test_width);
 
   // Logical UTF-16 string data to be drawn.
   base::string16 text_;
@@ -749,6 +790,7 @@ class GFX_EXPORT RenderText {
   // TODO(msw): Expand to support cursor, selection, background, etc. colors.
   BreakList<SkColor> colors_;
   BreakList<BaselineStyle> baselines_;
+  BreakList<int> font_size_overrides_;
   BreakList<Font::Weight> weights_;
   std::vector<BreakList<bool> > styles_;
 

@@ -4,8 +4,9 @@
 
 #import <XCTest/XCTest.h>
 
+#include <memory>
+
 #include "base/command_line.h"
-#include "base/ios/ios_util.h"
 #include "base/mac/bind_objc_block.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/sys_string_conversions.h"
@@ -25,7 +26,7 @@
 #include "ios/chrome/browser/ui/translate/language_selection_view_controller.h"
 #import "ios/chrome/test/app/chrome_test_util.h"
 #import "ios/chrome/test/app/tab_test_util.h"
-#include "ios/chrome/test/app/web_view_interaction_test_util.h"
+#import "ios/chrome/test/app/web_view_interaction_test_util.h"
 #import "ios/chrome/test/earl_grey/chrome_earl_grey.h"
 #import "ios/chrome/test/earl_grey/chrome_matchers.h"
 #import "ios/chrome/test/earl_grey/chrome_test_case.h"
@@ -113,21 +114,13 @@ NSString* GetTranslateInfobarSwitchLabel(const std::string& language) {
 // Returns a matcher for the button with label "Cancel" in the language picker.
 // The language picker uses the system accessibility labels, thus no IDS_CANCEL.
 id<GREYMatcher> LanguagePickerCancelButton() {
-  // Setting A11y id on this button doesn't work on iOS 9.0.
-  if (base::ios::IsRunningOnIOS10OrLater())
-    return grey_accessibilityID(kLanguagePickerCancelButtonId);
-
-  return chrome_test_util::ButtonWithAccessibilityLabel(@"Cancel");
+  return grey_accessibilityID(kLanguagePickerCancelButtonId);
 }
 
 // Returns a matcher for the button with label "Done" in the language picker.
 // The language picker uses the system accessibility labels, thus no IDS_DONE.
 id<GREYMatcher> LanguagePickerDoneButton() {
-  // Setting A11y ID on this button doesn't work on iOS 9.0.
-  if (base::ios::IsRunningOnIOS10OrLater())
-    return grey_accessibilityID(kLanguagePickerDoneButtonId);
-
-  return chrome_test_util::ButtonWithAccessibilityLabel(@"Done");
+  return grey_accessibilityID(kLanguagePickerDoneButtonId);
 }
 
 // Assigns the testing callback for the current WebState's language detection
@@ -240,6 +233,7 @@ void TestResponseProvider::GetLanguageResponse(
 
 }  // namespace
 
+using chrome_test_util::TapWebViewElementWithId;
 using translate::LanguageDetectionController;
 
 #pragma mark - MockTranslateScriptManager
@@ -324,7 +318,7 @@ using translate::LanguageDetectionController;
   language::IOSLanguageDetectionTabHelper::Callback copyDetailsCallback =
       base::BindBlockArc(^(const translate::LanguageDetectionDetails& details) {
         _language_detection_details =
-            base::MakeUnique<translate::LanguageDetectionDetails>(details);
+            std::make_unique<translate::LanguageDetectionDetails>(details);
       });
   SetTestingLanguageDetectionCallback(copyDetailsCallback);
 }
@@ -471,7 +465,7 @@ using translate::LanguageDetectionController;
   expectedLanguageDetails.adopted_language = "fr";
   [self assertLanguageDetails:expectedLanguageDetails];
   // Trigger the hash change.
-  chrome_test_util::TapWebViewElementWithId("Hash");
+  GREYAssert(TapWebViewElementWithId("Hash"), @"Failed to tap \"Hash\"");
   // Check that language detection has been re-run.
   expectedLanguageDetails.adopted_language = "en";
   [self assertLanguageDetails:expectedLanguageDetails];
@@ -528,7 +522,7 @@ using translate::LanguageDetectionController;
   GURL URL = web::test::HttpServer::MakeUrl(std::string("http://") + kLinkPath);
   GURL someLanguageURL = web::test::HttpServer::MakeUrl(kSomeLanguageUrl);
   [ChromeEarlGrey loadURL:URL];
-  chrome_test_util::TapWebViewElementWithId("click");
+  GREYAssert(TapWebViewElementWithId("click"), @"Failed to tap \"click\"");
   [[EarlGrey selectElementWithMatcher:chrome_test_util::OmniboxText(
                                           someLanguageURL.GetContent())]
       assertWithMatcher:grey_notNil()];
@@ -613,9 +607,8 @@ using translate::LanguageDetectionController;
       selectElementWithMatcher:chrome_test_util::ButtonWithAccessibilityLabelId(
                                    IDS_TRANSLATE_INFOBAR_ACCEPT)]
       assertWithMatcher:grey_notNil()];
-  [[EarlGrey
-      selectElementWithMatcher:chrome_test_util::ButtonWithAccessibilityLabelId(
-                                   IDS_CLOSE)] assertWithMatcher:grey_notNil()];
+  [[EarlGrey selectElementWithMatcher:chrome_test_util::CloseButton()]
+      assertWithMatcher:grey_notNil()];
 
   // Open the language picker.
   NSString* kFrench = @"French";
@@ -687,7 +680,7 @@ using translate::LanguageDetectionController;
   [[EarlGrey
       selectElementWithMatcher:chrome_test_util::ButtonWithAccessibilityLabel(
                                    switchLabel)]
-      assertWithMatcher:grey_notNil()];
+      assertWithMatcher:grey_sufficientlyVisible()];
 
   // Toggle "Always Translate" and check the preference.
   [[EarlGrey
@@ -859,17 +852,23 @@ using translate::LanguageDetectionController;
   client->GetTranslateManager()->PageTranslated(
       "es", "en", translate::TranslateErrors::NONE);
 
+  // The infobar is presented with an animation. Wait for the "Done" button
+  // to become visibile before considering the animation as complete.
+  [ChromeEarlGrey
+      waitForElementWithMatcherSufficientlyVisible:
+          chrome_test_util::ButtonWithAccessibilityLabelId(IDS_DONE)];
+
   // Assert that the infobar is visible.
   [[EarlGrey
       selectElementWithMatcher:chrome_test_util::ButtonWithAccessibilityLabelId(
-                                   IDS_DONE)] assertWithMatcher:grey_notNil()];
+                                   IDS_DONE)]
+      assertWithMatcher:grey_sufficientlyVisible()];
   [[EarlGrey
       selectElementWithMatcher:chrome_test_util::ButtonWithAccessibilityLabelId(
                                    IDS_TRANSLATE_INFOBAR_REVERT)]
-      assertWithMatcher:grey_notNil()];
-  [[EarlGrey
-      selectElementWithMatcher:chrome_test_util::ButtonWithAccessibilityLabelId(
-                                   IDS_CLOSE)] assertWithMatcher:grey_notNil()];
+      assertWithMatcher:grey_sufficientlyVisible()];
+  [[EarlGrey selectElementWithMatcher:chrome_test_util::CloseButton()]
+      assertWithMatcher:grey_sufficientlyVisible()];
 }
 
 @end

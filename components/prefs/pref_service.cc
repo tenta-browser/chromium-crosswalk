@@ -30,7 +30,7 @@ namespace {
 class ReadErrorHandler : public PersistentPrefStore::ReadErrorDelegate {
  public:
   using ErrorCallback =
-      base::Callback<void(PersistentPrefStore::PrefReadError)>;
+      base::RepeatingCallback<void(PersistentPrefStore::PrefReadError)>;
   explicit ReadErrorHandler(ErrorCallback cb) : callback_(cb) {}
 
   void OnError(PersistentPrefStore::PrefReadError error) override {
@@ -59,37 +59,28 @@ uint32_t GetWriteFlags(const PrefService::Preference* pref) {
 }  // namespace
 
 PrefService::PrefService(
-    PrefNotifierImpl* pref_notifier,
-    PrefValueStore* pref_value_store,
-    PersistentPrefStore* user_prefs,
-    PrefRegistry* pref_registry,
-    base::Callback<void(PersistentPrefStore::PrefReadError)>
+    std::unique_ptr<PrefNotifierImpl> pref_notifier,
+    std::unique_ptr<PrefValueStore> pref_value_store,
+    scoped_refptr<PersistentPrefStore> user_prefs,
+    scoped_refptr<PrefRegistry> pref_registry,
+    base::RepeatingCallback<void(PersistentPrefStore::PrefReadError)>
         read_error_callback,
     bool async)
-    : pref_notifier_(pref_notifier),
-      pref_value_store_(pref_value_store),
-      pref_registry_(pref_registry),
-      user_pref_store_(user_prefs),
-      read_error_callback_(read_error_callback) {
+    : pref_notifier_(std::move(pref_notifier)),
+      pref_value_store_(std::move(pref_value_store)),
+      pref_registry_(std::move(pref_registry)),
+      user_pref_store_(std::move(user_prefs)),
+      read_error_callback_(std::move(read_error_callback)) {
   pref_notifier_->SetPrefService(this);
 
-  // TODO(battre): This is a check for crbug.com/435208 to make sure that
-  // access violations are caused by a use-after-free bug and not by an
-  // initialization bug.
-  CHECK(pref_registry_);
-  CHECK(pref_value_store_);
+  DCHECK(pref_registry_);
+  DCHECK(pref_value_store_);
 
   InitFromStorage(async);
 }
 
 PrefService::~PrefService() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-
-  // Reset pointers so accesses after destruction reliably crash.
-  pref_value_store_.reset();
-  pref_registry_ = nullptr;
-  user_pref_store_ = nullptr;
-  pref_notifier_.reset();
 }
 
 void PrefService::InitFromStorage(bool async) {
@@ -365,8 +356,8 @@ void PrefService::RemovePrefObserver(const std::string& path,
   pref_notifier_->RemovePrefObserver(path, obs);
 }
 
-void PrefService::AddPrefInitObserver(base::Callback<void(bool)> obs) {
-  pref_notifier_->AddInitObserver(obs);
+void PrefService::AddPrefInitObserver(base::OnceCallback<void(bool)> obs) {
+  pref_notifier_->AddInitObserver(std::move(obs));
 }
 
 PrefRegistry* PrefService::DeprecatedGetPrefRegistry() {
@@ -405,19 +396,19 @@ void PrefService::Set(const std::string& path, const base::Value& value) {
 }
 
 void PrefService::SetBoolean(const std::string& path, bool value) {
-  SetUserPrefValue(path, base::MakeUnique<base::Value>(value));
+  SetUserPrefValue(path, std::make_unique<base::Value>(value));
 }
 
 void PrefService::SetInteger(const std::string& path, int value) {
-  SetUserPrefValue(path, base::MakeUnique<base::Value>(value));
+  SetUserPrefValue(path, std::make_unique<base::Value>(value));
 }
 
 void PrefService::SetDouble(const std::string& path, double value) {
-  SetUserPrefValue(path, base::MakeUnique<base::Value>(value));
+  SetUserPrefValue(path, std::make_unique<base::Value>(value));
 }
 
 void PrefService::SetString(const std::string& path, const std::string& value) {
-  SetUserPrefValue(path, base::MakeUnique<base::Value>(value));
+  SetUserPrefValue(path, std::make_unique<base::Value>(value));
 }
 
 void PrefService::SetFilePath(const std::string& path,
@@ -427,7 +418,7 @@ void PrefService::SetFilePath(const std::string& path,
 
 void PrefService::SetInt64(const std::string& path, int64_t value) {
   SetUserPrefValue(path,
-                   base::MakeUnique<base::Value>(base::Int64ToString(value)));
+                   std::make_unique<base::Value>(base::Int64ToString(value)));
 }
 
 int64_t PrefService::GetInt64(const std::string& path) const {
@@ -449,7 +440,7 @@ int64_t PrefService::GetInt64(const std::string& path) const {
 
 void PrefService::SetUint64(const std::string& path, uint64_t value) {
   SetUserPrefValue(path,
-                   base::MakeUnique<base::Value>(base::Uint64ToString(value)));
+                   std::make_unique<base::Value>(base::NumberToString(value)));
 }
 
 uint64_t PrefService::GetUint64(const std::string& path) const {
@@ -467,6 +458,15 @@ uint64_t PrefService::GetUint64(const std::string& path) const {
   uint64_t val;
   base::StringToUint64(result, &val);
   return val;
+}
+
+void PrefService::SetTime(const std::string& path, base::Time value) {
+  SetInt64(path, value.ToDeltaSinceWindowsEpoch().InMicroseconds());
+}
+
+base::Time PrefService::GetTime(const std::string& path) const {
+  return base::Time::FromDeltaSinceWindowsEpoch(
+      base::TimeDelta::FromMicroseconds(GetInt64(path)));
 }
 
 base::Value* PrefService::GetMutableUserPref(const std::string& path,

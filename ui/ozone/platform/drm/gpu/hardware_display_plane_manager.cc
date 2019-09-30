@@ -214,7 +214,10 @@ bool HardwareDisplayPlaneManager::IsCompatible(HardwareDisplayPlane* plane,
   if (!plane->CanUseForCrtc(crtc_index))
     return false;
 
-  if (!plane->IsSupportedFormat(overlay.buffer->GetFramebufferPixelFormat()))
+  const uint32_t format = overlay.enable_blend ?
+      overlay.buffer->GetFramebufferPixelFormat() :
+      overlay.buffer->GetOpaqueFramebufferPixelFormat();
+  if (!plane->IsSupportedFormat(format))
     return false;
 
   // TODO(kalyank): We should check for z-order and any needed transformation
@@ -308,39 +311,6 @@ bool HardwareDisplayPlaneManager::AssignOverlayPlanes(
 const std::vector<uint32_t>& HardwareDisplayPlaneManager::GetSupportedFormats()
     const {
   return supported_formats_;
-}
-
-bool HardwareDisplayPlaneManager::IsFormatSupported(uint32_t fourcc_format,
-                                                    uint32_t z_order,
-                                                    uint32_t crtc_id) const {
-  bool format_supported = false;
-  int crtc_index = LookupCrtcIndex(crtc_id);
-  if (crtc_index < 0) {
-    LOG(ERROR) << "Cannot find crtc " << crtc_id;
-    return format_supported;
-  }
-
-  // We dont have a way to query z_order of a plane. This is a temporary
-  // solution till driver exposes z_order property.
-  uint32_t plane_z_order = 0;
-  for (const auto& hardware_plane : planes_) {
-    if (plane_z_order > z_order)
-      break;
-
-    if (!hardware_plane->CanUseForCrtc(crtc_index))
-      continue;
-
-    if (plane_z_order == z_order) {
-      if (hardware_plane->IsSupportedFormat(fourcc_format))
-        format_supported = true;
-
-      break;
-    } else {
-      plane_z_order++;
-    }
-  }
-
-  return format_supported;
 }
 
 std::vector<uint64_t> HardwareDisplayPlaneManager::GetFormatModifiers(

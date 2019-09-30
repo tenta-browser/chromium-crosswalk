@@ -24,8 +24,10 @@
     documentSelectionChanged,
     expandedChanged,
     focus,
+    focusContext,
     imageFrameUpdated,
     hide,
+    hitTestResult,
     hover,
     invalidStatusChanged,
     layoutComplete,
@@ -56,6 +58,7 @@
     selectionAdd,
     selectionRemove,
     show,
+    stateChanged,
     textChanged,
     textSelectionChanged,
     treeChanged,
@@ -75,7 +78,6 @@
     banner,
     blockquote,
     button,
-    buttonDropDown,
     canvas,
     caption,
     caret,
@@ -119,6 +121,10 @@
     inlineTextBox,
     inputTime,
     labelText,
+    layoutTable,
+    layoutTableCell,
+    layoutTableColumn,
+    layoutTableRow,
     legend,
     lineBreak,
     link,
@@ -204,6 +210,7 @@
     haspopup,
     horizontal,
     hovered,
+    ignored,
     invisible,
     linked,
     multiline,
@@ -212,10 +219,35 @@
     protected,
     required,
     richlyEditable,
-    selectable,
-    selected,
     vertical,
     visited
+  };
+
+  // All possible actions that can be performed on automation nodes.
+  enum ActionType {
+    blur,
+    customAction,
+    decrement,
+    doDefault,
+    focus,
+    getImageData,
+    hitTest,
+    increment,
+    loadInlineTextBoxes,
+    replaceSelectedText,
+    scrollBackward,
+    scrollDown,
+    scrollForward,
+    scrollLeft,
+    scrollRight,
+    scrollToMakeVisible,
+    scrollToPoint,
+    scrollUp,
+    setScrollOffset,
+    setSelection,
+    setSequentialFocusNavigationStartingPoint,
+    setValue,
+    showContextMenu
   };
 
   // Possible changes to the automation tree. For any given atomic change
@@ -271,6 +303,19 @@
     disabled,
     readOnly
   };
+
+  // Describes possible actions when performing a do default action.
+  enum DefaultActionVerb {
+    activate,
+    check,
+    click,
+    clickAncestor,
+    jump,
+    open,
+    press,
+    select,
+    uncheck
+};
 
   dictionary Rect {
     long left;
@@ -366,6 +411,7 @@
 
   // Callback called for actions with a response.
   callback PerformActionCallback = void(boolean result);
+  callback PerformActionCallbackWithNode = void(AutomationNode node);
 
   dictionary CustomAction {
     long id;
@@ -459,8 +505,38 @@
     // The target of an in-page link.
     AutomationNode? inPageLinkTarget;
 
+    // A node that provides more details about the current node.
+    AutomationNode? details;
+
+    // A node that provides an error message for a current node.
+    AutomationNode? errorMessage;
+
+    // Reverse relationship for details.
+    AutomationNode[]? detailsFor;
+
+    // Reverse relationship for errorMessage.
+    AutomationNode[]? errorMessageFor;
+
+    // Reverse relationship for controls.
+    AutomationNode[]? controlledBy;
+
+    // Reverse relationship for describedBy.
+    AutomationNode[]? descriptionFor;
+
+    // Reverse relationship for flowTo.
+    AutomationNode[]? flowFrom;
+
+    // Reverse relationship for labelledBy.
+    AutomationNode[]? labelFor;
+
+    // An array of standard actions available on this node.
+    ActionType[]? standardActions;
+
     // An array of custom actions.
     CustomAction[]? customActions;
+
+    // The action taken by calling <code>doDefault</code>.
+    DefaultActionVerb? defaultActionVerb;
 
     //
     // Link attributes.
@@ -610,6 +686,12 @@
     // The corresponding row header for this cell.
     AutomationNode? tableRowHeader;
 
+    // The column index of this column node.
+    long? tableColumnIndex;
+
+    // The row index of this row node.
+    long? tableRowIndex;
+
     //
     // Live region attributes.
     //
@@ -643,6 +725,15 @@
     // Miscellaneous attributes.
     //
 
+    // Aria auto complete.
+    DOMString? autoComplete;
+
+    // The name of the programmatic backing object.
+    DOMString? className;
+
+    // Marks this subtree as modal.
+    boolean? modal;
+
     // A map containing all HTML attributes and their values
     // <jsexterns>@type {Object<string>}</jsexterns>
     object? htmlAttributes;
@@ -666,7 +757,7 @@
     DOMString? language;
 
     // Input restriction, if any, such as readonly or disabled:
-    // undefined - enabled control or other object that is not disabled 
+    // undefined - enabled control or other object that is not disabled
     // Restriction.DISABLED - disallows input in itself + any descendants
     // Restriction.READONLY - allow focus/selection but not input
     DOMString? restriction;
@@ -696,6 +787,9 @@
     // Indicates node text is line through.
     boolean lineThrough;
 
+    // Indicates whether this node is selected, unselected, or neither.
+    boolean? selected;
+
     //
     // Walking the tree.
     //
@@ -706,8 +800,10 @@
     AutomationNode? lastChild;
     AutomationNode? previousSibling;
     AutomationNode? nextSibling;
-    AutomationNode? nextOnLine;
     AutomationNode? previousOnLine;
+    AutomationNode? nextOnLine;
+    AutomationNode? previousFocus;
+    AutomationNode? nextFocus;
 
     // The index of this node in its parent node's list of children. If this is
     // the root node, this will be undefined.
@@ -733,13 +829,31 @@
 
     // Does a hit test of the given global screen coordinates, and fires
     // eventToFire on the resulting object.
-    static void hitTest(long x, long y, EventType eventToFire);
+    static void hitTest(
+        long x,
+        long y,
+        EventType eventToFire);
+
+    // Does a $(ref:automation.AutomationNode.hitTest), and receives a callback
+    // with the resulting hit node.
+    static void hitTestWithReply(
+        long x,
+        long y,
+        PerformActionCallbackWithNode callback);
 
     // Scrolls this node to make it visible.
     static void makeVisible();
 
     // Performs custom action.
     static void performCustomAction(long customActionId);
+
+    // Convenience method to perform a standard action supported by this node.
+    // For actions requiring additional arguments, call the specific binding
+    // e.g. <code>setSelection</code>.
+    static void performStandardAction(ActionType actionType);
+
+    // Replaces the selected text within a text field.
+    static void replaceSelectedText(DOMString value);
 
     // Sets selection within a text field.
     static void setSelection(long startIndex, long endIndex);
@@ -748,6 +862,9 @@
     // time the user presses Tab or Shift+Tab.
     static void setSequentialFocusNavigationStartingPoint();
 
+    // Sets the value of a text field.
+    static void setValue(DOMString value);
+    
     // Show the context menu for this element, as if the user right-clicked.
     static void showContextMenu();
 

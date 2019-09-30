@@ -20,10 +20,10 @@
 #include "components/content_settings/core/common/content_settings.h"
 #include "components/keyed_service/core/keyed_service_shutdown_notifier.h"
 #include "components/prefs/pref_member.h"
-#include "components/ukm/ukm_service.h"
 #include "content/public/browser/browser_message_filter.h"
-#include "extensions/features/features.h"
-#include "media/media_features.h"
+#include "content/public/browser/browser_thread.h"
+#include "extensions/buildflags/buildflags.h"
+#include "media/media_buildflags.h"
 #include "mojo/public/cpp/bindings/associated_binding.h"
 
 class GURL;
@@ -105,7 +105,6 @@ class PluginInfoHostImpl
     scoped_refptr<PluginPrefs> plugin_prefs_;
 
     BooleanPrefMember allow_outdated_plugins_;
-    BooleanPrefMember always_authorize_plugins_;
     BooleanPrefMember run_all_flash_in_allow_mode_;
   };
 
@@ -138,10 +137,6 @@ class PluginInfoHostImpl
                      const std::string& mime_type,
                      const GetPluginInfoCallback& callback) override;
 
-  void IsInternalPluginAvailableForMimeType(
-      const std::string& mime_type,
-      const IsInternalPluginAvailableForMimeTypeCallback& callback) override;
-
   // |params| wraps the parameters passed to |OnGetPluginInfo|, because
   // |base::Bind| doesn't support the required arity <http://crbug.com/98542>.
   void PluginsLoaded(const GetPluginInfo_Params& params,
@@ -160,21 +155,17 @@ class PluginInfoHostImpl
                            GetPluginInfoCallback callback,
                            std::unique_ptr<PluginMetadata> plugin_metadata);
 
-  // Reports usage metrics to RAPPOR and UKM. This must be a class function,
-  // because UkmService requires a friend declaration by design to call.
+  // Reports usage metrics to RAPPOR and UKM.
   void ReportMetrics(int render_frame_id,
                      const base::StringPiece& mime_type,
                      const GURL& url,
-                     const url::Origin& main_frame_origin,
-                     ukm::SourceId ukm_source_id);
+                     const url::Origin& main_frame_origin);
 
   Context context_;
   std::unique_ptr<KeyedServiceShutdownNotifier::Subscription>
       shutdown_notifier_;
 
   scoped_refptr<base::SingleThreadTaskRunner> main_thread_task_runner_;
-
-  const ukm::SourceId ukm_source_id_;
 
   // Binding is mutable so we can Close it in the const OnDestruct method
   // (which unfortunately hops ~PluginInfoMesssageFilter to the UI thread).

@@ -4,28 +4,32 @@
 
 #include "content/shell/browser/layout_test/layout_test_content_browser_client.h"
 
-#include "base/memory/ptr_util.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/pattern.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_thread.h"
+#include "content/public/browser/login_delegate.h"
+#include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/resource_dispatcher_host.h"
 #include "content/public/browser/storage_partition.h"
+#include "content/public/browser/web_package_context.h"
 #include "content/shell/browser/layout_test/blink_test_controller.h"
+#include "content/shell/browser/layout_test/fake_bluetooth_chooser.h"
 #include "content/shell/browser/layout_test/layout_test_bluetooth_fake_adapter_setter_impl.h"
 #include "content/shell/browser/layout_test/layout_test_browser_context.h"
 #include "content/shell/browser/layout_test/layout_test_browser_main_parts.h"
 #include "content/shell/browser/layout_test/layout_test_message_filter.h"
 #include "content/shell/browser/layout_test/layout_test_notification_manager.h"
-#include "content/shell/browser/layout_test/layout_test_resource_dispatcher_host_delegate.h"
 #include "content/shell/browser/layout_test/mojo_layout_test_helper.h"
 #include "content/shell/browser/shell_browser_context.h"
 #include "content/shell/common/layout_test/layout_test_switches.h"
 #include "content/shell/common/shell_messages.h"
 #include "content/shell/renderer/layout_test/blink_test_helpers.h"
 #include "device/bluetooth/test/fake_bluetooth.h"
+#include "mojo/public/cpp/bindings/strong_binding.h"
 #include "services/service_manager/public/cpp/binder_registry.h"
+#include "third_party/blink/public/mojom/web_package/web_package_internals.mojom.h"
 
 namespace content {
 namespace {
@@ -36,6 +40,34 @@ void BindLayoutTestHelper(mojom::MojoLayoutTestHelperRequest request,
                           RenderFrameHost* render_frame_host) {
   MojoLayoutTestHelper::Create(std::move(request));
 }
+
+class WebPackageInternalsImpl : public blink::test::mojom::WebPackageInternals {
+ public:
+  explicit WebPackageInternalsImpl(WebPackageContext* web_package_context)
+      : web_package_context_(web_package_context) {}
+  ~WebPackageInternalsImpl() override = default;
+
+  static void Create(WebPackageContext* web_package_context,
+                     blink::test::mojom::WebPackageInternalsRequest request) {
+    DCHECK_CURRENTLY_ON(BrowserThread::IO);
+    mojo::MakeStrongBinding(
+        std::make_unique<WebPackageInternalsImpl>(web_package_context),
+        std::move(request));
+  }
+
+ private:
+  void SetSignedExchangeVerificationTime(
+      base::Time time,
+      SetSignedExchangeVerificationTimeCallback callback) override {
+    DCHECK_CURRENTLY_ON(BrowserThread::IO);
+    web_package_context_->SetSignedExchangeVerificationTimeForTesting(time);
+    std::move(callback).Run();
+  }
+
+  WebPackageContext* web_package_context_;
+
+  DISALLOW_COPY_AND_ASSIGN(WebPackageInternalsImpl);
+};
 
 }  // namespace
 
@@ -65,22 +97,27 @@ void LayoutTestContentBrowserClient::SetPopupBlockingEnabled(
   block_popups_ = block_popups;
 }
 
+std::unique_ptr<FakeBluetoothChooser>
+LayoutTestContentBrowserClient::GetNextFakeBluetoothChooser() {
+  return std::move(next_fake_bluetooth_chooser_);
+}
+
 LayoutTestNotificationManager*
 LayoutTestContentBrowserClient::GetLayoutTestNotificationManager() {
   return layout_test_notification_manager_.get();
 }
 
 void LayoutTestContentBrowserClient::RenderProcessWillLaunch(
-    RenderProcessHost* host) {
-  ShellContentBrowserClient::RenderProcessWillLaunch(host);
+    RenderProcessHost* host,
+    service_manager::mojom::ServiceRequest* service_request) {
+  ShellContentBrowserClient::RenderProcessWillLaunch(host, service_request);
 
   StoragePartition* partition =
       BrowserContext::GetDefaultStoragePartition(browser_context());
   host->AddFilter(new LayoutTestMessageFilter(
-      host->GetID(),
-      partition->GetDatabaseTracker(),
-      partition->GetQuotaManager(),
-      partition->GetURLRequestContext()));
+      host->GetID(), partition->GetDatabaseTracker(),
+      partition->GetQuotaManager(), partition->GetURLRequestContext(),
+      partition->GetNetworkContext()));
 
   host->Send(new ShellViewMsg_SetWebKitSourceDir(GetWebKitRootDirFilePath()));
 }
@@ -93,25 +130,32 @@ void LayoutTestContentBrowserClient::ExposeInterfacesToRenderer(
       content::BrowserThread::GetTaskRunnerForThread(
           content::BrowserThread::UI);
   registry->AddInterface(
-      base::Bind(&LayoutTestBluetoothFakeAdapterSetterImpl::Create),
+      base::BindRepeating(&LayoutTestBluetoothFakeAdapterSetterImpl::Create),
       ui_task_runner);
 
-  registry->AddInterface(base::Bind(&bluetooth::FakeBluetooth::Create),
+  registry->AddInterface(base::BindRepeating(&bluetooth::FakeBluetooth::Create),
                          ui_task_runner);
-  registry->AddInterface(base::Bind(&MojoLayoutTestHelper::Create));
+  // This class outlives |render_process_host|, which owns |registry|. Since
+  // CreateFakeBluetoothChooser will not be called after |registry| is deleted
+  // and |registry| is outlived by this class, it is safe to use
+  // base::Unretained.
+  registry->AddInterface(
+      base::BindRepeating(
+          &LayoutTestContentBrowserClient::CreateFakeBluetoothChooser,
+          base::Unretained(this)),
+      ui_task_runner);
+  registry->AddInterface(base::BindRepeating(
+      &WebPackageInternalsImpl::Create,
+      base::Unretained(
+          render_process_host->GetStoragePartition()->GetWebPackageContext())));
+  registry->AddInterface(base::BindRepeating(&MojoLayoutTestHelper::Create));
 }
 
 void LayoutTestContentBrowserClient::OverrideWebkitPrefs(
     RenderViewHost* render_view_host,
     WebPreferences* prefs) {
-  BlinkTestController::Get()->OverrideWebkitPrefs(prefs);
-}
-
-void LayoutTestContentBrowserClient::ResourceDispatcherHostCreated() {
-  set_resource_dispatcher_host_delegate(
-      base::WrapUnique(new LayoutTestResourceDispatcherHostDelegate));
-  ResourceDispatcherHost::Get()->SetDelegate(
-      resource_dispatcher_host_delegate());
+  if (BlinkTestController::Get())
+    BlinkTestController::Get()->OverrideWebkitPrefs(prefs);
 }
 
 void LayoutTestContentBrowserClient::AppendExtraCommandLineSwitches(
@@ -193,6 +237,26 @@ void LayoutTestContentBrowserClient::ExposeInterfacesToFrame(
     service_manager::BinderRegistryWithArgs<content::RenderFrameHost*>*
         registry) {
   registry->AddInterface(base::Bind(&BindLayoutTestHelper));
+}
+
+scoped_refptr<LoginDelegate>
+LayoutTestContentBrowserClient::CreateLoginDelegate(
+    net::AuthChallengeInfo* auth_info,
+    content::ResourceRequestInfo::WebContentsGetter web_contents_getter,
+    bool is_main_frame,
+    const GURL& url,
+    bool first_auth_attempt,
+    const base::Callback<void(const base::Optional<net::AuthCredentials>&)>&
+        auth_required_callback) {
+  return nullptr;
+}
+
+// private
+void LayoutTestContentBrowserClient::CreateFakeBluetoothChooser(
+    mojom::FakeBluetoothChooserRequest request) {
+  DCHECK(!next_fake_bluetooth_chooser_);
+  next_fake_bluetooth_chooser_ =
+      FakeBluetoothChooser::Create(std::move(request));
 }
 
 }  // namespace content

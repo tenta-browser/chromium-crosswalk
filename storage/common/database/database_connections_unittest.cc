@@ -70,8 +70,8 @@ TEST(DatabaseConnectionsTest, DatabaseConnectionsTest) {
   another.AddConnection(kOriginId, kName);
   another.AddConnection(kOriginId, kName2);
 
-  std::vector<std::pair<std::string, base::string16> > closed_dbs;
-  connections.RemoveConnections(another, &closed_dbs);
+  std::vector<std::pair<std::string, base::string16>> closed_dbs =
+      connections.RemoveConnections(another);
   EXPECT_EQ(1u, closed_dbs.size());
   EXPECT_EQ(kOriginId, closed_dbs[0].first);
   EXPECT_EQ(kName2, closed_dbs[0].second);
@@ -117,8 +117,8 @@ TEST(DatabaseConnectionsTest, DatabaseConnectionsWrapperTest) {
   thread.Start();
   bool did_task_execute = false;
   thread.task_runner()->PostTask(
-      FROM_HERE, base::Bind(&RemoveConnectionTask, kOriginId, kName, obj,
-                            &did_task_execute));
+      FROM_HERE, base::BindOnce(&RemoveConnectionTask, kOriginId, kName, obj,
+                                &did_task_execute));
   // Use a long timeout value to avoid timeouts on test bots.
   EXPECT_TRUE(obj->WaitForAllDatabasesToClose(
       base::TimeDelta::FromSeconds(15)));

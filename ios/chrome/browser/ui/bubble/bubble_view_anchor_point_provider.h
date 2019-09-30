@@ -11,14 +11,9 @@
 // Points must be in window-coordinates.
 @protocol BubbleViewAnchorPointProvider
 
-@optional
 // Returns either the top-middle or bottom-middle of the tab switcher button
 // based on |direction|. Point is in window-coordinates.
 - (CGPoint)anchorPointForTabSwitcherButton:(BubbleArrowDirection)direction;
-
-// Returns either the top-middle or bottom-middle of the tools menu button
-// based on |direction|. Point is in window-coordinates.
-- (CGPoint)anchorPointForToolsMenuButton:(BubbleArrowDirection)direction;
 
 @end
 

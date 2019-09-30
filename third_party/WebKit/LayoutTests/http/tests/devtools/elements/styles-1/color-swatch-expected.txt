@@ -1,6 +1,5 @@
 The patch verifies that color swatch functions properly in matched and computed styles. crbug.com/461363
 
-Inspected div
 
 Running: selectNode
 
@@ -12,6 +11,9 @@ Has popover after click: true
 
 Running: testColorSwatchInCustomProperty
 Custom property has a color swatch: true
+
+Running: testColorSwatchInVarFunction
+var function has a color swatch: true
 
 Running: testColorSwatchInComputedRules
 Initial color value: rgb(255, 0, 0)

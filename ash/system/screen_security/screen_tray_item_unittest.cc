@@ -12,6 +12,7 @@
 #include "ash/test/ash_test_base.h"
 #include "base/callback.h"
 #include "base/memory/ptr_util.h"
+#include "base/stl_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "ui/events/event.h"
 #include "ui/events/event_utils.h"
@@ -162,33 +163,13 @@ TEST_F(ScreenShareTest, NotificationStartAndStop) {
   TestNotificationStartAndStop(this, start_func, stop_func);
 }
 
-void TestNotificationView(ScreenTrayItemTest* test) {
-  ScreenTrayItem* tray_item = test->tray_item();
-
-  test->StartSession();
-  message_center::MessageCenter* message_center =
-      message_center::MessageCenter::Get();
-  EXPECT_TRUE(message_center->FindVisibleNotificationById(
-      tray_item->GetNotificationId()));
-  test->StopSession();
-}
-
-TEST_F(ScreenCaptureTest, NotificationView) {
-  TestNotificationView(this);
-}
-
-TEST_F(ScreenShareTest, NotificationView) {
-  TestNotificationView(this);
-}
-
 void TestSystemTrayInteraction(ScreenTrayItemTest* test) {
   ScreenTrayItem* tray_item = test->tray_item();
   EXPECT_FALSE(tray_item->tray_view()->visible());
 
   std::vector<SystemTrayItem*> tray_items =
       AshTestBase::GetPrimarySystemTray()->GetTrayItems();
-  EXPECT_NE(std::find(tray_items.begin(), tray_items.end(), tray_item),
-            tray_items.end());
+  EXPECT_TRUE(base::ContainsValue(tray_items, tray_item));
 
   test->StartSession();
   EXPECT_TRUE(tray_item->tray_view()->visible());

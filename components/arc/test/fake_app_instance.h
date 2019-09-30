@@ -124,6 +124,10 @@ class FakeAppInstance : public mojom::AppInstance {
       const std::string& query,
       int32_t max_results,
       GetRecentAndSuggestedAppsFromPlayStoreCallback callback) override;
+  void GetIcingGlobalQueryResults(
+      const std::string& query,
+      int32_t max_results,
+      GetIcingGlobalQueryResultsCallback callback) override;
   void StartPaiFlow() override;
 
   // Methods to reply messages.
@@ -199,6 +203,10 @@ class FakeAppInstance : public mojom::AppInstance {
   std::vector<std::unique_ptr<ShortcutIconRequest>> shortcut_icon_requests_;
   // Keeps information for running tasks.
   TaskIdToInfo task_id_to_info_;
+
+  // Keeps the binding alive so that calls to this class can be correctly
+  // routed.
+  mojom::AppHostPtr host_;
 
   bool GetFakeIcon(mojom::ScaleFactor scale_factor,
                    std::string* png_data_as_string);

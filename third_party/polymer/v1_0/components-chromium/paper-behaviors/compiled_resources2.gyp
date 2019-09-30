@@ -1,4 +1,4 @@
-# Copyright 2017 The Chromium Authors. All rights reserved.
+# Copyright 2018 The Chromium Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 #
@@ -32,6 +32,7 @@
     {
       'target_name': 'paper-ripple-behavior-extracted',
       'dependencies': [
+        '../iron-behaviors/compiled_resources2.gyp:iron-button-state-extracted',
         '../paper-ripple/compiled_resources2.gyp:paper-ripple-extracted',
       ],
       'includes': ['../../../../closure_compiler/compile_js2.gypi'],

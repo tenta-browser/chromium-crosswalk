@@ -4,12 +4,12 @@
 
 #include "ios/chrome/browser/ui/webui/gcm/gcm_internals_ui.h"
 
+#include <memory>
 #include <vector>
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/memory/weak_ptr.h"
 #include "base/values.h"
 #include "components/gcm_driver/gcm_client.h"
@@ -144,12 +144,12 @@ void GcmInternalsUIMessageHandler::RequestGCMStatisticsFinished(
 void GcmInternalsUIMessageHandler::RegisterMessages() {
   web_ui()->RegisterMessageCallback(
       gcm_driver::kGetGcmInternalsInfo,
-      base::Bind(&GcmInternalsUIMessageHandler::RequestAllInfo,
-                 weak_ptr_factory_.GetWeakPtr()));
+      base::BindRepeating(&GcmInternalsUIMessageHandler::RequestAllInfo,
+                          weak_ptr_factory_.GetWeakPtr()));
   web_ui()->RegisterMessageCallback(
       gcm_driver::kSetGcmInternalsRecording,
-      base::Bind(&GcmInternalsUIMessageHandler::SetRecording,
-                 weak_ptr_factory_.GetWeakPtr()));
+      base::BindRepeating(&GcmInternalsUIMessageHandler::SetRecording,
+                          weak_ptr_factory_.GetWeakPtr()));
 }
 
 }  // namespace
@@ -173,7 +173,7 @@ GCMInternalsUI::GCMInternalsUI(web::WebUIIOS* web_ui)
   web::WebUIIOSDataSource::Add(ios::ChromeBrowserState::FromWebUIIOS(web_ui),
                                html_source);
 
-  web_ui->AddMessageHandler(base::MakeUnique<GcmInternalsUIMessageHandler>());
+  web_ui->AddMessageHandler(std::make_unique<GcmInternalsUIMessageHandler>());
 }
 
 GCMInternalsUI::~GCMInternalsUI() {}

@@ -4,6 +4,7 @@
 
 #include "content/browser/accessibility/accessibility_tree_formatter.h"
 
+#include <math.h>
 #include <oleacc.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -13,7 +14,6 @@
 #include <utility>
 
 #include "base/files/file_path.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_piece.h"
 #include "base/strings/string_util.h"
@@ -313,7 +313,7 @@ void AccessibilityTreeFormatterWin::RecursiveBuildAccessibilityTree(
     if (child_variant.type() == VT_DISPATCH) {
       dispatch = V_DISPATCH(child_variant.ptr());
     } else if (child_variant.type() == VT_I4) {
-      HRESULT hr = node->get_accChild(child_variant, dispatch.GetAddressOf());
+      hr = node->get_accChild(child_variant, dispatch.GetAddressOf());
       if (FAILED(hr)) {
         child_dict->SetString("error",
                               base::ASCIIToUTF16("[Error retrieving child]"));
@@ -837,17 +837,23 @@ void AccessibilityTreeFormatterWin::AddIA2ValueProperties(
   if (S_OK != QueryIAccessibleValue(node.Get(), ia2value.GetAddressOf()))
     return;  // No IA2Value, we are finished with this node.
 
-  base::win::ScopedVariant currentValue;
-  if (ia2value->get_currentValue(currentValue.Receive()) == S_OK)
-    dict->SetDouble("currentValue", V_R8(currentValue.ptr()));
+  base::win::ScopedVariant current_value;
+  if (ia2value->get_currentValue(current_value.Receive()) == S_OK &&
+      isfinite(V_R8(current_value.ptr()))) {
+    dict->SetDouble("currentValue", V_R8(current_value.ptr()));
+  }
 
-  base::win::ScopedVariant minimumValue;
-  if (ia2value->get_minimumValue(minimumValue.Receive()) == S_OK)
-    dict->SetDouble("minimumValue", V_R8(minimumValue.ptr()));
+  base::win::ScopedVariant minimum_value;
+  if (ia2value->get_minimumValue(minimum_value.Receive()) == S_OK &&
+      isfinite(V_R8(minimum_value.ptr()))) {
+    dict->SetDouble("minimumValue", V_R8(minimum_value.ptr()));
+  }
 
-  base::win::ScopedVariant maximumValue;
-  if (ia2value->get_maximumValue(maximumValue.Receive()) == S_OK)
-    dict->SetDouble("maximumValue", V_R8(maximumValue.ptr()));
+  base::win::ScopedVariant maximum_value;
+  if (ia2value->get_maximumValue(maximum_value.Receive()) == S_OK &&
+      isfinite(V_R8(maximum_value.ptr()))) {
+    dict->SetDouble("maximumValue", V_R8(maximum_value.ptr()));
+  }
 }
 
 base::string16 AccessibilityTreeFormatterWin::ProcessTreeForOutput(

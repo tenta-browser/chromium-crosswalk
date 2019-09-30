@@ -12,8 +12,6 @@
 #include "content/public/browser/browsing_data_remover.h"
 #include "content/public/browser/storage_partition.h"
 #include "content/public/browser/web_contents.h"
-#include "content/public/common/network_service.mojom.h"
-#include "content/public/common/simple_url_loader.h"
 #include "content/public/test/browsing_data_remover_test_util.h"
 #include "content/public/test/content_browser_test.h"
 #include "content/public/test/simple_url_loader_test_helper.h"
@@ -24,6 +22,8 @@
 #include "net/test/embedded_test_server/http_request.h"
 #include "net/test/embedded_test_server/http_response.h"
 #include "net/traffic_annotation/network_traffic_annotation_test_helper.h"
+#include "services/network/public/cpp/simple_url_loader.h"
+#include "services/network/public/mojom/network_service.mojom.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
 
@@ -79,13 +79,14 @@ class BrowsingDataRemoverImplBrowserTest : public ContentBrowserTest {
   // Issues a request for kHstsPath on localhost, and expects it to enable HSTS
   // for the domain.
   void IssueRequestThatSetsHsts() {
-    std::unique_ptr<ResourceRequest> request =
-        std::make_unique<ResourceRequest>();
+    std::unique_ptr<network::ResourceRequest> request =
+        std::make_unique<network::ResourceRequest>();
     request->url = ssl_server_.GetURL("localhost", kHstsPath);
 
     SimpleURLLoaderTestHelper loader_helper;
-    std::unique_ptr<SimpleURLLoader> loader = SimpleURLLoader::Create(
-        std::move(request), TRAFFIC_ANNOTATION_FOR_TESTS);
+    std::unique_ptr<network::SimpleURLLoader> loader =
+        network::SimpleURLLoader::Create(std::move(request),
+                                         TRAFFIC_ANNOTATION_FOR_TESTS);
     loader->DownloadToStringOfUnboundedSizeUntilCrashAndDie(
         url_loader_factory(), loader_helper.GetCallback());
     loader_helper.WaitForCallback();
@@ -105,12 +106,13 @@ class BrowsingDataRemoverImplBrowserTest : public ContentBrowserTest {
     GURL::Replacements replacements;
     replacements.SetSchemeStr("http");
     url = url.ReplaceComponents(replacements);
-    std::unique_ptr<ResourceRequest> request =
-        std::make_unique<ResourceRequest>();
+    std::unique_ptr<network::ResourceRequest> request =
+        std::make_unique<network::ResourceRequest>();
     request->url = url;
 
-    std::unique_ptr<SimpleURLLoader> loader = SimpleURLLoader::Create(
-        std::move(request), TRAFFIC_ANNOTATION_FOR_TESTS);
+    std::unique_ptr<network::SimpleURLLoader> loader =
+        network::SimpleURLLoader::Create(std::move(request),
+                                         TRAFFIC_ANNOTATION_FOR_TESTS);
     SimpleURLLoaderTestHelper loader_helper;
     loader->DownloadToStringOfUnboundedSizeUntilCrashAndDie(
         url_loader_factory(), loader_helper.GetCallback());
@@ -128,10 +130,11 @@ class BrowsingDataRemoverImplBrowserTest : public ContentBrowserTest {
     return false;
   }
 
-  mojom::URLLoaderFactory* url_loader_factory() {
+  network::mojom::URLLoaderFactory* url_loader_factory() {
     return BrowserContext::GetDefaultStoragePartition(
                shell()->web_contents()->GetBrowserContext())
-        ->GetURLLoaderFactoryForBrowserProcess();
+        ->GetURLLoaderFactoryForBrowserProcess()
+        .get();
   }
 
  private:

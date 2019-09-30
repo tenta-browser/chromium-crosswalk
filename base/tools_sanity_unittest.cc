@@ -9,7 +9,7 @@
 #include <stddef.h>
 
 #include "base/atomicops.h"
-#include "base/cfi_flags.h"
+#include "base/cfi_buildflags.h"
 #include "base/debug/asan_invalid_access.h"
 #include "base/debug/profiler.h"
 #include "base/message_loop/message_loop.h"
@@ -26,29 +26,23 @@ const base::subtle::Atomic32 kMagicValue = 42;
 
 // Helper for memory accesses that can potentially corrupt memory or cause a
 // crash during a native run.
-#if defined(ADDRESS_SANITIZER) || defined(SYZYASAN)
+#if defined(ADDRESS_SANITIZER)
 #if defined(OS_IOS)
 // EXPECT_DEATH is not supported on IOS.
 #define HARMFUL_ACCESS(action,error_regexp) do { action; } while (0)
-#elif defined(SYZYASAN)
-// We won't get a meaningful error message because we're not running under the
-// SyzyASan logger, but we can at least make sure that the error has been
-// generated in the SyzyASan runtime.
-#define HARMFUL_ACCESS(action,unused) \
-if (debug::IsBinaryInstrumented()) { EXPECT_DEATH(action, \
-                                                  "AsanRuntime::OnError"); }
 #else
 #define HARMFUL_ACCESS(action,error_regexp) EXPECT_DEATH(action,error_regexp)
-#endif  // !OS_IOS && !SYZYASAN
+#endif  // !OS_IOS
 #else
-#define HARMFUL_ACCESS(action,error_regexp) \
-do { if (RunningOnValgrind()) { action; } } while (0)
+#define HARMFUL_ACCESS(action, error_regexp)
+#define HARMFUL_ACCESS_IS_NOOP
 #endif
 
 void DoReadUninitializedValue(char *ptr) {
   // Comparison with 64 is to prevent clang from optimizing away the
   // jump -- valgrind only catches jumps and conditional moves, but clang uses
-  // the borrow flag if the condition is just `*ptr == '\0'`.
+  // the borrow flag if the condition is just `*ptr == '\0'`.  We no longer
+  // support valgrind, but this constant should be fine to keep as-is.
   if (*ptr == 64) {
     VLOG(1) << "Uninit condition is true";
   } else {
@@ -65,6 +59,7 @@ void ReadUninitializedValue(char *ptr) {
 #endif
 }
 
+#ifndef HARMFUL_ACCESS_IS_NOOP
 void ReadValueOutOfArrayBoundsLeft(char *ptr) {
   char c = ptr[-2];
   VLOG(1) << "Reading a byte out of bounds: " << c;
@@ -75,15 +70,14 @@ void ReadValueOutOfArrayBoundsRight(char *ptr, size_t size) {
   VLOG(1) << "Reading a byte out of bounds: " << c;
 }
 
-// This is harmless if you run it under Valgrind thanks to redzones.
 void WriteValueOutOfArrayBoundsLeft(char *ptr) {
   ptr[-1] = kMagicValue;
 }
 
-// This is harmless if you run it under Valgrind thanks to redzones.
 void WriteValueOutOfArrayBoundsRight(char *ptr, size_t size) {
   ptr[size] = kMagicValue;
 }
+#endif  // HARMFUL_ACCESS_IS_NOOP
 
 void MakeSomeErrors(char *ptr, size_t size) {
   ReadUninitializedValue(ptr);
@@ -107,16 +101,15 @@ TEST(ToolsSanityTest, MemoryLeak) {
   leak[4] = 1;  // Make sure the allocated memory is used.
 }
 
-#if (defined(ADDRESS_SANITIZER) && defined(OS_IOS)) || defined(SYZYASAN)
+#if (defined(ADDRESS_SANITIZER) && defined(OS_IOS))
 // Because iOS doesn't support death tests, each of the following tests will
-// crash the whole program under Asan. On Windows Asan is based on SyzyAsan; the
-// error report mechanism is different than with Asan so these tests will fail.
+// crash the whole program under Asan.
 #define MAYBE_AccessesToNewMemory DISABLED_AccessesToNewMemory
 #define MAYBE_AccessesToMallocMemory DISABLED_AccessesToMallocMemory
 #else
 #define MAYBE_AccessesToNewMemory AccessesToNewMemory
 #define MAYBE_AccessesToMallocMemory AccessesToMallocMemory
-#endif // (defined(ADDRESS_SANITIZER) && defined(OS_IOS)) || defined(SYZYASAN)
+#endif  // (defined(ADDRESS_SANITIZER) && defined(OS_IOS))
 
 // The following tests pass with Clang r170392, but not r172454, which
 // makes AddressSanitizer detect errors in them. We disable these tests under
@@ -124,14 +117,14 @@ TEST(ToolsSanityTest, MemoryLeak) {
 // tests should be put back under the (defined(OS_IOS) || defined(OS_WIN))
 // clause above.
 // See also http://crbug.com/172614.
-#if defined(ADDRESS_SANITIZER) || defined(SYZYASAN)
+#if defined(ADDRESS_SANITIZER)
 #define MAYBE_SingleElementDeletedWithBraces \
     DISABLED_SingleElementDeletedWithBraces
 #define MAYBE_ArrayDeletedWithoutBraces DISABLED_ArrayDeletedWithoutBraces
 #else
 #define MAYBE_ArrayDeletedWithoutBraces ArrayDeletedWithoutBraces
 #define MAYBE_SingleElementDeletedWithBraces SingleElementDeletedWithBraces
-#endif  // defined(ADDRESS_SANITIZER) || defined(SYZYASAN)
+#endif  // defined(ADDRESS_SANITIZER)
 
 TEST(ToolsSanityTest, MAYBE_AccessesToNewMemory) {
   char *foo = new char[10];
@@ -149,46 +142,39 @@ TEST(ToolsSanityTest, MAYBE_AccessesToMallocMemory) {
   HARMFUL_ACCESS(foo[5] = 0, "heap-use-after-free");
 }
 
+#if defined(ADDRESS_SANITIZER)
+
 static int* allocateArray() {
   // Clang warns about the mismatched new[]/delete if they occur in the same
   // function.
   return new int[10];
 }
 
+// This test may corrupt memory if not compiled with AddressSanitizer.
 TEST(ToolsSanityTest, MAYBE_ArrayDeletedWithoutBraces) {
-#if !defined(ADDRESS_SANITIZER) && !defined(SYZYASAN)
-  // This test may corrupt memory if not run under Valgrind or compiled with
-  // AddressSanitizer.
-  if (!RunningOnValgrind())
-    return;
-#endif
-
   // Without the |volatile|, clang optimizes away the next two lines.
   int* volatile foo = allocateArray();
   delete foo;
 }
+#endif
 
+#if defined(ADDRESS_SANITIZER)
 static int* allocateScalar() {
   // Clang warns about the mismatched new/delete[] if they occur in the same
   // function.
   return new int;
 }
 
+// This test may corrupt memory if not compiled with AddressSanitizer.
 TEST(ToolsSanityTest, MAYBE_SingleElementDeletedWithBraces) {
-#if !defined(ADDRESS_SANITIZER)
-  // This test may corrupt memory if not run under Valgrind or compiled with
-  // AddressSanitizer.
-  if (!RunningOnValgrind())
-    return;
-#endif
-
   // Without the |volatile|, clang optimizes away the next two lines.
   int* volatile foo = allocateScalar();
   (void) foo;
   delete [] foo;
 }
+#endif
 
-#if defined(ADDRESS_SANITIZER) || defined(SYZYASAN)
+#if defined(ADDRESS_SANITIZER)
 
 TEST(ToolsSanityTest, DISABLED_AddressSanitizerNullDerefCrashTest) {
   // Intentionally crash to make sure AddressSanitizer is running.
@@ -221,6 +207,7 @@ TEST(ToolsSanityTest, DISABLED_AddressSanitizerGlobalOOBCrashTest) {
   *access = 43;
 }
 
+#ifndef HARMFUL_ACCESS_IS_NOOP
 TEST(ToolsSanityTest, AsanHeapOverflow) {
   HARMFUL_ACCESS(debug::AsanHeapOverflow() ,"to the right");
 }
@@ -233,19 +220,22 @@ TEST(ToolsSanityTest, AsanHeapUseAfterFree) {
   HARMFUL_ACCESS(debug::AsanHeapUseAfterFree(), "heap-use-after-free");
 }
 
-#if defined(SYZYASAN)
-TEST(ToolsSanityTest, AsanCorruptHeapBlock) {
+#if defined(OS_WIN)
+// The ASAN runtime doesn't detect heap corruption, this needs fixing before
+// ASAN builds can ship to the wild. See https://crbug.com/818747.
+TEST(ToolsSanityTest, DISABLED_AsanCorruptHeapBlock) {
   HARMFUL_ACCESS(debug::AsanCorruptHeapBlock(), "");
 }
 
-TEST(ToolsSanityTest, AsanCorruptHeap) {
+TEST(ToolsSanityTest, DISABLED_AsanCorruptHeap) {
   // This test will kill the process by raising an exception, there's no
   // particular string to look for in the stack trace.
   EXPECT_DEATH(debug::AsanCorruptHeap(), "");
 }
-#endif  // SYZYASAN
+#endif  // OS_WIN
+#endif  // !HARMFUL_ACCESS_IS_NOOP
 
-#endif  // ADDRESS_SANITIZER || SYZYASAN
+#endif  // ADDRESS_SANITIZER
 
 namespace {
 
@@ -422,5 +412,13 @@ TEST(ToolsSanityTest, BadUnrelatedCast) {
 #endif  // BUILDFLAG(CFI_CAST_CHECK)
 
 #endif  // CFI_ERROR_MSG
+
+#undef CFI_ERROR_MSG
+#undef MAYBE_AccessesToNewMemory
+#undef MAYBE_AccessesToMallocMemory
+#undef MAYBE_ArrayDeletedWithoutBraces
+#undef MAYBE_SingleElementDeletedWithBraces
+#undef HARMFUL_ACCESS
+#undef HARMFUL_ACCESS_IS_NOOP
 
 }  // namespace base

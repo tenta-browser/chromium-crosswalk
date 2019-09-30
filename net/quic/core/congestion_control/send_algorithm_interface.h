@@ -20,6 +20,7 @@
 #include "net/quic/core/quic_unacked_packet_map.h"
 #include "net/quic/platform/api/quic_clock.h"
 #include "net/quic/platform/api/quic_export.h"
+#include "net/quic/platform/api/quic_string.h"
 
 namespace net {
 
@@ -47,6 +48,10 @@ class QUIC_EXPORT_PRIVATE SendAlgorithmInterface {
   // Sets the number of connections to emulate when doing congestion control,
   // particularly for congestion avoidance.  Can be set any time.
   virtual void SetNumEmulatedConnections(int num_connections) = 0;
+
+  // Sets the initial congestion window in number of packets.  May be ignored
+  // if called after the initial congestion window is no longer relevant.
+  virtual void SetInitialCongestionWindowInPackets(QuicPacketCount packets) = 0;
 
   // Indicates an update to the congestion state, caused either by an incoming
   // ack or loss event timeout.  |rtt_updated| indicates whether a new
@@ -117,7 +122,7 @@ class QUIC_EXPORT_PRIVATE SendAlgorithmInterface {
 
   // Retrieves debugging information about the current state of the
   // send algorithm.
-  virtual std::string GetDebugState() const = 0;
+  virtual QuicString GetDebugState() const = 0;
 
   // Called when the connection has no outstanding data to send. Specifically,
   // this means that none of the data streams are write-blocked, there are no

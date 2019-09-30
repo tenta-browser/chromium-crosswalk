@@ -18,7 +18,7 @@
 #include "net/reporting/reporting_service.h"
 #include "net/url_request/url_request_context.h"
 #include "net/url_request/url_request_context_getter.h"
-#include "third_party/WebKit/public/platform/reporting.mojom.h"
+#include "third_party/blink/public/platform/reporting.mojom.h"
 #include "url/gurl.h"
 
 namespace content {
@@ -47,11 +47,16 @@ class ReportingServiceProxyImpl : public blink::mojom::ReportingServiceProxy {
   }
 
   void QueueDeprecationReport(const GURL& url,
+                              const std::string& id,
+                              base::Time anticipatedRemoval,
                               const std::string& message,
                               const std::string& source_file,
                               int line_number,
                               int column_number) override {
     auto body = std::make_unique<base::DictionaryValue>();
+    body->SetString("id", id);
+    if (anticipatedRemoval.is_null())
+      body->SetDouble("anticipatedRemoval", anticipatedRemoval.ToDoubleT());
     body->SetString("message", message);
     body->SetString("sourceFile", source_file);
     body->SetInteger("lineNumber", line_number);
@@ -111,7 +116,10 @@ class ReportingServiceProxyImpl : public blink::mojom::ReportingServiceProxy {
       return;
     }
 
-    reporting_service->QueueReport(url, group, type, std::move(body));
+    // Depth is only non-zero for NEL reports, and those can't come from the
+    // renderer.
+    reporting_service->QueueReport(url, group, type, std::move(body),
+                                   /* depth= */ 0);
   }
 
   scoped_refptr<net::URLRequestContextGetter> request_context_getter_;

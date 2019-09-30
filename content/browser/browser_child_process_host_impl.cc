@@ -14,8 +14,8 @@
 #include "base/lazy_instance.h"
 #include "base/logging.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/metrics/field_trial.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/metrics/persistent_histogram_allocator.h"
 #include "base/metrics/persistent_memory_allocator.h"
@@ -25,7 +25,10 @@
 #include "base/synchronization/waitable_event.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
+#include "components/tracing/common/trace_config_file.h"
 #include "components/tracing/common/tracing_switches.h"
+#include "content/browser/bad_message.h"
+#include "content/browser/browser_main_loop.h"
 #include "content/browser/histogram_controller.h"
 #include "content/browser/loader/resource_message_filter.h"
 #include "content/browser/service_manager/service_manager_context.h"
@@ -207,6 +210,44 @@ void BrowserChildProcessHostImpl::CopyFeatureAndFieldTrialFlags(
       switches::kDisableFeatures, cmd_line);
 }
 
+// static
+void BrowserChildProcessHostImpl::CopyTraceStartupFlags(
+    base::CommandLine* cmd_line) {
+  const base::CommandLine& browser_cmd_line =
+      *base::CommandLine::ForCurrentProcess();
+
+  if (browser_cmd_line.HasSwitch(switches::kTraceStartup) &&
+      BrowserMainLoop::GetInstance()->is_tracing_startup_for_duration()) {
+    // Pass kTraceStartup switch to renderer only if startup tracing has not
+    // finished.
+    cmd_line->AppendSwitchASCII(
+        switches::kTraceStartup,
+        browser_cmd_line.GetSwitchValueASCII(switches::kTraceStartup));
+    if (browser_cmd_line.HasSwitch(switches::kTraceStartupRecordMode)) {
+      cmd_line->AppendSwitchASCII(switches::kTraceStartupRecordMode,
+                                  browser_cmd_line.GetSwitchValueASCII(
+                                      switches::kTraceStartupRecordMode));
+    }
+  } else if (tracing::TraceConfigFile::GetInstance()->IsEnabled()) {
+    const auto trace_config =
+        tracing::TraceConfigFile::GetInstance()->GetTraceConfig();
+    if (!trace_config.IsArgumentFilterEnabled()) {
+      // The only trace option that we can pass through switches is the record
+      // mode. Other trace options should have the default value.
+      //
+      // TODO(chiniforooshan): Add other trace options to switches if, for
+      // example, they are used in a telemetry test that needs startup trace
+      // events from renderer processes.
+      cmd_line->AppendSwitchASCII(switches::kTraceStartup,
+                                  trace_config.ToCategoryFilterString());
+      cmd_line->AppendSwitchASCII(
+          switches::kTraceStartupRecordMode,
+          base::trace_event::TraceConfig::TraceRecordModeToStr(
+              trace_config.GetTraceRecordMode()));
+    }
+  }
+}
+
 void BrowserChildProcessHostImpl::Launch(
     std::unique_ptr<SandboxedProcessLauncherDelegate> delegate,
     std::unique_ptr<base::CommandLine> cmd_line,
@@ -220,6 +261,7 @@ void BrowserChildProcessHostImpl::Launch(
       *base::CommandLine::ForCurrentProcess();
   static const char* const kForwardSwitches[] = {
       service_manager::switches::kDisableInProcessStackTraces,
+      switches::kDisableBackgroundTasks,
       switches::kDisableLogging,
       switches::kEnableLogging,
       switches::kIPCConnectionTimeout,
@@ -361,8 +403,12 @@ void BrowserChildProcessHostImpl::OnChannelError() {
 
 void BrowserChildProcessHostImpl::OnBadMessageReceived(
     const IPC::Message& message) {
-  std::string log_message =
-      base::StringPrintf("Bad message received of type: %u", message.type());
+  std::string log_message = "Bad message received of type: ";
+  if (message.IsValid()) {
+    log_message += std::to_string(message.type());
+  } else {
+    log_message += "unknown";
+  }
   TerminateOnBadMessageReceived(log_message);
 }
 
@@ -379,10 +425,6 @@ void BrowserChildProcessHostImpl::TerminateOnBadMessageReceived(
   base::debug::DumpWithoutCrashing();
 
   child_process_->GetProcess().Terminate(RESULT_CODE_KILLED_BAD_MESSAGE, false);
-}
-
-bool BrowserChildProcessHostImpl::CanShutdown() {
-  return delegate_->CanShutdown();
 }
 
 void BrowserChildProcessHostImpl::OnChannelInitialized(IPC::Channel* channel) {
@@ -433,6 +475,7 @@ void BrowserChildProcessHostImpl::OnChildDisconnected() {
         UMA_HISTOGRAM_ENUMERATION("ChildProcess.DisconnectedAlive2",
                                   static_cast<ProcessType>(data_.process_type),
                                   PROCESS_TYPE_MAX);
+        break;
       }
       default:
         break;
@@ -504,7 +547,7 @@ void BrowserChildProcessHostImpl::CreateMetricsAllocator() {
       int process_type = data_.process_type;
       if (process_type >= PROCESS_TYPE_CONTENT_END)
         process_type += 1000 - PROCESS_TYPE_CONTENT_END;
-      UMA_HISTOGRAM_SPARSE_SLOWLY(
+      base::UmaHistogramSparse(
           "UMA.SubprocessMetricsProvider.UntrackedProcesses", process_type);
       return;
   }
@@ -526,7 +569,8 @@ void BrowserChildProcessHostImpl::ShareMetricsAllocatorToProcess() {
         GetHost(),
         mojo::WrapSharedMemoryHandle(
             metrics_allocator_->shared_memory()->handle().Duplicate(),
-            metrics_allocator_->shared_memory()->mapped_size(), false));
+            metrics_allocator_->shared_memory()->mapped_size(),
+            mojo::UnwrappedSharedMemoryHandleProtection::kReadWrite));
   } else {
     HistogramController::GetInstance()->SetHistogramMemory<ChildProcessHost>(
         GetHost(), mojo::ScopedSharedBufferHandle());
@@ -599,7 +643,8 @@ void BrowserChildProcessHostImpl::OnMojoError(
   // Create a memory dump with the error message captured in a crash key value.
   // This will make it easy to determine details about what interface call
   // failed.
-  base::debug::ScopedCrashKey error_key_value("mojo-message-error", error);
+  base::debug::ScopedCrashKeyString scoped_error_key(
+      bad_message::GetMojoErrorCrashKey(), error);
   base::debug::DumpWithoutCrashing();
   process->child_process_->GetProcess().Terminate(
       RESULT_CODE_KILLED_BAD_MESSAGE, false);

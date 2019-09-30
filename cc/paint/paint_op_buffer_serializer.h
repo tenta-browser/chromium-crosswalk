@@ -8,27 +8,60 @@
 #include "cc/paint/paint_op_buffer.h"
 
 #include "third_party/skia/include/utils/SkNoDrawCanvas.h"
+#include "ui/gfx/geometry/rect_f.h"
 
 namespace cc {
 
+class TransferCacheSerializeHelper;
 class CC_PAINT_EXPORT PaintOpBufferSerializer {
  public:
   using SerializeCallback =
       base::Callback<size_t(const PaintOp*, const PaintOp::SerializeOptions&)>;
 
   PaintOpBufferSerializer(SerializeCallback serialize_cb,
-                          ImageProvider* image_provider);
+                          ImageProvider* image_provider,
+                          TransferCacheSerializeHelper* transfer_cache);
   virtual ~PaintOpBufferSerializer();
 
   struct Preamble {
-    gfx::Vector2dF translation;
+    // The full size of the content, to know whether edge texel clearing
+    // is required or not.  The full_raster_rect and playback_rect must
+    // be contained in this size.
+    gfx::Size content_size;
+    // Rect in content space (1 unit = 1 pixel) of this tile.
+    gfx::Rect full_raster_rect;
+    // A subrect in content space (full_raster_rect must contain this) of
+    // the partial content to play back.
     gfx::Rect playback_rect;
+    // The translation and scale to do after
     gfx::Vector2dF post_translation;
-    float post_scale = 1.f;
+    gfx::SizeF post_scale = gfx::SizeF(1.f, 1.f);
+    // If requires_clear is true, then this will raster will be cleared to
+    // transparent.  If false, it assumes that the content will raster
+    // opaquely up to content_size inset by 1 (with the last pixel being
+    // potentially being partially transparent, if post scaled).
+    bool requires_clear = true;
+    // If clearing is needed, the color to clear to.
+    SkColor background_color = SK_ColorTRANSPARENT;
   };
+  // Serialize the buffer with a preamble. This function wraps the buffer in a
+  // save/restore and includes any translations, scales, and clearing as
+  // specified by the preamble.  This should generally be used for top level
+  // rastering of an entire tile.
   void Serialize(const PaintOpBuffer* buffer,
                  const std::vector<size_t>* offsets,
                  const Preamble& preamble);
+  // Serialize the buffer without a preamble. This function serializes the whole
+  // buffer without any extra ops added.  No clearing is done.  This should
+  // generally be used for internal PaintOpBuffers that want to be sent as-is.
+  void Serialize(const PaintOpBuffer* buffer);
+  // Serialize the buffer with a scale and a playback rect.  This should
+  // generally be used for internal PaintOpBuffers in PaintShaders that have
+  // a scale and a tiling, but don't want the clearing or other complicated
+  // logic of the top level Serialize.
+  void Serialize(const PaintOpBuffer* buffer,
+                 const gfx::Rect& playback_rect,
+                 const gfx::SizeF& post_scale);
 
   bool valid() const { return valid_; }
 
@@ -54,6 +87,7 @@ class CC_PAINT_EXPORT PaintOpBufferSerializer {
   SerializeCallback serialize_cb_;
   SkNoDrawCanvas canvas_;
   ImageProvider* image_provider_;
+  TransferCacheSerializeHelper* transfer_cache_;
   bool valid_ = true;
 };
 
@@ -62,7 +96,8 @@ class CC_PAINT_EXPORT SimpleBufferSerializer : public PaintOpBufferSerializer {
  public:
   SimpleBufferSerializer(void* memory,
                          size_t size,
-                         ImageProvider* image_provider);
+                         ImageProvider* image_provider,
+                         TransferCacheSerializeHelper* transfer_cache);
   ~SimpleBufferSerializer() override;
 
   size_t written() const { return written_; }

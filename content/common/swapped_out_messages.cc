@@ -6,6 +6,7 @@
 
 #include "content/common/accessibility_messages.h"
 #include "content/common/frame_messages.h"
+#include "content/common/input/sync_compositor_messages.h"
 #include "content/common/input_messages.h"
 #include "content/common/view_messages.h"
 #include "content/public/common/content_client.h"
@@ -19,19 +20,21 @@ bool SwappedOutMessages::CanSendWhileSwappedOut(const IPC::Message* msg) {
   switch (msg->type()) {
     // Handled by RenderWidgetHost.
     case InputHostMsg_HandleInputEvent_ACK::ID:
+    case SyncCompositorHostMsg_SetNeedsBeginFrames::ID:
     case ViewHostMsg_ResizeOrRepaint_ACK::ID:
-    // Handled by RenderWidgetHostView.
-    case ViewHostMsg_SetNeedsBeginFrames::ID:
     // Handled by RenderViewHost.
     case FrameHostMsg_RenderProcessGone::ID:
     case ViewHostMsg_ClosePage_ACK::ID:
     case ViewHostMsg_Focus::ID:
     case ViewHostMsg_ShowFullscreenWidget::ID:
     case ViewHostMsg_ShowWidget::ID:
+    case ViewHostMsg_UpdateTargetURL::ID:
     // Allow cross-process JavaScript calls.
     case ViewHostMsg_RouteCloseEvent::ID:
     // Send page scale factor reset notification upon cross-process navigations.
     case ViewHostMsg_PageScaleFactorChanged::ID:
+    // Allow history.back() in OOPIFs - https://crbug.com/845923.
+    case ViewHostMsg_GoToEntryAtOffset::ID:
       return true;
     default:
       break;
@@ -55,8 +58,6 @@ bool SwappedOutMessages::CanHandleWhileSwappedOut(
   // Note that synchronous messages that are not handled will receive an
   // error reply instead, to avoid leaving the renderer in a stuck state.
   switch (msg.type()) {
-    // Sends an ACK.
-    case ViewHostMsg_UpdateTargetURL::ID:
     // We allow closing even if we are in the process of swapping out.
     case ViewHostMsg_Close::ID:
     // Sends an ACK.

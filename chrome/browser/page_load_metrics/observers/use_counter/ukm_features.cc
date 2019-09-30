@@ -5,11 +5,28 @@
 #include "chrome/browser/page_load_metrics/observers/use_counter/ukm_features.h"
 #include "base/containers/flat_set.h"
 
+using WebFeature = blink::mojom::WebFeature;
+
 // UKM-based UseCounter features (WebFeature) should be defined in
-// opt_in_features list. Currently there have been no features opt-in for
-// UKM-based UseCounter, which is why the list is empty.
+// opt_in_features list.
 bool IsAllowedUkmFeature(blink::mojom::WebFeature feature) {
-  CR_DEFINE_STATIC_LOCAL(const base::flat_set<blink::mojom::WebFeature>,
-                         opt_in_features, {});
+  CR_DEFINE_STATIC_LOCAL(
+      const base::flat_set<WebFeature>, opt_in_features,
+      ({
+          WebFeature::kNavigatorVibrate, WebFeature::kNavigatorVibrateSubFrame,
+          WebFeature::kTouchEventPreventedNoTouchAction,
+          WebFeature::kTouchEventPreventedForcedDocumentPassiveNoTouchAction,
+          // kDataUriHasOctothorpe may not be recorded correctly for iframes.
+          // See https://crbug.com/796173 for details.
+          WebFeature::kDataUriHasOctothorpe,
+          WebFeature::kApplicationCacheManifestSelectInsecureOrigin,
+          WebFeature::kApplicationCacheManifestSelectSecureOrigin,
+          WebFeature::kMixedContentAudio, WebFeature::kMixedContentImage,
+          WebFeature::kMixedContentVideo, WebFeature::kMixedContentPlugin,
+          WebFeature::kOpenerNavigationWithoutGesture,
+          WebFeature::kUsbRequestDevice, WebFeature::kXMLHttpRequestSynchronous,
+          WebFeature::kPaymentHandler,
+          WebFeature::kPaymentRequestShowWithoutGesture,
+      }));
   return opt_in_features.count(feature);
 }

@@ -8,13 +8,13 @@
 
 #include <string>
 
-#include "base/command_line.h"
 #import "base/mac/mac_util.h"
 #import "base/mac/scoped_sending_event.h"
 #include "base/mac/sdk_forward_declarations.h"
 #include "base/message_loop/message_loop.h"
 #import "base/message_loop/message_pump_mac.h"
 #include "content/browser/frame_host/popup_menu_helper_mac.h"
+#include "content/browser/renderer_host/display_util.h"
 #include "content/browser/renderer_host/render_view_host_factory.h"
 #include "content/browser/renderer_host/render_view_host_impl.h"
 #include "content/browser/renderer_host/render_widget_host_view_mac.h"
@@ -25,7 +25,6 @@
 #include "content/public/browser/interstitial_page.h"
 #include "content/public/browser/web_contents_delegate.h"
 #include "content/public/browser/web_contents_view_delegate.h"
-#include "content/public/common/content_switches.h"
 #include "skia/ext/skia_utils_mac.h"
 #import "third_party/mozilla/NSPasteboard+Utils.h"
 #include "ui/base/clipboard/custom_data_helper.h"
@@ -83,26 +82,6 @@ namespace {
 WebContentsViewMac::RenderWidgetHostViewCreateFunction
     g_create_render_widget_host_view = nullptr;
 
-content::ScreenInfo GetNSViewScreenInfo(NSView* view) {
-  display::Display display =
-      display::Screen::GetScreen()->GetDisplayNearestView(view);
-
-  content::ScreenInfo results;
-  results.device_scale_factor = static_cast<int>(display.device_scale_factor());
-  results.color_space = display.color_space();
-  results.icc_profile = gfx::ICCProfile::FromCacheMac(display.color_space());
-  results.depth = display.color_depth();
-  results.depth_per_component = display.depth_per_component();
-  results.is_monochrome = display.is_monochrome();
-  results.rect = display.bounds();
-  results.available_rect = display.work_area();
-  results.orientation_angle = display.RotationAsDegree();
-  results.orientation_type =
-      content::RenderWidgetHostViewBase::GetOrientationTypeForDesktop(display);
-
-  return results;
-}
-
 }  // namespace
 
 namespace content {
@@ -112,11 +91,6 @@ void WebContentsViewMac::InstallCreateHookForTests(
     RenderWidgetHostViewCreateFunction create_render_widget_host_view) {
   CHECK_EQ(nullptr, g_create_render_widget_host_view);
   g_create_render_widget_host_view = create_render_widget_host_view;
-}
-
-// static
-void WebContentsView::GetDefaultScreenInfo(ScreenInfo* results) {
-  *results = GetNSViewScreenInfo(nil);
 }
 
 WebContentsView* CreateWebContentsView(
@@ -158,10 +132,6 @@ gfx::NativeView WebContentsViewMac::GetContentNativeView() const {
 gfx::NativeWindow WebContentsViewMac::GetTopLevelNativeWindow() const {
   NSWindow* window = [cocoa_view_.get() window];
   return window ? window : delegate_->GetNativeWindow();
-}
-
-void WebContentsViewMac::GetScreenInfo(ScreenInfo* results) const {
-  *results = GetNSViewScreenInfo(GetNativeView());
 }
 
 void WebContentsViewMac::GetContainerBounds(gfx::Rect* out) const {
@@ -693,8 +663,12 @@ void WebContentsViewMac::CloseTab() {
   if (!webContents || webContents->IsBeingDestroyed())
     return;
 
-  const bool viewVisible = [self window] && ![self isHiddenOrHasHiddenAncestor];
-  webContents->UpdateWebContentsVisibility(viewVisible);
+  if ([self isHiddenOrHasHiddenAncestor] || ![self window])
+    webContents->UpdateWebContentsVisibility(content::Visibility::HIDDEN);
+  else if ([[self window] occlusionState] & NSWindowOcclusionStateVisible)
+    webContents->UpdateWebContentsVisibility(content::Visibility::VISIBLE);
+  else
+    webContents->UpdateWebContentsVisibility(content::Visibility::OCCLUDED);
 }
 
 - (void)resizeSubviewsWithOldSize:(NSSize)oldBoundsSize {
@@ -708,9 +682,6 @@ void WebContentsViewMac::CloseTab() {
 - (void)setFrameSize:(NSSize)newSize {
   [super setFrameSize:newSize];
 
-  if (webContentsView_ && webContentsView_->delegate())
-    webContentsView_->delegate()->SizeChanged(gfx::Size(newSize));
-
   // Perform manual layout of subviews, e.g., when the window size changes.
   for (NSView* subview in [self subviews])
     [subview setFrame:[self bounds]];
@@ -718,42 +689,25 @@ void WebContentsViewMac::CloseTab() {
 
 - (void)viewWillMoveToWindow:(NSWindow*)newWindow {
   NSWindow* oldWindow = [self window];
-
   NSNotificationCenter* notificationCenter =
       [NSNotificationCenter defaultCenter];
 
-  // Occlusion is highly undesirable for browser tests, since it will
-  // flakily change test behavior.
-  static bool isDisabled = base::CommandLine::ForCurrentProcess()->HasSwitch(
-      switches::kDisableBackgroundingOccludedWindowsForTesting);
-
-  if (!isDisabled) {
-    if (oldWindow) {
-      [notificationCenter
-          removeObserver:self
-                    name:NSWindowDidChangeOcclusionStateNotification
-                  object:oldWindow];
-    }
-    if (newWindow) {
-      [notificationCenter
-          addObserver:self
-             selector:@selector(windowChangedOcclusionState:)
-                 name:NSWindowDidChangeOcclusionStateNotification
-               object:newWindow];
-    }
+  if (oldWindow) {
+    [notificationCenter
+        removeObserver:self
+                  name:NSWindowDidChangeOcclusionStateNotification
+                object:oldWindow];
+  }
+  if (newWindow) {
+    [notificationCenter addObserver:self
+                           selector:@selector(windowChangedOcclusionState:)
+                               name:NSWindowDidChangeOcclusionStateNotification
+                             object:newWindow];
   }
 }
 
 - (void)windowChangedOcclusionState:(NSNotification*)notification {
-  NSWindow* window = [notification object];
-  WebContentsImpl* webContents = [self webContents];
-  if (window && webContents && !webContents->IsBeingDestroyed()) {
-    if ([window occlusionState] & NSWindowOcclusionStateVisible) {
-      webContents->WasUnOccluded();
-    } else {
-      webContents->WasOccluded();
-    }
-  }
+  [self updateWebContentsVisibility];
 }
 
 - (void)viewDidMoveToWindow {

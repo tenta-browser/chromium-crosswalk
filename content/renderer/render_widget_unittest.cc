@@ -13,10 +13,13 @@
 #include "base/test/histogram_tester.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/scoped_task_environment.h"
+#include "components/viz/common/features.h"
+#include "components/viz/common/surfaces/parent_local_surface_id_allocator.h"
 #include "content/common/input/input_handler.mojom.h"
 #include "content/common/input/synthetic_web_input_event_builders.h"
 #include "content/common/input_messages.h"
 #include "content/common/resize_params.h"
+#include "content/common/view_messages.h"
 #include "content/public/common/content_features.h"
 #include "content/public/test/mock_render_thread.h"
 #include "content/renderer/devtools/render_widget_screen_metrics_emulator.h"
@@ -26,8 +29,9 @@
 #include "ipc/ipc_test_sink.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/WebKit/public/platform/WebCoalescedInputEvent.h"
-#include "third_party/WebKit/public/web/WebDeviceEmulationParams.h"
+#include "third_party/blink/public/platform/scheduler/test/renderer_scheduler_test_support.h"
+#include "third_party/blink/public/platform/web_coalesced_input_event.h"
+#include "third_party/blink/public/web/web_device_emulation_params.h"
 #include "ui/events/base_event_utils.h"
 #include "ui/events/blink/web_input_event_traits.h"
 #include "ui/gfx/geometry/rect.h"
@@ -80,6 +84,8 @@ class MockWidgetInputHandlerHost : public mojom::WidgetInputHandlerHost {
 
   MOCK_METHOD0(DidStopFlinging, void());
 
+  MOCK_METHOD0(DidStartScrollingViewport, void());
+
   MOCK_METHOD0(ImeCancelComposition, void());
 
   MOCK_METHOD2(ImeCompositionRangeChanged,
@@ -120,6 +126,7 @@ class MockHandledEventCallback {
 
 class MockWebWidget : public blink::WebWidget {
  public:
+  MOCK_METHOD0(DispatchBufferedTouchEvents, blink::WebInputEventResult());
   MOCK_METHOD1(
       HandleInputEvent,
       blink::WebInputEventResult(const blink::WebCoalescedInputEvent&));
@@ -136,7 +143,8 @@ class InteractiveRenderWidget : public RenderWidget {
                      ScreenInfo(),
                      false,
                      false,
-                     false),
+                     false,
+                     blink::scheduler::GetSingleThreadTaskRunnerForTesting()),
         always_overscroll_(false) {
     Init(RenderWidget::ShowCallback(), mock_webwidget());
 
@@ -167,6 +175,12 @@ class InteractiveRenderWidget : public RenderWidget {
     return mock_input_handler_host_.get();
   }
 
+  const viz::LocalSurfaceId& local_surface_id() const {
+    return local_surface_id_;
+  }
+
+  void SetAutoResizeMode(bool enable) { auto_resize_mode_ = enable; }
+
  protected:
   ~InteractiveRenderWidget() override { webwidget_internal_ = nullptr; }
 
@@ -178,7 +192,7 @@ class InteractiveRenderWidget : public RenderWidget {
                                         event.data.scroll_update.delta_y),
                     blink::WebFloatSize(event.data.scroll_update.delta_x,
                                         event.data.scroll_update.delta_y),
-                    blink::WebFloatPoint(event.x, event.y),
+                    event.PositionInWidget(),
                     blink::WebFloatSize(event.data.scroll_update.velocity_x,
                                         event.data.scroll_update.velocity_y),
                     blink::WebOverscrollBehavior());
@@ -251,7 +265,7 @@ TEST_F(RenderWidgetUnittest, EventOverscroll) {
       blink::WebInputEvent::kGestureScrollUpdate,
       blink::WebInputEvent::kNoModifiers,
       ui::EventTimeStampToSeconds(ui::EventTimeForNow()));
-  scroll.x = -10;
+  scroll.SetPositionInWidget(gfx::PointF(-10, 0));
   scroll.data.scroll_update.delta_y = 10;
   MockHandledEventCallback handled_event;
 
@@ -296,6 +310,11 @@ TEST_F(RenderWidgetUnittest, RenderWidgetInputEventUmaMetrics) {
   touch.touch_start_or_first_touch_move = true;
 
   EXPECT_CALL(*widget()->mock_webwidget(), HandleInputEvent(_))
+      .Times(7)
+      .WillRepeatedly(
+          ::testing::Return(blink::WebInputEventResult::kNotHandled));
+
+  EXPECT_CALL(*widget()->mock_webwidget(), DispatchBufferedTouchEvents())
       .Times(7)
       .WillRepeatedly(
           ::testing::Return(blink::WebInputEventResult::kNotHandled));
@@ -351,6 +370,8 @@ TEST_F(RenderWidgetUnittest, RenderWidgetInputEventUmaMetrics) {
       2);
 
   EXPECT_CALL(*widget()->mock_webwidget(), HandleInputEvent(_))
+      .WillOnce(::testing::Return(blink::WebInputEventResult::kNotHandled));
+  EXPECT_CALL(*widget()->mock_webwidget(), DispatchBufferedTouchEvents())
       .WillOnce(
           ::testing::Return(blink::WebInputEventResult::kHandledSuppressed));
   touch.dispatch_type = blink::WebInputEvent::DispatchType::kBlocking;
@@ -359,6 +380,8 @@ TEST_F(RenderWidgetUnittest, RenderWidgetInputEventUmaMetrics) {
                                        PASSIVE_LISTENER_UMA_ENUM_SUPPRESSED, 1);
 
   EXPECT_CALL(*widget()->mock_webwidget(), HandleInputEvent(_))
+      .WillOnce(::testing::Return(blink::WebInputEventResult::kNotHandled));
+  EXPECT_CALL(*widget()->mock_webwidget(), DispatchBufferedTouchEvents())
       .WillOnce(
           ::testing::Return(blink::WebInputEventResult::kHandledApplication));
   touch.dispatch_type = blink::WebInputEvent::DispatchType::kBlocking;
@@ -366,6 +389,75 @@ TEST_F(RenderWidgetUnittest, RenderWidgetInputEventUmaMetrics) {
   histogram_tester().ExpectBucketCount(
       EVENT_LISTENER_RESULT_HISTOGRAM,
       PASSIVE_LISTENER_UMA_ENUM_CANCELABLE_AND_CANCELED, 1);
+}
+
+// Tests that if a RenderWidget goes invisible while performing a resize, the
+// resize is acked immediately.
+TEST_F(RenderWidgetUnittest, AckResizeOnHide) {
+  // The widget should start off visible.
+  ASSERT_FALSE(widget()->is_hidden());
+
+  // Send a ResizeParams that needs to be acked.
+  constexpr gfx::Size size(200, 200);
+  ResizeParams resize_params;
+  resize_params.screen_info = ScreenInfo();
+  resize_params.new_size = size;
+  resize_params.compositor_viewport_pixel_size = size;
+  resize_params.visible_viewport_size = size;
+  resize_params.content_source_id = widget()->GetContentSourceId();
+  resize_params.needs_resize_ack = true;
+  widget()->OnMessageReceived(
+      ViewMsg_Resize(widget()->routing_id(), resize_params));
+
+  // Hide the widget. Make sure the resize is acked.
+  widget()->sink()->ClearMessages();
+  widget()->OnMessageReceived(ViewMsg_WasHidden(widget()->routing_id()));
+  EXPECT_TRUE(widget()->sink()->GetUniqueMessageMatching(
+      ViewHostMsg_ResizeOrRepaint_ACK::ID));
+}
+
+// Tests that if a RenderWidget auto-resizes multiple times and receives an IPC
+// with a LocalSurfaceId, it will drop that LocalSurfaceId if it does not
+// correspond to the latest auto-resize request.
+TEST_F(RenderWidgetUnittest, SurfaceSynchronizationAutoResizeThrottling) {
+  if (!features::IsSurfaceSynchronizationEnabled())
+    return;
+
+  constexpr gfx::Size auto_size(100, 100);
+  widget()->InitializeLayerTreeView();
+  widget()->SetAutoResizeMode(true);
+
+  // Issue an auto-resize.
+  widget()->DidAutoResize(auto_size);
+  widget()->sink()->ClearMessages();
+  base::RunLoop().RunUntilIdle();
+  const IPC::Message* message = widget()->sink()->GetUniqueMessageMatching(
+      ViewHostMsg_ResizeOrRepaint_ACK::ID);
+  ASSERT_TRUE(message);
+  ViewHostMsg_ResizeOrRepaint_ACK::Param params;
+  ViewHostMsg_ResizeOrRepaint_ACK::Read(message, &params);
+  EXPECT_EQ(auto_size, std::get<0>(params).view_size);
+  uint64_t auto_resize_sequence_number = std::get<0>(params).sequence_number;
+  EXPECT_GT(auto_resize_sequence_number, 0lu);
+
+  // Issue another auto-resize but keep it in-flight.
+  constexpr gfx::Size auto_size2(200, 200);
+  widget()->DidAutoResize(auto_size2);
+
+  // Send the LocalSurfaceId for the first Auto-Resize.
+  viz::ParentLocalSurfaceIdAllocator allocator;
+  content::ResizeParams resize_params;
+  resize_params.auto_resize_enabled = true;
+  resize_params.auto_resize_sequence_number = auto_resize_sequence_number;
+  resize_params.min_size_for_auto_resize = auto_size;
+  resize_params.max_size_for_auto_resize = auto_size2;
+  resize_params.local_surface_id = allocator.GenerateId();
+  widget()->OnMessageReceived(
+      ViewMsg_Resize(widget()->routing_id(), resize_params));
+
+  // The LocalSurfaceId should not take because there's another in-flight auto-
+  // resize operation.
+  EXPECT_FALSE(widget()->local_surface_id().is_valid());
 }
 
 class PopupRenderWidget : public RenderWidget {
@@ -377,7 +469,8 @@ class PopupRenderWidget : public RenderWidget {
                      ScreenInfo(),
                      false,
                      false,
-                     false) {
+                     false,
+                     blink::scheduler::GetSingleThreadTaskRunnerForTesting()) {
     Init(RenderWidget::ShowCallback(), mock_webwidget());
     did_show_ = true;
   }

@@ -16,7 +16,7 @@
 #include "components/nacl/browser/nacl_file_host.h"
 #include "components/nacl/browser/nacl_process_host.h"
 #include "components/nacl/browser/pnacl_host.h"
-#include "components/nacl/common/features.h"
+#include "components/nacl/common/buildflags.h"
 #include "components/nacl/common/nacl_host_messages.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/plugin_service.h"
@@ -41,14 +41,14 @@ ppapi::PpapiPermissions GetNaClPermissions(
     uint32_t permission_bits,
     content::BrowserContext* browser_context,
     const GURL& document_url) {
-  // Only allow NaCl plugins to request certain permissions. We don't want
-  // a compromised renderer to be able to start a nacl plugin with e.g. Flash
+  // Don't grant any special permissions to NaCl plugins. We don't want
+  // a compromised renderer to be able to start a NaCl plugin with Dev or Flash
   // permissions which may expand the surface area of the sandbox.
-  uint32_t masked_bits = permission_bits & ppapi::PERMISSION_DEV;
+  uint32_t nacl_permissions = ppapi::PERMISSION_NONE;
   if (content::PluginService::GetInstance()->PpapiDevChannelSupported(
           browser_context, document_url))
-    masked_bits |= ppapi::PERMISSION_DEV_CHANNEL;
-  return ppapi::PpapiPermissions::GetForCommandLine(masked_bits);
+    nacl_permissions |= ppapi::PERMISSION_DEV_CHANNEL;
+  return ppapi::PpapiPermissions::GetForCommandLine(nacl_permissions);
 }
 
 ppapi::PpapiPermissions GetPpapiPermissions(uint32_t permission_bits,

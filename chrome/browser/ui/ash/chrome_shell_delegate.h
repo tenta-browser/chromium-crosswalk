@@ -16,6 +16,7 @@
 
 namespace chromeos {
 class DisplayConfigurationObserver;
+class DisplayPrefs;
 }
 
 namespace keyboard {
@@ -32,18 +33,14 @@ class ChromeShellDelegate : public ash::ShellDelegate,
   service_manager::Connector* GetShellConnector() const override;
   bool IsRunningInForcedAppMode() const override;
   bool CanShowWindowForUser(aura::Window* window) const override;
-  bool IsForceMaximizeOnFirstRun() const override;
   void PreInit() override;
   void PreShutdown() override;
   std::unique_ptr<keyboard::KeyboardUI> CreateKeyboardUI() override;
   void OpenUrlFromArc(const GURL& url) override;
   ash::NetworkingConfigDelegate* GetNetworkingConfigDelegate() override;
   std::unique_ptr<ash::ScreenshotDelegate> CreateScreenshotDelegate() override;
-  std::unique_ptr<ash::WallpaperDelegate> CreateWallpaperDelegate() override;
   ash::AccessibilityDelegate* CreateAccessibilityDelegate() override;
-  base::string16 GetProductName() const override;
   void OpenKeyboardShortcutHelpPage() const override;
-  gfx::Image GetDeprecatedAcceleratorImage() const override;
   ui::InputDeviceControllerClient* GetInputDeviceControllerClient() override;
 
   // content::NotificationObserver override:
@@ -56,6 +53,7 @@ class ChromeShellDelegate : public ash::ShellDelegate,
 
   content::NotificationRegistrar registrar_;
 
+  std::unique_ptr<chromeos::DisplayPrefs> display_prefs_;
   std::unique_ptr<chromeos::DisplayConfigurationObserver>
       display_configuration_observer_;
 

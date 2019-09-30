@@ -211,14 +211,22 @@ constexpr base::TimeDelta
     NetworkPortalDetectorImpl::kDelaySinceShillPortalForUMA;
 
 NetworkPortalDetectorImpl::NetworkPortalDetectorImpl(
-    const scoped_refptr<net::URLRequestContextGetter>& request_context,
+    network::mojom::URLLoaderFactory* loader_factory,
     bool create_notification_controller)
     : strategy_(PortalDetectorStrategy::CreateById(
           PortalDetectorStrategy::STRATEGY_ID_LOGIN_SCREEN,
           this)),
       weak_factory_(this) {
   NET_LOG(EVENT) << "NetworkPortalDetectorImpl::NetworkPortalDetectorImpl()";
-  captive_portal_detector_.reset(new CaptivePortalDetector(request_context));
+  captive_portal_detector_.reset(new CaptivePortalDetector(loader_factory));
+
+  // Captive portal randomization can cause problems in some environemnts.
+  // Disable randomization by default by setting portal_test_url_.
+  // http://crbug.com/776409.
+  if (!base::CommandLine::ForCurrentProcess()->HasSwitch(
+          chromeos::switches::kEnableCaptivePortalRandomUrl)) {
+    portal_test_url_ = GURL(CaptivePortalDetector::kDefaultURL);
+  }
 
   // Captive portal randomization can cause problems in some environemnts.
   // Disable randomization by default by setting portal_test_url_.
@@ -417,7 +425,7 @@ base::TimeTicks NetworkPortalDetectorImpl::AttemptStartTime() {
   return attempt_start_time_;
 }
 
-base::TimeTicks NetworkPortalDetectorImpl::NowTicks() {
+base::TimeTicks NetworkPortalDetectorImpl::NowTicks() const {
   if (time_ticks_for_testing_.is_null())
     return base::TimeTicks::Now();
   return time_ticks_for_testing_;
@@ -528,18 +536,7 @@ void NetworkPortalDetectorImpl::OnAttemptCompleted(
     attempt_completed_report_.Report();
   }
 
-  // If Chrome portal detection successfully returns portal state, mark the
-  // state so that Chrome won't schedule detection actively by self.
-  // The exception is when portal side session expires, shill doesn't report
-  // network connection state changed from online to portal. Thus we enable
-  // Chrome's detection by still marking |state_| to STATE_IDLE.
-  if (result == captive_portal::RESULT_BEHIND_CAPTIVE_PORTAL &&
-      response_code == 200 &&
-      (!network || network->connection_state() != shill::kStateOnline)) {
-    state_ = STATE_BEHIND_PORTAL_IDLE;
-  } else {
-    state_ = STATE_IDLE;
-  }
+  state_ = STATE_IDLE;
   attempt_timeout_.Cancel();
 
   CaptivePortalState state;

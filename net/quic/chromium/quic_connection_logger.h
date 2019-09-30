@@ -58,7 +58,7 @@ class NET_EXPORT_PRIVATE QuicConnectionLogger
   void OnIncorrectConnectionId(QuicConnectionId connection_id) override;
   void OnUndecryptablePacket() override;
   void OnDuplicatePacket(QuicPacketNumber packet_number) override;
-  void OnProtocolVersionMismatch(QuicTransportVersion version) override;
+  void OnProtocolVersionMismatch(ParsedQuicVersion version) override;
   void OnPacketHeader(const QuicPacketHeader& header) override;
   void OnStreamFrame(const QuicStreamFrame& frame) override;
   void OnAckFrame(const QuicAckFrame& frame) override;
@@ -77,7 +77,7 @@ class NET_EXPORT_PRIVATE QuicConnectionLogger
                           const std::string& error_details,
                           ConnectionCloseSource source) override;
   void OnSuccessfulVersionNegotiation(
-      const QuicTransportVersion& version) override;
+      const ParsedQuicVersion& version) override;
   void OnRttChanged(QuicTime::Delta rtt) const override;
 
   void OnCryptoHandshakeMessageReceived(const CryptoHandshakeMessage& message);

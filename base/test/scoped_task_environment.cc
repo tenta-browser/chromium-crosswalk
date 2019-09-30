@@ -6,6 +6,7 @@
 
 #include "base/bind_helpers.h"
 #include "base/logging.h"
+#include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/synchronization/condition_variable.h"
@@ -14,8 +15,13 @@
 #include "base/task_scheduler/task_scheduler.h"
 #include "base/task_scheduler/task_scheduler_impl.h"
 #include "base/test/test_mock_time_task_runner.h"
+#include "base/threading/sequence_local_storage_map.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
+
+#if defined(OS_POSIX)
+#include "base/files/file_descriptor_watcher_posix.h"
+#endif
 
 namespace base {
 namespace test {
@@ -62,7 +68,7 @@ class ScopedTaskEnvironment::TestTaskTracker
   friend class ScopedTaskEnvironment;
 
   // internal::TaskSchedulerImpl::TaskTrackerImpl:
-  void RunOrSkipTask(std::unique_ptr<internal::Task> task,
+  void RunOrSkipTask(internal::Task task,
                      internal::Sequence* sequence,
                      bool can_run_task) override;
 
@@ -94,6 +100,23 @@ ScopedTaskEnvironment::ScopedTaskEnvironment(
               ? MakeRefCounted<TestMockTimeTaskRunner>(
                     TestMockTimeTaskRunner::Type::kBoundToThread)
               : nullptr),
+      slsm_for_mock_time_(
+          main_thread_type == MainThreadType::MOCK_TIME
+              ? std::make_unique<internal::SequenceLocalStorageMap>()
+              : nullptr),
+      slsm_registration_for_mock_time_(
+          main_thread_type == MainThreadType::MOCK_TIME
+              ? std::make_unique<
+                    internal::ScopedSetSequenceLocalStorageMapForCurrentThread>(
+                    slsm_for_mock_time_.get())
+              : nullptr),
+#if defined(OS_POSIX)
+      file_descriptor_watcher_(
+          main_thread_type == MainThreadType::IO
+              ? std::make_unique<FileDescriptorWatcher>(
+                    static_cast<MessageLoopForIO*>(message_loop_.get()))
+              : nullptr),
+#endif  // defined(OS_POSIX)
       task_tracker_(new TestTaskTracker()) {
   CHECK(!TaskScheduler::GetInstance());
 
@@ -209,10 +232,10 @@ void ScopedTaskEnvironment::RunUntilIdle() {
     // the above logic as it'd then be possible for a TaskScheduler task to be
     // running during the DisallowRunTasks() test, causing it to fail, but then
     // post to the main thread and complete before the loop's condition is
-    // verified which could result in GetNumIncompleteUndelayedTasksForTesting()
-    // returning 0 and the loop erroneously exiting with a pending task on the
-    // main thread.
-    if (task_tracker_->GetNumIncompleteUndelayedTasksForTesting() == 0)
+    // verified which could result in HasIncompleteUndelayedTasksForTesting()
+    // returning false and the loop erroneously exiting with a pending task on
+    // the main thread.
+    if (!task_tracker_->HasIncompleteUndelayedTasksForTesting())
       break;
   }
 
@@ -232,8 +255,20 @@ void ScopedTaskEnvironment::FastForwardUntilNoTasksRemain() {
   mock_time_task_runner_->FastForwardUntilNoTasksRemain();
 }
 
+const TickClock* ScopedTaskEnvironment::GetMockTickClock() {
+  DCHECK(mock_time_task_runner_);
+  return mock_time_task_runner_->GetMockTickClock();
+}
+
+std::unique_ptr<TickClock> ScopedTaskEnvironment::DeprecatedGetMockTickClock() {
+  DCHECK(mock_time_task_runner_);
+  return mock_time_task_runner_->DeprecatedGetMockTickClock();
+}
+
 ScopedTaskEnvironment::TestTaskTracker::TestTaskTracker()
-    : can_run_tasks_cv_(&lock_), task_completed_(&lock_) {}
+    : internal::TaskSchedulerImpl::TaskTrackerImpl("ScopedTaskEnvironment"),
+      can_run_tasks_cv_(&lock_),
+      task_completed_(&lock_) {}
 
 void ScopedTaskEnvironment::TestTaskTracker::AllowRunTasks() {
   AutoLock auto_lock(lock_);
@@ -258,7 +293,7 @@ bool ScopedTaskEnvironment::TestTaskTracker::DisallowRunTasks() {
 }
 
 void ScopedTaskEnvironment::TestTaskTracker::RunOrSkipTask(
-    std::unique_ptr<internal::Task> task,
+    internal::Task task,
     internal::Sequence* sequence,
     bool can_run_task) {
   {

@@ -13,7 +13,7 @@
 #include "chrome/browser/net/profile_network_context_service_factory.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/sync/profile_sync_service_factory.h"
-#include "chrome/common/features.h"
+#include "chrome/common/buildflags.h"
 #include "chrome/common/pref_names.h"
 #include "components/browser_sync/profile_sync_service.h"
 #include "components/data_reduction_proxy/core/browser/data_reduction_proxy_prefs.h"
@@ -27,7 +27,7 @@
 #include "content/public/browser/storage_partition.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_ui.h"
-#include "extensions/features/features.h"
+#include "extensions/buildflags/buildflags.h"
 
 #if defined(OS_CHROMEOS)
 #include "base/command_line.h"
@@ -40,6 +40,8 @@
 #endif
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)
+#include "extensions/browser/extension_pref_store.h"
+#include "extensions/browser/extension_pref_value_map_factory.h"
 #include "extensions/browser/pref_names.h"
 #endif
 
@@ -52,10 +54,10 @@
 
 namespace {
 
-base::LazyInstance<base::Lock>::Leaky g_instances_lock =
+base::LazyInstance<base::Lock>::Leaky g_profile_instances_lock =
     LAZY_INSTANCE_INITIALIZER;
-base::LazyInstance<std::set<content::BrowserContext*>>::Leaky g_instances =
-    LAZY_INSTANCE_INITIALIZER;
+base::LazyInstance<std::set<content::BrowserContext*>>::Leaky
+    g_profile_instances = LAZY_INSTANCE_INITIALIZER;
 
 }  // namespace
 
@@ -68,8 +70,8 @@ Profile::Profile()
       is_guest_profile_(false),
       is_system_profile_(false) {
 #if DCHECK_IS_ON()
-  base::AutoLock lock(g_instances_lock.Get());
-  g_instances.Get().insert(this);
+  base::AutoLock lock(g_profile_instances_lock.Get());
+  g_profile_instances.Get().insert(this);
 #endif  // DCHECK_IS_ON()
 
   BrowserContextDependencyManager::GetInstance()->MarkBrowserContextLive(this);
@@ -77,8 +79,8 @@ Profile::Profile()
 
 Profile::~Profile() {
 #if DCHECK_IS_ON()
-  base::AutoLock lock(g_instances_lock.Get());
-  g_instances.Get().erase(this);
+  base::AutoLock lock(g_profile_instances_lock.Get());
+  g_profile_instances.Get().erase(this);
 #endif  // DCHECK_IS_ON()
 }
 
@@ -92,8 +94,8 @@ Profile* Profile::FromBrowserContext(content::BrowserContext* browser_context) {
   // testing, however, there are several BrowserContext subclasses that are not
   // Profile subclasses, and we can catch them. http://crbug.com/725276
 #if DCHECK_IS_ON()
-  base::AutoLock lock(g_instances_lock.Get());
-  if (!g_instances.Get().count(browser_context)) {
+  base::AutoLock lock(g_profile_instances_lock.Get());
+  if (!g_profile_instances.Get().count(browser_context)) {
     DCHECK(false)
         << "Non-Profile BrowserContext passed to Profile::FromBrowserContext! "
            "If you have a test linked in chrome/ you need a chrome/ based test "
@@ -177,7 +179,6 @@ void Profile::RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry) {
   registry->RegisterStringPref(prefs::kApplicationLocaleBackup, std::string());
   registry->RegisterStringPref(prefs::kApplicationLocaleAccepted,
                                std::string());
-  registry->RegisterStringPref(prefs::kCurrentWallpaperAppName, std::string());
 #endif
 
 #if defined(OS_ANDROID)
@@ -213,10 +214,6 @@ void Profile::RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry) {
   registry->RegisterBooleanPref(prefs::kMediaRouterMediaRemotingEnabled, true);
   registry->RegisterListPref(prefs::kMediaRouterTabMirroringSources);
 
-#if defined(OS_CHROMEOS)
-  registry->RegisterBooleanPref(prefs::kAllowScreenLock, true);
-#endif
-
   registry->RegisterDictionaryPref(prefs::kWebShareVisitedTargets);
   registry->RegisterDictionaryPref(prefs::kExcludedSchemes);
 }
@@ -244,7 +241,15 @@ bool Profile::IsSystemProfile() const {
   return is_system_profile_;
 }
 
-content::mojom::NetworkContextPtr Profile::CreateMainNetworkContext() {
+bool Profile::ShouldRestoreOldSessionCookies() {
+  return false;
+}
+
+bool Profile::ShouldPersistSessionCookies() {
+  return false;
+}
+
+network::mojom::NetworkContextPtr Profile::CreateMainNetworkContext() {
   return ProfileNetworkContextServiceFactory::GetForContext(this)
       ->CreateMainNetworkContext();
 }
@@ -280,6 +285,17 @@ void Profile::MaybeSendDestroyedNotification() {
         content::Source<Profile>(this),
         content::NotificationService::NoDetails());
   }
+}
+
+PrefStore* Profile::CreateExtensionPrefStore(Profile* profile,
+                                             bool incognito_pref_store) {
+#if BUILDFLAG(ENABLE_EXTENSIONS)
+  return new ExtensionPrefStore(
+      ExtensionPrefValueMapFactory::GetForBrowserContext(profile),
+      incognito_pref_store);
+#else
+  return nullptr;
+#endif
 }
 
 bool ProfileCompare::operator()(Profile* a, Profile* b) const {

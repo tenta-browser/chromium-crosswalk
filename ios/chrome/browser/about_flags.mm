@@ -20,7 +20,8 @@
 #include "base/strings/stringprintf.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/sys_info.h"
-#include "base/task_scheduler/switches.h"
+#include "components/autofill/core/common/autofill_features.h"
+#include "components/autofill/ios/browser/autofill_switches.h"
 #include "components/dom_distiller/core/dom_distiller_switches.h"
 #include "components/feature_engagement/public/feature_constants.h"
 #include "components/feature_engagement/public/feature_list.h"
@@ -33,21 +34,25 @@
 #include "components/password_manager/core/common/password_manager_features.h"
 #include "components/payments/core/features.h"
 #include "components/search_provider_logos/switches.h"
-#include "components/security_state/core/switches.h"
+#include "components/security_state/core/features.h"
+#include "components/signin/core/browser/profile_management_switches.h"
 #include "components/signin/core/browser/signin_switches.h"
 #include "components/strings/grit/components_strings.h"
-#include "ios/chrome/browser/bookmarks/bookmark_new_generation_features.h"
+#include "ios/chrome/browser/browsing_data/browsing_data_features.h"
 #include "ios/chrome/browser/chrome_switches.h"
 #include "ios/chrome/browser/drag_and_drop/drag_and_drop_flag.h"
 #include "ios/chrome/browser/ios_chrome_flag_descriptions.h"
+#include "ios/chrome/browser/itunes_links/itunes_links_flag.h"
+#include "ios/chrome/browser/mailto/features.h"
 #include "ios/chrome/browser/ssl/captive_portal_features.h"
-#include "ios/chrome/browser/ui/activity_services/canonical_url_feature.h"
 #include "ios/chrome/browser/ui/external_search/features.h"
-#include "ios/chrome/browser/ui/fullscreen/fullscreen_features.h"
+#import "ios/chrome/browser/ui/fullscreen/fullscreen_features.h"
 #import "ios/chrome/browser/ui/history/history_base_feature.h"
 #include "ios/chrome/browser/ui/main/main_feature_flags.h"
+#import "ios/chrome/browser/ui/popup_menu/popup_menu_flags.h"
 #import "ios/chrome/browser/ui/toolbar/public/toolbar_controller_base_feature.h"
-#import "ios/chrome/browser/ui/toolbar/toolbar_private_base_feature.h"
+#include "ios/chrome/browser/ui/ui_feature_flags.h"
+#include "ios/chrome/browser/ui/user_feedback_features.h"
 #include "ios/chrome/grit/ios_strings.h"
 #include "ios/public/provider/chrome/browser/chrome_browser_provider.h"
 #include "ios/web/public/features.h"
@@ -65,11 +70,36 @@
 using flags_ui::FeatureEntry;
 
 namespace {
-const FeatureEntry::Choice kMarkHttpAsChoices[] = {
-    {flags_ui::kGenericExperimentChoiceDefault, "", ""},
-    {flag_descriptions::kMarkHttpAsDangerous,
-     security_state::switches::kMarkHttpAs,
-     security_state::switches::kMarkHttpAsDangerous}};
+
+const FeatureEntry::FeatureParam kMarkHttpAsDangerous[] = {
+    {security_state::features::kMarkHttpAsFeatureParameterName,
+     security_state::features::kMarkHttpAsParameterDangerous}};
+const FeatureEntry::FeatureParam kMarkHttpAsWarning[] = {
+    {security_state::features::kMarkHttpAsFeatureParameterName,
+     security_state::features::kMarkHttpAsParameterWarning}};
+const FeatureEntry::FeatureParam kMarkHttpAsWarningAndDangerousOnFormEdits[] = {
+    {security_state::features::kMarkHttpAsFeatureParameterName,
+     security_state::features::
+         kMarkHttpAsParameterWarningAndDangerousOnFormEdits}};
+const FeatureEntry::FeatureParam
+    kMarkHttpAsWarningAndDangerousOnPasswordsAndCreditCards[] = {
+        {security_state::features::kMarkHttpAsFeatureParameterName,
+         security_state::features::
+             kMarkHttpAsParameterWarningAndDangerousOnPasswordsAndCreditCards}};
+
+const FeatureEntry::FeatureVariation kMarkHttpAsFeatureVariations[] = {
+    {"(mark as actively dangerous)", kMarkHttpAsDangerous,
+     arraysize(kMarkHttpAsDangerous), nullptr},
+    {"(mark with a Not Secure warning)", kMarkHttpAsWarning,
+     arraysize(kMarkHttpAsWarning), nullptr},
+    {"(mark with a Not Secure warning and dangerous on form edits)",
+     kMarkHttpAsWarningAndDangerousOnFormEdits,
+     arraysize(kMarkHttpAsWarningAndDangerousOnFormEdits), nullptr},
+    {"(mark with a Not Secure warning and dangerous on passwords and credit "
+     "card fields)",
+     kMarkHttpAsWarningAndDangerousOnPasswordsAndCreditCards,
+     arraysize(kMarkHttpAsWarningAndDangerousOnPasswordsAndCreditCards),
+     nullptr}};
 
 const FeatureEntry::Choice kUseDdljsonApiChoices[] = {
     {flags_ui::kGenericExperimentChoiceDefault, "", ""},
@@ -83,6 +113,18 @@ const FeatureEntry::Choice kUseDdljsonApiChoices[] = {
      "https://www.gstatic.com/chrome/ntp/doodle_test/ddljson_ios3.json"},
     {"(force test doodle 4)", search_provider_logos::switches::kGoogleDoodleUrl,
      "https://www.gstatic.com/chrome/ntp/doodle_test/ddljson_ios4.json"},
+};
+
+const FeatureEntry::Choice kAutofillIOSDelayBetweenFieldsChoices[] = {
+    {flags_ui::kGenericExperimentChoiceDefault, "", ""},
+    {"0", autofill::switches::kAutofillIOSDelayBetweenFields, "0"},
+    {"10", autofill::switches::kAutofillIOSDelayBetweenFields, "10"},
+    {"20", autofill::switches::kAutofillIOSDelayBetweenFields, "20"},
+    {"50", autofill::switches::kAutofillIOSDelayBetweenFields, "50"},
+    {"100", autofill::switches::kAutofillIOSDelayBetweenFields, "100"},
+    {"200", autofill::switches::kAutofillIOSDelayBetweenFields, "200"},
+    {"500", autofill::switches::kAutofillIOSDelayBetweenFields, "500"},
+    {"1000", autofill::switches::kAutofillIOSDelayBetweenFields, "1000"},
 };
 
 // To add a new entry, add to the end of kFeatureEntries. There are four
@@ -109,17 +151,12 @@ const FeatureEntry::Choice kUseDdljsonApiChoices[] = {
 //
 // When adding a new choice, add it to the end of the list.
 const flags_ui::FeatureEntry kFeatureEntries[] = {
-    {"contextual-search", flag_descriptions::kContextualSearch,
-     flag_descriptions::kContextualSearchDescription, flags_ui::kOsIos,
-     ENABLE_DISABLE_VALUE_TYPE(switches::kEnableContextualSearch,
-                               switches::kDisableContextualSearch)},
-    {"browser-task-scheduler", flag_descriptions::kBrowserTaskScheduler,
-     flag_descriptions::kBrowserTaskSchedulerDescription, flags_ui::kOsIos,
-     ENABLE_DISABLE_VALUE_TYPE(switches::kEnableBrowserTaskScheduler,
-                               switches::kDisableBrowserTaskScheduler)},
-    {"mark-non-secure-as", flag_descriptions::kMarkHttpAsName,
+    {"enable-mark-http-as", flag_descriptions::kMarkHttpAsName,
      flag_descriptions::kMarkHttpAsDescription, flags_ui::kOsIos,
-     MULTI_VALUE_TYPE(kMarkHttpAsChoices)},
+     FEATURE_WITH_PARAMS_VALUE_TYPE(
+         security_state::features::kMarkHttpAsFeature,
+         kMarkHttpAsFeatureVariations,
+         "MarkHttpAs")},
     {"web-payments", flag_descriptions::kWebPaymentsName,
      flag_descriptions::kWebPaymentsDescription, flags_ui::kOsIos,
      FEATURE_VALUE_TYPE(payments::features::kWebPayments)},
@@ -129,6 +166,9 @@ const flags_ui::FeatureEntry kFeatureEntries[] = {
     {"ios-captive-portal", flag_descriptions::kCaptivePortalName,
      flag_descriptions::kCaptivePortalDescription, flags_ui::kOsIos,
      FEATURE_VALUE_TYPE(kCaptivePortalFeature)},
+    {"ios-captive-portal-metrics", flag_descriptions::kCaptivePortalMetricsName,
+     flag_descriptions::kCaptivePortalMetricsDescription, flags_ui::kOsIos,
+     FEATURE_VALUE_TYPE(kCaptivePortalMetrics)},
     {"in-product-help-demo-mode-choice",
      flag_descriptions::kInProductHelpDemoModeName,
      flag_descriptions::kInProductHelpDemoModeDescription, flags_ui::kOsIos,
@@ -144,20 +184,6 @@ const flags_ui::FeatureEntry kFeatureEntries[] = {
      flag_descriptions::kOmniboxUIElideSuggestionUrlAfterHostDescription,
      flags_ui::kOsIos,
      FEATURE_VALUE_TYPE(omnibox::kUIExperimentElideSuggestionUrlAfterHost)},
-    {"omnibox-ui-hide-suggestion-url-scheme",
-     flag_descriptions::kOmniboxUIHideSuggestionUrlSchemeName,
-     flag_descriptions::kOmniboxUIHideSuggestionUrlSchemeDescription,
-     flags_ui::kOsIos,
-     FEATURE_VALUE_TYPE(omnibox::kUIExperimentHideSuggestionUrlScheme)},
-    {"omnibox-ui-hide-suggestion-url-trivial-subdomains",
-     flag_descriptions::kOmniboxUIHideSuggestionUrlTrivialSubdomainsName,
-     flag_descriptions::kOmniboxUIHideSuggestionUrlTrivialSubdomainsDescription,
-     flags_ui::kOsIos,
-     FEATURE_VALUE_TYPE(
-         omnibox::kUIExperimentHideSuggestionUrlTrivialSubdomains)},
-    {"bookmark-new-generation", flag_descriptions::kBookmarkNewGenerationName,
-     flag_descriptions::kBookmarkNewGenerationDescription, flags_ui::kOsIos,
-     FEATURE_VALUE_TYPE(kBookmarkNewGeneration)},
 #if defined(__IPHONE_11_0) && (__IPHONE_OS_VERSION_MAX_ALLOWED >= __IPHONE_11_0)
     {"drag_and_drop", flag_descriptions::kDragAndDropName,
      flag_descriptions::kDragAndDropDescription, flags_ui::kOsIos,
@@ -167,10 +193,6 @@ const flags_ui::FeatureEntry kFeatureEntries[] = {
      flag_descriptions::kTabSwitcherPresentsBVCName,
      flag_descriptions::kTabSwitcherPresentsBVCDescription, flags_ui::kOsIos,
      FEATURE_VALUE_TYPE(kTabSwitcherPresentsBVC)},
-    {"safe_area_compatible_toolbar",
-     flag_descriptions::kSafeAreaCompatibleToolbarName,
-     flag_descriptions::kSafeAreaCompatibleToolbarDescription, flags_ui::kOsIos,
-     FEATURE_VALUE_TYPE(kSafeAreaCompatibleToolbar)},
     {"external-search", flag_descriptions::kExternalSearchName,
      flag_descriptions::kExternalSearchDescription, flags_ui::kOsIos,
      FEATURE_VALUE_TYPE(kExternalSearch)},
@@ -181,25 +203,81 @@ const flags_ui::FeatureEntry kFeatureEntries[] = {
     {"slim-navigation-manager", flag_descriptions::kSlimNavigationManagerName,
      flag_descriptions::kSlimNavigationManagerDescription, flags_ui::kOsIos,
      FEATURE_VALUE_TYPE(web::features::kSlimNavigationManager)},
-    {"ios-share-canonical-url", flag_descriptions::kShareCanonicalURLName,
-     flag_descriptions::kShareCanonicalURLDescription, flags_ui::kOsIos,
-     FEATURE_VALUE_TYPE(activity_services::kShareCanonicalURL)},
-    {"property-animations-toolbar",
-     flag_descriptions::kPropertyAnimationsToolbarName,
-     flag_descriptions::kPropertyAnimationsToolbarDescription, flags_ui::kOsIos,
-     FEATURE_VALUE_TYPE(kPropertyAnimationsToolbar)},
-    {"new-fullscreen-controller", flag_descriptions::kNewFullscreenName,
-     flag_descriptions::kNewFullscreenDescription, flags_ui::kOsIos,
-     FEATURE_VALUE_TYPE(fullscreen::features::kNewFullscreen)},
-    {"clean-toolbar", flag_descriptions::kCleanToolbarName,
-     flag_descriptions::kCleanToolbarDescription, flags_ui::kOsIos,
-     FEATURE_VALUE_TYPE(kCleanToolbar)},
-    {"bookmark-new-edit-page", flag_descriptions::kBookmarkNewEditPageName,
-     flag_descriptions::kBookmarkNewEditPageDescription, flags_ui::kOsIos,
-     FEATURE_VALUE_TYPE(kBookmarkNewEditPage)},
-    {"password-export", flag_descriptions::kPasswordExportName,
+    {"new-file-download", flag_descriptions::kNewFileDownloadName,
+     flag_descriptions::kNewFileDownloadDescription, flags_ui::kOsIos,
+     FEATURE_VALUE_TYPE(web::features::kNewFileDownload)},
+    {"memex-tab-switcher", flag_descriptions::kMemexTabSwitcherName,
+     flag_descriptions::kMemexTabSwitcherDescription, flags_ui::kOsIos,
+     FEATURE_VALUE_TYPE(kMemexTabSwitcher)},
+    {"PasswordExport", flag_descriptions::kPasswordExportName,
      flag_descriptions::kPasswordExportDescription, flags_ui::kOsIos,
-     FEATURE_VALUE_TYPE(password_manager::features::kPasswordExport)}};
+     FEATURE_VALUE_TYPE(password_manager::features::kPasswordExport)},
+    {"wk-http-system-cookie-store",
+     flag_descriptions::kWKHTTPSystemCookieStoreName,
+     flag_descriptions::kWKHTTPSystemCookieStoreName, flags_ui::kOsIos,
+     FEATURE_VALUE_TYPE(web::features::kWKHTTPSystemCookieStore)},
+    {"show-autofill-type-predictions",
+     flag_descriptions::kShowAutofillTypePredictionsName,
+     flag_descriptions::kShowAutofillTypePredictionsDescription,
+     flags_ui::kOsIos,
+     FEATURE_VALUE_TYPE(autofill::features::kAutofillShowTypePredictions)},
+    {"autofill-ios-delay-between-fields",
+     flag_descriptions::kAutofillIOSDelayBetweenFieldsName,
+     flag_descriptions::kAutofillIOSDelayBetweenFieldsDescription,
+     flags_ui::kOsIos, MULTI_VALUE_TYPE(kAutofillIOSDelayBetweenFieldsChoices)},
+    {"ui-refresh-phase-1", flag_descriptions::kUIRefreshPhase1Name,
+     flag_descriptions::kUIRefreshPhase1Description, flags_ui::kOsIos,
+     FEATURE_VALUE_TYPE(kUIRefreshPhase1)},
+    {"collections-ui-reboot", flag_descriptions::kCollectionsUIRebootName,
+     flag_descriptions::kCollectionsUIRebootDescription, flags_ui::kOsIos,
+     FEATURE_VALUE_TYPE(kCollectionsUIReboot)},
+    {"context-menu-element-post-message",
+     flag_descriptions::kContextMenuElementPostMessageName,
+     flag_descriptions::kContextMenuElementPostMessageDescription,
+     flags_ui::kOsIos,
+     FEATURE_VALUE_TYPE(web::features::kContextMenuElementPostMessage)},
+    {"mailto-handling-google-ui",
+     flag_descriptions::kMailtoHandlingWithGoogleUIName,
+     flag_descriptions::kMailtoHandlingWithGoogleUIDescription,
+     flags_ui::kOsIos, FEATURE_VALUE_TYPE(kMailtoHandledWithGoogleUI)},
+    {"feedback-kit-v2", flag_descriptions::kFeedbackKitV2Name,
+     flag_descriptions::kFeedbackKitV2Description, flags_ui::kOsIos,
+     FEATURE_VALUE_TYPE(kFeedbackKitV2)},
+    {"feedback-kit-v2-sso-service",
+     flag_descriptions::kFeedbackKitV2WithSSOServiceName,
+     flag_descriptions::kFeedbackKitV2WithSSOServiceDescription,
+     flags_ui::kOsIos, FEATURE_VALUE_TYPE(kFeedbackKitV2WithSSOService)},
+    {"new-clear-browsing-data-ui",
+     flag_descriptions::kNewClearBrowsingDataUIName,
+     flag_descriptions::kNewClearBrowsingDataUIDescription, flags_ui::kOsIos,
+     FEATURE_VALUE_TYPE(kNewClearBrowsingDataUI)},
+    {"new-tools_menu", flag_descriptions::kNewToolsMenuName,
+     flag_descriptions::kNewToolsMenuDescription, flags_ui::kOsIos,
+     FEATURE_VALUE_TYPE(kNewToolsMenu)},
+    {"itunes-links-store-kit-handling",
+     flag_descriptions::kITunesLinksStoreKitHandlingName,
+     flag_descriptions::kITunesLinksStoreKitHandlingDescription,
+     flags_ui::kOsIos, FEATURE_VALUE_TYPE(kITunesLinksStoreKitHandling)},
+    {"unified-consent", flag_descriptions::kUnifiedConsentName,
+     flag_descriptions::kUnifiedConsentDescription, flags_ui::kOsIos,
+     FEATURE_VALUE_TYPE(signin::kUnifiedConsent)},
+    {"autofill-dynamic-forms", flag_descriptions::kAutofillDynamicFormsName,
+     flag_descriptions::kAutofillDynamicFormsDescription, flags_ui::kOsIos,
+     FEATURE_VALUE_TYPE(autofill::features::kAutofillDynamicForms)},
+    {"autofill-restrict-formless-form-extraction",
+     flag_descriptions::kAutofillRestrictUnownedFieldsToFormlessCheckoutName,
+     flag_descriptions::
+         kAutofillRestrictUnownedFieldsToFormlessCheckoutDescription,
+     flags_ui::kOsIos,
+     FEATURE_VALUE_TYPE(
+         autofill::features::kAutofillRestrictUnownedFieldsToFormlessCheckout)},
+    {"ui-refresh-location-bar", flag_descriptions::kUIRefreshLocationBarName,
+     flag_descriptions::kUIRefreshLocationBarDescription, flags_ui::kOsIos,
+     FEATURE_VALUE_TYPE(kUIRefreshLocationBar)},
+    {"fullscreen-content-inset", flag_descriptions::kFullscreenContentInsetName,
+     flag_descriptions::kFullscreenContentInsetDescription, flags_ui::kOsIos,
+     FEATURE_VALUE_TYPE(fullscreen::features::kFullscreenContentInset)},
+};
 
 // Add all switches from experimental flags to |command_line|.
 void AppendSwitchesFromExperimentalSettings(base::CommandLine* command_line) {

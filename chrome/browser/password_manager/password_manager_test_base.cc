@@ -26,6 +26,7 @@
 #include "components/autofill/core/browser/autofill_test_utils.h"
 #include "components/password_manager/core/browser/password_manager_test_utils.h"
 #include "components/password_manager/core/browser/test_password_store.h"
+#include "content/public/browser/browser_thread.h"
 #include "content/public/browser/navigation_details.h"
 #include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/render_frame_host.h"
@@ -269,6 +270,13 @@ void AddHSTSHostImpl(
   EXPECT_TRUE(transport_security_state->ShouldUpgradeToSSL(host));
 }
 
+enum ReturnCodes {  // Possible results of the JavaScript code.
+  RETURN_CODE_OK,
+  RETURN_CODE_NO_ELEMENT,
+  RETURN_CODE_WRONG_VALUE,
+  RETURN_CODE_INVALID,
+};
+
 }  // namespace
 
 NavigationObserver::NavigationObserver(content::WebContents* web_contents)
@@ -416,7 +424,7 @@ void PasswordManagerBrowserTestBase::SetUpOnMainThread() {
   verify_result.cert_status = 0;
   verify_result.is_issued_by_known_root = true;
   verify_result.verified_cert = cert;
-  mock_cert_verifier().AddResultForCert(cert.get(), verify_result, net::OK);
+  mock_cert_verifier()->AddResultForCert(cert.get(), verify_result, net::OK);
 
   // Add a tab with a customized ManagePasswordsUIController. Thus, we can
   // intercept useful UI events.
@@ -448,23 +456,21 @@ void PasswordManagerBrowserTestBase::TearDownOnMainThread() {
   ASSERT_TRUE(embedded_test_server()->ShutdownAndWaitUntilComplete());
 }
 
-void PasswordManagerBrowserTestBase::SetUpInProcessBrowserTestFixture() {
-  ProfileIOData::SetCertVerifierForTesting(&mock_cert_verifier_);
-}
-
 void PasswordManagerBrowserTestBase::TearDownInProcessBrowserTestFixture() {
   ProfileIOData::SetCertVerifierForTesting(nullptr);
 }
 
-content::WebContents* PasswordManagerBrowserTestBase::WebContents() {
+content::WebContents* PasswordManagerBrowserTestBase::WebContents() const {
   return web_contents_;
 }
 
-content::RenderViewHost* PasswordManagerBrowserTestBase::RenderViewHost() {
+content::RenderViewHost* PasswordManagerBrowserTestBase::RenderViewHost()
+    const {
   return WebContents()->GetRenderViewHost();
 }
 
-content::RenderFrameHost* PasswordManagerBrowserTestBase::RenderFrameHost() {
+content::RenderFrameHost* PasswordManagerBrowserTestBase::RenderFrameHost()
+    const {
   return WebContents()->GetMainFrame();
 }
 
@@ -523,12 +529,6 @@ void PasswordManagerBrowserTestBase::WaitForElementValue(
     const std::string& iframe_id,
     const std::string& element_id,
     const std::string& expected_value) {
-  enum ReturnCodes {  // Possible results of the JavaScript code.
-    RETURN_CODE_OK,
-    RETURN_CODE_NO_ELEMENT,
-    RETURN_CODE_WRONG_VALUE,
-    RETURN_CODE_INVALID,
-  };
   const std::string value_check_function = base::StringPrintf(
       "function valueCheck() {"
       "  if (%s)"
@@ -561,6 +561,12 @@ void PasswordManagerBrowserTestBase::WaitForElementValue(
           "    } else {"
           "      window.domAutomationController.send(%d);"
           "    }"
+          // This script should never send more than one message because only 1
+          // message is expected. Any further messages might be processed in
+          // subsequent script executions, that could lead to failures or
+          // flakiness. Leaving onchange handler would cause sending messages
+          // on any further onchange events.
+          "    element.onchange = undefined;"
           "  };"
           "}",
           RETURN_CODE_OK, iframe_id.c_str(), iframe_id.c_str(),
@@ -571,6 +577,60 @@ void PasswordManagerBrowserTestBase::WaitForElementValue(
       RenderFrameHost(), script, &return_value));
   EXPECT_EQ(RETURN_CODE_OK, return_value)
       << "element_id = " << element_id
+      << ", expected_value = " << expected_value;
+}
+
+void PasswordManagerBrowserTestBase::WaitForElementValue(
+    const std::string& form_id,
+    size_t elements_index,
+    const std::string& expected_value) {
+  const std::string element_selector =
+      base::StringPrintf("document.getElementById('%s').elements['%zu']",
+                         form_id.c_str(), elements_index);
+  WaitForJsElementValue(element_selector, expected_value);
+}
+
+void PasswordManagerBrowserTestBase::WaitForJsElementValue(
+    const std::string& element_selector,
+    const std::string& expected_value) {
+  const std::string value_check_function = base::StringPrintf(
+      "function valueCheck() {"
+      "  var element = %s;"
+      "  return element && element.value == '%s';"
+      "}",
+      element_selector.c_str(), expected_value.c_str());
+  const std::string script =
+      value_check_function +
+      base::StringPrintf(
+          "if (valueCheck()) {"
+          "  /* Spin the event loop with setTimeout. */"
+          "  setTimeout(window.domAutomationController.send(%d), 0);"
+          "} else {"
+          "  var element = %s;"
+          "  if (!element)"
+          "    window.domAutomationController.send(%d);"
+          "  element.onchange = function() {"
+          "    if (valueCheck()) {"
+          "      /* Spin the event loop with setTimeout. */"
+          "      setTimeout(window.domAutomationController.send(%d), 0);"
+          "    } else {"
+          "      window.domAutomationController.send(%d);"
+          "    }"
+          // This script should never send more than one message because only 1
+          // message is expected. Any further messages might be processed in
+          // subsequent script executions, that could lead to failures or
+          // flakiness. Leaving onchange handler would cause sending messages
+          // on any further onchange events.
+          "    element.onchange = undefined;"
+          "  };"
+          "}",
+          RETURN_CODE_OK, element_selector.c_str(), RETURN_CODE_NO_ELEMENT,
+          RETURN_CODE_OK, RETURN_CODE_WRONG_VALUE);
+  int return_value = RETURN_CODE_INVALID;
+  ASSERT_TRUE(content::ExecuteScriptWithoutUserGestureAndExtractInt(
+      RenderFrameHost(), script, &return_value));
+  EXPECT_EQ(RETURN_CODE_OK, return_value)
+      << "element_selector = " << element_selector
       << ", expected_value = " << expected_value;
 }
 

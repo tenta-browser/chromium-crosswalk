@@ -25,6 +25,8 @@ if (is_android) {
       "android_overlay.h",
       "android_util.cc",
       "android_util.h",
+      "jni_hdr_metadata.cc",
+      "jni_hdr_metadata.h",
       "media_codec_bridge.h",
       "media_codec_bridge_impl.cc",
       "media_codec_bridge_impl.h",
@@ -33,11 +35,11 @@ if (is_android) {
       "media_codec_loop.h",
       "media_codec_util.cc",
       "media_codec_util.h",
+      "media_crypto_context.h",
+      "media_crypto_context_impl.cc",
+      "media_crypto_context_impl.h",
       "media_drm_bridge.cc",
       "media_drm_bridge.h",
-      "media_drm_bridge_cdm_context.h",
-      "media_drm_bridge_cdm_context_impl.cc",
-      "media_drm_bridge_cdm_context_impl.h",
       "media_drm_bridge_client.cc",
       "media_drm_bridge_client.h",
       "media_drm_bridge_delegate.cc",
@@ -113,8 +115,8 @@ if (is_android) {
       "mock_android_overlay.h",
       "mock_media_codec_bridge.cc",
       "mock_media_codec_bridge.h",
-      "mock_media_drm_bridge_cdm_context.cc",
-      "mock_media_drm_bridge_cdm_context.h",
+      "mock_media_crypto_context.cc",
+      "mock_media_crypto_context.h",
       "test_destruction_observable.cc",
       "test_destruction_observable.h",
     ]
@@ -131,7 +133,9 @@ if (is_android) {
       "java/src/org/chromium/media/AudioRecordInput.java",
       "java/src/org/chromium/media/AudioTrackOutputStream.java",
       "java/src/org/chromium/media/CodecProfileLevelList.java",
+      "java/src/org/chromium/media/HdrMetadata.java",
       "java/src/org/chromium/media/MediaCodecBridge.java",
+      "java/src/org/chromium/media/MediaCodecBridgeBuilder.java",
       "java/src/org/chromium/media/MediaCodecUtil.java",
       "java/src/org/chromium/media/MediaDrmBridge.java",
       "java/src/org/chromium/media/MediaDrmStorageBridge.java",
@@ -168,13 +172,17 @@ if (is_android) {
       "java/src/org/chromium/media/AudioManagerAndroid.java",
       "java/src/org/chromium/media/AudioRecordInput.java",
       "java/src/org/chromium/media/AudioTrackOutputStream.java",
+      "java/src/org/chromium/media/BitrateAdjuster.java",
       "java/src/org/chromium/media/CodecProfileLevelList.java",
+      "java/src/org/chromium/media/HdrMetadata.java",
       "java/src/org/chromium/media/MediaCodecBridge.java",
+      "java/src/org/chromium/media/MediaCodecBridgeBuilder.java",
       "java/src/org/chromium/media/MediaCodecUtil.java",
       "java/src/org/chromium/media/MediaCodecEncoder.java",
       "java/src/org/chromium/media/MediaDrmBridge.java",
       "java/src/org/chromium/media/MediaDrmSessionManager.java",
       "java/src/org/chromium/media/MediaDrmStorageBridge.java",
+      "java/src/org/chromium/media/MediaFormatBuilder.java",
       "java/src/org/chromium/media/MediaPlayerBridge.java",
       "java/src/org/chromium/media/MediaPlayerListener.java",
       "java/src/org/chromium/media/MediaServerCrashListener.java",
@@ -183,8 +191,11 @@ if (is_android) {
   }
 
   junit_binary("media_base_junit_tests") {
-    java_files =
-        [ "java/src/test/org/chromium/media/AudioTrackOutputStreamTest.java" ]
+    java_files = [
+      "java/src/test/org/chromium/media/AudioTrackOutputStreamTest.java",
+      "java/src/test/org/chromium/media/BitrateAdjusterTest.java",
+      "java/src/test/org/chromium/media/MediaFormatBuilderTest.java",
+    ]
     deps = [
       ":media_java",
       "//base:base_java",

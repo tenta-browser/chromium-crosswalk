@@ -8,9 +8,9 @@
 #include "content/renderer/render_frame_impl.h"
 #include "content/renderer/render_thread_impl.h"
 #include "content/renderer/render_view_impl.h"
-#include "third_party/WebKit/public/web/WebFrame.h"
-#include "third_party/WebKit/public/web/WebLocalFrame.h"
-#include "third_party/WebKit/public/web/WebView.h"
+#include "third_party/blink/public/web/web_frame.h"
+#include "third_party/blink/public/web/web_local_frame.h"
+#include "third_party/blink/public/web/web_view.h"
 
 using blink::WebApplicationCacheHostClient;
 using blink::WebConsoleMessage;
@@ -63,14 +63,11 @@ void RendererWebApplicationCacheHostImpl::OnCacheSelected(
 }
 
 void RendererWebApplicationCacheHostImpl::SetSubresourceFactory(
-    mojo::MessagePipeHandle loader_factory_pipe_handle) {
+    network::mojom::URLLoaderFactoryPtr url_loader_factory) {
   RenderFrameImpl* render_frame =
       RenderFrameImpl::FromRoutingID(frame_routing_id_);
   if (render_frame) {
-    mojom::URLLoaderFactoryPtr loader_factory;
-    loader_factory.Bind(mojom::URLLoaderFactoryPtrInfo(
-        mojo::ScopedMessagePipeHandle(loader_factory_pipe_handle), 0));
-    render_frame->SetCustomURLLoaderFactory(std::move(loader_factory));
+    render_frame->SetCustomURLLoaderFactory(std::move(url_loader_factory));
   }
 }
 

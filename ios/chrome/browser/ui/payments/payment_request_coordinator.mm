@@ -4,8 +4,9 @@
 
 #import "ios/chrome/browser/ui/payments/payment_request_coordinator.h"
 
+#include <memory>
+
 #include "base/json/json_reader.h"
-#include "base/memory/ptr_util.h"
 #include "components/autofill/core/browser/autofill_profile.h"
 #include "components/autofill/core/browser/credit_card.h"
 #include "components/payments/core/autofill_payment_instrument.h"
@@ -35,13 +36,6 @@ const NSTimeInterval kUpdatePaymentSummaryItemIntervalSeconds = 10.0;
 
 @interface PaymentRequestCoordinator ()
 
-// A weak reference to self used in -stop. -stop is run twice, once by the
-// coordinator that manages the lifetime of this coordinator and once in
-// ChromeCoordinator's -dealloc. It is not possible to create a weak reference
-// to self in the process of deallocation. The second time -stop is called in
-// -dealloc this weak reference is expected to be nil.
-@property(nonatomic, weak) PaymentRequestCoordinator* weakSelf;
-
 // Updates the current total amount and asks the view controller to update the
 // Payment Summary item so that the changes in total amount are reflected.
 - (void)updatePaymentSummaryItem;
@@ -55,7 +49,6 @@ const NSTimeInterval kUpdatePaymentSummaryItemIntervalSeconds = 10.0;
   ContactInfoEditCoordinator* _contactInfoEditCoordinator;
   ContactInfoSelectionCoordinator* _contactInfoSelectionCoordinator;
   PaymentRequestViewController* _viewController;
-  PaymentRequestErrorCoordinator* _errorCoordinator;
   PaymentItemsDisplayCoordinator* _itemsDisplayCoordinator;
   ShippingAddressSelectionCoordinator* _shippingAddressSelectionCoordinator;
   ShippingOptionSelectionCoordinator* _shippingOptionSelectionCoordinator;
@@ -87,11 +80,8 @@ const NSTimeInterval kUpdatePaymentSummaryItemIntervalSeconds = 10.0;
 @synthesize pending = _pending;
 @synthesize cancellable = _cancellable;
 @synthesize delegate = _delegate;
-@synthesize weakSelf = _weakSelf;
 
 - (void)start {
-  _weakSelf = self;
-
   _currentTotal =
       std::make_unique<payments::PaymentItem>(self.paymentRequest->GetTotal(
           self.paymentRequest->selected_payment_method()));
@@ -123,15 +113,15 @@ const NSTimeInterval kUpdatePaymentSummaryItemIntervalSeconds = 10.0;
 }
 
 - (void)stop {
+  [self stopWithCompletion:nil];
+}
+
+- (void)stopWithCompletion:(ProceduralBlock)completion {
   [_updatePaymentSummaryItemTimer invalidate];
 
-  __weak PaymentRequestCoordinator* weakSelf = self.weakSelf;
-  ProceduralBlock callback = ^() {
-    [weakSelf.delegate paymentRequestCoordinatorDidStop:weakSelf];
-  };
   [[_navigationController presentingViewController]
       dismissViewControllerAnimated:YES
-                         completion:callback];
+                         completion:completion];
 
   [_addressEditCoordinator stop];
   _addressEditCoordinator = nil;
@@ -149,8 +139,6 @@ const NSTimeInterval kUpdatePaymentSummaryItemIntervalSeconds = 10.0;
   _shippingOptionSelectionCoordinator = nil;
   [_methodSelectionCoordinator stop];
   _methodSelectionCoordinator = nil;
-  [_errorCoordinator stop];
-  _errorCoordinator = nil;
   _viewController = nil;
   _navigationController = nil;
 }
@@ -180,21 +168,25 @@ requestFullCreditCard:(const autofill::CreditCard&)card
            (base::WeakPtr<autofill::payments::FullCardRequest::ResultDelegate>)
                resultDelegate {
   _fullCardRequester =
-      base::MakeUnique<FullCardRequester>(_navigationController, _browserState);
+      std::make_unique<FullCardRequester>(_navigationController, _browserState);
   _fullCardRequester->GetFullCard(card, _autofillManager, resultDelegate);
 }
 
 - (void)updatePaymentDetails:(payments::PaymentDetails)paymentDetails {
   _paymentRequest->UpdatePaymentDetails(paymentDetails);
 
+  // If the view controller is in pending state, set the pending state to false
+  // which causes the entire view to refresh. Return early after that.
+  if (_pending) {
+    [self setPending:false];
+    return;
+  }
+
   [self updatePaymentSummaryItem];
 
-  // If there are no available shipping options, reset the previously selected
-  // shipping address. Otherwise, if a shipping address had been selected, set
-  // it as the selected shipping address.
-  if (_paymentRequest->shipping_options().empty())
-    _paymentRequest->set_selected_shipping_profile(nullptr);
-  else if (_pendingShippingAddress) {
+  // If a shipping address had been selected, and merchant can ship to that
+  // address, set it as the selected shipping address.
+  if (_pendingShippingAddress && !_paymentRequest->shipping_options().empty()) {
     _paymentRequest->set_selected_shipping_profile(_pendingShippingAddress);
   }
   _pendingShippingAddress = nil;
@@ -222,15 +214,6 @@ requestFullCreditCard:(const autofill::CreditCard&)card
   // Dismiss the address edit view, if present.
   [_addressEditCoordinator stop];
   _addressEditCoordinator = nil;
-}
-
-- (void)displayErrorWithCallback:(ProceduralBlock)callback {
-  _errorCoordinator = [[PaymentRequestErrorCoordinator alloc]
-      initWithBaseViewController:_navigationController];
-  [_errorCoordinator setCallback:callback];
-  [_errorCoordinator setDelegate:self];
-
-  [_errorCoordinator start];
 }
 
 #pragma mark - PaymentRequestViewControllerDelegate
@@ -336,19 +319,6 @@ requestFullCreditCard:(const autofill::CreditCard&)card
   [_methodSelectionCoordinator setDelegate:self];
 
   [_methodSelectionCoordinator start];
-}
-
-#pragma mark - PaymentRequestErrorCoordinatorDelegate
-
-- (void)paymentRequestErrorCoordinatorDidDismiss:
-    (PaymentRequestErrorCoordinator*)coordinator {
-  ProceduralBlock callback = coordinator.callback;
-
-  [_errorCoordinator stop];
-  _errorCoordinator = nil;
-
-  if (callback)
-    callback();
 }
 
 #pragma mark - PaymentItemsDisplayCoordinatorDelegate

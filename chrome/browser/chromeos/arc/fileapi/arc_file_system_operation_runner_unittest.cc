@@ -6,6 +6,7 @@
 #include <string>
 
 #include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/macros.h"
 #include "base/optional.h"
 #include "base/run_loop.h"
@@ -14,6 +15,7 @@
 #include "components/arc/arc_bridge_service.h"
 #include "components/arc/arc_service_manager.h"
 #include "components/arc/common/file_system.mojom.h"
+#include "components/arc/test/connection_holder_util.h"
 #include "components/arc/test/fake_file_system_instance.h"
 #include "components/keyed_service/content/browser_context_keyed_service_factory.h"
 #include "content/public/test/test_browser_thread_bundle.h"
@@ -38,23 +40,21 @@ class ArcFileSystemOperationRunnerTest : public testing::Test {
   void SetUp() override {
     arc_service_manager_ = std::make_unique<ArcServiceManager>();
     profile_ = std::make_unique<TestingProfile>();
-    ArcFileSystemBridge::GetFactory()->SetTestingFactoryAndUse(
-        profile_.get(),
-        [](content::BrowserContext* context) -> std::unique_ptr<KeyedService> {
-          return std::make_unique<ArcFileSystemBridge>(
-              context, ArcServiceManager::Get()->arc_bridge_service());
-        });
+    ArcFileSystemBridge::GetForBrowserContextForTesting(profile_.get());
     runner_ = ArcFileSystemOperationRunner::CreateForTesting(
         profile_.get(), arc_service_manager_->arc_bridge_service());
     arc_service_manager_->arc_bridge_service()->file_system()->SetInstance(
         &file_system_instance_);
+    WaitForInstanceReady(
+        arc_service_manager_->arc_bridge_service()->file_system());
 
     // Run the message loop until FileSystemInstance::Init() is called.
-    base::RunLoop().RunUntilIdle();
     ASSERT_TRUE(file_system_instance_.InitCalled());
   }
 
   void TearDown() override {
+    arc_service_manager_->arc_bridge_service()->file_system()->CloseInstance(
+        &file_system_instance_);
     // Explicitly calls Shutdown() to detach from services.
     if (runner_)
       runner_->Shutdown();
@@ -70,13 +70,12 @@ class ArcFileSystemOperationRunnerTest : public testing::Test {
   void CallAllFunctions(int* counter) {
     // Following functions are deferred.
     runner_->AddWatcher(
-        kAuthority, kDocumentId,
-        base::Bind([](ArcFileSystemOperationRunner::ChangeType type) {}),
-        base::Bind([](int* counter, int64_t watcher_id) { ++*counter; },
-                   counter));
+        kAuthority, kDocumentId, base::DoNothing(),
+        base::BindOnce([](int* counter, int64_t watcher_id) { ++*counter; },
+                       counter));
     runner_->GetChildDocuments(
         kAuthority, kDocumentId,
-        base::Bind(
+        base::BindOnce(
             [](int* counter,
                base::Optional<std::vector<mojom::DocumentPtr>> documents) {
               ++*counter;
@@ -84,22 +83,23 @@ class ArcFileSystemOperationRunnerTest : public testing::Test {
             counter));
     runner_->GetDocument(
         kAuthority, kDocumentId,
-        base::Bind(
+        base::BindOnce(
             [](int* counter, mojom::DocumentPtr document) { ++*counter; },
             counter));
     runner_->GetFileSize(
         GURL(kUrl),
-        base::Bind([](int* counter, int64_t size) { ++*counter; }, counter));
+        base::BindOnce([](int* counter, int64_t size) { ++*counter; },
+                       counter));
     runner_->GetMimeType(
         GURL(kUrl),
-        base::Bind(
+        base::BindOnce(
             [](int* counter, const base::Optional<std::string>& mime_type) {
               ++*counter;
             },
             counter));
     runner_->GetRecentDocuments(
         kAuthority, kDocumentId,
-        base::Bind(
+        base::BindOnce(
             [](int* counter,
                base::Optional<std::vector<mojom::DocumentPtr>> documents) {
               ++*counter;
@@ -107,13 +107,14 @@ class ArcFileSystemOperationRunnerTest : public testing::Test {
             counter));
     runner_->OpenFileToRead(
         GURL(kUrl),
-        base::Bind([](int* counter, mojo::ScopedHandle handle) { ++*counter; },
-                   counter));
+        base::BindOnce(
+            [](int* counter, mojo::ScopedHandle handle) { ++*counter; },
+            counter));
 
     // RemoveWatcher() is never deferred.
     runner_->RemoveWatcher(
-        123,
-        base::Bind([](int* counter, bool success) { ++*counter; }, counter));
+        123, base::BindOnce([](int* counter, bool success) { ++*counter; },
+                            counter));
   }
 
   content::TestBrowserThreadBundle thread_bundle_;
@@ -164,8 +165,8 @@ TEST_F(ArcFileSystemOperationRunnerTest, DeferAndDiscard) {
 }
 
 TEST_F(ArcFileSystemOperationRunnerTest, FileInstanceUnavailable) {
-  arc_service_manager_->arc_bridge_service()->file_system()->SetInstance(
-      nullptr);
+  arc_service_manager_->arc_bridge_service()->file_system()->CloseInstance(
+      &file_system_instance_);
 
   int counter = 0;
   CallSetShouldDefer(false);

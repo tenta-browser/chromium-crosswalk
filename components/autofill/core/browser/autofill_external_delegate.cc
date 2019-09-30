@@ -12,9 +12,6 @@
 #include "base/command_line.h"
 #include "base/i18n/case_conversion.h"
 #include "base/message_loop/message_loop.h"
-#include "base/metrics/histogram_macros.h"
-#include "base/metrics/sparse_histogram.h"
-#include "base/metrics/user_metrics.h"
 #include "base/stl_util.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
@@ -26,6 +23,7 @@
 #include "components/autofill/core/browser/autofill_metrics.h"
 #include "components/autofill/core/browser/popup_item_ids.h"
 #include "components/autofill/core/common/autofill_util.h"
+#include "components/signin/core/browser/signin_metrics.h"
 #include "components/strings/grit/components_strings.h"
 #include "ui/base/l10n/l10n_util.h"
 
@@ -41,7 +39,7 @@ bool IsAutofillWarningEntry(int frontend_id) {
          frontend_id == POPUP_ITEM_ID_HTTP_NOT_SECURE_WARNING_MESSAGE;
 }
 
-} // anonymous namespace
+}  // namespace
 
 AutofillExternalDelegate::AutofillExternalDelegate(AutofillManager* manager,
                                                    AutofillDriver* driver)
@@ -53,7 +51,6 @@ AutofillExternalDelegate::AutofillExternalDelegate(AutofillManager* manager,
       should_show_scan_credit_card_(false),
       is_credit_card_popup_(false),
       should_show_cc_signin_promo_(false),
-      has_shown_address_book_prompt(false),
       weak_ptr_factory_(this) {
   DCHECK(manager);
 }
@@ -67,9 +64,6 @@ void AutofillExternalDelegate::OnQuery(int query_id,
                                        const FormData& form,
                                        const FormFieldData& field,
                                        const gfx::RectF& element_bounds) {
-  if (!query_form_.SameFormAs(form))
-    has_shown_address_book_prompt = false;
-
   query_form_ = form;
   query_field_ = field;
   query_id_ = query_id;
@@ -84,7 +78,8 @@ void AutofillExternalDelegate::OnQuery(int query_id,
 
 void AutofillExternalDelegate::OnSuggestionsReturned(
     int query_id,
-    const std::vector<Suggestion>& input_suggestions) {
+    const std::vector<Suggestion>& input_suggestions,
+    bool is_all_server_suggestions) {
   if (query_id != query_id_)
     return;
 
@@ -126,7 +121,7 @@ void AutofillExternalDelegate::OnSuggestionsReturned(
   }
 
   if (has_autofill_suggestions_)
-    ApplyAutofillOptions(&suggestions);
+    ApplyAutofillOptions(&suggestions, is_all_server_suggestions);
 
   // Append the credit card signin promo, if appropriate (there are no other
   // suggestions).
@@ -146,8 +141,8 @@ void AutofillExternalDelegate::OnSuggestionsReturned(
     signin_promo_suggestion.frontend_id =
         POPUP_ITEM_ID_CREDIT_CARD_SIGNIN_PROMO;
     suggestions.push_back(signin_promo_suggestion);
-    base::RecordAction(
-        base::UserMetricsAction("Signin_Impression_FromAutofillDropdown"));
+    signin_metrics::RecordSigninImpressionUserActionForAccessPoint(
+        signin_metrics::AccessPoint::ACCESS_POINT_AUTOFILL_DROPDOWN);
   }
 
 #if !defined(OS_ANDROID)
@@ -340,7 +335,8 @@ void AutofillExternalDelegate::PossiblyRemoveAutofillWarnings(
 }
 
 void AutofillExternalDelegate::ApplyAutofillOptions(
-    std::vector<Suggestion>* suggestions) {
+    std::vector<Suggestion>* suggestions,
+    bool is_all_server_suggestions) {
   // The form has been auto-filled, so give the user the chance to clear the
   // form.  Append the 'Clear form' menu item.
   if (query_field_.is_autofilled) {
@@ -355,11 +351,14 @@ void AutofillExternalDelegate::ApplyAutofillOptions(
     suggestions->back().frontend_id = POPUP_ITEM_ID_CLEAR_FORM;
   }
 
-  // Append the 'Chrome Autofill options' menu item, or the menu item specified
-  // in the popup layout experiment. If we do not include
-  // |POPUP_ITEM_ID_CLEAR_FORM|, include a hint for keyboard accessory.
+  // Append the 'Autofill settings' menu item, or the menu item specified in the
+  // popup layout experiment. If we do not include |POPUP_ITEM_ID_CLEAR_FORM|,
+  // include a hint for keyboard accessory.
   suggestions->push_back(Suggestion(GetSettingsSuggestionValue()));
   suggestions->back().frontend_id = POPUP_ITEM_ID_AUTOFILL_OPTIONS;
+  if (is_all_server_suggestions)
+    suggestions->back().icon = base::ASCIIToUTF16("googlePay");
+
 #if defined(OS_ANDROID)
   if (IsKeyboardAccessoryEnabled()) {
     suggestions->back().icon = base::ASCIIToUTF16("settings");
@@ -412,12 +411,9 @@ void AutofillExternalDelegate::InsertDataListValues(
 
 base::string16 AutofillExternalDelegate::GetSettingsSuggestionValue()
     const {
-  if (IsKeyboardAccessoryEnabled()) {
-    return l10n_util::GetStringUTF16(IDS_AUTOFILL_OPTIONS_CONTENT_DESCRIPTION);
-  }
-  return l10n_util::GetStringUTF16(is_credit_card_popup_ ?
-                                   IDS_AUTOFILL_CREDIT_CARD_OPTIONS_POPUP :
-                                   IDS_AUTOFILL_OPTIONS_POPUP);
+  return l10n_util::GetStringUTF16(
+      IsKeyboardAccessoryEnabled() ? IDS_AUTOFILL_OPTIONS_CONTENT_DESCRIPTION
+                                   : IDS_AUTOFILL_SETTINGS_POPUP);
 }
 
 }  // namespace autofill

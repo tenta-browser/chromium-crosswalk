@@ -11,12 +11,7 @@
 
 #include "ash/app_list/model/app_list_folder_item.h"
 #include "base/macros.h"
-#include "ui/app_list/views/app_list_page.h"
-#include "ui/app_list/views/top_icon_animation_view.h"
-
-namespace gfx {
-class Rect;
-}
+#include "ui/app_list/views/horizontal_page.h"
 
 namespace app_list {
 
@@ -24,17 +19,17 @@ class AppsGridView;
 class ApplicationDragAndDropHost;
 class AppListFolderItem;
 class AppListFolderView;
-class AppListMainView;
 class AppListModel;
+class ContentsView;
 class FolderBackgroundView;
+class PageSwitcher;
 
 // AppsContainerView contains a root level AppsGridView to render the root level
 // app items, and a AppListFolderView to render the app items inside the
 // active folder. Only one if them is visible to user at any time.
-class APP_LIST_EXPORT AppsContainerView : public AppListPage,
-                                          public TopIconAnimationObserver {
+class APP_LIST_EXPORT AppsContainerView : public HorizontalPage {
  public:
-  AppsContainerView(AppListMainView* app_list_main_view, AppListModel* model);
+  AppsContainerView(ContentsView* contents_view, AppListModel* model);
   ~AppsContainerView() override;
 
   // Shows the active folder content specified by |folder_item|.
@@ -65,23 +60,28 @@ class APP_LIST_EXPORT AppsContainerView : public AppListPage,
   // Called to notify the AppsContainerView that a reparent drag has completed.
   void ReparentDragEnded();
 
+  // Updates the visibility of the items in this view according to
+  // |app_list_state| and |is_in_drag|.
+  void UpdateControlVisibility(AppListViewState app_list_state,
+                               bool is_in_drag);
+
+  // Updates the opacity of the items in this view during dragging.
+  void UpdateOpacity();
+
   // views::View overrides:
   gfx::Size CalculatePreferredSize() const override;
   void Layout() override;
   bool OnKeyPressed(const ui::KeyEvent& event) override;
+  const char* GetClassName() const override;
 
-  // AppListPage overrides:
-  void OnWillBeShown() override;
-  gfx::Rect GetSearchBoxBounds() const override;
-  gfx::Rect GetSearchBoxBoundsForState(
-      AppListModel::State state) const override;
-  gfx::Rect GetPageBoundsForState(AppListModel::State state) const override;
-  gfx::Rect GetPageBoundsDuringDragging(
-      AppListModel::State state) const override;
-  views::View* GetSelectedView() const override;
+  // HorizontalPage overrides:
+  void OnWillBeHidden() override;
+  views::View* GetFirstFocusableView() override;
+  gfx::Rect GetPageBoundsForState(ash::AppListState state) const override;
 
-  // TopIconAnimationObserver overrides:
-  void OnTopIconAnimationsComplete() override;
+  // Returns the expected search box bounds in the screen when the given state
+  // is active.
+  gfx::Rect GetSearchBoxBoundsForState(ash::AppListState state) const;
 
   AppsGridView* apps_grid_view() { return apps_grid_view_; }
   FolderBackgroundView* folder_background_view() {
@@ -99,42 +99,24 @@ class APP_LIST_EXPORT AppsContainerView : public AppListPage,
 
   void SetShowState(ShowState show_state, bool show_apps_with_animation);
 
-  // Calculates the top item icon bounds in the active folder icon. The bounds
-  // is relative to AppsContainerView.
-  // Returns the bounds of top items' icon in sequence of top left, top right,
-  // bottom left, bottom right.
-  std::vector<gfx::Rect> GetTopItemIconBoundsInActiveFolder();
-
-  // Creates the transitional views for animating the top items in the folder
-  // when opening or closing a folder.
-  void CreateViewsForFolderTopItemsAnimation(AppListFolderItem* active_folder,
-                                             bool open_folder);
-
-  void PrepareToShowApps(AppListFolderItem* folder_item);
-
   // Gets the final top padding of search box.
   int GetSearchBoxFinalTopPadding() const;
 
   // Gets the top padding of search box during dragging.
   int GetSearchBoxTopPaddingDuringDragging() const;
 
+  // Returns the bounds of the page in the parent view during dragging.
+  gfx::Rect GetPageBoundsDuringDragging(ash::AppListState state) const;
+
+  ContentsView* contents_view_;  // Not owned.
+
   // The views below are owned by views hierarchy.
   AppsGridView* apps_grid_view_ = nullptr;
   AppListFolderView* app_list_folder_view_ = nullptr;
+  PageSwitcher* page_switcher_ = nullptr;
   FolderBackgroundView* folder_background_view_ = nullptr;
 
   ShowState show_state_ = SHOW_NONE;
-
-  // The transitional views for animating the top items in folder
-  // when opening or closing a folder.
-  std::vector<views::View*> top_icon_views_;
-
-  size_t top_icon_animation_pending_count_ = 0u;
-
-  const bool is_fullscreen_app_list_enabled_;
-
-  // Whether the app list focus is enabled.
-  const bool is_app_list_focus_enabled_;
 
   DISALLOW_COPY_AND_ASSIGN(AppsContainerView);
 };

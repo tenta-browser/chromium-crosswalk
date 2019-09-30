@@ -135,7 +135,7 @@ class TestableCache : public StubDecodeCache {
 // A simple class that can receive decode callbacks.
 class DecodeClient {
  public:
-  DecodeClient() {}
+  DecodeClient() = default;
   void Callback(base::OnceClosure quit_closure,
                 ImageController::ImageDecodeRequestId id,
                 ImageController::ImageDecodeResult result) {
@@ -327,7 +327,8 @@ TEST_F(ImageControllerTest, QueueImageDecodeNonLazy) {
   DrawImage image =
       DrawImage(PaintImageBuilder::WithDefault()
                     .set_id(PaintImage::GetNextId())
-                    .set_image(SkImage::MakeFromBitmap(bitmap))
+                    .set_image(SkImage::MakeFromBitmap(bitmap),
+                               PaintImage::GetNextContentId())
                     .TakePaintImage(),
                 SkIRect::MakeWH(1, 1), kNone_SkFilterQuality, SkMatrix::I(),
                 PaintImage::kDefaultFrameIndex, gfx::ColorSpace());

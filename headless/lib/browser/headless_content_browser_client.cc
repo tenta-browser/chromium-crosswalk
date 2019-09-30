@@ -11,10 +11,11 @@
 #include "base/callback.h"
 #include "base/command_line.h"
 #include "base/json/json_reader.h"
-#include "base/memory/ptr_util.h"
 #include "base/path_service.h"
+#include "base/strings/string_number_conversions.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_thread.h"
+#include "content/public/browser/client_certificate_delegate.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/resource_dispatcher_host.h"
@@ -30,6 +31,8 @@
 #include "headless/lib/browser/headless_quota_permission_context.h"
 #include "headless/lib/headless_macros.h"
 #include "net/base/url_util.h"
+#include "net/ssl/client_cert_identity.h"
+#include "printing/buildflags/buildflags.h"
 #include "storage/browser/quota/quota_settings.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/base/ui_base_switches.h"
@@ -124,7 +127,7 @@ HeadlessContentBrowserClient::~HeadlessContentBrowserClient() = default;
 content::BrowserMainParts* HeadlessContentBrowserClient::CreateBrowserMainParts(
     const content::MainFunctionParams&) {
   std::unique_ptr<HeadlessBrowserMainParts> browser_main_parts =
-      base::MakeUnique<HeadlessBrowserMainParts>(browser_);
+      std::make_unique<HeadlessBrowserMainParts>(browser_);
   browser_->set_browser_main_parts(browser_main_parts.get());
   return browser_main_parts.release();
 }
@@ -134,7 +137,7 @@ void HeadlessContentBrowserClient::OverrideWebkitPrefs(
     content::WebPreferences* prefs) {
   auto* browser_context = HeadlessBrowserContextImpl::From(
       render_view_host->GetProcess()->GetBrowserContext());
-  const base::Callback<void(WebPreferences*)>& callback =
+  base::RepeatingCallback<void(WebPreferences*)> callback =
       browser_context->options()->override_web_preferences_callback();
   if (callback)
     callback.Run(prefs);
@@ -261,6 +264,15 @@ void HeadlessContentBrowserClient::AppendExtraCommandLineSwitches(
       HeadlessBrowserContextImpl* headless_browser_context_impl =
           HeadlessBrowserContextImpl::From(
               render_process_host->GetBrowserContext());
+
+      if (headless_browser_context_impl->options()->initial_virtual_time()) {
+        command_line->AppendSwitchASCII(
+            ::switches::kInitialVirtualTime,
+            base::NumberToString(headless_browser_context_impl->options()
+                                     ->initial_virtual_time()
+                                     ->ToDoubleT()));
+      }
+
       std::vector<base::StringPiece> languages = base::SplitStringPiece(
           headless_browser_context_impl->options()->accept_language(), ",",
           base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY);
@@ -303,13 +315,21 @@ void HeadlessContentBrowserClient::AllowCertificateError(
     // was for localhost, then the error was not fatal.
     bool allow_localhost = base::CommandLine::ForCurrentProcess()->HasSwitch(
         ::switches::kAllowInsecureLocalhost);
-    if (allow_localhost && net::IsLocalhost(request_url.host())) {
+    if (allow_localhost && net::IsLocalhost(request_url)) {
       callback.Run(content::CERTIFICATE_REQUEST_RESULT_TYPE_CONTINUE);
       return;
     }
 
     callback.Run(content::CERTIFICATE_REQUEST_RESULT_TYPE_DENY);
   }
+}
+
+void HeadlessContentBrowserClient::SelectClientCertificate(
+    content::WebContents* web_contents,
+    net::SSLCertRequestInfo* cert_request_info,
+    net::ClientCertIdentityList client_certs,
+    std::unique_ptr<content::ClientCertificateDelegate> delegate) {
+  delegate->ContinueWithCertificate(nullptr, nullptr);
 }
 
 void HeadlessContentBrowserClient::ResourceDispatcherHostCreated() {
@@ -320,7 +340,7 @@ void HeadlessContentBrowserClient::ResourceDispatcherHostCreated() {
 }
 
 net::NetLog* HeadlessContentBrowserClient::GetNetLog() {
-  return browser_->browser_main_parts()->net_log();
+  return browser_->net_log();
 }
 
 bool HeadlessContentBrowserClient::AllowGetCookie(
@@ -354,6 +374,14 @@ bool HeadlessContentBrowserClient::AllowSetCookie(
   if (!browser_context)
     return false;
   return browser_context->options()->allow_cookies();
+}
+
+bool HeadlessContentBrowserClient::DoesSiteRequireDedicatedProcess(
+    content::BrowserContext* browser_context,
+    const GURL& effective_site_url) {
+  return HeadlessBrowserContextImpl::From(browser_context)
+      ->options()
+      ->site_per_process();
 }
 
 }  // namespace headless

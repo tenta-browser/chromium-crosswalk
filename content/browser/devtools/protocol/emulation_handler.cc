@@ -15,8 +15,8 @@
 #include "content/common/view_messages.h"
 #include "content/public/common/url_constants.h"
 #include "device/geolocation/public/cpp/geoposition.h"
-#include "device/geolocation/public/interfaces/geolocation_context.mojom.h"
-#include "device/geolocation/public/interfaces/geoposition.mojom.h"
+#include "services/device/public/mojom/geolocation_context.mojom.h"
+#include "services/device/public/mojom/geoposition.mojom.h"
 #include "ui/events/gesture_detection/gesture_provider_config_helper.h"
 
 namespace content {
@@ -64,7 +64,7 @@ EmulationHandler::EmulationHandler()
 EmulationHandler::~EmulationHandler() {
 }
 
-void EmulationHandler::SetRenderer(RenderProcessHost* process_host,
+void EmulationHandler::SetRenderer(int process_host_id,
                                    RenderFrameHostImpl* frame_host) {
   if (host_ == frame_host)
     return;
@@ -246,12 +246,11 @@ Response EmulationHandler::SetDeviceMetricsOverride(
 
   bool size_changed = false;
   if (!dont_set_visible_size.fromMaybe(false) && width > 0 && height > 0) {
-    gfx::Size new_size(width, height);
-    if (widget_host->GetView()->GetViewBounds().size() != new_size) {
-      if (original_view_size_.IsEmpty())
-        original_view_size_ = widget_host->GetView()->GetViewBounds().size();
-      widget_host->GetView()->SetSize(new_size);
-      size_changed = true;
+    if (GetWebContents()) {
+      size_changed =
+          GetWebContents()->SetDeviceEmulationSize(gfx::Size(width, height));
+    } else {
+      return Response::Error("Can't find the associated web contents");
     }
   }
 
@@ -266,27 +265,30 @@ Response EmulationHandler::SetDeviceMetricsOverride(
   device_emulation_enabled_ = true;
   device_emulation_params_ = params;
   UpdateDeviceEmulationState();
+
   // Renderer should answer after emulation params were updated, so that the
   // response is only sent to the client once updates were applied.
+  // Unless the renderer has crashed.
+  if (GetWebContents() && GetWebContents()->IsCrashed())
+    return Response::OK();
   return Response::FallThrough();
 }
 
 Response EmulationHandler::ClearDeviceMetricsOverride() {
-  RenderWidgetHostImpl* widget_host =
-      host_ ? host_->GetRenderWidgetHost() : nullptr;
-  if (!widget_host)
-    return Response::Error("Target does not support metrics override");
   if (!device_emulation_enabled_)
     return Response::OK();
-
+  if (GetWebContents())
+    GetWebContents()->ClearDeviceEmulationSize();
+  else
+    return Response::Error("Can't find the associated web contents");
   device_emulation_enabled_ = false;
   device_emulation_params_ = blink::WebDeviceEmulationParams();
-  if (original_view_size_.width())
-    widget_host->GetView()->SetSize(original_view_size_);
-  original_view_size_ = gfx::Size();
   UpdateDeviceEmulationState();
   // Renderer should answer after emulation was disabled, so that the response
   // is only sent to the client once updates were applied.
+  // Unless the renderer has crashed.
+  if (GetWebContents() && GetWebContents()->IsCrashed())
+    return Response::OK();
   return Response::FallThrough();
 }
 
@@ -294,13 +296,11 @@ Response EmulationHandler::SetVisibleSize(int width, int height) {
   if (width < 0 || height < 0)
     return Response::InvalidParams("Width and height must be non-negative");
 
-  // Set size of frame by resizing RWHV if available.
-  RenderWidgetHostImpl* widget_host =
-      host_ ? host_->GetRenderWidgetHost() : nullptr;
-  if (!widget_host)
-    return Response::Error("Target does not support setVisibleSize");
+  if (GetWebContents())
+    GetWebContents()->SetDeviceEmulationSize(gfx::Size(width, height));
+  else
+    return Response::Error("Can't find the associated web contents");
 
-  widget_host->GetView()->SetSize(gfx::Size(width, height));
   return Response::OK();
 }
 
@@ -323,16 +323,16 @@ WebContentsImpl* EmulationHandler::GetWebContents() {
 }
 
 void EmulationHandler::UpdateTouchEventEmulationState() {
-  RenderWidgetHostImpl* widget_host =
-      host_ ? host_->GetRenderWidgetHost() : nullptr;
-  if (!widget_host)
+  if (!host_ || !host_->GetRenderWidgetHost())
+    return;
+  if (host_->GetParent() && !host_->IsCrossProcessSubframe())
     return;
   if (touch_emulation_enabled_) {
-    widget_host->GetTouchEmulator()->Enable(
+    host_->GetRenderWidgetHost()->GetTouchEmulator()->Enable(
         TouchEmulator::Mode::kEmulatingTouchFromMouse,
         TouchEmulationConfigurationToType(touch_emulation_configuration_));
   } else {
-    widget_host->GetTouchEmulator()->Disable();
+    host_->GetRenderWidgetHost()->GetTouchEmulator()->Disable();
   }
   if (GetWebContents()) {
     GetWebContents()->SetForceDisableOverscrollContent(
@@ -341,9 +341,9 @@ void EmulationHandler::UpdateTouchEventEmulationState() {
 }
 
 void EmulationHandler::UpdateDeviceEmulationState() {
-  RenderWidgetHostImpl* widget_host =
-      host_ ? host_->GetRenderWidgetHost() : nullptr;
-  if (!widget_host)
+  if (!host_ || !host_->GetRenderWidgetHost())
+    return;
+  if (host_->GetParent() && !host_->IsCrossProcessSubframe())
     return;
   // TODO(eseckler): Once we change this to mojo, we should wait for an ack to
   // these messages from the renderer. The renderer should send the ack once the
@@ -353,11 +353,12 @@ void EmulationHandler::UpdateDeviceEmulationState() {
   // ViewMsg and acknowledgment, as well as plump the acknowledgment back to the
   // EmulationHandler somehow. Mojo callbacks should make this much simpler.
   if (device_emulation_enabled_) {
-    widget_host->Send(new ViewMsg_EnableDeviceEmulation(
-        widget_host->GetRoutingID(), device_emulation_params_));
+    host_->GetRenderWidgetHost()->Send(new ViewMsg_EnableDeviceEmulation(
+        host_->GetRenderWidgetHost()->GetRoutingID(),
+        device_emulation_params_));
   } else {
-    widget_host->Send(new ViewMsg_DisableDeviceEmulation(
-        widget_host->GetRoutingID()));
+    host_->GetRenderWidgetHost()->Send(new ViewMsg_DisableDeviceEmulation(
+        host_->GetRenderWidgetHost()->GetRoutingID()));
   }
 }
 

@@ -23,7 +23,6 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/search_engines/template_url_service_factory.h"
-#include "chrome/browser/signin/profile_oauth2_token_service_factory.h"
 #include "chrome/browser/sync/glue/sync_start_util.h"
 #include "chrome/browser/sync/glue/theme_data_type_controller.h"
 #include "chrome/browser/sync/profile_sync_service_factory.h"
@@ -36,13 +35,12 @@
 #include "chrome/browser/ui/sync/browser_synced_window_delegates_getter.h"
 #include "chrome/browser/undo/bookmark_undo_service_factory.h"
 #include "chrome/browser/web_data_service_factory.h"
+#include "chrome/common/buildflags.h"
 #include "chrome/common/channel_info.h"
 #include "chrome/common/chrome_paths.h"
-#include "chrome/common/features.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/common/url_constants.h"
 #include "components/autofill/core/browser/webdata/autocomplete_sync_bridge.h"
-#include "components/autofill/core/browser/webdata/autocomplete_syncable_service.h"
 #include "components/autofill/core/browser/webdata/autofill_profile_syncable_service.h"
 #include "components/autofill/core/browser/webdata/autofill_wallet_metadata_syncable_service.h"
 #include "components/autofill/core/browser/webdata/autofill_wallet_syncable_service.h"
@@ -57,8 +55,7 @@
 #include "components/password_manager/core/browser/password_store.h"
 #include "components/password_manager/sync/browser/password_model_worker.h"
 #include "components/search_engines/search_engine_data_type_controller.h"
-#include "components/signin/core/browser/profile_oauth2_token_service.h"
-#include "components/spellcheck/spellcheck_build_features.h"
+#include "components/spellcheck/spellcheck_buildflags.h"
 #include "components/sync/base/pref_names.h"
 #include "components/sync/base/report_unrecoverable_error.h"
 #include "components/sync/driver/async_directory_type_controller.h"
@@ -73,7 +70,7 @@
 #include "components/sync_sessions/sync_sessions_client.h"
 #include "content/public/browser/browser_thread.h"
 #include "extensions/browser/api/storage/backend_task_runner.h"
-#include "extensions/features/features.h"
+#include "extensions/buildflags/buildflags.h"
 #include "ui/base/device_form_factor.h"
 
 #if BUILDFLAG(ENABLE_APP_LIST)
@@ -157,10 +154,6 @@ class SyncSessionsClientImpl : public sync_sessions::SyncSessionsClient {
   ~SyncSessionsClientImpl() override {}
 
   // SyncSessionsClient implementation.
-  bookmarks::BookmarkModel* GetBookmarkModel() override {
-    DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
-    return BookmarkModelFactory::GetForBrowserContext(profile_);
-  }
   favicon::FaviconService* GetFaviconService() override {
     DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
     return FaviconServiceFactory::GetForProfile(
@@ -225,22 +218,14 @@ void ChromeSyncClient::Initialize() {
 
   // Component factory may already be set in tests.
   if (!GetSyncApiComponentFactory()) {
-    const GURL sync_service_url = syncer::GetSyncServiceURL(
-        *base::CommandLine::ForCurrentProcess(), chrome::GetChannel());
-    ProfileOAuth2TokenService* token_service =
-        ProfileOAuth2TokenServiceFactory::GetForProfile(profile_);
-    net::URLRequestContextGetter* url_request_context_getter =
-        profile_->GetRequestContext();
-
     component_factory_ = std::make_unique<ProfileSyncComponentsFactoryImpl>(
         this, chrome::GetChannel(), chrome::GetVersionString(),
         ui::GetDeviceFormFactor() == ui::DEVICE_FORM_FACTOR_TABLET,
         *base::CommandLine::ForCurrentProcess(),
-        prefs::kSavingBrowserHistoryDisabled, sync_service_url,
+        prefs::kSavingBrowserHistoryDisabled,
         content::BrowserThread::GetTaskRunnerForThread(
             content::BrowserThread::UI),
-        db_thread_, token_service, url_request_context_getter,
-        web_data_service_, password_store_);
+        db_thread_, web_data_service_, password_store_);
   }
 }
 
@@ -361,16 +346,12 @@ ChromeSyncClient::GetSyncableServiceForType(syncer::ModelType type) {
       return PrefServiceSyncableFromProfile(profile_)
           ->GetSyncableService(syncer::PRIORITY_PREFERENCES)
           ->AsWeakPtr();
-    case syncer::AUTOFILL:
     case syncer::AUTOFILL_PROFILE:
     case syncer::AUTOFILL_WALLET_DATA:
     case syncer::AUTOFILL_WALLET_METADATA: {
       if (!web_data_service_)
         return base::WeakPtr<syncer::SyncableService>();
-      if (type == syncer::AUTOFILL) {
-        return autofill::AutocompleteSyncableService::FromWebDataService(
-            web_data_service_.get())->AsWeakPtr();
-      } else if (type == syncer::AUTOFILL_PROFILE) {
+      if (type == syncer::AUTOFILL_PROFILE) {
         return autofill::AutofillProfileSyncableService::FromWebDataService(
             web_data_service_.get())->AsWeakPtr();
       } else if (type == syncer::AUTOFILL_WALLET_METADATA) {
@@ -405,17 +386,6 @@ ChromeSyncClient::GetSyncableServiceForType(syncer::ModelType type) {
       history::HistoryService* history = GetHistoryService();
       return history ? history->AsWeakPtr()
                      : base::WeakPtr<history::HistoryService>();
-    }
-    case syncer::TYPED_URLS: {
-      // We request history service with explicit access here because this
-      // codepath is executed on backend thread while HistoryServiceFactory
-      // checks preference value in implicit mode and PrefService expectes calls
-      // only from UI thread.
-      history::HistoryService* history = HistoryServiceFactory::GetForProfile(
-          profile_, ServiceAccessType::EXPLICIT_ACCESS);
-      if (!history)
-        return base::WeakPtr<history::TypedUrlSyncableService>();
-      return history->GetTypedUrlSyncableService()->AsWeakPtr();
     }
 #if BUILDFLAG(ENABLE_SPELLCHECK)
     case syncer::DICTIONARY:

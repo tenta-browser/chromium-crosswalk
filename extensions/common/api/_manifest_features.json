@@ -55,13 +55,6 @@
     ],
     "min_manifest_version": 2
   },
-  "background_page": {
-    "channel": "stable",
-    "extension_types": [
-      "extension", "legacy_packaged_app", "hosted_app"
-    ],
-    "max_manifest_version": 1
-  },
   "bluetooth": [{
     // Note: The "bluetooth" manifest permission is used by the
     // chrome.bluetooth, chrome.bluetoothSocket and chrome.bluetoothLowEnergy
@@ -210,17 +203,6 @@
       "platform_app"
     ]
   },
-  "launcher_page": {
-    "channel": "stable",
-    "min_manifest_version": 2,
-    "extension_types": ["platform_app"],
-    "whitelist": [
-      "07BD6A765FFC289FF755D7CAB2893A40EC337FEC",  // http://crbug.com/404000
-      "896B85CC7E913E11C34892C1425A093C0701D386",  // http://crbug.com/404000
-      "11A01C82EF355E674E4F9728A801F5C3CB40D83F",  // http://crbug.com/404000
-      "F410C88469990EE7947450311D24B8AF2ADB2595"   // http://crbug.com/404000
-    ]
-  },
   "manifest_version": {
     "channel": "stable",
     "extension_types": "all"
@@ -242,6 +224,9 @@
     "extension_types": [ "extension", "legacy_packaged_app", "platform_app" ],
     "whitelist": [
       "787000072C6FBB934AF5A42275CDE73FC977D995",  // browser_tests
+      "2FC374607C2DF285634B67C64A2E356C607091C3",  // QuickOffice
+      "12E618C3C6E97495AAECF2AC12DEB082353241C6",  // QuickOffice component extension
+      "3727DD3E564B6055387425027AD74C58784ACC15",  // QuickOffice Editor
       "CBCC42ABED43A4B58FE3810E62AFFA010EB0349F"   // PDF
     ]
   },

@@ -12,7 +12,10 @@
 @protocol TabHeadersDelegate
 
 // Called to retrieve the height of the header view above |tab|.
-- (CGFloat)headerHeightForTab:(Tab*)tab;
+- (CGFloat)tabHeaderHeightForTab:(Tab*)tab;
+
+// Called to retrieve the height of the footer view below |tab|.
+- (CGFloat)tabFooterHeightForTab:(Tab*)tab;
 
 @end
 

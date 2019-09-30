@@ -23,6 +23,9 @@ namespace {
 const char kProductName[] = "HeadlessChrome";
 constexpr gfx::Size kDefaultWindowSize(800, 600);
 
+constexpr gfx::FontRenderParams::Hinting kDefaultFontRenderHinting =
+    gfx::FontRenderParams::Hinting::HINTING_FULL;
+
 std::string GetProductNameAndVersion() {
   return std::string(kProductName) + "/" + PRODUCT_VERSION;
 }
@@ -44,7 +47,8 @@ Options::Options(int argc, const char** argv)
 #endif
       product_name_and_version(GetProductNameAndVersion()),
       user_agent(content::BuildUserAgentFromProduct(product_name_and_version)),
-      window_size(kDefaultWindowSize) {
+      window_size(kDefaultWindowSize),
+      font_render_hinting(kDefaultFontRenderHinting) {
 }
 
 Options::Options(Options&& options) = default;
@@ -54,7 +58,7 @@ Options::~Options() = default;
 Options& Options::operator=(Options&& options) = default;
 
 bool Options::DevtoolsServerEnabled() {
-  return (!devtools_endpoint.IsEmpty() || devtools_socket_fd != 0);
+  return (devtools_pipe_enabled || !devtools_endpoint.IsEmpty());
 }
 
 Builder::Builder(int argc, const char** argv) : options_(argc, argv) {}
@@ -79,13 +83,18 @@ Builder& Builder::SetAcceptLanguage(const std::string& accept_language) {
   return *this;
 }
 
+Builder& Builder::SetEnableBeginFrameControl(bool enable_begin_frame_control) {
+  options_.enable_begin_frame_control = enable_begin_frame_control;
+  return *this;
+}
+
 Builder& Builder::EnableDevToolsServer(const net::HostPortPair& endpoint) {
   options_.devtools_endpoint = endpoint;
   return *this;
 }
 
-Builder& Builder::EnableDevToolsServer(const size_t socket_fd) {
-  options_.devtools_socket_fd = socket_fd;
+Builder& Builder::EnableDevToolsPipe() {
+  options_.devtools_pipe_enabled = true;
   return *this;
 }
 
@@ -163,9 +172,24 @@ Builder& Builder::SetIncognitoMode(bool incognito_mode) {
   return *this;
 }
 
+Builder& Builder::SetSitePerProcess(bool site_per_process) {
+  options_.site_per_process = site_per_process;
+  return *this;
+}
+
+Builder& Builder::SetBlockNewWebContents(bool block_new_web_contents) {
+  options_.block_new_web_contents = block_new_web_contents;
+  return *this;
+}
+
+Builder& Builder::SetInitialVirtualTime(base::Time initial_virtual_time) {
+  options_.initial_virtual_time = initial_virtual_time;
+  return *this;
+}
+
 Builder& Builder::SetOverrideWebPreferencesCallback(
-    const base::Callback<void(WebPreferences*)>& callback) {
-  options_.override_web_preferences_callback = callback;
+    base::RepeatingCallback<void(WebPreferences*)> callback) {
+  options_.override_web_preferences_callback = std::move(callback);
   return *this;
 }
 
@@ -174,8 +198,19 @@ Builder& Builder::SetCrashReporterEnabled(bool enabled) {
   return *this;
 }
 
+Builder& Builder::SetCaptureResourceMetadata(bool capture_resource_metadata) {
+  options_.capture_resource_metadata = capture_resource_metadata;
+  return *this;
+}
+
 Builder& Builder::SetCrashDumpsDir(const base::FilePath& dir) {
   options_.crash_dumps_dir = dir;
+  return *this;
+}
+
+Builder& Builder::SetFontRenderHinting(
+    gfx::FontRenderParams::Hinting font_render_hinting) {
+  options_.font_render_hinting = font_render_hinting;
   return *this;
 }
 

@@ -14,7 +14,6 @@
 #include "base/lazy_instance.h"
 #include "base/logging.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
 #include "base/message_loop/message_loop.h"
 #include "base/numerics/safe_conversions.h"
@@ -870,9 +869,7 @@ void GLHelper::DeleteTexture(GLuint texture_id) {
 }
 
 void GLHelper::GenerateSyncToken(gpu::SyncToken* sync_token) {
-  const uint64_t fence_sync = gl_->InsertFenceSyncCHROMIUM();
-  gl_->ShallowFlushCHROMIUM();
-  gl_->GenSyncTokenCHROMIUM(fence_sync, sync_token->GetData());
+  gl_->GenSyncTokenCHROMIUM(sync_token->GetData());
 }
 
 void GLHelper::WaitSyncToken(const gpu::SyncToken& sync_token) {
@@ -883,7 +880,7 @@ gpu::MailboxHolder GLHelper::ProduceMailboxHolderFromTexture(
     GLuint texture_id) {
   gpu::Mailbox mailbox;
   gl_->GenMailboxCHROMIUM(mailbox.name);
-  gl_->ProduceTextureDirectCHROMIUM(texture_id, GL_TEXTURE_2D, mailbox.name);
+  gl_->ProduceTextureDirectCHROMIUM(texture_id, mailbox.name);
 
   gpu::SyncToken sync_token;
   GenerateSyncToken(&sync_token);
@@ -897,8 +894,7 @@ GLuint GLHelper::ConsumeMailboxToTexture(const gpu::Mailbox& mailbox,
     return 0;
   if (sync_token.HasData())
     WaitSyncToken(sync_token);
-  GLuint texture =
-      gl_->CreateAndConsumeTextureCHROMIUM(GL_TEXTURE_2D, mailbox.name);
+  GLuint texture = gl_->CreateAndConsumeTextureCHROMIUM(mailbox.name);
   return texture;
 }
 
@@ -957,13 +953,6 @@ gfx::Size I420Converter::GetChromaPlaneTextureSize(
     const gfx::Size& output_size) {
   return gfx::Size((output_size.width() + 7) / 8,
                    (output_size.height() + 1) / 2);
-}
-
-// static
-uint32_t ReadbackYUVInterface::GetGrGLBackendStateChanges() {
-  return kTextureBinding_GrGLBackendState | kView_GrGLBackendState |
-         kVertex_GrGLBackendState | kProgram_GrGLBackendState |
-         kRenderTarget_GrGLBackendState;
 }
 
 namespace {
@@ -1218,7 +1207,7 @@ GLHelper::CopyTextureToImpl::CreateReadbackPipelineYUV(bool flip_vertically,
   if (supported == GLHelperReadbackSupport::SWIZZLE)
     swizzle = kSwizzleBGRA;
 
-  return base::MakeUnique<ReadbackYUVImpl>(
+  return std::make_unique<ReadbackYUVImpl>(
       gl_, this, helper_->scaler_impl_.get(), flip_vertically, swizzle,
       use_mrt && (max_draw_buffers_ >= 2));
 }

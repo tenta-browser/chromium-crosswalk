@@ -4,12 +4,15 @@
 
 package org.chromium.base;
 
-import android.content.SharedPreferences;
-import android.content.pm.PackageInfo;
-import android.content.pm.PackageManager;
+import android.annotation.SuppressLint;
+import android.content.Context;
+import android.content.res.AssetManager;
 import android.os.AsyncTask;
+import android.os.Build;
+import android.os.Build.VERSION_CODES;
 import android.os.Handler;
 import android.os.Looper;
+import android.support.v4.content.ContextCompat;
 
 import java.io.File;
 import java.io.FileOutputStream;
@@ -20,75 +23,41 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
-import java.util.concurrent.CancellationException;
-import java.util.concurrent.ExecutionException;
+import java.util.zip.ZipFile;
 
 /**
  * Handles extracting the necessary resources bundled in an APK and moving them to a location on
  * the file system accessible from the native code.
  */
 public class ResourceExtractor {
+    // Experience shows that on some devices, the PackageManager fails to properly extract
+    // native shared libraries to the /data partition at installation or upgrade time,
+    // which creates all kind of chaos (https://crbug.com/806998).
+    //
+    // We implement a fallback when we detect the issue by manually extracting the library
+    // into Chromium's own data directory, then retrying to load the new library from here.
+    //
+    // This will work for any device running K-. Starting with Android L, render processes
+    // cannot access the file system anymore, and extraction will always fail for them.
+    // However, the issue doesn't seem to appear in the field for Android L.
+    //
+    // Also, starting with M, the issue doesn't exist if shared libraries are stored
+    // uncompressed in the APK (as Chromium does), because the system linker can access them
+    // directly, and the PackageManager will thus never extract them in the first place.
+    static public final boolean PLATFORM_REQUIRES_NATIVE_FALLBACK_EXTRACTION =
+            Build.VERSION.SDK_INT <= VERSION_CODES.KITKAT;
 
-    private static final String TAG = "cr.base";
+    private static final String TAG = "base";
     private static final String ICU_DATA_FILENAME = "icudtl.dat";
     private static final String V8_NATIVES_DATA_FILENAME = "natives_blob.bin";
     private static final String V8_SNAPSHOT_DATA_FILENAME = "snapshot_blob.bin";
-    private static final String APP_VERSION_PREF = "org.chromium.base.ResourceExtractor.Version";
-    public static final String FALLBACK_LOCALE = "en-US";
-
-     private static ResourceInterceptor sInterceptor = null;
-
-    public interface ResourceInterceptor {
-        public boolean shouldInterceptLoadRequest(String resource);
-        public InputStream openRawResource(String resource);
-    }
-
-    private static boolean isAppDataFile(String file) {
-        return ICU_DATA_FILENAME.equals(file)
-                || V8_NATIVES_DATA_FILENAME.equals(file)
-                || V8_SNAPSHOT_DATA_FILENAME.equals(file);
-    }
-
-     /**
-     * Allow embedders to intercept the resource loading process. Embedders may
-     * want to load paks from res/raw instead of assets, since assets are not
-     * supported in Android library project.
-     * @param intercepter The instance of intercepter which provides the files list
-     * to intercept and the inputstream for the files it wants to intercept with.
-     */
-    public static void setResourceInterceptor(ResourceInterceptor interceptor) {
-        assert (sInstance == null || sInstance.mExtractTask == null)
-                : "Must be called before startExtractingResources is called";
-        sInterceptor = interceptor;
-    }
+    private static final String FALLBACK_LOCALE = "en-US";
+    private static final String LIBRARY_DIR = "native_libraries";
+    private static final int BUFFER_SIZE = 16 * 1024;
 
     private class ExtractTask extends AsyncTask<Void, Void, Void> {
-        private static final int BUFFER_SIZE = 16 * 1024;
 
         private final List<Runnable> mCompletionCallbacks = new ArrayList<Runnable>();
-
-        private void extractResourceHelper(InputStream is, File outFile, byte[] buffer)
-                throws IOException {
-            OutputStream os = null;
-            try {
-                os = new FileOutputStream(outFile);
-
-                int count = 0;
-                while ((count = is.read(buffer, 0, BUFFER_SIZE)) != -1) {
-                    os.write(buffer, 0, count);
-                }
-            } finally {
-                try {
-                    if (os != null) {
-                        os.close();
-                    }
-                } finally {
-                    if (is != null) {
-                        is.close();
-                    }
-                }
-            }
-        }
 
         private void doInBackgroundImpl() {
             final File outputDir = getOutputDir();
@@ -99,55 +68,34 @@ public class ResourceExtractor {
                 return;
             }
 
-            TraceEvent.begin("checkPakTimeStamp");
-            long curAppVersion = getApkVersion();
-            SharedPreferences sharedPrefs = ContextUtils.getAppSharedPreferences();
-            long prevAppVersion = sharedPrefs.getLong(APP_VERSION_PREF, 0);
-            boolean versionChanged = curAppVersion != prevAppVersion;
-            TraceEvent.end("checkPakTimeStamp");
-
-            if (versionChanged) {
-                deleteFiles();
-                // Use the version only to see if files should be deleted, not to skip extraction.
-                // We've seen files be corrupted, so always attempt extraction.
-                // http://crbug.com/606413
-                sharedPrefs.edit().putLong(APP_VERSION_PREF, curAppVersion).apply();
+            // Use a suffix for extracted files in order to guarantee that the version of the file
+            // on disk matches up with the version of the APK.
+            String extractSuffix = BuildInfo.getInstance().extractedFileSuffix;
+            String[] existingFileNames = outputDir.list();
+            boolean allFilesExist = existingFileNames != null;
+            if (allFilesExist) {
+                List<String> existingFiles = Arrays.asList(existingFileNames);
+                for (String assetName : mAssetsToExtract) {
+                    allFilesExist &= existingFiles.contains(assetName + extractSuffix);
+                }
+            }
+            // This is the normal case.
+            if (allFilesExist) {
+                return;
             }
 
             TraceEvent.begin("WalkAssets");
             byte[] buffer = new byte[BUFFER_SIZE];
-            try {
-                for (String assetName : mAssetsToExtract) {
-//                    File output = new File(outputDir, assetName);
-                    // Loading "icudtl.dat" from "assets/"" currently does not work with either
-                    // embedded mode (the file is in raw/res) or shared mode (the app's context is
-                    // used to retrieve the AssetManager, not Crosswalk's). We thus need to put
-                    // those special files in a different directory so that we leverage the fallback
-                    // code in Chromium to load these files from disk.
-                    File dir = isAppDataFile(assetName) ? appDataDir : outputDir;
-                    File output = new File(dir, assetName);
-
-                    // TODO(agrieve): It would be better to check that .length == expectedLength.
-                    //     http://crbug.com/606413
-                    if (output.length() != 0) {
-                        continue;
-                    }
-                    TraceEvent.begin("ExtractResource");
-//                    InputStream inputStream =
-//                            ContextUtils.getApplicationContext().getAssets().open(assetName);
-                    InputStream inputStream;
-                    if (sInterceptor != null
-                            && sInterceptor.shouldInterceptLoadRequest(assetName)) {
-                        inputStream = sInterceptor.openRawResource(assetName);
-                    } else {
-                        inputStream = ContextUtils.getApplicationContext().getAssets().open(assetName);
-                    }
-
-                    try {
-                        extractResourceHelper(inputStream, output, buffer);
-                    } finally {
-                        TraceEvent.end("ExtractResource");
-                    }
+            for (String assetName : mAssetsToExtract) {
+                File output = new File(outputDir, assetName + extractSuffix);
+                TraceEvent.begin("ExtractResource");
+                try (InputStream inputStream = assetManager.open(assetName)) {
+                    extractResourceHelper(inputStream, output, buffer);
+                } catch (IOException e) {
+                    // The app would just crash later if files are missing.
+                    throw new RuntimeException(e);
+                } finally {
+                    TraceEvent.end("ExtractResource");
                 }
             } catch (IOException e) {
                 // TODO(benm): See crbug/152413.
@@ -218,6 +166,68 @@ public class ResourceExtractor {
             sInstance = new ResourceExtractor();
         }
         return sInstance;
+    }
+
+    // Android system sometimes fails to extract libraries from APK (https://crbug.com/806998).
+    // This function manually extract libraries as a fallback.
+    @SuppressLint({"SetWorldReadable"})
+    public static String extractFileIfStale(
+            Context appContext, String pathWithinApk, File destDir) {
+        assert PLATFORM_REQUIRES_NATIVE_FALLBACK_EXTRACTION;
+
+        String apkPath = appContext.getApplicationInfo().sourceDir;
+        String fileName =
+                (new File(pathWithinApk)).getName() + BuildInfo.getInstance().extractedFileSuffix;
+        File libraryFile = new File(destDir, fileName);
+
+        if (!libraryFile.exists()) {
+            try (ZipFile zipFile = new ZipFile(apkPath);
+                    InputStream inputStream =
+                            zipFile.getInputStream(zipFile.getEntry(pathWithinApk))) {
+                if (zipFile.getEntry(pathWithinApk) == null)
+                    throw new RuntimeException("Cannot find ZipEntry" + pathWithinApk);
+
+                extractResourceHelper(inputStream, libraryFile, new byte[BUFFER_SIZE]);
+                libraryFile.setReadable(true, false);
+                libraryFile.setExecutable(true, false);
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
+        }
+        return libraryFile.getAbsolutePath();
+    }
+
+    public static File makeLibraryDirAndSetPermission() {
+        if (!ContextUtils.isIsolatedProcess()) {
+            File cacheDir = ContextCompat.getCodeCacheDir(ContextUtils.getApplicationContext());
+            File libDir = new File(cacheDir, LIBRARY_DIR);
+            cacheDir.mkdir();
+            cacheDir.setExecutable(true, false);
+            libDir.mkdir();
+            libDir.setExecutable(true, false);
+        }
+        return getLibraryDir();
+    }
+
+    private static File getLibraryDir() {
+        return new File(
+                ContextCompat.getCodeCacheDir(ContextUtils.getApplicationContext()), LIBRARY_DIR);
+    }
+
+    private static void extractResourceHelper(InputStream is, File outFile, byte[] buffer)
+            throws IOException {
+        File tmpOutputFile = new File(outFile.getPath() + ".tmp");
+        try (OutputStream os = new FileOutputStream(tmpOutputFile)) {
+            Log.i(TAG, "Extracting resource %s", outFile);
+
+            int count = 0;
+            while ((count = is.read(buffer, 0, BUFFER_SIZE)) != -1) {
+                os.write(buffer, 0, count);
+            }
+        }
+        if (!tmpOutputFile.renameTo(outFile)) {
+            throw new IOException();
+        }
     }
 
     private static String[] detectFilesToExtract() {
@@ -359,12 +369,29 @@ public class ResourceExtractor {
         if (dir.exists()) {
             File[] files = dir.listFiles();
 
+    private void deleteFiles(String[] existingFileNames) {
+        // These used to be extracted, but no longer are, so just clean them up.
+        deleteFile(new File(getAppDataDir(), ICU_DATA_FILENAME));
+        deleteFile(new File(getAppDataDir(), V8_NATIVES_DATA_FILENAME));
+        deleteFile(new File(getAppDataDir(), V8_SNAPSHOT_DATA_FILENAME));
+
+        if (PLATFORM_REQUIRES_NATIVE_FALLBACK_EXTRACTION) {
+            String suffix = BuildInfo.getInstance().extractedFileSuffix;
+            File[] files = getLibraryDir().listFiles();
             if (files != null) {
                 for (File file : files) {
-                    if (!file.delete()) {
-                        Log.e(TAG, "Unable to remove existing resource %s", file.getName());
+                    // The delete can happen on the same time as writing file from InputStream, use
+                    // contains() to avoid deleting the temp file.
+                    if (!file.getName().contains(suffix)) {
+                        deleteFile(file);
                     }
                 }
+            }
+        }
+
+        if (existingFileNames != null) {
+            for (String fileName : existingFileNames) {
+                deleteFile(new File(getOutputDir(), fileName));
             }
         }
     }

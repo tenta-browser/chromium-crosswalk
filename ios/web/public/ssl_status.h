@@ -50,8 +50,9 @@ struct SSLStatus {
   bool Equals(const SSLStatus& status) const {
     return security_style == status.security_style &&
            !!certificate == !!status.certificate &&
-           (certificate ? certificate->Equals(status.certificate.get())
-                        : true) &&
+           (certificate
+                ? certificate->EqualsIncludingChain(status.certificate.get())
+                : true) &&
            cert_status == status.cert_status &&
            content_status == status.content_status;
     // |cert_status_host| is not used for comparison intentionally.
@@ -61,7 +62,6 @@ struct SSLStatus {
   web::SecurityStyle security_style;
   scoped_refptr<net::X509Certificate> certificate;
   net::CertStatus cert_status;
-  int connection_status;
   // A combination of the ContentStatusFlags above.
   int content_status;
   // Host which was used for |cert_status| calculation. It is not an actual part

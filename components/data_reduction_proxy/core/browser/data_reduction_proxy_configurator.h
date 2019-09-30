@@ -12,7 +12,7 @@
 #include "base/macros.h"
 #include "base/threading/thread_checker.h"
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_server.h"
-#include "net/proxy/proxy_config.h"
+#include "net/proxy_resolution/proxy_config.h"
 
 namespace net {
 class NetLog;
@@ -22,6 +22,7 @@ class ProxyServer;
 namespace data_reduction_proxy {
 
 class DataReductionProxyEventCreator;
+class NetworkPropertiesManager;
 
 class DataReductionProxyConfigurator {
  public:
@@ -31,22 +32,17 @@ class DataReductionProxyConfigurator {
   DataReductionProxyConfigurator(net::NetLog* net_log,
                                  DataReductionProxyEventCreator* event_creator);
 
-  virtual ~DataReductionProxyConfigurator();
+  ~DataReductionProxyConfigurator();
 
   // Enables data reduction using the proxy servers in |proxies_for_http|.
-  // |secure_transport_restricted| indicates that proxies going over secure
-  // transports can not be used. |insecure_proxies_restricted| indicates that
-  // insecure proxies can not be used.
   // TODO: crbug.com/675764: Pass a vector of DataReductionProxyServer
   // instead of net::ProxyServer.
-  virtual void Enable(
-      bool secure_transport_restricted,
-      bool insecure_proxies_restricted,
-      const std::vector<DataReductionProxyServer>& proxies_for_http);
+  void Enable(const NetworkPropertiesManager& network_properties_manager,
+              const std::vector<DataReductionProxyServer>& proxies_for_http);
 
   // Constructs a proxy configuration suitable for disabling the Data Reduction
   // proxy.
-  virtual void Disable();
+  void Disable();
 
   // Sets the host patterns to bypass.
   //
@@ -60,12 +56,12 @@ class DataReductionProxyConfigurator {
   const net::ProxyConfig& GetProxyConfig() const;
 
   // Constructs a proxy configuration suitable for enabling the Data Reduction
-  // proxy. If true, |secure_transport_restricted| indicates that proxies going
-  // over secure transports (HTTPS, QUIC) should/can not be used. If true,
-  // |insecure_proxies_restricted| indicates that HTTP proxies cannot be used.
+  // proxy. |probe_url_config| should be true if the proxy config is needed for
+  // fetching the probe URL. If |probe_url_config| is true, then proxies that
+  // are temporarily disabled may be included in the generated proxy config.
   net::ProxyConfig CreateProxyConfig(
-      bool secure_transport_restricted,
-      bool insecure_proxies_restricted,
+      bool probe_url_config,
+      const NetworkPropertiesManager& network_properties_manager,
       const std::vector<DataReductionProxyServer>& proxies_for_http) const;
 
  private:
@@ -75,8 +71,8 @@ class DataReductionProxyConfigurator {
   net::ProxyBypassRules bypass_rules_;
 
   // The Data Reduction Proxy's configuration. This contains the list of
-  // acceptable data reduction proxies and bypass rules. It should be accessed
-  // only on the IO thread.
+  // acceptable data reduction proxies and bypass rules, or DIRECT if DRP is not
+  // enabled. It should be accessed only on the IO thread.
   net::ProxyConfig config_;
 
   // Used for logging of network- and Data Reduction Proxy-related events.

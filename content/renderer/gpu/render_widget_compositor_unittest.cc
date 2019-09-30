@@ -8,7 +8,6 @@
 
 #include "base/location.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
@@ -16,10 +15,9 @@
 #include "build/build_config.h"
 #include "cc/animation/animation_host.h"
 #include "cc/test/fake_layer_tree_frame_sink.h"
-#include "cc/test/test_context_provider.h"
-#include "cc/test/test_web_graphics_context_3d.h"
 #include "cc/trees/layer_tree_host.h"
 #include "components/viz/common/frame_sinks/copy_output_request.h"
+#include "components/viz/test/test_context_provider.h"
 #include "content/public/common/screen_info.h"
 #include "content/public/test/mock_render_thread.h"
 #include "content/renderer/render_widget.h"
@@ -27,6 +25,7 @@
 #include "gpu/GLES2/gl2extchromium.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/blink/public/platform/scheduler/test/renderer_scheduler_test_support.h"
 
 using testing::AllOf;
 using testing::Field;
@@ -62,7 +61,7 @@ class StubRenderWidgetCompositorDelegate
   void DidReceiveCompositorFrameAck() override {}
   bool IsClosing() const override { return false; }
   void RequestScheduleAnimation() override {}
-  void UpdateVisualState() override {}
+  void UpdateVisualState(VisualStateUpdate requested_update) override {}
   void WillBeginCompositorFrame() override {}
   std::unique_ptr<cc::SwapPromise> RequestCopyOfOutputForLayoutTest(
       std::unique_ptr<viz::CopyOutputRequest> request) override {
@@ -84,7 +83,7 @@ class FakeRenderWidgetCompositorDelegate
       return;
     }
 
-    auto context_provider = cc::TestContextProvider::Create();
+    auto context_provider = viz::TestContextProvider::Create();
     if (num_failures_since_last_success_ < num_failures_before_success_) {
       context_provider->UnboundTestContext3d()->loseContextCHROMIUM(
           GL_GUILTY_CONTEXT_RESET_ARB, GL_INNOCENT_CONTEXT_RESET_ARB);
@@ -165,7 +164,7 @@ class RenderWidgetLayerTreeFrameSink : public RenderWidgetCompositor {
     layer_tree_host()->SetVisible(true);
 
     base::TimeTicks some_time;
-    layer_tree_host()->Composite(some_time);
+    layer_tree_host()->Composite(some_time, true /* raster */);
   }
 
   void RequestNewLayerTreeFrameSink() override {
@@ -182,7 +181,7 @@ class RenderWidgetLayerTreeFrameSink : public RenderWidgetCompositor {
     } else {
       // Post the synchronous composite task so that it is not called
       // reentrantly as a part of RequestNewLayerTreeFrameSink.
-      base::ThreadTaskRunnerHandle::Get()->PostTask(
+      blink::scheduler::GetSingleThreadTaskRunnerForTesting()->PostTask(
           FROM_HERE,
           base::BindOnce(&RenderWidgetLayerTreeFrameSink::SynchronousComposite,
                          base::Unretained(this)));
@@ -236,12 +235,9 @@ class RenderWidgetLayerTreeFrameSinkTest : public testing::Test {
     auto animation_host = cc::AnimationHost::CreateMainInstance();
 
     ScreenInfo dummy_screen_info;
-    const float initial_device_scale_factor = 1.f;
-
     auto layer_tree_host = RenderWidgetCompositor::CreateLayerTreeHost(
         &render_widget_compositor_, &render_widget_compositor_,
-        animation_host.get(), &compositor_deps_, initial_device_scale_factor,
-        dummy_screen_info);
+        animation_host.get(), &compositor_deps_, dummy_screen_info);
     render_widget_compositor_.Initialize(std::move(layer_tree_host),
                                          std::move(animation_host));
   }
@@ -273,7 +269,7 @@ class RenderWidgetLayerTreeFrameSinkTest : public testing::Test {
     render_widget_compositor_.SetUp(expected_successes, kTries, failure_mode,
                                     &run_loop);
     render_widget_compositor_.SetVisible(true);
-    base::ThreadTaskRunnerHandle::Get()->PostTask(
+    blink::scheduler::GetSingleThreadTaskRunnerForTesting()->PostTask(
         FROM_HERE,
         base::BindOnce(&RenderWidgetLayerTreeFrameSink::SynchronousComposite,
                        base::Unretained(&render_widget_compositor_)));
@@ -359,11 +355,9 @@ TEST(RenderWidgetCompositorTest, VisibilityTest) {
 
   auto animation_host = cc::AnimationHost::CreateMainInstance();
   ScreenInfo dummy_screen_info;
-  const float initial_device_scale_factor = 1.f;
   auto layer_tree_host = RenderWidgetCompositor::CreateLayerTreeHost(
       &render_widget_compositor, &render_widget_compositor,
-      animation_host.get(), &compositor_deps, initial_device_scale_factor,
-      dummy_screen_info);
+      animation_host.get(), &compositor_deps, dummy_screen_info);
   render_widget_compositor.Initialize(std::move(layer_tree_host),
                                       std::move(animation_host));
 

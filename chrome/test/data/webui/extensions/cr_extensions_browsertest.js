@@ -38,6 +38,7 @@ var CrExtensionsBrowserTest = class extends PolymerTest {
       '../../../../../ui/webui/resources/js/promise_resolver.js',
       '../../../../../ui/webui/resources/js/webui_resource_test.js',
       '../fake_chrome_event.js',
+      '../settings/test_util.js',
       '../test_browser_proxy.js',
       'test_service.js',
     ]);
@@ -122,9 +123,19 @@ TEST_F('CrExtensionsToolbarTest', 'Layout', function() {
   this.runMochaTest(extension_toolbar_tests.TestNames.Layout);
 });
 
+TEST_F('CrExtensionsToolbarTest', 'DevModeToggle', function() {
+  this.runMochaTest(extension_toolbar_tests.TestNames.DevModeToggle);
+});
+
 TEST_F('CrExtensionsToolbarTest', 'ClickHandlers', function() {
   this.runMochaTest(extension_toolbar_tests.TestNames.ClickHandlers);
 });
+
+GEN('#if defined(OS_CHROMEOS)');
+TEST_F('CrExtensionsToolbarTest', 'KioskMode', function() {
+  this.runMochaTest(extension_toolbar_tests.TestNames.KioskMode);
+});
+GEN('#endif');
 
 ////////////////////////////////////////////////////////////////////////////////
 // Extension Item Tests
@@ -179,6 +190,10 @@ TEST_F('CrExtensionsItemsTest', 'EnableToggle', function() {
 
 TEST_F('CrExtensionsItemsTest', 'RemoveButton', function() {
   this.runMochaTest(extension_item_tests.TestNames.RemoveButton);
+});
+
+TEST_F('CrExtensionsItemsTest', 'HtmlInName', function() {
+  this.runMochaTest(extension_item_tests.TestNames.HtmlInName);
 });
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -288,8 +303,12 @@ var CrExtensionsLoadErrorTest = class extends CrExtensionsBrowserTest {
   }
 };
 
-TEST_F('CrExtensionsLoadErrorTest', 'Interaction', function() {
-  this.runMochaTest(extension_load_error_tests.TestNames.Interaction);
+TEST_F('CrExtensionsLoadErrorTest', 'RetryError', function() {
+  this.runMochaTest(extension_load_error_tests.TestNames.RetryError);
+});
+
+TEST_F('CrExtensionsLoadErrorTest', 'RetrySuccess', function() {
+  this.runMochaTest(extension_load_error_tests.TestNames.RetrySuccess);
 });
 
 TEST_F('CrExtensionsLoadErrorTest', 'CodeSection', function() {
@@ -308,6 +327,7 @@ var CrExtensionsManagerUnitTest = class extends CrExtensionsBrowserTest {
   /** @override */
   get extraLibraries() {
     return super.extraLibraries.concat([
+      'test_kiosk_browser_proxy.js',
       'extension_manager_unit_test.js',
     ]);
   }
@@ -345,6 +365,12 @@ TEST_F('CrExtensionsManagerUnitTest', 'ToggleIncognito', function() {
 TEST_F('CrExtensionsManagerUnitTest', 'EnableAndDisable', function() {
   this.runMochaTest(extension_manager_tests.TestNames.EnableAndDisable);
 });
+
+GEN('#if defined(OS_CHROMEOS)');
+TEST_F('CrExtensionsManagerUnitTest', 'KioskMode', function() {
+  this.runMochaTest(extension_manager_tests.TestNames.KioskMode);
+});
+GEN('#endif');
 
 
 var CrExtensionsManagerTestWithMultipleExtensionTypesInstalled =
@@ -572,11 +598,6 @@ TEST_F('CrExtensionsErrorPageTest', 'ErrorSelection', function() {
 
 var CrExtensionsCodeSectionTest = class extends CrExtensionsBrowserTest {
   /** @override */
-  get browsePreload() {
-    return 'chrome://extensions/code_section.html';
-  }
-
-  /** @override */
   get extraLibraries() {
     return super.extraLibraries.concat([
       'extension_code_section_test.js',
@@ -591,6 +612,10 @@ var CrExtensionsCodeSectionTest = class extends CrExtensionsBrowserTest {
 
 TEST_F('CrExtensionsCodeSectionTest', 'Layout', function() {
   this.runMochaTest(extension_code_section_tests.TestNames.Layout);
+});
+
+TEST_F('CrExtensionsCodeSectionTest', 'LongSource', function() {
+  this.runMochaTest(extension_code_section_tests.TestNames.LongSource);
 });
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -664,6 +689,57 @@ TEST_F('CrExtensionsViewManagerTest', 'EventFiringTest', function() {
 });
 
 ////////////////////////////////////////////////////////////////////////////////
+// Error Console tests
+
+var CrExtensionsErrorConsoleTest = class extends CrExtensionsBrowserTest {
+  /** @override */
+  get suiteName() {
+    return 'ErrorConsoleTests';
+  }
+
+  /** @override */
+  get browsePreload() {
+    return 'chrome://extensions/?errors=oehidglfoeondlkoeloailjdmmghacge';
+  }
+
+  /** @override */
+  testGenPreamble() {
+    GEN('  SetDevModeEnabled(true);');
+    GEN('  EnableErrorConsole();');
+    GEN('  InstallErrorsExtension();');
+  }
+
+  /** @override */
+  testGenPostamble() {
+    GEN('  SetDevModeEnabled(false);');  // Return this to default.
+  }
+};
+
+TEST_F('CrExtensionsErrorConsoleTest', 'TestUpDownErrors', function() {
+  const STACK_ERRORS = '* /deep/ li';
+  const ACTIVE_ERROR_IN_STACK = '* /deep/ li[tabindex="0"]';
+
+  let initialFocus = document.querySelector(ACTIVE_ERROR_IN_STACK);
+  assertTrue(!!initialFocus);
+  assertEquals(1, document.querySelectorAll(ACTIVE_ERROR_IN_STACK).length);
+  assertEquals(4, document.querySelectorAll(STACK_ERRORS).length);
+
+  // Pressing up when the first item is focused should NOT change focus.
+  MockInteractions.keyDownOn(initialFocus, 38, '', 'ArrowUp');
+  assertEquals(initialFocus, document.querySelector(ACTIVE_ERROR_IN_STACK));
+
+  // Pressing down when the first item is focused should change focus.
+  MockInteractions.keyDownOn(initialFocus, 40, '', 'ArrowDown');
+  assertNotEquals(initialFocus, document.querySelector(ACTIVE_ERROR_IN_STACK));
+
+  // Pressing up when the second item is focused should focus the first again.
+  MockInteractions.keyDownOn(initialFocus, 38, '', 'ArrowUp');
+  assertEquals(initialFocus, document.querySelector(ACTIVE_ERROR_IN_STACK));
+
+  testDone();
+});
+
+////////////////////////////////////////////////////////////////////////////////
 // extensions-toggle-row tests.
 
 var CrExtensionsToggleRowTest = class extends CrExtensionsBrowserTest {
@@ -675,7 +751,6 @@ var CrExtensionsToggleRowTest = class extends CrExtensionsBrowserTest {
   /** @override */
   get extraLibraries() {
     return super.extraLibraries.concat([
-      '../settings/test_util.js',
       'toggle_row_test.js',
     ]);
   }
@@ -684,3 +759,53 @@ var CrExtensionsToggleRowTest = class extends CrExtensionsBrowserTest {
 TEST_F('CrExtensionsToggleRowTest', 'ToggleRowTest', function() {
   mocha.run();
 });
+
+////////////////////////////////////////////////////////////////////////////////
+// kiosk mode tests.
+
+GEN('#if defined(OS_CHROMEOS)');
+
+var CrExtensionsKioskModeTest = class extends CrExtensionsBrowserTest {
+  /** @override */
+  get browsePreload() {
+    return 'chrome://extensions/kiosk_dialog.html';
+  }
+
+  /** @override */
+  get extraLibraries() {
+    return super.extraLibraries.concat([
+      'test_kiosk_browser_proxy.js',
+      'extension_kiosk_mode_test.js',
+    ]);
+  }
+  /** @override */
+  get suiteName() {
+    return extension_kiosk_mode_tests.suiteName;
+  }
+};
+
+TEST_F('CrExtensionsKioskModeTest', 'AddButton', function() {
+  this.runMochaTest(extension_kiosk_mode_tests.TestNames.AddButton);
+});
+
+TEST_F('CrExtensionsKioskModeTest', 'Layout', function() {
+  this.runMochaTest(extension_kiosk_mode_tests.TestNames.Layout);
+});
+
+TEST_F('CrExtensionsKioskModeTest', 'AutoLaunch', function() {
+  this.runMochaTest(extension_kiosk_mode_tests.TestNames.AutoLaunch);
+});
+
+TEST_F('CrExtensionsKioskModeTest', 'Bailout', function() {
+  this.runMochaTest(extension_kiosk_mode_tests.TestNames.Bailout);
+});
+
+TEST_F('CrExtensionsKioskModeTest', 'Updated', function() {
+  this.runMochaTest(extension_kiosk_mode_tests.TestNames.Updated);
+});
+
+TEST_F('CrExtensionsKioskModeTest', 'AddError', function() {
+  this.runMochaTest(extension_kiosk_mode_tests.TestNames.AddError);
+});
+
+GEN('#endif');

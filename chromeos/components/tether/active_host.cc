@@ -7,16 +7,28 @@
 #include "base/bind.h"
 #include "base/memory/ptr_util.h"
 #include "base/values.h"
+#include "chromeos/components/proximity_auth/logging/logging.h"
 #include "chromeos/components/tether/pref_names.h"
 #include "chromeos/components/tether/tether_host_fetcher.h"
 #include "components/cryptauth/remote_device.h"
 #include "components/prefs/pref_registry_simple.h"
 #include "components/prefs/pref_service.h"
-#include "components/proximity_auth/logging/logging.h"
 
 namespace chromeos {
 
 namespace tether {
+
+// static
+std::string ActiveHost::StatusToString(const ActiveHostStatus& status) {
+  switch (status) {
+    case ActiveHostStatus::DISCONNECTED:
+      return "DISCONNECTED";
+    case ActiveHostStatus::CONNECTING:
+      return "CONNECTING";
+    case ActiveHostStatus::CONNECTED:
+      return "CONNECTED";
+  }
+}
 
 bool operator==(const ActiveHost::ActiveHostChangeInfo& first,
                 const ActiveHost::ActiveHostChangeInfo& second) {

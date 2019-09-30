@@ -8,13 +8,14 @@
 #include "chrome/browser/ui/test/test_browser_dialog.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
 #include "chrome/browser/ui/views/toolbar/toolbar_view.h"
+#include "chrome/test/views/scoped_macviews_browser_mode.h"
 
 class OutdatedUpgradeBubbleTest : public DialogBrowserTest {
  public:
   OutdatedUpgradeBubbleTest() = default;
 
   // DialogBrowserTest:
-  void ShowDialog(const std::string& name) override {
+  void ShowUi(const std::string& name) override {
     ToolbarView* toolbar_view =
         BrowserView::GetBrowserViewForBrowser(browser())->toolbar();
     if (name == "Outdated")
@@ -28,20 +29,34 @@ class OutdatedUpgradeBubbleTest : public DialogBrowserTest {
   }
 
  private:
+  test::ScopedMacViewsBrowserMode views_mode_{true};
+
   DISALLOW_COPY_AND_ASSIGN(OutdatedUpgradeBubbleTest);
 };
 
-IN_PROC_BROWSER_TEST_F(OutdatedUpgradeBubbleTest, InvokeDialog_Outdated) {
-  RunDialog();
+#if defined(OS_MACOSX)
+// This bubble doesn't show on Mac right now: https://crbug.com/764111
+#define MAYBE_InvokeUi_Outdated DISABLED_InvokeUi_Outdated
+#else
+#define MAYBE_InvokeUi_Outdated InvokeUi_Outdated
+#endif
+IN_PROC_BROWSER_TEST_F(OutdatedUpgradeBubbleTest, MAYBE_InvokeUi_Outdated) {
+  ShowAndVerifyUi();
 }
 
-IN_PROC_BROWSER_TEST_F(OutdatedUpgradeBubbleTest, InvokeDialog_NoAutoUpdate) {
-  RunDialog();
+#if defined(OS_MACOSX)
+// This bubble doesn't show on Mac right now: https://crbug.com/764111
+#define MAYBE_InvokeUi_NoAutoUpdate DISABLED_InvokeUi_NoAutoUpdate
+#else
+#define MAYBE_InvokeUi_NoAutoUpdate InvokeUi_NoAutoUpdate
+#endif
+IN_PROC_BROWSER_TEST_F(OutdatedUpgradeBubbleTest, MAYBE_InvokeUi_NoAutoUpdate) {
+  ShowAndVerifyUi();
 }
 
 // The critical upgrade dialog is intentionally only shown on Windows.
 #if defined(OS_WIN)
-IN_PROC_BROWSER_TEST_F(OutdatedUpgradeBubbleTest, InvokeDialog_Critical) {
-  RunDialog();
+IN_PROC_BROWSER_TEST_F(OutdatedUpgradeBubbleTest, InvokeUi_Critical) {
+  ShowAndVerifyUi();
 }
 #endif

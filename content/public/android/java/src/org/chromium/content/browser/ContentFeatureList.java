@@ -30,7 +30,8 @@ public abstract class ContentFeatureList {
     }
 
     // Alphabetical:
-    public static final String REQUEST_UNBUFFERED_DISPATCH = "RequestUnbufferedDispatch";
+    public static final String ENHANCED_SELECTION_INSERTION_HANDLE =
+            "EnhancedSelectionInsertionHandle";
 
     private static native boolean nativeIsEnabled(String featureName);
 }

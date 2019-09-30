@@ -9,7 +9,6 @@
 
 #include "base/files/file_path.h"
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "base/posix/eintr_wrapper.h"
 #include "base/process/kill.h"
 #include "base/strings/string_util.h"
@@ -268,11 +267,11 @@ Status ChromeDesktopImpl::SetWindowRect(const std::string& target_id,
   if (status.IsError())
     return status;
 
-  auto bounds = base::MakeUnique<base::DictionaryValue>();
+  auto bounds = std::make_unique<base::DictionaryValue>();
 
   // fully exit fullscreen
   if (window.state != "normal") {
-    auto bounds = base::MakeUnique<base::DictionaryValue>();
+    auto bounds = std::make_unique<base::DictionaryValue>();
     bounds->SetString("windowState", "normal");
     status = SetWindowBounds(window.id, std::move(bounds));
     if (status.IsError())
@@ -308,14 +307,14 @@ Status ChromeDesktopImpl::SetWindowPosition(const std::string& target_id,
 
   if (window.state != "normal") {
     // restore window to normal first to allow position change.
-    auto bounds = base::MakeUnique<base::DictionaryValue>();
+    auto bounds = std::make_unique<base::DictionaryValue>();
     bounds->SetString("windowState", "normal");
     status = SetWindowBounds(window.id, std::move(bounds));
     if (status.IsError())
       return status;
   }
 
-  auto bounds = base::MakeUnique<base::DictionaryValue>();
+  auto bounds = std::make_unique<base::DictionaryValue>();
   bounds->SetInteger("left", x);
   bounds->SetInteger("top", y);
   return SetWindowBounds(window.id, std::move(bounds));
@@ -331,14 +330,14 @@ Status ChromeDesktopImpl::SetWindowSize(const std::string& target_id,
 
   if (window.state != "normal") {
     // restore window to normal first to allow size change.
-    auto bounds = base::MakeUnique<base::DictionaryValue>();
+    auto bounds = std::make_unique<base::DictionaryValue>();
     bounds->SetString("windowState", "normal");
     status = SetWindowBounds(window.id, std::move(bounds));
     if (status.IsError())
       return status;
   }
 
-  auto bounds = base::MakeUnique<base::DictionaryValue>();
+  auto bounds = std::make_unique<base::DictionaryValue>();
   bounds->SetInteger("width", width);
   bounds->SetInteger("height", height);
   return SetWindowBounds(window.id, std::move(bounds));
@@ -356,15 +355,38 @@ Status ChromeDesktopImpl::MaximizeWindow(const std::string& target_id) {
   if (window.state != "normal") {
     // always restore window to normal first, since chrome ui doesn't allow
     // maximizing a minimized or fullscreen window.
-    auto bounds = base::MakeUnique<base::DictionaryValue>();
+    auto bounds = std::make_unique<base::DictionaryValue>();
     bounds->SetString("windowState", "normal");
     status = SetWindowBounds(window.id, std::move(bounds));
     if (status.IsError())
       return status;
   }
 
-  auto bounds = base::MakeUnique<base::DictionaryValue>();
+  auto bounds = std::make_unique<base::DictionaryValue>();
   bounds->SetString("windowState", "maximized");
+  return SetWindowBounds(window.id, std::move(bounds));
+}
+
+Status ChromeDesktopImpl::MinimizeWindow(const std::string& target_id) {
+  Window window;
+  Status status = GetWindow(target_id, &window);
+  if (status.IsError())
+    return status;
+
+  if (window.state == "minimized")
+    return Status(kOk);
+
+  if (window.state != "normal") {
+    // restore window to normal first
+    auto bounds = std::make_unique<base::DictionaryValue>();
+    bounds->SetString("windowState", "normal");
+    status = SetWindowBounds(window.id, std::move(bounds));
+    if (status.IsError())
+      return status;
+  }
+
+  auto bounds = std::make_unique<base::DictionaryValue>();
+  bounds->SetString("windowState", "minimized");
   return SetWindowBounds(window.id, std::move(bounds));
 }
 
@@ -378,14 +400,14 @@ Status ChromeDesktopImpl::FullScreenWindow(const std::string& target_id) {
     return Status(kOk);
 
   if (window.state != "normal") {
-    auto bounds = base::MakeUnique<base::DictionaryValue>();
+    auto bounds = std::make_unique<base::DictionaryValue>();
     bounds->SetString("windowState", "normal");
     status = SetWindowBounds(window.id, std::move(bounds));
     if (status.IsError())
       return status;
   }
 
-  auto bounds = base::MakeUnique<base::DictionaryValue>();
+  auto bounds = std::make_unique<base::DictionaryValue>();
   bounds->SetString("windowState", "fullscreen");
   return SetWindowBounds(window.id, std::move(bounds));
 }

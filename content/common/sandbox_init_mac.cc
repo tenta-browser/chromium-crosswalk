@@ -4,11 +4,18 @@
 
 #include "content/public/common/sandbox_init.h"
 
-#include "base/callback.h"
+#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/files/file_path.h"
 #include "base/logging.h"
 #include "content/public/common/content_switches.h"
+#include "gpu/config/gpu_feature_info.h"
+#include "gpu/config/gpu_info.h"
+#include "gpu/config/gpu_info_collector.h"
+#include "gpu/config/gpu_switches.h"
+#include "gpu/config/gpu_switching.h"
+#include "gpu/config/gpu_util.h"
+#include "gpu/ipc/common/gpu_preferences_util.h"
 #include "media/gpu/vt_video_decode_accelerator_mac.h"
 #include "sandbox/mac/seatbelt.h"
 #include "services/service_manager/sandbox/mac/sandbox_mac.h"
@@ -29,6 +36,31 @@ base::OnceClosure MaybeWrapWithGPUSandboxHook(
 
   return base::Bind(
       [](base::OnceClosure arg) {
+        // We need to gather GPUInfo and compute GpuFeatureInfo here, so we can
+        // decide if initializing core profile or compatibility profile GL,
+        // depending on gpu driver bug workarounds.
+        gpu::GPUInfo gpu_info;
+        auto* command_line = base::CommandLine::ForCurrentProcess();
+        gpu::CollectBasicGraphicsInfo(command_line, &gpu_info);
+        gpu::CacheGPUInfo(gpu_info);
+        gpu::GpuPreferences gpu_preferences;
+        if (command_line->HasSwitch(switches::kGpuPreferences)) {
+          std::string value =
+              command_line->GetSwitchValueASCII(switches::kGpuPreferences);
+          bool success =
+              gpu::SwitchValueToGpuPreferences(value, &gpu_preferences);
+          CHECK(success);
+        }
+        gpu::GpuFeatureInfo gpu_feature_info = gpu::ComputeGpuFeatureInfo(
+            gpu_info, gpu_preferences.ignore_gpu_blacklist,
+            gpu_preferences.disable_gpu_driver_bug_workarounds,
+            gpu_preferences.log_gpu_control_list_decisions, command_line,
+            nullptr);
+        gpu::CacheGpuFeatureInfo(gpu_feature_info);
+        if (gpu::SwitchableGPUsSupported(gpu_info, *command_line)) {
+          gpu::InitializeSwitchableGPUs(
+              gpu_feature_info.enabled_gpu_driver_bug_workarounds);
+        }
         // Preload either the desktop GL or the osmesa so, depending on the
         // --use-gl flag.
         gl::init::InitializeGLOneOff();
@@ -43,23 +75,13 @@ base::OnceClosure MaybeWrapWithGPUSandboxHook(
       base::Passed(std::move(original)));
 }
 
-// Fill in |sandbox_type| and |allowed_dir| based on the command line,  returns
-// false if the current process type doesn't need to be sandboxed or if the
-// sandbox was disabled from the command line.
-bool GetSandboxInfoFromCommandLine(service_manager::SandboxType* sandbox_type,
-                                   base::FilePath* allowed_dir) {
+// Fill in |sandbox_type| based on the command line.  Returns false if the
+// current process type doesn't need to be sandboxed or if the sandbox was
+// disabled from the command line.
+bool GetSandboxTypeFromCommandLine(service_manager::SandboxType* sandbox_type) {
   DCHECK(sandbox_type);
-  DCHECK(allowed_dir);
 
-  *allowed_dir = base::FilePath();  // Empty by default.
   auto* command_line = base::CommandLine::ForCurrentProcess();
-  std::string process_type =
-      command_line->GetSwitchValueASCII(switches::kProcessType);
-  if (process_type == switches::kUtilityProcess) {
-    *allowed_dir =
-        command_line->GetSwitchValuePath(switches::kUtilityProcessAllowedDir);
-  }
-
   *sandbox_type = service_manager::SandboxTypeFromCommandLine(*command_line);
   if (service_manager::IsUnsandboxedSandboxType(*sandbox_type))
     return false;
@@ -75,22 +97,19 @@ bool GetSandboxInfoFromCommandLine(service_manager::SandboxType* sandbox_type,
 
 }  // namespace
 
-bool InitializeSandbox(service_manager::SandboxType sandbox_type,
-                       const base::FilePath& allowed_dir) {
+bool InitializeSandbox(service_manager::SandboxType sandbox_type) {
   return service_manager::Sandbox::Initialize(
-      sandbox_type, allowed_dir,
+      sandbox_type,
       MaybeWrapWithGPUSandboxHook(sandbox_type, base::OnceClosure()));
 }
 
 bool InitializeSandbox(base::OnceClosure post_warmup_hook) {
   service_manager::SandboxType sandbox_type =
       service_manager::SANDBOX_TYPE_INVALID;
-  base::FilePath allowed_dir;
-  return !GetSandboxInfoFromCommandLine(&sandbox_type, &allowed_dir) ||
+  return !GetSandboxTypeFromCommandLine(&sandbox_type) ||
          service_manager::Sandbox::Initialize(
-             sandbox_type, allowed_dir,
-             MaybeWrapWithGPUSandboxHook(sandbox_type,
-                                         std::move(post_warmup_hook)));
+             sandbox_type, MaybeWrapWithGPUSandboxHook(
+                               sandbox_type, std::move(post_warmup_hook)));
 }
 
 bool InitializeSandbox() {

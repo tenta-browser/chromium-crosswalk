@@ -119,14 +119,10 @@ struct AXTreeUpdateState {
   std::set<int> removed_node_ids;
 };
 
-AXTreeDelegate::AXTreeDelegate() {
-}
+AXTreeDelegate::AXTreeDelegate() = default;
+AXTreeDelegate::~AXTreeDelegate() = default;
 
-AXTreeDelegate::~AXTreeDelegate() {
-}
-
-AXTree::AXTree()
-    : delegate_(NULL), root_(NULL) {
+AXTree::AXTree() {
   AXNodeData root;
   root.id = -1;
 
@@ -136,8 +132,7 @@ AXTree::AXTree()
   CHECK(Unserialize(initial_state)) << error();
 }
 
-AXTree::AXTree(const AXTreeUpdate& initial_state)
-    : delegate_(NULL), root_(NULL) {
+AXTree::AXTree(const AXTreeUpdate& initial_state) {
   CHECK(Unserialize(initial_state)) << error();
 }
 
@@ -151,8 +146,8 @@ void AXTree::SetDelegate(AXTreeDelegate* delegate) {
 }
 
 AXNode* AXTree::GetFromId(int32_t id) const {
-  base::hash_map<int32_t, AXNode*>::const_iterator iter = id_map_.find(id);
-  return iter != id_map_.end() ? iter->second : NULL;
+  auto iter = id_map_.find(id);
+  return iter != id_map_.end() ? iter->second : nullptr;
 }
 
 void AXTree::UpdateData(const AXTreeData& new_data) {
@@ -224,8 +219,10 @@ gfx::RectF AXTree::RelativeToTreeBounds(const AXNode* node,
 
     int scroll_x = 0;
     int scroll_y = 0;
-    if (container->data().GetIntAttribute(ui::AX_ATTR_SCROLL_X, &scroll_x) &&
-        container->data().GetIntAttribute(ui::AX_ATTR_SCROLL_Y, &scroll_y)) {
+    if (container->data().GetIntAttribute(ax::mojom::IntAttribute::kScrollX,
+                                          &scroll_x) &&
+        container->data().GetIntAttribute(ax::mojom::IntAttribute::kScrollY,
+                                          &scroll_y)) {
       bounds.Offset(-scroll_x, -scroll_y);
     }
 
@@ -236,9 +233,8 @@ gfx::RectF AXTree::RelativeToTreeBounds(const AXNode* node,
     // Calculate the clipped bounds to determine offscreen state.
     gfx::RectF clipped = bounds;
     // If this is the root web area, make sure we clip the node to fit.
-    // This is disabled as a bugfix for Chrome 63, see crbug.com/786164
-    // if (false) {
-    if (container->data().GetBoolAttribute(ui::AX_ATTR_CLIPS_CHILDREN)) {
+    if (container->data().GetBoolAttribute(
+            ax::mojom::BoolAttribute::kClipsChildren)) {
       if (!intersection.IsEmpty()) {
         // We can simply clip it to the container.
         clipped = intersection;
@@ -265,15 +261,16 @@ gfx::RectF AXTree::RelativeToTreeBounds(const AXNode* node,
     if (clip_bounds)
       bounds = clipped;
 
-    if (container->data().GetBoolAttribute(ui::AX_ATTR_CLIPS_CHILDREN) &&
+    if (container->data().GetBoolAttribute(
+            ax::mojom::BoolAttribute::kClipsChildren) &&
         intersection.IsEmpty() && !clipped.IsEmpty()) {
       // If it is offscreen with respect to its parent, and the node itself is
       // not empty, label it offscreen.
       // Here we are extending the definition of offscreen to include elements
       // that are clipped by their parents in addition to those clipped by
       // the rootWebArea.
-      // No need to update |offscreen| if |clipped| is not empty, because it
-      // should be false by default.
+      // No need to update |offscreen| if |intersection| is not empty, because
+      // it should be false by default.
       if (offscreen != nullptr)
         *offscreen |= true;
     }
@@ -290,16 +287,34 @@ gfx::RectF AXTree::GetTreeBounds(const AXNode* node,
   return RelativeToTreeBounds(node, gfx::RectF(), offscreen, clip_bounds);
 }
 
-std::set<int32_t> AXTree::GetReverseRelations(AXIntAttribute attr,
-                                              int32_t dst_id) {
+std::set<int32_t> AXTree::GetReverseRelations(ax::mojom::IntAttribute attr,
+                                              int32_t dst_id) const {
   DCHECK(IsNodeIdIntAttribute(attr));
-  return int_reverse_relations_[attr][dst_id];
+
+  // Conceptually, this is the "const" version of:
+  //   return int_reverse_relations_[attr][dst_id];
+  const auto& attr_relations = int_reverse_relations_.find(attr);
+  if (attr_relations != int_reverse_relations_.end()) {
+    const auto& result = attr_relations->second.find(dst_id);
+    if (result != attr_relations->second.end())
+      return result->second;
+  }
+  return std::set<int32_t>();
 }
 
-std::set<int32_t> AXTree::GetReverseRelations(AXIntListAttribute attr,
-                                              int32_t dst_id) {
+std::set<int32_t> AXTree::GetReverseRelations(ax::mojom::IntListAttribute attr,
+                                              int32_t dst_id) const {
   DCHECK(IsNodeIdIntListAttribute(attr));
-  return intlist_reverse_relations_[attr][dst_id];
+
+  // Conceptually, this is the "const" version of:
+  //   return intlist_reverse_relations_[attr][dst_id];
+  const auto& attr_relations = intlist_reverse_relations_.find(attr);
+  if (attr_relations != intlist_reverse_relations_.end()) {
+    const auto& result = attr_relations->second.find(dst_id);
+    if (result != attr_relations->second.end())
+      return result->second;
+  }
+  return std::set<int32_t>();
 }
 
 bool AXTree::Unserialize(const AXTreeUpdate& update) {
@@ -313,6 +328,9 @@ bool AXTree::Unserialize(const AXTreeUpdate& update) {
   if (update.has_tree_data)
     UpdateData(update.tree_data);
 
+  // We distinguish between updating the root, e.g. changing its children or
+  // some of its attributes, or replacing the root completely.
+  bool root_updated = false;
   if (update.node_id_to_clear != 0) {
     AXNode* node = GetFromId(update.node_id_to_clear);
     if (!node) {
@@ -320,13 +338,25 @@ bool AXTree::Unserialize(const AXTreeUpdate& update) {
                                   update.node_id_to_clear);
       return false;
     }
+
+    // Only destroy the root if the root was replaced and not if it's simply
+    // updated. To figure out if  the root was simply updated, we compare the ID
+    // of the new root with the existing root ID.
     if (node == root_) {
-      // Clear root_ before calling DestroySubtree so that root_ doesn't
-      // ever point to an invalid node.
-      AXNode* old_root = root_;
-      root_ = nullptr;
-      DestroySubtree(old_root, &update_state);
-    } else {
+      if (update.root_id != old_root_id) {
+        // Clear root_ before calling DestroySubtree so that root_ doesn't ever
+        // point to an invalid node.
+        AXNode* old_root = root_;
+        root_ = nullptr;
+        DestroySubtree(old_root, &update_state);
+      } else {
+        root_updated = true;
+      }
+    }
+
+    // If the root has simply been updated, we treat it like an update to any
+    // other node.
+    if (root_ && (node != root_ || root_updated)) {
       for (int i = 0; i < node->child_count(); ++i)
         DestroySubtree(node->ChildAtIndex(i), &update_state);
       std::vector<AXNode*> children;
@@ -349,10 +379,8 @@ bool AXTree::Unserialize(const AXTreeUpdate& update) {
 
   if (!update_state.pending_nodes.empty()) {
     error_ = "Nodes left pending by the update:";
-    for (std::set<AXNode*>::iterator iter = update_state.pending_nodes.begin();
-         iter != update_state.pending_nodes.end(); ++iter) {
-      error_ += base::StringPrintf(" %d", (*iter)->id());
-    }
+    for (const AXNode* pending : update_state.pending_nodes)
+      error_ += base::StringPrintf(" %d", pending->id());
     return false;
   }
 
@@ -373,17 +401,23 @@ bool AXTree::Unserialize(const AXTreeUpdate& update) {
       if (is_new_node) {
         if (is_reparented_node) {
           // A reparented subtree is any new node whose parent either doesn't
-          // exist, or is not new.
+          // exist, or whose parent is not new.
+          // Note that we also need to check for the special case when we update
+          // the root without replacing it.
           bool is_subtree = !node->parent() ||
-                            new_nodes.find(node->parent()) == new_nodes.end();
+                            new_nodes.find(node->parent()) == new_nodes.end() ||
+                            (node->parent() == root_ && root_updated);
           change = is_subtree ? AXTreeDelegate::SUBTREE_REPARENTED
                               : AXTreeDelegate::NODE_REPARENTED;
         } else {
           // A new subtree is any new node whose parent is either not new, or
           // whose parent happens to be new only because it has been reparented.
+          // Note that we also need to check for the special case when we update
+          // the root without replacing it.
           bool is_subtree = !node->parent() ||
                             new_nodes.find(node->parent()) == new_nodes.end() ||
-                            update_state.HasRemovedNode(node->parent());
+                            update_state.HasRemovedNode(node->parent()) ||
+                            (node->parent() == root_ && root_updated);
           change = is_subtree ? AXTreeDelegate::SUBTREE_CREATED
                               : AXTreeDelegate::NODE_CREATED;
         }
@@ -430,6 +464,10 @@ bool AXTree::UpdateNode(const AXNodeData& src,
   AXNode* node = GetFromId(src.id);
   if (node) {
     update_state->pending_nodes.erase(node);
+
+    // TODO(accessibility): CallNodeChangeCallbacks should not pass |node|,
+    // since the tree and the node data are not yet in a consistent
+    // state. Possibly only pass id.
     if (update_state->new_nodes.find(node) == update_state->new_nodes.end())
       CallNodeChangeCallbacks(node, src);
     UpdateReverseRelations(node, src);
@@ -441,7 +479,7 @@ bool AXTree::UpdateNode(const AXNodeData& src,
       return false;
     }
 
-    update_state->new_root = CreateNode(NULL, src.id, 0, update_state);
+    update_state->new_root = CreateNode(nullptr, src.id, 0, update_state);
     node = update_state->new_root;
     update_state->new_nodes.insert(node);
     UpdateReverseRelations(node, src);
@@ -505,14 +543,15 @@ void AXTree::CallNodeChangeCallbacks(AXNode* node, const AXNodeData& new_data) {
     delegate_->OnRoleChanged(this, node, old_data.role, new_data.role);
 
   if (old_data.state != new_data.state) {
-    for (int i = AX_STATE_NONE + 1; i <= AX_STATE_LAST; ++i) {
-      AXState state = static_cast<AXState>(i);
+    for (int32_t i = static_cast<int32_t>(ax::mojom::State::kNone) + 1;
+         i <= static_cast<int32_t>(ax::mojom::State::kMaxValue); ++i) {
+      ax::mojom::State state = static_cast<ax::mojom::State>(i);
       if (old_data.HasState(state) != new_data.HasState(state))
         delegate_->OnStateChanged(this, node, state, new_data.HasState(state));
     }
   }
 
-  auto string_callback = [this, node](AXStringAttribute attr,
+  auto string_callback = [this, node](ax::mojom::StringAttribute attr,
                                       const std::string& old_string,
                                       const std::string& new_string) {
     delegate_->OnStringAttributeChanged(this, node, attr, old_string,
@@ -522,14 +561,15 @@ void AXTree::CallNodeChangeCallbacks(AXNode* node, const AXNodeData& new_data) {
                                new_data.string_attributes, std::string(),
                                string_callback);
 
-  auto bool_callback = [this, node](AXBoolAttribute attr, const bool& old_bool,
+  auto bool_callback = [this, node](ax::mojom::BoolAttribute attr,
+                                    const bool& old_bool,
                                     const bool& new_bool) {
     delegate_->OnBoolAttributeChanged(this, node, attr, new_bool);
   };
   CallIfAttributeValuesChanged(old_data.bool_attributes,
                                new_data.bool_attributes, false, bool_callback);
 
-  auto float_callback = [this, node](AXFloatAttribute attr,
+  auto float_callback = [this, node](ax::mojom::FloatAttribute attr,
                                      const float& old_float,
                                      const float& new_float) {
     delegate_->OnFloatAttributeChanged(this, node, attr, old_float, new_float);
@@ -537,15 +577,15 @@ void AXTree::CallNodeChangeCallbacks(AXNode* node, const AXNodeData& new_data) {
   CallIfAttributeValuesChanged(old_data.float_attributes,
                                new_data.float_attributes, 0.0f, float_callback);
 
-  auto int_callback = [this, node](AXIntAttribute attr, const int& old_int,
-                                   const int& new_int) {
+  auto int_callback = [this, node](ax::mojom::IntAttribute attr,
+                                   const int& old_int, const int& new_int) {
     delegate_->OnIntAttributeChanged(this, node, attr, old_int, new_int);
   };
   CallIfAttributeValuesChanged(old_data.int_attributes, new_data.int_attributes,
                                0, int_callback);
 
   auto intlist_callback = [this, node](
-                              AXIntListAttribute attr,
+                              ax::mojom::IntListAttribute attr,
                               const std::vector<int32_t>& old_intlist,
                               const std::vector<int32_t>& new_intlist) {
     delegate_->OnIntListAttributeChanged(this, node, attr, old_intlist,
@@ -556,7 +596,7 @@ void AXTree::CallNodeChangeCallbacks(AXNode* node, const AXNodeData& new_data) {
                                std::vector<int32_t>(), intlist_callback);
 
   auto stringlist_callback =
-      [this, node](AXStringListAttribute attr,
+      [this, node](ax::mojom::StringListAttribute attr,
                    const std::vector<std::string>& old_stringlist,
                    const std::vector<std::string>& new_stringlist) {
         delegate_->OnStringListAttributeChanged(this, node, attr,
@@ -570,8 +610,8 @@ void AXTree::CallNodeChangeCallbacks(AXNode* node, const AXNodeData& new_data) {
 void AXTree::UpdateReverseRelations(AXNode* node, const AXNodeData& new_data) {
   const AXNodeData& old_data = node->data();
   int id = new_data.id;
-  auto int_callback = [this, node, id](AXIntAttribute attr, const int& old_int,
-                                       const int& new_int) {
+  auto int_callback = [this, node, id](ax::mojom::IntAttribute attr,
+                                       const int& old_int, const int& new_int) {
     if (!IsNodeIdIntAttribute(attr))
       return;
 
@@ -582,7 +622,7 @@ void AXTree::UpdateReverseRelations(AXNode* node, const AXNodeData& new_data) {
                                0, int_callback);
 
   auto intlist_callback = [this, node, id](
-                              AXIntListAttribute attr,
+                              ax::mojom::IntListAttribute attr,
                               const std::vector<int32_t>& old_intlist,
                               const std::vector<int32_t>& new_intlist) {
     if (!IsNodeIdIntListAttribute(attr))

@@ -41,6 +41,7 @@ namespace user_manager {
 class User;
 }
 
+class PrefChangeRegistrar;
 class PrefRegistrySimple;
 class PrefService;
 class Profile;
@@ -91,14 +92,15 @@ class DeviceStatusCollector {
   // Constructor. Callers can inject their own *Fetcher callbacks, e.g. for unit
   // testing. A null callback can be passed for any *Fetcher parameter, to use
   // the default implementation. These callbacks are always executed on Blocking
-  // Pool.
-  DeviceStatusCollector(
-      PrefService* local_state,
-      chromeos::system::StatisticsProvider* provider,
-      const VolumeInfoFetcher& volume_info_fetcher,
-      const CPUStatisticsFetcher& cpu_statistics_fetcher,
-      const CPUTempFetcher& cpu_temp_fetcher,
-      const AndroidStatusFetcher& android_status_fetcher);
+  // Pool. If |is_enterprise_device| additional enterprise relevant status data
+  // will be reported.
+  DeviceStatusCollector(PrefService* local_state,
+                        chromeos::system::StatisticsProvider* provider,
+                        const VolumeInfoFetcher& volume_info_fetcher,
+                        const CPUStatisticsFetcher& cpu_statistics_fetcher,
+                        const CPUTempFetcher& cpu_temp_fetcher,
+                        const AndroidStatusFetcher& android_status_fetcher,
+                        bool is_enterprise_device);
   virtual ~DeviceStatusCollector();
 
   // Gathers device and session status information and calls the passed response
@@ -167,7 +169,9 @@ class DeviceStatusCollector {
                                  int min_day_trim_duration,
                                  int64_t max_day_key);
 
-  void AddActivePeriod(base::Time start, base::Time end);
+  void AddActivePeriod(base::Time start,
+                       base::Time end,
+                       const std::string& active_user_email);
 
   // Clears the cached hardware resource usage.
   void ClearCachedResourceUsage();
@@ -217,6 +221,9 @@ class DeviceStatusCollector {
 
   // Callback invoked to update our cpu usage information.
   void ReceiveCPUStatistics(const std::string& statistics);
+
+  // Callback invoked when reporting users pref is changed.
+  void ReportingUsersChanged();
 
   PrefService* const local_state_;
 
@@ -280,6 +287,9 @@ class DeviceStatusCollector {
   bool report_os_update_status_ = false;
   bool report_running_kiosk_app_ = false;
 
+  // Whether device is managed by enterprise or owned by consumer.
+  bool is_enterprise_device_ = false;
+
   std::unique_ptr<chromeos::CrosSettings::ObserverSubscription>
       version_info_subscription_;
   std::unique_ptr<chromeos::CrosSettings::ObserverSubscription>
@@ -298,6 +308,8 @@ class DeviceStatusCollector {
       os_update_status_subscription_;
   std::unique_ptr<chromeos::CrosSettings::ObserverSubscription>
       running_kiosk_app_subscription_;
+
+  std::unique_ptr<PrefChangeRegistrar> pref_change_registrar_;
 
   // Task runner in the creation thread where responses are sent to.
   scoped_refptr<base::SequencedTaskRunner> task_runner_;

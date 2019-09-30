@@ -7,7 +7,7 @@
 
 #include "chrome/browser/ui/browser_navigator_params.h"
 #include "content/public/common/referrer.h"
-#include "third_party/WebKit/public/web/window_features.mojom.h"
+#include "third_party/blink/public/web/window_features.mojom.h"
 #include "ui/base/window_open_disposition.h"
 #include "url/gurl.h"
 
@@ -27,8 +27,7 @@ class BlockedWindowParams {
   BlockedWindowParams(const BlockedWindowParams& other);
   ~BlockedWindowParams();
 
-  chrome::NavigateParams CreateNavigateParams(
-      content::WebContents* web_contents) const;
+  NavigateParams CreateNavigateParams(content::WebContents* web_contents) const;
 
   blink::mojom::WindowFeatures features() const { return features_; }
 

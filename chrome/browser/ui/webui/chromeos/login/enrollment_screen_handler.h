@@ -72,6 +72,7 @@ class EnrollmentScreenHandler
   void Initialize() override;
   void DeclareLocalizedValues(
       ::login::LocalizedValuesBuilder* builder) override;
+  void GetAdditionalParameters(base::DictionaryValue* parameters) override;
 
   // Implements NetworkStateInformer::NetworkStateInformerObserver
   void UpdateState(NetworkError::ErrorReason reason) override;
@@ -83,6 +84,8 @@ class EnrollmentScreenHandler
   void HandleCompleteLogin(const std::string& user,
                            const std::string& auth_code);
   void HandleAdCompleteLogin(const std::string& machine_name,
+                             const std::string& distinguished_name,
+                             int encryption_types,
                              const std::string& user_name,
                              const std::string& password);
   void HandleRetry();
@@ -130,7 +133,8 @@ class EnrollmentScreenHandler
   // Handler callback from AuthPolicyClient.
   void HandleAdDomainJoin(const std::string& machine_name,
                           const std::string& user_name,
-                          authpolicy::ErrorType code);
+                          authpolicy::ErrorType code,
+                          const std::string& machine_domain);
 
   // Keeps the controller for this view.
   Controller* controller_ = nullptr;

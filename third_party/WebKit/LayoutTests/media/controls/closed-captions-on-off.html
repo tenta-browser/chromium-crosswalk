@@ -3,7 +3,6 @@
 <script src='../../resources/testharness.js'></script>
 <script src='../../resources/testharnessreport.js'></script>
 <script src='../media-controls.js'></script>
-<script src='../media-file.js'></script>
 <video controls></video>
 <script>
 async_test(t => {
@@ -20,10 +19,10 @@ async_test(t => {
     }
 
     // The controls are updated asynchronously.
-    assert_false(isClosedCaptionsButtonVisible(video));
+    assert_false(isClosedCaptionsButtonEnabled(video));
 
-    setTimeout(t.step_func_done(_ => {
-      assert_true(isClosedCaptionsButtonVisible(video));
+    setTimeout(t.step_func(_ => {
+      assert_true(isClosedCaptionsButtonEnabled(video));
 
       // The captions track should be listed in textTracks, but not yet loaded.
       assert_equals(video.textTracks.length, 2);
@@ -32,19 +31,22 @@ async_test(t => {
       checkCaptionsHidden(video);
 
       // Captions track should become visible after the track is selected.
-      clickTextTrackAtIndex(video, 0);
-      checkCaptionsVisible(video, captions);
+      clickTextTrackAtIndex(video, 0, t.step_func(() => {
+        checkCaptionsVisible(video, captions);
 
-      // Captions should not be visible after they're turned off through the menu.
-      turnClosedCaptionsOff(video);
-      checkCaptionsHidden(video);
+        // Captions should not be visible after they're turned off through the menu.
+        turnClosedCaptionsOff(video, t.step_func(() => {
+          checkCaptionsHidden(video);
 
-      // Captions track should become visible after the track is selected again.
-      clickTextTrackAtIndex(video, 0);
-      checkCaptionsVisible(video, captions);
+          // Captions track should become visible after the track is selected again.
+          clickTextTrackAtIndex(video, 0, t.step_func_done(() => {
+            checkCaptionsVisible(video, captions);
+          }));
+        }));
+      }));
     }));
   });
 
-  video.src = findMediaFile('video', '../content/counting');
+  video.src = '../content/counting.ogv';
 });
 </script>

@@ -4,10 +4,11 @@
 
 #include "headless/test/headless_browser_test.h"
 
+#include <memory>
+
 #include "base/command_line.h"
 #include "base/files/file_path.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
 #include "base/path_service.h"
 #include "base/run_loop.h"
@@ -67,8 +68,8 @@ class EvaluateHelper {
         devtools_client_(HeadlessDevToolsClient::Create()) {
     web_contents_->GetDevToolsTarget()->AttachClient(devtools_client_.get());
     devtools_client_->GetRuntime()->Evaluate(
-        script_to_eval,
-        base::Bind(&EvaluateHelper::OnEvaluateResult, base::Unretained(this)));
+        script_to_eval, base::BindOnce(&EvaluateHelper::OnEvaluateResult,
+                                       base::Unretained(this)));
   }
 
   ~EvaluateHelper() {
@@ -97,7 +98,7 @@ class EvaluateHelper {
 }  // namespace
 
 LoadObserver::LoadObserver(HeadlessDevToolsClient* devtools_client,
-                           base::Closure callback)
+                           base::OnceClosure callback)
     : callback_(std::move(callback)),
       devtools_client_(devtools_client),
       navigation_succeeded_(true) {
@@ -113,7 +114,7 @@ LoadObserver::~LoadObserver() {
 }
 
 void LoadObserver::OnLoadEventFired(const page::LoadEventFiredParams& params) {
-  callback_.Run();
+  std::move(callback_).Run();
 }
 
 void LoadObserver::OnResponseReceived(
@@ -147,6 +148,8 @@ void HeadlessBrowserTest::SetUp() {
 }
 
 void HeadlessBrowserTest::SetUpWithoutGPU() {
+  base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
+  SetUpCommandLine(command_line);
   BrowserTestBase::SetUp();
 }
 
@@ -197,7 +200,7 @@ void HeadlessBrowserTest::RunAsynchronousTest() {
   base::MessageLoop::ScopedNestableTaskAllower nestable_allower(
       base::MessageLoop::current());
   EXPECT_FALSE(run_loop_);
-  run_loop_ = base::MakeUnique<base::RunLoop>();
+  run_loop_ = std::make_unique<base::RunLoop>();
   PreRunAsynchronousTest();
   run_loop_->Run();
   PostRunAsynchronousTest();
@@ -249,10 +252,13 @@ void HeadlessAsyncDevTooledBrowserTest::RunTest() {
   browser()->SetDefaultBrowserContext(browser_context_);
   browser()->GetDevToolsTarget()->AttachClient(browser_devtools_client_.get());
 
-  web_contents_ = browser_context_->CreateWebContentsBuilder()
-                      .SetAllowTabSockets(GetAllowTabSockets())
-                      .SetEnableBeginFrameControl(GetEnableBeginFrameControl())
-                      .Build();
+  HeadlessWebContents::Builder web_contents_builder =
+      browser_context_->CreateWebContentsBuilder();
+  web_contents_builder.SetAllowTabSockets(GetAllowTabSockets());
+  web_contents_builder.SetEnableBeginFrameControl(GetEnableBeginFrameControl());
+  CustomizeHeadlessWebContents(web_contents_builder);
+  web_contents_ = web_contents_builder.Build();
+
   web_contents_->AddObserver(this);
 
   RunAsynchronousTest();
@@ -281,5 +287,8 @@ bool HeadlessAsyncDevTooledBrowserTest::GetEnableBeginFrameControl() {
 
 void HeadlessAsyncDevTooledBrowserTest::CustomizeHeadlessBrowserContext(
     HeadlessBrowserContext::Builder& builder) {}
+
+void HeadlessAsyncDevTooledBrowserTest::CustomizeHeadlessWebContents(
+    HeadlessWebContents::Builder& builder) {}
 
 }  // namespace headless

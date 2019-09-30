@@ -13,6 +13,7 @@
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "content/common/content_export.h"
+#include "net/nqe/effective_connection_type.h"
 #include "ui/base/touch/touch_device.h"
 #include "url/gurl.h"
 
@@ -38,9 +39,10 @@ enum EditingBehavior {
 enum V8CacheOptions {
   V8_CACHE_OPTIONS_DEFAULT,
   V8_CACHE_OPTIONS_NONE,
-  V8_CACHE_OPTIONS_PARSE,
   V8_CACHE_OPTIONS_CODE,
-  V8_CACHE_OPTIONS_LAST = V8_CACHE_OPTIONS_CODE
+  V8_CACHE_OPTIONS_CODE_WITHOUT_HEAT_CHECK,
+  V8_CACHE_OPTIONS_FULLCODE_WITHOUT_HEAT_CHECK,
+  V8_CACHE_OPTIONS_LAST = V8_CACHE_OPTIONS_FULLCODE_WITHOUT_HEAT_CHECK
 };
 
 // ImageAnimationPolicy is used for controlling image animation
@@ -54,17 +56,6 @@ enum ImageAnimationPolicy {
 };
 
 enum class ViewportStyle { DEFAULT, MOBILE, TELEVISION, LAST = TELEVISION };
-
-// Controls when the progress bar reports itself as complete. See
-// third_party/WebKit/Source/core/loader/ProgressTracker.cpp for most of its
-// effects.
-enum class ProgressBarCompletion {
-  LOAD_EVENT,
-  RESOURCES_BEFORE_DCL,
-  DOM_CONTENT_LOADED,
-  RESOURCES_BEFORE_DCL_AND_SAME_ORIGIN_IFRAMES,
-  LAST = RESOURCES_BEFORE_DCL_AND_SAME_ORIGIN_IFRAMES
-};
 
 enum class SavePreviousDocumentResources {
   NEVER,
@@ -132,6 +123,7 @@ struct CONTENT_EXPORT WebPreferences {
   bool application_cache_enabled;
   bool tabs_to_links;
   bool history_entry_requires_user_gesture;
+  bool disable_pushstate_throttle;
   bool hyperlink_auditing_enabled;
   bool allow_universal_access_from_file_urls;
   bool allow_file_access_from_file_urls;
@@ -191,6 +183,7 @@ struct CONTENT_EXPORT WebPreferences {
   bool shrinks_viewport_contents_to_fit;
   ViewportStyle viewport_style;
   bool always_show_context_menu_on_touch;
+  bool smooth_scroll_for_find_enabled;
   bool main_frame_resizes_are_orientation_changes;
   bool initialize_at_minimum_page_scale;
   bool smart_insert_delete_enabled;
@@ -208,9 +201,9 @@ struct CONTENT_EXPORT WebPreferences {
   // without raising a DOM security exception.
   bool cookie_enabled;
 
-  // This flag indicates whether H/W accelerated video decode is enabled for
-  // pepper plugins. Defaults to false.
-  bool pepper_accelerated_video_decode_enabled;
+  // This flag indicates whether H/W accelerated video decode is enabled.
+  // Defaults to false.
+  bool accelerated_video_decode_enabled;
 
   ImageAnimationPolicy animation_policy;
 
@@ -221,7 +214,7 @@ struct CONTENT_EXPORT WebPreferences {
   // Cues will not be placed in this margin area.
   float text_track_margin_percentage;
 
-  bool page_popups_suppressed;
+  bool immersive_mode_enabled;
 
 #if defined(OS_ANDROID)
   bool text_autosizing_enabled;
@@ -246,8 +239,7 @@ struct CONTENT_EXPORT WebPreferences {
   bool report_screen_size_in_physical_pixels_quirk;
   // Used by Android_WebView only to support legacy apps that inject script into
   // a top-level initial empty document and expect it to persist on navigation.
-  bool resue_global_for_unowned_main_frame;
-  ProgressBarCompletion progress_bar_completion;
+  bool reuse_global_for_unowned_main_frame;
   // Specifies default setting for spellcheck when the spellcheck attribute is
   // not explicitly specified.
   bool spellcheck_enabled_by_default;
@@ -296,6 +288,13 @@ struct CONTENT_EXPORT WebPreferences {
 
   // Defines the current autoplay policy.
   AutoplayPolicy autoplay_policy;
+
+  // Network quality threshold below which resources from iframes are assigned
+  // lowest priority.
+  net::EffectiveConnectionType low_priority_iframes_threshold;
+
+  // Whether Picture-in-Picture is enabled.
+  bool picture_in_picture_enabled;
 
   // We try to keep the default values the same as the default values in
   // chrome, except for the cases where it would require lots of extra work for

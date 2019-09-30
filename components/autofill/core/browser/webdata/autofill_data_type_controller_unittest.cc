@@ -11,6 +11,7 @@
 #include "base/callback.h"
 #include "base/compiler_specific.h"
 #include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "base/message_loop/message_loop.h"
@@ -91,8 +92,8 @@ class AutofillDataTypeControllerTest : public testing::Test,
     web_data_service_ =
         new FakeWebDataService(base::ThreadTaskRunnerHandle::Get(),
                                base::ThreadTaskRunnerHandle::Get());
-    autofill_dtc_ = base::MakeUnique<AutofillDataTypeController>(
-        base::ThreadTaskRunnerHandle::Get(), base::Bind(&base::DoNothing), this,
+    autofill_dtc_ = std::make_unique<AutofillDataTypeController>(
+        base::ThreadTaskRunnerHandle::Get(), base::DoNothing(), this,
         web_data_service_);
 
     last_type_ = syncer::UNSPECIFIED;
@@ -124,7 +125,7 @@ class AutofillDataTypeControllerTest : public testing::Test,
     autofill_dtc_->SetGenericChangeProcessorFactoryForTest(
         base::WrapUnique<syncer::GenericChangeProcessorFactory>(
             new syncer::FakeGenericChangeProcessorFactory(
-                base::MakeUnique<syncer::FakeGenericChangeProcessor>(
+                std::make_unique<syncer::FakeGenericChangeProcessor>(
                     syncer::AUTOFILL, this))));
   }
 

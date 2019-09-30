@@ -19,7 +19,6 @@ extern const char kGoogleServicesAccountId[];
 extern const char kGoogleServicesHostedDomain[];
 extern const char kGoogleServicesLastAccountId[];
 extern const char kGoogleServicesLastUsername[];
-extern const char kGoogleServicesRefreshTokenAnnotateScheduledTime[];
 extern const char kGoogleServicesSigninScopedDeviceId[];
 extern const char kGoogleServicesUserAccountId[];
 extern const char kGoogleServicesUsername[];
@@ -28,6 +27,7 @@ extern const char kReverseAutologinEnabled[];
 extern const char kReverseAutologinRejectedEmailList[];
 extern const char kSignedInTime[];
 extern const char kSigninAllowed[];
+extern const char kTokenServiceDiceCompatible[];
 extern const char kTokenServiceExcludeAllSecondaryAccounts[];
 extern const char kTokenServiceExcludedSecondaryAccounts[];
 

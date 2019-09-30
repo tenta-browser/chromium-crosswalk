@@ -58,7 +58,7 @@ void OutOfMemoryReporter::OnForegroundOOMDetected(const GURL& url,
 }
 
 void OutOfMemoryReporter::SetTickClockForTest(
-    std::unique_ptr<base::TickClock> tick_clock) {
+    std::unique_ptr<const base::TickClock> tick_clock) {
   DCHECK(tick_clock_);
   tick_clock_ = std::move(tick_clock);
 }
@@ -82,7 +82,7 @@ void OutOfMemoryReporter::DidFinishNavigation(
 void OutOfMemoryReporter::RenderProcessGone(base::TerminationStatus status) {
   if (!last_committed_source_id_.has_value())
     return;
-  if (!web_contents()->IsVisible())
+  if (web_contents()->GetVisibility() != content::Visibility::VISIBLE)
     return;
 
   crashed_render_process_id_ =
@@ -116,11 +116,7 @@ void OutOfMemoryReporter::OnCrashDumpProcessed(
   if (details.process_host_id != crashed_render_process_id_)
     return;
 
-  if (details.process_type == content::PROCESS_TYPE_RENDERER &&
-      details.termination_status == base::TERMINATION_STATUS_OOM_PROTECTED &&
-      details.file_size == 0 &&
-      details.app_state ==
-          base::android::APPLICATION_STATE_HAS_RUNNING_ACTIVITIES) {
+  if (breakpad::CrashDumpManager::IsForegroundOom(details)) {
     OnForegroundOOMDetected(web_contents()->GetLastCommittedURL(),
                             *last_committed_source_id_);
   }

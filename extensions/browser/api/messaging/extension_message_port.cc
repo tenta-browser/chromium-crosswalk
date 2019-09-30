@@ -4,7 +4,6 @@
 
 #include "extensions/browser/api/messaging/extension_message_port.h"
 
-#include "base/memory/ptr_util.h"
 #include "base/scoped_observer.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/interstitial_page.h"
@@ -151,8 +150,8 @@ ExtensionMessagePort::ExtensionMessagePort(
 
   frame_tracker_->TrackTabFrames(tab);
   if (include_child_frames) {
-    tab->ForEachFrame(base::Bind(&ExtensionMessagePort::RegisterFrame,
-                                 base::Unretained(this)));
+    tab->ForEachFrame(base::BindRepeating(&ExtensionMessagePort::RegisterFrame,
+                                          base::Unretained(this)));
   } else {
     RegisterFrame(rfh);
   }

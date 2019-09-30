@@ -19,12 +19,12 @@ class HostCachePersistenceManagerTest : public testing::Test {
  protected:
   void SetUp() override {
     cache_ = net::HostCache::CreateDefaultCache();
-    pref_service_ = base::MakeUnique<TestingPrefServiceSimple>();
+    pref_service_ = std::make_unique<TestingPrefServiceSimple>();
     pref_service_->registry()->RegisterListPref(kPrefName);
   }
 
   void MakePersistenceManager(base::TimeDelta delay) {
-    persistence_manager_ = base::MakeUnique<HostCachePersistenceManager>(
+    persistence_manager_ = std::make_unique<HostCachePersistenceManager>(
         cache_.get(), pref_service_.get(), kPrefName, delay, nullptr);
   }
 
@@ -45,7 +45,7 @@ class HostCachePersistenceManagerTest : public testing::Test {
   // not the full contents, since the tests in this file are only intended
   // to test that writes happen when they're supposed to, not serialization
   // correctness.
-  void CheckPref(uint size) {
+  void CheckPref(size_t size) {
     const base::Value* value = pref_service_->GetUserPref(kPrefName);
     base::ListValue list;
     if (value)

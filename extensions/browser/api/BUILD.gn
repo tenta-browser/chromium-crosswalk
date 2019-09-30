@@ -3,7 +3,7 @@
 # found in the LICENSE file.
 
 import("//extensions/common/api/schema.gni")
-import("//extensions/features/features.gni")
+import("//extensions/buildflags/buildflags.gni")
 import("//tools/json_schema_compiler/json_schema_api.gni")
 
 assert(enable_extensions,
@@ -98,7 +98,7 @@ source_set("api") {
     "//extensions/common/api",
     "//extensions/strings",
     "//services/device/public/cpp/hid",
-    "//services/device/public/interfaces",
+    "//services/device/public/mojom",
   ]
 
   # TODO(michaelpg): Move these deps to the individual APIs that require them.

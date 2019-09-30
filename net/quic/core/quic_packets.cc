@@ -53,8 +53,9 @@ QuicPacketHeader::QuicPacketHeader()
       connection_id_length(PACKET_8BYTE_CONNECTION_ID),
       reset_flag(false),
       version_flag(false),
-      packet_number_length(PACKET_6BYTE_PACKET_NUMBER),
-      version(QUIC_VERSION_UNSUPPORTED),
+      packet_number_length(PACKET_4BYTE_PACKET_NUMBER),
+      version(
+          ParsedQuicVersion(PROTOCOL_UNSUPPORTED, QUIC_VERSION_UNSUPPORTED)),
       nonce(nullptr),
       packet_number(0) {}
 
@@ -80,6 +81,19 @@ QuicVersionNegotiationPacket::QuicVersionNegotiationPacket(
 
 QuicVersionNegotiationPacket::~QuicVersionNegotiationPacket() {}
 
+QuicIetfStatelessResetPacket::QuicIetfStatelessResetPacket()
+    : stateless_reset_token(0) {}
+
+QuicIetfStatelessResetPacket::QuicIetfStatelessResetPacket(
+    const QuicPacketHeader& header,
+    uint128 token)
+    : header(header), stateless_reset_token(token) {}
+
+QuicIetfStatelessResetPacket::QuicIetfStatelessResetPacket(
+    const QuicIetfStatelessResetPacket& other) = default;
+
+QuicIetfStatelessResetPacket::~QuicIetfStatelessResetPacket() {}
+
 std::ostream& operator<<(std::ostream& os, const QuicPacketHeader& header) {
   os << "{ connection_id: " << header.connection_id
      << ", connection_id_length: " << header.connection_id_length
@@ -87,7 +101,7 @@ std::ostream& operator<<(std::ostream& os, const QuicPacketHeader& header) {
      << ", reset_flag: " << header.reset_flag
      << ", version_flag: " << header.version_flag;
   if (header.version_flag) {
-    os << ", version: " << QuicVersionToString(header.version);
+    os << ", version: " << ParsedQuicVersionToString(header.version);
   }
   if (header.nonce != nullptr) {
     os << ", diversification_nonce: "

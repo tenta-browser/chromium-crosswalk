@@ -68,9 +68,11 @@ public class SingleWebsitePreferences extends PreferenceFragment
     // Buttons:
     public static final String PREF_RESET_SITE = "reset_site_button";
     // Website permissions (if adding new, see hasPermissionsPreferences and resetSite below):
+    public static final String PREF_ADS_PERMISSION = "ads_permission_list";
     public static final String PREF_AUTOPLAY_PERMISSION = "autoplay_permission_list";
     public static final String PREF_BACKGROUND_SYNC_PERMISSION = "background_sync_permission_list";
     public static final String PREF_CAMERA_CAPTURE_PERMISSION = "camera_permission_list";
+    public static final String PREF_CLIPBOARD_PERMISSION = "clipboard_permission_list";
     public static final String PREF_COOKIES_PERMISSION = "cookies_permission_list";
     public static final String PREF_JAVASCRIPT_PERMISSION = "javascript_permission_list";
     public static final String PREF_LOCATION_ACCESS = "location_access_list";
@@ -80,7 +82,6 @@ public class SingleWebsitePreferences extends PreferenceFragment
     public static final String PREF_POPUP_PERMISSION = "popup_permission_list";
     public static final String PREF_PROTECTED_MEDIA_IDENTIFIER_PERMISSION =
             "protected_media_identifier_permission_list";
-    public static final String PREF_ADS_PERMISSION = "ads_permission_list";
     public static final String PREF_SOUND_PERMISSION = "sound_permission_list";
 
     // All permissions from the permissions preference category must be listed here.
@@ -89,6 +90,7 @@ public class SingleWebsitePreferences extends PreferenceFragment
             PREF_AUTOPLAY_PERMISSION,
             PREF_BACKGROUND_SYNC_PERMISSION,
             PREF_CAMERA_CAPTURE_PERMISSION,
+            PREF_CLIPBOARD_PERMISSION,
             PREF_COOKIES_PERMISSION,
             PREF_JAVASCRIPT_PERMISSION,
             PREF_LOCATION_ACCESS,
@@ -194,6 +196,10 @@ public class SingleWebsitePreferences extends PreferenceFragment
             if (merged.getAdsException() == null && other.getAdsException() != null
                     && other.compareByAddressTo(merged) == 0) {
                 merged.setAdsException(other.getAdsException());
+            }
+            if (merged.getClipboardInfo() == null && other.getClipboardInfo() != null
+                    && permissionInfoIsForTopLevelOrigin(other.getClipboardInfo(), origin)) {
+                merged.setClipboardInfo(other.getClipboardInfo());
             }
             if (merged.getGeolocationInfo() == null && other.getGeolocationInfo() != null
                     && permissionInfoIsForTopLevelOrigin(other.getGeolocationInfo(), origin)) {
@@ -327,6 +333,8 @@ public class SingleWebsitePreferences extends PreferenceFragment
             setUpListPreference(preference, mSite.getBackgroundSyncPermission());
         } else if (PREF_CAMERA_CAPTURE_PERMISSION.equals(key)) {
             setUpListPreference(preference, mSite.getCameraPermission());
+        } else if (PREF_CLIPBOARD_PERMISSION.equals(key)) {
+            setUpListPreference(preference, mSite.getClipboardPermission());
         } else if (PREF_COOKIES_PERMISSION.equals(key)) {
             setUpListPreference(preference, mSite.getCookiePermission());
         } else if (PREF_JAVASCRIPT_PERMISSION.equals(key)) {
@@ -344,7 +352,7 @@ public class SingleWebsitePreferences extends PreferenceFragment
         } else if (PREF_PROTECTED_MEDIA_IDENTIFIER_PERMISSION.equals(key)) {
             setUpListPreference(preference, mSite.getProtectedMediaIdentifierPermission());
         } else if (PREF_SOUND_PERMISSION.equals(key)) {
-            setUpListPreference(preference, mSite.getSoundPermission());
+            setUpSoundPreference(preference);
         }
     }
 
@@ -368,9 +376,9 @@ public class SingleWebsitePreferences extends PreferenceFragment
     }
 
     private void setUpNotificationsPreference(Preference preference) {
+        final ContentSetting value = mSite.getNotificationPermission();
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
                 && ChromeFeatureList.isEnabled(ChromeFeatureList.SITE_NOTIFICATION_CHANNELS)) {
-            final ContentSetting value = mSite.getNotificationPermission();
             if (!(value == ContentSetting.ALLOW || value == ContentSetting.BLOCK)) {
                 // TODO(crbug.com/735110): Figure out if this is the correct thing to do, for values
                 // that are non-null, but not ALLOW or BLOCK either. (In setupListPreference we
@@ -384,8 +392,16 @@ public class SingleWebsitePreferences extends PreferenceFragment
             newPreference.setKey(preference.getKey());
             setUpPreferenceCommon(newPreference);
 
-            newPreference.setSummary(
-                    getResources().getString(ContentSettingsResources.getSiteSummary(value)));
+            if (isPermissionControlledByDSE(
+                        ContentSettingsType.CONTENT_SETTINGS_TYPE_NOTIFICATIONS)) {
+                newPreference.setSummary(getResources().getString(value == ContentSetting.ALLOW
+                                ? R.string.website_settings_permissions_allow_dse
+                                : R.string.website_settings_permissions_block_dse));
+            } else {
+                newPreference.setSummary(
+                        getResources().getString(ContentSettingsResources.getSiteSummary(value)));
+            }
+
             newPreference.setDefaultValue(value);
 
             // This preference is read-only so should not attempt to persist to shared prefs.
@@ -410,7 +426,11 @@ public class SingleWebsitePreferences extends PreferenceFragment
             getPreferenceScreen().removePreference(preference);
             getPreferenceScreen().addPreference(newPreference);
         } else {
-            setUpListPreference(preference, mSite.getNotificationPermission());
+            setUpListPreference(preference, value);
+            if (isPermissionControlledByDSE(ContentSettingsType.CONTENT_SETTINGS_TYPE_NOTIFICATIONS)
+                    && value != null) {
+                updatePreferenceForDSESetting(preference);
+            }
         }
     }
 
@@ -617,14 +637,22 @@ public class SingleWebsitePreferences extends PreferenceFragment
 
     private void setUpLocationPreference(Preference preference) {
         ContentSetting permission = mSite.getGeolocationPermission();
-        if (shouldUseDSEGeolocationSetting()) {
-            String origin = mSite.getAddress().getOrigin();
-            mSite.setGeolocationInfo(new GeolocationInfo(origin, origin, false));
-            setUpListPreference(preference, ContentSetting.ALLOW);
-            updateLocationPreferenceForDSESetting(preference);
-        } else {
-            setUpListPreference(preference, permission);
+        setUpListPreference(preference, permission);
+        if (isPermissionControlledByDSE(ContentSettingsType.CONTENT_SETTINGS_TYPE_GEOLOCATION)
+                && permission != null) {
+            updatePreferenceForDSESetting(preference);
         }
+    }
+
+    private void setUpSoundPreference(Preference preference) {
+        ContentSetting currentValue = mSite.getSoundPermission();
+        // In order to always show the sound permission, set it up with the default value if it
+        // doesn't have a current value.
+        if (currentValue == null) {
+            currentValue = PrefServiceBridge.getInstance().isSoundEnabled() ? ContentSetting.ALLOW
+                                                                            : ContentSetting.BLOCK;
+        }
+        setUpListPreference(preference, currentValue);
     }
 
     /**
@@ -674,13 +702,12 @@ public class SingleWebsitePreferences extends PreferenceFragment
     }
 
     /**
-     * Returns true if the DSE (default search engine) geolocation setting should be used for the
-     * current host. This will be the case when the host is the CCTLD (Country Code Top Level
-     * Domain) of the DSE, and the DSE supports the X-Geo header.
+     * Returns true if the DSE (default search engine) geolocation and notifications permissions
+     * are configured for the DSE.
      */
-    private boolean shouldUseDSEGeolocationSetting() {
-        return WebsitePreferenceBridge.shouldUseDSEGeolocationSetting(
-                mSite.getAddress().getOrigin(), false);
+    private boolean isPermissionControlledByDSE(@ContentSettingsType int contentSettingsType) {
+        return WebsitePreferenceBridge.isPermissionControlledByDSE(
+                contentSettingsType, mSite.getAddress().getOrigin(), false);
     }
 
     /**
@@ -688,15 +715,13 @@ public class SingleWebsitePreferences extends PreferenceFragment
      * for searches that happen from the omnibox.
      * @param preference The Location preference to modify.
      */
-    private void updateLocationPreferenceForDSESetting(Preference preference) {
+    private void updatePreferenceForDSESetting(Preference preference) {
         ListPreference listPreference = (ListPreference) preference;
         Resources res = getResources();
         listPreference.setEntries(new String[] {
                 res.getString(R.string.website_settings_permissions_allow_dse),
                 res.getString(R.string.website_settings_permissions_block_dse),
         });
-        listPreference.setValueIndex(
-                WebsitePreferenceBridge.getDSEGeolocationSetting() ? 0 : 1);
     }
 
     private int getContentSettingsTypeFromPreferenceKey(String preferenceKey) {
@@ -709,6 +734,8 @@ public class SingleWebsitePreferences extends PreferenceFragment
                 return ContentSettingsType.CONTENT_SETTINGS_TYPE_BACKGROUND_SYNC;
             case PREF_CAMERA_CAPTURE_PERMISSION:
                 return ContentSettingsType.CONTENT_SETTINGS_TYPE_MEDIASTREAM_CAMERA;
+            case PREF_CLIPBOARD_PERMISSION:
+                return ContentSettingsType.CONTENT_SETTINGS_TYPE_CLIPBOARD_READ;
             case PREF_COOKIES_PERMISSION:
                 return ContentSettingsType.CONTENT_SETTINGS_TYPE_COOKIES;
             case PREF_JAVASCRIPT_PERMISSION:
@@ -768,6 +795,8 @@ public class SingleWebsitePreferences extends PreferenceFragment
             mSite.setBackgroundSyncPermission(permission);
         } else if (PREF_CAMERA_CAPTURE_PERMISSION.equals(preference.getKey())) {
             mSite.setCameraPermission(permission);
+        } else if (PREF_CLIPBOARD_PERMISSION.equals(preference.getKey())) {
+            mSite.setClipboardPermission(permission);
         } else if (PREF_COOKIES_PERMISSION.equals(preference.getKey())) {
             mSite.setCookiePermission(permission);
         } else if (PREF_JAVASCRIPT_PERMISSION.equals(preference.getKey())) {
@@ -850,6 +879,7 @@ public class SingleWebsitePreferences extends PreferenceFragment
         mSite.setAutoplayPermission(ContentSetting.DEFAULT);
         mSite.setBackgroundSyncPermission(ContentSetting.DEFAULT);
         mSite.setCameraPermission(ContentSetting.DEFAULT);
+        mSite.setClipboardPermission(ContentSetting.DEFAULT);
         mSite.setCookiePermission(ContentSetting.DEFAULT);
         mSite.setGeolocationPermission(ContentSetting.DEFAULT);
         mSite.setJavaScriptPermission(ContentSetting.DEFAULT);

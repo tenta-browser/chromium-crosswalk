@@ -5,7 +5,6 @@
 #include <memory>
 
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/string_util.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chromeos/policy/device_policy_builder.h"
@@ -20,9 +19,7 @@ namespace policy {
 
 class VariationsServiceDevicePolicyTest : public DevicePolicyCrosBrowserTest {
  protected:
-  VariationsServiceDevicePolicyTest() {
-    variations::VariationsService::EnableForTesting();
-  }
+  VariationsServiceDevicePolicyTest() {}
 
   void SetUpInProcessBrowserTestFixture() override {
     DevicePolicyCrosBrowserTest::SetUpInProcessBrowserTestFixture();
@@ -50,7 +47,8 @@ IN_PROC_BROWSER_TEST_F(VariationsServiceDevicePolicyTest, VariationsURLValid) {
   // Device policy has updated the cros settings.
   const GURL url =
       g_browser_process->variations_service()->GetVariationsServerURL(
-          g_browser_process->local_state(), std::string());
+          g_browser_process->local_state(), std::string(),
+          variations::VariationsService::HttpOptions::USE_HTTPS);
   EXPECT_TRUE(base::StartsWith(url.spec(), default_variations_url,
                                base::CompareCase::SENSITIVE));
   std::string value;

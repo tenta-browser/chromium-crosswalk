@@ -9,6 +9,7 @@
 #include "base/feature_list.h"
 #include "base/supports_user_data.h"
 #include "components/safe_browsing/proto/csd.pb.h"
+#include "components/sessions/core/session_id.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "third_party/protobuf/src/google/protobuf/repeated_field.h"
 #include "url/gurl.h"
@@ -27,9 +28,15 @@ typedef google::protobuf::RepeatedPtrField<safe_browsing::ReferrerChainEntry>
 // User data stored in DownloadItem for referrer chain information.
 class ReferrerChainData : public base::SupportsUserData::Data {
  public:
-  explicit ReferrerChainData(std::unique_ptr<ReferrerChain> referrer_chain);
+  ReferrerChainData(std::unique_ptr<ReferrerChain> referrer_chain,
+                    size_t referrer_chain_length,
+                    size_t recent_navigation_to_collect);
   ~ReferrerChainData() override;
   ReferrerChain* GetReferrerChain();
+  size_t referrer_chain_length() { return referrer_chain_length_; }
+  size_t recent_navigations_to_collect() {
+    return recent_navigations_to_collect_;
+  }
 
   // Unique user data key used to get and set referrer chain data in
   // DownloadItem.
@@ -37,6 +44,13 @@ class ReferrerChainData : public base::SupportsUserData::Data {
 
  private:
   std::unique_ptr<ReferrerChain> referrer_chain_;
+  // This is the actual referrer chain length before appending recent navigation
+  // events;
+  size_t referrer_chain_length_;
+  // |recent_navigations_to_collect_| is controlled by finch parameter. If the
+  // user is incognito mode or hasn't enabled extended reporting, this value is
+  // always 0.
+  size_t recent_navigations_to_collect_;
 };
 
 // Struct that manages insertion, cleanup, and lookup of NavigationEvent
@@ -53,7 +67,7 @@ struct NavigationEventList {
   // |target_main_frame_url| are the same.
   // If |target_url| is empty, we use its main frame url (a.k.a.
   // |target_main_frame_url|) to search for navigation events.
-  // If |target_tab_id| is not available (-1), we look for all tabs for the most
+  // If |target_tab_id| is invalid, we look for all tabs for the most
   // recent navigation to |target_url| or |target_main_frame_url|.
   // For some cases, the most recent navigation to |target_url| may not be
   // relevant.
@@ -70,12 +84,12 @@ struct NavigationEventList {
   // of all these navigations.
   NavigationEvent* FindNavigationEvent(const GURL& target_url,
                                        const GURL& target_main_frame_url,
-                                       int target_tab_id);
+                                       SessionID target_tab_id);
 
   // Finds the most recent retargeting NavigationEvent that satisfies
   // |target_url|, and |target_tab_id|.
   NavigationEvent* FindRetargetingNavigationEvent(const GURL& target_url,
-                                                  int target_tab_id);
+                                                  SessionID target_tab_id);
 
   void RecordNavigationEvent(std::unique_ptr<NavigationEvent> nav_event);
 
@@ -86,6 +100,11 @@ struct NavigationEventList {
 
   NavigationEvent* Get(std::size_t index) {
     return navigation_events_[index].get();
+  }
+
+  const base::circular_deque<std::unique_ptr<NavigationEvent>>&
+  navigation_events() {
+    return navigation_events_;
   }
 
  private:
@@ -157,7 +176,7 @@ class SafeBrowsingNavigationObserverManager
   // |out_referrer_chain|.
   AttributionResult IdentifyReferrerChainByEventURL(
       const GURL& event_url,
-      int event_tab_id,  // -1 if tab id is unknown or not available
+      SessionID event_tab_id,  // Invalid if tab id is unknown or not available.
       int user_gesture_count_limit,
       ReferrerChain* out_referrer_chain);
 
@@ -183,19 +202,29 @@ class SafeBrowsingNavigationObserverManager
   AttributionResult IdentifyReferrerChainByHostingPage(
       const GURL& initiating_frame_url,
       const GURL& initiating_main_frame_url,
-      int tab_id,
+      SessionID tab_id,
       bool has_user_gesture,
       int user_gesture_count_limit,
       ReferrerChain* out_referrer_chain);
 
-  // Record the creation of a new WebContents by |source_web_contents|. This is
+  // Records the creation of a new WebContents by |source_web_contents|. This is
   // used to detect cross-frame and cross-tab navigations.
   void RecordNewWebContents(content::WebContents* source_web_contents,
                             int source_render_process_id,
                             int source_render_frame_id,
                             GURL target_url,
                             content::WebContents* target_web_contents,
-                            bool not_yet_in_tabstrip);
+                            bool renderer_initiated);
+
+  // Based on user state, attribution result and finch parameter, calculates the
+  // number of recent navigations we want to append to the referrer chain.
+  static size_t CountOfRecentNavigationsToAppend(const Profile& profile,
+                                                 AttributionResult result);
+
+  // Appends |recent_navigation_count| number of recent navigation events to
+  // referrer chain in reverse chronological order.
+  void AppendRecentNavigations(size_t recent_navigation_count,
+                               ReferrerChain* out_referrer_chain);
 
  private:
   friend class base::RefCountedThreadSafe<

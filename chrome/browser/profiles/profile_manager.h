@@ -24,7 +24,7 @@
 #include "chrome/browser/profiles/profile_metrics.h"
 #include "chrome/browser/profiles/profile_shortcut_manager.h"
 #include "chrome/browser/ui/browser_list_observer.h"
-#include "chrome/common/features.h"
+#include "chrome/common/buildflags.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
 
@@ -34,8 +34,9 @@ class ProfileInfoCache;
 class ProfileManager : public content::NotificationObserver,
                        public Profile::Delegate {
  public:
-  typedef base::Callback<void(Profile*, Profile::CreateStatus)> CreateCallback;
-  typedef base::Callback<void(Profile*)> ProfileLoadedCallback;
+  typedef base::RepeatingCallback<void(Profile*, Profile::CreateStatus)>
+      CreateCallback;
+  typedef base::OnceCallback<void(Profile*)> ProfileLoadedCallback;
 
   explicit ProfileManager(const base::FilePath& user_data_dir);
   ~ProfileManager() override;
@@ -108,10 +109,10 @@ class ProfileManager : public content::NotificationObserver,
   // as part of the callback.
   bool LoadProfile(const std::string& profile_name,
                    bool incognito,
-                   const ProfileLoadedCallback& callback);
+                   ProfileLoadedCallback callback);
   bool LoadProfileByPath(const base::FilePath& profile_path,
                          bool incognito,
-                         const ProfileLoadedCallback& callback);
+                         ProfileLoadedCallback callback);
 
   // Explicit asynchronous creation of a profile located at |profile_path|.
   // If the profile has already been created then callback is called
@@ -201,14 +202,14 @@ class ProfileManager : public content::NotificationObserver,
   // profile is either scheduling or marked for deletion.
   void MaybeScheduleProfileForDeletion(
       const base::FilePath& profile_dir,
-      const CreateCallback& callback,
+      ProfileLoadedCallback callback,
       ProfileMetrics::ProfileDelete deletion_source);
 
   // Schedules the profile at the given path to be deleted on shutdown. If we're
   // deleting the last profile, a new one will be created in its place, and in
   // that case the callback will be called when profile creation is complete.
   void ScheduleProfileForDeletion(const base::FilePath& profile_dir,
-                                  const CreateCallback& callback);
+                                  ProfileLoadedCallback callback);
 #endif
 
   // Autoloads profiles if they are running background apps.
@@ -315,7 +316,7 @@ class ProfileManager : public content::NotificationObserver,
   // last non-supervised profile. In the Mac, loads the next non-supervised
   // profile if the profile to be deleted is the active profile.
   void EnsureActiveProfileExistsBeforeDeletion(
-      const CreateCallback& callback,
+      ProfileLoadedCallback callback,
       const base::FilePath& profile_dir);
 
   // Schedules the profile at the given path to be deleted on shutdown,
@@ -366,12 +367,12 @@ class ProfileManager : public content::NotificationObserver,
   // See kLastActiveUser in UserManagerBase.
   void UpdateLastUser(Profile* last_active);
 
-  class BrowserListObserver : public chrome::BrowserListObserver {
+  class BrowserListObserver : public ::BrowserListObserver {
    public:
     explicit BrowserListObserver(ProfileManager* manager);
     ~BrowserListObserver() override;
 
-    // chrome::BrowserListObserver implementation.
+    // ::BrowserListObserver implementation.
     void OnBrowserAdded(Browser* browser) override;
     void OnBrowserRemoved(Browser* browser) override;
     void OnBrowserSetLastActive(Browser* browser) override;
@@ -389,7 +390,7 @@ class ProfileManager : public content::NotificationObserver,
   void OnNewActiveProfileLoaded(
       const base::FilePath& profile_to_delete_path,
       const base::FilePath& last_non_supervised_profile_path,
-      const CreateCallback& original_callback,
+      ProfileLoadedCallback callback,
       Profile* loaded_profile,
       Profile::CreateStatus status);
 

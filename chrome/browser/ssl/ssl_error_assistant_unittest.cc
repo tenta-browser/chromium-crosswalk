@@ -4,7 +4,8 @@
 
 #include "chrome/browser/ssl/ssl_error_assistant.h"
 
-#include "base/memory/ptr_util.h"
+#include <memory>
+
 #include "chrome/browser/ssl/ssl_error_assistant.pb.h"
 #include "chrome/test/base/chrome_render_view_host_test_harness.h"
 #include "crypto/sha2.h"
@@ -101,7 +102,7 @@ class SSLErrorAssistantTest : public ChromeRenderViewHostTestHarness {
 
  protected:
   SSLErrorAssistantTest() {
-    embedded_test_server_ = base::MakeUnique<net::EmbeddedTestServer>();
+    embedded_test_server_ = std::make_unique<net::EmbeddedTestServer>();
   }
 
   ~SSLErrorAssistantTest() override {}
@@ -112,10 +113,20 @@ class SSLErrorAssistantTest : public ChromeRenderViewHostTestHarness {
     return embedded_test_server_.get();
   }
 
-  const net::SSLInfo& ssl_info() { return ssl_info_; }
+  const net::SSLInfo& ssl_info() const { return ssl_info_; }
+
+  const std::string& issuer_common_name() const {
+    return ssl_info_.cert->issuer().common_name;
+  }
+
+  const std::string& issuer_organization_name() const {
+    DCHECK(!ssl_info_.cert->issuer().organization_names.empty());
+    return ssl_info_.cert->issuer().organization_names.front();
+  }
 
  private:
   net::SSLInfo ssl_info_;
+
   std::unique_ptr<SSLErrorAssistant> error_assistant_;
   std::unique_ptr<net::EmbeddedTestServer> embedded_test_server_;
 
@@ -130,7 +141,7 @@ TEST_F(SSLErrorAssistantTest, CaptivePortalCertificateList) {
 
   // Test without the known captive portal certificate in config_proto.
   auto config_proto =
-      base::MakeUnique<chrome_browser_ssl::SSLErrorAssistantConfig>();
+      std::make_unique<chrome_browser_ssl::SSLErrorAssistantConfig>();
   config_proto->set_version_id(kLargeVersionId);
   config_proto->add_captive_portal_cert()->set_sha256_hash("sha256/boxfish");
   config_proto->add_captive_portal_cert()->set_sha256_hash(
@@ -159,7 +170,7 @@ TEST_F(SSLErrorAssistantTest, MitMSoftwareMatching) {
   ASSERT_TRUE(embedded_test_server()->Start());
 
   auto config_proto =
-      base::MakeUnique<chrome_browser_ssl::SSLErrorAssistantConfig>();
+      std::make_unique<chrome_browser_ssl::SSLErrorAssistantConfig>();
   config_proto->set_version_id(kLargeVersionId);
 
   // Tests for a basic and more complex regex match.
@@ -197,4 +208,407 @@ TEST_F(SSLErrorAssistantTest, MitMSoftwareMatching) {
   error_assistant()->SetErrorAssistantProto(std::move(config_proto));
 
   TestMITMSoftwareMatchFromString(kMisconfigSoftwareCert, "");
+}
+
+// Test to see if the dynamic interstitial is matched with more complex regex
+// fields.
+TEST_F(SSLErrorAssistantTest, DynamicInterstitialListMatch) {
+  ASSERT_TRUE(embedded_test_server()->Start());
+  EXPECT_EQ(1u, ssl_info().public_key_hashes.size());
+
+  auto config_proto =
+      std::make_unique<chrome_browser_ssl::SSLErrorAssistantConfig>();
+  config_proto->set_version_id(kLargeVersionId);
+
+  // Add a dynamic interstitial that will mismatch.
+  chrome_browser_ssl::DynamicInterstitial* filter =
+      config_proto->add_dynamic_interstitial();
+  filter->set_interstitial_type(chrome_browser_ssl::DynamicInterstitial::
+                                    INTERSTITIAL_PAGE_CAPTIVE_PORTAL);
+  filter->set_cert_error(
+      chrome_browser_ssl::DynamicInterstitial::UNKNOWN_CERT_ERROR);
+  filter->add_sha256_hash("sha256/nightjar");
+  filter->add_sha256_hash("sha256/frogmouth");
+  filter->add_sha256_hash("sha256/poorwill");
+
+  filter->set_mitm_software_name("UwS");
+  filter->set_issuer_common_name_regex("whippoorwill");
+
+  // Add a matching dynamic interstitial.
+  filter = config_proto->add_dynamic_interstitial();
+  filter->set_interstitial_type(
+      chrome_browser_ssl::DynamicInterstitial::INTERSTITIAL_PAGE_SSL);
+  filter->set_cert_error(
+      chrome_browser_ssl::DynamicInterstitial::ERR_CERT_COMMON_NAME_INVALID);
+  filter->add_sha256_hash("sha256/nuthatch");
+  filter->add_sha256_hash(ssl_info().public_key_hashes[0].ToString());
+  filter->add_sha256_hash("sha256/treecreeper");
+
+  filter->set_mitm_software_name("UwS");
+  filter->set_issuer_common_name_regex(issuer_common_name());
+  filter->set_issuer_organization_regex(issuer_organization_name());
+
+  error_assistant()->SetErrorAssistantProto(std::move(config_proto));
+
+  base::Optional<DynamicInterstitialInfo> dynamic_interstitial =
+      error_assistant()->MatchDynamicInterstitial(ssl_info());
+  ASSERT_TRUE(dynamic_interstitial);
+  EXPECT_EQ(chrome_browser_ssl::DynamicInterstitial::INTERSTITIAL_PAGE_SSL,
+            dynamic_interstitial->interstitial_type);
+}
+
+// Test to see if the dynamic interstitial is matched.
+TEST_F(SSLErrorAssistantTest, DynamicInterstitialListComplexRegexMatch) {
+  ASSERT_TRUE(embedded_test_server()->Start());
+  EXPECT_EQ(1u, ssl_info().public_key_hashes.size());
+
+  auto config_proto =
+      std::make_unique<chrome_browser_ssl::SSLErrorAssistantConfig>();
+  config_proto->set_version_id(kLargeVersionId);
+
+  // Add a dynamic interstitial that will mismatch.
+  chrome_browser_ssl::DynamicInterstitial* filter =
+      config_proto->add_dynamic_interstitial();
+  filter->set_interstitial_type(chrome_browser_ssl::DynamicInterstitial::
+                                    INTERSTITIAL_PAGE_CAPTIVE_PORTAL);
+  filter->set_cert_error(
+      chrome_browser_ssl::DynamicInterstitial::UNKNOWN_CERT_ERROR);
+  filter->add_sha256_hash("sha256/nightjar");
+  filter->add_sha256_hash("sha256/frogmouth");
+  filter->add_sha256_hash("sha256/poorwill");
+
+  filter->set_mitm_software_name("UwS");
+  filter->set_issuer_common_name_regex("whippoorwill");
+
+  // Add a dynamic interstitial that will match.
+  filter = config_proto->add_dynamic_interstitial();
+  filter->set_interstitial_type(
+      chrome_browser_ssl::DynamicInterstitial::INTERSTITIAL_PAGE_SSL);
+  filter->set_cert_error(
+      chrome_browser_ssl::DynamicInterstitial::ERR_CERT_COMMON_NAME_INVALID);
+  filter->add_sha256_hash("sha256/nuthatch");
+  filter->add_sha256_hash(ssl_info().public_key_hashes[0].ToString());
+  filter->add_sha256_hash("sha256/treecreeper");
+
+  filter->set_mitm_software_name("UwS");
+  filter->set_issuer_common_name_regex("[0-9]+.0.[0-9]+.1");
+  filter->set_issuer_organization_regex("T[a-z]+t CA");
+
+  error_assistant()->SetErrorAssistantProto(std::move(config_proto));
+
+  base::Optional<DynamicInterstitialInfo> dynamic_interstitial =
+      error_assistant()->MatchDynamicInterstitial(ssl_info());
+  ASSERT_TRUE(dynamic_interstitial);
+  EXPECT_EQ(chrome_browser_ssl::DynamicInterstitial::INTERSTITIAL_PAGE_SSL,
+            dynamic_interstitial->interstitial_type);
+}
+
+// Test to see if the dynamic interstitial is matched when the certificate
+// error is set to UNKNOWN_CERT_ERROR.
+TEST_F(SSLErrorAssistantTest, DynamicInterstitialListMatchUnknownCertError) {
+  ASSERT_TRUE(embedded_test_server()->Start());
+  EXPECT_EQ(1u, ssl_info().public_key_hashes.size());
+
+  auto config_proto =
+      std::make_unique<chrome_browser_ssl::SSLErrorAssistantConfig>();
+  config_proto->set_version_id(kLargeVersionId);
+
+  // Add a dynamic interstitial that will mismatch.
+  chrome_browser_ssl::DynamicInterstitial* filter =
+      config_proto->add_dynamic_interstitial();
+  filter->set_interstitial_type(chrome_browser_ssl::DynamicInterstitial::
+                                    INTERSTITIAL_PAGE_CAPTIVE_PORTAL);
+  filter->set_cert_error(
+      chrome_browser_ssl::DynamicInterstitial::UNKNOWN_CERT_ERROR);
+  filter->add_sha256_hash("sha256/nightjar");
+  filter->add_sha256_hash("sha256/frogmouth");
+  filter->add_sha256_hash("sha256/poorwill");
+
+  // Add a dynamic interstitial that will match.
+  filter = config_proto->add_dynamic_interstitial();
+  filter->set_interstitial_type(
+      chrome_browser_ssl::DynamicInterstitial::INTERSTITIAL_PAGE_SSL);
+  filter->set_cert_error(
+      chrome_browser_ssl::DynamicInterstitial::UNKNOWN_CERT_ERROR);
+  filter->add_sha256_hash("sha256/nuthatch");
+  filter->add_sha256_hash(ssl_info().public_key_hashes[0].ToString());
+  filter->add_sha256_hash("sha256/treecreeper");
+
+  filter->set_issuer_common_name_regex(issuer_common_name());
+  filter->set_issuer_organization_regex(issuer_organization_name());
+  filter->set_mitm_software_name("UwS");
+
+  error_assistant()->SetErrorAssistantProto(std::move(config_proto));
+
+  base::Optional<DynamicInterstitialInfo> dynamic_interstitial =
+      error_assistant()->MatchDynamicInterstitial(ssl_info());
+  EXPECT_TRUE(dynamic_interstitial);
+  EXPECT_EQ(chrome_browser_ssl::DynamicInterstitial::INTERSTITIAL_PAGE_SSL,
+            dynamic_interstitial->interstitial_type);
+}
+
+// Test to see if the dynamic interstitial is matched if an empty issuer
+// common name regex is set.
+TEST_F(SSLErrorAssistantTest, DynamicInterstitialListNoCommonName) {
+  ASSERT_TRUE(embedded_test_server()->Start());
+  EXPECT_EQ(1u, ssl_info().public_key_hashes.size());
+
+  auto config_proto =
+      std::make_unique<chrome_browser_ssl::SSLErrorAssistantConfig>();
+  config_proto->set_version_id(kLargeVersionId);
+
+  // Add a dynamic interstitial that will mismatch.
+  chrome_browser_ssl::DynamicInterstitial* filter =
+      config_proto->add_dynamic_interstitial();
+  filter->set_interstitial_type(chrome_browser_ssl::DynamicInterstitial::
+                                    INTERSTITIAL_PAGE_CAPTIVE_PORTAL);
+  filter->set_cert_error(
+      chrome_browser_ssl::DynamicInterstitial::UNKNOWN_CERT_ERROR);
+  filter->add_sha256_hash("sha256/nightjar");
+  filter->add_sha256_hash("sha256/frogmouth");
+  filter->add_sha256_hash("sha256/poorwill");
+
+  // Add a matching dynamic interstitial with an empty issuer common name
+  // regex.
+  filter = config_proto->add_dynamic_interstitial();
+  filter->set_interstitial_type(
+      chrome_browser_ssl::DynamicInterstitial::INTERSTITIAL_PAGE_SSL);
+  filter->set_cert_error(
+      chrome_browser_ssl::DynamicInterstitial::ERR_CERT_COMMON_NAME_INVALID);
+  filter->add_sha256_hash("sha256/nuthatch");
+  filter->add_sha256_hash(ssl_info().public_key_hashes[0].ToString());
+  filter->add_sha256_hash("sha256/treecreeper");
+
+  filter->set_issuer_common_name_regex(std::string());
+  filter->set_issuer_organization_regex(issuer_organization_name());
+  filter->set_mitm_software_name("UwS");
+
+  error_assistant()->SetErrorAssistantProto(std::move(config_proto));
+
+  base::Optional<DynamicInterstitialInfo> dynamic_interstitial =
+      error_assistant()->MatchDynamicInterstitial(ssl_info());
+  ASSERT_TRUE(dynamic_interstitial);
+  EXPECT_EQ(chrome_browser_ssl::DynamicInterstitial::INTERSTITIAL_PAGE_SSL,
+            dynamic_interstitial->interstitial_type);
+}
+
+// Test to see if the dynamic interstitial is matched if no issuer
+// organization name regex is set.
+TEST_F(SSLErrorAssistantTest, DynamicInterstitialListNoOrganizationRegex) {
+  ASSERT_TRUE(embedded_test_server()->Start());
+  EXPECT_EQ(1u, ssl_info().public_key_hashes.size());
+
+  auto config_proto =
+      std::make_unique<chrome_browser_ssl::SSLErrorAssistantConfig>();
+  config_proto->set_version_id(kLargeVersionId);
+
+  // Add a dynamic interstitial that will mismatch.
+  chrome_browser_ssl::DynamicInterstitial* filter =
+      config_proto->add_dynamic_interstitial();
+  filter->set_interstitial_type(chrome_browser_ssl::DynamicInterstitial::
+                                    INTERSTITIAL_PAGE_CAPTIVE_PORTAL);
+  filter->set_cert_error(
+      chrome_browser_ssl::DynamicInterstitial::UNKNOWN_CERT_ERROR);
+  filter->add_sha256_hash("sha256/nightjar");
+  filter->add_sha256_hash("sha256/frogmouth");
+  filter->add_sha256_hash("sha256/poorwill");
+
+  // Add a matching dynamic interstitial with an empty issuer organization
+  // name regex.
+  filter = config_proto->add_dynamic_interstitial();
+  filter->set_interstitial_type(
+      chrome_browser_ssl::DynamicInterstitial::INTERSTITIAL_PAGE_SSL);
+  filter->set_cert_error(
+      chrome_browser_ssl::DynamicInterstitial::ERR_CERT_COMMON_NAME_INVALID);
+  filter->add_sha256_hash("sha256/nuthatch");
+  filter->add_sha256_hash(ssl_info().public_key_hashes[0].ToString());
+  filter->add_sha256_hash("sha256/treecreeper");
+
+  filter->set_issuer_common_name_regex(issuer_common_name());
+  filter->set_issuer_organization_regex(std::string());
+  filter->set_mitm_software_name("UwS");
+
+  error_assistant()->SetErrorAssistantProto(std::move(config_proto));
+
+  base::Optional<DynamicInterstitialInfo> dynamic_interstitial =
+      error_assistant()->MatchDynamicInterstitial(ssl_info());
+  ASSERT_TRUE(dynamic_interstitial);
+  EXPECT_EQ(chrome_browser_ssl::DynamicInterstitial::INTERSTITIAL_PAGE_SSL,
+            dynamic_interstitial->interstitial_type);
+}
+
+// Test to see if the dynamic interstitial is matched if no certificate hash is
+// provided.
+TEST_F(SSLErrorAssistantTest, DynamicInterstitialListNoCertHashes) {
+  ASSERT_TRUE(embedded_test_server()->Start());
+  EXPECT_EQ(1u, ssl_info().public_key_hashes.size());
+
+  auto config_proto =
+      std::make_unique<chrome_browser_ssl::SSLErrorAssistantConfig>();
+  config_proto->set_version_id(kLargeVersionId);
+
+  // Add a dynamic interstitial that will mismatch.
+  chrome_browser_ssl::DynamicInterstitial* filter =
+      config_proto->add_dynamic_interstitial();
+  filter->set_interstitial_type(chrome_browser_ssl::DynamicInterstitial::
+                                    INTERSTITIAL_PAGE_CAPTIVE_PORTAL);
+  filter->set_cert_error(
+      chrome_browser_ssl::DynamicInterstitial::UNKNOWN_CERT_ERROR);
+  filter->add_sha256_hash("sha256/nightjar");
+  filter->add_sha256_hash("sha256/frogmouth");
+  filter->add_sha256_hash("sha256/poorwill");
+
+  // Add a dynamic interstitial that will match.
+  filter = config_proto->add_dynamic_interstitial();
+  filter->set_interstitial_type(
+      chrome_browser_ssl::DynamicInterstitial::INTERSTITIAL_PAGE_SSL);
+  filter->set_cert_error(
+      chrome_browser_ssl::DynamicInterstitial::ERR_CERT_COMMON_NAME_INVALID);
+
+  filter->set_issuer_common_name_regex(issuer_common_name());
+  filter->set_issuer_organization_regex(issuer_organization_name());
+  filter->set_mitm_software_name("UwS");
+
+  error_assistant()->SetErrorAssistantProto(std::move(config_proto));
+
+  base::Optional<DynamicInterstitialInfo> dynamic_interstitial =
+      error_assistant()->MatchDynamicInterstitial(ssl_info());
+  ASSERT_TRUE(dynamic_interstitial);
+  EXPECT_EQ(chrome_browser_ssl::DynamicInterstitial::INTERSTITIAL_PAGE_SSL,
+            dynamic_interstitial->interstitial_type);
+}
+
+// Test to see if the dynamic interstitial is matched if no certificate hash,
+// cert error or regexes is provided.
+TEST_F(SSLErrorAssistantTest, DynamicInterstitialListMatchBlank) {
+  ASSERT_TRUE(embedded_test_server()->Start());
+  EXPECT_EQ(1u, ssl_info().public_key_hashes.size());
+
+  auto config_proto =
+      std::make_unique<chrome_browser_ssl::SSLErrorAssistantConfig>();
+  config_proto->set_version_id(kLargeVersionId);
+
+  // Add a dynamic interstitial that will mismatch.
+  chrome_browser_ssl::DynamicInterstitial* filter =
+      config_proto->add_dynamic_interstitial();
+  filter->set_interstitial_type(
+      chrome_browser_ssl::DynamicInterstitial::INTERSTITIAL_PAGE_SSL);
+
+  error_assistant()->SetErrorAssistantProto(std::move(config_proto));
+
+  base::Optional<DynamicInterstitialInfo> dynamic_interstitial =
+      error_assistant()->MatchDynamicInterstitial(ssl_info());
+  ASSERT_TRUE(dynamic_interstitial);
+  EXPECT_EQ(chrome_browser_ssl::DynamicInterstitial::INTERSTITIAL_PAGE_SSL,
+            dynamic_interstitial->interstitial_type);
+}
+
+// Test for a dynamic interstitial mismatch in the cert error.
+TEST_F(SSLErrorAssistantTest, DynamicInterstitialListCertErrorMismatch) {
+  ASSERT_TRUE(embedded_test_server()->Start());
+  EXPECT_EQ(1u, ssl_info().public_key_hashes.size());
+
+  auto config_proto =
+      std::make_unique<chrome_browser_ssl::SSLErrorAssistantConfig>();
+  config_proto->set_version_id(kLargeVersionId);
+
+  chrome_browser_ssl::DynamicInterstitial* filter =
+      config_proto->add_dynamic_interstitial();
+  filter->set_interstitial_type(
+      chrome_browser_ssl::DynamicInterstitial::INTERSTITIAL_PAGE_SSL);
+  filter->set_cert_error(
+      chrome_browser_ssl::DynamicInterstitial::ERR_CERT_DATE_INVALID);
+  filter->add_sha256_hash("sha256/nuthatch");
+  filter->add_sha256_hash(ssl_info().public_key_hashes[0].ToString());
+  filter->add_sha256_hash("sha256/treecreeper");
+
+  filter->set_issuer_common_name_regex(issuer_common_name());
+  filter->set_issuer_organization_regex(issuer_organization_name());
+  filter->set_mitm_software_name("UwS");
+
+  error_assistant()->SetErrorAssistantProto(std::move(config_proto));
+  EXPECT_FALSE(error_assistant()->MatchDynamicInterstitial(ssl_info()));
+}
+
+// Test for a dynamic interstitial mismatch in the certificate hashes.
+TEST_F(SSLErrorAssistantTest, DynamicInterstitialListHashesMismatch) {
+  ASSERT_TRUE(embedded_test_server()->Start());
+  EXPECT_EQ(1u, ssl_info().public_key_hashes.size());
+
+  auto config_proto =
+      std::make_unique<chrome_browser_ssl::SSLErrorAssistantConfig>();
+  config_proto->set_version_id(kLargeVersionId);
+
+  chrome_browser_ssl::DynamicInterstitial* filter =
+      config_proto->add_dynamic_interstitial();
+  filter->set_interstitial_type(
+      chrome_browser_ssl::DynamicInterstitial::INTERSTITIAL_PAGE_SSL);
+  filter->set_cert_error(
+      chrome_browser_ssl::DynamicInterstitial::UNKNOWN_CERT_ERROR);
+
+  filter->add_sha256_hash("sha256/yellowlegs");
+  filter->add_sha256_hash("sha256/killdeer");
+
+  filter->set_issuer_common_name_regex(issuer_common_name());
+  filter->set_issuer_organization_regex(issuer_organization_name());
+  filter->set_mitm_software_name("UwS");
+
+  error_assistant()->SetErrorAssistantProto(std::move(config_proto));
+  EXPECT_FALSE(error_assistant()->MatchDynamicInterstitial(ssl_info()));
+}
+
+// Test for a dynamic interstitial with an issuer common name regex mismatch.
+TEST_F(SSLErrorAssistantTest, DynamicInterstitialListCommonNameMismatch) {
+  ASSERT_TRUE(embedded_test_server()->Start());
+  EXPECT_EQ(1u, ssl_info().public_key_hashes.size());
+
+  auto config_proto =
+      std::make_unique<chrome_browser_ssl::SSLErrorAssistantConfig>();
+  config_proto->set_version_id(kLargeVersionId);
+
+  chrome_browser_ssl::DynamicInterstitial* filter =
+      config_proto->add_dynamic_interstitial();
+  filter->set_interstitial_type(
+      chrome_browser_ssl::DynamicInterstitial::INTERSTITIAL_PAGE_SSL);
+  filter->set_cert_error(
+      chrome_browser_ssl::DynamicInterstitial::UNKNOWN_CERT_ERROR);
+
+  filter->add_sha256_hash("sha256/nuthatch");
+  filter->add_sha256_hash(ssl_info().public_key_hashes[0].ToString());
+  filter->add_sha256_hash("sha256/treecreeper");
+
+  filter->set_issuer_common_name_regex("beeeater");
+  filter->set_issuer_organization_regex(issuer_organization_name());
+  filter->set_mitm_software_name("UwS");
+
+  error_assistant()->SetErrorAssistantProto(std::move(config_proto));
+  EXPECT_FALSE(error_assistant()->MatchDynamicInterstitial(ssl_info()));
+}
+
+// Test for a dynamic interstitial with an issuer organization regex mismatch.
+TEST_F(SSLErrorAssistantTest, DynamicInterstitialListOrganizationMismatch) {
+  ASSERT_TRUE(embedded_test_server()->Start());
+  EXPECT_EQ(1u, ssl_info().public_key_hashes.size());
+
+  auto config_proto =
+      std::make_unique<chrome_browser_ssl::SSLErrorAssistantConfig>();
+  config_proto->set_version_id(kLargeVersionId);
+
+  chrome_browser_ssl::DynamicInterstitial* filter =
+      config_proto->add_dynamic_interstitial();
+  filter->set_interstitial_type(
+      chrome_browser_ssl::DynamicInterstitial::INTERSTITIAL_PAGE_SSL);
+  filter->set_cert_error(
+      chrome_browser_ssl::DynamicInterstitial::UNKNOWN_CERT_ERROR);
+
+  filter->add_sha256_hash("sha256/nuthatch");
+  filter->add_sha256_hash(ssl_info().public_key_hashes[0].ToString());
+  filter->add_sha256_hash("sha256/treecreeper");
+
+  filter->set_issuer_common_name_regex(issuer_common_name());
+  filter->set_issuer_organization_regex("beeeater");
+  filter->set_mitm_software_name("UwS");
+
+  error_assistant()->SetErrorAssistantProto(std::move(config_proto));
+  EXPECT_FALSE(error_assistant()->MatchDynamicInterstitial(ssl_info()));
 }

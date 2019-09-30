@@ -4,8 +4,9 @@
 
 #import <EarlGrey/EarlGrey.h>
 
+#include <memory>
+
 #include "base/mac/foundation_util.h"
-#include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
 #include "base/strings/stringprintf.h"
 #include "base/synchronization/condition_variable.h"
@@ -15,7 +16,7 @@
 #include "base/time/time.h"
 #include "ios/chrome/browser/ui/ui_util.h"
 #include "ios/chrome/test/app/navigation_test_util.h"
-#include "ios/chrome/test/app/web_view_interaction_test_util.h"
+#import "ios/chrome/test/app/web_view_interaction_test_util.h"
 #import "ios/chrome/test/earl_grey/chrome_earl_grey.h"
 #import "ios/chrome/test/earl_grey/chrome_earl_grey_ui.h"
 #import "ios/chrome/test/earl_grey/chrome_test_case.h"
@@ -180,7 +181,7 @@ class InfinitePendingResponseProvider : public HtmlResponseProvider {
   const GURL infinitePendingURL =
       web::test::HttpServer::MakeUrl(kInfinitePendingPageURL);
   auto uniqueInfinitePendingProvider =
-      base::MakeUnique<InfinitePendingResponseProvider>(infinitePendingURL);
+      std::make_unique<InfinitePendingResponseProvider>(infinitePendingURL);
   InfinitePendingResponseProvider* infinitePendingProvider =
       uniqueInfinitePendingProvider.get();
   web::test::SetUpHttpServer(std::move(uniqueInfinitePendingProvider));
@@ -217,7 +218,7 @@ class InfinitePendingResponseProvider : public HtmlResponseProvider {
 
   // Add responseProvider for page that never finishes loading.
   auto uniqueInfinitePendingProvider =
-      base::MakeUnique<InfinitePendingResponseProvider>(infinitePendingURL);
+      std::make_unique<InfinitePendingResponseProvider>(infinitePendingURL);
   InfinitePendingResponseProvider* infinitePendingProvider =
       uniqueInfinitePendingProvider.get();
   web::test::AddResponseProvider(std::move(uniqueInfinitePendingProvider));

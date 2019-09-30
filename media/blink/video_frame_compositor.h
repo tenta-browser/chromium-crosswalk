@@ -19,7 +19,7 @@
 #include "media/base/video_renderer_sink.h"
 #include "media/blink/media_blink_export.h"
 #include "media/blink/webmediaplayer_params.h"
-#include "third_party/WebKit/public/platform/WebVideoFrameSubmitter.h"
+#include "third_party/blink/public/platform/web_video_frame_submitter.h"
 #include "ui/gfx/geometry/size.h"
 
 namespace base {
@@ -64,7 +64,7 @@ class MEDIA_BLINK_EXPORT VideoFrameCompositor : public VideoRendererSink,
                                                 public cc::VideoFrameProvider {
  public:
   // Used to report back the time when the new frame has been processed.
-  using OnNewProcessedFrameCB = base::Callback<void(base::TimeTicks)>;
+  using OnNewProcessedFrameCB = base::OnceCallback<void(base::TimeTicks)>;
 
   // |task_runner| is the task runner on which this class will live,
   // though it may be constructed on any thread.
@@ -80,7 +80,8 @@ class MEDIA_BLINK_EXPORT VideoFrameCompositor : public VideoRendererSink,
 
   // Signals the VideoFrameSubmitter to prepare to receive BeginFrames and
   // submit video frames given by VideoFrameCompositor.
-  virtual void EnableSubmission(const viz::FrameSinkId& id);
+  virtual void EnableSubmission(const viz::FrameSinkId& id,
+                                media::VideoRotation rotation);
 
   // cc::VideoFrameProvider implementation. These methods must be called on the
   // |task_runner_|.
@@ -121,10 +122,13 @@ class MEDIA_BLINK_EXPORT VideoFrameCompositor : public VideoRendererSink,
   // Sets the callback to be run when the new frame has been processed. The
   // callback is only run once and then reset.
   // Must be called on the compositor thread.
-  virtual void SetOnNewProcessedFrameCallback(const OnNewProcessedFrameCB& cb);
+  virtual void SetOnNewProcessedFrameCallback(OnNewProcessedFrameCB cb);
 
-  void set_tick_clock_for_testing(std::unique_ptr<base::TickClock> tick_clock) {
-    tick_clock_ = std::move(tick_clock);
+  // Updates the rotation information for frames given to |submitter_|.
+  void UpdateRotation(media::VideoRotation rotation);
+
+  void set_tick_clock_for_testing(const base::TickClock* tick_clock) {
+    tick_clock_ = tick_clock;
   }
 
   void clear_current_frame_for_testing() { current_frame_ = nullptr; }
@@ -178,7 +182,7 @@ class MEDIA_BLINK_EXPORT VideoFrameCompositor : public VideoRendererSink,
   // media thread.
   scoped_refptr<base::SingleThreadTaskRunner> task_runner_;
 
-  std::unique_ptr<base::TickClock> tick_clock_;
+  const base::TickClock* tick_clock_;
 
   // Allows tests to disable the background rendering task.
   bool background_rendering_enabled_;
@@ -209,9 +213,6 @@ class MEDIA_BLINK_EXPORT VideoFrameCompositor : public VideoRendererSink,
   // AutoOpenCloseEvent for begin/end events.
   std::unique_ptr<base::trace_event::AutoOpenCloseEvent> auto_open_close_;
   std::unique_ptr<blink::WebVideoFrameSubmitter> submitter_;
-
-  // Whether the use of a surface layer instead of a video layer is enabled.
-  bool surface_layer_for_video_enabled_ = false;
 
   base::WeakPtrFactory<VideoFrameCompositor> weak_ptr_factory_;
 

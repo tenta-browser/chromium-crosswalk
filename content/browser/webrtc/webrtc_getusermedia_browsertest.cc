@@ -259,11 +259,9 @@ IN_PROC_BROWSER_TEST_F(WebRtcGetUserMediaBrowserTest,
   ExecuteJavascriptAndWaitForOk("getUserMediaAndClone();");
 }
 
-// Test fails under Android, http://crbug.com/524388
-// Test fails under MSan
-// Flaky everywhere else: http://crbug.com/523152
+// TODO(crbug.com/803516) : Flaky on all platforms.
 IN_PROC_BROWSER_TEST_F(WebRtcGetUserMediaBrowserTest,
-                       RenderVideoTrackInMultipleTagsAndPause) {
+                       DISABLED_RenderVideoTrackInMultipleTagsAndPause) {
   ASSERT_TRUE(embedded_test_server()->Start());
 
   GURL url(embedded_test_server()->GetURL("/media/getusermedia.html"));
@@ -435,27 +433,6 @@ IN_PROC_BROWSER_TEST_F(WebRtcGetUserMediaBrowserTest,
                                                   expected_result);
 }
 
-// Test fails under MSan, http://crbug.com/445745.
-// Flaky everywhere: https://crbug.com/789121.
-IN_PROC_BROWSER_TEST_F(WebRtcGetUserMediaBrowserTest,
-                       DISABLED_TwoGetUserMediaAndVerifyFrameRate) {
-  ASSERT_TRUE(embedded_test_server()->Start());
-
-  GURL url(embedded_test_server()->GetURL("/media/getusermedia.html"));
-  NavigateToURL(shell(), url);
-
-  std::string constraints1 =
-      "{video: {mandatory: {minWidth:640 , minHeight: 480, "
-      "minFrameRate : 15, maxFrameRate : 15}}}";
-  std::string constraints2 =
-      "{video: {mandatory: {maxWidth:320 , maxHeight: 240,"
-      "minFrameRate : 7, maxFrameRate : 7}}}";
-
-  std::string command = "twoGetUserMediaAndVerifyFrameRate(" +
-      constraints1 + ',' + constraints2 + ", 15, 7)";
-  ExecuteJavascriptAndWaitForOk(command);
-}
-
 IN_PROC_BROWSER_TEST_F(WebRtcGetUserMediaBrowserTest,
                        GetUserMediaWithTooHighVideoConstraintsValues) {
   ASSERT_TRUE(embedded_test_server()->Start());
@@ -589,8 +566,9 @@ IN_PROC_BROWSER_TEST_F(WebRtcGetUserMediaBrowserTest,
   ExecuteJavascriptAndWaitForOk(call);
 }
 
+// Flaky: crbug.com/807638
 IN_PROC_BROWSER_TEST_F(WebRtcGetUserMediaBrowserTest,
-                       VideoInIFrameAndCloseInSuccessCb) {
+                       DISABLED_VideoInIFrameAndCloseInSuccessCb) {
   ASSERT_TRUE(embedded_test_server()->Start());
 
   GURL url(embedded_test_server()->GetURL("/media/getusermedia.html"));
@@ -810,6 +788,22 @@ IN_PROC_BROWSER_TEST_F(WebRtcGetUserMediaBrowserTest,
   GURL url(embedded_test_server()->GetURL("/media/getusermedia.html"));
   NavigateToURL(shell(), url);
   ExecuteJavascriptAndWaitForOk("concurrentGetUserMediaStop()");
+}
+
+IN_PROC_BROWSER_TEST_F(WebRtcGetUserMediaBrowserTest,
+                       GetUserMediaAfterStopElementCapture) {
+  ASSERT_TRUE(embedded_test_server()->Start());
+  GURL url(embedded_test_server()->GetURL("/media/getusermedia.html"));
+  NavigateToURL(shell(), url);
+  ExecuteJavascriptAndWaitForOk("getUserMediaAfterStopCanvasCapture()");
+}
+
+IN_PROC_BROWSER_TEST_F(WebRtcGetUserMediaBrowserTest,
+                       GetUserMediaEchoCancellationOnAndOff) {
+  ASSERT_TRUE(embedded_test_server()->Start());
+  GURL url(embedded_test_server()->GetURL("/media/getusermedia.html"));
+  NavigateToURL(shell(), url);
+  ExecuteJavascriptAndWaitForOk("getUserMediaEchoCancellationOnAndOff()");
 }
 
 }  // namespace content

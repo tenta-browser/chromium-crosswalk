@@ -72,6 +72,10 @@ enum AppMenuAction {
   MENU_ACTION_UPGRADE_DIALOG = 44,
   MENU_ACTION_CAST = 45,
   MENU_ACTION_BETA_FORUM = 46,
+  MENU_ACTION_COPY_URL = 47,
+  MENU_ACTION_OPEN_IN_CHROME = 48,
+  MENU_ACTION_SITE_SETTINGS = 49,
+  MENU_ACTION_APP_INFO = 50,
   LIMIT_MENU_ACTION
 };
 
@@ -157,18 +161,20 @@ class AppMenuModel : public ui::SimpleMenuModel,
   void UpdateZoomControls();
 
  protected:
+  // Helper function to record the menu action in a UMA histogram.
+  virtual void LogMenuAction(AppMenuAction action_id);
+
   // Builds the menu model, adding appropriate menu items.
   virtual void Build();
 
-  // Appends everything needed for the clipboard menu: a menu break, the
-  // clipboard menu content and the finalizing menu break.
+  // Appends a clipboard menu (without separators).
   void CreateCutCopyPasteMenu();
 
-  // Add a menu item for the browser action icons.
-  void CreateActionToolbarOverflowMenu();
+  // Add a menu item for the browser action icons if there is overflow, returns
+  // whether the menu was added.
+  bool CreateActionToolbarOverflowMenu();
 
-  // Appends everything needed for the zoom menu: a menu break, then the zoom
-  // menu content and then another menu break.
+  // Appends a zoom menu (without separators).
   void CreateZoomMenu();
 
  private:
@@ -188,9 +194,6 @@ class AppMenuModel : public ui::SimpleMenuModel,
   // Logs UMA metrics about which command was chosen and how long the user
   // took to select the command.
   void LogMenuMetrics(int command_id);
-
-  // Helper function to record the menu action in a UMA histogram.
-  void LogMenuAction(AppMenuAction action_id);
 
   // Time menu has been open. Used by LogMenuMetrics() to record the time
   // to action when the user selects a menu item.

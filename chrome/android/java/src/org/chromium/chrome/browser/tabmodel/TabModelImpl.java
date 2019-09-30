@@ -67,11 +67,6 @@ public class TabModelImpl extends TabModelJniBridge {
      */
     private boolean mIsUndoSupported = true;
 
-    /**
-     * Whether a tab is currently pending addition to this model.
-     */
-    private boolean mIsPendingTabAdd;
-
     public TabModelImpl(boolean incognito, boolean isTabbedActivity, TabCreator regularTabCreator,
             TabCreator incognitoTabCreator, TabModelSelectorUma uma,
             TabModelOrderController orderController, TabContentManager tabContentManager,
@@ -128,8 +123,6 @@ public class TabModelImpl extends TabModelJniBridge {
     public void addTab(Tab tab, int index, TabLaunchType type) {
         try {
             TraceEvent.begin("TabModelImpl.addTab");
-
-            mIsPendingTabAdd = false;
 
             for (TabModelObserver obs : mObservers) obs.willAddTab(tab, type);
 
@@ -397,7 +390,7 @@ public class TabModelImpl extends TabModelJniBridge {
 
         if (allowDelegation && mModelDelegate.closeAllTabsRequest(isIncognito())) return;
 
-        if (HomepageManager.isHomepageEnabled()) {
+        if (HomepageManager.shouldCloseAppWithZeroTabs()) {
             commitAllTabClosures();
 
             for (int i = 0; i < getCount(); i++) getTabAt(i).setClosing(true);
@@ -448,13 +441,6 @@ public class TabModelImpl extends TabModelJniBridge {
         if (tab == null) return INVALID_TAB_INDEX;
         int retVal = mTabs.indexOf(tab);
         return retVal == -1 ? INVALID_TAB_INDEX : retVal;
-    }
-
-    /**
-     * @return true if this is the current model according to the model selector
-     */
-    private boolean isCurrentModel() {
-        return mModelDelegate.getCurrentModel().isIncognito() == isIncognito();
     }
 
     // TODO(aurimas): Move this method to TabModelSelector when notifications move there.
@@ -510,6 +496,11 @@ public class TabModelImpl extends TabModelJniBridge {
         } finally {
             TraceEvent.end("TabModelImpl.setIndex");
         }
+    }
+
+    @Override
+    public boolean isCurrentModel() {
+        return mModelDelegate.isCurrentModel(this);
     }
 
     /**
@@ -743,7 +734,7 @@ public class TabModelImpl extends TabModelJniBridge {
 
     @Override
     public int index() {
-        return mIsPendingTabAdd ? INVALID_TAB_INDEX : mIndex;
+        return mIndex;
     }
 
     @Override
@@ -766,16 +757,5 @@ public class TabModelImpl extends TabModelJniBridge {
         mRecentlyClosedBridge.openRecentlyClosedTab();
         // If there is only one tab, select it.
         if (getCount() == 1) setIndex(0, TabSelectionType.FROM_NEW);
-    }
-
-    @Override
-    public void setIsPendingTabAdd(boolean isPendingTabAdd) {
-        mIsPendingTabAdd = isPendingTabAdd;
-        for (TabModelObserver obs : mObservers) obs.pendingTabAdd(isPendingTabAdd);
-    }
-
-    @Override
-    public boolean isPendingTabAdd() {
-        return mIsPendingTabAdd;
     }
 }

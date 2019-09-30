@@ -20,6 +20,7 @@
 #include "chrome/grit/generated_resources.h"
 #include "components/constrained_window/constrained_window_views.h"
 #include "components/signin/core/browser/profile_management_switches.h"
+#include "components/strings/grit/components_strings.h"
 #include "content/public/browser/web_contents.h"
 #include "google_apis/gaia/gaia_auth_util.h"
 #include "third_party/skia/include/core/SkColor.h"
@@ -186,8 +187,7 @@ void ProfileSigninConfirmationDialogViews::ViewHierarchyChanged(
   // Create the explanation label.
   std::vector<size_t> offsets;
   const base::string16 learn_more_text =
-      l10n_util::GetStringUTF16(
-          IDS_ENTERPRISE_SIGNIN_PROFILE_LINK_LEARN_MORE);
+      l10n_util::GetStringUTF16(IDS_LEARN_MORE);
   const base::string16 signin_explanation_text =
       l10n_util::GetStringFUTF16(prompt_for_new_profile_ ?
           IDS_ENTERPRISE_SIGNIN_EXPLANATION_WITH_PROFILE_CREATION :
@@ -207,11 +207,12 @@ void ProfileSigninConfirmationDialogViews::ViewHierarchyChanged(
   // insets.
   SetBorder(views::CreateEmptyBorder(content_insets.top(), 0,
                                      content_insets.bottom(), 0));
-  views::GridLayout* dialog_layout = views::GridLayout::CreateAndInstall(this);
+  views::GridLayout* dialog_layout =
+      SetLayoutManager(std::make_unique<views::GridLayout>(this));
 
   // Use GridLayout inside the prompt bar because StyledLabel requires it.
-  views::GridLayout* prompt_layout =
-      views::GridLayout::CreateAndInstall(prompt_bar);
+  views::GridLayout* prompt_layout = prompt_bar->SetLayoutManager(
+      std::make_unique<views::GridLayout>(prompt_bar));
   prompt_bar->SetBorder(
       views::CreateEmptyBorder(ChromeLayoutProvider::Get()->GetInsetsMetric(
           views::INSETS_DIALOG_SUBSECTION)));
@@ -255,13 +256,12 @@ void ProfileSigninConfirmationDialogViews::StyledLabelLinkClicked(
     views::StyledLabel* label,
     const gfx::Range& range,
     int event_flags) {
-  chrome::NavigateParams params(
-      browser_,
-      GURL("https://support.google.com/chromebook/answer/1331549"),
+  NavigateParams params(
+      browser_, GURL("https://support.google.com/chromebook/answer/1331549"),
       ui::PAGE_TRANSITION_LINK);
   params.disposition = WindowOpenDisposition::NEW_POPUP;
-  params.window_action = chrome::NavigateParams::SHOW_WINDOW;
-  chrome::Navigate(&params);
+  params.window_action = NavigateParams::SHOW_WINDOW;
+  Navigate(&params);
 }
 
 void ProfileSigninConfirmationDialogViews::ButtonPressed(

@@ -6,6 +6,7 @@
 #define COMPONENTS_AUTOFILL_CORE_BROWSER_AUTOFILL_METRICS_H_
 
 #include <stddef.h>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -118,6 +119,19 @@ class AutofillMetrics {
     NUM_INFO_BAR_METRICS,
   };
 
+  // Represents card submitted state.
+  enum SubmittedCardStateMetric {
+    // Submitted card has valid card number and expiration date.
+    HAS_CARD_NUMBER_AND_EXPIRATION_DATE,
+    // Submitted card has a valid card number but an invalid or missing
+    // expiration date.
+    HAS_CARD_NUMBER_ONLY,
+    // Submitted card has a valid expiration date but an invalid or missing card
+    // number.
+    HAS_EXPIRATION_DATE_ONLY,
+    NUM_SUBMITTED_CARD_STATE_METRICS,
+  };
+
   // Metric to measure if a submitted card's expiration date matches the same
   // server card's expiration date (unmasked or not).  Cards are considered to
   // be the same if they have the same card number (if unmasked) or if they have
@@ -136,6 +150,26 @@ class AutofillMetrics {
     // dates.
     MASKED_SERVER_CARD_EXPIRATION_DATE_DID_NOT_MATCH,
     NUM_SUBMITTED_SERVER_CARD_EXPIRATION_STATUS_METRICS,
+  };
+
+  // Metric to measure if a card for which upload was offered is already stored
+  // as a local card on the device or if it has not yet been seen.
+  enum UploadOfferedCardOriginMetric {
+    // Credit card upload was offered for a local card already on the device.
+    OFFERING_UPLOAD_OF_LOCAL_CARD,
+    // Credit card upload was offered for a newly-seen credit card.
+    OFFERING_UPLOAD_OF_NEW_CARD,
+    NUM_UPLOAD_OFFERED_CARD_ORIGIN_METRICS,
+  };
+
+  // Metric to measure if a card for which upload was accepted is already stored
+  // as a local card on the device or if it has not yet been seen.
+  enum UploadAcceptedCardOriginMetric {
+    // The user accepted upload of a local card already on the device.
+    USER_ACCEPTED_UPLOAD_OF_LOCAL_CARD,
+    // The user accepted upload of a newly-seen credit card.
+    USER_ACCEPTED_UPLOAD_OF_NEW_CARD,
+    NUM_UPLOAD_ACCEPTED_CARD_ORIGIN_METRICS,
   };
 
   // Metrics to measure user interaction with the save credit card prompt.
@@ -282,6 +316,26 @@ class AutofillMetrics {
 
     // This must be last.
     NUM_FIELD_TYPE_QUALITY_METRICS
+  };
+
+  // Metrics measuring how well rationalization has performed given user's
+  // actual input.
+  enum RationalizationQualityMetric {
+    // Rationalization did make it better for the user. Most commonly, user
+    // have left it empty as rationalization predicted.
+    RATIONALIZATION_GOOD,
+
+    // Rationalization did not make it better or worse. Meaning user have
+    // input some value that would not be filled correctly automatically.
+    RATIONALIZATION_OK,
+
+    // Rationalization did make it worse, user has to fill
+    // in a value that would have been automatically filled
+    // if there was no rationalization at all.
+    RATIONALIZATION_BAD,
+
+    // This must be last.
+    NUM_RATIONALIZATION_QUALITY_METRICS
   };
 
   enum QualityMetricPredictionSource {
@@ -630,7 +684,9 @@ class AutofillMetrics {
                       QualityMetricType metric_type,
                       ServerFieldType predicted_type,
                       ServerFieldType actual_type);
-    void LogFormSubmitted(AutofillFormSubmittedState state,
+    void LogFormSubmitted(bool is_for_credit_card,
+                          const std::set<FormType>& form_types,
+                          AutofillFormSubmittedState state,
                           const base::TimeTicks& form_parsed_timestamp);
 
     // We initialize |url_| with the form's URL when we log the first form
@@ -663,11 +719,28 @@ class AutofillMetrics {
     DISALLOW_IMPLICIT_CONSTRUCTORS(UkmTimestampPin);
   };
 
+  // Friended Helper for recording main frame URLs to UKM.
+  static void UpdateSourceURL(ukm::UkmRecorder* ukm_recorder,
+                              ukm::SourceId source_id,
+                              const GURL& url);
+
+  static void LogSubmittedCardStateMetric(SubmittedCardStateMetric metric);
+
   // If a credit card that matches a server card (unmasked or not) was submitted
   // on a form, logs whether the submitted card's expiration date matched the
   // server card's known expiration date.
   static void LogSubmittedServerCardExpirationStatusMetric(
       SubmittedServerCardExpirationStatusMetric metric);
+
+  // When credit card upload is offered, logs whether the card being offered is
+  // already a local card on the device or not.
+  static void LogUploadOfferedCardOriginMetric(
+      UploadOfferedCardOriginMetric metric);
+
+  // When credit card upload is accepted, logs whether the card being accepted
+  // is already a local card on the device or not.
+  static void LogUploadAcceptedCardOriginMetric(
+      UploadAcceptedCardOriginMetric metric);
 
   // |upload_decision_metrics| is a bitmask of |CardUploadDecisionMetric|.
   static void LogCardUploadDecisionMetrics(int upload_decision_metrics);
@@ -850,6 +923,8 @@ class AutofillMetrics {
   // state of the form.
   static void LogAutofillFormSubmittedState(
       AutofillFormSubmittedState state,
+      bool is_for_credit_card,
+      const std::set<FormType>& form_types,
       const base::TimeTicks& form_parsed_timestamp,
       FormInteractionsUkmLogger* form_interactions_ukm_logger);
 
@@ -886,9 +961,14 @@ class AutofillMetrics {
 
   // Logs the developer engagement ukm for the specified |url| and autofill
   // fields in the form structure. |developer_engagement_metrics| is a bitmask
-  // of |AutofillMetrics::DeveloperEngagementMetric|.
+  // of |AutofillMetrics::DeveloperEngagementMetric|. |is_for_credit_card| is
+  // true if the form is a credit card form. |form_types| is set of
+  // FormType recorded for the page. This will be stored as a bit vector
+  // in UKM.
   static void LogDeveloperEngagementUkm(ukm::UkmRecorder* ukm_recorder,
                                         const GURL& url,
+                                        bool is_for_credit_card,
+                                        std::set<FormType> form_types,
                                         int developer_engagement_metrics);
 
   // Logs the the |ukm_entry_name| with the specified |url| and the specified
@@ -897,6 +977,9 @@ class AutofillMetrics {
                      const GURL& url,
                      const std::string& ukm_entry_name,
                      const std::vector<std::pair<const char*, int>>& metrics);
+
+  // Converts form type to bit vector to store in UKM.
+  static int64_t FormTypesToBitVector(const std::set<FormType>& form_types);
 
   // Utility to log autofill form events in the relevant histograms depending on
   // the presence of server and/or local data.

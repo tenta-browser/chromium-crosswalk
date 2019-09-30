@@ -6,15 +6,15 @@
 
 #include "ash/login/ui/hover_notifier.h"
 #include "ash/login/ui/login_button.h"
-#include "ash/login/ui/login_constants.h"
 #include "ash/login/ui/non_accessible_view.h"
+#include "ash/public/cpp/login_constants.h"
 #include "ash/resources/vector_icons/vector_icons.h"
+#include "ash/shell.h"
 #include "ash/strings/grit/ash_strings.h"
 #include "ash/system/user/button_from_view.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "ui/accessibility/ax_node_data.h"
-#include "ui/base/ime/chromeos/input_method_manager.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/events/event_constants.h"
@@ -78,11 +78,27 @@ class NonAccessibleSeparator : public views::Separator {
   // views::Separator:
   void GetAccessibleNodeData(ui::AXNodeData* node_data) override {
     views::Separator::GetAccessibleNodeData(node_data);
-    node_data->AddState(ui::AX_STATE_INVISIBLE);
+    node_data->AddState(ax::mojom::State::kInvisible);
   }
 
  private:
   DISALLOW_COPY_AND_ASSIGN(NonAccessibleSeparator);
+};
+
+// A textfield that selects all text on focus.
+class LoginTextfield : public views::Textfield {
+ public:
+  LoginTextfield() {}
+  ~LoginTextfield() override {}
+
+  // views::Textfield:
+  void OnFocus() override {
+    views::Textfield::OnFocus();
+    SelectAll(false /*reverse*/);
+  }
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(LoginTextfield);
 };
 
 // Set of resources for an easy unlock icon.
@@ -187,7 +203,7 @@ class LoginPasswordView::EasyUnlockIcon : public views::Button,
   EasyUnlockIcon(const gfx::Size& size, int corner_radius)
       : views::Button(this) {
     SetPreferredSize(size);
-    SetLayoutManager(new views::FillLayout());
+    SetLayoutManager(std::make_unique<views::FillLayout>());
     icon_ = new AnimatedRoundedImageView(size, corner_radius);
     icon_->SetAnimationEnabled(true);
     AddChildView(icon_);
@@ -343,21 +359,24 @@ void LoginPasswordView::TestApi::set_immediately_hover_easy_unlock_icon() {
   view_->easy_unlock_icon_->set_immediately_hover_for_test();
 }
 
-LoginPasswordView::LoginPasswordView() : ime_keyboard_observer_(this) {
-  auto* root_layout = new views::BoxLayout(views::BoxLayout::kVertical);
+LoginPasswordView::LoginPasswordView() {
+  Shell::Get()->ime_controller()->AddObserver(this);
+
+  auto root_layout =
+      std::make_unique<views::BoxLayout>(views::BoxLayout::kVertical);
   root_layout->set_main_axis_alignment(
       views::BoxLayout::MAIN_AXIS_ALIGNMENT_CENTER);
-  SetLayoutManager(root_layout);
+  SetLayoutManager(std::move(root_layout));
 
   password_row_ = new NonAccessibleView();
 
-  auto* layout =
-      new views::BoxLayout(views::BoxLayout::kHorizontal,
-                           gfx::Insets(kMarginAboveBelowPasswordIconsDp, 0));
+  auto layout = std::make_unique<views::BoxLayout>(
+      views::BoxLayout::kHorizontal,
+      gfx::Insets(kMarginAboveBelowPasswordIconsDp, 0));
   layout->set_main_axis_alignment(views::BoxLayout::MAIN_AXIS_ALIGNMENT_CENTER);
   layout->set_cross_axis_alignment(
       views::BoxLayout::CROSS_AXIS_ALIGNMENT_CENTER);
-  password_row_->SetLayoutManager(layout);
+  auto* layout_ptr = password_row_->SetLayoutManager(std::move(layout));
   AddChildView(password_row_);
 
   // Add easy unlock icon.
@@ -378,7 +397,7 @@ LoginPasswordView::LoginPasswordView() : ime_keyboard_observer_(this) {
 
   // Password textfield. We control the textfield size by sizing the parent
   // view, as the textfield will expand to fill it.
-  textfield_ = new views::Textfield();
+  textfield_ = new LoginTextfield();
   textfield_->set_controller(this);
   textfield_->SetTextInputType(ui::TEXT_INPUT_TYPE_PASSWORD);
   textfield_->SetTextColor(kTextColor);
@@ -391,7 +410,7 @@ LoginPasswordView::LoginPasswordView() : ime_keyboard_observer_(this) {
   textfield_->SetBackgroundColor(SK_ColorTRANSPARENT);
 
   password_row_->AddChildView(textfield_);
-  layout->SetFlexForView(textfield_, 1);
+  layout_ptr->SetFlexForView(textfield_, 1);
 
   // Caps lock hint icon.
   capslock_icon_ = new views::ImageView();
@@ -427,16 +446,16 @@ LoginPasswordView::LoginPasswordView() : ime_keyboard_observer_(this) {
   // Make sure the textfield always starts with focus.
   textfield_->RequestFocus();
 
-  // Input method manager may be null in tests.
-  if (chromeos::input_method::InputMethodManager::Get()) {
-    chromeos::input_method::ImeKeyboard* keyboard =
-        chromeos::input_method::InputMethodManager::Get()->GetImeKeyboard();
-    ime_keyboard_observer_.Add(keyboard);
-    OnCapsLockChanged(keyboard->CapsLockIsEnabled());
-  }
+  // Initialize with the initial state of caps lock.
+  OnCapsLockChanged(Shell::Get()->ime_controller()->IsCapsLockEnabled());
+
+  // Make sure the UI start with the correct states.
+  UpdateUiState();
 }
 
-LoginPasswordView::~LoginPasswordView() = default;
+LoginPasswordView::~LoginPasswordView() {
+  Shell::Get()->ime_controller()->RemoveObserver(this);
+}
 
 void LoginPasswordView::Init(
     const OnPasswordSubmit& on_submit,
@@ -482,11 +501,8 @@ void LoginPasswordView::Clear() {
   ContentsChanged(textfield_, textfield_->text());
 }
 
-void LoginPasswordView::AppendNumber(int value) {
-  textfield_->SetText(textfield_->text() + base::IntToString16(value));
-  // |ContentsChanged| won't be called by |Textfield| if the text is changed
-  // by |Textfield::AppendText()|.
-  ContentsChanged(textfield_, textfield_->text());
+void LoginPasswordView::InsertNumber(int value) {
+  textfield_->InsertOrReplaceText(base::IntToString16(value));
 }
 
 void LoginPasswordView::Backspace() {

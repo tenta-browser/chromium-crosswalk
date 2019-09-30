@@ -5,59 +5,62 @@ Tested locations: 1200,1500
   "layers": [
     {
       "name": "LayoutView #document",
+      "bounds": [800, 600],
+      "drawsContent": false,
+      "backgroundColor": "#FFFFFF"
+    },
+    {
+      "name": "Scrolling Layer",
+      "bounds": [800, 585],
+      "drawsContent": false
+    },
+    {
+      "name": "Scrolling Contents Layer",
       "bounds": [1600, 585],
       "contentsOpaque": true,
       "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
         {
-          "object": "LayoutView #document",
+          "object": "Scrolling Contents Layer",
           "rect": [1300, 0, 300, 585],
           "reason": "incremental"
         },
         {
-          "object": "LayoutView #document",
+          "object": "Scrolling Contents Layer",
           "rect": [1000, 0, 300, 585],
           "reason": "incremental"
         },
         {
           "object": "LayoutBlockFlow DIV id='box'",
           "rect": [1500, 0, 100, 100],
-          "reason": "subtree"
+          "reason": "paint property change"
         },
         {
           "object": "LayoutBlockFlow DIV id='box'",
           "rect": [1200, 0, 100, 100],
-          "reason": "subtree"
+          "reason": "paint property change"
         },
         {
           "object": "LayoutBlockFlow DIV id='box'",
           "rect": [1200, 0, 100, 100],
-          "reason": "subtree"
+          "reason": "paint property change"
         },
         {
           "object": "LayoutBlockFlow DIV id='box'",
           "rect": [900, 0, 100, 100],
-          "reason": "subtree"
+          "reason": "paint property change"
         }
       ]
     }
   ],
   "objectPaintInvalidations": [
     {
-      "object": "LayoutView #document",
+      "object": "Scrolling Contents Layer",
       "reason": "incremental"
     },
     {
-      "object": "LayoutBlockFlow DIV id='box'",
-      "reason": "subtree"
-    },
-    {
-      "object": "LayoutView #document",
+      "object": "Scrolling Contents Layer",
       "reason": "incremental"
-    },
-    {
-      "object": "LayoutBlockFlow DIV id='box'",
-      "reason": "subtree"
     }
   ]
 }

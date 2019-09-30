@@ -4,8 +4,10 @@
 
 #import "ios/chrome/browser/ui/toolbar/clean/toolbar_mediator.h"
 
-#include "base/memory/ptr_util.h"
+#include <memory>
+
 #include "base/strings/sys_string_conversions.h"
+#include "base/strings/utf_string_conversions.h"
 #include "components/bookmarks/browser/bookmark_model.h"
 #include "components/bookmarks/browser/bookmark_node.h"
 #include "components/bookmarks/test/bookmark_test_helpers.h"
@@ -18,7 +20,10 @@
 #include "ios/chrome/browser/web_state_list/web_state_list.h"
 #import "ios/chrome/browser/web_state_list/web_state_list_observer_bridge.h"
 #import "ios/chrome/browser/web_state_list/web_state_opener.h"
+#include "ios/chrome/test/ios_chrome_scoped_testing_chrome_browser_provider.h"
+#include "ios/public/provider/chrome/browser/test_chrome_browser_provider.h"
 #import "ios/public/provider/chrome/browser/voice/voice_search_provider.h"
+#import "ios/web/public/test/fakes/fake_navigation_context.h"
 #import "ios/web/public/test/fakes/test_navigation_manager.h"
 #import "ios/web/public/test/fakes/test_web_state.h"
 #include "ios/web/public/test/test_web_thread_bundle.h"
@@ -35,8 +40,47 @@ using bookmarks::BookmarkNode;
 using bookmarks::BookmarkModel;
 
 namespace {
-class MockEnabledVoiceSearchProvider : public VoiceSearchProvider {
-  bool IsVoiceSearchEnabled() const override { return true; }
+
+// Test VoiceSearchProvider that allow overriding whether voice search
+// is enabled or not.
+class TestToolbarMediatorVoiceSearchProvider : public VoiceSearchProvider {
+ public:
+  TestToolbarMediatorVoiceSearchProvider() = default;
+  ~TestToolbarMediatorVoiceSearchProvider() override = default;
+
+  // Setter to control the value returned by IsVoiceSearchEnabled().
+  void set_voice_search_enabled(bool enabled) {
+    voice_search_enabled_ = enabled;
+  }
+
+  // VoiceSearchProvider implementation.
+  bool IsVoiceSearchEnabled() const override { return voice_search_enabled_; }
+
+ private:
+  bool voice_search_enabled_ = true;
+
+  DISALLOW_COPY_AND_ASSIGN(TestToolbarMediatorVoiceSearchProvider);
+};
+
+// Test ChromeBrowserProvider that install custom BrandedImageProvider and
+// VoiceSearchProvider for ToolbarMediator unit tests.
+class TestToolbarMediatorChromeBrowserProvider
+    : public ios::TestChromeBrowserProvider {
+ public:
+  TestToolbarMediatorChromeBrowserProvider()
+      : voice_search_provider_(
+            std::make_unique<TestToolbarMediatorVoiceSearchProvider>()) {}
+
+  ~TestToolbarMediatorChromeBrowserProvider() override = default;
+
+  VoiceSearchProvider* GetVoiceSearchProvider() const override {
+    return voice_search_provider_.get();
+  }
+
+ private:
+  std::unique_ptr<VoiceSearchProvider> voice_search_provider_;
+
+  DISALLOW_COPY_AND_ASSIGN(TestToolbarMediatorChromeBrowserProvider);
 };
 }
 
@@ -55,7 +99,9 @@ static const char kTestUrl2[] = "http://www.notChromium.org";
 
 class ToolbarMediatorTest : public PlatformTest {
  public:
-  ToolbarMediatorTest() {
+  ToolbarMediatorTest()
+      : scoped_provider_(
+            std::make_unique<TestToolbarMediatorChromeBrowserProvider>()) {
     TestChromeBrowserState::Builder test_cbs_builder;
     chrome_browser_state_ = test_cbs_builder.Build();
     chrome_browser_state_->CreateBookmarkModel(false);
@@ -63,7 +109,7 @@ class ToolbarMediatorTest : public PlatformTest {
         chrome_browser_state_.get());
     bookmarks::test::WaitForBookmarkModelToLoad(bookmark_model_);
     std::unique_ptr<ToolbarTestNavigationManager> navigation_manager =
-        base::MakeUnique<ToolbarTestNavigationManager>();
+        std::make_unique<ToolbarTestNavigationManager>();
     navigation_manager_ = navigation_manager.get();
     test_web_state_ = std::make_unique<ToolbarTestWebState>();
     test_web_state_->SetNavigationManager(std::move(navigation_manager));
@@ -82,7 +128,7 @@ class ToolbarMediatorTest : public PlatformTest {
  protected:
   web::TestWebThreadBundle thread_bundle_;
   void SetUpWebStateList() {
-    web_state_list_ = base::MakeUnique<WebStateList>(&web_state_list_delegate_);
+    web_state_list_ = std::make_unique<WebStateList>(&web_state_list_delegate_);
     web_state_list_->InsertWebState(0, std::move(test_web_state_),
                                     WebStateList::INSERT_FORCE_INDEX,
                                     WebStateOpener());
@@ -101,7 +147,7 @@ class ToolbarMediatorTest : public PlatformTest {
   }
 
   void InsertNewWebState(int index) {
-    auto web_state = base::MakeUnique<web::TestWebState>();
+    auto web_state = std::make_unique<web::TestWebState>();
     GURL url("http://test/" + std::to_string(index));
     web_state->SetCurrentURL(url);
     web_state_list_->InsertWebState(index, std::move(web_state),
@@ -111,6 +157,13 @@ class ToolbarMediatorTest : public PlatformTest {
 
   void SetUpActiveWebState() { web_state_list_->ActivateWebStateAt(0); }
 
+  void set_voice_search_enabled(bool enabled) {
+    static_cast<TestToolbarMediatorVoiceSearchProvider*>(
+        ios::GetChromeBrowserProvider()->GetVoiceSearchProvider())
+        ->set_voice_search_enabled(enabled);
+  }
+
+  IOSChromeScopedTestingChromeBrowserProvider scoped_provider_;
   TestToolbarMediator* mediator_;
   ToolbarTestWebState* web_state_;
   ToolbarTestNavigationManager* navigation_manager_;
@@ -267,7 +320,7 @@ TEST_F(ToolbarMediatorTest, TestToolbarSetupWithNoWebstateList) {
   [[[consumer_ reject] ignoringNonObjectArgs] setTabCount:0];
 }
 
-// Test the Toolbar Setup gets called when the mediator's WebState and Consumer
+// Tests the Toolbar Setup gets called when the mediator's WebState and Consumer
 // have been set.
 TEST_F(ToolbarMediatorTest, TestToolbarSetup) {
   mediator_.webStateList = web_state_list_.get();
@@ -280,7 +333,7 @@ TEST_F(ToolbarMediatorTest, TestToolbarSetup) {
   [[consumer_ verify] setShareMenuEnabled:NO];
 }
 
-// Test the Toolbar Setup gets called when the mediator's WebState and Consumer
+// Tests the Toolbar Setup gets called when the mediator's WebState and Consumer
 // have been set in reverse order.
 TEST_F(ToolbarMediatorTest, TestToolbarSetupReverse) {
   mediator_.consumer = consumer_;
@@ -311,8 +364,8 @@ TEST_F(ToolbarMediatorTest, TestWebstateListRelatedSetupReverse) {
   [[consumer_ verify] setTabCount:3];
 }
 
-// Test the Toolbar is updated when the Webstate observer method DidStartLoading
-// is triggered by SetLoading.
+// Tests the Toolbar is updated when the Webstate observer method
+// DidStartLoading is triggered by SetLoading.
 TEST_F(ToolbarMediatorTest, TestDidStartLoading) {
   // Change the default loading state to false to verify the Webstate
   // callback with true.
@@ -325,7 +378,7 @@ TEST_F(ToolbarMediatorTest, TestDidStartLoading) {
   [[consumer_ verify] setLoadingState:YES];
 }
 
-// Test the Toolbar is updated when the Webstate observer method DidStopLoading
+// Tests the Toolbar is updated when the Webstate observer method DidStopLoading
 // is triggered by SetLoading.
 TEST_F(ToolbarMediatorTest, TestDidStopLoading) {
   mediator_.webStateList = web_state_list_.get();
@@ -336,7 +389,7 @@ TEST_F(ToolbarMediatorTest, TestDidStopLoading) {
   [[consumer_ verify] setLoadingState:NO];
 }
 
-// Test the Toolbar is updated when the Webstate observer method
+// Tests the Toolbar is updated when the Webstate observer method
 // DidLoadPageWithSuccess is triggered by OnPageLoaded.
 TEST_F(ToolbarMediatorTest, TestDidLoadPageWithSucess) {
   SetUpBookmarks();
@@ -357,7 +410,50 @@ TEST_F(ToolbarMediatorTest, TestDidLoadPageWithSucess) {
   [[consumer_ verify] setShareMenuEnabled:YES];
 }
 
-// Test the Toolbar is updated when the Webstate observer method
+// Tests the Toolbar is updated when the Webstate observer method
+// didFinishNavigation is called.
+TEST_F(ToolbarMediatorTest, TestDidFinishNavigation) {
+  SetUpBookmarks();
+  mediator_.webStateList = web_state_list_.get();
+  SetUpActiveWebState();
+  mediator_.consumer = consumer_;
+  mediator_.bookmarkModel = bookmark_model_;
+
+  navigation_manager_->set_can_go_forward(true);
+  navigation_manager_->set_can_go_back(true);
+
+  web_state_->SetCurrentURL(GURL(kTestUrl));
+  web::FakeNavigationContext context;
+  web_state_->OnNavigationFinished(&context);
+
+  [[consumer_ verify] setCanGoForward:YES];
+  [[consumer_ verify] setCanGoBack:YES];
+  [[consumer_ verify] setPageBookmarked:YES];
+  [[consumer_ verify] setShareMenuEnabled:YES];
+}
+
+// Tests the Toolbar is updated when the Webstate observer method
+// didChangeVisibleSecurityState is called.
+TEST_F(ToolbarMediatorTest, TestDidChangeVisibleSecurityState) {
+  SetUpBookmarks();
+  mediator_.webStateList = web_state_list_.get();
+  SetUpActiveWebState();
+  mediator_.consumer = consumer_;
+  mediator_.bookmarkModel = bookmark_model_;
+
+  navigation_manager_->set_can_go_forward(true);
+  navigation_manager_->set_can_go_back(true);
+
+  web_state_->SetCurrentURL(GURL(kTestUrl));
+  web_state_->OnVisibleSecurityStateChanged();
+
+  [[consumer_ verify] setCanGoForward:YES];
+  [[consumer_ verify] setCanGoBack:YES];
+  [[consumer_ verify] setPageBookmarked:YES];
+  [[consumer_ verify] setShareMenuEnabled:YES];
+}
+
+// Tests the Toolbar is updated when the Webstate observer method
 // didChangeLoadingProgress is called.
 TEST_F(ToolbarMediatorTest, TestLoadingProgress) {
   mediator_.webStateList = web_state_list_.get();
@@ -366,6 +462,22 @@ TEST_F(ToolbarMediatorTest, TestLoadingProgress) {
 
   [mediator_ webState:web_state_ didChangeLoadingProgress:0.42];
   [[consumer_ verify] setLoadingProgressFraction:0.42];
+}
+
+// Tests the Toolbar is updated when Webstate observer method
+// didChangeBackForwardState is called.
+TEST_F(ToolbarMediatorTest, TestDidChangeBackForwardState) {
+  mediator_.webStateList = web_state_list_.get();
+  SetUpActiveWebState();
+  mediator_.consumer = consumer_;
+
+  navigation_manager_->set_can_go_forward(true);
+  navigation_manager_->set_can_go_back(true);
+
+  web_state_->OnBackForwardStateChanged();
+
+  [[consumer_ verify] setCanGoForward:YES];
+  [[consumer_ verify] setCanGoBack:YES];
 }
 
 // Test that increasing the number of Webstates will update the consumer with
@@ -388,35 +500,51 @@ TEST_F(ToolbarMediatorTest, TestDecreaseNumberOfWebstates) {
   [[consumer_ verify] setTabCount:kNumberOfWebStates - 1];
 }
 
-// Test that setting the voice search provider after the consumer works.
-TEST_F(ToolbarMediatorTest, TestVoiceSearchProviderAfterConsumer) {
-  MockEnabledVoiceSearchProvider provider;
+// Test that consumer is informed that voice search is enabled.
+TEST_F(ToolbarMediatorTest, TestVoiceSearchProviderEnabled) {
+  set_voice_search_enabled(true);
 
   OCMExpect([consumer_ setVoiceSearchEnabled:YES]);
-  mediator_.consumer = consumer_;
-  mediator_.voiceSearchProvider = &provider;
-
-  EXPECT_OCMOCK_VERIFY(consumer_);
-}
-
-// Test that setting the voice search provider after the consumer works.
-TEST_F(ToolbarMediatorTest, TestVoiceSearchProviderBeforeConsumer) {
-  MockEnabledVoiceSearchProvider provider;
-
-  OCMExpect([consumer_ setVoiceSearchEnabled:YES]);
-  mediator_.voiceSearchProvider = &provider;
   mediator_.consumer = consumer_;
 
   EXPECT_OCMOCK_VERIFY(consumer_);
 }
 
-// Test that setting the voice search provider after the consumer works.
+// Test that consumer is informed that voice search is not enabled.
 TEST_F(ToolbarMediatorTest, TestVoiceSearchProviderNotEnabled) {
-  VoiceSearchProvider provider;
+  set_voice_search_enabled(false);
 
   OCMExpect([consumer_ setVoiceSearchEnabled:NO]);
-  mediator_.voiceSearchProvider = &provider;
   mediator_.consumer = consumer_;
+
+  EXPECT_OCMOCK_VERIFY(consumer_);
+}
+
+// Test that updating the consumer for a specific webState works.
+TEST_F(ToolbarMediatorTest, TestUpdateConsumerForWebState) {
+  VoiceSearchProvider provider;
+
+  SetUpBookmarks();
+  mediator_.webStateList = web_state_list_.get();
+  SetUpActiveWebState();
+  mediator_.consumer = consumer_;
+  mediator_.bookmarkModel = bookmark_model_;
+
+  auto navigation_manager = std::make_unique<ToolbarTestNavigationManager>();
+  navigation_manager->set_can_go_forward(true);
+  navigation_manager->set_can_go_back(true);
+  std::unique_ptr<ToolbarTestWebState> test_web_state =
+      std::make_unique<ToolbarTestWebState>();
+  test_web_state->SetNavigationManager(std::move(navigation_manager));
+  test_web_state->SetCurrentURL(GURL(kTestUrl));
+  test_web_state->OnPageLoaded(web::PageLoadCompletionStatus::SUCCESS);
+
+  OCMExpect([consumer_ setCanGoForward:YES]);
+  OCMExpect([consumer_ setCanGoBack:YES]);
+  OCMExpect([consumer_ setPageBookmarked:YES]);
+  OCMExpect([consumer_ setShareMenuEnabled:YES]);
+
+  [mediator_ updateConsumerForWebState:test_web_state.get()];
 
   EXPECT_OCMOCK_VERIFY(consumer_);
 }

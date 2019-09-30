@@ -39,7 +39,8 @@ bool ThreadTaskRunnerHandle::IsSet() {
 
 // static
 ScopedClosureRunner ThreadTaskRunnerHandle::OverrideForTesting(
-    scoped_refptr<SingleThreadTaskRunner> overriding_task_runner) {
+    scoped_refptr<SingleThreadTaskRunner> overriding_task_runner,
+    ThreadTaskRunnerHandle::OverrideType type) {
   // OverrideForTesting() is not compatible with a SequencedTaskRunnerHandle
   // being set (but SequencedTaskRunnerHandle::IsSet() includes
   // ThreadTaskRunnerHandle::IsSet() so that's discounted as the only valid
@@ -56,9 +57,9 @@ ScopedClosureRunner ThreadTaskRunnerHandle::OverrideForTesting(
   if (!IsSet()) {
     auto top_level_ttrh = std::make_unique<ThreadTaskRunnerHandle>(
         std::move(overriding_task_runner));
-    return ScopedClosureRunner(base::Bind(
+    return ScopedClosureRunner(base::BindOnce(
         [](std::unique_ptr<ThreadTaskRunnerHandle> ttrh_to_release) {},
-        base::Passed(&top_level_ttrh)));
+        std::move(top_level_ttrh)));
   }
 
   ThreadTaskRunnerHandle* ttrh = thread_task_runner_tls.Pointer()->Get();
@@ -67,9 +68,11 @@ ScopedClosureRunner ThreadTaskRunnerHandle::OverrideForTesting(
   ttrh->task_runner_.swap(overriding_task_runner);
 
   auto no_running_during_override =
-      std::make_unique<RunLoop::ScopedDisallowRunningForTesting>();
+      type == OverrideType::kTakeOverThread
+          ? nullptr
+          : std::make_unique<RunLoop::ScopedDisallowRunningForTesting>();
 
-  return ScopedClosureRunner(base::Bind(
+  return ScopedClosureRunner(base::BindOnce(
       [](scoped_refptr<SingleThreadTaskRunner> task_runner_to_restore,
          SingleThreadTaskRunner* expected_task_runner_before_restore,
          std::unique_ptr<RunLoop::ScopedDisallowRunningForTesting>
@@ -82,9 +85,9 @@ ScopedClosureRunner ThreadTaskRunnerHandle::OverrideForTesting(
 
         ttrh->task_runner_.swap(task_runner_to_restore);
       },
-      base::Passed(&overriding_task_runner),
+      std::move(overriding_task_runner),
       base::Unretained(ttrh->task_runner_.get()),
-      base::Passed(&no_running_during_override)));
+      std::move(no_running_during_override)));
 }
 
 ThreadTaskRunnerHandle::ThreadTaskRunnerHandle(

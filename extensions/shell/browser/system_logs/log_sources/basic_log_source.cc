@@ -7,7 +7,6 @@
 #include <memory>
 #include <string>
 
-#include "base/memory/ptr_util.h"
 #include "base/strings/string_util.h"
 #include "base/sys_info.h"
 #include "components/version_info/version_info.h"
@@ -32,7 +31,7 @@ BasicLogSource::BasicLogSource(content::BrowserContext* browser_context)
 
 BasicLogSource::~BasicLogSource() = default;
 
-void BasicLogSource::Fetch(const SysLogsSourceCallback& callback) {
+void BasicLogSource::Fetch(SysLogsSourceCallback callback) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   DCHECK(!callback.is_null());
 
@@ -41,7 +40,7 @@ void BasicLogSource::Fetch(const SysLogsSourceCallback& callback) {
   PopulateVersionStrings(response.get());
   PopulateExtensionInfoLogs(response.get());
 
-  callback.Run(std::move(response));
+  std::move(callback).Run(std::move(response));
 }
 
 void BasicLogSource::PopulateVersionStrings(SystemLogsResponse* response) {

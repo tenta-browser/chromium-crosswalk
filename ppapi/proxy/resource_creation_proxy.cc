@@ -26,8 +26,6 @@
 #include "ppapi/proxy/media_stream_video_track_resource.h"
 #include "ppapi/proxy/net_address_resource.h"
 #include "ppapi/proxy/network_monitor_resource.h"
-#include "ppapi/proxy/output_protection_resource.h"
-#include "ppapi/proxy/platform_verification_private_resource.h"
 #include "ppapi/proxy/plugin_dispatcher.h"
 #include "ppapi/proxy/plugin_globals.h"
 #include "ppapi/proxy/plugin_resource_tracker.h"
@@ -266,7 +264,7 @@ PP_Resource ResourceCreationProxy::CreateGraphics3D(
 PP_Resource ResourceCreationProxy::CreateGraphics3DRaw(
     PP_Instance instance,
     PP_Resource share_context,
-    const gpu::gles2::ContextCreationAttribHelper& attrib_helper,
+    const gpu::ContextCreationAttribs& attrib_helper,
     gpu::Capabilities* capabilities,
     base::SharedMemoryHandle* shared_state,
     gpu::CommandBufferId* command_buffer_id) {
@@ -344,12 +342,6 @@ PP_Resource ResourceCreationProxy::CreateNetAddressFromNetAddressPrivate(
 PP_Resource ResourceCreationProxy::CreateNetworkMonitor(
     PP_Instance instance) {
   return (new NetworkMonitorResource(GetConnection(), instance))->
-      GetReference();
-}
-
-PP_Resource ResourceCreationProxy::CreateOutputProtectionPrivate(
-    PP_Instance instance) {
-  return (new OutputProtectionResource(GetConnection(), instance))->
       GetReference();
 }
 
@@ -478,12 +470,6 @@ PP_Resource ResourceCreationProxy::CreateFlashMenu(
 PP_Resource ResourceCreationProxy::CreateFlashMessageLoop(
     PP_Instance instance) {
   return PPB_Flash_MessageLoop_Proxy::CreateProxyResource(instance);
-}
-
-PP_Resource ResourceCreationProxy::CreatePlatformVerificationPrivate(
-    PP_Instance instance) {
-  return (new PlatformVerificationPrivateResource(GetConnection(), instance))->
-      GetReference();
 }
 
 PP_Resource ResourceCreationProxy::CreateVideoCapture(PP_Instance instance) {

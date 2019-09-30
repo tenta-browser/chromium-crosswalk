@@ -88,10 +88,7 @@ TEST_F(NativeExtensionBindingsSystemUnittest, Basic) {
             api_errors::InvocationError(
                 "idle.queryState",
                 "integer detectionIntervalInSeconds, function callback",
-                api_errors::ArgumentError(
-                    "detectionIntervalInSeconds",
-                    api_errors::InvalidType(api_errors::kTypeInteger,
-                                            api_errors::kTypeString))));
+                api_errors::NoMatchingSignature()));
   }
 
   {
@@ -217,7 +214,7 @@ TEST_F(NativeExtensionBindingsSystemUnittest, APIObjectsAreEqual) {
 }
 
 // Tests that referencing APIs after the context data is disposed is safe (and
-// returns undefined).
+// returns undefined if not yet instantiated).
 TEST_F(NativeExtensionBindingsSystemUnittest,
        ReferencingAPIAfterDisposingContext) {
   scoped_refptr<Extension> extension =
@@ -240,17 +237,20 @@ TEST_F(NativeExtensionBindingsSystemUnittest,
   EXPECT_TRUE(first_idle_object->IsObject());
 
   DisposeContext(context);
+  {
+    // Despite disposal, the context has been kept alive via the Local above.
+    v8::Context::Scope context_scope(context);
 
-  // Check an API that was instantiated....
-  v8::Local<v8::Value> second_idle_object =
-      V8ValueFromScriptSource(context, "chrome.idle");
-  ASSERT_FALSE(second_idle_object.IsEmpty());
-  EXPECT_TRUE(second_idle_object->IsUndefined());
-  // ... and also one that wasn't.
-  v8::Local<v8::Value> power_object =
-      V8ValueFromScriptSource(context, "chrome.power");
-  ASSERT_FALSE(power_object.IsEmpty());
-  EXPECT_TRUE(power_object->IsUndefined());
+    // Check an API that was instantiated....
+    v8::Local<v8::Value> second_idle_object =
+        V8ValueFromScriptSource(context, "chrome.idle");
+    EXPECT_EQ(first_idle_object, second_idle_object);
+    // ... and also one that wasn't.
+    v8::Local<v8::Value> power_object =
+        V8ValueFromScriptSource(context, "chrome.power");
+    ASSERT_FALSE(power_object.IsEmpty());
+    EXPECT_TRUE(power_object->IsUndefined());
+  }
 }
 
 // Tests that traditional custom bindings can be used with the native bindings
@@ -1000,6 +1000,119 @@ TEST_F(NativeExtensionBindingsSystemUnittest, AliasedAPIsAreDifferentObjects) {
           context, "chrome.networkingPrivate == chrome.networking.onc"),
       &equal));
   EXPECT_FALSE(equal);
+}
+
+// Tests that script can overwrite the value of an API.
+TEST_F(NativeExtensionBindingsSystemUnittest, CanOverwriteAPIs) {
+  scoped_refptr<Extension> extension = ExtensionBuilder("extension").Build();
+
+  RegisterExtension(extension);
+
+  v8::HandleScope handle_scope(isolate());
+  v8::Local<v8::Context> context = MainContext();
+  ScriptContext* script_context = CreateScriptContext(
+      context, extension.get(), Feature::BLESSED_EXTENSION_CONTEXT);
+  script_context->set_url(extension->url());
+
+  bindings_system()->UpdateBindingsForContext(script_context);
+
+  v8::Local<v8::Function> overwrite_api =
+      FunctionFromString(context, "(function() { chrome.runtime = 'bar'; })");
+  RunFunction(overwrite_api, context, 0, nullptr);
+  v8::Local<v8::Value> property =
+      V8ValueFromScriptSource(context, "chrome.runtime");
+  EXPECT_TRUE(property->IsString());
+  EXPECT_EQ("bar", gin::V8ToString(property));
+}
+
+// Tests that script can delete an API property.
+TEST_F(NativeExtensionBindingsSystemUnittest, CanDeleteAPIs) {
+  scoped_refptr<Extension> extension = ExtensionBuilder("extension").Build();
+
+  RegisterExtension(extension);
+
+  v8::HandleScope handle_scope(isolate());
+  v8::Local<v8::Context> context = MainContext();
+  ScriptContext* script_context = CreateScriptContext(
+      context, extension.get(), Feature::BLESSED_EXTENSION_CONTEXT);
+  script_context->set_url(extension->url());
+
+  bindings_system()->UpdateBindingsForContext(script_context);
+
+  v8::Local<v8::Object> chrome =
+      GetPropertyFromObject(context->Global(), context, "chrome")
+          .As<v8::Object>();
+  v8::Local<v8::String> runtime_key = gin::StringToSymbol(isolate(), "runtime");
+
+  {
+    v8::Maybe<bool> has_runtime = chrome->HasOwnProperty(context, runtime_key);
+    ASSERT_TRUE(has_runtime.IsJust());
+    EXPECT_TRUE(has_runtime.FromJust());
+  }
+
+  v8::Local<v8::Function> delete_api =
+      FunctionFromString(context, "(function() { delete chrome.runtime; })");
+  RunFunction(delete_api, context, 0, nullptr);
+
+  {
+    v8::Maybe<bool> has_runtime = chrome->HasOwnProperty(context, runtime_key);
+    ASSERT_TRUE(has_runtime.IsJust());
+    EXPECT_FALSE(has_runtime.FromJust());
+  }
+
+  v8::Local<v8::Value> property =
+      V8ValueFromScriptSource(context, "chrome.runtime");
+  EXPECT_TRUE(property->IsUndefined());
+}
+
+// Test that API initialization happens in the owning context.
+TEST_F(NativeExtensionBindingsSystemUnittest, APIIsInitializedByOwningContext) {
+  // Attach custom JS hooks.
+  const char kCustomBinding[] =
+      R"(this.apiBridge = apiBridge;
+         apiBridge.registerCustomHook(() => {});)";
+  source_map()->RegisterModule("idle", kCustomBinding);
+
+  scoped_refptr<Extension> extension =
+      ExtensionBuilder("foo").AddPermission("idle").Build();
+  RegisterExtension(extension);
+
+  v8::HandleScope handle_scope(isolate());
+  v8::Local<v8::Context> context = MainContext();
+
+  ScriptContext* script_context = CreateScriptContext(
+      context, extension.get(), Feature::BLESSED_EXTENSION_CONTEXT);
+  script_context->set_url(extension->url());
+
+  bindings_system()->UpdateBindingsForContext(script_context);
+
+  {
+    // Create a second, uninitialized context, which will trigger the
+    // construction of chrome.idle in the first context.
+    set_allow_unregistered_contexts(true);
+    v8::Local<v8::Context> second_context = AddContext();
+
+    v8::Local<v8::Function> get_idle = FunctionFromString(
+        second_context, "(function(chrome) { chrome.idle; })");
+    v8::Local<v8::Value> chrome =
+        context->Global()
+            ->Get(context, gin::StringToV8(isolate(), "chrome"))
+            .ToLocalChecked();
+    ASSERT_TRUE(chrome->IsObject());
+
+    v8::Context::Scope context_scope(second_context);
+    v8::Local<v8::Value> args[] = {chrome};
+    RunFunction(get_idle, second_context, arraysize(args), args);
+  }
+
+  // The apiBridge should have been created in the owning (original) context,
+  // even though the initialization was triggered by the second context.
+  v8::Local<v8::Value> api_bridge =
+      context->Global()
+          ->Get(context, gin::StringToV8(isolate(), "apiBridge"))
+          .ToLocalChecked();
+  ASSERT_TRUE(api_bridge->IsObject());
+  EXPECT_EQ(context, api_bridge.As<v8::Object>()->CreationContext());
 }
 
 }  // namespace extensions

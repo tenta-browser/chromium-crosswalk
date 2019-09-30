@@ -4,9 +4,11 @@
 
 #include "chrome/browser/vr/elements/content_element.h"
 
+#include "chrome/browser/vr/model/text_input_info.h"
 #include "chrome/browser/vr/ui_element_renderer.h"
+#include "chrome/browser/vr/ui_scene_constants.h"
 #include "chrome/browser/vr/vr_gl_util.h"
-#include "third_party/WebKit/public/platform/WebGestureEvent.h"
+#include "third_party/blink/public/platform/web_gesture_event.h"
 #include "ui/gfx/geometry/rect_f.h"
 
 namespace vr {
@@ -20,6 +22,16 @@ static constexpr float kContentBoundsPropagationThreshold = 0.2f;
 // Changes of the aspect ratio lead to a
 // distorted content much more quickly. Thus, have a smaller threshold here.
 static constexpr float kContentAspectRatioPropagationThreshold = 0.01f;
+
+gfx::Vector3dF GetNormalFromTransform(const gfx::Transform& transform) {
+  gfx::Vector3dF x_axis(1, 0, 0);
+  gfx::Vector3dF y_axis(0, 1, 0);
+  transform.TransformVector(&x_axis);
+  transform.TransformVector(&y_axis);
+  gfx::Vector3dF normal = CrossProduct(x_axis, y_axis);
+  normal.GetNormalized(&normal);
+  return normal;
+}
 
 }  // namespace
 
@@ -35,59 +47,84 @@ ContentElement::~ContentElement() = default;
 
 void ContentElement::Render(UiElementRenderer* renderer,
                             const CameraModel& model) const {
-  if (!texture_id_)
-    return;
   gfx::RectF copy_rect(0, 0, 1, 1);
-  renderer->DrawTexturedQuad(texture_id_, texture_location_,
-                             model.view_proj_matrix * world_space_transform(),
-                             copy_rect, computed_opacity(), size(),
-                             corner_radius());
+  if (texture_id_ || (overlay_texture_non_empty_ && overlay_texture_id_)) {
+    renderer->DrawTexturedQuad(
+        texture_id_, overlay_texture_non_empty_ ? overlay_texture_id_ : 0,
+        texture_location_, model.view_proj_matrix * world_space_transform(),
+        copy_rect, computed_opacity(), size(), corner_radius());
+  }
+}
+
+void ContentElement::OnFocusChanged(bool focused) {
+  if (delegate_)
+    delegate_->OnFocusChanged(focused);
+
+  focused_ = focused;
+  if (event_handlers_.focus_change)
+    event_handlers_.focus_change.Run(focused);
+}
+
+void ContentElement::OnInputEdited(const EditedText& info) {
+  delegate_->OnWebInputEdited(info, false);
+}
+
+void ContentElement::OnInputCommitted(const EditedText& info) {
+  delegate_->OnWebInputEdited(info, true);
 }
 
 void ContentElement::OnHoverEnter(const gfx::PointF& position) {
-  delegate_->OnContentEnter(position);
+  if (delegate_)
+    delegate_->OnContentEnter(position);
 }
 
 void ContentElement::OnHoverLeave() {
-  delegate_->OnContentLeave();
+  if (delegate_)
+
+    delegate_->OnContentLeave();
 }
 
 void ContentElement::OnMove(const gfx::PointF& position) {
-  delegate_->OnContentMove(position);
+  if (delegate_)
+    delegate_->OnContentMove(position);
 }
 
 void ContentElement::OnButtonDown(const gfx::PointF& position) {
-  delegate_->OnContentDown(position);
+  if (delegate_)
+    delegate_->OnContentDown(position);
 }
 
 void ContentElement::OnButtonUp(const gfx::PointF& position) {
-  delegate_->OnContentUp(position);
+  if (delegate_)
+    delegate_->OnContentUp(position);
 }
 
-void ContentElement::OnFlingStart(
-    std::unique_ptr<blink::WebGestureEvent> gesture,
-    const gfx::PointF& position) {
-  delegate_->OnContentFlingStart(std::move(gesture), position);
-}
 void ContentElement::OnFlingCancel(
     std::unique_ptr<blink::WebGestureEvent> gesture,
     const gfx::PointF& position) {
-  delegate_->OnContentFlingCancel(std::move(gesture), position);
+  if (delegate_)
+    delegate_->OnContentFlingCancel(std::move(gesture), position);
 }
+
 void ContentElement::OnScrollBegin(
     std::unique_ptr<blink::WebGestureEvent> gesture,
     const gfx::PointF& position) {
-  delegate_->OnContentScrollBegin(std::move(gesture), position);
+  if (delegate_)
+    delegate_->OnContentScrollBegin(std::move(gesture), position);
 }
+
 void ContentElement::OnScrollUpdate(
     std::unique_ptr<blink::WebGestureEvent> gesture,
     const gfx::PointF& position) {
-  delegate_->OnContentScrollUpdate(std::move(gesture), position);
+  if (delegate_)
+    delegate_->OnContentScrollUpdate(std::move(gesture), position);
 }
+
 void ContentElement::OnScrollEnd(
     std::unique_ptr<blink::WebGestureEvent> gesture,
     const gfx::PointF& position) {
-  delegate_->OnContentScrollEnd(std::move(gesture), position);
+  if (delegate_)
+    delegate_->OnContentScrollEnd(std::move(gesture), position);
 }
 
 void ContentElement::SetTextureId(unsigned int texture_id) {
@@ -99,12 +136,55 @@ void ContentElement::SetTextureLocation(
   texture_location_ = location;
 }
 
+void ContentElement::SetOverlayTextureId(unsigned int texture_id) {
+  overlay_texture_id_ = texture_id;
+}
+
+void ContentElement::SetOverlayTextureLocation(
+    UiElementRenderer::TextureLocation location) {
+  overlay_texture_location_ = location;
+}
+
+void ContentElement::SetOverlayTextureEmpty(bool empty) {
+  overlay_texture_non_empty_ = !empty;
+}
+
 void ContentElement::SetProjectionMatrix(const gfx::Transform& matrix) {
   projection_matrix_ = matrix;
 }
 
-bool ContentElement::OnBeginFrame(const base::TimeTicks& time,
-                                  const gfx::Vector3dF& look_at) {
+void ContentElement::SetTextInputDelegate(
+    TextInputDelegate* text_input_delegate) {
+  text_input_delegate_ = text_input_delegate;
+}
+
+void ContentElement::RequestFocus() {
+  if (!text_input_delegate_)
+    return;
+
+  text_input_delegate_->RequestFocus(id());
+}
+
+void ContentElement::RequestUnfocus() {
+  if (!text_input_delegate_)
+    return;
+
+  text_input_delegate_->RequestUnfocus(id());
+}
+
+void ContentElement::UpdateInput(const EditedText& info) {
+  if (text_input_delegate_ && focused_)
+    text_input_delegate_->UpdateInput(info.current);
+}
+
+bool ContentElement::OnBeginFrame(const gfx::Transform& head_pose) {
+  // TODO(mthiesse): This projection matrix is always going to be a frame
+  // behind when computing the content size. We'll need to address this somehow
+  // when we allow content resizing, or we could end up triggering an extra
+  // incorrect resize.
+  if (projection_matrix_.IsIdentity())
+    return false;
+
   // Determine if the projected size of the content quad changed more than a
   // given threshold. If so, propagate this info so that the content's
   // resolution and size can be adjusted. For the calculation, we cannot take
@@ -120,8 +200,13 @@ bool ContentElement::OnBeginFrame(const base::TimeTicks& time,
   // is animated. This approach only works with the current scene hierarchy and
   // set of animated properties.
   gfx::Transform target_transform = ComputeTargetWorldSpaceTransform();
+
+  gfx::Point3F target_center;
+  target_transform.TransformPoint(&target_center);
+  gfx::Vector3dF target_normal = GetNormalFromTransform(target_transform);
+  float distance = gfx::DotProduct(target_center - kOrigin, -target_normal);
   gfx::SizeF screen_size =
-      CalculateScreenSize(projection_matrix_, target_transform, target_size);
+      CalculateScreenSize(projection_matrix_, distance, target_size);
 
   float aspect_ratio = target_size.width() / target_size.height();
   gfx::SizeF screen_bounds;
@@ -146,6 +231,10 @@ bool ContentElement::OnBeginFrame(const base::TimeTicks& time,
     return true;
   }
   return false;
+}
+
+void ContentElement::SetDelegate(ContentInputDelegate* delegate) {
+  delegate_ = delegate;
 }
 
 }  // namespace vr

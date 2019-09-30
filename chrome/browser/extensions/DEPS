@@ -9,6 +9,7 @@ include_rules = [
   "+ui/base",
   "+components/arc",
   "+components/vector_icons",
+  "+services/network/public/mojom",
 
   # For access to testing command line switches.
   "+ppapi/shared_impl",
@@ -29,8 +30,13 @@ specific_include_rules = {
     "+ash/touch",
     "+ash/wm/tablet_mode/tablet_mode_controller.h",
   ],
-  "launch_util\.cc": [
-    # TODO(mash): Remove. http://crbug.com/678705
-    "+ash/shell.h",
+  "extension_protocols_unittest\.cc": [
+    "+services/network/test",
+  ],
+  "zipfile_installer_unittest.cc": [
+    "+services/data_decoder",
+  ],
+  "test_extension_system.cc": [
+    "+services/data_decoder",
   ],
 }

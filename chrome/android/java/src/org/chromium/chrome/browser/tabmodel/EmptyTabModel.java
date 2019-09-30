@@ -86,6 +86,11 @@ public class EmptyTabModel implements TabModel {
     public void setIndex(int i, TabSelectionType type) {}
 
     @Override
+    public boolean isCurrentModel() {
+        return false;
+    }
+
+    @Override
     public void moveTab(int id, int newIndex) {}
 
     @Override
@@ -136,12 +141,4 @@ public class EmptyTabModel implements TabModel {
 
     @Override
     public void openMostRecentlyClosedTab() {}
-
-    @Override
-    public void setIsPendingTabAdd(boolean isPendingTabAdd) {}
-
-    @Override
-    public boolean isPendingTabAdd() {
-        return false;
-    }
 }

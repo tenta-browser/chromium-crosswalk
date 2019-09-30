@@ -5,7 +5,7 @@
 import("//build/config/features.gni")
 import("//build/config/ui.gni")
 import("//chrome/common/features.gni")
-import("//extensions/features/features.gni")
+import("//extensions/buildflags/buildflags.gni")
 import("//media/media_options.gni")
 import("//tools/json_schema_compiler/json_features.gni")
 import("//tools/json_schema_compiler/json_schema_api.gni")
@@ -36,11 +36,8 @@ schema_sources = [
   "debugger.json",
   "desktop_capture.json",
   "developer_private.idl",
-  "dial.idl",
   "downloads.idl",
   "downloads_internal.idl",
-  "easy_unlock_private.idl",
-  "experience_sampling_private.json",
   "font_settings.json",
   "gcm.json",
   "history.json",
@@ -60,7 +57,6 @@ schema_sources = [
   "permissions.json",
   "preferences_private.json",
   "resources_private.idl",
-  "screenlock_private.idl",
   "sessions.json",
   "settings_private.idl",
   "signed_in_devices.idl",
@@ -94,6 +90,7 @@ if (is_chromeos) {
   schema_sources += [
     "certificate_provider.idl",
     "certificate_provider_internal.idl",
+    "easy_unlock_private.idl",
     "echo_private.json",
     "enterprise_device_attributes.idl",
     "enterprise_platform_keys.idl",
@@ -111,6 +108,7 @@ if (is_chromeos) {
     "platform_keys.idl",
     "platform_keys_internal.idl",
     "quick_unlock_private.idl",
+    "screenlock_private.idl",
     "terminal_private.json",
     "users_private.idl",
     "wallpaper.json",
@@ -120,11 +118,8 @@ if (is_chromeos) {
   schema_sources += [ "input_ime.json" ]
 }
 
-if (enable_app_list) {
-  schema_sources += [
-    # TODO(tapted): Move this into chromeos_schema_files.
-    "launcher_page.idl",
-  ]
+if (!is_chromeos) {
+  schema_sources += [ "enterprise_reporting_private.idl" ]
 }
 
 if (enable_print_preview && !is_chromeos) {
@@ -225,7 +220,7 @@ json_schema_api("api_registration") {
     "//components/sync",
     "//skia",
     "//third_party/metrics_proto",
-    "//ui/accessibility:ax_gen",
+    "//ui/accessibility:ax_enums_mojo",
   ]
   if (is_chromeos) {
     deps += [ "//components/drive:proto" ]

@@ -4,8 +4,8 @@
 <script src="../resources/js-test.js"></script>
 <script src="file:///gen/layout_test_data/mojo/public/js/mojo_bindings.js"></script>
 <script src="file:///gen/device/geolocation/public/interfaces/geolocation.mojom.js"></script>
-<script src="file:///gen/third_party/WebKit/public/platform/modules/geolocation/geolocation_service.mojom.js"></script>
-<script src="file:///gen/third_party/WebKit/public/platform/modules/permissions/permission.mojom.js"></script>
+<script src="file:///gen/third_party/blink/public/platform/modules/geolocation/geolocation_service.mojom.js"></script>
+<script src="file:///gen/third_party/blink/public/platform/modules/permissions/permission.mojom.js"></script>
 <script src="resources/geolocation-mock.js"></script>
 </head>
 <body>
@@ -37,6 +37,10 @@ function checkPosition(p) {
         debug("  t = " + t);
     }
     shouldBeTrue('t <= then + 1'); // Avoid rounding errors
+    if (t > then + 1) {
+        debug("  t = " + t);
+        debug("  then + 1 = " + (then + 1));
+    }
     finishJSTest();
 }
 

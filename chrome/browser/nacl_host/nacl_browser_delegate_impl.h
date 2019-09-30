@@ -11,7 +11,7 @@
 #include "base/compiler_specific.h"
 #include "base/macros.h"
 #include "components/nacl/browser/nacl_browser_delegate.h"
-#include "extensions/features/features.h"
+#include "extensions/buildflags/buildflags.h"
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)
 #include "base/memory/ref_counted.h"
@@ -49,6 +49,11 @@ class NaClBrowserDelegateImpl : public NaClBrowserDelegate {
                            const GURL& manifest_url) override;
 
  private:
+  // Creates a NaCl infobar and delegate for the given render process and view
+  // IDs.  Should be called on the UI thread.
+  static void CreateInfoBarOnUiThread(int render_process_id,
+                                      int render_view_id);
+
 #if BUILDFLAG(ENABLE_EXTENSIONS)
   scoped_refptr<extensions::InfoMap> GetExtensionInfoMap(
       const base::FilePath& profile_directory);

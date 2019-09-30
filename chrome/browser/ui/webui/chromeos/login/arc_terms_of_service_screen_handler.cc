@@ -4,21 +4,26 @@
 
 #include "chrome/browser/ui/webui/chromeos/login/arc_terms_of_service_screen_handler.h"
 
-#include "base/command_line.h"
 #include "base/i18n/timezone.h"
+#include "chrome/browser/chromeos/arc/arc_support_host.h"
+#include "chrome/browser/chromeos/arc/arc_util.h"
 #include "chrome/browser/chromeos/arc/optin/arc_optin_preference_handler.h"
 #include "chrome/browser/chromeos/login/screens/arc_terms_of_service_screen_view_observer.h"
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
+#include "chrome/browser/consent_auditor/consent_auditor_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
+#include "chrome/browser/signin/signin_manager_factory.h"
 #include "chrome/grit/generated_resources.h"
 #include "chromeos/chromeos_switches.h"
 #include "chromeos/network/network_handler.h"
 #include "chromeos/network/network_state.h"
 #include "chromeos/network/network_state_handler.h"
 #include "components/arc/arc_prefs.h"
+#include "components/consent_auditor/consent_auditor.h"
 #include "components/login/localized_values_builder.h"
 #include "components/prefs/pref_service.h"
+#include "components/signin/core/browser/signin_manager_base.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_ui.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -72,11 +77,6 @@ void ArcTermsOfServiceScreenHandler::OnCurrentScreenChanged(
   if (new_screen != OobeScreen::SCREEN_GAIA_SIGNIN)
     return;
 
-  const base::CommandLine* command_line =
-      base::CommandLine::ForCurrentProcess();
-  if (!command_line->HasSwitch(chromeos::switches::kEnableArcOOBEOptIn))
-    return;
-
   MaybeLoadPlayStoreToS(false);
   StartNetworkAndTimeZoneObserving();
 }
@@ -102,15 +102,26 @@ void ArcTermsOfServiceScreenHandler::DeclareLocalizedValues(
   builder->Add("arcTermsOfServiceRetryButton", IDS_ARC_OOBE_TERMS_BUTTON_RETRY);
   builder->Add("arcTermsOfServiceAcceptButton",
                IDS_ARC_OOBE_TERMS_BUTTON_ACCEPT);
+  builder->Add("arcTermsOfServiceNextButton",
+               IDS_ARC_OPT_IN_DIALOG_BUTTON_NEXT);
   builder->Add("arcPolicyLink", IDS_ARC_OPT_IN_PRIVACY_POLICY_LINK);
   builder->Add("arcTextBackupRestore", IDS_ARC_OPT_IN_DIALOG_BACKUP_RESTORE);
   builder->Add("arcTextLocationService", IDS_ARC_OPT_IN_LOCATION_SETTING);
+  builder->Add("arcTextPaiService", IDS_ARC_OPT_IN_PAI);
+  builder->Add("arcTextGoogleServiceConfirmation",
+               IDS_ARC_OPT_IN_GOOGLE_SERVICE_CONFIRMATION);
   builder->Add("arcLearnMoreStatistics", IDS_ARC_OPT_IN_LEARN_MORE_STATISTICS);
   builder->Add("arcLearnMoreLocationService",
       IDS_ARC_OPT_IN_LEARN_MORE_LOCATION_SERVICES);
   builder->Add("arcLearnMoreBackupAndRestore",
       IDS_ARC_OPT_IN_LEARN_MORE_BACKUP_AND_RESTORE);
+  builder->Add("arcLearnMorePaiService", IDS_ARC_OPT_IN_LEARN_MORE_PAI_SERVICE);
   builder->Add("arcOverlayClose", IDS_ARC_OOBE_TERMS_POPUP_HELP_CLOSE_BUTTON);
+}
+
+void ArcTermsOfServiceScreenHandler::SendArcManagedStatus(Profile* profile) {
+  CallJS("setArcManaged",
+         arc::IsArcPlayStoreEnabledPreferenceManagedForProfile(profile));
 }
 
 void ArcTermsOfServiceScreenHandler::OnMetricsModeChanged(bool enabled,
@@ -130,23 +141,29 @@ void ArcTermsOfServiceScreenHandler::OnMetricsModeChanged(bool enabled,
   // managed flag.
   const bool owner_profile = !owner.is_valid() || user->GetAccountId() == owner;
 
-  if (owner_profile && !managed) {
+  if (owner_profile && !managed && !enabled) {
     CallJS("setMetricsMode", base::string16(), false);
   } else {
-    int message_id = enabled ?
-        IDS_ARC_OOBE_TERMS_DIALOG_METRICS_MANAGED_ENABLED :
-        IDS_ARC_OOBE_TERMS_DIALOG_METRICS_MANAGED_DISABLED;
+    int message_id;
+    if (owner_profile && !managed) {
+      message_id = IDS_ARC_OOBE_TERMS_DIALOG_METRICS_ENABLED;
+    } else {
+      message_id = enabled ? IDS_ARC_OOBE_TERMS_DIALOG_METRICS_MANAGED_ENABLED
+                           : IDS_ARC_OOBE_TERMS_DIALOG_METRICS_MANAGED_DISABLED;
+    }
     CallJS("setMetricsMode", l10n_util::GetStringUTF16(message_id), true);
   }
 }
 
 void ArcTermsOfServiceScreenHandler::OnBackupAndRestoreModeChanged(
     bool enabled, bool managed) {
+  backup_restore_managed_ = managed;
   CallJS("setBackupAndRestoreMode", enabled, managed);
 }
 
 void ArcTermsOfServiceScreenHandler::OnLocationServicesModeChanged(
     bool enabled, bool managed) {
+  location_services_managed_ = managed;
   CallJS("setLocationServicesMode", enabled, managed);
 }
 
@@ -210,6 +227,7 @@ void ArcTermsOfServiceScreenHandler::DoShow() {
 
   ShowScreen(kScreenId);
 
+  SendArcManagedStatus(profile);
   MaybeLoadPlayStoreToS(true);
   StartNetworkAndTimeZoneObserving();
 
@@ -235,12 +253,44 @@ void ArcTermsOfServiceScreenHandler::HandleSkip() {
 
 void ArcTermsOfServiceScreenHandler::HandleAccept(
     bool enable_backup_restore,
-    bool enable_location_services) {
+    bool enable_location_services,
+    const std::string& tos_content) {
   if (!NeedDispatchEventOnAction())
     return;
-
   pref_handler_->EnableBackupRestore(enable_backup_restore);
   pref_handler_->EnableLocationService(enable_location_services);
+
+  Profile* profile = ProfileManager::GetActiveUserProfile();
+  consent_auditor::ConsentAuditor* consent_auditor =
+      ConsentAuditorFactory::GetForProfile(profile);
+  SigninManagerBase* signin_manager =
+      SigninManagerFactory::GetForProfile(profile);
+  DCHECK(signin_manager->IsAuthenticated());
+  std::string account_id = signin_manager->GetAuthenticatedAccountId();
+
+  // Record acceptance of Play ToS.
+  consent_auditor->RecordGaiaConsent(
+      account_id, consent_auditor::Feature::PLAY_STORE,
+      ArcSupportHost::ComputePlayToSConsentIds(tos_content),
+      IDS_ARC_OOBE_TERMS_BUTTON_ACCEPT, consent_auditor::ConsentStatus::GIVEN);
+
+  // If the user - not policy - chose Backup and Restore, record consent.
+  if (enable_backup_restore && !backup_restore_managed_) {
+    consent_auditor->RecordGaiaConsent(
+        account_id, consent_auditor::Feature::BACKUP_AND_RESTORE,
+        {IDS_ARC_OPT_IN_DIALOG_BACKUP_RESTORE},
+        IDS_ARC_OOBE_TERMS_BUTTON_ACCEPT,
+        consent_auditor::ConsentStatus::GIVEN);
+  }
+
+  // If the user - not policy - chose Location Services, record consent.
+  if (enable_location_services && !location_services_managed_) {
+    consent_auditor->RecordGaiaConsent(
+        account_id, consent_auditor::Feature::GOOGLE_LOCATION_SERVICE,
+        {IDS_ARC_OPT_IN_LOCATION_SETTING}, IDS_ARC_OOBE_TERMS_BUTTON_ACCEPT,
+        consent_auditor::ConsentStatus::GIVEN);
+  }
+
   for (auto& observer : observer_list_)
     observer.OnAccept();
 }

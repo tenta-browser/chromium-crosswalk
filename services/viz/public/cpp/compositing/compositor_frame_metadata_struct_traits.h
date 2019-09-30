@@ -9,6 +9,7 @@
 
 #include "components/viz/common/quads/compositor_frame_metadata.h"
 #include "services/viz/public/cpp/compositing/begin_frame_args_struct_traits.h"
+#include "services/viz/public/cpp/compositing/frame_deadline_struct_traits.h"
 #include "services/viz/public/interfaces/compositing/compositor_frame_metadata.mojom-shared.h"
 
 namespace mojo {
@@ -48,11 +49,6 @@ struct StructTraits<viz::mojom::CompositorFrameMetadataDataView,
   static float max_page_scale_factor(
       const viz::CompositorFrameMetadata& metadata) {
     return metadata.max_page_scale_factor;
-  }
-
-  static bool root_overflow_x_hidden(
-      const viz::CompositorFrameMetadata& metadata) {
-    return metadata.root_overflow_x_hidden;
   }
 
   static bool root_overflow_y_hidden(
@@ -114,9 +110,9 @@ struct StructTraits<viz::mojom::CompositorFrameMetadataDataView,
     return metadata.activation_dependencies;
   }
 
-  static bool can_activate_before_dependencies(
+  static const viz::FrameDeadline& deadline(
       const viz::CompositorFrameMetadata& metadata) {
-    return metadata.can_activate_before_dependencies;
+    return metadata.deadline;
   }
 
   static uint32_t content_source_id(

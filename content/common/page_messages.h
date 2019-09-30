@@ -11,6 +11,7 @@
 #include "ui/gfx/geometry/rect.h"
 
 // IPC messages for page-level actions.
+// TODO(https://crbug.com/775827): Convert to mojo.
 
 #undef IPC_MESSAGE_EXPORT
 #define IPC_MESSAGE_EXPORT CONTENT_EXPORT
@@ -45,9 +46,17 @@ IPC_MESSAGE_ROUTED2(PageMsg_SetHistoryOffsetAndLength,
 
 IPC_MESSAGE_ROUTED1(PageMsg_AudioStateChanged, bool /* is_audio_playing */)
 
+// Pause and unpause active tasks regarding deferLoading, active javascripts,
+// timer, scheduled task through |blink::WebFrameScheduler|.
+IPC_MESSAGE_ROUTED1(PageMsg_PausePageScheduledTasks, bool /* paused */)
+
 // Sent to OOPIF renderers when the main frame's ScreenInfo changes.
 IPC_MESSAGE_ROUTED1(PageMsg_UpdateScreenInfo,
                     content::ScreenInfo /* screen_info */)
+
+// Sent to all renderers, instructing them to freeze all frames that belongs to
+// this page.
+IPC_MESSAGE_ROUTED0(PageMsg_FreezePage)
 
 // -----------------------------------------------------------------------------
 // Messages sent from the renderer to the browser.

@@ -7,7 +7,6 @@
 #include <utility>
 
 #include "base/json/json_reader.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
@@ -76,7 +75,7 @@ std::unique_ptr<base::Value> ConvertValue(const base::Value& value,
   int int_value = 0;
   switch (schema.type()) {
     case base::Value::Type::NONE: {
-      return base::MakeUnique<base::Value>();
+      return std::make_unique<base::Value>();
     }
     case base::Value::Type::BOOLEAN: {
       // Accept booleans encoded as either string or integer.
@@ -123,6 +122,7 @@ std::unique_ptr<base::Value> ConvertValue(const base::Value& value,
         return std::move(result);
       }
       // Fall through in order to accept lists encoded as JSON strings.
+      FALLTHROUGH;
     }
     case base::Value::Type::DICTIONARY: {
       // Dictionaries may be encoded as JSON strings.
@@ -234,7 +234,7 @@ void RegistryDict::Merge(const RegistryDict& other) {
        entry != other.keys_.end(); ++entry) {
     std::unique_ptr<RegistryDict>& subdict = keys_[entry->first];
     if (!subdict)
-      subdict = base::MakeUnique<RegistryDict>();
+      subdict = std::make_unique<RegistryDict>();
     subdict->Merge(*entry->second);
   }
 
@@ -275,6 +275,7 @@ void RegistryDict::ReadRegistry(HKEY hive, const base::string16& root) {
                              new base::Value(static_cast<int>(dword_value))));
           continue;
         }
+        FALLTHROUGH;
       case REG_NONE:
       case REG_LINK:
       case REG_MULTI_SZ:

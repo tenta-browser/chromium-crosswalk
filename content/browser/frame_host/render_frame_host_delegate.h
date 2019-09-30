@@ -12,16 +12,20 @@
 
 #include "base/i18n/rtl.h"
 #include "build/build_config.h"
+#include "components/viz/common/surfaces/surface_id.h"
 #include "content/browser/webui/web_ui_impl.h"
 #include "content/common/content_export.h"
 #include "content/common/frame_message_enums.h"
 #include "content/public/browser/site_instance.h"
 #include "content/public/common/javascript_dialog_type.h"
 #include "content/public/common/media_stream_request.h"
-#include "device/geolocation/public/interfaces/geolocation_context.mojom.h"
+#include "content/public/common/resource_load_info.mojom.h"
+#include "content/public/common/resource_type.h"
 #include "mojo/public/cpp/bindings/scoped_interface_endpoint_handle.h"
+#include "net/cert/cert_status_flags.h"
 #include "net/http/http_response_headers.h"
-#include "services/device/public/interfaces/wake_lock.mojom.h"
+#include "services/device/public/mojom/geolocation_context.mojom.h"
+#include "services/device/public/mojom/wake_lock.mojom.h"
 #include "ui/base/window_open_disposition.h"
 
 #if defined(OS_WIN)
@@ -30,7 +34,7 @@
 
 #if defined(OS_ANDROID)
 #include "base/android/scoped_java_ref.h"
-#include "services/device/public/interfaces/nfc.mojom.h"
+#include "services/device/public/mojom/nfc.mojom.h"
 #endif
 
 class GURL;
@@ -41,6 +45,7 @@ class Message;
 
 namespace gfx {
 class Rect;
+class Size;
 }
 
 namespace url {
@@ -115,7 +120,6 @@ class CONTENT_EXPORT RenderFrameHostDelegate {
   virtual void RunJavaScriptDialog(RenderFrameHost* render_frame_host,
                                    const base::string16& message,
                                    const base::string16& default_prompt,
-                                   const GURL& frame_url,
                                    JavaScriptDialogType type,
                                    IPC::Message* reply_msg) {}
 
@@ -175,7 +179,8 @@ class CONTENT_EXPORT RenderFrameHostDelegate {
   // Checks if we have permission to access the microphone or camera. Note that
   // this does not query the user. |type| must be MEDIA_DEVICE_AUDIO_CAPTURE
   // or MEDIA_DEVICE_VIDEO_CAPTURE.
-  virtual bool CheckMediaAccessPermission(const url::Origin& security_origin,
+  virtual bool CheckMediaAccessPermission(RenderFrameHost* render_frame_host,
+                                          const url::Origin& security_origin,
                                           MediaStreamType type);
 
   // Returns the ID of the default device for the given media device |type|.
@@ -244,6 +249,9 @@ class CONTENT_EXPORT RenderFrameHostDelegate {
   // Set the |node| frame as focused in the current FrameTree as well as
   // possibly changing focus in distinct but related inner/outer WebContents.
   virtual void SetFocusedFrame(FrameTreeNode* node, SiteInstance* source) {}
+
+  // The frame called |window.focus()|.
+  virtual void DidCallFocus() {}
 
   // Searches the WebContents for a focused frame, potentially in an inner
   // WebContents. If this WebContents has no focused frame, returns |nullptr|.
@@ -336,6 +344,28 @@ class CONTENT_EXPORT RenderFrameHostDelegate {
   // Whether the delegate is being destroyed, in which case the RenderFrameHost
   // should not be asked to create a RenderFrame.
   virtual bool IsBeingDestroyed() const;
+
+  // Notifies that the render frame started loading a subresource.
+  virtual void SubresourceResponseStarted(const GURL& url,
+                                          net::CertStatus cert_status) {}
+
+  // Notifies that the render finished loading a subresource.
+  virtual void ResourceLoadComplete(
+      mojom::ResourceLoadInfoPtr resource_load_info) {}
+
+  // Request to print a frame that is in a different process than its parent.
+  virtual void PrintCrossProcessSubframe(const gfx::Rect& rect,
+                                         int document_cookie,
+                                         RenderFrameHost* render_frame_host) {}
+
+  // Updates the Picture-in-Picture controller with the relevant viz::SurfaceId
+  // of the video to be in Picture-in-Picture mode.
+  virtual void UpdatePictureInPictureSurfaceId(const viz::SurfaceId& surface_id,
+                                               const gfx::Size& natural_size) {}
+
+  // Updates the Picture-in-Picture controller with a signal that
+  // Picture-in-Picture mode has ended.
+  virtual void ExitPictureInPicture() {}
 
  protected:
   virtual ~RenderFrameHostDelegate() {}

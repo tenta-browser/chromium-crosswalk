@@ -12,23 +12,37 @@
 #include "base/macros.h"
 #include "base/threading/thread_checker.h"
 #include "components/signin/core/browser/account_tracker_service.h"
+#include "components/signin/core/browser/profile_management_switches.h"
 #include "components/signin/core/browser/profile_oauth2_token_service.h"
 #include "components/signin/core/browser/signin_error_controller.h"
 #include "components/webdata/common/web_data_service_base.h"
 #include "components/webdata/common/web_data_service_consumer.h"
+#include "google_apis/gaia/oauth2_token_service_delegate.h"
 #include "net/base/backoff_entry.h"
 #include "net/base/network_change_notifier.h"
+
+namespace user_prefs {
+class PrefRegistrySyncable;
+}
 
 class MutableProfileOAuth2TokenServiceDelegate
     : public OAuth2TokenServiceDelegate,
       public WebDataServiceConsumer,
       public net::NetworkChangeNotifier::NetworkChangeObserver {
  public:
+  // Refresh token guaranteed to be invalid. Can be passed to
+  // UpdateCredentials() to force an authentication error.
+  static const char kInvalidRefreshToken[];
+
   MutableProfileOAuth2TokenServiceDelegate(
       SigninClient* client,
       SigninErrorController* signin_error_controller,
-      AccountTrackerService* account_tracker_service);
+      AccountTrackerService* account_tracker_service,
+      signin::AccountConsistencyMethod account_consistency,
+      bool revoke_all_tokens_on_load = false);
   ~MutableProfileOAuth2TokenServiceDelegate() override;
+
+  static void RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry);
 
   // OAuth2TokenServiceDelegate overrides.
   OAuth2AccessTokenFetcher* CreateAccessTokenFetcher(
@@ -42,7 +56,8 @@ class MutableProfileOAuth2TokenServiceDelegate
                        const GoogleServiceAuthError& error) override;
 
   bool RefreshTokenIsAvailable(const std::string& account_id) const override;
-  bool RefreshTokenHasError(const std::string& account_id) const override;
+  GoogleServiceAuthError GetAuthError(
+      const std::string& account_id) const override;
   std::vector<std::string> GetAccounts() override;
   net::URLRequestContextGetter* GetRequestContext() const override;
 
@@ -80,6 +95,9 @@ class MutableProfileOAuth2TokenServiceDelegate
                   const std::string& refresh_token);
     ~AccountStatus() override;
 
+    // Must be called after the account has been added to the AccountStatusMap.
+    void Initialize();
+
     const std::string& refresh_token() const { return refresh_token_; }
     void set_refresh_token(const std::string& token) { refresh_token_ = token; }
 
@@ -110,6 +128,14 @@ class MutableProfileOAuth2TokenServiceDelegate
   FRIEND_TEST_ALL_PREFIXES(MutableProfileOAuth2TokenServiceDelegateTest,
                            RevokeOnUpdate);
   FRIEND_TEST_ALL_PREFIXES(MutableProfileOAuth2TokenServiceDelegateTest,
+                           DelayedRevoke);
+  FRIEND_TEST_ALL_PREFIXES(MutableProfileOAuth2TokenServiceDelegateTest,
+                           ShutdownDuringRevoke);
+  FRIEND_TEST_ALL_PREFIXES(MutableProfileOAuth2TokenServiceDelegateTest,
+                           UpdateInvalidToken);
+  FRIEND_TEST_ALL_PREFIXES(MutableProfileOAuth2TokenServiceDelegateTest,
+                           LoadInvalidToken);
+  FRIEND_TEST_ALL_PREFIXES(MutableProfileOAuth2TokenServiceDelegateTest,
                            GetAccounts);
   FRIEND_TEST_ALL_PREFIXES(MutableProfileOAuth2TokenServiceDelegateTest,
                            RetryBackoff);
@@ -119,6 +145,8 @@ class MutableProfileOAuth2TokenServiceDelegate
                            CanonAndNonCanonAccountId);
   FRIEND_TEST_ALL_PREFIXES(MutableProfileOAuth2TokenServiceDelegateTest,
                            ShutdownService);
+  FRIEND_TEST_ALL_PREFIXES(MutableProfileOAuth2TokenServiceDelegateTest,
+                           ClearTokensOnStartup);
 
   // WebDataServiceConsumer implementation:
   void OnWebDataServiceRequestDone(
@@ -128,6 +156,10 @@ class MutableProfileOAuth2TokenServiceDelegate
   // Loads credentials into in memory stucture.
   void LoadAllCredentialsIntoMemory(
       const std::map<std::string, std::string>& db_tokens);
+
+  // Updates the in-memory representation of the credentials.
+  void UpdateCredentialsInMemory(const std::string& account_id,
+                                 const std::string& refresh_token);
 
   // Persists credentials for |account_id|. Enables overriding for
   // testing purposes, or other cases, when accessing the DB is not desired.
@@ -146,9 +178,16 @@ class MutableProfileOAuth2TokenServiceDelegate
 
   std::string GetRefreshToken(const std::string& account_id) const;
 
+  // Creates a new AccountStatus and adds it to the AccountStatusMap.
+  // The account must not be already in the map.
+  void AddAccountStatus(const std::string& account_id,
+                        const std::string& refresh_token,
+                        const GoogleServiceAuthError& error);
+
   // Maps the |account_id| of accounts known to ProfileOAuth2TokenService
   // to information about the account.
-  typedef std::map<std::string, linked_ptr<AccountStatus>> AccountStatusMap;
+  typedef std::map<std::string, std::unique_ptr<AccountStatus>>
+      AccountStatusMap;
   // In memory refresh token store mapping account_id to refresh_token.
   AccountStatusMap refresh_tokens_;
 
@@ -176,6 +215,12 @@ class MutableProfileOAuth2TokenServiceDelegate
   SigninClient* client_;
   SigninErrorController* signin_error_controller_;
   AccountTrackerService* account_tracker_service_;
+  signin::AccountConsistencyMethod account_consistency_;
+
+  // Revokes all the tokens after loading them. Secondary accounts will be
+  // completely removed, and the primary account will be kept in authentication
+  // error state.
+  const bool revoke_all_tokens_on_load_;
 
   DISALLOW_COPY_AND_ASSIGN(MutableProfileOAuth2TokenServiceDelegate);
 };

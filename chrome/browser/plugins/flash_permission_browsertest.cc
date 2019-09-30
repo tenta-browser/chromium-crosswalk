@@ -3,7 +3,6 @@
 // found in the LICENSE file.
 
 #include "base/command_line.h"
-#include "base/memory/ptr_util.h"
 #include "base/path_service.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/scoped_feature_list.h"
@@ -18,7 +17,7 @@
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/ppapi_test_utils.h"
 #include "content/public/test/test_utils.h"
-#include "third_party/WebKit/public/platform/WebInputEvent.h"
+#include "third_party/blink/public/platform/web_input_event.h"
 #include "url/gurl.h"
 
 namespace {
@@ -59,17 +58,6 @@ class FlashPermissionBrowserTest : public PermissionsBrowserTest {
     // throttling make it harder to test if Flash was succcessfully enabled.
     command_line->AppendSwitchASCII(
         switches::kOverridePluginPowerSaverForTesting, "never");
-  }
-
-  void SetUpOnMainThread() override {
-    // Set a high engagement threshhold so it doesn't interfere with testing the
-    // permission.
-    std::map<std::string, std::string> parameters;
-    parameters["engagement_threshold_for_flash"] = "100";
-    scoped_feature_list_.InitAndEnableFeatureWithParameters(
-        features::kPreferHtmlOverPlugins, parameters);
-
-    PermissionsBrowserTest::SetUpOnMainThread();
   }
 
   void TriggerPrompt() override {
@@ -138,7 +126,7 @@ IN_PROC_BROWSER_TEST_F(FlashPermissionBrowserTest, SucceedsInPopupWindow) {
   PermissionRequestManager* manager = PermissionRequestManager::FromWebContents(
       GetWebContents());
   auto popup_prompt_factory =
-      base::MakeUnique<MockPermissionPromptFactory>(manager);
+      std::make_unique<MockPermissionPromptFactory>(manager);
 
   EXPECT_EQ(0, popup_prompt_factory->TotalRequestCount());
   popup_prompt_factory->set_response_type(PermissionRequestManager::ACCEPT_ALL);

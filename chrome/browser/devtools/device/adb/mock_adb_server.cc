@@ -9,7 +9,6 @@
 
 #include "base/location.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/memory/weak_ptr.h"
 #include "base/message_loop/message_loop.h"
 #include "base/sequence_checker.h"
@@ -29,6 +28,7 @@
 #include "net/log/net_log_source.h"
 #include "net/socket/stream_socket.h"
 #include "net/socket/tcp_server_socket.h"
+#include "net/traffic_annotation/network_traffic_annotation_test_helper.h"
 
 using content::BrowserThread;
 
@@ -343,9 +343,9 @@ void SimpleHttpServer::Connection::WriteData() {
            output_buffer_->offset() + bytes_to_write_) << "Overflow";
 
   int write_result = socket_->Write(
-      output_buffer_.get(),
-      bytes_to_write_,
-      base::Bind(&Connection::OnDataWritten, base::Unretained(this)));
+      output_buffer_.get(), bytes_to_write_,
+      base::Bind(&Connection::OnDataWritten, base::Unretained(this)),
+      TRAFFIC_ANNOTATION_FOR_TESTS);
 
   if (write_result != net::ERR_IO_PENDING)
     OnDataWritten(write_result);
@@ -444,7 +444,7 @@ class AdbParser : public SimpleHttpServer::Parser,
       Send("FAIL", "device offline (x)");
     } else {
       mock_connection_ =
-          base::MakeUnique<MockAndroidConnection>(this, serial_, command);
+          std::make_unique<MockAndroidConnection>(this, serial_, command);
     }
   }
 

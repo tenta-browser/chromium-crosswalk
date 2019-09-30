@@ -9,7 +9,6 @@
 #include "base/callback_helpers.h"
 #include "base/command_line.h"
 #include "base/location.h"
-#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/single_thread_task_runner.h"
 #include "base/threading/thread_task_runner_handle.h"
@@ -25,12 +24,12 @@
 #include "content/browser/service_worker/service_worker_response_info.h"
 #include "content/browser/ssl/ssl_client_auth_handler.h"
 #include "content/browser/ssl/ssl_manager.h"
-#include "content/common/loader_util.h"
-#include "content/public/browser/resource_dispatcher_host_login_delegate.h"
+#include "content/public/browser/content_browser_client.h"
+#include "content/public/browser/login_delegate.h"
+#include "content/public/common/appcache_info.h"
 #include "content/public/common/browser_side_navigation_policy.h"
 #include "content/public/common/content_client.h"
 #include "content/public/common/content_switches.h"
-#include "content/public/common/resource_response.h"
 #include "content/public/common/resource_type.h"
 #include "net/base/io_buffer.h"
 #include "net/base/load_flags.h"
@@ -42,6 +41,9 @@
 #include "net/url_request/redirect_info.h"
 #include "net/url_request/url_request_context.h"
 #include "net/url_request/url_request_status.h"
+#include "services/network/loader_util.h"
+#include "services/network/public/cpp/resource_response.h"
+#include "url/url_constants.h"
 
 using base::TimeDelta;
 using base::TimeTicks;
@@ -52,7 +54,7 @@ namespace {
 void PopulateResourceResponse(
     ResourceRequestInfoImpl* info,
     net::URLRequest* request,
-    ResourceResponse* response,
+    network::ResourceResponse* response,
     const net::HttpRawRequestHeaders& raw_request_headers,
     const net::HttpResponseHeaders* raw_response_headers) {
   response->head.request_time = request->request_time();
@@ -68,13 +70,18 @@ void PopulateResourceResponse(
       response_info.alpn_negotiated_protocol;
   response->head.connection_info = response_info.connection_info;
   response->head.socket_address = response_info.socket_address;
+  response->head.was_fetched_via_proxy = request->was_fetched_via_proxy();
+  response->head.network_accessed = response_info.network_accessed;
   const content::ResourceRequestInfo* request_info =
       content::ResourceRequestInfo::ForRequest(request);
-  if (request_info)
-    response->head.previews_state = request_info->GetPreviewsState();
+  if (request_info) {
+    response->head.previews_state =
+        static_cast<int>(request_info->GetPreviewsState());
+  }
   if (info->ShouldReportRawHeaders()) {
-    response->head.devtools_info =
-        BuildDevToolsInfo(*request, raw_request_headers, raw_response_headers);
+    response->head.raw_request_response_info =
+        network::BuildRawRequestResponseInfo(*request, raw_request_headers,
+                                             raw_response_headers);
   }
 
   response->head.effective_connection_type =
@@ -94,6 +101,7 @@ void PopulateResourceResponse(
       ServiceWorkerResponseInfo::ForRequest(request);
   if (service_worker_info)
     service_worker_info->GetExtraResponseInfo(&response->head);
+  response->head.appcache_id = kAppCacheNoCacheId;
   AppCacheInterceptor::GetExtraResponseInfo(
       request, &response->head.appcache_id,
       &response->head.appcache_manifest_url);
@@ -101,37 +109,16 @@ void PopulateResourceResponse(
     request->GetLoadTimingInfo(&response->head.load_timing);
 
   if (request->ssl_info().cert.get()) {
-    response->head.has_major_certificate_errors =
-        net::IsCertStatusError(request->ssl_info().cert_status) &&
-        !net::IsCertStatusMinorError(request->ssl_info().cert_status);
-    response->head.is_legacy_symantec_cert =
-        !response->head.has_major_certificate_errors &&
-        net::IsLegacySymantecCert(request->ssl_info().public_key_hashes);
-    response->head.cert_validity_start =
-        request->ssl_info().cert->valid_start();
     response->head.cert_status = request->ssl_info().cert_status;
-    if (info->ShouldReportRawHeaders()) {
-      // Only pass these members when the network panel of the DevTools is open,
-      // i.e. ShouldReportRawHeaders() is set. These data are used to populate
-      // the requests in the security panel too.
-      response->head.ssl_connection_status =
-          request->ssl_info().connection_status;
-      response->head.ssl_key_exchange_group =
-          request->ssl_info().key_exchange_group;
-      response->head.signed_certificate_timestamps =
-          request->ssl_info().signed_certificate_timestamps;
-      std::string encoded;
-      bool rv = net::X509Certificate::GetDEREncoded(
-          request->ssl_info().cert->os_cert_handle(), &encoded);
-      DCHECK(rv);
-      response->head.certificate.push_back(encoded);
-      for (auto* cert :
-           request->ssl_info().cert->GetIntermediateCertificates()) {
-        rv = net::X509Certificate::GetDEREncoded(cert, &encoded);
-        DCHECK(rv);
-        response->head.certificate.push_back(encoded);
-      }
-    }
+    response->head.ct_policy_compliance =
+        request->ssl_info().ct_policy_compliance;
+    response->head.is_legacy_symantec_cert =
+        (!net::IsCertStatusError(response->head.cert_status) ||
+         net::IsCertStatusMinorError(response->head.cert_status)) &&
+        net::IsLegacySymantecCert(request->ssl_info().public_key_hashes);
+
+    if (info->ShouldReportRawHeaders())
+      response->head.ssl_info = request->ssl_info();
   } else {
     // We should not have any SSL state.
     DCHECK(!request->ssl_info().cert_status);
@@ -222,7 +209,8 @@ class ResourceLoader::ScopedDeferral {
 
 ResourceLoader::ResourceLoader(std::unique_ptr<net::URLRequest> request,
                                std::unique_ptr<ResourceHandler> handler,
-                               ResourceLoaderDelegate* delegate)
+                               ResourceLoaderDelegate* delegate,
+                               ResourceContext* resource_context)
     : deferred_stage_(DEFERRED_NONE),
       request_(std::move(request)),
       handler_(std::move(handler)),
@@ -231,12 +219,32 @@ ResourceLoader::ResourceLoader(std::unique_ptr<net::URLRequest> request,
       times_cancelled_before_request_start_(0),
       started_request_(false),
       times_cancelled_after_request_start_(0),
+      resource_context_(resource_context),
       weak_ptr_factory_(this) {
   request_->set_delegate(this);
   handler_->SetDelegate(this);
 }
 
 ResourceLoader::~ResourceLoader() {
+  if (update_body_read_before_paused_)
+    body_read_before_paused_ = request_->GetRawBodyBytes();
+  if (body_read_before_paused_ != -1) {
+    // Only record histograms for web schemes.
+    bool should_record_scheme = request_->url().SchemeIs(url::kHttpScheme) ||
+                                request_->url().SchemeIs(url::kHttpsScheme) ||
+                                request_->url().SchemeIs(url::kFtpScheme);
+    if (!request_->was_cached() && should_record_scheme) {
+      UMA_HISTOGRAM_COUNTS_1M("Network.URLLoader.BodyReadFromNetBeforePaused",
+                              body_read_before_paused_);
+    } else {
+      DVLOG(1) << "The request has been paused, but "
+               << "Network.URLLoader.BodyReadFromNetBeforePaused is not "
+               << "reported because the response body may not be from the "
+               << "network, or may be from cache. body_read_before_paused_: "
+               << body_read_before_paused_;
+    }
+  }
+
   if (login_delegate_.get())
     login_delegate_->OnRequestCancelled();
   ssl_client_auth_handler_.reset();
@@ -318,6 +326,44 @@ void ResourceLoader::OutOfBandCancel(int error_code, bool tell_renderer) {
   CancelRequestInternal(error_code, !tell_renderer);
 }
 
+void ResourceLoader::PauseReadingBodyFromNet() {
+  DVLOG(1) << "ResourceLoader pauses fetching response body for "
+           << request_->original_url().spec();
+
+  // Please note that reading the body is paused in all cases. Even if the URL
+  // request indicates that the response was cached, there could still be
+  // network activity involved. For example, the response was only partially
+  // cached. This also pauses things that don't come from the network (chrome
+  // URLs, file URLs, data URLs, etc.).
+  //
+  // On the other hand, BodyReadFromNetBeforePaused histogram is only reported
+  // when it is certain that the response body is read from the network and
+  // wasn't cached. This avoids polluting the histogram data.
+  should_pause_reading_body_ = true;
+
+  if (pending_read_) {
+    update_body_read_before_paused_ = true;
+  } else {
+    body_read_before_paused_ = request_->GetRawBodyBytes();
+  }
+}
+
+void ResourceLoader::ResumeReadingBodyFromNet() {
+  DVLOG(1) << "ResourceLoader resumes fetching response body for "
+           << request_->original_url().spec();
+
+  should_pause_reading_body_ = false;
+
+  if (read_more_body_supressed_) {
+    DCHECK(!is_deferred());
+    read_more_body_supressed_ = false;
+    base::ThreadTaskRunnerHandle::Get()->PostTask(
+        FROM_HERE, base::BindOnce(&ResourceLoader::ReadMore,
+                                  weak_ptr_factory_.GetWeakPtr(),
+                                  false /* handle_result_asynchronously */));
+  }
+}
+
 void ResourceLoader::OnReceivedRedirect(net::URLRequest* unused,
                                         const net::RedirectInfo& redirect_info,
                                         bool* defer) {
@@ -347,7 +393,8 @@ void ResourceLoader::OnReceivedRedirect(net::URLRequest* unused,
     }
   }
 
-  scoped_refptr<ResourceResponse> response = new ResourceResponse();
+  scoped_refptr<network::ResourceResponse> response =
+      new network::ResourceResponse();
   PopulateResourceResponse(info, request_.get(), response.get(),
                            raw_request_headers_, raw_response_headers_.get());
   raw_request_headers_ = net::HttpRawRequestHeaders();
@@ -403,8 +450,15 @@ void ResourceLoader::OnCertificateRequested(
 
   DCHECK(!ssl_client_auth_handler_)
       << "OnCertificateRequested called with ssl_client_auth_handler pending";
+  ResourceRequestInfo::WebContentsGetter web_contents_getter =
+      ResourceRequestInfo::ForRequest(request_.get())
+          ->GetWebContentsGetterForRequest();
+
+  std::unique_ptr<net::ClientCertStore> client_cert_store =
+      GetContentClient()->browser()->CreateClientCertStore(resource_context_);
   ssl_client_auth_handler_.reset(new SSLClientAuthHandler(
-      delegate_->CreateClientCertStore(this), request_.get(), cert_info, this));
+      std::move(client_cert_store), std::move(web_contents_getter), cert_info,
+      this));
   ssl_client_auth_handler_->SelectCertificate();
 }
 
@@ -439,6 +493,8 @@ void ResourceLoader::OnReadCompleted(net::URLRequest* unused, int bytes_read) {
   DCHECK_EQ(request_.get(), unused);
   DVLOG(1) << "OnReadCompleted: \"" << request_->url().spec() << "\""
            << " bytes_read = " << bytes_read;
+
+  pending_read_ = false;
 
   // bytes_read == -1 always implies an error.
   if (bytes_read == -1 || !request_->status().is_success()) {
@@ -652,7 +708,8 @@ void ResourceLoader::FollowDeferredRedirectInternal() {
 
 void ResourceLoader::CompleteResponseStarted() {
   ResourceRequestInfoImpl* info = GetRequestInfo();
-  scoped_refptr<ResourceResponse> response = new ResourceResponse();
+  scoped_refptr<network::ResourceResponse> response =
+      new network::ResourceResponse();
   PopulateResourceResponse(info, request_.get(), response.get(),
                            raw_request_headers_, raw_response_headers_.get());
   raw_request_headers_ = net::HttpRawRequestHeaders();
@@ -706,6 +763,13 @@ void ResourceLoader::ReadMore(bool handle_result_async) {
   DCHECK(read_buffer_.get());
   DCHECK_GT(read_buffer_size_, 0);
 
+  if (should_pause_reading_body_) {
+    read_more_body_supressed_ = true;
+    return;
+  }
+
+  pending_read_ = true;
+
   int result = request_->Read(read_buffer_.get(), read_buffer_size_);
   // Have to do this after the Read call, to ensure it still has an outstanding
   // reference.
@@ -748,6 +812,11 @@ void ResourceLoader::CompleteRead(int bytes_read) {
 
   DCHECK(bytes_read >= 0);
   DCHECK(request_->status().is_success());
+
+  if (update_body_read_before_paused_) {
+    update_body_read_before_paused_ = false;
+    body_read_before_paused_ = request_->GetRawBodyBytes();
+  }
 
   ScopedDeferral scoped_deferral(
       this, bytes_read > 0 ? DEFERRED_READ : DEFERRED_RESPONSE_COMPLETE);

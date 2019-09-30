@@ -6,9 +6,11 @@
 
 #include <stddef.h>
 
+#include <memory>
+
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/test/scoped_task_environment.h"
 #include "components/omnibox/browser/autocomplete_controller.h"
 #include "components/omnibox/browser/autocomplete_match.h"
 #include "components/omnibox/browser/omnibox_edit_model.h"
@@ -30,7 +32,6 @@ class TestOmniboxPopupView : public OmniboxPopupView {
   void OnLineSelected(size_t line) override {}
   void UpdatePopupAppearance() override {}
   void OnMatchIconUpdated(size_t match_index) override {}
-  gfx::Rect GetTargetBounds() override { return gfx::Rect(); }
   void PaintUpdatesNow() override {}
   void OnDragCanceled() override {}
 };
@@ -41,13 +42,14 @@ class OmniboxPopupModelTest : public ::testing::Test {
  public:
   OmniboxPopupModelTest()
       : view_(&controller_),
-        model_(&view_, &controller_, base::MakeUnique<TestOmniboxClient>()),
+        model_(&view_, &controller_, std::make_unique<TestOmniboxClient>()),
         popup_model_(&popup_view_, &model_) {}
 
   OmniboxEditModel* model() { return &model_; }
   OmniboxPopupModel* popup_model() { return &popup_model_; }
 
  private:
+  base::test::ScopedTaskEnvironment task_environment_;
   TestOmniboxEditController controller_;
   TestOmniboxView view_;
   OmniboxEditModel model_;

@@ -29,7 +29,6 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/task_scheduler/post_task.h"
 #include "base/threading/sequenced_task_runner_handle.h"
-#include "base/threading/sequenced_worker_pool.h"
 #include "base/version.h"
 #include "base/win/pe_image.h"
 #include "base/win/registry.h"
@@ -53,6 +52,7 @@
 #include "chrome/browser/win/browser_util.h"
 #include "chrome/browser/win/chrome_elf_init.h"
 #include "chrome/chrome_watcher/chrome_watcher_main_api.h"
+#include "chrome/common/channel_info.h"
 #include "chrome/common/chrome_constants.h"
 #include "chrome/common/chrome_features.h"
 #include "chrome/common/chrome_paths.h"
@@ -71,7 +71,11 @@
 #include "chrome/installer/util/l10n_string_util.h"
 #include "chrome/installer/util/shell_util.h"
 #include "components/crash/content/app/crash_export_thunks.h"
+#include "components/crash/content/app/dump_hung_process_with_ptype.h"
+#include "components/crash/core/common/crash_key.h"
+#include "components/version_info/channel.h"
 #include "content/public/browser/browser_thread.h"
+#include "content/public/browser/render_process_host.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/common/main_function_params.h"
 #include "ui/base/cursor/cursor_loader_win.h"
@@ -94,6 +98,12 @@ void InitializeWindowProcExceptions() {
   base::win::WinProcExceptionFilter exception_filter =
       base::win::SetWinProcExceptionFilter(&CrashForException_ExportThunk);
   DCHECK(!exception_filter);
+}
+
+// TODO(siggi): Remove once https://crbug.com/806661 is resolved.
+void DumpHungRendererProcessImpl(const base::Process& renderer) {
+  // Use a distinguishing process type for these reports.
+  crash_reporter::DumpHungProcessWithPtype(renderer, "hung-renderer");
 }
 
 // gfx::Font callbacks
@@ -335,7 +345,7 @@ void OnModuleEvent(const ModuleWatcher::ModuleEvent& event) {
         // task.
         base::PostTaskWithTraits(
             FROM_HERE,
-            {base::MayBlock(),
+            {base::MayBlock(), base::TaskPriority::BACKGROUND,
              base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN},
             base::Bind(&HandleModuleLoadEventWithoutTimeDateStamp,
                        event.module_path, event.module_size, load_address));
@@ -358,7 +368,7 @@ void SetupModuleDatabase(std::unique_ptr<ModuleWatcher>* module_watcher) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
 
   ModuleDatabase::SetInstance(
-      base::MakeUnique<ModuleDatabase>(base::SequencedTaskRunnerHandle::Get()));
+      std::make_unique<ModuleDatabase>(base::SequencedTaskRunnerHandle::Get()));
   auto* module_database = ModuleDatabase::GetInstance();
 
   *module_watcher = ModuleWatcher::Create(base::BindRepeating(&OnModuleEvent));
@@ -471,17 +481,24 @@ void ChromeBrowserMainPartsWin::PreMainMessageLoopStart() {
 int ChromeBrowserMainPartsWin::PreCreateThreads() {
   // Record whether the machine is enterprise managed in a crash key. This will
   // be used to better identify whether crashes are from enterprise users.
-  base::debug::SetCrashKeyValue(
-      crash_keys::kIsEnterpriseManaged,
-      base::win::IsEnterpriseManaged() ? "yes" : "no");
+  static crash_reporter::CrashKeyString<4> is_enterprise_managed(
+      "is-enterprise-managed");
+  is_enterprise_managed.Set(base::win::IsEnterpriseManaged() ? "yes" : "no");
 
   // Set crash keys containing the registry values used to determine Chrome's
   // update channel at process startup; see https://crbug.com/579504.
   const auto& details = install_static::InstallDetails::Get();
-  base::debug::SetCrashKeyValue(crash_keys::kApValue,
-                                base::UTF16ToUTF8(details.update_ap()));
-  base::debug::SetCrashKeyValue(
-      crash_keys::kCohortName, base::UTF16ToUTF8(details.update_cohort_name()));
+
+  static crash_reporter::CrashKeyString<50> ap_value("ap");
+  ap_value.Set(base::UTF16ToUTF8(details.update_ap()));
+
+  static crash_reporter::CrashKeyString<32> update_cohort_name("cohort-name");
+  update_cohort_name.Set(base::UTF16ToUTF8(details.update_cohort_name()));
+
+  if (chrome::GetChannel() == version_info::Channel::CANARY) {
+    content::RenderProcessHost::SetHungRendererAnalysisFunction(
+        &DumpHungRendererProcessImpl);
+  }
 
   return ChromeBrowserMainParts::PreCreateThreads();
 }
@@ -534,7 +551,7 @@ void ChromeBrowserMainPartsWin::PostBrowserStart() {
     safe_browsing::PostCleanupSettingsResetter().ResetTaggedProfiles(
         g_browser_process->profile_manager()->GetLastOpenedProfiles(),
         base::BindOnce(&MaybePostSettingsResetPrompt),
-        base::MakeUnique<
+        std::make_unique<
             safe_browsing::PostCleanupSettingsResetter::Delegate>());
   } else {
     MaybePostSettingsResetPrompt();

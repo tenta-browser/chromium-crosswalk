@@ -8,7 +8,6 @@
 #include <memory>
 
 #include "base/callback_forward.h"
-#include "base/memory/ptr_util.h"
 #include "base/time/time.h"
 #include "cc/trees/element_id.h"
 #include "cc/trees/layer_tree_mutator.h"
@@ -109,8 +108,9 @@ class MutatorHost {
                                    ElementListType list_type,
                                    float* start_scale) const = 0;
 
-  virtual bool HasAnyAnimation(ElementId element_id) const = 0;
-  virtual bool HasTickingAnimationForTesting(ElementId element_id) const = 0;
+  virtual bool IsElementAnimating(ElementId element_id) const = 0;
+  virtual bool HasTickingKeyframeModelForTesting(
+      ElementId element_id) const = 0;
 
   virtual void ImplOnlyScrollAnimationCreate(
       ElementId element_id,
@@ -130,6 +130,8 @@ class MutatorHost {
   virtual size_t CompositedAnimationsCount() const = 0;
   virtual size_t MainThreadAnimationsCount() const = 0;
   virtual size_t MainThreadCompositableAnimationsCount() const = 0;
+  virtual bool CurrentFrameHadRAF() const = 0;
+  virtual bool NextFrameHasPendingRAF() const = 0;
 };
 
 class MutatorEvents {

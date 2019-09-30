@@ -7,20 +7,14 @@
 #include "ash/wm/window_state.h"
 #include "ui/gfx/geometry/rect.h"
 
-DECLARE_UI_CLASS_PROPERTY_TYPE(ash::wm::WindowState*);
-DECLARE_EXPORTED_UI_CLASS_PROPERTY_TYPE(ASH_EXPORT, ash::WidgetCreationType);
+DEFINE_UI_CLASS_PROPERTY_TYPE(ash::wm::WindowState*);
+DEFINE_EXPORTED_UI_CLASS_PROPERTY_TYPE(ASH_EXPORT, ash::WidgetCreationType);
 
 namespace ash {
 
 DEFINE_UI_CLASS_PROPERTY_KEY(bool, kLockedToRootKey, false);
 
 DEFINE_UI_CLASS_PROPERTY_KEY(bool, kRenderTitleAreaProperty, false);
-
-DEFINE_OWNED_UI_CLASS_PROPERTY_KEY(gfx::Rect, kRestoreBoundsOverrideKey, NULL);
-
-DEFINE_UI_CLASS_PROPERTY_KEY(ui::WindowShowState,
-                             kRestoreShowStateOverrideKey,
-                             ui::SHOW_STATE_DEFAULT);
 
 DEFINE_UI_CLASS_PROPERTY_KEY(bool, kSnapChildrenToPixelBoundary, false);
 

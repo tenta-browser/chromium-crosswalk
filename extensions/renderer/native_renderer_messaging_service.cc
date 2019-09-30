@@ -15,6 +15,9 @@
 #include "extensions/common/api/messaging/port_id.h"
 #include "extensions/common/extension_messages.h"
 #include "extensions/common/manifest_handlers/externally_connectable.h"
+#include "extensions/renderer/api_activity_logger.h"
+#include "extensions/renderer/bindings/api_binding_util.h"
+#include "extensions/renderer/bindings/get_per_context_data.h"
 #include "extensions/renderer/ipc_message_sender.h"
 #include "extensions/renderer/message_target.h"
 #include "extensions/renderer/native_extension_bindings_system.h"
@@ -30,6 +33,9 @@ namespace extensions {
 namespace {
 
 struct MessagingPerContextData : public base::SupportsUserData::Data {
+  static constexpr char kPerContextDataKey[] =
+      "extension_messaging_per_context_data";
+
   // All the port objects that exist in this context.
   std::map<PortId, v8::Global<v8::Object>> ports;
 
@@ -37,26 +43,7 @@ struct MessagingPerContextData : public base::SupportsUserData::Data {
   int next_port_id = 0;
 };
 
-constexpr char kExtensionMessagingPerContextData[] =
-    "extension_messaging_per_context_data";
-
-MessagingPerContextData* GetPerContextData(v8::Local<v8::Context> context,
-                                           bool should_create) {
-  gin::PerContextData* per_context_data = gin::PerContextData::From(context);
-  if (!per_context_data)
-    return nullptr;
-  auto* data = static_cast<MessagingPerContextData*>(
-      per_context_data->GetUserData(kExtensionMessagingPerContextData));
-
-  if (!data && should_create) {
-    auto messaging_data = std::make_unique<MessagingPerContextData>();
-    data = messaging_data.get();
-    per_context_data->SetUserData(kExtensionMessagingPerContextData,
-                                  std::move(messaging_data));
-  }
-
-  return data;
-}
+constexpr char MessagingPerContextData::kPerContextDataKey[];
 
 bool ScriptContextIsValid(ScriptContext* script_context) {
   // TODO(devlin): This is in lieu of a similar check in the JS bindings that
@@ -85,8 +72,8 @@ gin::Handle<GinPort> NativeRendererMessagingService::Connect(
   if (!ScriptContextIsValid(script_context))
     return gin::Handle<GinPort>();
 
-  MessagingPerContextData* data =
-      GetPerContextData(script_context->v8_context(), true);
+  MessagingPerContextData* data = GetPerContextData<MessagingPerContextData>(
+      script_context->v8_context(), kCreateIfMissing);
   if (!data)
     return gin::Handle<GinPort>();
 
@@ -111,8 +98,8 @@ void NativeRendererMessagingService::SendOneTimeMessage(
   if (!ScriptContextIsValid(script_context))
     return;
 
-  MessagingPerContextData* data =
-      GetPerContextData(script_context->v8_context(), true);
+  MessagingPerContextData* data = GetPerContextData<MessagingPerContextData>(
+      script_context->v8_context(), kCreateIfMissing);
 
   bool is_opener = true;
   PortId port_id(script_context->context_id(), data->next_port_id++, is_opener);
@@ -144,8 +131,8 @@ void NativeRendererMessagingService::ClosePort(v8::Local<v8::Context> context,
       ScriptContextSet::GetContextByV8Context(context);
   CHECK(script_context);
 
-  MessagingPerContextData* data =
-      GetPerContextData(script_context->v8_context(), false);
+  MessagingPerContextData* data = GetPerContextData<MessagingPerContextData>(
+      script_context->v8_context(), kDontCreateIfMissing);
   if (!data)
     return;
 
@@ -184,8 +171,9 @@ bool NativeRendererMessagingService::ContextHasMessagePort(
     const PortId& port_id) {
   if (one_time_message_handler_.HasPort(script_context, port_id))
     return true;
-  MessagingPerContextData* data =
-      GetPerContextData(script_context->v8_context(), false);
+  v8::HandleScope handle_scope(script_context->isolate());
+  MessagingPerContextData* data = GetPerContextData<MessagingPerContextData>(
+      script_context->v8_context(), kDontCreateIfMissing);
   return data && base::ContainsKey(data->ports, port_id);
 }
 
@@ -201,13 +189,15 @@ void NativeRendererMessagingService::DispatchOnConnectToListeners(
   v8::Isolate* isolate = script_context->isolate();
   v8::HandleScope handle_scope(isolate);
   v8::Local<v8::Context> v8_context = script_context->v8_context();
+  v8::Context::Scope context_scope(v8_context);
 
   gin::DataObjectBuilder sender_builder(isolate);
   if (!info.source_id.empty())
     sender_builder.Set("id", info.source_id);
   if (!info.source_url.is_empty())
     sender_builder.Set("url", info.source_url.spec());
-  sender_builder.Set("frameId", source->frame_id);
+  if (source->frame_id >= 0)
+    sender_builder.Set("frameId", source->frame_id);
 
   const Extension* extension = script_context->extension();
   if (extension) {
@@ -237,15 +227,36 @@ void NativeRendererMessagingService::DispatchOnConnectToListeners(
       channel_name == "chrome.runtime.sendMessage") {
     one_time_message_handler_.AddReceiver(script_context, target_port_id,
                                           sender, event_name);
-    return;
+  } else {
+    gin::Handle<GinPort> port =
+        CreatePort(script_context, channel_name, target_port_id);
+    port->SetSender(v8_context, sender);
+    std::vector<v8::Local<v8::Value>> args = {port.ToV8()};
+    bindings_system_->api_system()->event_handler()->FireEventInContext(
+        event_name, v8_context, &args, nullptr, JSRunner::ResultCallback());
   }
+  // Note: Arbitrary JS may have run; the context may now be deleted.
 
-  gin::Handle<GinPort> port =
-      CreatePort(script_context, channel_name, target_port_id);
-  port->SetSender(v8_context, sender);
-  std::vector<v8::Local<v8::Value>> args = {port.ToV8()};
-  bindings_system_->api_system()->event_handler()->FireEventInContext(
-      event_name, v8_context, &args, nullptr);
+  if (binding::IsContextValid(v8_context) &&
+      APIActivityLogger::IsLoggingEnabled()) {
+    auto activity_logging_args =
+        std::make_unique<base::Value>(base::Value::Type::LIST);
+    auto& list = activity_logging_args->GetList();
+    list.reserve(2u);
+    if (!info.source_id.empty())
+      list.emplace_back(info.source_id);
+    else
+      list.emplace_back();
+
+    if (!info.source_url.is_empty())
+      list.emplace_back(info.source_url.spec());
+    else
+      list.emplace_back();
+
+    APIActivityLogger::LogEvent(
+        script_context, event_name,
+        base::ListValue::From(std::move(activity_logging_args)));
+  }
 }
 
 void NativeRendererMessagingService::DispatchOnMessageToListeners(
@@ -254,6 +265,7 @@ void NativeRendererMessagingService::DispatchOnMessageToListeners(
     const PortId& target_port_id) {
   v8::Isolate* isolate = script_context->isolate();
   v8::HandleScope handle_scope(isolate);
+  v8::Context::Scope context_scope(script_context->v8_context());
 
   if (one_time_message_handler_.DeliverMessage(script_context, message,
                                                target_port_id)) {
@@ -264,6 +276,7 @@ void NativeRendererMessagingService::DispatchOnMessageToListeners(
   DCHECK(!port.IsEmpty());
 
   port->DispatchOnMessage(script_context->v8_context(), message);
+  // Note: Arbitrary JS may have run; the context may now be deleted.
 }
 
 void NativeRendererMessagingService::DispatchOnDisconnectToListeners(
@@ -272,26 +285,39 @@ void NativeRendererMessagingService::DispatchOnDisconnectToListeners(
     const std::string& error_message) {
   v8::Isolate* isolate = script_context->isolate();
   v8::HandleScope handle_scope(isolate);
+  v8::Local<v8::Context> v8_context = script_context->v8_context();
+  v8::Context::Scope context_scope(v8_context);
 
   if (one_time_message_handler_.Disconnect(script_context, port_id,
                                            error_message)) {
     return;
   }
 
-  v8::Local<v8::Context> context = script_context->v8_context();
   gin::Handle<GinPort> port = GetPort(script_context, port_id);
   DCHECK(!port.IsEmpty());
   if (!error_message.empty()) {
+    // TODO(devlin): Subtle: If the JS event to disconnect the port happens
+    // asynchronously because JS is suspended, this last error won't be
+    // correctly set for listeners. Given this exceedingly rare, and shouldn't
+    // behave too strangely, this is somewhat low priority.
     bindings_system_->api_system()->request_handler()->last_error()->SetError(
-        context, error_message);
-  }
-  port->DispatchOnDisconnect(context);
-  if (!error_message.empty()) {
-    bindings_system_->api_system()->request_handler()->last_error()->ClearError(
-        context, true);
+        v8_context, error_message);
   }
 
-  MessagingPerContextData* data = GetPerContextData(context, false);
+  port->DispatchOnDisconnect(v8_context);
+  // Note: Arbitrary JS may have run; the context may now be deleted.
+
+  if (!binding::IsContextValid(v8_context))
+    return;
+
+  if (!error_message.empty()) {
+    bindings_system_->api_system()->request_handler()->last_error()->ClearError(
+        v8_context, true);
+  }
+
+  MessagingPerContextData* data = GetPerContextData<MessagingPerContextData>(
+      v8_context, kDontCreateIfMissing);
+  DCHECK(data);
   data->ports.erase(port_id);
 }
 
@@ -318,13 +344,14 @@ gin::Handle<GinPort> NativeRendererMessagingService::CreatePort(
   int routing_id =
       render_frame ? render_frame->GetRoutingID() : MSG_ROUTING_NONE;
 
-  MessagingPerContextData* data = GetPerContextData(context, true);
+  MessagingPerContextData* data =
+      GetPerContextData<MessagingPerContextData>(context, kCreateIfMissing);
   DCHECK(data);
   DCHECK(!base::ContainsKey(data->ports, port_id));
 
   gin::Handle<GinPort> port_handle = gin::CreateHandle(
       isolate,
-      new GinPort(port_id, routing_id, channel_name,
+      new GinPort(context, port_id, routing_id, channel_name,
                   bindings_system_->api_system()->event_handler(), this));
 
   v8::Local<v8::Object> port_object = port_handle.ToV8().As<v8::Object>();
@@ -340,8 +367,8 @@ gin::Handle<GinPort> NativeRendererMessagingService::GetPort(
   v8::Isolate* isolate = script_context->isolate();
   v8::Local<v8::Context> context = script_context->v8_context();
 
-  MessagingPerContextData* data =
-      GetPerContextData(script_context->v8_context(), false);
+  MessagingPerContextData* data = GetPerContextData<MessagingPerContextData>(
+      script_context->v8_context(), kDontCreateIfMissing);
   DCHECK(data);
   DCHECK(base::ContainsKey(data->ports, port_id));
 

@@ -10,9 +10,9 @@
 #include "base/run_loop.h"
 #include "chrome/browser/chromeos/drive/file_system_util.h"
 #include "chrome/test/base/testing_profile.h"
+#include "components/download/public/common/mock_download_item.h"
 #include "components/drive/chromeos/dummy_file_system.h"
 #include "components/drive/file_system_core_util.h"
-#include "content/public/test/mock_download_item.h"
 #include "content/public/test/mock_download_manager.h"
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "content/public/test/test_utils.h"
@@ -71,7 +71,7 @@ class DownloadHandlerTestDownloadManager : public content::MockDownloadManager {
   content::DownloadManager::DownloadVector test_downloads_;
 };
 
-class DownloadHandlerTestDownloadItem : public content::MockDownloadItem {
+class DownloadHandlerTestDownloadItem : public download::MockDownloadItem {
  public:
   bool IsDone() const override { return is_done_; }
 
@@ -96,7 +96,7 @@ class DownloadHandlerTest : public testing::Test {
 
     // Set expectations for download item.
     EXPECT_CALL(download_item_, GetState())
-        .WillRepeatedly(testing::Return(content::DownloadItem::IN_PROGRESS));
+        .WillRepeatedly(testing::Return(download::DownloadItem::IN_PROGRESS));
 
     download_handler_.reset(new DownloadHandler(&test_file_system_));
     download_handler_->Initialize(download_manager_.get(), temp_dir_.GetPath());
@@ -113,7 +113,7 @@ class DownloadHandlerTest : public testing::Test {
       incognito_download_manager_;
   DownloadHandlerTestFileSystem test_file_system_;
   std::unique_ptr<DownloadHandler> download_handler_;
-  content::MockDownloadItem download_item_;
+  download::MockDownloadItem download_item_;
 };
 
 TEST_F(DownloadHandlerTest, SubstituteDriveDownloadPathNonDrivePath) {

@@ -15,6 +15,10 @@
 #include "tools/gn/settings.h"
 #include "tools/gn/source_dir.h"
 
+#if defined(OS_WIN)
+#include <windows.h>
+#endif
+
 namespace {
 
 enum DotDisposition {
@@ -412,6 +416,47 @@ bool MakeAbsolutePathRelativeIfPossible(const base::StringPiece& source_root,
 #endif
 }
 
+base::FilePath MakeAbsoluteFilePathRelativeIfPossible(
+    const base::FilePath& base,
+    const base::FilePath& target) {
+  DCHECK(base.IsAbsolute());
+  DCHECK(target.IsAbsolute());
+  std::vector<base::FilePath::StringType> base_components;
+  std::vector<base::FilePath::StringType> target_components;
+  base.GetComponents(&base_components);
+  target.GetComponents(&target_components);
+#if defined(OS_WIN)
+  // On Windows, it's impossible to have a relative path from C:\foo to D:\bar,
+  // so return the target as an aboslute path instead.
+  if (base_components[0] != target_components[0])
+    return target;
+#endif
+  size_t i;
+  for (i = 0; i < base_components.size() && i < target_components.size(); i++) {
+    if (base_components[i] != target_components[i])
+      break;
+  }
+  std::vector<base::FilePath::StringType> relative_components;
+  for (size_t j = i; j < base_components.size(); j++)
+    relative_components.push_back(base::FilePath::kParentDirectory);
+  for (size_t j = i; j < target_components.size(); j++)
+    relative_components.push_back(target_components[j]);
+  if (relative_components.size() <= 1) {
+    // In case the file pointed-to is an executable, prepend the current
+    // directory to the path -- if the path was "gn", use "./gn" instead.  If
+    // the file path is used in a command, this prevents issues where "gn" might
+    // not be in the PATH (or it is in the path, and the wrong gn is used).
+    relative_components.insert(relative_components.begin(),
+                               base::FilePath::kCurrentDirectory);
+  }
+  // base::FilePath::Append(component) replaces the file path with |component|
+  // if the path is base::Filepath::kCurrentDirectory.  We want to preserve the
+  // leading "./", so we build the path ourselves and use that to construct the
+  // base::FilePath.
+  base::FilePath::StringType separator(&base::FilePath::kSeparators[0], 1);
+  return base::FilePath(base::JoinString(relative_components, separator));
+}
+
 void NormalizePath(std::string* path, const base::StringPiece& source_root) {
   char* pathbuf = path->empty() ? nullptr : &(*path)[0];
 
@@ -659,6 +704,109 @@ std::string RebasePath(const std::string& input,
   ret = MakeRelativePath(input, dest_dir.value());
   return ret;
 }
+
+base::FilePath ResolvePath(const std::string& value,
+                           bool as_file,
+                           const base::FilePath& source_root) {
+  if (value.empty())
+    return base::FilePath();
+
+  std::string converted;
+  if (!IsPathSourceAbsolute(value)) {
+    if (value.size() > 2 && value[2] == ':') {
+      // Windows path, strip the leading slash.
+      converted.assign(&value[1], value.size() - 1);
+    } else {
+      converted.assign(value);
+    }
+    return base::FilePath(UTF8ToFilePath(converted));
+  }
+
+  // String the double-leading slash for source-relative paths.
+  converted.assign(&value[2], value.size() - 2);
+
+  if (as_file && source_root.empty())
+    return UTF8ToFilePath(converted).NormalizePathSeparatorsTo('/');
+
+  return source_root.Append(UTF8ToFilePath(converted))
+      .NormalizePathSeparatorsTo('/');
+}
+
+template <typename StringType>
+std::string ResolveRelative(const StringType& input,
+                            const std::string& value,
+                            bool as_file,
+                            const base::StringPiece& source_root) {
+  std::string result;
+
+  if (input.size() >= 2 && input[0] == '/' && input[1] == '/') {
+    // Source-relative.
+    result.assign(input.data(), input.size());
+    if (!as_file) {
+      if (!EndsWithSlash(result))
+        result.push_back('/');
+    }
+    NormalizePath(&result, source_root);
+    return result;
+  } else if (IsPathAbsolute(input)) {
+    if (source_root.empty() ||
+        !MakeAbsolutePathRelativeIfPossible(source_root, input, &result)) {
+#if defined(OS_WIN)
+      if (input[0] != '/')  // See the file case for why we do this check.
+        result = "/";
+#endif
+      result.append(input.data(), input.size());
+    }
+    NormalizePath(&result);
+    if (!as_file) {
+      if (!EndsWithSlash(result))
+        result.push_back('/');
+    }
+    return result;
+  }
+
+  if (!source_root.empty()) {
+    std::string absolute =
+        FilePathToUTF8(ResolvePath(value, as_file, UTF8ToFilePath(source_root))
+                           .AppendASCII(input)
+                           .value());
+    NormalizePath(&absolute);
+    if (!MakeAbsolutePathRelativeIfPossible(source_root, absolute, &result)) {
+#if defined(OS_WIN)
+      if (absolute[0] != '/')  // See the file case for why we do this check.
+        result = "/";
+#endif
+      result.append(absolute.data(), absolute.size());
+    }
+    if (!as_file && !EndsWithSlash(result))
+      result.push_back('/');
+    return result;
+  }
+
+  // With no source_root, there's nothing we can do about
+  // e.g. input=../../../path/to/file and value=//source and we'll
+  // errornously return //file.
+  result.reserve(value.size() + input.size());
+  result.assign(value);
+  result.append(input.data(), input.size());
+
+  NormalizePath(&result);
+  if (!as_file && !EndsWithSlash(result))
+    result.push_back('/');
+
+  return result;
+}
+
+// Explicit template instantiation
+template std::string ResolveRelative(const base::StringPiece& input,
+                                     const std::string& value,
+                                     bool as_file,
+                                     const base::StringPiece& source_root);
+
+template std::string ResolveRelative(const std::string& input,
+                                     const std::string& value,
+                                     bool as_file,
+                                     const base::StringPiece& source_root);
 
 std::string DirectoryWithNoLastSlash(const SourceDir& dir) {
   std::string ret;

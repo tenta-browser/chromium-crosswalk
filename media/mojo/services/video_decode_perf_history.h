@@ -56,9 +56,7 @@ class MEDIA_MOJO_EXPORT VideoDecodePerfHistory
   void BindRequest(mojom::VideoDecodePerfHistoryRequest request);
 
   // mojom::VideoDecodePerfHistory implementation:
-  void GetPerfInfo(VideoCodecProfile profile,
-                   const gfx::Size& natural_size,
-                   int frame_rate,
+  void GetPerfInfo(mojom::PredictionFeaturesPtr features,
                    GetPerfInfoCallback got_info_cb) override;
 
   // Save a record of the given performance stats for the described stream.
@@ -66,12 +64,9 @@ class MEDIA_MOJO_EXPORT VideoDecodePerfHistory
   // for tests to know the save is complete.
   void SavePerfRecord(const url::Origin& untrusted_top_frame_origin,
                       bool is_top_frame,
-                      VideoCodecProfile profile,
-                      const gfx::Size& natural_size,
-                      int frame_rate,
-                      uint32_t frames_decoded,
-                      uint32_t frames_dropped,
-                      uint32_t frames_decoded_power_efficient,
+                      mojom::PredictionFeatures features,
+                      mojom::PredictionTargets targets,
+                      uint64_t player_id,
                       base::OnceClosure save_done_cb = base::OnceClosure());
 
   // Clear all history from the underlying database. Run |clear_done_cb| when
@@ -122,6 +117,7 @@ class MEDIA_MOJO_EXPORT VideoDecodePerfHistory
   void OnGotStatsForSave(
       const url::Origin& top_frame_origin,
       bool is_top_frame,
+      uint64_t player_id,
       const VideoDecodeStatsDB::VideoDescKey& video_key,
       const VideoDecodeStatsDB::DecodeStatsEntry& new_stats,
       base::OnceClosure save_done_cb,
@@ -136,6 +132,7 @@ class MEDIA_MOJO_EXPORT VideoDecodePerfHistory
   // |past_stats| predicts |new_stats|.
   void ReportUkmMetrics(const url::Origin& top_frame_origin,
                         bool is_top_frame,
+                        uint64_t player_id,
                         const VideoDecodeStatsDB::VideoDescKey& video_key,
                         const VideoDecodeStatsDB::DecodeStatsEntry& new_stats,
                         VideoDecodeStatsDB::DecodeStatsEntry* past_stats);

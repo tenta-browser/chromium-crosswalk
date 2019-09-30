@@ -19,11 +19,14 @@ class AutofillClient;
 
 namespace password_manager {
 class PasswordManagerClient;
+class PasswordStore;
 }
 
 namespace syncer {
 class SyncService;
 }
+
+class PrefService;
 
 namespace password_manager_util {
 
@@ -54,11 +57,6 @@ void TrimUsernameOnlyCredentials(
 // and required to always return non-null.
 bool IsLoggingActive(const password_manager::PasswordManagerClient* client);
 
-// Calculates 37 bits hash for a sync password. The calculation is based on a
-// slow hash function. The running time is ~10^{-4} seconds on Desktop.
-uint64_t CalculateSyncPasswordHash(const base::StringPiece16& text,
-                                   const std::string& salt);
-
 // True iff the manual password generation is enabled and the user is sync user
 // without custom passphrase.
 bool ManualPasswordGenerationEnabled(syncer::SyncService* sync_service);
@@ -75,6 +73,13 @@ void UserTriggeredShowAllSavedPasswordsFromContextMenu(
 // Triggers password generation flow and records the metrics.
 void UserTriggeredManualGenerationFromContextMenu(
     password_manager::PasswordManagerClient* password_manager_client);
+
+// Clean up the blacklisted entries in the password store. Those shouldn't
+// contain username/password pair. https://crbug.com/817754
+void CleanUserDataInBlacklistedCredentials(
+    password_manager::PasswordStore* store,
+    PrefService* prefs,
+    int delay_in_seconds);
 
 }  // namespace password_manager_util
 

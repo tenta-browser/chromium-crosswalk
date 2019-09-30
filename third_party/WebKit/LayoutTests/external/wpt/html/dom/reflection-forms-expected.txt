@@ -1,5 +1,5 @@
 This is a testharness.js-based test.
-Found 7041 tests; 6729 PASS, 312 FAIL, 0 TIMEOUT, 0 NOTRUN.
+Found 6725 tests; 6710 PASS, 15 FAIL, 0 TIMEOUT, 0 NOTRUN.
 PASS form.title: 32 tests
 PASS form.lang: 32 tests
 PASS form.dir: 62 tests
@@ -8,9 +8,7 @@ PASS form.hidden: 33 tests
 PASS form.accessKey: 32 tests
 PASS form.tabIndex: 24 tests
 PASS form.acceptCharset (<form accept-charset>): 32 tests
-NOTRUN test
-NOTRUN test
-PASS form.action: 36 tests
+PASS form.action: 38 tests
 PASS form.autocomplete: 52 tests
 PASS form.enctype: 62 tests
 PASS form.encoding (<form enctype>): 62 tests
@@ -63,162 +61,6 @@ PASS input.formMethod: 52 tests
 PASS input.formNoValidate: 33 tests
 PASS input.formTarget: 32 tests
 PASS input.height: 9 tests
-PASS input.inputMode: 3 tests
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
 PASS input.max: 32 tests
 PASS input.maxLength: 61 tests
 PASS input.min: 32 tests
@@ -229,9 +71,7 @@ PASS input.pattern: 32 tests
 PASS input.placeholder: 32 tests
 PASS input.readOnly: 33 tests
 PASS input.required: 33 tests
-PASS input.size: 57 tests
-NOTRUN test
-NOTRUN test
+PASS input.size: 59 tests
 PASS input.src: 38 tests
 PASS input.step: 32 tests
 PASS input.type: 256 tests
@@ -263,23 +103,7 @@ PASS select.className (<select class>): 32 tests
 PASS select.hidden: 33 tests
 PASS select.accessKey: 32 tests
 PASS select.tabIndex: 24 tests
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
+PASS select.autocomplete: 17 tests
 PASS select.autofocus: 33 tests
 PASS select.disabled: 33 tests
 PASS select.multiple: 33 tests
@@ -320,183 +144,11 @@ PASS textarea.className (<textarea class>): 32 tests
 PASS textarea.hidden: 33 tests
 PASS textarea.accessKey: 32 tests
 PASS textarea.tabIndex: 24 tests
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
+PASS textarea.autocomplete: 17 tests
 PASS textarea.autofocus: 33 tests
 PASS textarea.cols: 59 tests
 PASS textarea.dirName: 32 tests
 PASS textarea.disabled: 33 tests
-PASS textarea.inputMode: 3 tests
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
-NOTRUN test
 PASS textarea.maxLength: 61 tests
 PASS textarea.minLength: 61 tests
 PASS textarea.name: 32 tests

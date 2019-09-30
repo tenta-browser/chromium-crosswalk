@@ -7,7 +7,7 @@
 #include <memory>
 
 #include "base/test/scoped_task_environment.h"
-#include "services/proxy_resolver/public/interfaces/proxy_resolver.mojom.h"
+#include "services/proxy_resolver/public/mojom/proxy_resolver.mojom.h"
 #include "services/service_manager/public/cpp/test/test_connector_factory.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -17,7 +17,7 @@ class ProxyResolverServiceTest : public testing::Test {
  public:
   ProxyResolverServiceTest()
       : connector_factory_(
-            std::make_unique<service_manager::TestConnectorFactory>(
+            service_manager::TestConnectorFactory::CreateForUniqueService(
                 std::make_unique<ProxyResolverService>())),
         connector_(connector_factory_->CreateConnector()) {}
 

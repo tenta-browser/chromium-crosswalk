@@ -42,6 +42,8 @@ struct EnumTraits<gfx::mojom::BufferFormat, gfx::BufferFormat> {
         return gfx::mojom::BufferFormat::BGRX_8888;
       case gfx::BufferFormat::BGRX_1010102:
         return gfx::mojom::BufferFormat::BGRX_1010102;
+      case gfx::BufferFormat::RGBX_1010102:
+        return gfx::mojom::BufferFormat::RGBX_1010102;
       case gfx::BufferFormat::BGRA_8888:
         return gfx::mojom::BufferFormat::BGRA_8888;
       case gfx::BufferFormat::RGBA_F16:
@@ -95,6 +97,9 @@ struct EnumTraits<gfx::mojom::BufferFormat, gfx::BufferFormat> {
         return true;
       case gfx::mojom::BufferFormat::BGRX_1010102:
         *out = gfx::BufferFormat::BGRX_1010102;
+        return true;
+      case gfx::mojom::BufferFormat::RGBX_1010102:
+        *out = gfx::BufferFormat::RGBX_1010102;
         return true;
       case gfx::mojom::BufferFormat::RGBA_8888:
         *out = gfx::BufferFormat::RGBA_8888;
@@ -173,6 +178,21 @@ struct EnumTraits<gfx::mojom::BufferUsage, gfx::BufferUsage> {
     NOTREACHED();
     return false;
   }
+};
+
+template <>
+struct StructTraits<gfx::mojom::BufferUsageAndFormatDataView,
+                    gfx::BufferUsageAndFormat> {
+  static gfx::BufferUsage usage(const gfx::BufferUsageAndFormat& input) {
+    return input.usage;
+  }
+
+  static gfx::BufferFormat format(const gfx::BufferUsageAndFormat& input) {
+    return input.format;
+  }
+
+  static bool Read(gfx::mojom::BufferUsageAndFormatDataView data,
+                   gfx::BufferUsageAndFormat* out);
 };
 
 template <>

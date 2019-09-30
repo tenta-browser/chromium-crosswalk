@@ -38,6 +38,10 @@ class VIZ_SERVICE_EXPORT SoftwareOutputDeviceMac : public SoftwareOutputDevice,
   // gfx::VSyncProvider implementation.
   void GetVSyncParameters(
       const gfx::VSyncProvider::UpdateVSyncCallback& callback) override;
+  bool GetVSyncParametersIfAvailable(base::TimeTicks* timebase,
+                                     base::TimeDelta* interval) override;
+  bool SupportGetVSyncParametersIfAvailable() const override;
+  bool IsHWClock() const override;
 
   // Testing methods.
   SkRegion LastCopyRegionForTesting() const {

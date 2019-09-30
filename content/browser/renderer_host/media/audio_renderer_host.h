@@ -65,7 +65,6 @@ class AudioSystem;
 
 namespace content {
 
-class AudioMirroringManager;
 class MediaStreamManager;
 
 class CONTENT_EXPORT AudioRendererHost
@@ -76,7 +75,6 @@ class CONTENT_EXPORT AudioRendererHost
   AudioRendererHost(int render_process_id,
                     media::AudioManager* audio_manager,
                     media::AudioSystem* audio_system,
-                    AudioMirroringManager* mirroring_manager,
                     MediaStreamManager* media_stream_manager);
 
   // BrowserMessageFilter implementation.
@@ -186,13 +184,9 @@ class CONTENT_EXPORT AudioRendererHost
   const int render_process_id_;
 
   media::AudioManager* const audio_manager_;
-  AudioMirroringManager* const mirroring_manager_;
 
   // Used to access to AudioInputDeviceManager.
   MediaStreamManager* media_stream_manager_;
-
-  // A list of the current open streams.
-  AudioOutputDelegateVector delegates_;
 
   // Map of device authorizations for streams that are not yet created
   // The key is the stream ID, and the value is a pair. The pair's first element
@@ -201,6 +195,9 @@ class CONTENT_EXPORT AudioRendererHost
   std::map<int, std::pair<bool, std::string>> authorizations_;
 
   AudioOutputAuthorizationHandler authorization_handler_;
+
+  // A list of the current open streams.
+  AudioOutputDelegateVector delegates_;
 
   DISALLOW_COPY_AND_ASSIGN(AudioRendererHost);
 };

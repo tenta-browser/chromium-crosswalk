@@ -22,7 +22,6 @@
 #include "content/browser/service_worker/service_worker_registration.h"
 #include "content/browser/service_worker/service_worker_test_utils.h"
 #include "content/common/service_worker/service_worker_utils.h"
-#include "content/public/common/resource_request_body.h"
 #include "content/public/test/mock_resource_context.h"
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "net/base/io_buffer.h"
@@ -35,13 +34,14 @@
 #include "net/url_request/url_request_job_factory_impl.h"
 #include "net/url_request/url_request_test_job.h"
 #include "net/url_request/url_request_test_util.h"
+#include "services/network/public/cpp/resource_request_body.h"
+#include "services/network/public/mojom/request_context_frame_type.mojom.h"
 #include "storage/browser/blob/blob_storage_context.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/WebKit/public/platform/modules/serviceworker/service_worker_registration.mojom.h"
+#include "third_party/blink/public/mojom/service_worker/service_worker_registration.mojom.h"
 
 namespace content {
-
-namespace {
+namespace service_worker_write_to_cache_job_unittest {
 
 const char kHeaders[] =
     "HTTP/1.1 200 OK\n"
@@ -216,8 +216,9 @@ class ResponseVerifier : public base::RefCounted<ResponseVerifier> {
   void Start() {
     info_buffer_ = new HttpResponseInfoIOBuffer();
     io_buffer_ = new net::IOBuffer(kBlockSize);
-    reader_->ReadInfo(info_buffer_.get(),
-                      base::Bind(&ResponseVerifier::OnReadInfoComplete, this));
+    reader_->ReadInfo(
+        info_buffer_.get(),
+        base::BindOnce(&ResponseVerifier::OnReadInfoComplete, this));
     bytes_read_ = 0;
   }
 
@@ -235,8 +236,9 @@ class ResponseVerifier : public base::RefCounted<ResponseVerifier> {
   }
 
   void ReadSomeData() {
-    reader_->ReadData(io_buffer_.get(), kBlockSize,
-                      base::Bind(&ResponseVerifier::OnReadDataComplete, this));
+    reader_->ReadData(
+        io_buffer_.get(), kBlockSize,
+        base::BindOnce(&ResponseVerifier::OnReadDataComplete, this));
   }
 
   void OnReadDataComplete(int result) {
@@ -269,8 +271,6 @@ class ResponseVerifier : public base::RefCounted<ResponseVerifier> {
   scoped_refptr<net::IOBuffer> io_buffer_;
   size_t bytes_read_;
 };
-
-}  // namespace
 
 class ServiceWorkerWriteToCacheJobTest : public testing::Test {
  public:
@@ -319,10 +319,11 @@ class ServiceWorkerWriteToCacheJobTest : public testing::Test {
         request_.get(), context_wrapper(), &blob_storage_context_, process_id,
         provider_id, false, network::mojom::FetchRequestMode::kNoCORS,
         network::mojom::FetchCredentialsMode::kOmit,
-        FetchRedirectMode::FOLLOW_MODE, std::string() /* integrity */,
-        false /* keepalive */, RESOURCE_TYPE_SERVICE_WORKER,
-        REQUEST_CONTEXT_TYPE_SERVICE_WORKER, REQUEST_CONTEXT_FRAME_TYPE_NONE,
-        scoped_refptr<ResourceRequestBody>());
+        network::mojom::FetchRedirectMode::kFollow,
+        std::string() /* integrity */, false /* keepalive */,
+        RESOURCE_TYPE_SERVICE_WORKER, REQUEST_CONTEXT_TYPE_SERVICE_WORKER,
+        network::mojom::RequestContextFrameType::kNone,
+        scoped_refptr<network::ResourceRequestBody>());
   }
 
   int NextVersionId() { return next_version_id_++; }
@@ -331,9 +332,10 @@ class ServiceWorkerWriteToCacheJobTest : public testing::Test {
     helper_.reset(new EmbeddedWorkerTestHelper(base::FilePath()));
 
     // A new unstored registration/version.
-    registration_ = new ServiceWorkerRegistration(
-        blink::mojom::ServiceWorkerRegistrationOptions(scope_), 1L,
-        context()->AsWeakPtr());
+    blink::mojom::ServiceWorkerRegistrationOptions options;
+    options.scope = scope_;
+    registration_ =
+        new ServiceWorkerRegistration(options, 1L, context()->AsWeakPtr());
     version_ =
         new ServiceWorkerVersion(registration_.get(), script_url_,
                                  NextVersionId(), context()->AsWeakPtr());
@@ -342,8 +344,7 @@ class ServiceWorkerWriteToCacheJobTest : public testing::Test {
     ASSERT_TRUE(host);
     SetUpScriptRequest(helper_->mock_render_process_id(), host->provider_id());
 
-    context()->storage()->LazyInitializeForTest(
-        base::BindOnce(&base::DoNothing));
+    context()->storage()->LazyInitializeForTest(base::DoNothing());
     base::RunLoop().RunUntilIdle();
   }
 
@@ -685,4 +686,5 @@ TEST_F(ServiceWorkerWriteToCacheJobTest, FailedWriteHeadersToCache) {
   EXPECT_EQ(net::ERR_FAILED, request_->status().error());
 }
 
+}  // namespace service_worker_write_to_cache_job_unittest
 }  // namespace content

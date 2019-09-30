@@ -11,7 +11,6 @@
 #include "base/files/file.h"
 #include "base/files/file_path.h"
 #include "base/files/file_path_watcher.h"
-#include "base/files/file_util.h"
 #include "base/lazy_instance.h"
 #include "base/location.h"
 #include "base/macros.h"
@@ -20,11 +19,6 @@
 #include "base/threading/scoped_blocking_call.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
-#include "base/trace_event/memory_allocator_dump.h"
-#include "base/trace_event/memory_dump_manager.h"
-#include "base/trace_event/memory_dump_provider.h"
-#include "base/trace_event/process_memory_dump.h"
-#include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
 #include "net/base/ip_address.h"
 #include "net/base/ip_endpoint.h"
@@ -41,7 +35,9 @@
 #include <sys/system_properties.h>
 #include "base/android/build_info.h"
 #include "net/android/network_library.h"
+#include "net/base/address_tracker_linux.h"
 #include "net/base/network_change_notifier.h"
+#include "net/base/network_interfaces.h"
 #endif
 
 namespace net {
@@ -124,6 +120,20 @@ class DnsConfigWatcher {
 };
 #endif  // defined(OS_IOS)
 
+#if defined(OS_ANDROID)
+bool IsVpnPresent() {
+  NetworkInterfaceList networks;
+  if (!GetNetworkList(&networks, INCLUDE_HOST_SCOPE_VIRTUAL_INTERFACES))
+    return false;
+
+  for (NetworkInterface network : networks) {
+    if (AddressTrackerLinux::IsTunnelInterfaceName(network.name.c_str()))
+      return true;
+  }
+  return false;
+}
+#endif  // defined(OS_ANDROID)
+
 ConfigParsePosixResult ReadDnsConfig(DnsConfig* dns_config) {
   base::ScopedBlockingCall scoped_blocking_call(base::BlockingType::MAY_BLOCK);
 #if !defined(OS_ANDROID)
@@ -163,6 +173,7 @@ ConfigParsePosixResult ReadDnsConfig(DnsConfig* dns_config) {
     case CONFIG_PARSE_POSIX_UNHANDLED_OPTIONS:
       LOG(WARNING) << "dns_config has unhandled options!";
       dns_config->unhandled_options = true;
+      FALLTHROUGH;
     default:
       return error;
   }
@@ -188,6 +199,11 @@ ConfigParsePosixResult ReadDnsConfig(DnsConfig* dns_config) {
     if (dns_config->nameservers.empty())
       return CONFIG_PARSE_POSIX_NO_NAMESERVERS;
     return CONFIG_PARSE_POSIX_OK;
+  }
+
+  if (IsVpnPresent()) {
+    dns_config->unhandled_options = true;
+    return CONFIG_PARSE_POSIX_UNHANDLED_OPTIONS;
   }
 
   char property_value[PROP_VALUE_MAX];
@@ -272,8 +288,6 @@ class DnsConfigServicePosix::Watcher {
   }
 
   void OnConfigChangedDelayed(bool succeeded) {
-    TRACE_HEAP_PROFILER_API_SCOPED_TASK_EXECUTION scoped_heap_context(
-        "net/dns/configchanged");
     service_->OnConfigChanged(succeeded);
   }
 
@@ -305,8 +319,6 @@ class DnsConfigServicePosix::ConfigReader : public SerialWorker {
   }
 
   void DoWork() override {
-    TRACE_HEAP_PROFILER_API_SCOPED_TASK_EXECUTION scoped_heap_context(
-        "net/dns/configreader");
     base::TimeTicks start_time = base::TimeTicks::Now();
     ConfigParsePosixResult result = ReadDnsConfig(&dns_config_);
     if (dns_config_for_testing_) {
@@ -317,7 +329,7 @@ class DnsConfigServicePosix::ConfigReader : public SerialWorker {
       case CONFIG_PARSE_POSIX_MISSING_OPTIONS:
       case CONFIG_PARSE_POSIX_UNHANDLED_OPTIONS:
         DCHECK(dns_config_.unhandled_options);
-        // Fall through.
+        FALLTHROUGH;
       case CONFIG_PARSE_POSIX_OK:
         success_ = true;
         break;
@@ -333,8 +345,6 @@ class DnsConfigServicePosix::ConfigReader : public SerialWorker {
 
   void OnWorkFinished() override {
     DCHECK(!IsCancelled());
-    TRACE_HEAP_PROFILER_API_SCOPED_TASK_EXECUTION scoped_heap_context(
-        "net/dns/configreaderfinished");
     if (success_) {
       service_->OnConfigRead(dns_config_);
     } else {
@@ -359,54 +369,27 @@ class DnsConfigServicePosix::ConfigReader : public SerialWorker {
 };
 
 // A SerialWorker that reads the HOSTS file and runs Callback.
-class DnsConfigServicePosix::HostsReader
-    : public SerialWorker,
-      public base::trace_event::MemoryDumpProvider {
+class DnsConfigServicePosix::HostsReader : public SerialWorker {
  public:
   explicit HostsReader(DnsConfigServicePosix* service)
       : service_(service),
         file_path_hosts_(service->file_path_hosts_),
-        success_(false),
-        hosts_size_(0) {
-    base::trace_event::MemoryDumpManager::GetInstance()->RegisterDumpProvider(
-        this, "DnsConfigServicePosix::HostsReader",
-        base::ThreadTaskRunnerHandle::Get());
-  }
-
-  bool OnMemoryDump(const base::trace_event::MemoryDumpArgs& args,
-                    base::trace_event::ProcessMemoryDump* pmd) override {
-    base::trace_event::MemoryAllocatorDump* dump =
-        pmd->CreateAllocatorDump("net/dns_config_service_posix_hosts_reader");
-    dump->AddScalar("hosts_entry_count",
-                    base::trace_event::MemoryAllocatorDump::kUnitsObjects,
-                    hosts_.size());
-    dump->AddScalar("hosts_file_size",
-                    base::trace_event::MemoryAllocatorDump::kUnitsBytes,
-                    hosts_size_);
-    return true;
-  }
+        success_(false) {}
 
  private:
-  ~HostsReader() override {
-    base::trace_event::MemoryDumpManager::GetInstance()->UnregisterDumpProvider(
-        this);
-  }
+  ~HostsReader() override {}
 
   void DoWork() override {
-    TRACE_HEAP_PROFILER_API_SCOPED_TASK_EXECUTION scoped_heap_context(
-        "net/dns/hostsreader");
     base::TimeTicks start_time = base::TimeTicks::Now();
     base::ScopedBlockingCall scoped_blocking_call(
         base::BlockingType::MAY_BLOCK);
-    success_ = ParseHostsFile(file_path_hosts_, &hosts_, &hosts_size_);
+    success_ = ParseHostsFile(file_path_hosts_, &hosts_);
     UMA_HISTOGRAM_BOOLEAN("AsyncDNS.HostParseResult", success_);
     UMA_HISTOGRAM_TIMES("AsyncDNS.HostsParseDuration",
                         base::TimeTicks::Now() - start_time);
   }
 
   void OnWorkFinished() override {
-    TRACE_HEAP_PROFILER_API_SCOPED_TASK_EXECUTION scoped_heap_context(
-        "net/dns/hostsreaderfinished");
     if (success_) {
       service_->OnHostsRead(hosts_);
     } else {
@@ -423,7 +406,6 @@ class DnsConfigServicePosix::HostsReader
   // Written in DoWork, read in OnWorkFinished, no locking necessary.
   DnsHosts hosts_;
   bool success_;
-  int64_t hosts_size_;
 
   DISALLOW_COPY_AND_ASSIGN(HostsReader);
 };

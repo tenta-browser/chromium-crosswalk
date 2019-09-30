@@ -78,8 +78,8 @@ void SetExperimentIds(const base::ListValue& list) {
 //
 //      std::unique_ptr<Foo> CreateFoo() {
 //        if (base::FeatureList::IsEnabled(kSuperSecretSauce))
-//          return base::MakeUnique<SuperSecretFoo>();
-//        return base::MakeUnique<BoringOldFoo>();
+//          return std::make_unique<SuperSecretFoo>();
+//        return std::make_unique<BoringOldFoo>();
 //      }
 //
 //    base::FeatureList can be called from any thread, in any process, at any
@@ -124,6 +124,11 @@ const base::Feature kTripleBuffer720{"enable_triple_buffer_720",
 // settings and takes precedence over triple-buffer feature).
 const base::Feature kSingleBuffer{"enable_single_buffer",
                                   base::FEATURE_DISABLED_BY_DEFAULT};
+// Disable idle sockets closing on memory pressure. See
+// chromecast/browser/url_request_context_factory.cc for usage.
+const base::Feature kDisableIdleSocketsCloseOnMemoryPressure{
+    "disable_idle_sockets_close_on_memory_pressure",
+    base::FEATURE_DISABLED_BY_DEFAULT};
 
 // End Chromecast Feature definitions.
 
@@ -140,7 +145,7 @@ void InitializeFeatureList(const base::DictionaryValue& dcs_features,
   SetExperimentIds(dcs_experiment_ids);
 
   // Initialize the FeatureList from the command line.
-  auto feature_list = base::MakeUnique<base::FeatureList>();
+  auto feature_list = std::make_unique<base::FeatureList>();
   feature_list->InitializeFromCommandLine(cmd_line_enable_features,
                                           cmd_line_disable_features);
 
@@ -234,7 +239,7 @@ base::DictionaryValue GetOverriddenFeaturesForStorage(
 
     const base::DictionaryValue* params_dict;
     if (it.value().GetAsDictionary(&params_dict)) {
-      auto params = base::MakeUnique<base::DictionaryValue>();
+      auto params = std::make_unique<base::DictionaryValue>();
 
       bool bval;
       int ival;

@@ -35,7 +35,7 @@ namespace autofill {
 class FormStructureTest : public testing::Test {
  public:
   static std::string Hash64Bit(const std::string& str) {
-    return base::Uint64ToString(StrToHash64Bit(str));
+    return base::NumberToString(StrToHash64Bit(str));
   }
 
   void SetUp() override {
@@ -129,7 +129,7 @@ class FormStructureTest : public testing::Test {
   void EnableAutofillMetadataFieldTrial() {
     field_trial_list_.reset();
     field_trial_list_.reset(new base::FieldTrialList(
-        std::make_unique<metrics::SHA1EntropyProvider>("foo")));
+        std::make_unique<variations::SHA1EntropyProvider>("foo")));
     field_trial_ = base::FieldTrialList::CreateFieldTrial(
         "AutofillFieldMetadata", "Enabled");
     field_trial_->group();
@@ -598,6 +598,9 @@ TEST_F(FormStructureTest, HeuristicsAutocompleteAttribute) {
 
 // Verify that the heuristics are not run for non checkout formless forms.
 TEST_F(FormStructureTest, Heuristics_FormlessNonCheckoutForm) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitAndEnableFeature(
+      features::kAutofillRestrictUnownedFieldsToFormlessCheckout);
   std::unique_ptr<FormStructure> form_structure;
   FormData form;
 
@@ -2563,13 +2566,6 @@ TEST_F(FormStructureTest,
       form_structure->field(i)->set_form_classifier_outcome(
           AutofillUploadContents::Field::NON_GENERATION_ELEMENT);
     }
-    if (form_structure->field(i)->name == ASCIIToUTF16("firstname")) {
-      form_structure->field(i)->properties_mask =
-          FieldPropertiesFlags::HAD_FOCUS;
-    } else {
-      form_structure->field(i)->properties_mask =
-          FieldPropertiesFlags::HAD_FOCUS | FieldPropertiesFlags::USER_TYPED;
-    }
     if (form_structure->field(i)->name == ASCIIToUTF16("username")) {
       form_structure->field(i)->set_username_vote_type(
           AutofillUploadContents::Field::CREDENTIALS_REUSED);
@@ -2598,31 +2594,24 @@ TEST_F(FormStructureTest,
                         "given-name", 3U);
   upload_firstname_field->set_form_classifier_outcome(
       AutofillUploadContents::Field::NON_GENERATION_ELEMENT);
-  upload_firstname_field->set_properties_mask(FieldPropertiesFlags::HAD_FOCUS);
 
   AutofillUploadContents::Field* upload_lastname_field = upload.add_field();
   test::FillUploadField(upload_lastname_field, 2786066110U, "lastname", "",
                         "family-name", 5U);
   upload_lastname_field->set_form_classifier_outcome(
       AutofillUploadContents::Field::NON_GENERATION_ELEMENT);
-  upload_lastname_field->set_properties_mask(FieldPropertiesFlags::HAD_FOCUS |
-                                             FieldPropertiesFlags::USER_TYPED);
 
   AutofillUploadContents::Field* upload_email_field = upload.add_field();
   test::FillUploadField(upload_email_field, 1029417091U, "email", "email",
                         "email", 9U);
   upload_email_field->set_form_classifier_outcome(
       AutofillUploadContents::Field::NON_GENERATION_ELEMENT);
-  upload_email_field->set_properties_mask(FieldPropertiesFlags::HAD_FOCUS |
-                                          FieldPropertiesFlags::USER_TYPED);
 
   AutofillUploadContents::Field* upload_username_field = upload.add_field();
   test::FillUploadField(upload_username_field, 239111655U, "username", "text",
                         "email", 86U);
   upload_username_field->set_form_classifier_outcome(
       AutofillUploadContents::Field::NON_GENERATION_ELEMENT);
-  upload_username_field->set_properties_mask(FieldPropertiesFlags::HAD_FOCUS |
-                                             FieldPropertiesFlags::USER_TYPED);
   upload_username_field->set_username_vote_type(
       AutofillUploadContents::Field::CREDENTIALS_REUSED);
 
@@ -2634,8 +2623,6 @@ TEST_F(FormStructureTest,
   upload_password_field->set_generation_type(
       AutofillUploadContents::Field::
           MANUALLY_TRIGGERED_GENERATION_ON_SIGN_UP_FORM);
-  upload_password_field->set_properties_mask(FieldPropertiesFlags::HAD_FOCUS |
-                                             FieldPropertiesFlags::USER_TYPED);
   upload_password_field->set_generated_password_changed(true);
 
   std::string expected_upload_string;
@@ -2708,6 +2695,94 @@ TEST_F(FormStructureTest, EncodeUploadRequest_WithAutocomplete) {
                         "family-name", 5U);
   test::FillUploadField(upload.add_field(), 1029417091U, "email", "email",
                         "email", 9U);
+
+  std::string expected_upload_string;
+  ASSERT_TRUE(upload.SerializeToString(&expected_upload_string));
+
+  AutofillUploadContents encoded_upload;
+  EXPECT_TRUE(form_structure->EncodeUploadRequest(
+      available_field_types, true, std::string(), true, &encoded_upload));
+
+  std::string encoded_upload_string;
+  encoded_upload.SerializeToString(&encoded_upload_string);
+  EXPECT_EQ(expected_upload_string, encoded_upload_string);
+}
+
+TEST_F(FormStructureTest, EncodeUploadRequestWithPropertiesMask) {
+  DisableAutofillMetadataFieldTrial();
+
+  std::unique_ptr<FormStructure> form_structure;
+  std::vector<ServerFieldTypeSet> possible_field_types;
+  FormData form;
+  form_structure.reset(new FormStructure(form));
+  form_structure->DetermineHeuristicTypes(nullptr /* ukm_service */);
+
+  FormFieldData field;
+  field.form_control_type = "text";
+
+  field.label = ASCIIToUTF16("First Name");
+  field.name = ASCIIToUTF16("firstname");
+  field.id = ASCIIToUTF16("first_name");
+  field.autocomplete_attribute = "given-name";
+  field.css_classes = ASCIIToUTF16("class1 class2");
+  field.properties_mask = FieldPropertiesFlags::HAD_FOCUS;
+  form.fields.push_back(field);
+  possible_field_types.push_back(ServerFieldTypeSet());
+  possible_field_types.back().insert(NAME_FIRST);
+
+  field.label = ASCIIToUTF16("Last Name");
+  field.name = ASCIIToUTF16("lastname");
+  field.id = ASCIIToUTF16("last_name");
+  field.autocomplete_attribute = "family-name";
+  field.css_classes = ASCIIToUTF16("class1 class2");
+  field.properties_mask =
+      FieldPropertiesFlags::HAD_FOCUS | FieldPropertiesFlags::USER_TYPED;
+  form.fields.push_back(field);
+  possible_field_types.push_back(ServerFieldTypeSet());
+  possible_field_types.back().insert(NAME_LAST);
+
+  field.label = ASCIIToUTF16("Email");
+  field.name = ASCIIToUTF16("email");
+  field.id = ASCIIToUTF16("e-mail");
+  field.form_control_type = "email";
+  field.autocomplete_attribute = "email";
+  field.css_classes = ASCIIToUTF16("class1 class2");
+  field.properties_mask =
+      FieldPropertiesFlags::HAD_FOCUS | FieldPropertiesFlags::USER_TYPED;
+  form.fields.push_back(field);
+  possible_field_types.push_back(ServerFieldTypeSet());
+  possible_field_types.back().insert(EMAIL_ADDRESS);
+
+  form_structure.reset(new FormStructure(form));
+
+  ASSERT_EQ(form_structure->field_count(), possible_field_types.size());
+  for (size_t i = 0; i < form_structure->field_count(); ++i)
+    form_structure->field(i)->set_possible_types(possible_field_types[i]);
+
+  ServerFieldTypeSet available_field_types;
+  available_field_types.insert(NAME_FIRST);
+  available_field_types.insert(NAME_LAST);
+  available_field_types.insert(EMAIL_ADDRESS);
+
+  // Prepare the expected proto string.
+  AutofillUploadContents upload;
+  upload.set_submission(true);
+  upload.set_client_version("6.1.1715.1442/en (GGLL)");
+  upload.set_form_signature(14746822798145140279U);
+  upload.set_autofill_used(true);
+  upload.set_data_present("1440");
+
+  test::FillUploadField(upload.add_field(), 3763331450U, nullptr, nullptr,
+                        nullptr, 3U);
+  upload.mutable_field(0)->set_properties_mask(FieldPropertiesFlags::HAD_FOCUS);
+  test::FillUploadField(upload.add_field(), 3494530716U, nullptr, nullptr,
+                        nullptr, 5U);
+  upload.mutable_field(1)->set_properties_mask(
+      FieldPropertiesFlags::HAD_FOCUS | FieldPropertiesFlags::USER_TYPED);
+  test::FillUploadField(upload.add_field(), 1029417091U, nullptr, nullptr,
+                        nullptr, 9U);
+  upload.mutable_field(2)->set_properties_mask(
+      FieldPropertiesFlags::HAD_FOCUS | FieldPropertiesFlags::USER_TYPED);
 
   std::string expected_upload_string;
   ASSERT_TRUE(upload.SerializeToString(&expected_upload_string));
@@ -3921,6 +3996,62 @@ TEST_F(FormStructureTest, PossibleValues) {
   EXPECT_EQ(0U, form_structure2.PossibleValues(ADDRESS_BILLING_COUNTRY).size());
 }
 
+// Tests proper resolution heuristic, server and html field types when the
+// server returns NO_SERVER_DATA, UNKNOWN_TYPE, and a valid type.
+TEST_F(FormStructureTest, ParseQueryResponse_UnknownType) {
+  FormData form_data;
+  FormFieldData field;
+  form_data.origin = GURL("http://foo.com");
+  field.form_control_type = "text";
+
+  field.label = ASCIIToUTF16("First Name");
+  field.name = ASCIIToUTF16("fname");
+  form_data.fields.push_back(field);
+
+  field.label = ASCIIToUTF16("Last Name");
+  field.name = ASCIIToUTF16("lname");
+  form_data.fields.push_back(field);
+
+  field.label = ASCIIToUTF16("email");
+  field.name = ASCIIToUTF16("email");
+  field.autocomplete_attribute = "address-level2";
+  form_data.fields.push_back(field);
+
+  FormStructure form(form_data);
+  form.DetermineHeuristicTypes(nullptr /* ukm_service */);
+
+  // Setup the query response.
+  AutofillQueryResponseContents response;
+  std::string response_string;
+  response.add_field()->set_overall_type_prediction(UNKNOWN_TYPE);
+  response.add_field()->set_overall_type_prediction(NO_SERVER_DATA);
+  response.add_field()->set_overall_type_prediction(ADDRESS_HOME_LINE1);
+  ASSERT_TRUE(response.SerializeToString(&response_string));
+
+  // Parse the response and update the field type predictions.
+  std::vector<FormStructure*> forms{&form};
+  FormStructure::ParseQueryResponse(response_string, forms);
+  ASSERT_EQ(form.field_count(), 3U);
+
+  // Validate field 0.
+  EXPECT_EQ(NAME_FIRST, form.field(0)->heuristic_type());
+  EXPECT_EQ(UNKNOWN_TYPE, form.field(0)->overall_server_type());
+  EXPECT_EQ(HTML_TYPE_UNSPECIFIED, form.field(0)->html_type());
+  EXPECT_EQ(UNKNOWN_TYPE, form.field(0)->Type().GetStorableType());
+
+  // Validate field 1.
+  EXPECT_EQ(NAME_LAST, form.field(1)->heuristic_type());
+  EXPECT_EQ(NO_SERVER_DATA, form.field(1)->overall_server_type());
+  EXPECT_EQ(HTML_TYPE_UNSPECIFIED, form.field(1)->html_type());
+  EXPECT_EQ(NAME_LAST, form.field(1)->Type().GetStorableType());
+
+  // Validate field 2. Note: HTML_TYPE_ADDRESS_LEVEL2 -> City
+  EXPECT_EQ(EMAIL_ADDRESS, form.field(2)->heuristic_type());
+  EXPECT_EQ(ADDRESS_HOME_LINE1, form.field(2)->overall_server_type());
+  EXPECT_EQ(HTML_TYPE_ADDRESS_LEVEL2, form.field(2)->html_type());
+  EXPECT_EQ(ADDRESS_HOME_CITY, form.field(2)->Type().GetStorableType());
+}
+
 // TODO(crbug.com/578257): Add more tests for the AutofillQueryResponseContents
 // proto.
 TEST_F(FormStructureTest, ParseQueryResponse) {
@@ -3994,7 +4125,7 @@ TEST_F(FormStructureTest, ParseQueryResponse) {
   EXPECT_EQ(0U, forms[1]->field(1)->server_predictions()[0].type());
 }
 
-TEST_F(FormStructureTest, ParseQueryResponseAuthorDefinedTypes) {
+TEST_F(FormStructureTest, ParseQueryResponse_AuthorDefinedTypes) {
   FormData form;
   form.origin = GURL("http://foo.com");
   FormFieldData field;

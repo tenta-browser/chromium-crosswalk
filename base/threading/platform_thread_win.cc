@@ -16,6 +16,8 @@
 #include "base/threading/thread_restrictions.h"
 #include "base/win/scoped_handle.h"
 
+#include <windows.h>
+
 namespace base {
 
 namespace {
@@ -173,7 +175,7 @@ void PlatformThread::Sleep(TimeDelta duration) {
 
 // static
 void PlatformThread::SetName(const std::string& name) {
-  ThreadIdNameManager::GetInstance()->SetName(CurrentId(), name);
+  ThreadIdNameManager::GetInstance()->SetName(name);
 
   // The SetThreadDescription API works even if no debugger is attached.
   auto set_thread_description_func =
@@ -186,9 +188,7 @@ void PlatformThread::SetName(const std::string& name) {
 
   // The debugger needs to be around to catch the name in the exception.  If
   // there isn't a debugger, we are just needlessly throwing an exception.
-  // If this image file is instrumented, we raise the exception anyway
-  // to provide the profiler with human-readable thread names.
-  if (!::IsDebuggerPresent() && !base::debug::IsBinaryInstrumented())
+  if (!::IsDebuggerPresent())
     return;
 
   SetNameInternal(CurrentId(), name.c_str());
@@ -306,7 +306,8 @@ ThreadPriority PlatformThread::GetCurrentThreadPriority() {
     case THREAD_PRIORITY_TIME_CRITICAL:
       return ThreadPriority::REALTIME_AUDIO;
     case THREAD_PRIORITY_ERROR_RETURN:
-      DPCHECK(false) << "GetThreadPriority error";  // Falls through.
+      DPCHECK(false) << "GetThreadPriority error";
+      FALLTHROUGH;
     default:
       NOTREACHED() << "Unexpected priority: " << priority;
       return ThreadPriority::NORMAL;

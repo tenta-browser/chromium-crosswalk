@@ -7,8 +7,9 @@
 
 #include "base/memory/scoped_refptr.h"
 #include "base/threading/thread.h"
+#include "base/time/time.h"
 #include "build/build_config.h"
-#include "device/vr/vr_service.mojom.h"
+#include "device/vr/public/mojom/vr_service.mojom.h"
 #include "mojo/public/cpp/bindings/binding.h"
 #include "mojo/public/cpp/system/platform_handle.h"
 #include "third_party/openvr/src/headers/openvr.h"
@@ -22,18 +23,25 @@ namespace device {
 
 class OpenVRRenderLoop : public base::Thread, mojom::VRPresentationProvider {
  public:
-  OpenVRRenderLoop();
+  OpenVRRenderLoop(vr::IVRSystem* vr);
   ~OpenVRRenderLoop() override;
 
-  void RequestPresent(mojom::VRSubmitFrameClientPtrInfo submit_client_info,
-                      mojom::VRPresentationProviderRequest request,
-                      base::Callback<void(bool)> callback);
+  void RequestPresent(
+      mojom::VRSubmitFrameClientPtrInfo submit_client_info,
+      mojom::VRPresentationProviderRequest request,
+      device::mojom::VRRequestPresentOptionsPtr present_options,
+      device::mojom::VRDisplayHost::RequestPresentCallback callback);
   void ExitPresent();
   base::WeakPtr<OpenVRRenderLoop> GetWeakPtr();
 
   // VRPresentationProvider overrides:
+  void SubmitFrameMissing(int16_t frame_index, const gpu::SyncToken&) override;
   void SubmitFrame(int16_t frame_index,
-                   const gpu::MailboxHolder& mailbox) override;
+                   const gpu::MailboxHolder& mailbox,
+                   base::TimeDelta time_waited) override;
+  void SubmitFrameDrawnIntoTexture(int16_t frame_index,
+                                   const gpu::SyncToken&,
+                                   base::TimeDelta time_waited) override;
   void SubmitFrameWithTextureHandle(int16_t frame_index,
                                     mojo::ScopedHandle texture_handle) override;
   void UpdateLayerBounds(int16_t frame_id,
@@ -48,6 +56,16 @@ class OpenVRRenderLoop : public base::Thread, mojom::VRPresentationProvider {
   void CleanUp() override;
 
   mojom::VRPosePtr GetPose();
+  std::vector<mojom::XRInputSourceStatePtr> GetInputState(
+      vr::TrackedDevicePose_t* poses,
+      uint32_t count);
+
+  struct InputActiveState {
+    bool active;
+    bool primary_input_pressed;
+    vr::ETrackedDeviceClass device_class;
+    vr::ETrackedControllerRole controller_role;
+  };
 
 #if defined(OS_WIN)
   D3D11TextureHelper texture_helper_;
@@ -55,10 +73,13 @@ class OpenVRRenderLoop : public base::Thread, mojom::VRPresentationProvider {
 
   int16_t next_frame_id_ = 0;
   bool is_presenting_ = false;
+  bool report_webxr_input_ = false;
+  InputActiveState input_active_states_[vr::k_unMaxTrackedDeviceCount];
   gfx::RectF left_bounds_;
   gfx::RectF right_bounds_;
   gfx::Size source_size_;
   scoped_refptr<base::SingleThreadTaskRunner> main_thread_task_runner_;
+  vr::IVRSystem* vr_system_;
   vr::IVRCompositor* vr_compositor_;
   mojom::VRSubmitFrameClientPtr submit_client_;
   mojo::Binding<mojom::VRPresentationProvider> binding_;

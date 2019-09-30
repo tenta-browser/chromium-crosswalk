@@ -8,6 +8,7 @@
 
 #include <memory>
 #include <string>
+#include <utility>
 
 #include "base/run_loop.h"
 #include "base/strings/stringprintf.h"
@@ -15,21 +16,22 @@
 #include "base/test/scoped_task_environment.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "content/child/child_process.h"
-#include "content/renderer/media/media_stream_video_source.h"
-#include "content/renderer/media/media_stream_video_track.h"
 #include "content/renderer/media/mock_audio_device_factory.h"
-#include "content/renderer/media/mock_constraint_factory.h"
-#include "content/renderer/media/mock_media_stream_video_source.h"
+#include "content/renderer/media/stream/media_stream_video_source.h"
+#include "content/renderer/media/stream/media_stream_video_track.h"
+#include "content/renderer/media/stream/mock_constraint_factory.h"
+#include "content/renderer/media/stream/mock_media_stream_video_source.h"
+#include "content/renderer/media/stream/processed_local_audio_source.h"
 #include "content/renderer/media/webrtc/mock_peer_connection_dependency_factory.h"
-#include "content/renderer/media/webrtc/processed_local_audio_source.h"
 #include "content/renderer/media/webrtc/webrtc_media_stream_track_adapter_map.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/WebKit/public/platform/WebMediaStream.h"
-#include "third_party/WebKit/public/platform/WebMediaStreamSource.h"
-#include "third_party/WebKit/public/platform/WebMediaStreamTrack.h"
-#include "third_party/WebKit/public/platform/WebVector.h"
-#include "third_party/WebKit/public/web/WebHeap.h"
+#include "third_party/blink/public/platform/scheduler/test/renderer_scheduler_test_support.h"
+#include "third_party/blink/public/platform/web_media_stream.h"
+#include "third_party/blink/public/platform/web_media_stream_source.h"
+#include "third_party/blink/public/platform/web_media_stream_track.h"
+#include "third_party/blink/public/platform/web_vector.h"
+#include "third_party/blink/public/web/web_heap.h"
 
 using ::testing::_;
 
@@ -39,8 +41,9 @@ class WebRtcMediaStreamAdapterTest : public ::testing::Test {
  public:
   void SetUp() override {
     dependency_factory_.reset(new MockPeerConnectionDependencyFactory());
-    track_adapter_map_ =
-        new WebRtcMediaStreamTrackAdapterMap(dependency_factory_.get());
+    track_adapter_map_ = new WebRtcMediaStreamTrackAdapterMap(
+        dependency_factory_.get(),
+        blink::scheduler::GetSingleThreadTaskRunnerForTesting());
   }
 
   void TearDown() override {
@@ -76,6 +79,7 @@ class LocalWebRtcMediaStreamAdapterTest : public WebRtcMediaStreamAdapterTest {
                           media::AudioParameters::kAudioCDSampleRate,
                           media::CHANNEL_LAYOUT_STEREO,
                           media::AudioParameters::kAudioCDSampleRate / 50),
+        false /* hotword_enabled */, false /* disable_local_echo */,
         AudioProcessingProperties(),
         base::Bind(&LocalWebRtcMediaStreamAdapterTest::OnAudioSourceStarted),
         dependency_factory_.get());
@@ -139,7 +143,8 @@ class RemoteWebRtcMediaStreamAdapterTest : public WebRtcMediaStreamAdapterTest {
             &RemoteWebRtcMediaStreamAdapterTest::
                 CreateRemoteStreamAdapterOnSignalingThread,
             base::Unretained(this),
-            base::Unretained(base::ThreadTaskRunnerHandle::Get().get()),
+            base::Unretained(
+                blink::scheduler::GetSingleThreadTaskRunnerForTesting().get()),
             base::Unretained(webrtc_stream), base::Unretained(&adapter)));
     RunMessageLoopsUntilIdle();
     DCHECK(adapter);
@@ -245,7 +250,7 @@ TEST_F(LocalWebRtcMediaStreamAdapterTest, CreateStreamAdapter) {
   EXPECT_TRUE(adapter->IsEqual(web_stream));
   EXPECT_EQ(1u, adapter->webrtc_stream()->GetAudioTracks().size());
   EXPECT_EQ(1u, adapter->webrtc_stream()->GetVideoTracks().size());
-  EXPECT_EQ(web_stream.Id().Utf8(), adapter->webrtc_stream()->label());
+  EXPECT_EQ(web_stream.Id().Utf8(), adapter->webrtc_stream()->id());
 }
 
 TEST_F(LocalWebRtcMediaStreamAdapterTest,
@@ -258,7 +263,7 @@ TEST_F(LocalWebRtcMediaStreamAdapterTest,
   EXPECT_TRUE(adapter->IsEqual(web_stream));
   EXPECT_EQ(1u, adapter->webrtc_stream()->GetAudioTracks().size());
   EXPECT_EQ(1u, adapter->webrtc_stream()->GetVideoTracks().size());
-  EXPECT_EQ(web_stream.Id().Utf8(), adapter->webrtc_stream()->label());
+  EXPECT_EQ(web_stream.Id().Utf8(), adapter->webrtc_stream()->id());
 }
 
 // It should not crash if |MediaStream| is created in blink with an unknown
@@ -289,7 +294,7 @@ TEST_F(LocalWebRtcMediaStreamAdapterTest,
   EXPECT_TRUE(adapter->IsEqual(web_stream));
   EXPECT_EQ(0u, adapter->webrtc_stream()->GetAudioTracks().size());
   EXPECT_EQ(0u, adapter->webrtc_stream()->GetVideoTracks().size());
-  EXPECT_EQ(web_stream.Id().Utf8(), adapter->webrtc_stream()->label());
+  EXPECT_EQ(web_stream.Id().Utf8(), adapter->webrtc_stream()->id());
 }
 
 TEST_F(LocalWebRtcMediaStreamAdapterTest, RemoveAndAddTrack) {
@@ -301,7 +306,7 @@ TEST_F(LocalWebRtcMediaStreamAdapterTest, RemoveAndAddTrack) {
   EXPECT_TRUE(adapter->IsEqual(web_stream));
   EXPECT_EQ(1u, adapter->webrtc_stream()->GetAudioTracks().size());
   EXPECT_EQ(1u, adapter->webrtc_stream()->GetVideoTracks().size());
-  EXPECT_EQ(web_stream.Id().Utf8(), adapter->webrtc_stream()->label());
+  EXPECT_EQ(web_stream.Id().Utf8(), adapter->webrtc_stream()->id());
 
   // Modify the web layer stream, make sure the webrtc layer stream is updated.
   blink::WebVector<blink::WebMediaStreamTrack> audio_tracks;

@@ -4,10 +4,13 @@
 
 #include "components/url_formatter/idn_spoof_checker.h"
 
+#include "base/no_destructor.h"
 #include "base/numerics/safe_conversions.h"
+#include "base/strings/string_piece.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/threading/thread_local_storage.h"
+#include "build/build_config.h"
 #include "net/base/lookup_string_in_fixed_set.h"
 #include "third_party/icu/source/common/unicode/schriter.h"
 #include "third_party/icu/source/common/unicode/unistr.h"
@@ -18,17 +21,26 @@
 namespace url_formatter {
 
 namespace {
-base::ThreadLocalStorage::StaticSlot tls_index = TLS_INITIALIZER;
 
 void OnThreadTermination(void* regex_matcher) {
   delete reinterpret_cast<icu::RegexMatcher*>(regex_matcher);
 }
 
+base::ThreadLocalStorage::Slot& DangerousPatternTLS() {
+  static base::NoDestructor<base::ThreadLocalStorage::Slot>
+      dangerous_pattern_tls(&OnThreadTermination);
+  return *dangerous_pattern_tls;
+}
+
 #include "components/url_formatter/top_domains/alexa_skeletons-inc.cc"
 // All the domains in the above file have 3 or fewer labels.
 const size_t kNumberOfLabelsToCheck = 3;
+const unsigned char* g_graph = kDafsa;
+size_t g_graph_length = sizeof(kDafsa);
 
-bool LookupMatchInTopDomains(base::StringPiece skeleton) {
+bool LookupMatchInTopDomains(const icu::UnicodeString& ustr_skeleton) {
+  std::string skeleton;
+  ustr_skeleton.toUTF8String(skeleton);
   DCHECK_NE(skeleton.back(), '.');
   auto labels = base::SplitStringPiece(skeleton, ".", base::KEEP_WHITESPACE,
                                        base::SPLIT_WANT_ALL);
@@ -41,7 +53,7 @@ bool LookupMatchInTopDomains(base::StringPiece skeleton) {
   while (labels.size() > 1) {
     std::string partial_skeleton = base::JoinString(labels, ".");
     if (net::LookupStringInFixedSet(
-            kDafsa, arraysize(kDafsa), partial_skeleton.data(),
+            g_graph, g_graph_length, partial_skeleton.data(),
             partial_skeleton.length()) != net::kDafsaNotFound)
       return true;
     labels.erase(labels.begin());
@@ -107,8 +119,8 @@ IDNSpoofChecker::IDNSpoofChecker() {
 
   // These Cyrillic letters look like Latin. A domain label entirely made of
   // these letters is blocked as a simplified whole-script-spoofable.
-  cyrillic_letters_latin_alike_ =
-      icu::UnicodeSet(icu::UnicodeString("[асԁеһіјӏорԛѕԝхуъЬҽпгѵѡ]"), status);
+  cyrillic_letters_latin_alike_ = icu::UnicodeSet(
+      icu::UnicodeString::fromUTF8("[асԁеһіјӏорԛѕԝхуъЬҽпгѵѡ]"), status);
   cyrillic_letters_latin_alike_.freeze();
 
   cyrillic_letters_ =
@@ -138,26 +150,41 @@ IDNSpoofChecker::IDNSpoofChecker() {
   UParseError parse_error;
   diacritic_remover_.reset(icu::Transliterator::createFromRules(
       UNICODE_STRING_SIMPLE("DropAcc"),
-      icu::UnicodeString("::NFD; ::[:Nonspacing Mark:] Remove; ::NFC;"
-                         " ł > l; ø > o; đ > d;"),
+      icu::UnicodeString::fromUTF8("::NFD; ::[:Nonspacing Mark:] Remove; ::NFC;"
+                                   " ł > l; ø > o; đ > d;"),
       UTRANS_FORWARD, parse_error, status));
 
   // Supplement the Unicode confusable list by the following mapping.
-  //   - U+04CF (ӏ) => l
-  //   - {U+043A (к), U+0138(ĸ), U+03BA(κ)} => k
-  //   - U+043F(п) => n
-  //   - {U+0185 (ƅ), U+044C (ь)} => b
-  //   - U+0432 (в) => b
-  //   - U+043C (м) => m
-  //   - U+043D (н) => h
-  //   - U+0442 (т) => t
-  //   - {U+0448 (ш), U+0449 (щ)} => w
-  //   - U+0D1F (ട) => s
+  //   - {U+00FE (þ), U+03FC (ϼ), U+048F (ҏ)} => p
+  //   - {U+0127 (ħ), U+043D (н), U+045B (ћ), U+04A3 (ң), U+04A5 (ҥ),
+  //      U+04C8 (ӈ), U+04CA (ӊ), U+050B (ԋ), U+0527 (ԧ), U+0529 (ԩ)} => h
+  //   - {U+0138 (ĸ), U+03BA (κ), U+043A (к), U+049B (қ), U+049D (ҝ),
+  //      U+049F (ҟ), U+04A1(ҡ), U+04C4 (ӄ), U+051F (ԟ)} => k
+  //   - {U+014B (ŋ), U+043F (п)} => n
+  //   - {U+0167 (ŧ), U+0442 (т), U+04AD (ҭ), U+050F (ԏ)} => t
+  //   - {U+0185 (ƅ), U+044C (ь), U+048D (ҍ), U+0432 (в)} => b
+  //   - {U+03C9 (ω), U+0448 (ш), U+0449 (щ), U+0E1F (ฟ)} => w
+  //   - {U+043C (м), U+04CE (ӎ)} => m
+  //   - {U+0454 (є), U+04BD (ҽ), U+04BF (ҿ), U+1054 (ၔ)} => e
+  //   - U+0491 (ґ) => r
+  //   - {U+0493 (ғ), U+04FB (ӻ)} => f
+  //   - {U+04AB (ҫ), U+1004 (င)} => c
+  //   - U+04B1 (ұ) => y
+  //   - U+03C7 (χ), U+04B3 (ҳ), U+04FD (ӽ), U+04FF (ӿ) => x
+  //   - U+0503 (ԃ) => d
+  //   - {U+050D (ԍ), U+100c (ဌ)} => g
+  //   - {U+0D1F (ട), U+0E23 (ร)} => s
+  //   - U+1042 (၂) => j
+  //   - {U+0437 (з), U+04E1 (ӡ)} => 3
   extra_confusable_mapper_.reset(icu::Transliterator::createFromRules(
       UNICODE_STRING_SIMPLE("ExtraConf"),
-      icu::UnicodeString(
-          "ӏ > l; [кĸκ] > k; п > n; [ƅь] > b; в > b; м > m; н > h; "
-          "т > t; [шщ] > w; ട > s;"),
+      icu::UnicodeString::fromUTF8("[þϼҏ] > p; [ħнћңҥӈӊԋԧԩ] > h;"
+                                   "[ĸκкқҝҟҡӄԟ] > k; [ŋп] > n; [ŧтҭԏ] > t;"
+                                   "[ƅьҍв] > b;  [ωшщฟ] > w; [мӎ] > m;"
+                                   "[єҽҿၔ] > e; ґ > r; [ғӻ] > f; [ҫင] > c;"
+                                   "ұ > y; [χҳӽӿ] > x;"
+                                   "ԃ  > d; [ԍဌ] > g; [ടร] > s; ၂ > j;"
+                                   "[зӡ] > 3"),
       UTRANS_FORWARD, parse_error, status));
   DCHECK(U_SUCCESS(status))
       << "Spoofchecker initalization failed due to an error: "
@@ -226,10 +253,8 @@ bool IDNSpoofChecker::SafeToDisplayAsUnicode(base::StringPiece16 label,
       !lgc_letters_n_ascii_.containsAll(label_string))
     return false;
 
-  if (!tls_index.initialized())
-    tls_index.Initialize(&OnThreadTermination);
   icu::RegexMatcher* dangerous_pattern =
-      reinterpret_cast<icu::RegexMatcher*>(tls_index.Get());
+      reinterpret_cast<icu::RegexMatcher*>(DangerousPatternTLS().Get());
   if (!dangerous_pattern) {
     // Disallow the katakana no, so, zo, or n, as they may be mistaken for
     // slashes when they're surrounded by non-Japanese scripts (i.e. scripts
@@ -272,7 +297,7 @@ bool IDNSpoofChecker::SafeToDisplayAsUnicode(base::StringPiece16 label,
             R"([ijl]\u0307)",
             -1, US_INV),
         0, status);
-    tls_index.Set(dangerous_pattern);
+    DangerousPatternTLS().Set(dangerous_pattern);
   }
   dangerous_pattern->reset(label_string);
   return !dangerous_pattern->find();
@@ -280,23 +305,36 @@ bool IDNSpoofChecker::SafeToDisplayAsUnicode(base::StringPiece16 label,
 
 bool IDNSpoofChecker::SimilarToTopDomains(base::StringPiece16 hostname) {
   size_t hostname_length = hostname.length() - (hostname.back() == '.' ? 1 : 0);
-  icu::UnicodeString ustr_host(FALSE, hostname.data(), hostname_length);
+  icu::UnicodeString host(FALSE, hostname.data(), hostname_length);
   // If input has any characters outside Latin-Greek-Cyrillic and [0-9._-],
   // there is no point in getting rid of diacritics because combining marks
   // attached to non-LGC characters are already blocked.
-  if (lgc_letters_n_ascii_.span(ustr_host, 0, USET_SPAN_CONTAINED) ==
-      ustr_host.length())
-    diacritic_remover_.get()->transliterate(ustr_host);
-  extra_confusable_mapper_.get()->transliterate(ustr_host);
+  if (lgc_letters_n_ascii_.span(host, 0, USET_SPAN_CONTAINED) == host.length())
+    diacritic_remover_.get()->transliterate(host);
+  extra_confusable_mapper_.get()->transliterate(host);
 
   UErrorCode status = U_ZERO_ERROR;
-  icu::UnicodeString ustr_skeleton;
-  uspoof_getSkeletonUnicodeString(checker_, 0, ustr_host, ustr_skeleton,
-                                  &status);
-  if (U_FAILURE(status))
-    return false;
-  std::string skeleton;
-  return LookupMatchInTopDomains(ustr_skeleton.toUTF8String(skeleton));
+  icu::UnicodeString skeleton;
+
+  // Map U+04CF (ӏ) to lowercase L in addition to what uspoof_getSkeleton does
+  // (mapping it to lowercase I).
+  int32_t u04cf_pos;
+  if ((u04cf_pos = host.indexOf(0x4CF)) != -1) {
+    icu::UnicodeString host_alt(host);
+    size_t length = host_alt.length();
+    char16_t* buffer = host_alt.getBuffer(-1);
+    for (char16_t* uc = buffer + u04cf_pos ; uc < buffer + length; ++uc) {
+      if (*uc == 0x4CF)
+        *uc = 0x6C;  // Lowercase L
+    }
+    host_alt.releaseBuffer(length);
+    uspoof_getSkeletonUnicodeString(checker_, 0, host_alt, skeleton, &status);
+    if (U_SUCCESS(status) && LookupMatchInTopDomains(skeleton))
+      return true;
+  }
+
+  uspoof_getSkeletonUnicodeString(checker_, 0, host, skeleton, &status);
+  return U_SUCCESS(status) && LookupMatchInTopDomains(skeleton);
 }
 
 bool IDNSpoofChecker::IsMadeOfLatinAlikeCyrillic(
@@ -384,7 +422,27 @@ void IDNSpoofChecker::SetAllowedUnicodeSet(UErrorCode* status) {
   allowed_set.remove(0x0F8Fu);
 #endif
 
+  // Disallow extremely rarely used LGC character blocks.
+  // Cyllic Ext A is not in the allowed set. Neither are Latin Ext-{C,E}.
+  allowed_set.remove(0x01CDu, 0x01DCu);  // Latin Ext B; Pinyin
+  allowed_set.remove(0x1C80u, 0x1C8Fu);  // Cyrillic Extended-C
+  allowed_set.remove(0x1E00u, 0x1E9Bu);  // Latin Extended Additional
+  allowed_set.remove(0x1F00u, 0x1FFFu);  // Greek Extended
+  allowed_set.remove(0xA640u, 0xA69Fu);  // Cyrillic Extended-B
+  allowed_set.remove(0xA720u, 0xA7FFu);  // Latin Extended-D
+
   uspoof_setAllowedUnicodeSet(checker_, &allowed_set, status);
+}
+
+void IDNSpoofChecker::RestoreTopDomainGraphToDefault() {
+  g_graph = kDafsa;
+  g_graph_length = sizeof(kDafsa);
+}
+
+void IDNSpoofChecker::SetTopDomainGraph(base::StringPiece domain_graph) {
+  DCHECK_NE(0u, domain_graph.length());
+  g_graph = reinterpret_cast<const unsigned char*>(domain_graph.data());
+  g_graph_length = domain_graph.length();
 }
 
 }  // namespace url_formatter

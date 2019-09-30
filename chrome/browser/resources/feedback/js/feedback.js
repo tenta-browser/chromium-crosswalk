@@ -321,6 +321,8 @@ function initialize() {
       }
 
       $('description-text').textContent = feedbackInfo.description;
+      if (feedbackInfo.descriptionPlaceholder)
+        $('description-text').placeholder = feedbackInfo.descriptionPlaceholder;
       if (feedbackInfo.pageUrl)
         $('page-url-text').value = feedbackInfo.pageUrl;
 
@@ -331,6 +333,13 @@ function initialize() {
           resizeAppWindow();
         });
         chrome.app.window.current().show();
+
+        // Allow feedback to be sent even if the screenshot failed.
+        if (!screenshotCanvas) {
+          $('screenshot-checkbox').disabled = true;
+          $('screenshot-checkbox').checked = false;
+          return;
+        }
 
         screenshotCanvas.toBlob(function(blob) {
           $('screenshot-image').src = URL.createObjectURL(blob);

@@ -12,9 +12,9 @@
 #include "net/quic/core/quic_socket_address_coder.h"
 #include "net/quic/core/quic_utils.h"
 #include "net/quic/platform/api/quic_endian.h"
-#include "net/quic/platform/api/quic_flag_utils.h"
 #include "net/quic/platform/api/quic_map_util.h"
 #include "net/quic/platform/api/quic_str_cat.h"
+#include "net/quic/platform/api/quic_string.h"
 #include "net/quic/platform/api/quic_text_utils.h"
 
 using std::string;
@@ -76,33 +76,21 @@ void CryptoHandshakeMessage::SetVersionVector(
     QuicTransportVersionVector versions) {
   QuicVersionLabelVector version_labels;
   for (QuicTransportVersion version : versions) {
-    if (!FLAGS_quic_reloadable_flag_quic_use_net_byte_order_version_label) {
-      version_labels.push_back(QuicVersionToQuicVersionLabel(version));
-    } else {
-      QUIC_FLAG_COUNT_N(
-          quic_reloadable_flag_quic_use_net_byte_order_version_label, 7, 10);
-      version_labels.push_back(
-          QuicEndian::HostToNet32(QuicVersionToQuicVersionLabel(version)));
-    }
+    version_labels.push_back(
+        QuicEndian::HostToNet32(QuicVersionToQuicVersionLabel(version)));
   }
   SetVector(tag, version_labels);
 }
 
 void CryptoHandshakeMessage::SetVersion(QuicTag tag,
                                         QuicTransportVersion version) {
-  if (!FLAGS_quic_reloadable_flag_quic_use_net_byte_order_version_label) {
-    SetValue(tag, QuicVersionToQuicVersionLabel(version));
-  } else {
-    QUIC_FLAG_COUNT_N(
-        quic_reloadable_flag_quic_use_net_byte_order_version_label, 8, 10);
-    SetValue(tag,
-             QuicEndian::HostToNet32(QuicVersionToQuicVersionLabel(version)));
-  }
+  SetValue(tag,
+           QuicEndian::HostToNet32(QuicVersionToQuicVersionLabel(version)));
 }
 
 void CryptoHandshakeMessage::SetStringPiece(QuicTag tag,
                                             QuicStringPiece value) {
-  tag_value_map_[tag] = value.as_string();
+  tag_value_map_[tag] = string(value);
 }
 
 void CryptoHandshakeMessage::Erase(QuicTag tag) {
@@ -139,12 +127,6 @@ QuicErrorCode CryptoHandshakeMessage::GetTaglist(
 QuicErrorCode CryptoHandshakeMessage::GetVersionLabelList(
     QuicTag tag,
     QuicVersionLabelVector* out) const {
-  if (!FLAGS_quic_reloadable_flag_quic_use_net_byte_order_version_label) {
-    return GetTaglist(tag, out);
-  }
-
-  QUIC_FLAG_COUNT_N(quic_reloadable_flag_quic_use_net_byte_order_version_label,
-                    9, 10);
   QuicErrorCode error = GetTaglist(tag, out);
   if (error != QUIC_NO_ERROR) {
     return error;
@@ -160,12 +142,6 @@ QuicErrorCode CryptoHandshakeMessage::GetVersionLabelList(
 QuicErrorCode CryptoHandshakeMessage::GetVersionLabel(
     QuicTag tag,
     QuicVersionLabel* out) const {
-  if (!FLAGS_quic_reloadable_flag_quic_use_net_byte_order_version_label) {
-    return GetUint32(tag, out);
-  }
-
-  QUIC_FLAG_COUNT_N(quic_reloadable_flag_quic_use_net_byte_order_version_label,
-                    10, 10);
   QuicErrorCode error = GetUint32(tag, out);
   if (error != QUIC_NO_ERROR) {
     return error;
@@ -237,8 +213,8 @@ QuicErrorCode CryptoHandshakeMessage::GetUint64(QuicTag tag,
 }
 
 QuicErrorCode CryptoHandshakeMessage::GetUint128(QuicTag tag,
-                                                 uint128* out) const {
-  return GetPOD(tag, out, sizeof(uint128));
+                                                 QuicUint128* out) const {
+  return GetPOD(tag, out, sizeof(QuicUint128));
 }
 
 size_t CryptoHandshakeMessage::size() const {
@@ -266,7 +242,7 @@ size_t CryptoHandshakeMessage::minimum_size() const {
   return minimum_size_;
 }
 
-string CryptoHandshakeMessage::DebugString(Perspective perspective) const {
+QuicString CryptoHandshakeMessage::DebugString(Perspective perspective) const {
   return DebugStringInternal(0, perspective);
 }
 
@@ -291,14 +267,14 @@ QuicErrorCode CryptoHandshakeMessage::GetPOD(QuicTag tag,
   return ret;
 }
 
-string CryptoHandshakeMessage::DebugStringInternal(
+QuicString CryptoHandshakeMessage::DebugStringInternal(
     size_t indent,
     Perspective perspective) const {
-  string ret = string(2 * indent, ' ') + QuicTagToString(tag_) + "<\n";
+  QuicString ret = QuicString(2 * indent, ' ') + QuicTagToString(tag_) + "<\n";
   ++indent;
   for (QuicTagValueMap::const_iterator it = tag_value_map_.begin();
        it != tag_value_map_.end(); ++it) {
-    ret += string(2 * indent, ' ') + QuicTagToString(it->first) + ": ";
+    ret += QuicString(2 * indent, ' ') + QuicTagToString(it->first) + ": ";
 
     bool done = false;
     switch (it->first) {
@@ -379,7 +355,7 @@ string CryptoHandshakeMessage::DebugStringInternal(
         if (!it->second.empty()) {
           std::unique_ptr<CryptoHandshakeMessage> msg(
               CryptoFramer::ParseMessage(it->second, perspective));
-          if (msg.get()) {
+          if (msg) {
             ret += "\n";
             ret += msg->DebugStringInternal(indent + 1, perspective);
 
@@ -407,7 +383,7 @@ string CryptoHandshakeMessage::DebugStringInternal(
     ret += "\n";
   }
   --indent;
-  ret += string(2 * indent, ' ') + ">";
+  ret += QuicString(2 * indent, ' ') + ">";
   return ret;
 }
 

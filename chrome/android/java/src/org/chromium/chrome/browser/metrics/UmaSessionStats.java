@@ -7,6 +7,8 @@ package org.chromium.chrome.browser.metrics;
 import android.content.ComponentCallbacks;
 import android.content.Context;
 import android.content.res.Configuration;
+import android.os.AsyncTask;
+import android.text.TextUtils;
 
 import org.chromium.base.ContextUtils;
 import org.chromium.base.metrics.RecordUserAction;
@@ -17,6 +19,7 @@ import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tabmodel.TabModel;
 import org.chromium.chrome.browser.tabmodel.TabModelSelector;
 import org.chromium.chrome.browser.tabmodel.TabModelSelectorTabObserver;
+import org.chromium.chrome.browser.util.UrlUtilities;
 import org.chromium.content_public.browser.WebContents;
 
 /**
@@ -57,8 +60,13 @@ public class UmaSessionStats {
             nativeRecordPageLoadedWithKeyboard();
         }
 
-        if (InstantAppsHandler.getInstance().getInstantAppIntentForUrl(tab.getUrl()) != null) {
-            RecordUserAction.record("Android.InstantApps.InstantAppsEligiblePageLoaded");
+        String url = tab.getUrl();
+        if (!TextUtils.isEmpty(url) && UrlUtilities.isHttpOrHttps(url)) {
+            AsyncTask.THREAD_POOL_EXECUTOR.execute(() -> {
+                if (InstantAppsHandler.getInstance().getInstantAppIntentForUrl(url) != null) {
+                    RecordUserAction.record("Android.InstantApps.InstantAppsEligiblePageLoaded");
+                }
+            });
         }
 
         // If the session has ended (i.e. chrome is in the background), escape early. Ideally we
@@ -165,6 +173,27 @@ public class UmaSessionStats {
     }
 
     /**
+     * Initializes the metrics consent bit to false. Used only for testing.
+     */
+    public static void initMetricsAndCrashReportingForTesting() {
+        nativeInitMetricsAndCrashReportingForTesting();
+    }
+
+    /**
+     * Clears the metrics consent bit used for testing to original setting. Used only for testing.
+     */
+    public static void unSetMetricsAndCrashReportingForTesting() {
+        nativeUnsetMetricsAndCrashReportingForTesting();
+    }
+
+    /**
+     * Updates the metrics consent bit to |consent|. Used only for testing.
+     */
+    public static void updateMetricsAndCrashReportingForTesting(boolean consent) {
+        nativeUpdateMetricsAndCrashReportingForTesting(consent);
+    }
+
+    /**
      * Updates the state of MetricsService to account for the user's preferences.
      */
     public static void updateMetricsServiceState() {
@@ -204,6 +233,9 @@ public class UmaSessionStats {
 
     private static native long nativeInit();
     private static native void nativeChangeMetricsReportingConsent(boolean consent);
+    private static native void nativeInitMetricsAndCrashReportingForTesting();
+    private static native void nativeUnsetMetricsAndCrashReportingForTesting();
+    private static native void nativeUpdateMetricsAndCrashReportingForTesting(boolean consent);
     private static native void nativeUpdateMetricsServiceState(boolean mayUpload);
     private native void nativeUmaResumeSession(long nativeUmaSessionStats);
     private native void nativeUmaEndSession(long nativeUmaSessionStats);

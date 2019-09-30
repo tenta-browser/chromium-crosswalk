@@ -4,6 +4,7 @@
 <link rel="help" href="https://w3c.github.io/webpayments-payment-apps-api/#payment-instruments">
 <script src="../resources/testharness.js"></script>
 <script src="../resources/testharnessreport.js"></script>
+<script src="../resources/permissions-helper.js"></script>
 <script src="../../serviceworker/resources/test-helpers.js"></script>
 <script>
 
@@ -19,6 +20,9 @@ promise_test(test => {
         })
       .then(state => {
           assert_equals(state, 'activated');
+          return PermissionsHelper.setPermission('payment-handler', 'granted');
+        })
+      .then(() => {
           return registration.paymentManager.instruments.set(
               'test_key',
               {
@@ -36,7 +40,7 @@ promise_test(test => {
                     'purpose': 'any badge'
                   }
                 ],
-                enabledMethods: ['basic-card'],
+                method: 'basic-card',
                 capabilities: {
                   supportedNetworks: ['visa'],
                   supportedTypes: ['credit']
@@ -49,7 +53,7 @@ promise_test(test => {
         })
       .then(stored_instrument => {
           assert_equals(stored_instrument.name, 'Visa ending ****4756');
-          assert_array_equals(stored_instrument.enabledMethods, ['basic-card']);
+          assert_equals(stored_instrument.method, 'basic-card');
           assert_equals(stored_instrument.icons.length, 2);
           assert_object_equals(stored_instrument.icons[0], {
               src: location.origin + '/payments/resources/icon-1x.png',
@@ -101,11 +105,14 @@ promise_test(test => {
         })
       .then(state => {
           assert_equals(state, 'activated');
+          return PermissionsHelper.setPermission('payment-handler', 'granted');
+        })
+      .then(() => {
           return registration.paymentManager.instruments.set(
               'test_key',
               {
                 name: 'Visa ending ****4756',
-                enabledMethods: ['basic-card'],
+                method: 'basic-card',
                 capabilities: {
                   supportedNetworks: ['visa'],
                   supportedTypes: ['credit']
@@ -138,11 +145,14 @@ promise_test(test => {
         })
       .then(state => {
           assert_equals(state, 'activated');
+          return PermissionsHelper.setPermission('payment-handler', 'granted');
+        })
+      .then(() => {
           return registration.paymentManager.instruments.set(
               'test_key',
               {
                 name: 'Visa ending ****4756',
-                enabledMethods: ['basic-card'],
+                method: 'basic-card',
                 capabilities: {
                   supportedNetworks: ['visa'],
                   supportedTypes: ['credit']
@@ -175,12 +185,15 @@ promise_test(test => {
         })
       .then(state => {
           assert_equals(state, 'activated');
+          return PermissionsHelper.setPermission('payment-handler', 'granted');
+        })
+      .then(() => {
           var instruments = [
             registration.paymentManager.instruments.set(
               'test_key1',
               {
                 name: 'Visa ending ****4756',
-                enabledMethods: ['basic-card'],
+                method: 'basic-card',
                 capabilities: {
                   supportedNetworks: ['visa'],
                   supportedTypes: ['credit']
@@ -190,7 +203,7 @@ promise_test(test => {
               'test_key2',
               {
                 name: "My Bob Pay Account: john@example.com",
-                enabledMethods: ["https://bobpay.com/"]
+                method: "https://bobpay.com/"
               })
           ];
           return Promise.all(instruments);
@@ -217,12 +230,15 @@ promise_test(test => {
         })
       .then(state => {
           assert_equals(state, 'activated');
+          return PermissionsHelper.setPermission('payment-handler', 'granted');
+        })
+      .then(() => {
           var instruments = [
             registration.paymentManager.instruments.set(
               'test_key1',
               {
                 name: 'Visa ending ****4756',
-                enabledMethods: ['basic-card'],
+                method: 'basic-card',
                 capabilities: {
                   supportedNetworks: ['visa'],
                   supportedTypes: ['credit']
@@ -232,7 +248,7 @@ promise_test(test => {
               'test_key2',
               {
                 name: "My Bob Pay Account: john@example.com",
-                enabledMethods: ["https://bobpay.com/"]
+                method: "https://bobpay.com/"
               })
           ];
           return Promise.all(instruments);
@@ -254,5 +270,52 @@ promise_test(test => {
         })
       .catch(unreached_rejection(test));
   }, 'PaymentInstruments |clear| method test');
+
+promise_test(test => {
+    var registration;
+    var script_url = 'resources/empty-worker.js';
+    var scope = 'resources/';
+
+    return service_worker_unregister_and_register(test, script_url, scope)
+      .then(r => {
+          registration = r;
+          return wait_for_state(test, registration.installing, 'activated');
+        })
+      .then(state => {
+          assert_equals(state, 'activated');
+          return PermissionsHelper.setPermission('payment-handler', 'denied');
+        })
+      .then(() => {
+          return registration.paymentManager.instruments.set(
+              'test_key',
+              {
+                name: 'Visa ending ****4756',
+                icons: [
+                  {
+                    'src': './resources/icon-1x.png',
+                    'sizes': '32x32 48x48',
+                    'type': 'image/png'
+                  },
+                  {
+                    'src': './resources/icon-2x.png',
+                    'sizes': '96x96',
+                    'type': 'image/png',
+                    'purpose': 'any badge'
+                  }
+                ],
+                method: 'basic-card',
+                capabilities: {
+                  supportedNetworks: ['visa'],
+                  supportedTypes: ['credit']
+                }
+              });
+        })
+      .then(result => {
+          assert_unreached();
+        })
+      .catch(e => {
+          assert_equals(e.name, 'NotAllowedError');
+        });
+  }, 'Throw NotAllowedError if permission is not granted');
 
 </script>

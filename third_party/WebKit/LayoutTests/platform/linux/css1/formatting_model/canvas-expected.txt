@@ -17,7 +17,7 @@ layer at (0,0) size 800x600
           text run at (0,0) width 387: "The body of this document should have a green background. "
           text run at (387,0) width 308: "It also has a margin of 25 pixels, so the light blue"
           text run at (0,20) width 430: "background set for the HTML element should surround the BODY. "
-          text run at (429,20) width 308: "If the BODY content is significantly shorter than"
+          text run at (430,20) width 307: "If the BODY content is significantly shorter than"
           text run at (0,40) width 519: "the browser's window height, then the bottom border may be larger than 25 pixels."
       LayoutTable {TABLE} at (0,175) size 750x98 [border: (1px outset #808080)]
         LayoutTableSection {TBODY} at (1,1) size 748x96
@@ -36,7 +36,7 @@ layer at (0,0) size 800x600
                   text run at (0,0) width 387: "The body of this document should have a green background. "
                   text run at (387,0) width 308: "It also has a margin of 25 pixels, so the light blue"
                   text run at (0,20) width 430: "background set for the HTML element should surround the BODY. "
-                  text run at (429,20) width 277: "If the BODY content is significantly shorter"
+                  text run at (430,20) width 276: "If the BODY content is significantly shorter"
                   text run at (0,40) width 550: "than the browser's window height, then the bottom border may be larger than 25 pixels."
 layer at (25,106) size 750x2 clip at (0,0) size 0x0
   LayoutBlockFlow {HR} at (0,81) size 750x2 [border: (1px inset #EEEEEE)]

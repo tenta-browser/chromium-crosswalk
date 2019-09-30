@@ -33,7 +33,7 @@
 #include "chrome/browser/ui/user_manager.h"
 #include "chrome/browser/ui/webui/profile_helper.h"
 #include "chrome/browser/ui/webui/signin/signin_utils.h"
-#include "chrome/common/features.h"
+#include "chrome/common/buildflags.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/grit/chromium_strings.h"
@@ -159,27 +159,30 @@ void SigninCreateProfileHandler::RegisterMessages() {
   // Cancellation is only supported for supervised users.
   web_ui()->RegisterMessageCallback(
       "cancelCreateProfile",
-      base::Bind(&SigninCreateProfileHandler::HandleCancelProfileCreation,
-                 base::Unretained(this)));
+      base::BindRepeating(
+          &SigninCreateProfileHandler::HandleCancelProfileCreation,
+          base::Unretained(this)));
 
   web_ui()->RegisterMessageCallback(
       "switchToProfile",
-      base::Bind(&SigninCreateProfileHandler::SwitchToProfile,
-                 base::Unretained(this)));
+      base::BindRepeating(&SigninCreateProfileHandler::SwitchToProfile,
+                          base::Unretained(this)));
 #endif
   web_ui()->RegisterMessageCallback(
-      "createProfile", base::Bind(&SigninCreateProfileHandler::CreateProfile,
-                                  base::Unretained(this)));
+      "createProfile",
+      base::BindRepeating(&SigninCreateProfileHandler::CreateProfile,
+                          base::Unretained(this)));
 
   web_ui()->RegisterMessageCallback(
       "requestDefaultProfileIcons",
-      base::Bind(&SigninCreateProfileHandler::RequestDefaultProfileIcons,
-                 base::Unretained(this)));
+      base::BindRepeating(
+          &SigninCreateProfileHandler::RequestDefaultProfileIcons,
+          base::Unretained(this)));
 
   web_ui()->RegisterMessageCallback(
       "requestSignedInProfiles",
-      base::Bind(&SigninCreateProfileHandler::RequestSignedInProfiles,
-                 base::Unretained(this)));
+      base::BindRepeating(&SigninCreateProfileHandler::RequestSignedInProfiles,
+                          base::Unretained(this)));
 }
 
 void SigninCreateProfileHandler::RequestDefaultProfileIcons(
@@ -447,7 +450,6 @@ void SigninCreateProfileHandler::ShowProfileCreationError(
   // The ProfileManager calls us back with a NULL profile in some cases.
   if (profile) {
     webui::DeleteProfileAtPath(profile->GetPath(),
-                               web_ui(),
                                ProfileMetrics::DELETE_PROFILE_SETTINGS);
   }
   profile_creation_type_ = NO_CREATION_IN_PROGRESS;
@@ -478,10 +480,10 @@ void SigninCreateProfileHandler::Observe(
     int type,
     const content::NotificationSource& source,
     const content::NotificationDetails& details) {
-  DCHECK_EQ(chrome::NOTIFICATION_BROWSER_WINDOW_READY, type);
+  DCHECK_EQ(chrome::NOTIFICATION_BROWSER_OPENED, type);
 
-  // Only respond to one Browser Window Ready event.
-  registrar_.Remove(this, chrome::NOTIFICATION_BROWSER_WINDOW_READY,
+  // Only respond to one Browser Opened event.
+  registrar_.Remove(this, chrome::NOTIFICATION_BROWSER_OPENED,
                     content::NotificationService::AllSources());
   UserManager::Hide();
 }
@@ -495,8 +497,7 @@ void SigninCreateProfileHandler::OnBrowserReadyCallback(
   if (browser && browser->window()) {
     UserManager::Hide();
   } else {
-    registrar_.Add(this,
-                   chrome::NOTIFICATION_BROWSER_WINDOW_READY,
+    registrar_.Add(this, chrome::NOTIFICATION_BROWSER_OPENED,
                    content::NotificationService::AllSources());
   }
 }
@@ -717,7 +718,6 @@ void SigninCreateProfileHandler::CancelProfileRegistration(
   // RegisterAndInitSync() won't be called, so the cleanup must be done here.
   profile_path_being_created_.clear();
   webui::DeleteProfileAtPath(new_profile->GetPath(),
-                             web_ui(),
                              ProfileMetrics::DELETE_PROFILE_SETTINGS);
 }
 
@@ -739,9 +739,9 @@ void SigninCreateProfileHandler::RegisterSupervisedUser(
     supervised_user_service->RegisterAndInitSync(
         supervised_user_registration_utility_.get(), custodian_profile,
         supervised_user_id,
-        base::Bind(&SigninCreateProfileHandler::OnSupervisedUserRegistered,
-                   weak_ptr_factory_.GetWeakPtr(), create_shortcut,
-                   custodian_profile, new_profile));
+        base::BindOnce(&SigninCreateProfileHandler::OnSupervisedUserRegistered,
+                       weak_ptr_factory_.GetWeakPtr(), create_shortcut,
+                       custodian_profile, new_profile));
   }
 }
 

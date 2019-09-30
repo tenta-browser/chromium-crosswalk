@@ -17,6 +17,8 @@
 #include "net/socket/connection_attempts.h"
 #include "net/socket/stream_socket.h"
 #include "net/socket/tcp_socket.h"
+#include "net/socket/transport_client_socket.h"
+#include "net/traffic_annotation/network_traffic_annotation.h"
 
 namespace net {
 
@@ -25,7 +27,7 @@ struct NetLogSource;
 class SocketPerformanceWatcher;
 
 // A client socket that uses TCP as the transport layer.
-class NET_EXPORT TCPClientSocket : public StreamSocket {
+class NET_EXPORT TCPClientSocket : public TransportClientSocket {
  public:
   // The IP address(es) and port number to connect to.  The TCP socket will try
   // each IP address in the list until it succeeds in establishing a
@@ -43,10 +45,8 @@ class NET_EXPORT TCPClientSocket : public StreamSocket {
 
   ~TCPClientSocket() override;
 
-  // Binds the socket to a local IP address and port.
-  int Bind(const IPEndPoint& address);
-
-  // StreamSocket implementation.
+  // TransportClientSocket implementation.
+  int Bind(const IPEndPoint& address) override;
   int Connect(const CompletionCallback& callback) override;
   void Disconnect() override;
   bool IsConnected() const override;
@@ -61,6 +61,11 @@ class NET_EXPORT TCPClientSocket : public StreamSocket {
   bool WasAlpnNegotiated() const override;
   NextProto GetNegotiatedProtocol() const override;
   bool GetSSLInfo(SSLInfo* ssl_info) override;
+  void GetConnectionAttempts(ConnectionAttempts* out) const override;
+  void ClearConnectionAttempts() override;
+  void AddConnectionAttempts(const ConnectionAttempts& attempts) override;
+  int64_t GetTotalReceivedBytes() const override;
+  void ApplySocketTag(const SocketTag& tag) override;
 
   // Socket implementation.
   // Multiple outstanding requests are not supported.
@@ -73,17 +78,13 @@ class NET_EXPORT TCPClientSocket : public StreamSocket {
                   const CompletionCallback& callback) override;
   int Write(IOBuffer* buf,
             int buf_len,
-            const CompletionCallback& callback) override;
+            const CompletionCallback& callback,
+            const NetworkTrafficAnnotationTag& traffic_annotation) override;
   int SetReceiveBufferSize(int32_t size) override;
   int SetSendBufferSize(int32_t size) override;
 
   virtual bool SetKeepAlive(bool enable, int delay);
   virtual bool SetNoDelay(bool no_delay);
-
-  void GetConnectionAttempts(ConnectionAttempts* out) const override;
-  void ClearConnectionAttempts() override;
-  void AddConnectionAttempts(const ConnectionAttempts& attempts) override;
-  int64_t GetTotalReceivedBytes() const override;
 
  private:
   // State machine for connecting the socket.

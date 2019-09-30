@@ -10,7 +10,6 @@
   <template>
     <style include="cr-icons cr-hidden-style">
       :host {
-        --cr-toolbar-field-width: 680px;
         --cr-toolbar-height: 56px;
         --paper-icon-button-ink-color: white;
         align-items: center;
@@ -41,12 +40,10 @@
         display: flex;
       }
 
-      #menuButton {
+      #menuButtonContainer {
         height: 32px;
-        margin-bottom: 6px;
-        margin-top: 6px;
         min-width: 32px;
-        padding: 6px;
+        padding: 6px 0;
         width: 32px;
       }
 
@@ -131,12 +128,14 @@
       <div id="leftSpacer">
         <!-- Note: showing #menuPromo relies on this dom-if being [restamp]. -->
         <template is="dom-if" if="[[showMenu]]" restamp>
-          <button id="menuButton" is="paper-icon-button-light"
-              class="icon-menu-white no-overlap"
-              on-tap="onMenuTap_"
-              title="[[titleIfNotShowMenuPromo_(menuLabel, showMenuPromo)]]"
-              aria-label$="[[menuLabel]]">
-          </button>
+          <paper-icon-button-light id="menuButtonContainer"
+              class="icon-menu-white no-overlap">
+            <button id="menuButton"
+                on-tap="onMenuTap_"
+                title="[[titleIfNotShowMenuPromo_(menuLabel, showMenuPromo)]]"
+                aria-label$="[[menuLabel]]">
+            </button>
+          </paper-icon-button-light>
           <template is="dom-if" if="[[showMenuPromo]]">
             <div id="menuPromo" role="tooltip">
               [[menuPromo]]
@@ -161,7 +160,7 @@
     </div>
 
     <div id="rightContent">
-      <content select=".more-actions"></content>
+      <slot></slot>
     </div>
   </template>
   <script src="cr_toolbar.js"></script>

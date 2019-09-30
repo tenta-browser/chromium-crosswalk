@@ -3,18 +3,29 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
+      "backgroundColor": "#FFFFFF"
+    },
+    {
+      "name": "Scrolling Layer",
+      "bounds": [800, 600],
+      "drawsContent": false
+    },
+    {
+      "name": "Scrolling Contents Layer",
+      "bounds": [800, 600],
       "contentsOpaque": true,
       "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
         {
-          "object": "LayoutSVGRect rect",
+          "object": "LayoutSVGViewportContainer svg id='inner'",
           "rect": [0, 0, 200, 200],
-          "reason": "geometry"
+          "reason": "paint property change"
         },
         {
           "object": "LayoutSVGViewportContainer svg id='inner'",
-          "rect": [0, 0, 200, 200],
-          "reason": "full"
+          "rect": [0, 0, 100, 100],
+          "reason": "paint property change"
         }
       ]
     }
@@ -23,10 +34,6 @@
     {
       "object": "LayoutSVGViewportContainer svg id='inner'",
       "reason": "full"
-    },
-    {
-      "object": "LayoutSVGRect rect",
-      "reason": "geometry"
     }
   ]
 }

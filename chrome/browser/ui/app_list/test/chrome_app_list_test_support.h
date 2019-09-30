@@ -5,18 +5,16 @@
 #ifndef CHROME_BROWSER_UI_APP_LIST_TEST_CHROME_APP_LIST_TEST_SUPPORT_H_
 #define CHROME_BROWSER_UI_APP_LIST_TEST_CHROME_APP_LIST_TEST_SUPPORT_H_
 
-namespace app_list {
-class AppListModel;
-}
-
+class AppListModelUpdater;
 class AppListService;
 class AppListServiceImpl;
 class Profile;
 
 namespace test {
 
-// Gets the model keyed to the profile currently associated with |service|.
-app_list::AppListModel* GetAppListModel(AppListService* service);
+// Gets the model updater keyed to the profile currently associated with
+// |service|.
+AppListModelUpdater* GetModelUpdater(AppListService* service);
 
 AppListServiceImpl* GetAppListServiceImpl();
 

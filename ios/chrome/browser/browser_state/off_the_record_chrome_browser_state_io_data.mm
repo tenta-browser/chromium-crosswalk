@@ -23,6 +23,7 @@
 #include "ios/chrome/browser/net/ios_chrome_network_delegate.h"
 #include "ios/chrome/browser/net/ios_chrome_url_request_context_getter.h"
 #include "ios/chrome/browser/pref_names.h"
+#import "ios/net/cookies/system_cookie_store.h"
 #include "ios/web/public/web_thread.h"
 #include "net/cookies/cookie_store.h"
 #include "net/disk_cache/disk_cache.h"
@@ -40,9 +41,6 @@
 #endif
 
 namespace {
-
-// Callback doing nothing, called by DoomIncognitoCache() below.
-void DoNothing(int rv) {}
 
 // Called by the notification center on memory warnings.
 void OnMemoryWarningReceived(CFNotificationCenterRef center,
@@ -69,7 +67,7 @@ void OffTheRecordChromeBrowserStateIOData::Handle::DoomIncognitoCache() {
                                     ->GetCache();
         if (!cache->GetCurrentBackend())
           return;
-        cache->GetCurrentBackend()->DoomAllEntries(base::Bind(&DoNothing));
+        cache->GetCurrentBackend()->DoomAllEntries(base::DoNothing());
       }));
 }
 
@@ -169,7 +167,7 @@ void OffTheRecordChromeBrowserStateIOData::InitializeInternal(
   main_context->set_host_resolver(io_thread_globals->host_resolver.get());
   main_context->set_http_auth_handler_factory(
       io_thread_globals->http_auth_handler_factory.get());
-  main_context->set_proxy_service(proxy_service());
+  main_context->set_proxy_resolution_service(proxy_resolution_service());
 
   main_context->set_cert_transparency_verifier(
       io_thread_globals->cert_transparency_verifier.get());
@@ -193,12 +191,12 @@ void OffTheRecordChromeBrowserStateIOData::InitializeInternal(
       new net::DefaultChannelIDStore(channel_id_store.get()));
   set_channel_id_service(channel_id_service);
   main_context->set_channel_id_service(channel_id_service);
-
-  main_cookie_store_ =
-      cookie_util::CreateCookieStore(cookie_util::CookieStoreConfig(
+  main_cookie_store_ = cookie_util::CreateCookieStore(
+      cookie_util::CookieStoreConfig(
           cookie_path_,
           cookie_util::CookieStoreConfig::RESTORED_SESSION_COOKIES,
-          cookie_util::CookieStoreConfig::COOKIE_STORE_IOS, nullptr));
+          cookie_util::CookieStoreConfig::COOKIE_STORE_IOS, nullptr),
+      std::move(profile_params->system_cookie_store));
   main_context->set_cookie_store(main_cookie_store_.get());
   main_cookie_store_->SetChannelIDServiceID(channel_id_service->GetUniqueID());
 

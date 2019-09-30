@@ -18,7 +18,6 @@
 #include "base/compiler_specific.h"
 #include "base/logging.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
 #include "base/metrics/histogram_base.h"
 #include "base/metrics/histogram_samples.h"
@@ -549,7 +548,6 @@ class PrefHashFilterTest : public testing::TestWithParam<EnforcementLevel>,
         reset_recorded_(false) {}
 
   void SetUp() override {
-    base::StatisticsRecorder::Initialize();
     Reset();
   }
 

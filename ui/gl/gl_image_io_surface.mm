@@ -14,11 +14,19 @@
 #include "base/trace_event/memory_dump_manager.h"
 #include "base/trace_event/process_memory_dump.h"
 #include "base/trace_event/trace_event.h"
+#include "ui/gfx/buffer_format_util.h"
 #include "ui/gfx/mac/io_surface.h"
 #include "ui/gl/gl_bindings.h"
 #include "ui/gl/gl_context.h"
+#include "ui/gl/gl_enums.h"
+#include "ui/gl/gl_features.h"
+#include "ui/gl/gl_version_info.h"
 #include "ui/gl/scoped_binders.h"
 #include "ui/gl/yuv_to_rgb_converter.h"
+
+#if BUILDFLAG(USE_EGL_ON_MAC)
+#include "ui/gl/gl_image_io_surface_egl.h"
+#endif  // BUILDFLAG(USE_EGL_ON_MAC)
 
 // Note that this must be included after gl_bindings.h to avoid conflicts.
 #include <OpenGL/CGLIOSurface.h>
@@ -37,6 +45,7 @@ bool ValidInternalFormat(unsigned internalformat) {
     case GL_RG:
     case GL_BGRA_EXT:
     case GL_RGB:
+    case GL_RGB10_A2_EXT:
     case GL_RGB_YCBCR_420V_CHROMIUM:
     case GL_RGB_YCBCR_422_CHROMIUM:
     case GL_RGBA:
@@ -44,35 +53,6 @@ bool ValidInternalFormat(unsigned internalformat) {
     default:
       return false;
   }
-}
-
-bool ValidFormat(gfx::BufferFormat format) {
-  switch (format) {
-    case gfx::BufferFormat::R_8:
-    case gfx::BufferFormat::BGRA_8888:
-    case gfx::BufferFormat::BGRX_8888:
-    case gfx::BufferFormat::RGBA_8888:
-    case gfx::BufferFormat::RGBA_F16:
-    case gfx::BufferFormat::UYVY_422:
-    case gfx::BufferFormat::YUV_420_BIPLANAR:
-      return true;
-    case gfx::BufferFormat::R_16:
-    case gfx::BufferFormat::RG_88:
-    case gfx::BufferFormat::ATC:
-    case gfx::BufferFormat::ATCIA:
-    case gfx::BufferFormat::DXT1:
-    case gfx::BufferFormat::DXT5:
-    case gfx::BufferFormat::ETC1:
-    case gfx::BufferFormat::BGR_565:
-    case gfx::BufferFormat::RGBA_4444:
-    case gfx::BufferFormat::RGBX_8888:
-    case gfx::BufferFormat::BGRX_1010102:
-    case gfx::BufferFormat::YVU_420:
-      return false;
-  }
-
-  NOTREACHED();
-  return false;
 }
 
 GLenum TextureFormat(gfx::BufferFormat format) {
@@ -84,14 +64,18 @@ GLenum TextureFormat(gfx::BufferFormat format) {
     case gfx::BufferFormat::RG_88:
       return GL_RG;
     case gfx::BufferFormat::BGRA_8888:
-    case gfx::BufferFormat::BGRX_8888:
+    case gfx::BufferFormat::BGRX_8888:  // See https://crbug.com/595948.
     case gfx::BufferFormat::RGBA_8888:
     case gfx::BufferFormat::RGBA_F16:
       return GL_RGBA;
     case gfx::BufferFormat::UYVY_422:
-      return GL_RGB;
     case gfx::BufferFormat::YUV_420_BIPLANAR:
       return GL_RGB_YCBCR_420V_CHROMIUM;
+    case gfx::BufferFormat::BGRX_1010102:
+      // Technically we should use GL_RGB but CGLTexImageIOSurface2D() (and
+      // OpenGL ES 3.0, for the case) support only GL_RGBA (the hardware ignores
+      // the alpha channel anyway), see https://crbug.com/797347.
+      return GL_RGBA;
     case gfx::BufferFormat::ATC:
     case gfx::BufferFormat::ATCIA:
     case gfx::BufferFormat::DXT1:
@@ -100,7 +84,7 @@ GLenum TextureFormat(gfx::BufferFormat format) {
     case gfx::BufferFormat::BGR_565:
     case gfx::BufferFormat::RGBA_4444:
     case gfx::BufferFormat::RGBX_8888:
-    case gfx::BufferFormat::BGRX_1010102:
+    case gfx::BufferFormat::RGBX_1010102:
     case gfx::BufferFormat::YVU_420:
       NOTREACHED();
       return 0;
@@ -120,7 +104,8 @@ GLenum DataFormat(gfx::BufferFormat format) {
       return GL_RG;
     case gfx::BufferFormat::BGRA_8888:
     case gfx::BufferFormat::BGRX_8888:
-    case gfx::BufferFormat::RGBA_8888:
+    case gfx::BufferFormat::RGBA_8888:  // See https://crbug.com/533677#c6.
+    case gfx::BufferFormat::BGRX_1010102:
       return GL_BGRA;
     case gfx::BufferFormat::RGBA_F16:
       return GL_RGBA;
@@ -134,10 +119,10 @@ GLenum DataFormat(gfx::BufferFormat format) {
     case gfx::BufferFormat::BGR_565:
     case gfx::BufferFormat::RGBA_4444:
     case gfx::BufferFormat::RGBX_8888:
-    case gfx::BufferFormat::BGRX_1010102:
+    case gfx::BufferFormat::RGBX_1010102:
     case gfx::BufferFormat::YVU_420:
     case gfx::BufferFormat::YUV_420_BIPLANAR:
-      NOTREACHED();
+      NOTREACHED() << gfx::BufferFormatToString(format);
       return 0;
   }
 
@@ -156,11 +141,12 @@ GLenum DataType(gfx::BufferFormat format) {
     case gfx::BufferFormat::BGRX_8888:
     case gfx::BufferFormat::RGBA_8888:
       return GL_UNSIGNED_INT_8_8_8_8_REV;
+    case gfx::BufferFormat::BGRX_1010102:
+      return GL_UNSIGNED_INT_2_10_10_10_REV;
     case gfx::BufferFormat::RGBA_F16:
       return GL_HALF_APPLE;
     case gfx::BufferFormat::UYVY_422:
       return GL_UNSIGNED_SHORT_8_8_APPLE;
-      break;
     case gfx::BufferFormat::ATC:
     case gfx::BufferFormat::ATCIA:
     case gfx::BufferFormat::DXT1:
@@ -169,10 +155,10 @@ GLenum DataType(gfx::BufferFormat format) {
     case gfx::BufferFormat::BGR_565:
     case gfx::BufferFormat::RGBA_4444:
     case gfx::BufferFormat::RGBX_8888:
-    case gfx::BufferFormat::BGRX_1010102:
+    case gfx::BufferFormat::RGBX_1010102:
     case gfx::BufferFormat::YVU_420:
     case gfx::BufferFormat::YUV_420_BIPLANAR:
-      NOTREACHED();
+      NOTREACHED() << gfx::BufferFormatToString(format);
       return 0;
   }
 
@@ -183,7 +169,7 @@ GLenum DataType(gfx::BufferFormat format) {
 // When an IOSurface is bound to a texture with internalformat "GL_RGB", many
 // OpenGL operations are broken. Therefore, don't allow an IOSurface to be bound
 // with GL_RGB unless overridden via BindTexImageWithInternalformat.
-// crbug.com/595948, crbug.com/699566.
+// https://crbug.com/595948, https://crbug.com/699566.
 GLenum ConvertRequestedInternalFormat(GLenum internalformat) {
   if (internalformat == GL_RGB)
     return GL_RGBA;
@@ -195,6 +181,13 @@ GLenum ConvertRequestedInternalFormat(GLenum internalformat) {
 // static
 GLImageIOSurface* GLImageIOSurface::Create(const gfx::Size& size,
                                            unsigned internalformat) {
+#if BUILDFLAG(USE_EGL_ON_MAC)
+  if (GLContext::GetCurrent()->GetVersionInfo()->is_angle ||
+      GLContext::GetCurrent()->GetVersionInfo()->is_swiftshader) {
+    return new GLImageIOSurfaceEGL(size, internalformat);
+  }
+#endif  // BUILDFLAG(USE_EGL_ON_MAC)
+
   return new GLImageIOSurface(size, internalformat);
 }
 
@@ -214,14 +207,19 @@ bool GLImageIOSurface::Initialize(IOSurfaceRef io_surface,
                                   gfx::BufferFormat format) {
   DCHECK(thread_checker_.CalledOnValidThread());
   DCHECK(!io_surface_);
+  if (!io_surface) {
+    LOG(ERROR) << "Invalid IOSurface";
+    return false;
+  }
 
   if (!ValidInternalFormat(internalformat_)) {
-    LOG(ERROR) << "Invalid internalformat: " << internalformat_;
+    LOG(ERROR) << "Invalid internalformat: "
+               << GLEnums::GetStringEnum(internalformat_);
     return false;
   }
 
   if (!ValidFormat(format)) {
-    LOG(ERROR) << "Invalid format: " << static_cast<int>(format);
+    LOG(ERROR) << "Invalid format: " << gfx::BufferFormatToString(format);
     return false;
   }
 
@@ -279,24 +277,33 @@ bool GLImageIOSurface::BindTexImageWithInternalformat(unsigned target,
     return false;
   }
 
+  DCHECK(io_surface_);
+
+  if (!BindTexImageImpl(internalformat)) {
+    return false;
+  }
+
+  UMA_HISTOGRAM_TIMES("GPU.IOSurface.TexImageTime",
+                      base::TimeTicks::Now() - start_time);
+  return true;
+}
+
+bool GLImageIOSurface::BindTexImageImpl(unsigned internalformat) {
   CGLContextObj cgl_context =
       static_cast<CGLContextObj>(GLContext::GetCurrent()->GetHandle());
-
-  DCHECK(io_surface_);
 
   GLenum texture_format =
       internalformat ? internalformat : TextureFormat(format_);
   CGLError cgl_error = CGLTexImageIOSurface2D(
-      cgl_context, target, texture_format, size_.width(), size_.height(),
-      DataFormat(format_), DataType(format_), io_surface_.get(), 0);
+      cgl_context, GL_TEXTURE_RECTANGLE_ARB, texture_format, size_.width(),
+      size_.height(), DataFormat(format_), DataType(format_), io_surface_.get(),
+      0);
   if (cgl_error != kCGLNoError) {
     LOG(ERROR) << "Error in CGLTexImageIOSurface2D: "
                << CGLErrorString(cgl_error);
     return false;
   }
 
-  UMA_HISTOGRAM_TIMES("GPU.IOSurface.TexImageTime",
-                      base::TimeTicks::Now() - start_time);
   return true;
 }
 
@@ -377,7 +384,8 @@ bool GLImageIOSurface::ScheduleOverlayPlane(gfx::AcceleratedWidget widget,
                                             int z_order,
                                             gfx::OverlayTransform transform,
                                             const gfx::Rect& bounds_rect,
-                                            const gfx::RectF& crop_rect) {
+                                            const gfx::RectF& crop_rect,
+                                            bool enable_blend) {
   NOTREACHED();
   return false;
 }
@@ -455,6 +463,37 @@ GLImageIOSurface* GLImageIOSurface::FromGLImage(GLImage* image) {
   if (!image || image->GetType() != Type::IOSURFACE)
     return nullptr;
   return static_cast<GLImageIOSurface*>(image);
+}
+
+// static
+bool GLImageIOSurface::ValidFormat(gfx::BufferFormat format) {
+  switch (format) {
+    case gfx::BufferFormat::R_8:
+    case gfx::BufferFormat::BGRA_8888:
+    case gfx::BufferFormat::BGRX_8888:
+    case gfx::BufferFormat::RGBA_8888:
+    case gfx::BufferFormat::RGBA_F16:
+    case gfx::BufferFormat::BGRX_1010102:
+    case gfx::BufferFormat::UYVY_422:
+    case gfx::BufferFormat::YUV_420_BIPLANAR:
+      return true;
+    case gfx::BufferFormat::R_16:
+    case gfx::BufferFormat::RG_88:
+    case gfx::BufferFormat::ATC:
+    case gfx::BufferFormat::ATCIA:
+    case gfx::BufferFormat::DXT1:
+    case gfx::BufferFormat::DXT5:
+    case gfx::BufferFormat::ETC1:
+    case gfx::BufferFormat::BGR_565:
+    case gfx::BufferFormat::RGBA_4444:
+    case gfx::BufferFormat::RGBX_8888:
+    case gfx::BufferFormat::RGBX_1010102:
+    case gfx::BufferFormat::YVU_420:
+      return false;
+  }
+
+  NOTREACHED();
+  return false;
 }
 
 }  // namespace gl

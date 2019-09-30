@@ -14,6 +14,7 @@
 /** @const */ var SCREEN_OOBE_UPDATE = 'update';
 /** @const */ var SCREEN_OOBE_RESET = 'reset';
 /** @const */ var SCREEN_OOBE_ENROLLMENT = 'oauth-enrollment';
+/** @const */ var SCREEN_OOBE_DEMO_SETUP = 'demo-setup';
 /** @const */ var SCREEN_OOBE_KIOSK_ENABLE = 'kiosk-enable';
 /** @const */ var SCREEN_OOBE_AUTO_ENROLLMENT_CHECK = 'auto-enrollment-check';
 /** @const */ var SCREEN_GAIA_SIGNIN = 'gaia-signin';
@@ -33,10 +34,12 @@
 /** @const */ var SCREEN_ARC_TERMS_OF_SERVICE = 'arc-tos';
 /** @const */ var SCREEN_WRONG_HWID = 'wrong-hwid';
 /** @const */ var SCREEN_DEVICE_DISABLED = 'device-disabled';
+/** @const */ var SCREEN_UPDATE_REQUIRED = 'update-required';
 /** @const */ var SCREEN_UNRECOVERABLE_CRYPTOHOME_ERROR =
     'unrecoverable-cryptohome-error';
 /** @const */ var SCREEN_ACTIVE_DIRECTORY_PASSWORD_CHANGE =
     'ad-password-change';
+/** @const */ var SCREEN_SYNC_CONSENT = 'sync-consent';
 
 /* Accelerator identifiers. Must be kept in sync with webui_login_view.cc. */
 /** @const */ var ACCELERATOR_CANCEL = 'cancel';
@@ -54,6 +57,8 @@
 /** @const */ var ACCELERATOR_APP_LAUNCH_NETWORK_CONFIG =
     'app_launch_network_config';
 /** @const */ var ACCELERATOR_BOOTSTRAPPING_SLAVE = "bootstrapping_slave";
+/** @const */ var ACCELERATOR_DEMO_MODE = "demo_mode";
+/** @const */ var ACCELERATOR_SEND_FEEDBACK = "send_feedback";
 
 /* Signin UI state constants. Used to control header bar UI. */
 /** @const */ var SIGNIN_UI_STATE = {
@@ -89,7 +94,8 @@
   USER_ADDING: 'user-adding',
   APP_LAUNCH_SPLASH: 'app-launch-splash',
   ARC_KIOSK_SPLASH: 'arc-kiosk-splash',
-  DESKTOP_USER_MANAGER: 'login-add-user'
+  DESKTOP_USER_MANAGER: 'login-add-user',
+  GAIA_SIGNIN: 'gaia-signin'
 };
 
 /* Possible lock screen enabled app activity state. */
@@ -154,7 +160,9 @@ cr.define('cr.ui.login', function() {
     SCREEN_ARC_TERMS_OF_SERVICE,
     SCREEN_WRONG_HWID,
     SCREEN_CONFIRM_PASSWORD,
-    SCREEN_FATAL_ERROR
+    SCREEN_UPDATE_REQUIRED,
+    SCREEN_FATAL_ERROR,
+    SCREEN_SYNC_CONSENT
   ];
 
   /**
@@ -182,6 +190,15 @@ cr.define('cr.ui.login', function() {
     SCREEN_OOBE_RESET,
   ];
 
+  /**
+   * Group of screens (screen IDs) where demo mode setup invocation is
+   * available.
+   * @type Array<string>
+   * @const
+   */
+  var DEMO_MODE_SETUP_AVAILABLE_SCREEN_GROUP = [
+    SCREEN_GAIA_SIGNIN,
+  ];
 
   /**
    * OOBE screens group index.
@@ -289,10 +306,21 @@ cr.define('cr.ui.login', function() {
      * The header bar should be hidden when views-based shelf is shown.
      */
     get showingViewsBasedShelf() {
-      return loadTimeData.valueExists('showMdLogin') &&
-          loadTimeData.getString('showMdLogin') == 'on' &&
+      var showingViewsLock = loadTimeData.valueExists('showViewsLock') &&
+          loadTimeData.getString('showViewsLock') == 'on' &&
           (this.displayType_ == DISPLAY_TYPE.LOCK ||
            this.displayType_ == DISPLAY_TYPE.USER_ADDING);
+      return showingViewsLock || this.showingViewsLogin;
+    },
+
+    /**
+     * Returns true if we are showing views based login screen.
+     * @return {boolean}
+     */
+    get showingViewsLogin() {
+      return loadTimeData.valueExists('showViewsLogin') &&
+          loadTimeData.getString('showViewsLogin') == 'on' &&
+          (this.displayType_ == DISPLAY_TYPE.GAIA_SIGNIN);
     },
 
     /**
@@ -357,12 +385,12 @@ cr.define('cr.ui.login', function() {
      * @param {string} name Accelerator name.
      */
     handleAccelerator: function(name) {
-      if (this.currentScreen.ignoreAccelerators) {
+      if (this.currentScreen && this.currentScreen.ignoreAccelerators) {
         return;
       }
       var currentStepId = this.screens_[this.currentStep_];
       if (name == ACCELERATOR_CANCEL) {
-        if (this.currentScreen.cancel) {
+        if (this.currentScreen && this.currentScreen.cancel) {
           this.currentScreen.cancel();
         }
       } else if (name == ACCELERATOR_ENABLE_DEBBUGING) {
@@ -415,6 +443,13 @@ cr.define('cr.ui.login', function() {
           chrome.send('networkConfigRequest');
       } else if (name == ACCELERATOR_BOOTSTRAPPING_SLAVE) {
         chrome.send('setOobeBootstrappingSlave');
+      } else if (name == ACCELERATOR_DEMO_MODE) {
+        if (DEMO_MODE_SETUP_AVAILABLE_SCREEN_GROUP.indexOf(currentStepId) !=
+            -1) {
+          chrome.send('setupDemoMode');
+        }
+      } else if (name == ACCELERATOR_SEND_FEEDBACK) {
+        chrome.send('sendFeedback');
       }
     },
 
@@ -539,10 +574,6 @@ cr.define('cr.ui.login', function() {
         newStep.setAttribute(
             'aria-label',
             loadTimeData.getString('signinScreenTitle'));
-      } else if (nextStepId == SCREEN_OOBE_NETWORK) {
-        newStep.setAttribute(
-            'aria-label',
-            loadTimeData.getString('networkScreenAccessibleTitle'));
       }
 
       // Default control to be focused (if specified).
@@ -632,6 +663,10 @@ cr.define('cr.ui.login', function() {
         return;
 
       var screenId = screen.id;
+      if (screenId == SCREEN_ACCOUNT_PICKER && this.showingViewsLogin) {
+        chrome.send('updateGaiaDialogVisibility', [false]);
+        return;
+      }
 
       // Make sure the screen is decorated.
       this.preloadScreen(screen);
@@ -727,6 +762,12 @@ cr.define('cr.ui.login', function() {
       // This requires |screen| to have 'box-sizing: border-box'.
       screen.style.width = width + 'px';
       screen.style.height = height + 'px';
+
+      if (this.showingViewsLogin) {
+        chrome.send('updateGaiaDialogSize', [width, height]);
+        $('scroll-container').classList.toggle('disable-scroll', true);
+        $('scroll-container').scrollTop = $('inner-container').offsetTop;
+      }
     },
 
     /**
@@ -744,6 +785,8 @@ cr.define('cr.ui.login', function() {
         if (screen.updateLocalizedContent)
           screen.updateLocalizedContent();
       }
+      var isInTabletMode = loadTimeData.getBoolean('isInTabletMode');
+      this.setTabletModeState_(isInTabletMode);
 
       var currentScreenId = this.screens_[this.currentStep_];
       var currentScreen = $(currentScreenId);
@@ -753,6 +796,18 @@ cr.define('cr.ui.login', function() {
       // so that strings are reloaded.
       // Will be reloaded if drowdown is actually shown.
       cr.ui.DropDown.refresh();
+    },
+
+    /**
+     * Updates "device in tablet mode" state when tablet mode is changed.
+     * @param {Boolean} isInTabletMode True when in tablet mode.
+     */
+    setTabletModeState_: function(isInTabletMode) {
+      for (var i = 0, screenId; screenId = this.screens_[i]; ++i) {
+        var screen = $(screenId);
+        if (screen.setTabletModeState)
+          screen.setTabletModeState(isInTabletMode);
+      }
     },
 
     /**
@@ -812,13 +867,11 @@ cr.define('cr.ui.login', function() {
      * @private
      */
     onWindowResize_: function() {
-      var currentScreenId = this.screens_[this.currentStep_];
-      var currentScreen = $(currentScreenId);
-      if (currentScreen)
-        currentScreen.onWindowResize();
-      // The account picker always needs to be notified of window size changes.
-      if (currentScreenId != SCREEN_ACCOUNT_PICKER && $(SCREEN_ACCOUNT_PICKER))
-        $(SCREEN_ACCOUNT_PICKER).onWindowResize();
+      for (var i = 0, screenId; screenId = this.screens_[i]; ++i) {
+        var screen = $(screenId);
+        if (screen.onWindowResize)
+          screen.onWindowResize();
+      }
     },
 
     /*
@@ -966,14 +1019,14 @@ cr.define('cr.ui.login', function() {
   };
 
   /**
-   * Shows sign-in error bubble.
-   * @param {number} loginAttempts Number of login attemps tried.
-   * @param {string} message Error message to show.
+   * Creates a div element used to display error message in an error bubble.
+   *
+   * @param {string} message The error message.
    * @param {string} link Text to use for help link.
    * @param {number} helpId Help topic Id associated with help link.
+   * @return {!HTMLElement} The error bubble content.
    */
-  DisplayManager.showSignInError = function(loginAttempts, message, link,
-                                            helpId) {
+  DisplayManager.createErrorElement_ = function(message, link, helpId) {
     var error = document.createElement('div');
 
     var messageDiv = document.createElement('div');
@@ -995,11 +1048,61 @@ cr.define('cr.ui.login', function() {
     }
 
     error.setAttribute('aria-live', 'assertive');
+    return error;
+  };
+
+  /**
+   * Shows sign-in error bubble.
+   * @param {number} loginAttempts Number of login attemps tried.
+   * @param {string} message Error message to show.
+   * @param {string} link Text to use for help link.
+   * @param {number} helpId Help topic Id associated with help link.
+   */
+  DisplayManager.showSignInError = function(
+      loginAttempts, message, link, helpId) {
+    var error = DisplayManager.createErrorElement_(message, link, helpId);
 
     var currentScreen = Oobe.getInstance().currentScreen;
     if (currentScreen && typeof currentScreen.showErrorBubble === 'function') {
       currentScreen.showErrorBubble(loginAttempts, error);
       this.errorMessageWasShownForTesting_ = true;
+    }
+  };
+
+  /**
+   * Shows a warning to the user that the detachable base (keyboard) different
+   * than the one previously used by the user got attached to the device. It
+   * warn the user that the attached base might be untrusted.
+   *
+   * @param {string} username The username of the user with which the error
+   *     bubble is associated. For example, in the account picker screen, it
+   *     identifies the user pod under which the error bubble should be shown.
+   * @param {string} message Error message to show.
+   * @param {string} link Text to use for help link.
+   * @param {number} helpId Help topic Id associated with help link.
+   */
+  DisplayManager.showDetachableBaseChangedWarning = function(
+      username, message, link, helpId) {
+    var error = DisplayManager.createErrorElement_(message, link, helpId);
+
+    var currentScreen = Oobe.getInstance().currentScreen;
+    if (currentScreen &&
+        typeof currentScreen.showDetachableBaseWarningBubble === 'function') {
+      currentScreen.showDetachableBaseWarningBubble(username, error);
+    }
+  };
+
+  /**
+   * Hides the warning bubble shown by {@code showDetachableBaseChangedWarning}.
+   *
+   * @param {string} username The username of the user with wich the warning was
+   *     associated.
+   */
+  DisplayManager.hideDetachableBaseChangedWarning = function(username) {
+    var currentScreen = Oobe.getInstance().currentScreen;
+    if (currentScreen &&
+        typeof currentScreen.hideDetachableBaseWarningBubble === 'function') {
+      currentScreen.hideDetachableBaseWarningBubble(username);
     }
   };
 

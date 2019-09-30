@@ -123,6 +123,7 @@ void CloudPolicyService::OnStoreLoaded(CloudPolicyStore* store) {
   if (!policy_timestamp.is_null() && !old_timestamp.is_null() &&
       policy_timestamp != old_timestamp) {
     const base::TimeDelta age = policy_timestamp - old_timestamp;
+    // TODO(zmin): add UMA for new policy type.
     if (policy_type_ == dm_protocol::kChromeUserPolicyType) {
       UMA_HISTOGRAM_CUSTOM_COUNTS("Enterprise.PolicyUpdatePeriod.User",
                                   age.InDays(), 1, 1000, 100);
@@ -144,8 +145,11 @@ void CloudPolicyService::OnStoreLoaded(CloudPolicyStore* store) {
       !client_->is_registered()) {
     DVLOG(1) << "Setting up registration with request token: "
              << policy->request_token();
-    client_->SetupRegistration(policy->request_token(),
-                               policy->device_id());
+    std::vector<std::string> user_affiliation_ids(
+        policy->user_affiliation_ids().begin(),
+        policy->user_affiliation_ids().end());
+    client_->SetupRegistration(policy->request_token(), policy->device_id(),
+                               user_affiliation_ids);
   }
 
   if (refresh_state_ == REFRESH_POLICY_STORE)

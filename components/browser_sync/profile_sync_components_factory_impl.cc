@@ -16,13 +16,10 @@
 #include "components/autofill/core/browser/webdata/autofill_profile_data_type_controller.h"
 #include "components/autofill/core/browser/webdata/autofill_webdata_service.h"
 #include "components/autofill/core/browser/webdata/web_data_model_type_controller.h"
-#include "components/autofill/core/common/autofill_pref_names.h"
-#include "components/autofill/core/common/autofill_switches.h"
 #include "components/browser_sync/browser_sync_switches.h"
 #include "components/browser_sync/profile_sync_service.h"
 #include "components/dom_distiller/core/dom_distiller_features.h"
 #include "components/history/core/browser/history_delete_directives_data_type_controller.h"
-#include "components/history/core/browser/typed_url_data_type_controller.h"
 #include "components/history/core/browser/typed_url_model_type_controller.h"
 #include "components/password_manager/core/browser/password_store.h"
 #include "components/password_manager/sync/browser/password_data_type_controller.h"
@@ -37,18 +34,12 @@
 #include "components/sync/driver/proxy_data_type_controller.h"
 #include "components/sync/driver/sync_client.h"
 #include "components/sync/driver/sync_driver_switches.h"
-#include "components/sync/engine/attachments/attachment_downloader.h"
-#include "components/sync/engine/attachments/attachment_uploader.h"
 #include "components/sync/engine/sync_engine.h"
-#include "components/sync/model/attachments/attachment_service.h"
 #include "components/sync_bookmarks/bookmark_change_processor.h"
 #include "components/sync_bookmarks/bookmark_data_type_controller.h"
 #include "components/sync_bookmarks/bookmark_model_associator.h"
 #include "components/sync_bookmarks/bookmark_model_type_controller.h"
 #include "components/sync_sessions/session_data_type_controller.h"
-#include "google_apis/gaia/oauth2_token_service.h"
-#include "google_apis/gaia/oauth2_token_service_request.h"
-#include "net/url_request/url_request_context_getter.h"
 
 using base::FeatureList;
 using bookmarks::BookmarkModel;
@@ -78,11 +69,6 @@ syncer::ModelTypeSet GetDisabledTypesFromCommandLine(
   return disabled_types;
 }
 
-syncer::ModelTypeSet GetEnabledTypesFromCommandLine(
-    const base::CommandLine& command_line) {
-  return syncer::ModelTypeSet();
-}
-
 }  // namespace
 
 ProfileSyncComponentsFactoryImpl::ProfileSyncComponentsFactoryImpl(
@@ -92,11 +78,8 @@ ProfileSyncComponentsFactoryImpl::ProfileSyncComponentsFactoryImpl(
     bool is_tablet,
     const base::CommandLine& command_line,
     const char* history_disabled_pref,
-    const GURL& sync_service_url,
     const scoped_refptr<base::SingleThreadTaskRunner>& ui_thread,
     const scoped_refptr<base::SingleThreadTaskRunner>& db_thread,
-    OAuth2TokenService* token_service,
-    net::URLRequestContextGetter* url_request_context_getter,
     const scoped_refptr<autofill::AutofillWebDataService>& web_data_service,
     const scoped_refptr<password_manager::PasswordStore>& password_store)
     : sync_client_(sync_client),
@@ -105,17 +88,10 @@ ProfileSyncComponentsFactoryImpl::ProfileSyncComponentsFactoryImpl(
       is_tablet_(is_tablet),
       command_line_(command_line),
       history_disabled_pref_(history_disabled_pref),
-      sync_service_url_(sync_service_url),
       ui_thread_(ui_thread),
       db_thread_(db_thread),
-      token_service_(token_service),
-      url_request_context_getter_(url_request_context_getter),
       web_data_service_(web_data_service),
-      password_store_(password_store),
-      weak_factory_(this) {
-  DCHECK(token_service_);
-  DCHECK(url_request_context_getter_);
-}
+      password_store_(password_store) {}
 
 ProfileSyncComponentsFactoryImpl::~ProfileSyncComponentsFactoryImpl() {}
 
@@ -124,18 +100,17 @@ void ProfileSyncComponentsFactoryImpl::RegisterDataTypes(
     const RegisterDataTypesMethod& register_platform_types_method) {
   syncer::ModelTypeSet disabled_types =
       GetDisabledTypesFromCommandLine(command_line_);
-  syncer::ModelTypeSet enabled_types =
-      GetEnabledTypesFromCommandLine(command_line_);
-  RegisterCommonDataTypes(sync_service, disabled_types, enabled_types);
-  if (!register_platform_types_method.is_null())
+  RegisterCommonDataTypes(sync_service, disabled_types);
+  if (!register_platform_types_method.is_null()) {
+    syncer::ModelTypeSet enabled_types;
     register_platform_types_method.Run(sync_service, disabled_types,
                                        enabled_types);
+  }
 }
 
 void ProfileSyncComponentsFactoryImpl::RegisterCommonDataTypes(
     syncer::SyncService* sync_service,
-    syncer::ModelTypeSet disabled_types,
-    syncer::ModelTypeSet enabled_types) {
+    syncer::ModelTypeSet disabled_types) {
   base::Closure error_callback =
       base::Bind(&syncer::ReportUnrecoverableError, channel_);
 
@@ -150,17 +125,11 @@ void ProfileSyncComponentsFactoryImpl::RegisterCommonDataTypes(
     // Autocomplete sync is enabled by default.  Register unless explicitly
     // disabled.
     if (!disabled_types.Has(syncer::AUTOFILL)) {
-      if (FeatureList::IsEnabled(switches::kSyncUSSAutocomplete)) {
-        sync_service->RegisterDataTypeController(
-            std::make_unique<autofill::WebDataModelTypeController>(
-                syncer::AUTOFILL, sync_client_, db_thread_, web_data_service_,
-                base::Bind(
-                    &autofill::AutocompleteSyncBridge::FromWebDataService)));
-      } else {
-        sync_service->RegisterDataTypeController(
-            std::make_unique<AutofillDataTypeController>(
-                db_thread_, error_callback, sync_client_, web_data_service_));
-      }
+      sync_service->RegisterDataTypeController(
+          std::make_unique<autofill::WebDataModelTypeController>(
+              syncer::AUTOFILL, sync_client_, db_thread_, web_data_service_,
+              base::Bind(
+                  &autofill::AutocompleteSyncBridge::FromWebDataService)));
     }
 
     // Autofill sync is enabled by default.  Register unless explicitly
@@ -211,15 +180,9 @@ void ProfileSyncComponentsFactoryImpl::RegisterCommonDataTypes(
     // TypedUrl sync is enabled by default.  Register unless explicitly
     // disabled.
     if (!disabled_types.Has(syncer::TYPED_URLS)) {
-      if (base::FeatureList::IsEnabled(switches::kSyncUSSTypedURL)) {
-        sync_service->RegisterDataTypeController(
-            std::make_unique<history::TypedURLModelTypeController>(
-                sync_client_, history_disabled_pref_));
-      } else {
-        sync_service->RegisterDataTypeController(
-            std::make_unique<TypedUrlDataTypeController>(
-                error_callback, sync_client_, history_disabled_pref_));
-      }
+      sync_service->RegisterDataTypeController(
+          std::make_unique<history::TypedURLModelTypeController>(
+              sync_client_, history_disabled_pref_));
     }
 
     // Delete directive sync is enabled by default.
@@ -345,89 +308,6 @@ std::unique_ptr<syncer::LocalDeviceInfoProvider>
 ProfileSyncComponentsFactoryImpl::CreateLocalDeviceInfoProvider() {
   return std::make_unique<syncer::LocalDeviceInfoProviderImpl>(
       channel_, version_, is_tablet_);
-}
-
-class TokenServiceProvider
-    : public OAuth2TokenServiceRequest::TokenServiceProvider {
- public:
-  TokenServiceProvider(
-      const scoped_refptr<base::SingleThreadTaskRunner>& task_runner,
-      OAuth2TokenService* token_service);
-
-  // OAuth2TokenServiceRequest::TokenServiceProvider implementation.
-  scoped_refptr<base::SingleThreadTaskRunner> GetTokenServiceTaskRunner()
-      override;
-  OAuth2TokenService* GetTokenService() override;
-
- private:
-  ~TokenServiceProvider() override;
-
-  scoped_refptr<base::SingleThreadTaskRunner> task_runner_;
-  OAuth2TokenService* token_service_;
-};
-
-TokenServiceProvider::TokenServiceProvider(
-    const scoped_refptr<base::SingleThreadTaskRunner>& task_runner,
-    OAuth2TokenService* token_service)
-    : task_runner_(task_runner), token_service_(token_service) {}
-
-TokenServiceProvider::~TokenServiceProvider() {}
-
-scoped_refptr<base::SingleThreadTaskRunner>
-TokenServiceProvider::GetTokenServiceTaskRunner() {
-  return task_runner_;
-}
-
-OAuth2TokenService* TokenServiceProvider::GetTokenService() {
-  return token_service_;
-}
-
-std::unique_ptr<syncer::AttachmentService>
-ProfileSyncComponentsFactoryImpl::CreateAttachmentService(
-    std::unique_ptr<syncer::AttachmentStoreForSync> attachment_store,
-    const syncer::UserShare& user_share,
-    const std::string& store_birthday,
-    syncer::ModelType model_type,
-    syncer::AttachmentService::Delegate* delegate) {
-  std::unique_ptr<syncer::AttachmentUploader> attachment_uploader;
-  std::unique_ptr<syncer::AttachmentDownloader> attachment_downloader;
-  // Only construct an AttachmentUploader and AttachmentDownload if we have sync
-  // credentials. We may not have sync credentials because there may not be a
-  // signed in sync user.
-  if (!user_share.sync_credentials.account_id.empty() &&
-      !user_share.sync_credentials.scope_set.empty()) {
-    scoped_refptr<OAuth2TokenServiceRequest::TokenServiceProvider>
-        token_service_provider(
-            new TokenServiceProvider(ui_thread_, token_service_));
-    // TODO(maniscalco): Use shared (one per profile) thread-safe instances of
-    // AttachmentUploader and AttachmentDownloader instead of creating a new one
-    // per AttachmentService (bug 369536).
-    attachment_uploader = syncer::AttachmentUploader::Create(
-        sync_service_url_, url_request_context_getter_,
-        user_share.sync_credentials.account_id,
-        user_share.sync_credentials.scope_set, token_service_provider,
-        store_birthday, model_type);
-
-    token_service_provider =
-        new TokenServiceProvider(ui_thread_, token_service_);
-    attachment_downloader = syncer::AttachmentDownloader::Create(
-        sync_service_url_, url_request_context_getter_,
-        user_share.sync_credentials.account_id,
-        user_share.sync_credentials.scope_set, token_service_provider,
-        store_birthday, model_type);
-  }
-
-  // It is important that the initial backoff delay is relatively large.  For
-  // whatever reason, the server may fail all requests for a short period of
-  // time.  When this happens we don't want to overwhelm the server with
-  // requests so we use a large initial backoff.
-  const base::TimeDelta initial_backoff_delay =
-      base::TimeDelta::FromMinutes(30);
-  const base::TimeDelta max_backoff_delay = base::TimeDelta::FromHours(4);
-  return syncer::AttachmentService::Create(
-      std::move(attachment_store), std::move(attachment_uploader),
-      std::move(attachment_downloader), delegate, initial_backoff_delay,
-      max_backoff_delay);
 }
 
 syncer::SyncApiComponentFactory::SyncComponents

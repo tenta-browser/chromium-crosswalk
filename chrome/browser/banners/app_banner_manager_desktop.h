@@ -24,16 +24,19 @@ class AppBannerManagerDesktop
  public:
   ~AppBannerManagerDesktop() override;
 
+  using content::WebContentsUserData<AppBannerManagerDesktop>::FromWebContents;
+
   static bool IsEnabled();
 
   // Turn off triggering on engagement notifications or navigates, for testing
   // purposes only.
   static void DisableTriggeringForTesting();
 
+ protected:
+  explicit AppBannerManagerDesktop(content::WebContents* web_contents);
+
  private:
   friend class content::WebContentsUserData<AppBannerManagerDesktop>;
-
-  explicit AppBannerManagerDesktop(content::WebContents* web_contents);
 
   // AppBannerManager overrides.
   void DidFinishCreatingBookmarkApp(
@@ -43,16 +46,17 @@ class AppBannerManagerDesktop
                                    const GURL& validated_url,
                                    const GURL& start_url,
                                    const GURL& manifest_url) override;
-  void ShowBannerUi() override;
+  void ShowBannerUi(WebappInstallSource install_source) override;
 
   // content::WebContentsObserver override.
   void DidFinishLoad(content::RenderFrameHost* render_frame_host,
                      const GURL& validated_url) override;
 
   // SiteEngagementObserver override.
-  void OnEngagementIncreased(content::WebContents* web_contents,
-                             const GURL& url,
-                             double score) override;
+  void OnEngagementEvent(content::WebContents* web_contents,
+                         const GURL& url,
+                         double score,
+                         SiteEngagementService::EngagementType type) override;
 
   std::unique_ptr<extensions::BookmarkAppHelper> bookmark_app_helper_;
 

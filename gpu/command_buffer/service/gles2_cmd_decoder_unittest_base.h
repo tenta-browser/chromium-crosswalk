@@ -17,17 +17,18 @@
 #include "gpu/command_buffer/common/gles2_cmd_utils.h"
 #include "gpu/command_buffer/service/buffer_manager.h"
 #include "gpu/command_buffer/service/context_group.h"
+#include "gpu/command_buffer/service/decoder_client.h"
 #include "gpu/command_buffer/service/framebuffer_manager.h"
 #include "gpu/command_buffer/service/gl_context_mock.h"
 #include "gpu/command_buffer/service/gles2_cmd_decoder.h"
 #include "gpu/command_buffer/service/gles2_cmd_decoder_mock.h"
 #include "gpu/command_buffer/service/gles2_cmd_decoder_passthrough.h"
+#include "gpu/command_buffer/service/gles2_query_manager.h"
 #include "gpu/command_buffer/service/gpu_preferences.h"
 #include "gpu/command_buffer/service/gpu_tracer.h"
 #include "gpu/command_buffer/service/image_manager.h"
 #include "gpu/command_buffer/service/mailbox_manager_impl.h"
 #include "gpu/command_buffer/service/program_manager.h"
-#include "gpu/command_buffer/service/query_manager.h"
 #include "gpu/command_buffer/service/renderbuffer_manager.h"
 #include "gpu/command_buffer/service/sampler_manager.h"
 #include "gpu/command_buffer/service/service_discardable_manager.h"
@@ -46,9 +47,10 @@ namespace gpu {
 namespace gles2 {
 
 class MemoryTracker;
+class MockCopyTextureResourceManager;
 
 class GLES2DecoderTestBase : public ::testing::TestWithParam<bool>,
-                             public GLES2DecoderClient {
+                             public DecoderClient {
  public:
   GLES2DecoderTestBase();
   ~GLES2DecoderTestBase() override;
@@ -364,6 +366,14 @@ class GLES2DecoderTestBase : public ::testing::TestWithParam<bool>,
                     GLenum type,
                     uint32_t shared_memory_id,
                     uint32_t shared_memory_offset);
+  void DoCopyTexImage2D(GLenum target,
+                        GLint level,
+                        GLenum internal_format,
+                        GLint x,
+                        GLint y,
+                        GLsizei width,
+                        GLsizei height,
+                        GLint border);
   void DoRenderbufferStorage(
       GLenum target, GLenum internal_format, GLenum actual_format,
       GLsizei width, GLsizei height, GLenum error);
@@ -754,8 +764,7 @@ class GLES2DecoderTestBase : public ::testing::TestWithParam<bool>,
           bound_vertex_array_object_(0) {
     }
 
-    ~MockGLStates() {
-    }
+    ~MockGLStates() = default;
 
     void OnBindArrayBuffer(GLuint id) {
       bound_array_buffer_object_ = id;
@@ -797,6 +806,8 @@ class GLES2DecoderTestBase : public ::testing::TestWithParam<bool>,
   scoped_refptr<ContextGroup> group_;
   MockGLStates gl_states_;
   base::MessageLoop message_loop_;
+
+  MockCopyTextureResourceManager* copy_texture_manager_;  // not owned
 };
 
 class GLES2DecoderWithShaderTestBase : public GLES2DecoderTestBase {
@@ -823,7 +834,7 @@ MATCHER_P2(PointsToArray, array, size, "") {
 }
 
 class GLES2DecoderPassthroughTestBase : public testing::Test,
-                                        public GLES2DecoderClient {
+                                        public DecoderClient {
  public:
   GLES2DecoderPassthroughTestBase(ContextType context_type);
   ~GLES2DecoderPassthroughTestBase() override;
@@ -921,7 +932,6 @@ class GLES2DecoderPassthroughTestBase : public testing::Test,
   }
 
   GLint GetGLError();
-  void InjectGLError(GLenum error);
 
  protected:
   void DoRequestExtension(const char* extension);
@@ -983,7 +993,7 @@ class GLES2DecoderPassthroughTestBase : public testing::Test,
   uint32_t immediate_buffer_[64];
 
  private:
-  ContextCreationAttribHelper context_creation_attribs_;
+  ContextCreationAttribs context_creation_attribs_;
   GpuPreferences gpu_preferences_;
   MailboxManagerImpl mailbox_manager_;
   ShaderTranslatorCache shader_translator_cache_;

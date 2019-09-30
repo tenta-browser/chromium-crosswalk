@@ -3,28 +3,29 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
+      "backgroundColor": "#FFFFFF"
+    },
+    {
+      "name": "Scrolling Layer",
+      "bounds": [800, 600],
+      "drawsContent": false
+    },
+    {
+      "name": "Scrolling Contents Layer",
+      "bounds": [800, 600],
       "contentsOpaque": true,
       "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
         {
-          "object": "LayoutSVGInlineText #text",
-          "rect": [8, 58, 400, 100],
-          "reason": "subtree"
-        },
-        {
           "object": "LayoutSVGText text",
           "rect": [8, 58, 400, 100],
-          "reason": "subtree"
+          "reason": "appeared"
         },
         {
-          "object": "LayoutSVGInlineText #text",
+          "object": "LayoutSVGRoot svg",
           "rect": [8, 8, 400, 100],
-          "reason": "subtree"
-        },
-        {
-          "object": "LayoutSVGText text",
-          "rect": [8, 8, 400, 100],
-          "reason": "subtree"
+          "reason": "disappeared"
         }
       ]
     }
@@ -32,35 +33,19 @@
   "objectPaintInvalidations": [
     {
       "object": "LayoutSVGText text",
-      "reason": "subtree"
+      "reason": "style change"
     },
     {
       "object": "RootInlineBox",
-      "reason": "subtree"
+      "reason": "style change"
     },
     {
       "object": "LayoutSVGInlineText #text",
-      "reason": "subtree"
+      "reason": "style change"
     },
     {
       "object": "InlineTextBox 'Test'",
-      "reason": "subtree"
-    },
-    {
-      "object": "LayoutSVGText text",
-      "reason": "subtree"
-    },
-    {
-      "object": "RootInlineBox",
-      "reason": "subtree"
-    },
-    {
-      "object": "LayoutSVGInlineText #text",
-      "reason": "subtree"
-    },
-    {
-      "object": "InlineTextBox 'Test'",
-      "reason": "subtree"
+      "reason": "style change"
     }
   ]
 }

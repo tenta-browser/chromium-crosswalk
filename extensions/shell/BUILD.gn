@@ -6,10 +6,14 @@ import("//build/config/features.gni")
 import("//build/config/ui.gni")
 import("//build/util/process_version.gni")
 import("//components/nacl/features.gni")
-import("//extensions/features/features.gni")
+import("//extensions/buildflags/buildflags.gni")
 import("//testing/test.gni")
 import("//tools/grit/grit_rule.gni")
-if (is_mac) {
+import("//tools/v8_context_snapshot/v8_context_snapshot.gni")
+
+if (is_linux) {
+  import("//build/linux/extract_symbols.gni")
+} else if (is_mac) {
   import("//build/config/mac/rules.gni")
   import("//third_party/icu/config.gni")
   import("//v8/gni/v8.gni")
@@ -37,19 +41,22 @@ source_set("app_shell_lib") {
     "//base",
     "//components/feedback",
     "//components/guest_view/browser",
-    "//components/guest_view/common",
     "//components/guest_view/renderer",
-    "//components/nacl/common:features",
+    "//components/keep_alive_registry",
+    "//components/keyed_service/content:content",
+    "//components/nacl/common:buildflags",
     "//components/network_session_configurator/common",
     "//components/pref_registry",
     "//components/prefs",
+    "//components/storage_monitor",
     "//components/update_client",
     "//components/user_prefs",
-    "//components/web_cache/renderer",
+    "//components/version_info",
     "//content",
     "//content/shell:content_shell_lib",
     "//device/base",
     "//device/bluetooth",
+    "//device/usb",
     "//extensions:extensions_resources",
     "//extensions:shell_and_test_pak",
     "//extensions/browser",
@@ -62,13 +69,10 @@ source_set("app_shell_lib") {
     "//extensions/shell/common/api",
     "//extensions/shell/common/api:api_registration",
     "//extensions/shell/common/api:extensions_features",
-    "//extensions/utility",
-    "//skia",
-    "//third_party/WebKit/public:blink",
-    "//third_party/cld_3/src/src:cld_3",
+    "//google_apis",
+    "//third_party/blink/public:blink",
     "//ui/base",
     "//ui/base/ime",
-    "//v8",
   ]
 
   # TODO(michaelpg): remove Mac support and always use aura.
@@ -79,7 +83,7 @@ source_set("app_shell_lib") {
     ]
 
     if (use_x11) {
-      deps += [ "//ui/events" ]
+      deps += [ "//ui/events/devices/x11" ]
     }
   }
 
@@ -92,6 +96,8 @@ source_set("app_shell_lib") {
     "browser/api/feedback_private/shell_feedback_private_delegate.h",
     "browser/api/identity/identity_api.cc",
     "browser/api/identity/identity_api.h",
+    "browser/api/runtime/shell_runtime_api_delegate.cc",
+    "browser/api/runtime/shell_runtime_api_delegate.h",
     "browser/default_shell_browser_main_delegate.cc",
     "browser/default_shell_browser_main_delegate.h",
     "browser/delegates/shell_kiosk_delegate.cc",
@@ -128,6 +134,8 @@ source_set("app_shell_lib") {
     "browser/shell_display_info_provider.h",
     "browser/shell_extension_host_delegate.cc",
     "browser/shell_extension_host_delegate.h",
+    "browser/shell_extension_loader.cc",
+    "browser/shell_extension_loader.h",
     "browser/shell_extension_system.cc",
     "browser/shell_extension_system.h",
     "browser/shell_extension_system_factory.cc",
@@ -138,6 +146,8 @@ source_set("app_shell_lib") {
     "browser/shell_extensions_api_client.h",
     "browser/shell_extensions_browser_client.cc",
     "browser/shell_extensions_browser_client.h",
+    "browser/shell_keep_alive_requester.cc",
+    "browser/shell_keep_alive_requester.h",
     "browser/shell_native_app_window.cc",
     "browser/shell_native_app_window.h",
     "browser/shell_native_app_window_mac.h",
@@ -154,8 +164,6 @@ source_set("app_shell_lib") {
     "browser/shell_oauth2_token_service_delegate.h",
     "browser/shell_prefs.cc",
     "browser/shell_prefs.h",
-    "browser/shell_runtime_api_delegate.cc",
-    "browser/shell_runtime_api_delegate.h",
     "browser/shell_special_storage_policy.cc",
     "browser/shell_special_storage_policy.h",
     "browser/shell_speech_recognition_manager_delegate.cc",
@@ -176,8 +184,6 @@ source_set("app_shell_lib") {
     "renderer/shell_content_renderer_client.h",
     "renderer/shell_extensions_renderer_client.cc",
     "renderer/shell_extensions_renderer_client.h",
-    "utility/shell_content_utility_client.cc",
-    "utility/shell_content_utility_client.h",
   ]
 
   if (use_aura) {
@@ -194,19 +200,29 @@ source_set("app_shell_lib") {
       "//ui/wm",
       "//ui/wm/public",
     ]
+    if (is_chromeos) {
+      deps += [ "//ui/ozone" ]
+    }
   }
 
   if (is_desktop_linux) {
     sources += [
+      "app/shell_crash_reporter_client.cc",
+      "app/shell_crash_reporter_client.h",
       "browser/api/file_system/shell_file_system_delegate.cc",
       "browser/api/file_system/shell_file_system_delegate.h",
+    ]
+    deps += [
+      "//components/crash/content/app",
+      "//components/crash/core/common",
+      "//components/upload_list",
+      "//components/version_info:generate_version_info",
     ]
   }
 
   if (is_chromeos) {
     sources += [
       "browser/api/vpn_provider/vpn_service_factory.cc",
-      "browser/api/vpn_provider/vpn_service_factory.h",
       "browser/shell_screen.cc",
       "browser/shell_screen.h",
     ]
@@ -229,6 +245,7 @@ source_set("app_shell_lib") {
       "//components/nacl/loader",
       "//components/nacl/renderer",
       "//components/nacl/renderer/plugin:nacl_trusted_plugin",
+      "//ppapi/shared_impl:shared_impl",
     ]
 
     if (is_linux) {
@@ -251,6 +268,7 @@ if (is_mac) {
     deps = [
       ":app_shell_framework_bundle_data",
       "//build/config:exe_and_shlib_deps",
+      "//content/public/app:both",
       "//extensions:shell_and_test_pak",
     ]
     ldflags = [
@@ -271,12 +289,14 @@ if (is_mac) {
       ":app_shell_lib",
       "//build/config:exe_and_shlib_deps",
       "//build/win:default_exe_manifest",
+      "//content/public/app:both",
       "//extensions:shell_and_test_pak",
     ]
 
     if (is_win) {
       configs += [ "//build/config/win:windowed" ]
       configs -= [ "//build/config/win:console" ]
+      deps += [ "//sandbox/win:sandbox" ]
     }
   }
 }
@@ -285,6 +305,8 @@ test("app_shell_unittests") {
   sources = [
     "../test/extensions_unittests_main.cc",
     "browser/api/identity/identity_api_unittest.cc",
+    "browser/shell_extension_loader_unittest.cc",
+    "browser/shell_keep_alive_requester_unittest.cc",
     "browser/shell_oauth2_token_service_unittest.cc",
     "browser/shell_prefs_unittest.cc",
     "browser/system_logs/shell_system_logs_fetcher_unittest.cc",
@@ -298,20 +320,28 @@ test("app_shell_unittests") {
     "$root_out_dir/extensions_shell_and_test.pak",
 
     #"$root_out_dir/natives_blob.bin", # move to gin
-    #"$root_out_dir/snapshot_blob.bin",
   ]
 
   deps = [
     ":app_shell_lib",
+    "//apps",
     "//base",
     "//base/test:test_support",
+    "//components/crx_file",
     "//components/feedback",
+    "//components/keep_alive_registry",
+    "//components/prefs",
+    "//components/user_prefs",
     "//content/test:test_support",
     "//extensions:shell_and_test_pak",
     "//extensions:test_support",
     "//extensions/browser",
     "//extensions/common",
+    "//extensions/common/api",
+    "//extensions/shell/browser/system_logs",
+    "//google_apis",
     "//testing/gtest",
+    "//ui/gl:test_support",
   ]
 
   data_deps = [
@@ -341,7 +371,10 @@ test("app_shell_unittests") {
       "browser/shell_audio_controller_chromeos_unittest.cc",
       "browser/shell_screen_unittest.cc",
     ]
-    deps += [ "//chromeos:test_support_without_gmock" ]
+    deps += [
+      "//chromeos",
+      "//chromeos:test_support_without_gmock",
+    ]
   }
 
   if (enable_nacl) {
@@ -363,23 +396,24 @@ if (is_mac) {
     sources = [
       "$root_gen_dir/extensions/shell/app_shell_resources.pak",
       "$root_out_dir/extensions_shell_and_test.pak",
-      "$root_out_dir/v8_context_snapshot.bin",
     ]
     public_deps = [
       ":resources_grit",
       "//extensions:shell_and_test_pak",
-      "//tools/v8_context_snapshot:v8_context_snapshot",
     ]
     if (icu_use_data_file) {
       sources += [ "$root_out_dir/icudtl.dat" ]
       public_deps += [ "//third_party/icu:icudata" ]
     }
     if (v8_use_external_startup_data) {
-      sources += [
-        "$root_out_dir/natives_blob.bin",
-        "$root_out_dir/snapshot_blob.bin",
-      ]
+      sources += [ "$root_out_dir/natives_blob.bin" ]
       public_deps += [ "//v8" ]
+      if (use_v8_context_snapshot) {
+        sources += [ "$root_out_dir/v8_context_snapshot.bin" ]
+        public_deps += [ "//tools/v8_context_snapshot" ]
+      } else {
+        sources += [ "$root_out_dir/snapshot_blob.bin" ]
+      }
     }
     outputs = [
       "{{bundle_resources_dir}}/{{source_file_part}}",
@@ -389,6 +423,8 @@ if (is_mac) {
   mac_framework_bundle("app_shell_framework") {
     testonly = true
     output_name = "App Shell Framework"
+    framework_version = "A"
+    framework_contents = [ "Resources" ]
     sources = [
       "app/shell_main_mac.cc",
       "app/shell_main_mac.h",
@@ -398,6 +434,7 @@ if (is_mac) {
     ]
     deps = [
       ":app_shell_framework_resources",
+      "//content/public/app:both",
     ]
     ldflags = [ "-Wl,-install_name,@rpath/Frameworks/App Shell Framework.framework/App Shell Framework" ]
     if (is_component_build) {
@@ -418,6 +455,7 @@ if (is_mac) {
     deps = [
       ":app_shell_framework+link",
       "//build/config:exe_and_shlib_deps",
+      "//content/public/app:both",
     ]
     ldflags = [
       "-rpath",
@@ -445,6 +483,7 @@ if (is_mac) {
 source_set("browser_tests") {
   testonly = true
   sources = [
+    "browser/api/runtime/runtime_apitest.cc",
     "browser/geolocation/geolocation_apitest.cc",
     "browser/shell_browsertest.cc",
     "test/shell_apitest.cc",
@@ -462,15 +501,18 @@ source_set("browser_tests") {
     ":app_shell_lib",
     "//base",
     "//base/test:test_support",
+    "//components/keep_alive_registry",
     "//components/version_info",
     "//content/shell:content_shell_lib",
     "//content/test:test_support",
     "//extensions:test_support",
     "//extensions/browser",
+    "//extensions/browser:test_support",
     "//extensions/common",
   ]
 
   if (use_aura) {
+    sources += [ "browser/shell_desktop_controller_aura_browsertest.cc" ]
     deps += [ "//ui/aura" ]
   }
 }
@@ -490,6 +532,19 @@ source_set("unit_tests") {
     deps += [
       "//chromeos:test_support",
       "//components/keyed_service/content",
+    ]
+  }
+}
+
+if (is_desktop_linux && is_official_build) {
+  extract_symbols("app_shell_linux") {
+    # testonly because :app_shell is testonly. See :app_shell_lib comment.
+    testonly = true
+
+    binary = "$root_out_dir/app_shell"
+    symbol_file = "$root_out_dir/app_shell.breakpad.$current_cpu"
+    deps = [
+      ":app_shell",
     ]
   }
 }

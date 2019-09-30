@@ -26,11 +26,9 @@ static void TestArray(SnifferTest* tests, size_t count) {
   std::string mime_type;
 
   for (size_t i = 0; i < count; ++i) {
-    SniffMimeType(tests[i].content,
-                       tests[i].content_len,
-                       GURL(tests[i].url),
-                       tests[i].type_hint,
-                       &mime_type);
+    SniffMimeType(tests[i].content, tests[i].content_len, GURL(tests[i].url),
+                  tests[i].type_hint, ForceSniffFileUrlsForHtml::kDisabled,
+                  &mime_type);
     EXPECT_EQ(tests[i].mime_type, mime_type);
   }
 }
@@ -41,8 +39,8 @@ static std::string SniffMimeType(const std::string& content,
                                  const std::string& url,
                                  const std::string& mime_type_hint) {
   std::string mime_type;
-  SniffMimeType(content.data(), content.size(), GURL(url),
-                     mime_type_hint, &mime_type);
+  SniffMimeType(content.data(), content.size(), GURL(url), mime_type_hint,
+                ForceSniffFileUrlsForHtml::kDisabled, &mime_type);
   return mime_type;
 }
 
@@ -56,11 +54,14 @@ TEST(MimeSnifferTest, BoundaryConditionsTest) {
 
   GURL url;
 
-  SniffMimeType(buf, 0, url, type_hint, &mime_type);
+  SniffMimeType(buf, 0, url, type_hint, ForceSniffFileUrlsForHtml::kDisabled,
+                &mime_type);
   EXPECT_EQ("text/plain", mime_type);
-  SniffMimeType(buf, 1, url, type_hint, &mime_type);
+  SniffMimeType(buf, 1, url, type_hint, ForceSniffFileUrlsForHtml::kDisabled,
+                &mime_type);
   EXPECT_EQ("text/plain", mime_type);
-  SniffMimeType(buf, 2, url, type_hint, &mime_type);
+  SniffMimeType(buf, 2, url, type_hint, ForceSniffFileUrlsForHtml::kDisabled,
+                &mime_type);
   EXPECT_EQ("application/octet-stream", mime_type);
 }
 
@@ -94,66 +95,55 @@ TEST(MimeSnifferTest, BasicSniffingTest) {
 
 TEST(MimeSnifferTest, ChromeExtensionsTest) {
   SnifferTest tests[] = {
-    // schemes
-    { "Cr24\x02\x00\x00\x00", sizeof("Cr24\x02\x00\x00\x00")-1,
-      "http://www.example.com/foo.crx",
-      "", "application/x-chrome-extension" },
-    { "Cr24\x02\x00\x00\x00", sizeof("Cr24\x02\x00\x00\x00")-1,
-      "https://www.example.com/foo.crx",
-      "", "application/x-chrome-extension" },
-    { "Cr24\x02\x00\x00\x00", sizeof("Cr24\x02\x00\x00\x00")-1,
-      "ftp://www.example.com/foo.crx",
-      "", "application/x-chrome-extension" },
+      // schemes
+      {"Cr24\x02\x00\x00\x00", sizeof("Cr24\x02\x00\x00\x00") - 1,
+       "http://www.example.com/foo.crx", "", "application/x-chrome-extension"},
+      {"Cr24\x02\x00\x00\x00", sizeof("Cr24\x02\x00\x00\x00") - 1,
+       "https://www.example.com/foo.crx", "", "application/x-chrome-extension"},
+      {"Cr24\x02\x00\x00\x00", sizeof("Cr24\x02\x00\x00\x00") - 1,
+       "ftp://www.example.com/foo.crx", "", "application/x-chrome-extension"},
 
-    // some other mimetypes that should get converted
-    { "Cr24\x02\x00\x00\x00", sizeof("Cr24\x02\x00\x00\x00")-1,
-      "http://www.example.com/foo.crx",
-      "text/plain", "application/x-chrome-extension" },
-    { "Cr24\x02\x00\x00\x00", sizeof("Cr24\x02\x00\x00\x00")-1,
-      "http://www.example.com/foo.crx",
-      "application/octet-stream", "application/x-chrome-extension" },
+      // some other mimetypes that should get converted
+      {"Cr24\x02\x00\x00\x00", sizeof("Cr24\x02\x00\x00\x00") - 1,
+       "http://www.example.com/foo.crx", "text/plain",
+       "application/x-chrome-extension"},
+      {"Cr24\x02\x00\x00\x00", sizeof("Cr24\x02\x00\x00\x00") - 1,
+       "http://www.example.com/foo.crx", "application/octet-stream",
+       "application/x-chrome-extension"},
 
-    // success edge cases
-    { "Cr24\x02\x00\x00\x00", sizeof("Cr24\x02\x00\x00\x00")-1,
-      "http://www.example.com/foo.crx?query=string",
-      "", "application/x-chrome-extension" },
-    { "Cr24\x02\x00\x00\x00", sizeof("Cr24\x02\x00\x00\x00")-1,
-      "http://www.example.com/foo..crx",
-      "", "application/x-chrome-extension" },
+      // success edge cases
+      {"Cr24\x02\x00\x00\x00", sizeof("Cr24\x02\x00\x00\x00") - 1,
+       "http://www.example.com/foo.crx?query=string", "",
+       "application/x-chrome-extension"},
+      {"Cr24\x02\x00\x00\x00", sizeof("Cr24\x02\x00\x00\x00") - 1,
+       "http://www.example.com/foo..crx", "", "application/x-chrome-extension"},
+      {"Cr24\x03\x00\x00\x00", sizeof("Cr24\x03\x00\x00\x00") - 1,
+       "http://www.example.com/foo..crx", "", "application/x-chrome-extension"},
 
-    // wrong file extension
-    { "Cr24\x02\x00\x00\x00", sizeof("Cr24\x02\x00\x00\x00")-1,
-      "http://www.example.com/foo.bin",
-      "", "application/octet-stream" },
-    { "Cr24\x02\x00\x00\x00", sizeof("Cr24\x02\x00\x00\x00")-1,
-      "http://www.example.com/foo.bin?monkey",
-      "", "application/octet-stream" },
-    { "Cr24\x02\x00\x00\x00", sizeof("Cr24\x02\x00\x00\x00")-1,
-      "invalid-url",
-      "", "application/octet-stream" },
-    { "Cr24\x02\x00\x00\x00", sizeof("Cr24\x02\x00\x00\x00")-1,
-      "http://www.example.com",
-      "", "application/octet-stream" },
-    { "Cr24\x02\x00\x00\x00", sizeof("Cr24\x02\x00\x00\x00")-1,
-      "http://www.example.com/",
-      "", "application/octet-stream" },
-    { "Cr24\x02\x00\x00\x00", sizeof("Cr24\x02\x00\x00\x00")-1,
-      "http://www.example.com/foo",
-      "", "application/octet-stream" },
-    { "Cr24\x02\x00\x00\x00", sizeof("Cr24\x02\x00\x00\x00")-1,
-      "http://www.example.com/foocrx",
-      "", "application/octet-stream" },
-    { "Cr24\x02\x00\x00\x00", sizeof("Cr24\x02\x00\x00\x00")-1,
-      "http://www.example.com/foo.crx.blech",
-      "", "application/octet-stream" },
+      // wrong file extension
+      {"Cr24\x02\x00\x00\x00", sizeof("Cr24\x02\x00\x00\x00") - 1,
+       "http://www.example.com/foo.bin", "", "application/octet-stream"},
+      {"Cr24\x02\x00\x00\x00", sizeof("Cr24\x02\x00\x00\x00") - 1,
+       "http://www.example.com/foo.bin?monkey", "", "application/octet-stream"},
+      {"Cr24\x02\x00\x00\x00", sizeof("Cr24\x02\x00\x00\x00") - 1,
+       "invalid-url", "", "application/octet-stream"},
+      {"Cr24\x02\x00\x00\x00", sizeof("Cr24\x02\x00\x00\x00") - 1,
+       "http://www.example.com", "", "application/octet-stream"},
+      {"Cr24\x02\x00\x00\x00", sizeof("Cr24\x02\x00\x00\x00") - 1,
+       "http://www.example.com/", "", "application/octet-stream"},
+      {"Cr24\x02\x00\x00\x00", sizeof("Cr24\x02\x00\x00\x00") - 1,
+       "http://www.example.com/foo", "", "application/octet-stream"},
+      {"Cr24\x02\x00\x00\x00", sizeof("Cr24\x02\x00\x00\x00") - 1,
+       "http://www.example.com/foocrx", "", "application/octet-stream"},
+      {"Cr24\x02\x00\x00\x00", sizeof("Cr24\x02\x00\x00\x00") - 1,
+       "http://www.example.com/foo.crx.blech", "", "application/octet-stream"},
 
-    // wrong magic
-    { "Cr24\x02\x00\x00\x01", sizeof("Cr24\x02\x00\x00\x01")-1,
-      "http://www.example.com/foo.crx?monkey",
-      "", "application/octet-stream" },
-    { "PADDING_Cr24\x02\x00\x00\x00", sizeof("PADDING_Cr24\x02\x00\x00\x00")-1,
-      "http://www.example.com/foo.crx?monkey",
-      "", "application/octet-stream" },
+      // wrong magic
+      {"Cr24\x02\x00\x00\x01", sizeof("Cr24\x02\x00\x00\x01") - 1,
+       "http://www.example.com/foo.crx?monkey", "", "application/octet-stream"},
+      {"PADDING_Cr24\x02\x00\x00\x00",
+       sizeof("PADDING_Cr24\x02\x00\x00\x00") - 1,
+       "http://www.example.com/foo.crx?monkey", "", "application/octet-stream"},
   };
 
   TestArray(tests, arraysize(tests));
@@ -254,6 +244,20 @@ TEST(MimeSnifferTest, DontAllowPrivilegeEscalationTest) {
   };
 
   TestArray(tests, arraysize(tests));
+}
+
+TEST(MimeSnifferTest, SniffFilesAsHtml) {
+  const std::string kContent = "<html><body>text</body></html>";
+  const GURL kUrl("file:///C/test.unusualextension");
+
+  std::string mime_type;
+  SniffMimeType(kContent.c_str(), kContent.length(), kUrl, "" /* type_hint */,
+                ForceSniffFileUrlsForHtml::kDisabled, &mime_type);
+  EXPECT_EQ("text/plain", mime_type);
+
+  SniffMimeType(kContent.c_str(), kContent.length(), kUrl, "" /* type_hint */,
+                ForceSniffFileUrlsForHtml::kEnabled, &mime_type);
+  EXPECT_EQ("text/html", mime_type);
 }
 
 TEST(MimeSnifferTest, UnicodeTest) {
@@ -373,8 +377,8 @@ TEST(MimeSnifferTest, XMLTestLargeNoAngledBracket) {
 
   // content.size() >= 1024 so the sniff is unambiguous.
   std::string mime_type;
-  EXPECT_TRUE(SniffMimeType(content.data(), content.size(), GURL(),
-                            "text/xml", &mime_type));
+  EXPECT_TRUE(SniffMimeType(content.data(), content.size(), GURL(), "text/xml",
+                            ForceSniffFileUrlsForHtml::kDisabled, &mime_type));
   EXPECT_EQ("text/xml", mime_type);
 }
 
@@ -390,7 +394,8 @@ TEST(MimeSnifferTest, LooksBinary) {
   // content.size() >= 1024 so the sniff is unambiguous.
   std::string mime_type;
   EXPECT_TRUE(SniffMimeType(content.data(), content.size(), GURL(),
-                            "text/plain", &mime_type));
+                            "text/plain", ForceSniffFileUrlsForHtml::kDisabled,
+                            &mime_type));
   EXPECT_EQ("application/octet-stream", mime_type);
 }
 

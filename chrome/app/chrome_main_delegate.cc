@@ -15,7 +15,6 @@
 #include "base/lazy_instance.h"
 #include "base/macros.h"
 #include "base/message_loop/message_loop.h"
-#include "base/metrics/statistics_recorder.h"
 #include "base/path_service.h"
 #include "base/process/memory.h"
 #include "base/process/process_handle.h"
@@ -27,7 +26,7 @@
 #include "build/build_config.h"
 #include "chrome/browser/chrome_content_browser_client.h"
 #include "chrome/browser/defaults.h"
-#include "chrome/child/child_profiling.h"
+#include "chrome/common/buildflags.h"
 #include "chrome/common/channel_info.h"
 #include "chrome/common/chrome_constants.h"
 #include "chrome/common/chrome_content_client.h"
@@ -36,11 +35,8 @@
 #include "chrome/common/chrome_result_codes.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/crash_keys.h"
-#include "chrome/common/features.h"
 #include "chrome/common/logging_chrome.h"
 #include "chrome/common/profiling.h"
-#include "chrome/common/profiling/memlog_allocator_shim.h"
-#include "chrome/common/profiling/memlog_stream.h"
 #include "chrome/common/trace_event_args_whitelist.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/gpu/chrome_content_gpu_client.h"
@@ -50,16 +46,19 @@
 #include "components/content_settings/core/common/content_settings_pattern.h"
 #include "components/crash/content/app/crash_reporter_client.h"
 #include "components/crash/core/common/crash_key.h"
-#include "components/nacl/common/features.h"
+#include "components/crash/core/common/crash_keys.h"
+#include "components/nacl/common/buildflags.h"
+#include "components/services/heap_profiling/public/cpp/allocator_shim.h"
+#include "components/services/heap_profiling/public/cpp/stream.h"
 #include "components/version_info/version_info.h"
 #include "content/public/common/content_client.h"
 #include "content/public/common/content_paths.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/common/service_names.mojom.h"
 #include "extensions/common/constants.h"
-#include "pdf/features.h"
-#include "ppapi/features/features.h"
-#include "printing/features/features.h"
+#include "pdf/buildflags.h"
+#include "ppapi/buildflags/buildflags.h"
+#include "printing/buildflags/buildflags.h"
 #include "services/service_manager/embedder/switches.h"
 #include "ui/base/material_design/material_design_controller.h"
 #include "ui/base/resource/resource_bundle.h"
@@ -109,7 +108,6 @@
 #include "chromeos/chromeos_paths.h"
 #include "chromeos/chromeos_switches.h"
 #include "chromeos/hugepage_text/hugepage_text.h"
-#include "components/metrics/leak_detector/leak_detector.h"
 #endif
 
 #if defined(OS_ANDROID)
@@ -149,7 +147,7 @@
 
 #if BUILDFLAG(ENABLE_PLUGINS) && (defined(CHROME_MULTIPLE_DLL_CHILD) || \
     !defined(CHROME_MULTIPLE_DLL_BROWSER))
-#include "pdf/pdf.h"
+#include "pdf/pdf_ppapi.h"
 #endif
 
 #if !defined(CHROME_MULTIPLE_DLL_CHILD)
@@ -333,17 +331,16 @@ bool HandleVersionSwitches(const base::CommandLine& command_line) {
 #endif
 
   if (command_line.HasSwitch(switches::kVersion)) {
-    printf("%s %s %s\n",
-           version_info::GetProductName().c_str(),
+    printf("%s %s %s\n", version_info::GetProductName().c_str(),
            version_info::GetVersionNumber().c_str(),
-           chrome::GetChannelString().c_str());
+           chrome::GetChannelName().c_str());
     return true;
   }
 
   return false;
 }
 
-#if !defined(OS_MACOSX) && !defined(OS_CHROMEOS)
+#if defined(OS_LINUX) && !defined(OS_CHROMEOS)
 // Show the man page if --help or -h is on the command line.
 void HandleHelpSwitches(const base::CommandLine& command_line) {
   if (command_line.HasSwitch(switches::kHelp) ||
@@ -353,7 +350,7 @@ void HandleHelpSwitches(const base::CommandLine& command_line) {
     PLOG(FATAL) << "execlp failed";
   }
 }
-#endif
+#endif  // defined(OS_LINUX) && !defined(OS_CHROMEOS)
 
 #if !defined(OS_MACOSX) && !defined(OS_ANDROID)
 void SIGTERMProfilingShutdown(int signal) {
@@ -487,7 +484,8 @@ void RecordMainStartupMetrics(base::TimeTicks exe_entry_point_ticks) {
 // from the Java side until it has initialized the JNI. See
 // ChromeMainDelegateAndroid.
 #if !defined(OS_ANDROID)
-  startup_metric_utils::RecordMainEntryPointTime(base::Time::Now());
+  startup_metric_utils::RecordMainEntryPointTime(base::Time::Now(),
+                                                 base::TimeTicks::Now());
 #endif
 }
 #endif  // !defined(CHROME_MULTIPLE_DLL_CHILD)
@@ -537,9 +535,6 @@ bool ChromeMainDelegate::BasicStartupComplete(int* exit_code) {
   chrome::common::mac::EnableCFBundleBlocker();
 #endif
 
-#if !defined(CHROME_MULTIPLE_DLL_BROWSER)
-  ChildProfiling::ProcessStarted();
-#endif
   Profiling::ProcessStarted();
 
   base::trace_event::TraceLog::GetInstance()->SetArgumentFilterPredicate(
@@ -557,7 +552,7 @@ bool ChromeMainDelegate::BasicStartupComplete(int* exit_code) {
     *exit_code = 0;
     return true;  // Got a --version switch; exit with a success error code.
   }
-#if !defined(OS_MACOSX) && !defined(OS_CHROMEOS)
+#if defined(OS_LINUX) && !defined(OS_CHROMEOS)
   // This will directly exit if the user asked for help.
   HandleHelpSwitches(command_line);
 #endif
@@ -630,16 +625,13 @@ bool ChromeMainDelegate::BasicStartupComplete(int* exit_code) {
         base::DIR_HOME, homedir, true, false);
   }
 
-  // If we are recovering from a crash on ChromeOS, then we will do some
-  // recovery using the diagnostics module, and then continue on. We fake up a
-  // command line to tell it that we want it to recover, and to preserve the
-  // original command line.
-  if (command_line.HasSwitch(chromeos::switches::kLoginUser) ||
+  // If we are recovering from a crash on a ChromeOS device, then we will do
+  // some recovery using the diagnostics module, and then continue on. We fake
+  // up a command line to tell it that we want it to recover, and to preserve
+  // the original command line. Note: logging at this point is to /var/log/ui.
+  if ((base::SysInfo::IsRunningOnChromeOS() &&
+       command_line.HasSwitch(chromeos::switches::kLoginUser)) ||
       command_line.HasSwitch(switches::kDiagnosticsRecovery)) {
-    // The statistics subsystem needs get initialized soon enough for the
-    // statistics to be collected.  It's safe to call this more than once.
-    base::StatisticsRecorder::Initialize();
-
     base::CommandLine interim_command_line(command_line.GetProgram());
     const char* const kSwitchNames[] = {switches::kUserDataDir, };
     interim_command_line.CopySwitchesFrom(
@@ -694,16 +686,7 @@ bool ChromeMainDelegate::BasicStartupComplete(int* exit_code) {
   // order to allocate storage for a higher slot number. Since malloc is hooked,
   // this causes re-entrancy into the allocator shim, while the TLS object is
   // partially-initialized, which the TLS object is supposed to protect again.
-  profiling::InitTLSSlot();
-
-#if defined (OS_CHROMEOS)
-  // The TLS slot used by metrics::LeakDetector needs to be initialized early to
-  // ensure that it gets assigned a low slow number. If it gets initialized too
-  // late, the glibc TLS system will require a malloc call in order to allocate
-  // storage for a higher slot number. Normally that's not a problem, but in
-  // LeakDetector it will result in recursive alloc hook function calls.
-  metrics::LeakDetector::InitTLSSlot();
-#endif
+  heap_profiling::InitTLSSlot();
 
   return false;
 }
@@ -907,11 +890,6 @@ void ChromeMainDelegate::PreSandboxStartup() {
   }
 
 #if !defined(CHROME_MULTIPLE_DLL_BROWSER)
-  if (process_type == switches::kUtilityProcess ||
-      process_type == switches::kZygoteProcess) {
-    ChromeContentUtilityClient::PreSandboxStartup();
-  }
-
   InitializePDF();
 #endif
 
@@ -1051,7 +1029,6 @@ void ChromeMainDelegate::ZygoteStarting(
 }
 
 void ChromeMainDelegate::ZygoteForked() {
-  ChildProfiling::ProcessStarted();
   Profiling::ProcessStarted();
   if (Profiling::BeingProfiled()) {
     base::debug::RestartProfilingAfterFork();

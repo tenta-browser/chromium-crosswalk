@@ -14,10 +14,10 @@
 #include "base/compiler_specific.h"
 #include "base/logging.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "build/build_config.h"
 #include "components/policy/proto/cloud_policy.pb.h"
 #include "components/policy/proto/device_management_backend.pb.h"
+#include "components/signin/core/account_id/account_id.h"
 #include "crypto/rsa_private_key.h"
 
 #if !defined(OS_ANDROID) && !defined(OS_IOS)
@@ -34,6 +34,7 @@ class PolicyBuilder {
   // Constants used as dummy data for filling the PolicyData protobuf.
   static const char kFakeDeviceId[];
   static const char kFakeDomain[];
+  static const char kFakeGaiaId[];
   static const char kFakeMachineName[];
   static const char kFakePolicyType[];
   static const int kFakePublicKeyVersion;
@@ -57,7 +58,7 @@ class PolicyBuilder {
   }
   void clear_policy_data() { policy_data_.reset(); }
   void CreatePolicyData() {
-    policy_data_ = base::MakeUnique<enterprise_management::PolicyData>();
+    policy_data_ = std::make_unique<enterprise_management::PolicyData>();
   }
 
   // Returns a reference to the policy protobuf being built. Note that the
@@ -126,6 +127,10 @@ class PolicyBuilder {
   static std::string GetPublicTestKeyAsString();
   static std::string GetPublicTestOtherKeyAsString();
 
+  static std::vector<std::string> GetUserAffiliationIds();
+
+  static AccountId GetFakeAccountId();
+
  private:
   enterprise_management::PolicyFetchResponse policy_;
   std::unique_ptr<enterprise_management::PolicyData> policy_data_;
@@ -155,7 +160,7 @@ class TypedPolicyBuilder : public PolicyBuilder {
   PayloadProto& payload() { return *payload_; }
   const PayloadProto& payload() const { return *payload_; }
   void clear_payload() { payload_.reset(); }
-  void CreatePayload() { payload_ = base::MakeUnique<PayloadProto>(); }
+  void CreatePayload() { payload_ = std::make_unique<PayloadProto>(); }
 
   // PolicyBuilder:
   void Build() override {

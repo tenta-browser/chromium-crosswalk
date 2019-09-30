@@ -11,28 +11,28 @@
 
 #include <utility>
 
-#include "base/bind.h"
 #include "base/debug/alias.h"
 #include "base/debug/dump_without_crashing.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/format_macros.h"
 #include "base/json/json_file_value_serializer.h"
-#include "base/lazy_instance.h"
 #include "base/location.h"
 #include "base/logging.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/metrics/sparse_histogram.h"
+#include "base/no_destructor.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/synchronization/lock.h"
-#include "base/threading/sequenced_task_runner_handle.h"
 #include "base/trace_event/memory_dump_manager.h"
 #include "build/build_config.h"
 #include "sql/connection_memory_dump_provider.h"
+#include "sql/initialization.h"
 #include "sql/meta_table.h"
 #include "sql/statement.h"
 #include "sql/vfs_wrapper.h"
@@ -129,62 +129,6 @@ bool ValidAttachmentPoint(const char* attachment_point) {
   return true;
 }
 
-void RecordSqliteMemory10Min() {
-  const int64_t used = sqlite3_memory_used();
-  UMA_HISTOGRAM_COUNTS("Sqlite.MemoryKB.TenMinutes", used / 1024);
-}
-
-void RecordSqliteMemoryHour() {
-  const int64_t used = sqlite3_memory_used();
-  UMA_HISTOGRAM_COUNTS("Sqlite.MemoryKB.OneHour", used / 1024);
-}
-
-void RecordSqliteMemoryDay() {
-  const int64_t used = sqlite3_memory_used();
-  UMA_HISTOGRAM_COUNTS("Sqlite.MemoryKB.OneDay", used / 1024);
-}
-
-void RecordSqliteMemoryWeek() {
-  const int64_t used = sqlite3_memory_used();
-  UMA_HISTOGRAM_COUNTS("Sqlite.MemoryKB.OneWeek", used / 1024);
-}
-
-// SQLite automatically calls sqlite3_initialize() lazily, but
-// sqlite3_initialize() uses double-checked locking and thus can have
-// data races.
-//
-// TODO(shess): Another alternative would be to have
-// sqlite3_initialize() called as part of process bring-up.  If this
-// is changed, remove the dynamic_annotations dependency in sql.gyp.
-base::LazyInstance<base::Lock>::Leaky
-    g_sqlite_init_lock = LAZY_INSTANCE_INITIALIZER;
-void InitializeSqlite() {
-  base::AutoLock lock(g_sqlite_init_lock.Get());
-  static bool first_call = true;
-  if (first_call) {
-    sqlite3_initialize();
-
-    // Schedule callback to record memory footprint histograms at 10m, 1h, and
-    // 1d. There may not be a registered task runner in tests.
-    if (base::SequencedTaskRunnerHandle::IsSet()) {
-      base::SequencedTaskRunnerHandle::Get()->PostDelayedTask(
-          FROM_HERE, base::Bind(&RecordSqliteMemory10Min),
-          base::TimeDelta::FromMinutes(10));
-      base::SequencedTaskRunnerHandle::Get()->PostDelayedTask(
-          FROM_HERE, base::Bind(&RecordSqliteMemoryHour),
-          base::TimeDelta::FromHours(1));
-      base::SequencedTaskRunnerHandle::Get()->PostDelayedTask(
-          FROM_HERE, base::Bind(&RecordSqliteMemoryDay),
-          base::TimeDelta::FromDays(1));
-      base::SequencedTaskRunnerHandle::Get()->PostDelayedTask(
-          FROM_HERE, base::Bind(&RecordSqliteMemoryWeek),
-          base::TimeDelta::FromDays(7));
-    }
-
-    first_call = false;
-  }
-}
-
 // Helper to get the sqlite3_file* associated with the "main" database.
 int GetSqlite3File(sqlite3* db, sqlite3_file** file) {
   *file = NULL;
@@ -248,10 +192,7 @@ void Connection::ReportDiagnosticInfo(int extended_error, Statement* stmt) {
 
   std::string debug_info = GetDiagnosticInfo(extended_error, stmt);
   if (!debug_info.empty() && RegisterIntentToUpload()) {
-    char debug_buf[2000];
-    base::strlcpy(debug_buf, debug_info.c_str(), arraysize(debug_buf));
-    base::debug::Alias(&debug_buf);
-
+    DEBUG_ALIAS_FOR_CSTR(debug_buf, debug_info.c_str(), 2000);
     base::debug::DumpWithoutCrashing();
   }
 }
@@ -465,7 +406,7 @@ void Connection::CloseInternal(bool forced) {
 
     int rc = sqlite3_close(db_);
     if (rc != SQLITE_OK) {
-      UMA_HISTOGRAM_SPARSE_SLOWLY("Sqlite.CloseFailure", rc);
+      base::UmaHistogramSparse("Sqlite.CloseFailure", rc);
       DLOG(DCHECK) << "sqlite3_close failed: " << GetErrorMessage();
     }
   }
@@ -644,7 +585,8 @@ bool Connection::RegisterIntentToUpload() const {
   // is _probably_ something systemic wrong with the user's system.  So the lock
   // should never be contended, but when it is the database experience is
   // already bad.
-  base::AutoLock lock(g_sqlite_init_lock.Get());
+  static base::NoDestructor<base::Lock> lock;
+  base::AutoLock auto_lock(*lock);
 
   std::unique_ptr<base::Value> root;
   if (!base::PathExists(breadcrumb_path)) {
@@ -953,7 +895,8 @@ size_t Connection::GetAppropriateMmapSize() {
     if (amount < 0)
       amount = 0;
     if (amount > 0) {
-      base::AutoLock lock(g_sqlite_init_lock.Get());
+      static base::NoDestructor<base::Lock> lock;
+      base::AutoLock auto_lock(*lock);
       static sqlite3_int64 g_reads_allowed = 20 * 1024 * 1024;
       if (g_reads_allowed < amount)
         amount = g_reads_allowed;
@@ -1124,7 +1067,7 @@ bool Connection::Raze() {
 
   const char* kMain = "main";
   int rc = BackupDatabase(null_db.db_, db_, kMain);
-  UMA_HISTOGRAM_SPARSE_SLOWLY("Sqlite.RazeDatabase",rc);
+  base::UmaHistogramSparse("Sqlite.RazeDatabase", rc);
 
   // The destination database was locked.
   if (rc == SQLITE_BUSY) {
@@ -1147,13 +1090,13 @@ bool Connection::Raze() {
 
     rc = file->pMethods->xTruncate(file, 0);
     if (rc != SQLITE_OK) {
-      UMA_HISTOGRAM_SPARSE_SLOWLY("Sqlite.RazeDatabaseTruncate",rc);
+      base::UmaHistogramSparse("Sqlite.RazeDatabaseTruncate", rc);
       DLOG(DCHECK) << "Failed to truncate file.";
       return false;
     }
 
     rc = BackupDatabase(null_db.db_, db_, kMain);
-    UMA_HISTOGRAM_SPARSE_SLOWLY("Sqlite.RazeDatabase2",rc);
+    base::UmaHistogramSparse("Sqlite.RazeDatabase2", rc);
 
     DCHECK_EQ(rc, SQLITE_DONE) << "Failed retrying Raze().";
   }
@@ -1222,8 +1165,7 @@ bool Connection::Delete(const base::FilePath& path) {
   std::string wal_str = AsUTF8ForSQL(wal_path);
   std::string path_str = AsUTF8ForSQL(path);
 
-  // Make sure sqlite3_initialize() is called before anything else.
-  InitializeSqlite();
+  EnsureSqliteInitialized();
 
   sqlite3_vfs* vfs = sqlite3_vfs_find(NULL);
   CHECK(vfs);
@@ -1647,8 +1589,7 @@ bool Connection::OpenInternal(const std::string& file_name,
     return false;
   }
 
-  // Make sure sqlite3_initialize() is called before anything else.
-  InitializeSqlite();
+  EnsureSqliteInitialized();
 
   // Setup the stats histograms immediately rather than allocating lazily.
   // Connections which won't exercise all of these probably shouldn't exist.
@@ -1698,7 +1639,7 @@ bool Connection::OpenInternal(const std::string& file_name,
 
     // Histogram failures specific to initial open for debugging
     // purposes.
-    UMA_HISTOGRAM_SPARSE_SLOWLY("Sqlite.OpenFailure", err);
+    base::UmaHistogramSparse("Sqlite.OpenFailure", err);
 
     OnSqliteError(err, NULL, "-- sqlite3_open()");
     bool was_poisoned = poisoned_;
@@ -1757,7 +1698,7 @@ bool Connection::OpenInternal(const std::string& file_name,
   // be razed.
   err = ExecuteAndReturnErrorCode("PRAGMA auto_vacuum");
   if (err != SQLITE_OK) {
-    UMA_HISTOGRAM_SPARSE_SLOWLY("Sqlite.OpenProbeFailure", err);
+    base::UmaHistogramSparse("Sqlite.OpenProbeFailure", err);
     OnSqliteError(err, nullptr, "PRAGMA auto_vacuum");
 
     // Retry or bail out if the error handler poisoned the handle.
@@ -1932,7 +1873,7 @@ void Connection::AddTaggedHistogram(const std::string& name,
 
 int Connection::OnSqliteError(
     int err, sql::Statement *stmt, const char* sql) const {
-  UMA_HISTOGRAM_SPARSE_SLOWLY("Sqlite.Error", err);
+  base::UmaHistogramSparse("Sqlite.Error", err);
   AddTaggedHistogram("Sqlite.Error", err);
 
   // Always log the error.

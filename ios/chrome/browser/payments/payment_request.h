@@ -184,6 +184,10 @@ class PaymentRequest : public PaymentOptionsProvider,
   virtual autofill::AutofillProfile* AddAutofillProfile(
       const autofill::AutofillProfile& profile);
 
+  // Updates the given |profile| in the PersonalDataManager if the user is
+  // not in incognito mode.
+  virtual void UpdateAutofillProfile(const autofill::AutofillProfile& profile);
+
   // Returns the available autofill profiles for this user to be used as
   // shipping profiles.
   const std::vector<autofill::AutofillProfile*>& shipping_profiles() const {
@@ -246,9 +250,14 @@ class PaymentRequest : public PaymentOptionsProvider,
     return supported_card_types_set_;
   }
 
-  // Creates and adds an AutofillPaymentInstrument, which makes a copy of
-  // |credit_card|.
-  virtual AutofillPaymentInstrument* AddAutofillPaymentInstrument(
+  // Creates and adds an AutofillPaymentInstrument to the list of payment
+  // instruments by making a copy of |credit_card|.
+  virtual AutofillPaymentInstrument* CreateAndAddAutofillPaymentInstrument(
+      const autofill::CreditCard& credit_card);
+
+  // Updates the given |credit_card| in the PersonalDataManager if the user is
+  // not in incognito mode.
+  virtual void UpdateAutofillPaymentInstrument(
       const autofill::CreditCard& credit_card);
 
   // Returns the available payment methods for this user that match a supported
@@ -344,12 +353,19 @@ class PaymentRequest : public PaymentOptionsProvider,
   // methods.
   void PopulateAvailablePaymentMethods();
 
+  // Creates and adds an AutofillPaymentInstrument to the list of payment
+  // instruments by making a copy of |credit_card|. Updates PersonalDataManager
+  // if not in incognito mode and |may_update_personal_data_manager| is true.
+  AutofillPaymentInstrument* CreateAndAddAutofillPaymentInstrument(
+      const autofill::CreditCard& credit_card,
+      bool may_update_personal_data_manager);
+
   // Sets the available shipping options as references to the shipping options
   // in |web_payment_request_|.
   void PopulateAvailableShippingOptions();
 
-  // Sets the selected shipping option, if any.
-  void SetSelectedShippingOption();
+  // Sets the selected shipping option and profile, if any.
+  void SetSelectedShippingOptionAndProfile();
 
   // Records the number of suggestions shown for contact, shipping and payment
   // instrument in the JourneyLogger.
@@ -381,11 +397,9 @@ class PaymentRequest : public PaymentOptionsProvider,
   // created this PaymentRequest object.
   __weak id<PaymentRequestUIDelegate> payment_request_ui_delegate_;
 
-  // The address normalizer to use for the duration of the Payment Request.
-  autofill::AddressNormalizerImpl address_normalizer_;
-
   // Used to normalize the shipping address and the contact info.
-  autofill::AddressNormalizationManager address_normalization_manager_;
+  std::unique_ptr<autofill::AddressNormalizationManager>
+      address_normalization_manager_;
 
   // The currency formatter instance for this PaymentRequest flow.
   std::unique_ptr<CurrencyFormatter> currency_formatter_;

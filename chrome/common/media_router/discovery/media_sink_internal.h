@@ -82,17 +82,9 @@ class MediaSinkInternal {
   // Sorted by sink id.
   bool operator<(const MediaSinkInternal& other) const;
 
-  // Used by mojo.
-  void set_sink_id(const MediaSink::Id& sink_id) { sink_.set_sink_id(sink_id); }
-  void set_name(const std::string& name) { sink_.set_name(name); }
-  void set_description(const std::string& description) {
-    sink_.set_description(description);
-  }
-  void set_domain(const std::string& domain) { sink_.set_domain(domain); }
-  void set_icon_type(SinkIconType icon_type) { sink_.set_icon_type(icon_type); }
-
   void set_sink(const MediaSink& sink);
   const MediaSink& sink() const { return sink_; }
+  MediaSink& sink() { return sink_; }
 
   void set_dial_data(const DialSinkExtraData& dial_data);
 
@@ -108,6 +100,11 @@ class MediaSinkInternal {
   bool is_cast_sink() const { return sink_type_ == SinkType::CAST; }
 
   static bool IsValidSinkId(const std::string& sink_id);
+
+  // Returns processed device id without "uuid:" and "-", e.g. input
+  // "uuid:6d238518-a574-eab1-017e-d0975c039081" and output
+  // "6d238518a574eab1017ed0975c039081"
+  static std::string ProcessDeviceUUID(const std::string& device_uuid);
 
  private:
   void InternalCopyConstructFrom(const MediaSinkInternal& other);

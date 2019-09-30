@@ -68,12 +68,14 @@ IdleActionWarningDialogView::IdleActionWarningDialogView(
       ChromeLayoutProvider::Get()->GetDialogInsetsForContentType(views::TEXT,
                                                                  views::TEXT)));
   AddChildView(label_);
-  SetLayoutManager(new views::FillLayout());
+  SetLayoutManager(std::make_unique<views::FillLayout>());
 
   UpdateLabel();
 
-  views::DialogDelegate::CreateDialogWidget(
-      this, ash::Shell::GetPrimaryRootWindow(), NULL)->Show();
+  // Shown on the root window for new windows.
+  views::DialogDelegate::CreateDialogWidget(this, nullptr /* context */,
+                                            nullptr /* parent */)
+      ->Show();
 
   update_timer_.Start(
       FROM_HERE,

@@ -14,19 +14,33 @@
 #include "base/values.h"
 #include "components/autofill/core/browser/autofill_experiments.h"
 #include "components/autofill/core/browser/autofill_test_utils.h"
+#include "components/autofill/core/browser/credit_card_save_manager.h"
 #include "components/autofill/core/browser/payments/payments_client.h"
 #include "components/autofill/core/common/autofill_pref_names.h"
 #include "components/autofill/core/common/autofill_switches.h"
 #include "components/prefs/pref_registry_simple.h"
 #include "components/prefs/testing_pref_service.h"
-#include "google_apis/gaia/fake_identity_provider.h"
-#include "google_apis/gaia/fake_oauth2_token_service.h"
 #include "net/url_request/test_url_fetcher_factory.h"
 #include "net/url_request/url_request_test_util.h"
+#include "services/identity/public/cpp/identity_test_environment.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace autofill {
 namespace payments {
+namespace {
+
+int kAllDetectableValues =
+    CreditCardSaveManager::DetectedValue::CVC |
+    CreditCardSaveManager::DetectedValue::CARDHOLDER_NAME |
+    CreditCardSaveManager::DetectedValue::ADDRESS_NAME |
+    CreditCardSaveManager::DetectedValue::ADDRESS_LINE |
+    CreditCardSaveManager::DetectedValue::LOCALITY |
+    CreditCardSaveManager::DetectedValue::ADMINISTRATIVE_AREA |
+    CreditCardSaveManager::DetectedValue::POSTAL_CODE |
+    CreditCardSaveManager::DetectedValue::COUNTRY_CODE |
+    CreditCardSaveManager::DetectedValue::HAS_GOOGLE_PAYMENTS_ACCOUNT;
+
+}  // namespace
 
 class PaymentsClientTest : public testing::Test,
                            public PaymentsClientUnmaskDelegate,
@@ -47,18 +61,26 @@ class PaymentsClientTest : public testing::Test,
 
     request_context_ = new net::TestURLRequestContextGetter(
         base::ThreadTaskRunnerHandle::Get());
-    token_service_.reset(new FakeOAuth2TokenService());
-    identity_provider_.reset(new FakeIdentityProvider(token_service_.get()));
     TestingPrefServiceSimple pref_service_;
     client_.reset(new PaymentsClient(request_context_.get(), &pref_service_,
-                                     identity_provider_.get(), this, this));
+                                     identity_test_env_.identity_manager(),
+                                     this, this));
   }
 
   void TearDown() override { client_.reset(); }
 
-  void DisableAutofillSendBillingCustomerNumberExperiment() {
+  void DisableAutofillUpstreamSendDetectedValuesExperiment() {
     scoped_feature_list_.InitAndDisableFeature(
-        kAutofillSendBillingCustomerNumber);
+        kAutofillUpstreamSendDetectedValues);
+  }
+
+  void EnableAutofillUpstreamSendDetectedValuesExperiment() {
+    scoped_feature_list_.InitAndEnableFeature(
+        kAutofillUpstreamSendDetectedValues);
+  }
+
+  void EnableAutofillUpstreamSendPanFirstSixExperiment() {
+    scoped_feature_list_.InitAndEnableFeature(kAutofillUpstreamSendPanFirstSix);
   }
 
   // PaymentsClientUnmaskDelegate:
@@ -86,8 +108,9 @@ class PaymentsClientTest : public testing::Test,
   base::test::ScopedFeatureList scoped_feature_list_;
 
   void StartUnmasking() {
-    token_service_->AddAccount("example@gmail.com");
-    identity_provider_->LogIn("example@gmail.com");
+    if (!identity_test_env_.identity_manager()->HasPrimaryAccount())
+      identity_test_env_.MakePrimaryAccountAvailable("example@gmail.com");
+
     PaymentsClient::UnmaskRequestDetails request_details;
     request_details.billing_customer_number = 111222333444;
     request_details.card = test::GetMaskedServerCard();
@@ -97,15 +120,18 @@ class PaymentsClientTest : public testing::Test,
   }
 
   void StartGettingUploadDetails() {
-    token_service_->AddAccount("example@gmail.com");
-    identity_provider_->LogIn("example@gmail.com");
-    client_->GetUploadDetails(BuildTestProfiles(), std::vector<const char*>(),
-                              "language-LOCALE");
+    if (!identity_test_env_.identity_manager()->HasPrimaryAccount())
+      identity_test_env_.MakePrimaryAccountAvailable("example@gmail.com");
+
+    client_->GetUploadDetails(BuildTestProfiles(), kAllDetectableValues,
+                              /*pan_first_six=*/"411111",
+                              std::vector<const char*>(), "language-LOCALE");
   }
 
   void StartUploading(bool include_cvc) {
-    token_service_->AddAccount("example@gmail.com");
-    identity_provider_->LogIn("example@gmail.com");
+    if (!identity_test_env_.identity_manager()->HasPrimaryAccount())
+      identity_test_env_.MakePrimaryAccountAvailable("example@gmail.com");
+
     PaymentsClient::UploadRequestDetails request_details;
     request_details.billing_customer_number = 111222333444;
     request_details.card = test::GetCreditCard();
@@ -123,8 +149,8 @@ class PaymentsClientTest : public testing::Test,
   }
 
   void IssueOAuthToken() {
-    token_service_->IssueAllTokensForAccount(
-        "example@gmail.com", "totally_real_token",
+    identity_test_env_.WaitForAccessTokenRequestAndRespondWithToken(
+        "totally_real_token",
         base::Time::Now() + base::TimeDelta::FromDays(10));
 
     // Verify the auth header.
@@ -155,9 +181,8 @@ class PaymentsClientTest : public testing::Test,
   base::test::ScopedTaskEnvironment scoped_task_environment_;
   net::TestURLFetcherFactory factory_;
   scoped_refptr<net::TestURLRequestContextGetter> request_context_;
-  std::unique_ptr<FakeOAuth2TokenService> token_service_;
-  std::unique_ptr<FakeIdentityProvider> identity_provider_;
   std::unique_ptr<PaymentsClient> client_;
+  identity::IdentityTestEnvironment identity_test_env_;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(PaymentsClientTest);
@@ -195,33 +220,20 @@ class PaymentsClientTest : public testing::Test,
 
 TEST_F(PaymentsClientTest, OAuthError) {
   StartUnmasking();
-  token_service_->IssueErrorForAllPendingRequestsForAccount(
-      "example@gmail.com",
+  identity_test_env_.WaitForAccessTokenRequestAndRespondWithError(
       GoogleServiceAuthError(GoogleServiceAuthError::SERVICE_UNAVAILABLE));
   EXPECT_EQ(AutofillClient::PERMANENT_FAILURE, result_);
   EXPECT_TRUE(real_pan_.empty());
 }
 
 TEST_F(PaymentsClientTest,
-       UnmaskRequestIncludesBillingCustomerNumberInRequestIfExperimentOn) {
+       UnmaskRequestIncludesBillingCustomerNumberInRequest) {
   StartUnmasking();
 
   // Verify that the billing customer number is included in the request.
   EXPECT_TRUE(
       GetUploadData().find("%22external_customer_id%22:%22111222333444%22") !=
       std::string::npos);
-}
-
-TEST_F(
-    PaymentsClientTest,
-    UnmaskRequestDoesNotIncludeBillingCustomerNumberInRequestIfExperimentOff) {
-  DisableAutofillSendBillingCustomerNumberExperiment();
-
-  StartUnmasking();
-
-  // Verify that the billing customer number is not included in the request.
-  EXPECT_TRUE(GetUploadData().find("external_customer_id") ==
-              std::string::npos);
 }
 
 TEST_F(PaymentsClientTest, UnmaskSuccess) {
@@ -264,6 +276,52 @@ TEST_F(PaymentsClientTest, GetDetailsRemovesNonLocationData) {
   EXPECT_TRUE(GetUploadData().find("0090") == std::string::npos);
 }
 
+TEST_F(PaymentsClientTest,
+       GetDetailsIncludesDetectedValuesInRequestIfExperimentOn) {
+  EnableAutofillUpstreamSendDetectedValuesExperiment();
+
+  StartGettingUploadDetails();
+
+  // Verify that the detected values were included in the request.
+  std::string detected_values_string =
+      "\"detected_values\":" + std::to_string(kAllDetectableValues);
+  EXPECT_TRUE(GetUploadData().find(detected_values_string) !=
+              std::string::npos);
+}
+
+TEST_F(PaymentsClientTest,
+       GetDetailsDoesNotIncludeDetectedValuesInRequestIfExperimentOff) {
+  DisableAutofillUpstreamSendDetectedValuesExperiment();
+
+  StartGettingUploadDetails();
+
+  // Verify that the detected values were left out of the request.
+  std::string detected_values_string =
+      "\"detected_values\":" + std::to_string(kAllDetectableValues);
+  EXPECT_TRUE(GetUploadData().find(detected_values_string) ==
+              std::string::npos);
+}
+
+TEST_F(PaymentsClientTest,
+       GetDetailsIncludesPanFirstSixInRequestIfExperimentOn) {
+  EnableAutofillUpstreamSendPanFirstSixExperiment();
+
+  StartGettingUploadDetails();
+
+  // Verify that the value of pan_first_six was included in the request.
+  EXPECT_TRUE(GetUploadData().find("\"pan_first6\":\"411111\"") !=
+              std::string::npos);
+}
+
+TEST_F(PaymentsClientTest,
+       GetDetailsDoesNotIncludePanFirstSixInRequestIfExperimentOff) {
+  StartGettingUploadDetails();
+
+  // Verify that the value of pan_first_six was left out of the request.
+  EXPECT_TRUE(GetUploadData().find("\"pan_first6\":\"411111\"") ==
+              std::string::npos);
+}
+
 TEST_F(PaymentsClientTest, UploadSuccessWithoutServerId) {
   StartUploading(/*include_cvc=*/true);
   IssueOAuthToken();
@@ -304,25 +362,13 @@ TEST_F(PaymentsClientTest, UploadIncludesNonLocationData) {
 }
 
 TEST_F(PaymentsClientTest,
-       UploadRequestIncludesBillingCustomerNumberInRequestIfExperimentOn) {
+       UploadRequestIncludesBillingCustomerNumberInRequest) {
   StartUploading(/*include_cvc=*/true);
 
   // Verify that the billing customer number is included in the request.
   EXPECT_TRUE(
       GetUploadData().find("%22external_customer_id%22:%22111222333444%22") !=
       std::string::npos);
-}
-
-TEST_F(
-    PaymentsClientTest,
-    UploadRequestDoesNotIncludeBillingCustomerNumberInRequestIfExperimentOff) {
-  DisableAutofillSendBillingCustomerNumberExperiment();
-
-  StartUploading(/*include_cvc=*/true);
-
-  // Verify that the billing customer number is not included in the request.
-  EXPECT_TRUE(GetUploadData().find("external_customer_id") ==
-              std::string::npos);
 }
 
 TEST_F(PaymentsClientTest, UploadIncludesCvcInRequestIfProvided) {
@@ -425,7 +471,10 @@ TEST_F(PaymentsClientTest, ReauthNeeded) {
 
   {
     StartUnmasking();
-    IssueOAuthToken();
+    // NOTE: Don't issue an access token here: the issuing of an access token
+    // first waits for the access token request to be received, but here there
+    // should be no access token request because PaymentsClient should reuse the
+    // access token from the previous request.
     ReturnResponse(net::HTTP_UNAUTHORIZED, "");
     // No response yet.
     EXPECT_EQ(AutofillClient::NONE, result_);

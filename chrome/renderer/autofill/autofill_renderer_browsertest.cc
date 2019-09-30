@@ -23,14 +23,14 @@
 #include "mojo/public/cpp/bindings/binding_set.h"
 #include "services/service_manager/public/cpp/interface_provider.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/WebKit/public/platform/WebString.h"
-#include "third_party/WebKit/public/platform/WebURLRequest.h"
-#include "third_party/WebKit/public/platform/WebVector.h"
-#include "third_party/WebKit/public/web/WebDocument.h"
-#include "third_party/WebKit/public/web/WebFormElement.h"
-#include "third_party/WebKit/public/web/WebInputElement.h"
-#include "third_party/WebKit/public/web/WebLocalFrame.h"
-#include "third_party/WebKit/public/web/WebView.h"
+#include "third_party/blink/public/platform/web_string.h"
+#include "third_party/blink/public/platform/web_url_request.h"
+#include "third_party/blink/public/platform/web_vector.h"
+#include "third_party/blink/public/web/web_document.h"
+#include "third_party/blink/public/web/web_form_element.h"
+#include "third_party/blink/public/web/web_input_element.h"
+#include "third_party/blink/public/web/web_local_frame.h"
+#include "third_party/blink/public/web/web_view.h"
 
 using autofill::features::kAutofillEnforceMinRequiredFieldsForHeuristics;
 using autofill::features::kAutofillEnforceMinRequiredFieldsForQuery;
@@ -76,10 +76,10 @@ class FakeContentAutofillDriver : public mojom::AutofillDriver {
       forms_.reset(new std::vector<FormData>(forms));
   }
 
-  void WillSubmitForm(const FormData& form,
-                      base::TimeTicks timestamp) override {}
-
-  void FormSubmitted(const FormData& form) override {}
+  void FormSubmitted(const FormData& form,
+                     bool known_success,
+                     SubmissionSource source,
+                     base::TimeTicks timestamp) override {}
 
   void TextFieldDidChange(const FormData& form,
                           const FormFieldData& field,
@@ -91,6 +91,10 @@ class FakeContentAutofillDriver : public mojom::AutofillDriver {
   void TextFieldDidScroll(const FormData& form,
                           const FormFieldData& field,
                           const gfx::RectF& bounding_box) override {}
+
+  void SelectControlDidChange(const FormData& form,
+                              const FormFieldData& field,
+                              const gfx::RectF& bounding_box) override {}
 
   void QueryFormFieldAutofill(int32_t id,
                               const FormData& form,
@@ -114,6 +118,8 @@ class FakeContentAutofillDriver : public mojom::AutofillDriver {
 
   void SetDataList(const std::vector<base::string16>& values,
                    const std::vector<base::string16>& labels) override {}
+
+  void SelectFieldOptionsDidChange(const autofill::FormData& form) override {}
 
   // Records whether TextFieldDidChange() get called.
   bool called_field_change_;

@@ -9,10 +9,6 @@
 
 #include "chromecast/public/media/media_pipeline_backend.h"
 
-namespace base {
-class TimeDelta;
-}  // namespace base
-
 namespace chromecast {
 namespace media {
 
@@ -25,9 +21,6 @@ class MixerOutputStream {
   static std::unique_ptr<MixerOutputStream> Create();
 
   virtual ~MixerOutputStream() {}
-
-  // Returns true if the sample rate is fixed.
-  virtual bool IsFixedSampleRate() = 0;
 
   // Start the stream. Caller must call GetSampleRate() to get the actual sample
   // rate selected for the stream. It may be different from
@@ -42,8 +35,9 @@ class MixerOutputStream {
   virtual MediaPipelineBackend::AudioDecoder::RenderingDelay
   GetRenderingDelay() = 0;
 
-  // Return how much time is left to call Write() to prevent buffer underrun.
-  virtual bool GetTimeUntilUnderrun(base::TimeDelta* result) = 0;
+  // Returns the optimal number of frames to pass to Write(). For ALSA, this is
+  // the period size.
+  virtual int OptimalWriteFramesCount() = 0;
 
   // |data_size| is size of |data|. Should be divided by number
   // of channels to get number of frames.

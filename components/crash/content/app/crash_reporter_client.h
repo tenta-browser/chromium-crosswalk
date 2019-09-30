@@ -5,8 +5,6 @@
 #ifndef COMPONENTS_CRASH_CONTENT_APP_CRASH_REPORTER_CLIENT_H_
 #define COMPONENTS_CRASH_CONTENT_APP_CRASH_REPORTER_CLIENT_H_
 
-#include <stddef.h>
-
 #include <string>
 
 #include "base/strings/string16.h"
@@ -96,8 +94,13 @@ class CrashReporterClient {
 #if defined(OS_POSIX) && !defined(OS_MACOSX) && !defined(OS_IOS)
   // Returns a textual description of the product type and version to include
   // in the crash report. Neither out parameter should be set to NULL.
+  // TODO(jperaza): Remove the 2-parameter overload of this method once all
+  // Linux-ish breakpad clients have transitioned to crashpad.
   virtual void GetProductNameAndVersion(const char** product_name,
                                         const char** version);
+  virtual void GetProductNameAndVersion(const char** product_name,
+                                        const char** version,
+                                        const char** channel);
 
   virtual base::FilePath GetReporterLogFilename();
 
@@ -129,10 +132,6 @@ class CrashReporterClient {
   virtual bool GetCrashMetricsLocation(base::FilePath* metrics_dir);
 #endif
 
-  // Register all of the potential crash keys that can be sent to the crash
-  // reporting server. Returns the size of the union of all keys.
-  virtual size_t RegisterCrashKeys();
-
   virtual bool UseCrashKeysWhiteList();
 
   // Returns a NULL-terminated array of crash keys to whitelist.
@@ -149,11 +148,9 @@ class CrashReporterClient {
   // returns true and GetCollectStatsConsent returns true.
   virtual bool GetCollectStatsInSample();
 
-#if defined(OS_WIN) || defined(OS_MACOSX)
   // Returns true if crash reporting is enforced via management policies. In
   // that case, |breakpad_enabled| is set to the value enforced by policies.
   virtual bool ReportingIsEnforcedByPolicy(bool* breakpad_enabled);
-#endif
 
 #if defined(OS_ANDROID)
   // Returns the descriptor key of the android minidump global descriptor.
@@ -168,7 +165,6 @@ class CrashReporterClient {
   virtual bool ShouldEnableBreakpadMicrodumps();
 #endif
 
-#if defined(OS_MACOSX) || defined(OS_WIN)
   // This method should return true to configure a crash reporter capable of
   // monitoring itself for its own crashes to do so, even if self-monitoring
   // would be expensive. "Expensive" self-monitoring dedicates an additional
@@ -182,7 +178,6 @@ class CrashReporterClient {
   //
   // The default implementation returns false.
   virtual bool ShouldMonitorCrashHandlerExpensively();
-#endif
 
   // Returns true if breakpad should run in the given process type.
   virtual bool EnableBreakpadForProcess(const std::string& process_type);

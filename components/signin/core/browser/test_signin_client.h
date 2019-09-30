@@ -6,12 +6,16 @@
 #define COMPONENTS_SIGNIN_CORE_BROWSER_TEST_SIGNIN_CLIENT_H_
 
 #include <memory>
+#include <string>
+#include <vector>
 
+#include "base/callback_forward.h"
 #include "base/compiler_specific.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "components/signin/core/browser/signin_client.h"
+#include "net/cookies/cookie_change_dispatcher.h"
 #include "net/url_request/url_request_test_util.h"
 
 class PrefService;
@@ -68,15 +72,20 @@ class TestSigninClient : public SigninClient {
 
   // Registers |callback| and returns the subscription.
   // Note that |callback| will never be called.
-  std::unique_ptr<SigninClient::CookieChangedSubscription>
-  AddCookieChangedCallback(
-      const GURL& url,
-      const std::string& name,
-      const net::CookieStore::CookieChangedCallback& callback) override;
+  std::unique_ptr<SigninClient::CookieChangeSubscription>
+  AddCookieChangeCallback(const GURL& url,
+                          const std::string& name,
+                          net::CookieChangeCallback callback) override;
 
   void set_are_signin_cookies_allowed(bool value) {
     are_signin_cookies_allowed_ = value;
   }
+
+  // When |value| is true, network calls posted through DelayNetworkCall() are
+  // delayed indefinitely.
+  // When |value| is false, all pending calls are unblocked, and new calls are
+  // executed immediately.
+  void SetNetworkCallsDelayed(bool value);
 
   // SigninClient overrides:
   bool IsFirstRun() const override;
@@ -102,6 +111,8 @@ class TestSigninClient : public SigninClient {
   scoped_refptr<TokenWebData> database_;
   PrefService* pref_service_;
   bool are_signin_cookies_allowed_;
+  bool network_calls_delayed_;
+  std::vector<base::OnceClosure> delayed_network_calls_;
 
   // Pointer to be filled by PostSignedIn.
   std::string signed_in_password_;

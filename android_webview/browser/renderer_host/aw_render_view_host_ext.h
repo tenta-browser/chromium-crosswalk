@@ -42,7 +42,7 @@ class AwRenderViewHostExt : public content::WebContentsObserver {
   ~AwRenderViewHostExt() override;
 
   // |result| will be invoked with the outcome of the request.
-  typedef base::Callback<void(bool)> DocumentHasImagesResult;
+  using DocumentHasImagesResult = base::OnceCallback<void(bool)>;
   void DocumentHasImages(DocumentHasImagesResult result);
 
   // Clear all WebCore memory cache (not only for this view).
@@ -81,7 +81,6 @@ class AwRenderViewHostExt : public content::WebContentsObserver {
 
  private:
   // content::WebContentsObserver implementation.
-  void RenderViewCreated(content::RenderViewHost* view_host) override;
   void RenderViewHostChanged(content::RenderViewHost* old_host,
                              content::RenderViewHost* new_host) override;
   void RenderFrameCreated(content::RenderFrameHost* frame_host) override;

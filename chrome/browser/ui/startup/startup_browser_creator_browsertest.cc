@@ -5,12 +5,15 @@
 #include <stddef.h>
 
 #include <algorithm>
+#include <memory>
 #include <string>
 
 #include "base/command_line.h"
 #include "base/files/file_path.h"
+#include "base/json/json_writer.h"
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
+#include "base/path_service.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/histogram_tester.h"
 #include "base/threading/thread_restrictions.h"
@@ -29,6 +32,7 @@
 #include "chrome/browser/profiles/profile_attributes_storage.h"
 #include "chrome/browser/profiles/profile_impl.h"
 #include "chrome/browser/profiles/profile_manager.h"
+#include "chrome/browser/search/search.h"
 #include "chrome/browser/sessions/session_restore.h"
 #include "chrome/browser/signin/signin_promo.h"
 #include "chrome/browser/ui/browser.h"
@@ -41,9 +45,10 @@
 #include "chrome/browser/ui/startup/startup_browser_creator_impl.h"
 #include "chrome/browser/ui/startup/startup_tab_provider.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
+#include "chrome/common/buildflags.h"
+#include "chrome/common/chrome_constants.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/extensions/extension_constants.h"
-#include "chrome/common/features.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/test/base/in_process_browser_test.h"
@@ -209,7 +214,7 @@ class StartupBrowserCreatorTest : public ExtensionBrowserTest {
   DISALLOW_COPY_AND_ASSIGN(StartupBrowserCreatorTest);
 };
 
-class OpenURLsPopupObserver : public chrome::BrowserListObserver {
+class OpenURLsPopupObserver : public BrowserListObserver {
  public:
   OpenURLsPopupObserver() : added_browser_(NULL) { }
 
@@ -460,6 +465,50 @@ IN_PROC_BROWSER_TEST_F(StartupBrowserCreatorTest, OpenAppShortcutTabPref) {
 #endif  // !defined(OS_MACOSX)
 
 #endif  // !defined(OS_CHROMEOS)
+
+#if defined(OS_WIN)
+IN_PROC_BROWSER_TEST_F(StartupBrowserCreatorTest, ValidNotificationLaunchId) {
+  // This test execises NotificationPlatformBridgeWin, which is not enabled in
+  // older versions of Windows.
+  if (base::win::GetVersion() < base::win::VERSION_WIN8)
+    return;
+
+  // Simulate a launch from the notification_helper process which appends the
+  // kNotificationLaunchId switch to the command line.
+  base::CommandLine command_line(base::CommandLine::NO_PROGRAM);
+  command_line.AppendSwitchNative(
+      switches::kNotificationLaunchId,
+      L"1|1|0|Default|0|https://example.com/|notification_id");
+  chrome::startup::IsFirstRun first_run =
+      first_run::IsChromeFirstRun() ? chrome::startup::IS_FIRST_RUN
+                                    : chrome::startup::IS_NOT_FIRST_RUN;
+  StartupBrowserCreatorImpl launch(base::FilePath(), command_line, first_run);
+  ASSERT_TRUE(launch.Launch(browser()->profile(), std::vector<GURL>(), false));
+
+  // The launch delegates to the notification system and doesn't open any new
+  // browser window.
+  ASSERT_EQ(1u, chrome::GetBrowserCount(browser()->profile()));
+}
+
+IN_PROC_BROWSER_TEST_F(StartupBrowserCreatorTest, InvalidNotificationLaunchId) {
+  // This test execises NotificationPlatformBridgeWin, which is not enabled in
+  // older versions of Windows.
+  if (base::win::GetVersion() < base::win::VERSION_WIN8)
+    return;
+
+  // Simulate a launch with invalid launch id, which will fail.
+  base::CommandLine command_line(base::CommandLine::NO_PROGRAM);
+  command_line.AppendSwitchNative(switches::kNotificationLaunchId, L"");
+  chrome::startup::IsFirstRun first_run =
+      first_run::IsChromeFirstRun() ? chrome::startup::IS_FIRST_RUN
+                                    : chrome::startup::IS_NOT_FIRST_RUN;
+  StartupBrowserCreatorImpl launch(base::FilePath(), command_line, first_run);
+  ASSERT_FALSE(launch.Launch(browser()->profile(), std::vector<GURL>(), false));
+
+  // No new browser window is open.
+  ASSERT_EQ(1u, chrome::GetBrowserCount(browser()->profile()));
+}
+#endif  // defined(OS_WIN)
 
 IN_PROC_BROWSER_TEST_F(StartupBrowserCreatorTest,
                        ReadingWasRestartedAfterRestart) {
@@ -756,8 +805,7 @@ IN_PROC_BROWSER_TEST_F(StartupBrowserCreatorTest,
 
   // The new browser should have only the NTP.
   ASSERT_EQ(1, tab_strip->count());
-  EXPECT_EQ(GURL(chrome::kChromeUINewTabURL),
-            tab_strip->GetWebContentsAt(0)->GetURL());
+  EXPECT_TRUE(search::IsInstantNTP(tab_strip->GetWebContentsAt(0)));
 
   // profile_urls opened the urls.
   ASSERT_EQ(1u, chrome::GetBrowserCount(profile_urls));
@@ -779,7 +827,9 @@ IN_PROC_BROWSER_TEST_F(StartupBrowserCreatorTest,
   ASSERT_EQ(0u, chrome::GetBrowserCount(profile_home2));
 }
 
-IN_PROC_BROWSER_TEST_F(StartupBrowserCreatorTest, ProfilesLaunchedAfterCrash) {
+// Flaky. See https://crbug.com/819976.
+IN_PROC_BROWSER_TEST_F(StartupBrowserCreatorTest,
+                       DISABLED_ProfilesLaunchedAfterCrash) {
   // After an unclean exit, all profiles will be launched. However, they won't
   // open any pages automatically.
 
@@ -870,8 +920,7 @@ IN_PROC_BROWSER_TEST_F(StartupBrowserCreatorTest, ProfilesLaunchedAfterCrash) {
 
   // The new browser should have only the NTP.
   ASSERT_EQ(1, tab_strip->count());
-  EXPECT_EQ(GURL(chrome::kChromeUINewTabURL),
-            tab_strip->GetWebContentsAt(0)->GetURL());
+  EXPECT_TRUE(search::IsInstantNTP(tab_strip->GetWebContentsAt(0)));
 
   EnsureRestoreUIWasShown(tab_strip->GetWebContentsAt(0));
 
@@ -881,8 +930,7 @@ IN_PROC_BROWSER_TEST_F(StartupBrowserCreatorTest, ProfilesLaunchedAfterCrash) {
   ASSERT_TRUE(new_browser);
   tab_strip = new_browser->tab_strip_model();
   ASSERT_EQ(1, tab_strip->count());
-  EXPECT_EQ(GURL(chrome::kChromeUINewTabURL),
-            tab_strip->GetWebContentsAt(0)->GetURL());
+  EXPECT_TRUE(search::IsInstantNTP(tab_strip->GetWebContentsAt(0)));
   EnsureRestoreUIWasShown(tab_strip->GetWebContentsAt(0));
 
   // The profile which normally opens URLs displays the new tab page.
@@ -891,8 +939,7 @@ IN_PROC_BROWSER_TEST_F(StartupBrowserCreatorTest, ProfilesLaunchedAfterCrash) {
   ASSERT_TRUE(new_browser);
   tab_strip = new_browser->tab_strip_model();
   ASSERT_EQ(1, tab_strip->count());
-  EXPECT_EQ(GURL(chrome::kChromeUINewTabURL),
-            tab_strip->GetWebContentsAt(0)->GetURL());
+  EXPECT_TRUE(search::IsInstantNTP(tab_strip->GetWebContentsAt(0)));
   EnsureRestoreUIWasShown(tab_strip->GetWebContentsAt(0));
 
 #if !defined(OS_MACOSX) && !defined(GOOGLE_CHROME_BUILD)
@@ -997,7 +1044,7 @@ void StartupBrowserCreatorFirstRunTest::SetUpInProcessBrowserTestFixture() {
   policy_map_.Set(policy::key::kMetricsReportingEnabled,
                   policy::POLICY_LEVEL_MANDATORY, policy::POLICY_SCOPE_USER,
                   policy::POLICY_SOURCE_CLOUD,
-                  base::MakeUnique<base::Value>(false), nullptr);
+                  std::make_unique<base::Value>(false), nullptr);
   provider_.UpdateChromePolicy(policy_map_);
 #endif  // defined(OS_LINUX) && defined(GOOGLE_CHROME_BUILD)
 
@@ -1220,9 +1267,9 @@ IN_PROC_BROWSER_TEST_F(StartupBrowserCreatorFirstRunTest,
   // * RestoreOnStartupURLs = [ "/title1.html" ]
   policy_map_.Set(policy::key::kRestoreOnStartup,
                   policy::POLICY_LEVEL_MANDATORY, policy::POLICY_SCOPE_MACHINE,
-                  policy::POLICY_SOURCE_CLOUD, base::MakeUnique<base::Value>(4),
+                  policy::POLICY_SOURCE_CLOUD, std::make_unique<base::Value>(4),
                   nullptr);
-  auto url_list = base::MakeUnique<base::Value>(base::Value::Type::LIST);
+  auto url_list = std::make_unique<base::Value>(base::Value::Type::LIST);
   url_list->GetList().push_back(
       base::Value(embedded_test_server()->GetURL("/title1.html").spec()));
   policy_map_.Set(policy::key::kRestoreOnStartupURLs,
@@ -1296,7 +1343,7 @@ class StartupBrowserCreatorWelcomeBackTest : public InProcessBrowserTest {
     profile_ = browser()->profile();
 
     // Keep the browser process running when all browsers are closed.
-    scoped_keep_alive_ = base::MakeUnique<ScopedKeepAlive>(
+    scoped_keep_alive_ = std::make_unique<ScopedKeepAlive>(
         KeepAliveOrigin::BROWSER, KeepAliveRestartOption::DISABLED);
 
     // Close the browser opened by InProcessBrowserTest.
@@ -1312,8 +1359,8 @@ class StartupBrowserCreatorWelcomeBackTest : public InProcessBrowserTest {
       policy::PolicyMap values;
       values.Set(policy::key::kRestoreOnStartup, variant.value(),
                  policy::POLICY_SCOPE_MACHINE, policy::POLICY_SOURCE_CLOUD,
-                 base::MakeUnique<base::Value>(4), nullptr);
-      auto url_list = base::MakeUnique<base::Value>(base::Value::Type::LIST);
+                 std::make_unique<base::Value>(4), nullptr);
+      auto url_list = std::make_unique<base::Value>(base::Value::Type::LIST);
       url_list->GetList().push_back(base::Value("http://managed.site.com/"));
       values.Set(policy::key::kRestoreOnStartupURLs, variant.value(),
                  policy::POLICY_SCOPE_MACHINE, policy::POLICY_SOURCE_CLOUD,
@@ -1394,4 +1441,37 @@ IN_PROC_BROWSER_TEST_F(StartupBrowserCreatorWelcomeBackTest,
       StartBrowser(StartupBrowserCreator::WelcomeBackPage::kWelcomeStandard,
                    PolicyVariant(policy::POLICY_LEVEL_RECOMMENDED)));
   ExpectUrlInBrowserAtPosition(GURL("http://managed.site.com/"), 0);
+}
+
+// Validates that prefs::kWasRestarted is automatically reset after next browser
+// start.
+class StartupBrowserCreatorWasRestartedFlag : public InProcessBrowserTest {
+ public:
+  StartupBrowserCreatorWasRestartedFlag() = default;
+  ~StartupBrowserCreatorWasRestartedFlag() override = default;
+
+  void SetUpCommandLine(base::CommandLine* command_line) override {
+    InProcessBrowserTest::SetUpCommandLine(command_line);
+    ASSERT_TRUE(temp_dir_.CreateUniqueTempDir());
+    command_line->AppendSwitchPath(switches::kUserDataDir, temp_dir_.GetPath());
+    std::string json;
+    base::DictionaryValue local_state;
+    local_state.SetBoolean(prefs::kWasRestarted, true);
+    base::JSONWriter::Write(local_state, &json);
+    ASSERT_EQ(json.length(),
+              static_cast<size_t>(base::WriteFile(
+                  temp_dir_.GetPath().Append(chrome::kLocalStateFilename),
+                  json.c_str(), json.length())));
+  }
+
+ private:
+  base::ScopedTempDir temp_dir_;
+
+  DISALLOW_COPY_AND_ASSIGN(StartupBrowserCreatorWasRestartedFlag);
+};
+
+IN_PROC_BROWSER_TEST_F(StartupBrowserCreatorWasRestartedFlag, Test) {
+  EXPECT_TRUE(StartupBrowserCreator::WasRestarted());
+  EXPECT_FALSE(
+      g_browser_process->local_state()->GetBoolean(prefs::kWasRestarted));
 }

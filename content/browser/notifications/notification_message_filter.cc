@@ -24,7 +24,7 @@
 #include "content/public/common/content_client.h"
 #include "content/public/common/content_features.h"
 #include "content/public/common/content_switches.h"
-#include "third_party/WebKit/public/platform/modules/notifications/WebNotificationConstants.h"
+#include "third_party/blink/public/platform/modules/notifications/web_notification_constants.h"
 
 namespace content {
 
@@ -89,7 +89,6 @@ NotificationMessageFilter::NotificationMessageFilter(
     BrowserContext* browser_context)
     : BrowserMessageFilter(PlatformNotificationMsgStart),
       process_id_(process_id),
-      non_persistent__notification_shown_(false),
       notification_context_(notification_context),
       resource_context_(resource_context),
       service_worker_context_(service_worker_context),
@@ -99,76 +98,22 @@ NotificationMessageFilter::NotificationMessageFilter(
 NotificationMessageFilter::~NotificationMessageFilter() = default;
 
 void NotificationMessageFilter::OnDestruct() const {
-  if (non_persistent__notification_shown_) {
-    NotificationEventDispatcherImpl* event_dispatcher =
-        NotificationEventDispatcherImpl::GetInstance();
-    DCHECK(event_dispatcher);
-    event_dispatcher->RendererGone(process_id_);
-  }
   BrowserThread::DeleteOnIOThread::Destruct(this);
 }
 
 bool NotificationMessageFilter::OnMessageReceived(const IPC::Message& message) {
   bool handled = true;
   IPC_BEGIN_MESSAGE_MAP(NotificationMessageFilter, message)
-    IPC_MESSAGE_HANDLER(PlatformNotificationHostMsg_Show,
-                        OnShowPlatformNotification)
     IPC_MESSAGE_HANDLER(PlatformNotificationHostMsg_ShowPersistent,
                         OnShowPersistentNotification)
     IPC_MESSAGE_HANDLER(PlatformNotificationHostMsg_GetNotifications,
                         OnGetNotifications)
-    IPC_MESSAGE_HANDLER(PlatformNotificationHostMsg_Close,
-                        OnClosePlatformNotification)
     IPC_MESSAGE_HANDLER(PlatformNotificationHostMsg_ClosePersistent,
                         OnClosePersistentNotification)
     IPC_MESSAGE_UNHANDLED(handled = false)
   IPC_END_MESSAGE_MAP()
 
   return handled;
-}
-
-void NotificationMessageFilter::OverrideThreadForMessage(
-    const IPC::Message& message,
-    BrowserThread::ID* thread) {
-  if (message.type() == PlatformNotificationHostMsg_Show::ID ||
-      message.type() == PlatformNotificationHostMsg_Close::ID)
-    *thread = BrowserThread::UI;
-}
-
-void NotificationMessageFilter::OnShowPlatformNotification(
-    int non_persistent_notification_id,
-    const GURL& origin,
-    const PlatformNotificationData& notification_data,
-    const NotificationResources& notification_resources) {
-  DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  if (!RenderProcessHost::FromID(process_id_))
-    return;
-
-  if (!ValidateNotificationResources(notification_resources)) {
-    bad_message::ReceivedBadMessage(this, bad_message::NMF_INVALID_ARGUMENT);
-    return;
-  }
-
-  PlatformNotificationService* service =
-      GetContentClient()->browser()->GetPlatformNotificationService();
-  DCHECK(service);
-
-  if (!VerifyNotificationPermissionGranted(service, origin))
-    return;
-
-  std::string notification_id =
-      GetNotificationIdGenerator()->GenerateForNonPersistentNotification(
-          origin, notification_data.tag, non_persistent_notification_id,
-          process_id_);
-  NotificationEventDispatcherImpl* event_dispatcher =
-      NotificationEventDispatcherImpl::GetInstance();
-  non_persistent__notification_shown_ = true;
-  event_dispatcher->RegisterNonPersistentNotification(
-      notification_id, process_id_, non_persistent_notification_id);
-
-  service->DisplayNotification(browser_context_, notification_id, origin,
-                               SanitizeNotificationData(notification_data),
-                               notification_resources);
 }
 
 void NotificationMessageFilter::OnShowPersistentNotification(
@@ -226,9 +171,10 @@ void NotificationMessageFilter::DidWritePersistentNotificationData(
   // Get the service worker scope.
   service_worker_context_->FindReadyRegistrationForId(
       service_worker_registration_id, origin,
-      base::Bind(&NotificationMessageFilter::DidFindServiceWorkerRegistration,
-                 weak_factory_io_.GetWeakPtr(), request_id, origin,
-                 notification_data, notification_resources, notification_id));
+      base::BindOnce(
+          &NotificationMessageFilter::DidFindServiceWorkerRegistration,
+          weak_factory_io_.GetWeakPtr(), request_id, origin, notification_data,
+          notification_resources, notification_id));
 }
 
 void NotificationMessageFilter::DidFindServiceWorkerRegistration(
@@ -304,28 +250,6 @@ void NotificationMessageFilter::DidGetNotifications(
 
   Send(new PlatformNotificationMsg_DidGetNotifications(
       request_id, persistent_notifications));
-}
-
-void NotificationMessageFilter::OnClosePlatformNotification(
-    const GURL& origin,
-    const std::string& tag,
-    int non_persistent_notification_id) {
-  DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  if (!RenderProcessHost::FromID(process_id_))
-    return;
-
-  std::string notification_id =
-      GetNotificationIdGenerator()->GenerateForNonPersistentNotification(
-          origin, tag, non_persistent_notification_id, process_id_);
-
-  PlatformNotificationService* service =
-      GetContentClient()->browser()->GetPlatformNotificationService();
-  DCHECK(service);
-
-  service->CloseNotification(browser_context_, notification_id);
-
-  NotificationEventDispatcherImpl::GetInstance()
-      ->DispatchNonPersistentCloseEvent(notification_id);
 }
 
 void NotificationMessageFilter::OnClosePersistentNotification(

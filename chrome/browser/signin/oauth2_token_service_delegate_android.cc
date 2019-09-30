@@ -212,11 +212,11 @@ bool OAuth2TokenServiceDelegateAndroid::RefreshTokenIsAvailable(
   return refresh_token_is_available == JNI_TRUE;
 }
 
-bool OAuth2TokenServiceDelegateAndroid::RefreshTokenHasError(
+GoogleServiceAuthError OAuth2TokenServiceDelegateAndroid::GetAuthError(
     const std::string& account_id) const {
   auto it = errors_.find(account_id);
-  // TODO(rogerta): should we distinguish between transient and persistent?
-  return it == errors_.end() ? false : IsError(it->second.error);
+  return (it == errors_.end()) ? GoogleServiceAuthError::AuthErrorNone()
+                               : it->second.error;
 }
 
 void OAuth2TokenServiceDelegateAndroid::UpdateAuthError(
@@ -225,12 +225,14 @@ void OAuth2TokenServiceDelegateAndroid::UpdateAuthError(
   DVLOG(1) << "OAuth2TokenServiceDelegateAndroid::UpdateAuthError"
            << " account=" << account_id
            << " error=" << error.ToString();
-  if (error.state() == GoogleServiceAuthError::NONE) {
+
+  if (error.IsTransientError())
+    return;
+
+  if (error.state() == GoogleServiceAuthError::NONE)
     errors_.erase(account_id);
-  } else {
-    // TODO(rogerta): should we distinguish between transient and persistent?
+  else
     errors_[account_id] = ErrorInfo(error);
-  }
 }
 
 std::vector<std::string> OAuth2TokenServiceDelegateAndroid::GetAccounts() {
@@ -526,7 +528,8 @@ std::string OAuth2TokenServiceDelegateAndroid::MapAccountIdToAccountName(
     const std::string& account_id) const {
   std::string account_name =
       account_tracker_service_->GetAccountInfo(account_id).email;
-  DCHECK(!account_name.empty() || account_id.empty());
+  DCHECK(!account_name.empty() || account_id.empty())
+      << "Can't find account name, account_id=" << account_id;
   return account_name;
 }
 
@@ -534,7 +537,8 @@ std::string OAuth2TokenServiceDelegateAndroid::MapAccountNameToAccountId(
     const std::string& account_name) const {
   std::string account_id =
       account_tracker_service_->FindAccountInfoByEmail(account_name).account_id;
-  DCHECK(!account_id.empty() || account_name.empty());
+  DCHECK(!account_id.empty() || account_name.empty())
+      << "Can't find account id, account_name=" << account_name;
   return account_id;
 }
 
@@ -551,11 +555,14 @@ void JNI_OAuth2TokenService_OAuth2TokenFetched(
     token = ConvertJavaStringToUTF8(env, authToken);
   std::unique_ptr<FetchOAuth2TokenCallback> heap_callback(
       reinterpret_cast<FetchOAuth2TokenCallback*>(nativeCallback));
-  GoogleServiceAuthError
-      err(authToken
-              ? GoogleServiceAuthError::NONE
-              : isTransientError
-                    ? GoogleServiceAuthError::CONNECTION_FAILED
-                    : GoogleServiceAuthError::INVALID_GAIA_CREDENTIALS);
+  GoogleServiceAuthError err = GoogleServiceAuthError::AuthErrorNone();
+  if (!authToken) {
+    err =
+        isTransientError
+            ? GoogleServiceAuthError(GoogleServiceAuthError::CONNECTION_FAILED)
+            : GoogleServiceAuthError::FromInvalidGaiaCredentialsReason(
+                  GoogleServiceAuthError::InvalidGaiaCredentialsReason::
+                      CREDENTIALS_REJECTED_BY_SERVER);
+  }
   heap_callback->Run(err, token, base::Time());
 }

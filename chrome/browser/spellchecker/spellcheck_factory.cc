@@ -4,7 +4,6 @@
 
 #include "chrome/browser/spellchecker/spellcheck_factory.h"
 
-#include "base/memory/ptr_util.h"
 #include "chrome/browser/profiles/incognito_helpers.h"
 #include "chrome/browser/spellchecker/spellcheck_service.h"
 #include "chrome/grit/locale_settings.h"
@@ -61,7 +60,7 @@ KeyedService* SpellcheckServiceFactory::BuildServiceInstanceFor(
 
   // Instantiates Metrics object for spellchecking for use.
   spellcheck->StartRecordingMetrics(
-      prefs->GetBoolean(spellcheck::prefs::kEnableSpellcheck));
+      prefs->GetBoolean(spellcheck::prefs::kSpellCheckEnable));
 
   return spellcheck;
 }
@@ -69,7 +68,9 @@ KeyedService* SpellcheckServiceFactory::BuildServiceInstanceFor(
 void SpellcheckServiceFactory::RegisterProfilePrefs(
     user_prefs::PrefRegistrySyncable* user_prefs) {
   user_prefs->RegisterListPref(spellcheck::prefs::kSpellCheckDictionaries,
-                               base::MakeUnique<base::ListValue>());
+                               std::make_unique<base::ListValue>());
+  user_prefs->RegisterListPref(spellcheck::prefs::kSpellCheckForcedDictionaries,
+                               std::make_unique<base::ListValue>());
   // Continue registering kSpellCheckDictionary for preference migration.
   // TODO(estade): remove: crbug.com/751275
   user_prefs->RegisterStringPref(
@@ -82,8 +83,8 @@ void SpellcheckServiceFactory::RegisterProfilePrefs(
 #else
   uint32_t flags = user_prefs::PrefRegistrySyncable::SYNCABLE_PREF;
 #endif
-  user_prefs->RegisterBooleanPref(
-      spellcheck::prefs::kEnableSpellcheck, true, flags);
+  user_prefs->RegisterBooleanPref(spellcheck::prefs::kSpellCheckEnable, true,
+                                  flags);
 }
 
 content::BrowserContext* SpellcheckServiceFactory::GetBrowserContextToUse(

@@ -13,7 +13,6 @@
 
 #include "base/command_line.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "base/test/trace_event_analyzer.h"
@@ -68,13 +67,9 @@ constexpr size_t kTrimEvents = 24;  // 1 sec at 24fps, or 0.4 sec at 60 fps.
 constexpr size_t kMinDataPoints = 100;  // 1 sec of audio, or ~5 sec at 24fps.
 
 enum TestFlags {
-  // TODO(miu): Remove kUseGpu (since the GPU is required), and maybe
-  // kDisableVsync. http://crbug.com/567848
   kUseGpu = 1 << 0,           // Only execute test if --enable-gpu was given
                               // on the command line.  This is required for
                               // tests that run on GPU.
-  kDisableVsync = 1 << 1,     // Do not limit framerate to vertical refresh.
-                              // when on GPU, nor to 60hz when not on GPU.
   kSmallWindow = 1 << 2,      // Window size: 1 = 800x600, 0 = 2000x1000
   k24fps = 1 << 3,            // Use 24 fps video.
   k30fps = 1 << 4,            // Use 30 fps video.
@@ -104,26 +99,25 @@ media::cast::FrameReceiverConfig WithAesKeyAndIvSet(
 
 class SkewedCastEnvironment : public media::cast::StandaloneCastEnvironment {
  public:
-  explicit SkewedCastEnvironment(const base::TimeDelta& delta) :
-      StandaloneCastEnvironment() {
-    auto skewed_clock =
-        base::MakeUnique<media::cast::test::SkewedTickClock>(&default_clock_);
+  explicit SkewedCastEnvironment(const base::TimeDelta& delta)
+      : StandaloneCastEnvironment(),
+        skewed_clock_(base::DefaultTickClock::GetInstance()) {
     // If testing with a receiver clock that is ahead or behind the sender
     // clock, fake a clock that is offset and also ticks at a rate of 50 parts
     // per million faster or slower than the local sender's clock. This is the
     // worst-case scenario for skew in-the-wild.
     if (!delta.is_zero()) {
       const double skew = delta < base::TimeDelta() ? 0.999950 : 1.000050;
-      skewed_clock->SetSkew(skew, delta);
+      skewed_clock_.SetSkew(skew, delta);
     }
-    clock_ = std::move(skewed_clock);
+    clock_ = &skewed_clock_;
   }
 
  protected:
   ~SkewedCastEnvironment() override {}
 
  private:
-  base::DefaultTickClock default_clock_;
+  media::cast::test::SkewedTickClock skewed_clock_;
 };
 
 // We log one of these for each call to OnAudioFrame/OnVideoFrame.
@@ -369,8 +363,6 @@ class CastV2PerformanceTest
     std::string suffix;
     if (HasFlag(kUseGpu))
       suffix += "_gpu";
-    if (HasFlag(kDisableVsync))
-      suffix += "_novsync";
     if (HasFlag(kSmallWindow))
       suffix += "_small";
     if (HasFlag(k24fps))
@@ -407,6 +399,8 @@ class CastV2PerformanceTest
 
   void SetUp() override {
     EnablePixelOutput();
+    if (!HasFlag(kUseGpu))
+      UseSoftwareCompositing();
     ExtensionApiTest::SetUp();
   }
 
@@ -426,12 +420,10 @@ class CastV2PerformanceTest
     if (!HasFlag(kUseGpu))
       command_line->AppendSwitch(switches::kDisableGpu);
 
-    if (HasFlag(kDisableVsync))
-      command_line->AppendSwitch(switches::kDisableGpuVsync);
-
     command_line->AppendSwitchASCII(
         extensions::switches::kWhitelistedExtensionID,
         kExtensionId);
+
     ExtensionApiTest::SetUpCommandLine(command_line);
   }
 
@@ -722,7 +714,6 @@ INSTANTIATE_TEST_CASE_P(
     testing::Values(kUseGpu | k24fps,
                     kUseGpu | k30fps,
                     kUseGpu | k60fps,
-                    kUseGpu | k24fps | kDisableVsync,
                     kUseGpu | k30fps | kProxyWifi,
                     kUseGpu | k30fps | kProxyBad,
                     kUseGpu | k30fps | kSlowClock,

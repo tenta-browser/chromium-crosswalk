@@ -52,6 +52,9 @@ public class ContextualSearchFieldTrial {
     private static final String SHORT_WORD_SUPPRESSION_ENABLED = "enable_short_word_suppression";
     private static final String NOT_LONG_WORD_SUPPRESSION_ENABLED =
             "enable_not_long_word_suppression";
+    private static final String SHORT_TEXT_RUN_SUPPRESSION_ENABLED =
+            "enable_short_text_run_suppression";
+    private static final String SMALL_TEXT_SUPPRESSION_ENABLED = "enable_small_text_suppression";
     @VisibleForTesting
     static final String NOT_AN_ENTITY_SUPPRESSION_ENABLED = "enable_not_an_entity_suppression";
     // The threshold for tap suppression based on duration.
@@ -96,11 +99,14 @@ public class ContextualSearchFieldTrial {
     private static Boolean sIsShortWordSuppressionEnabled;
     private static Boolean sIsNotLongWordSuppressionEnabled;
     private static Boolean sIsNotAnEntitySuppressionEnabled;
+    private static Boolean sIsShortTextRunSuppressionEnabled;
+    private static Boolean sIsSmallTextSuppressionEnabled;
     private static Integer sMinimumSelectionLength;
     private static Boolean sIsOnlineDetectionDisabled;
     private static Boolean sIsAmpAsSeparateTabDisabled;
     private static Boolean sContextualSearchMlTapSuppressionEnabled;
     private static Boolean sContextualSearchSecondTapMlOverrideEnabled;
+    private static Boolean sContextualSearchTapDisableOverrideEnabled;
     private static Boolean sIsSendHomeCountryDisabled;
     private static Boolean sIsPageContentNotificationDisabled;
     private static Boolean sIsUkmRankerLoggingDisabled;
@@ -150,18 +156,13 @@ public class ContextualSearchFieldTrial {
     }
 
     /**
-     * @return Whether the search term resolution is enabled.
+     * @return Whether the search term resolution is disabled.
      */
-    static boolean isSearchTermResolutionEnabled() {
+    static boolean isSearchTermResolutionDisabled() {
         if (sDisableSearchTermResolution == null) {
             sDisableSearchTermResolution = getBooleanParam(DISABLE_SEARCH_TERM_RESOLUTION);
         }
-
-        if (sDisableSearchTermResolution.booleanValue()) {
-            return false;
-        }
-
-        return true;
+        return sDisableSearchTermResolution.booleanValue();
     }
 
     /**
@@ -277,6 +278,26 @@ public class ContextualSearchFieldTrial {
             sIsNotAnEntitySuppressionEnabled = getBooleanParam(NOT_AN_ENTITY_SUPPRESSION_ENABLED);
         }
         return sIsNotAnEntitySuppressionEnabled.booleanValue();
+    }
+
+    /**
+     * @return Whether triggering is suppressed for a tap that has a short element run-length.
+     */
+    static boolean isShortTextRunSuppressionEnabled() {
+        if (sIsShortTextRunSuppressionEnabled == null) {
+            sIsShortTextRunSuppressionEnabled = getBooleanParam(SHORT_TEXT_RUN_SUPPRESSION_ENABLED);
+        }
+        return sIsShortTextRunSuppressionEnabled.booleanValue();
+    }
+
+    /**
+     * @return Whether triggering is suppressed for a tap on small-looking text.
+     */
+    static boolean isSmallTextSuppressionEnabled() {
+        if (sIsSmallTextSuppressionEnabled == null) {
+            sIsSmallTextSuppressionEnabled = getBooleanParam(SMALL_TEXT_SUPPRESSION_ENABLED);
+        }
+        return sIsSmallTextSuppressionEnabled.booleanValue();
     }
 
     /**
@@ -418,6 +439,17 @@ public class ContextualSearchFieldTrial {
                     ChromeFeatureList.isEnabled(ChromeFeatureList.CONTEXTUAL_SEARCH_SECOND_TAP);
         }
         return sContextualSearchSecondTapMlOverrideEnabled;
+    }
+
+    /**
+     * @return Whether or not to override tap-disable for users that have never opened the panel.
+     */
+    static boolean isContextualSearchTapDisableOverrideEnabled() {
+        if (sContextualSearchTapDisableOverrideEnabled == null) {
+            sContextualSearchTapDisableOverrideEnabled = ChromeFeatureList.isEnabled(
+                    ChromeFeatureList.CONTEXTUAL_SEARCH_TAP_DISABLE_OVERRIDE);
+        }
+        return sContextualSearchTapDisableOverrideEnabled;
     }
 
     // --------------------------------------------------------------------------------------------

@@ -20,20 +20,32 @@
   <message name="IDS_WALLPAPER_MANAGER_CUSTOM_CATEGORY_LABEL" desc="Wallpaper category label.">
     Custom
   </message>
+  <message name="IDS_WALLPAPER_MANAGER_MY_PHOTOS_CATEGORY_LABEL" desc="Wallpaper category label, the equivalent of the Custom category on the new wallpaper picker.">
+    My Photos
+  </message>
   <message name="IDS_WALLPAPER_MANAGER_SELECT_CUSTOM_LABEL" desc="Selects custom wallpaper label.">
     Custom Image:
   </message>
-  <message name="IDS_WALLPAPER_MANAGER_POSITION_LABEL" desc="Custom wallpaper position label">
+  <message name="IDS_WALLPAPER_MANAGER_POSITION_LABEL" desc="Custom wallpaper position label.">
     Position:
   </message>
   <message name="IDS_WALLPAPER_MANAGER_COLOR_LABEL" desc="Custom wallpaper color label.">
     Color:
   </message>
-  <message name="IDS_WALLPAPER_MANAGER_SHOW_CUSTOM_WALLPAPER_ON_START_WARNING" desc="The string displayed to user when set custom wallpaper">
+  <message name="IDS_WALLPAPER_MANAGER_REFRESH_LABEL" desc="The label of the refresh option in the top bar. Upon click, the wallpaper picker will fetch the online wallpapers again.">
+    Refresh
+  </message>
+  <message name="IDS_WALLPAPER_MANAGER_EXPLORE_LABEL" desc="The label of the explore option in the top bar. Upon click, a link with more information on the selected wallpaper will open.">
+    Explore
+  </message>
+  <message name="IDS_WALLPAPER_MANAGER_SHOW_CUSTOM_WALLPAPER_ON_START_WARNING" desc="The string displayed to user when set custom wallpaper.">
     Wallpapers appear on the Sign-in Screen.
   </message>
   <message name="IDS_WALLPAPER_MANAGER_SURPRISE_ME_LABEL" desc="Wallpaper surprise me checkbox label. If the checkbox is checked, Chrome will automatically change wallpaper to either a random one available in wallpaper picker or a google pushed wallpaper (surprise factor).">
     Surprise Me
+  </message>
+  <message name="IDS_WALLPAPER_MANAGER_DAILY_REFRESH_LABEL" desc="Wallpaper daily refresh checkbox label. It is the equivalent of surprise me on the new wallpaper picker.">
+    Daily Refresh
   </message>
   <message name="IDS_WALLPAPER_MANAGER_ACCESS_FAIL" desc="The string displayed to user when access wallpaper server failed.">
     Chrome cannot access wallpapers. Please connect to a network.
@@ -49,6 +61,9 @@
   </message>
   <message name="IDS_WALLPAPER_MANAGER_INVALID_WALLPAPER" desc="The string displayed to user when user selected wallpaper can not be set as a wallpaper.">
     Chrome cannot set wallpaper.
+  </message>
+  <message name="IDS_WALLPAPER_MANAGER_NO_IMAGES_AVAILABLE" desc="The string displayed to user when there're no local files that can be used as wallpaper.">
+    No images available
   </message>
   <message name="IDS_WALLPAPER_MANAGER_LAYOUT_CENTER" desc="Label for option to center a customized wallpaper.">
     Center
@@ -104,6 +119,10 @@
     Cancel
   </message>
 
+  <!-- MultiDevice setup dialog. -->
+  <message name="IDS_MULTIDEVICE_SETUP_DIALOG_TITLE" desc="Title for the MultiDevice setup dialog, which allows users to enable features which involve communication between multiple devices (e.g., a Chromebook and a phone).">
+    MultiDevice Setup
+  </message>
 
   <!-- File Manager -->
   <message name="IDS_FILE_SYSTEM_PROVIDER_UNRESPONSIVE_WARNING" desc="A warning shown in a notification that an operation is taking longer than expected.">
@@ -307,10 +326,10 @@
    <ph name="LINE_BREAKS">&lt;br/&gt;&lt;br/&gt;</ph>
    Removing your device while it is in use may cause data loss.  Please wait until the operation is over, then eject the device using the Files app.
   </message>
-  <message name="IDS_FILE_BROWSER_UNMOUNT_PROVIDED_FAILED" desc="Title of the error dialog when unmount operation for a volume provided by an extension failed.">
-   <ph name="BEGIN_BOLD">&lt;b&gt;</ph>Cannot unmount volume<ph name="END_BOLD">&lt;/b&gt;</ph>
+  <message name="IDS_FILE_BROWSER_UNMOUNT_PROVIDED_FAILED" desc="Title of the error dialog when unmount operation for a volume provided by an extension failed. One of the most typical use case is an archive (i.e. ZIP) file mounted as a virtual disk. However, arbitrary Chrome apps can mount volumes. So we should not assume this is an archive file.">
+   <ph name="BEGIN_BOLD">&lt;b&gt;</ph>Can't disconnect from an archive or virtual disk<ph name="END_BOLD">&lt;/b&gt;</ph>
    <ph name="LINE_BREAKS">&lt;br/&gt;&lt;br/&gt;</ph>
-   The volume is busy. Please close all the opened files from it, then try again later.
+   Close all files on the archive or virtual disk, then try again.
   </message>
   <message name="IDS_FILE_BROWSER_MOUNT_ARCHIVE" desc="Title of the action for mounting an archive file to work with its contents.">
     Open
@@ -541,7 +560,7 @@
     Open with...
   </message>
   <message name="IDS_FILE_BROWSER_MORE_ACTIONS_BUTTON_LABEL" desc="Menu item label, showing dialog to choose extension to open/share/pack/etc... selected files or directories.">
-    More actions...
+    More actions
   </message>
   <message name="IDS_FILE_BROWSER_OPEN_WITH_VERB_BUTTON_LABEL" desc="Verb that describe the action of opening one or more files or directories with the given extension.">
     Open with <ph name="EXTENSION_NAME">$1<ex>Gallery</ex></ph>
@@ -606,10 +625,16 @@
   <message name="IDS_FILE_BROWSER_CLOUD_IMPORT_CANCEL_COMMAND" desc="Label of button on details panel that cancels an active import.">
     Cancel
   </message>
+  <message name="IDS_FILE_BROWSER_CLOUD_IMPORT_ONE_FILE" desc="Cloud import 1 new photo.">
+    1 new photo
+  </message>
+  <message name="IDS_FILE_BROWSER_CLOUD_IMPORT_MULTIPLE_FILES" desc="Cloud import multiple new photos.">
+    <ph name="FILE_COUNT">$1<ex>5</ex></ph> new photos
+  </message>
   <message name="IDS_FILE_BROWSER_CLOUD_IMPORT_STATUS_SCANNING" desc="Cloud import scanning status message.">
     Scanning your media device...
     <ph name="LINE_BREAK1">&lt;br&gt;</ph>
-    <ph name="FILE_COUNT">$1<ex>5</ex></ph> new photos found
+    <ph name="FILE_COUNT">$1<ex>5 new photos</ex></ph> found
   </message>
   <message name="IDS_FILE_BROWSER_CLOUD_IMPORT_TOOLTIP_SCANNING" desc="Cloud import scanning tooltip.">
     Scanning your media device...
@@ -620,32 +645,45 @@
   <message name="IDS_FILE_BROWSER_CLOUD_IMPORT_TOOLTIP_NO_MEDIA" desc="Cloud import no-new-media-found tooltip. Shown after backup is completed and when a search for new files to backup produces no result.">
     All backed up!
   </message>
-  <message name="IDS_FILE_BROWSER_CLOUD_IMPORT_STATUS_INSUFFICIENT_SPACE" desc="Cloud import insufficient space status message.">
-    <ph name="FILE_COUNT">$1<ex>5</ex></ph> new photos found
+  <message name="IDS_FILE_BROWSER_CLOUD_IMPORT_STATUS_INSUFFICIENT_CLOUD_SPACE" desc="Cloud import insufficient cloud space status message.">
+    <ph name="FILE_COUNT">$1<ex>5 new photos</ex></ph> found.
     <ph name="LINE_BREAK1">&lt;br&gt;</ph>
-    Not enough space on device.
+    Your Google Drive quota isn't large enough. Additional <ph name="FILE_SIZE">$2<ex>5 MB</ex></ph> needed.
     <ph name="LINE_BREAK2">&lt;br&gt;</ph>
-    Try selecting a few photos to start.
+    Try selecting fewer photos.
   </message>
-  <message name="IDS_FILE_BROWSER_CLOUD_IMPORT_TOOLTIP_INSUFFICIENT_SPACE" desc="Cloud import insufficient space tooltip.">
-    Not enough space on device
+  <message name="IDS_FILE_BROWSER_CLOUD_IMPORT_TOOLTIP_INSUFFICIENT_CLOUD_SPACE" desc="Cloud import insufficient cloud space tooltip.">
+    Your Google Drive quota isn't large enough.
+  </message>
+  <message name="IDS_FILE_BROWSER_CLOUD_IMPORT_STATUS_INSUFFICIENT_LOCAL_SPACE" desc="Cloud import insufficient local space status message.">
+    <ph name="FILE_COUNT">$1<ex>5 new photos</ex></ph> found.
+    <ph name="LINE_BREAK1">&lt;br&gt;</ph>
+    Not enough space available in local storage. Additional <ph name="FILE_SIZE">$2<ex>5 MB</ex></ph> needed.
+    <ph name="LINE_BREAK2">&lt;br&gt;</ph>
+    Try selecting fewer photos.
+  </message>
+  <message name="IDS_FILE_BROWSER_CLOUD_IMPORT_TOOLTIP_INSUFFICIENT_LOCAL_SPACE" desc="Cloud import insufficient local space tooltip.">
+    Not enough space available in local storage.
   </message>
   <message name="IDS_FILE_BROWSER_CLOUD_IMPORT_STATUS_READY" desc="Cloud import ready status message.">
-    <ph name="FILE_COUNT">$1<ex>5</ex></ph> new photos found
+    <ph name="FILE_COUNT">$1<ex>5 new photos</ex></ph> found
     <ph name="LINE_BREAK1">&lt;br&gt;</ph>
-    Ready to backup to <ph name="BEGIN_LINK">&lt;a is='action-link' class='destination-link'&gt;</ph>Google Drive<ph name="END_LINK">&lt;/a&gt;</ph>
+    Ready to back up to <ph name="BEGIN_LINK">&lt;a is='action-link' class='destination-link'&gt;</ph>Google Drive<ph name="END_LINK">&lt;/a&gt;</ph>
   </message>
   <message name="IDS_FILE_BROWSER_CLOUD_IMPORT_TOOLTIP_READY" desc="Cloud import ready tooltip.">
-    Ready to backup <ph name="FILE_COUNT">$1<ex>5</ex></ph> new photos
+    Ready to backup <ph name="FILE_COUNT">$1<ex>5 new photos</ex></ph>
   </message>
   <message name="IDS_FILE_BROWSER_CLOUD_IMPORT_STATUS_IMPORTING" desc="Cloud import active-backup status. Message shown when importing is in progress">
-    Backing up <ph name="FILE_COUNT">$1<ex>5</ex></ph> photos to <ph name="BEGIN_LINK">&lt;a is='action-link' class='destination-link'&gt;</ph>Google Drive<ph name="END_LINK">&lt;/a&gt;</ph>
+    Backing up <ph name="FILE_COUNT">$1<ex>5 new photos</ex></ph> to <ph name="BEGIN_LINK">&lt;a is='action-link' class='destination-link'&gt;</ph>Google Drive<ph name="END_LINK">&lt;/a&gt;</ph>
   </message>
   <message name="IDS_FILE_BROWSER_CLOUD_IMPORT_TOOLTIP_IMPORTING" desc="Cloud import active-backup tooltip.">
-    Backing up <ph name="FILE_COUNT">$1<ex>5</ex></ph> photos
+    Backing up <ph name="FILE_COUNT">$1<ex>5 new photos</ex></ph>
   </message>
   <message name="IDS_FILE_BROWSER_CLOUD_IMPORT_STATUS_DONE" desc="Cloud import backup is complete status.">
     <ph name="FILE_COUNT">$1<ex>5</ex></ph> photos backed up to <ph name="BEGIN_LINK">&lt;a is='action-link' class='destination-link'&gt;</ph>Google Drive<ph name="END_LINK">&lt;/a&gt;</ph>
+  </message>
+  <message name="IDS_FILE_BROWSER_CLOUD_IMPORT_ERROR_ITEM" desc="Cloud import error message for a file it couldn't back up.">
+    Couldn't back up <ph name="FILE_NAME">$1<ex>photo.jpg</ex></ph>
   </message>
   <message name="IDS_FILE_BROWSER_CLOUD_IMPORT_TOOLTIP_DONE" desc="Cloud import backup is complete tooltip.">
     <ph name="FILE_COUNT">$1<ex>5</ex></ph> photos backed up
@@ -854,16 +892,16 @@
     Album
   </message>
   <message name="IDS_FILE_BROWSER_METADATA_BOX_AUDIO_INFO" desc="Category label for audio file info.">
-    Audio Info
+    Audio info
   </message>
   <message name="IDS_FILE_BROWSER_METADATA_BOX_CODEC" desc="Label for video codec.">
     Codec
   </message>
   <message name="IDS_FILE_BROWSER_METADATA_BOX_CREATED_BY" desc="Label for who created the file.">
-    Created By
+    Created by
   </message>
   <message name="IDS_FILE_BROWSER_METADATA_BOX_CREATION_TIME" desc="Label for file creation time.">
-    Created Time
+    Created time
   </message>
   <message name="IDS_FILE_BROWSER_METADATA_BOX_DIMENSION" desc="Label for image dimensions.">
     Dimensions
@@ -872,10 +910,10 @@
     Duration
   </message>
   <message name="IDS_FILE_BROWSER_METADATA_BOX_EXIF_DEVICE_MODEL" desc="Label for the device model which created the image.">
-    Device Model
+    Device model
   </message>
   <message name="IDS_FILE_BROWSER_METADATA_BOX_EXIF_DEVICE_SETTINGS" desc="Label for the device settings (exif's F number, exposure time, focal length and ISO speed rating) metadata.">
-    Device Settings
+    Device settings
   </message>
   <message name="IDS_FILE_BROWSER_METADATA_BOX_EXIF_GEOGRAPHY" desc="Label for the latitude and the longitude where the image was taken.">
     Geography
@@ -883,20 +921,20 @@
   <message name="IDS_FILE_BROWSER_METADATA_BOX_FILE_PATH" desc="Label for file path.">
     Path
   </message>
-  <message name="IDS_FILE_BROWSER_METADATA_BOX_FILE_SIZE" desc="Label fo file size.">
+  <message name="IDS_FILE_BROWSER_METADATA_BOX_FILE_SIZE" desc="Label for file size.">
     Size
   </message>
   <message name="IDS_FILE_BROWSER_METADATA_BOX_FRAME_RATE" desc="Label for video frame rate.">
-    Frame Rate
+    Frame rate
   </message>
   <message name="IDS_FILE_BROWSER_METADATA_BOX_GENERAL_INFO" desc="Category label for general file info.">
-    General Info
+    General info
   </message>
   <message name="IDS_FILE_BROWSER_METADATA_BOX_GENRE" desc="Label for audio genre.">
     Genre
   </message>
   <message name="IDS_FILE_BROWSER_METADATA_BOX_IMAGE_INFO" desc="Category label for image file info.">
-    Image Info
+    Image info
   </message>
   <message name="IDS_FILE_BROWSER_METADATA_BOX_MEDIA_ARTIST" desc="Label for media artist.">
     Artist
@@ -908,13 +946,13 @@
     Title
   </message>
   <message name="IDS_FILE_BROWSER_METADATA_BOX_MODIFICATION_TIME" desc="Label for file modification time.">
-    Modified Time
+    Modified time
   </message>
   <message name="IDS_FILE_BROWSER_METADATA_BOX_MODIFIED_BY" desc="Label for who modified the file.">
-    Modified By
+    Modified by
   </message>
   <message name="IDS_FILE_BROWSER_METADATA_BOX_PAGE_COUNT" desc="Label for pdf page count.">
-    Page Count
+    Page count
   </message>
   <message name="IDS_FILE_BROWSER_METADATA_BOX_SOURCE" desc="Label for the device used to capture the image.">
     Source
@@ -923,10 +961,10 @@
     Track
   </message>
   <message name="IDS_FILE_BROWSER_METADATA_BOX_VIDEO_INFO" desc="Category label for video file info.">
-    Video Info
+    Video info
   </message>
   <message name="IDS_FILE_BROWSER_METADATA_BOX_YEAR_RECORDED" desc="Label for audio recorded year.">
-    Year Recorded
+    Year recorded
   </message>
   <message name="IDS_FILE_BROWSER_CALCULATING_SIZE" desc="Message informing the user that total items size is being calculated.">
     Calculating size
@@ -1017,9 +1055,6 @@
   </message>
   <message name="IDS_FILE_BROWSER_DRIVE_CANNOT_REACH" desc="Message informing the user that Google Drive can not be reached at this moment.">
     Google Drive cannot be reached at this time.
-  </message>
-  <message name="IDS_FILE_BROWSER_DRIVE_LEARN_MORE" desc="In the Loading Google Drive page and in the Welcome to Google Drive banner, a text on the Learn More link.">
-    Learn more
   </message>
   <message name="IDS_FILE_BROWSER_DRIVE_OUT_OF_SPACE_MESSAGE" desc="Message informing the user how to make more space available to save the selected file offline.">
     To save "<ph name="FILE_NAME">$1<ex>document.pdf</ex></ph>" offline you must free up an additional <ph name="TOTAL_FILE_SIZE">$2<ex>3.3 MB</ex></ph> of space:<ph name="MARKUP_1">&lt;br&gt;<ex>&lt;br&gt;</ex></ph>
@@ -1439,9 +1474,6 @@
   <message name="IDS_OOBE_ADVANCED_OPTIONS_DEVICE_REQUISITION_SUBTITLE" desc="Subtitle of the button that trigers Device requisition device setup mode on the Chrome OS OOBE (first run UI) Advanced options screen">
     Add requisition ID to this device
   </message>
-  <message name="IDS_NETWORK_SCREEN_ACCESSIBLE_TITLE" desc="Text to be spoken on opening the OOBE network screen">
-    Welcome! Set your language and network
-  </message>
   <message name="IDS_EULA_SCREEN_TITLE" desc="Title of the OOBE EULA screen">
     The small print
   </message>
@@ -1500,7 +1532,7 @@
     Please wait...
   </message>
   <message name="IDS_ENTERPRISE_ENROLLMENT_WORKING_MESSAGE" desc="Message to show while enrollment is in progress">
-    Please wait...
+    Enrolling device...
   </message>
   <message name="IDS_NETWORK_SELECTION_TITLE" desc="Welcome title shown on network selection screen">
     Let's get started
@@ -1682,6 +1714,27 @@
   <message name="IDS_OOBE_EULA_ACCEPT_AND_CONTINUE_BUTTON_TEXT" desc="Label on a button on the Title of Terms of Service OOBE screen to accept EULA and continue.">
     Accept and continue
   </message>
+  <message name="IDS_LOGIN_SYNC_CONSENT_SCREEN_TITLE" desc="The title of the dialog that welcomes the user on the first log in, and explains Chrome Sync and privacy options.">
+    You're signed in!
+  </message>
+  <message name="IDS_LOGIN_SYNC_CONSENT_SCREEN_CHROME_SYNC_NAME" desc="Title of the 'Chrome sync' section of the sync confirmation dialog that is displayed on the first user log in.">
+    Chrome sync
+  </message>
+  <message name="IDS_LOGIN_SYNC_CONSENT_SCREEN_CHROME_SYNC_DESCRIPTION" desc="The description of 'Chrome sync' section of the sync confirmation dialog that is displayed on the first user log in.">
+    Your bookmarks, history, passwords, and other settings will be synced to your Google Account so you can use them on all your devices.
+  </message>
+  <message name="IDS_LOGIN_SYNC_CONSENT_SCREEN_PERSONALIZE_GOOGLE_SERVICES_NAME" desc="Title of the personalize services section of the sync confirmation dialog that is displayed on the first user log in.">
+    Personalize Google services
+  </message>
+  <message name="IDS_LOGIN_SYNC_CONSENT_SCREEN_PERSONALIZE_GOOGLE_SERVICES_DESCRIPTION" desc="The description of how services personalization works and a URL to configure personalization settings in Google user profile.">
+    Google may use your browsing history to personalize Search, ads, and other Google services. You can change this anytime at myaccount.google.com/activitycontrols/search
+  </message>
+  <message name="IDS_LOGIN_SYNC_CONSENT_SCREEN_REVIEW_SYNC_OPTIONS_LATER" desc="The label to the checkbox explaining that when checked, it will trigger user settings screen opened after session start.">
+    Review sync options following setup
+  </message>
+  <message name="IDS_LOGIN_SYNC_CONSENT_SCREEN_ACCEPT_AND_CONTINUE" desc="The label on the button that closes dialog while accepting the selected settings.">
+    Accept and continue
+  </message>
   <message name="IDS_DISABLED_ADD_USER_TOOLTIP" desc="Tooltip over disabled Add user button">
     The owner of this device has disabled new users from being added
   </message>
@@ -1837,9 +1890,6 @@
   </message>
   <message name="IDS_WHITELIST_ERROR_TRY_AGAIN_BUTTON" desc="The text of the try again button on the whitelist error UI.">
     Try again
-  </message>
-  <message name="IDS_WHITELIST_ERROR_LEARN_MORE_BUTTON" desc="The text of the learn more link on the whitelist error UI.">
-    Learn more
   </message>
   <message name="IDS_BROWSE_WITHOUT_SIGNING_IN_HTML" desc="Text shown on side of Google sign-in UI.">
     You may also skip signing in and <ph name="LINK_START">$1<ex>&gt;a&lt;</ex></ph>browse as Guest<ph name="LINK_END">$2<ex>&gt;/a&lt;</ex></ph>.
@@ -2058,7 +2108,7 @@
     Help
   </message>
   <message name="IDS_LOGIN_NEEDS_DIRCRYPTO_MIGRATION_BANNER" desc="Banner text for users that need to migrate their data to use dircrypto.">
-    You've got a new OS update. Sign in to get started.
+    A critical update is ready to install. Sign in to get started.
   </message>
   <message name="IDS_LOGIN_NEW_LOCK_SCREEN_NOTE_BUTTON_TITLE" desc="Title for the button on the Chrome OS lock screen that launches an app for taking notes (the action of creating a new note is delegated to the app). The string is primarily intended to be spoken out by accessibility tools - the button is represented by an icon in the lock screen UI.">
     Create new note
@@ -2193,6 +2243,12 @@
   <message name="IDS_NETWORK_ACTIVATION_NEEDS_CONNECTION" desc="Message when attempting to activate a mobile network that requires a connection">
     Activation of '<ph name="name">$1<ex>Generic Wireless</ex></ph>' requires a network connection.
   </message>
+  <message name="IDS_NETWORK_AUTOCONNECT_NOTIFICATION_TITLE" desc="Title used for the system notification shown when a network has been auto-connected (e.g., when an enterprise policy is applied which initiates a connection to a corporate network like Google-A).">
+    Switched network connection
+  </message>
+  <message name="IDS_NETWORK_AUTOCONNECT_NOTIFICATION_MESSAGE" desc="Message displayed in the system notification shown when a network has been auto-connected (e.g., when an enterprise policy is applied which initiates a connection to a corporate network like Google-A).">
+    Your connection has switched to a more secure network
+  </message>
 
   <!-- Strings shown within Tether notifications -->
   <message name="IDS_TETHER_NOTIFICATION_CONNECTION_FAILED_TITLE" desc="Title of the notification shown to the user when an attempt to tether to another device has failed.">
@@ -2238,8 +2294,8 @@
   <message name="IDS_OPTIONS_SETTINGS_OTHER_WIFI_NETWORKS" desc="In the settings tab, the text on the button to display other Wi-Fi networks.">
     Other Wi-Fi network...
   </message>
-  <message name="IDS_OPTIONS_SETTINGS_OTHER_CELLULAR_NETWORKS" desc="In the settings tab, the text on the button to display other cellular networks.">
-    Other mobile network...
+  <message name="IDS_OPTIONS_SETTINGS_CONFIGURE_CELLULAR" desc="In the settings tab, the text on the button to display other cellular networks.">
+    Configure mobile network
   </message>
   <message name="IDS_OPTIONS_SETTINGS_JOIN_WIFI_NETWORKS" desc="The title for the dialog to configure and connect to a wifi network.">
     Join Wi-Fi network
@@ -2267,8 +2323,8 @@
   <message name="IDS_OPTIONS_CHANGE_PICTURE_PHOTO_FROM_CAMERA" desc="The accessible text on the icon in the user image grid for a camera photo, when a photo has been captured.">
     Photo from internal camera
   </message>
-  <message name="IDS_OPTIONS_CHANGE_PICTURE_DISCARD_PHOTO" desc="The text on the button to discard the captured photo of the current user.">
-    Discard photo
+  <message name="IDS_OPTIONS_CHANGE_PICTURE_DISCARD_PHOTO" desc="The text on the button to discard the captured photo or video of the current user.">
+    Discard photo or video
   </message>
   <message name="IDS_OPTIONS_PHOTO_CAPTURE_ACCESSIBLE_TEXT" desc="The accessible message to speak to announce that a photo was captured.">
     Photo was captured
@@ -2852,9 +2908,6 @@
   </message>
 
   <!-- Keyboard overlay UI -->
-  <message name="IDS_KEYBOARD_OVERLAY_LEARN_MORE" desc="The text of the learn more link on the keyboard overlay.">
-    Learn more
-  </message>
   <message name="IDS_KEYBOARD_OVERLAY_TITLE" desc="The title of the keyboard overlay.">
     Keyboard Overlay
   </message>
@@ -2903,17 +2956,8 @@
   <message name="IDS_KEYBOARD_OVERLAY_BRIGHT_UP_KEY_LABEL" desc="The text in the keyboard overlay to show the label of the 'bright up' key that turns the screen's brightness up.">
     bright up
   </message>
-  <message name="IDS_KEYBOARD_OVERLAY_MOVE_WINDOW_TO_ABOVE_DISPLAY" desc="The text in the keyboard overlay to explain the shortcut (move active window to above display).">
-    Window up
-  </message>
-  <message name="IDS_KEYBOARD_OVERLAY_MOVE_WINDOW_TO_BELOW_DISPLAY" desc="The text in the keyboard overlay to explain the shortcut (move active window to below display).">
-    Window down
-  </message>
-  <message name="IDS_KEYBOARD_OVERLAY_MOVE_WINDOW_TO_LEFT_DISPLAY" desc="The text in the keyboard overlay to explain the shortcut (move active window to left display).">
-    Window left
-  </message>
-  <message name="IDS_KEYBOARD_OVERLAY_MOVE_WINDOW_TO_RIGHT_DISPLAY" desc="The text in the keyboard overlay to explain the shortcut (move active window to right display).">
-    Window right
+  <message name="IDS_KEYBOARD_OVERLAY_MOVE_ACTIVE_WINDOW_BETWEEN_DISPLAYS" desc="The text in the keyboard overlay to explain the shortcut (move active window between displays).">
+    move window to another display
   </message>
   <message name="IDS_KEYBOARD_OVERLAY_MUTE_KEY_LABEL" desc="The text in the keyboard overlay to show the label of the 'mute' key that mutes the system's sound.">
     mute
@@ -3428,6 +3472,9 @@
   <message name="IDS_LOGIN_ERROR_TITLE" desc="A title of screen containing a message about login error, like proxy error or corruption of the local state.">
     Oops, something went wrong with signing in
   </message>
+  <message name="IDS_LOGIN_ERROR_DETACHABLE_BASE_CHANGED" desc="Text for error dialog shown on the login screen when a detachable base different than the base last used by the user is attached.">
+        A different keyboard has been connected since you last entered your password. It may be attempting to steal your keystrokes.
+      </message>
   <message name="IDS_LOGIN_PROXY_ERROR_MESSAGE" desc="An offline message shown when a proxy error has appeared.">
     The sign-in page failed to load using the current proxy settings. Please <ph name="GAIA_RELOAD_LINK_START">$1<ex>&gt;a&lt;</ex></ph>try to sign in again<ph name="GAIA_RELOAD_LINK_END">$2<ex>&gt;/a&lt;</ex></ph>, or use different <ph name="PROXY_SETTINGS_LINK_START">$3<ex>&gt;a&lt;</ex></ph>proxy settings<ph name="PROXY_SETTINGS_LINK_END">$4<ex>&gt;/a&lt;</ex></ph>.
   </message>
@@ -3500,9 +3547,6 @@
   <message name="IDS_LOGIN_PUBLIC_ACCOUNT_MONITORING_WARNING" desc="Text shown in the public account user pod, warning the user about potential admin monitoring.">
     The device admin may monitor your browsing activity.
   </message>
-  <message name="IDS_LOGIN_PUBLIC_ACCOUNT_LEARN_MORE" desc="Link shown in the public account user pod, showing the user more information about the monitoring.">
-    Learn more
-  </message>
   <message name="IDS_LOGIN_PUBLIC_ACCOUNT_MONITORING_INFO" desc="Text shown in the warning dialog after user clicks on the learn more link, notifying the user of potential security and privacy implications of using the device">
     The device admin may monitor the following:
   </message>
@@ -3539,10 +3583,10 @@
 
   <!-- Encryption migration dialog -->
   <message name="IDS_ENCRYPTION_MIGRATION_READY_TITLE" desc="Title shown in encryption migration screen, which asks the user to install an OS update.">
-    Install OS update
+    Install critical update
   </message>
   <message name="IDS_ENCRYPTION_MIGRATION_READY_DESCRIPTION" desc="Description shown in encryption migration screen, which asks the user to install an OS update.">
-    To download and use Android apps, first you need to install an update. While your device is updating, you can’t use it. Your <ph name="DEVICE_TYPE">$1<ex>Chromebook</ex></ph> will restart after installation completes.
+    To download and use Android apps, first you need to install this required update. While your <ph name="DEVICE_TYPE">$1<ex>Chromebook</ex></ph> is updating, you can’t use it. After installation completes, your <ph name="DEVICE_TYPE">$1<ex>Chromebook</ex></ph> will restart.
   </message>
   <message name="IDS_ENCRYPTION_MIGRATION_MIGRATING_TITLE" desc="Title shown in encryption migration screen when the migration is ongoing.">
     Installing OS update
@@ -3688,11 +3732,13 @@
   <message name="IDS_EOL_NOTIFICATION_EOL" desc="Notification shown to inform the user that this device will no longer receive latest software updates.">
     This device will no longer receive the latest software updates. Please consider upgrading.
   </message>
-  <message name="IDS_EOL_MORE_INFO_BUTTON" desc="A button label shown in the notification for eol status change to get more information.">
-    Learn more
-  </message>
   <message name="IDS_EOL_DISMISS_BUTTON" desc="A button label shown in the notification for eol status change to dismiss the notification.">
     Don't remind me again
+  </message>
+
+  <!-- Obsolete versions Notification strings-->
+  <message name="IDS_UPDATE_REQUIRED_LOGIN_SCREEN_MESSAGE" desc="The message on login screen to inform the user that policy prevents user sign in before OS version is is updated.">
+    Your device is no longer compliant with the minimum client version specified by your admin. Please update to login.
   </message>
 
   <!-- Genius App -->
@@ -4166,12 +4212,74 @@
   <message name="IDS_ENTERPRISE_ENROLLMENT_LOCATION_LABEL" desc="Label for location tex box on the device naming screen in the enterprise enrollment dialog.">
     Device Location
   </message>
-  <message name="IDS_AD_MACHINE_NAME_INPUT_LABEL" desc="Label for machine name input field on the AD domain join screen. User should tell us the name of his machine.">
+  <!-- Administrator facing strings for Active Directory screens. -->
+  <message name="IDS_AD_MACHINE_NAME_INPUT_LABEL" desc="Admin-facing. Label for machine name input field on the AD domain join screen. User should tell us the name of his machine.">
     Chromebook machine name
   </message>
-  <message name="IDS_AD_DOMAIN_JOIN_WELCOME_MESSAGE" desc="Welcome message on the AD domain join screen.">
+  <message name="IDS_AD_DOMAIN_JOIN_WELCOME_MESSAGE" desc="Admin-facing. Welcome message on the AD domain join screen.">
     Join device to domain
   </message>
+  <message name="IDS_AD_MORE_OPTIONS_BUTTON" desc="Admin-facing. Text on the 'More options' button on the Active Directory domain join screen.">
+    More options
+  </message>
+  <message name="IDS_AD_ORG_UNIT_HINT" desc="Admin-facing. Hint for the Active Directory Organizational units input on the 'More options' dialog.">
+    Computer OU (e.g. OU=Chromebooks,DC=example,DC=com)
+  </message>
+  <message name="IDS_AD_ENCRYPTION_SELECTION_SELECT" desc="Admin-facing. Title for kerberos encryption types selection.">
+    Select encryption types
+  </message>
+  <message name="IDS_AD_ENCRYPTION_STRONG_TITLE" desc="Admin-facing. Title for 'Strong' kerberos types option.">
+    Strong
+  </message>
+  <message name="IDS_AD_ENCRYPTION_STRONG_SUBTITLE" desc="Admin-facing. Subtitle describing 'Strong' option.">
+    Enforce AES encryption (recommended).
+  </message>
+  <message name="IDS_AD_ENCRYPTION_ALL_TITLE" desc="Admin-facing. Title for 'All' kerberos types option.">
+    All (insecure)
+  </message>
+  <message name="IDS_AD_ENCRYPTION_ALL_SUBTITLE" desc="Admin-facing. Subtitle describing 'All' option.">
+    Allow AES and RC4 encryption. Using this option increases your risk, as the RC4 ciphers are insecure.
+  </message>
+  <message name="IDS_AD_ENCRYPTION_LEGACY_TITLE" desc="Admin-facing. Title for 'Legacy' kerberos types option.">
+    Legacy (insecure)
+  </message>
+  <message name="IDS_AD_ENCRYPTION_LEGACY_SUBTITLE" desc="Admin-facing. Subtitle describing 'Legacy' option.">
+    Enforce RC4 encryption. Using this option increases your risk, as the RC4 ciphers are insecure.
+  </message>
+  <message name="IDS_AD_DOMAIN_JOIN_UNKNOWN_ERROR" desc="Admin-facing. Default error text on the Active Directory join screen">
+    Oops!  Something went wrong when trying to join the domain. Please try again.
+  </message>
+  <message name="IDS_AD_MACHINENAME_INVALID" desc="Admin-facing. Alert message about invalid machine name">
+    Invalid machine name
+  </message>
+  <message name="IDS_AD_MACHINENAME_TOO_LONG" desc="Admin-facing. Alert message about too long machine name">
+    Machine name too long
+  </message>
+  <message name="IDS_AD_USER_DENIED_TO_JOIN_MACHINE" desc="Admin-facing. Alert message user was denied to join machine to the domain">
+    Failed to join the machine to the domain. This might be due to insufficient privileges for your account on the server.
+  </message>
+  <message name="IDS_AD_USER_HIT_JOIN_QUOTA" desc="Admin-facing. Alert message that user can't add more machines to the domain">
+    Failed to join the machine to the domain. This might be due to exceeding the maximum number of allowed machine joins for your account on the server.
+  </message>
+  <message name="IDS_AD_OU_DOES_NOT_EXIST" desc="Admin-facing. Alert message that user joins the machine to non-existing organizational unit.">
+    Failed to join the machine to the domain. Organizational unit does not exist.
+  </message>
+  <message name="IDS_AD_OU_INVALID" desc="Admin-facing. Alert message that user joins the machine to invalid organizational unit.">
+    Failed to join the machine to the domain. Organizational unit is invalid.
+  </message>
+  <message name="IDS_AD_OU_ACCESS_DENIED" desc="Admin-facing. Alert message that user does not have rights to join the machine to specified organizational unit.">
+    Failed to join the machine to the domain. This might be due to insufficient privileges for your account for the organizational unit.
+  </message>
+  <message name="IDS_AD_OU_SETTING_FAILED" desc="Admin-facing. Alert message that user could not join the machine to specified organizational unit due to unknown reason.">
+    Failed to join the machine to the domain. This might be due to issues with the organizational unit.
+  </message>
+  <message name="IDS_AD_NOT_SUPPORTED_ENCRYPTION" desc="Admin-facing. Alert message that user could not join the machine to due to not supported encryption types.">
+    Can't join the machine to the domain. The server does not support specified Kerberos encryption types. Check "More options" for encryption settings.
+  </message>
+  <message name="IDS_AD_BOARD_NOT_SUPPORTED" desc="Admin-facing. Alert message that the Chromebook model is not supported for Active Directory">
+    Chrome <ph name="MS_AD_NAME">Microsoft® Active Directory®</ph> integration is only supported on x86_64 platforms. Chromebooks built on top of an ARM or x86 platform do not support this functionality.
+  </message>
+  <!-- User facing strings for Active Directory screens. -->
   <message name="IDS_AD_DOMAIN_AUTH_WELCOME_MESSAGE" desc="Welcome message on the AD Authentication user screen. Include the domain (realm) the machine joined to.">
     Sign in to <ph name="REALM">$1<ex>example.com</ex></ph>
   </message>
@@ -4208,8 +4316,11 @@
   <message name="IDS_AD_PASSWORD_CHANGE_PASSWORDS_MISMATCH_ERROR" desc="Error message in case new password fields does not match on the Active Directory password change dialog.">
     Passwords do not match.
   </message>
-  <message name="IDS_AD_DOMAIN_JOIN_UNKNOWN_ERROR" desc="Default error text on the Active Directory join screen">
-    Oops!  Something went wrong when trying to join the domain. Please try again.
+  <message name="IDS_AD_CONFIRM_BUTTON" desc="Text on the 'Confirm' button on the 'More options' dialog.">
+    Confirm
+  </message>
+  <message name="IDS_AD_CANCEL_BUTTON" desc="Text on the 'Cancel' button on the 'More options' dialog.">
+    Cancel
   </message>
   <message name="IDS_AD_INVALID_USERNAME" desc="Alert message about invalid username on the Active Directory domain join screen.">
     Please enter a valid username
@@ -4220,27 +4331,13 @@
   <message name="IDS_AD_PASSWORD_EXPIRED" desc="Alert message about expired password in the Active Directory">
     Oops!  Looks like your password expired. Please renew it on another machine and try again.
   </message>
-  <message name="IDS_AD_MACHINENAME_INVALID" desc="Alert message about invalid machine name">
-    Invalid machine name
-  </message>
-  <message name="IDS_AD_MACHINENAME_TOO_LONG" desc="Alert message about too long machine name">
-    Machine name too long
-  </message>
-  <message name="IDS_AD_USER_DENIED_TO_JOIN_MACHINE" desc="Alert message user was denied to join machine to the domain">
-    Failed to join the machine to the domain. This might be due to insufficient privileges for your account on the server.
-  </message>
-  <message name="IDS_AD_USER_HIT_JOIN_QUOTA" desc="Alert message that user can't add more machines to the domain">
-    Failed to join the machine to the domain. This might be due to exceeding the maximum number of allowed machine joins for your account on the server.
-  </message>
-  <message name="IDS_AD_BOARD_NOT_SUPPORTED" desc="Alert message that the Chromebook model is not supported for Active Directory">
-    Chrome <ph name="MS_AD_NAME">Microsoft® Active Directory®</ph> integration is only supported on x86_64 platforms. Chromebooks built on top of an ARM or x86 platform do not support this functionality.
-  </message>
   <message name="IDS_AD_AUTH_NETWORK_ERROR" desc="Error message to show when there is a problem contacting the logon server when authenticating for Active Directory enrollment.">
     Oops!  There was a problem contacting the logon server. Please check your network connection and the domain name, then try again.
   </message>
   <message name="IDS_AD_AUTH_UNKNOWN_ERROR" desc="Error message to show that occurs something a user could not fix.">
     Oops!  An unknown error occurred. Please try again later or contact your administrator if the issue persists.
   </message>
+
   <message name="IDS_ENTERPRISE_ENROLLMENT_ATTRIBUTE_EXPLANATION" desc="Device attribute message to be shown on attribute update prompt screen.">
     Optional — enter new or update existing information to be associated with this device.
   </message>
@@ -4377,17 +4474,11 @@
   <message name="IDS_ARC_PLAYSTORE_ICON_TITLE_BETA" desc="The Play Store icon title with the beta label in the launcher.">
     Play Store
   </message>
-  <message name="IDS_ARC_NOTIFICATION_TITLE" desc="Title of the first-run notification that enables Android apps.">
-    Google Play on your <ph name="DEVICE_TYPE">$1<ex>Chromebook</ex></ph>
-  </message>
   <message name="IDS_ARC_NOTIFICATION_DISPLAY_SOURCE" desc="Context title of the first-run notification that enables Android apps.">
     Google Play
   </message>
   <message name="IDS_ARC_PLAYSTORE_SETTING_UP_TITLE" desc="The text tile which is shown when Play Store is initializing.">
     Setting up Google Play...
-  </message>
-  <message name="IDS_ARC_NOTIFICATION_MESSAGE" desc="Description message of the first-run notification that enables Android apps.">
-    Install apps and games from Google Play
   </message>
   <message name="IDS_ARC_OPEN_PLAY_STORE_NOTIFICATION_BUTTON" desc="Label for the button in the first-run notification that enables Android apps.">
     Open Play Store
@@ -4396,13 +4487,13 @@
     No thanks
   </message>
   <message name="IDS_ARC_OPT_IN_DIALOG_BUTTON_AGREE" desc="Agree button of the opt-in dialog for Android apps.">
-    Agree
+    I Agree
   </message>
   <message name="IDS_ARC_OPT_IN_DIALOG_BUTTON_CANCEL" desc="Cancel button of the opt-in dialog for Android apps.">
     Cancel
   </message>
   <message name="IDS_ARC_OPT_IN_DIALOG_BUTTON_NEXT" desc="Next button of the opt-in dialog for Android apps.">
-    Next
+    More
   </message>
   <message name="IDS_ARC_OPT_IN_DIALOG_BUTTON_RETRY" desc="Retry button of the opt-in dialog for Android apps.">
     Try again
@@ -4423,42 +4514,59 @@
     Terms of Service
   </message>
   <message name="IDS_ARC_OPT_IN_DIALOG_METRICS_MANAGED_ENABLED" desc="Message in the opt-in dialog for Android apps in case metrics are managed on the device and on.">
-    This device currently sends diagnostic and usage data to Google. This <ph name="BEGIN_LINK1">&lt;a href="#" id="settings-link"&gt;</ph>setting<ph name="END_LINK1">&lt;/a&gt;<ex>&lt;/a&gt;</ex></ph> is enforced by the owner. <ph name="BEGIN_LINK2">&lt;a href="#" id="learn-more-link-metrics"&gt;</ph>Learn More<ph name="END_LINK2">&lt;/a&gt;<ex>&lt;/a&gt;</ex></ph>
+    Send system data. This device currently automatically sends diagnostic and device and app usage data to Google. This <ph name="BEGIN_LINK1">&lt;a href="#" id="settings-link"&gt;</ph>setting<ph name="END_LINK1">&lt;/a&gt;<ex>&lt;/a&gt;</ex></ph> is enforced by the owner. If you turned on additional Web &#38; App Activity, this information will be stored with your account so you can manage it in My Activity. <ph name="BEGIN_LINK2">&lt;a href="#" id="learn-more-link-metrics"&gt;</ph>Learn More<ph name="END_LINK2">&lt;/a&gt;<ex>&lt;/a&gt;</ex></ph>
   </message>
-  <message name="IDS_ARC_OPT_IN_DIALOG_METRICS_MANAGED_DISABLED" desc="Message in the opt-in dialog for Android apps in case metrics are enabled on the device and off.">
-    The owner may choose to send diagnostic and usage data for this device to Google. You may view this <ph name="BEGIN_LINK1">&lt;a href="#" id="settings-link"&gt;</ph>setting<ph name="END_LINK1">&lt;/a&gt;<ex>&lt;/a&gt;</ex></ph> here. <ph name="BEGIN_LINK2">&lt;a href="#" id="learn-more-link-metrics"&gt;</ph>Learn More<ph name="END_LINK2">&lt;/a&gt;<ex>&lt;/a&gt;</ex></ph>
+  <message name="IDS_ARC_OPT_IN_DIALOG_METRICS_MANAGED_DISABLED" desc="Message in the opt-in dialog for Android apps in case metrics are managed on the device and off.">
+    Send system data. Automatically send diagnostic and device and app usage data to Google. This setting is enforced by the owner. The owner may choose to send diagnostic and usage data for this device to Google. You may view this in <ph name="BEGIN_LINK1">&lt;a href="#" id="settings-link"&gt;</ph>settings<ph name="END_LINK1">&lt;/a&gt;<ex>&lt;/a&gt;</ex></ph>. If you turned on additional Web &#38; App Activity, this information will be stored with your account so you can manage it in My Activity. <ph name="BEGIN_LINK2">&lt;a href="#" id="learn-more-link-metrics"&gt;</ph>Learn More<ph name="END_LINK2">&lt;/a&gt;<ex>&lt;/a&gt;</ex></ph>
   </message>
   <message name="IDS_ARC_OPT_IN_DIALOG_METRICS_ENABLED" desc="Message in the opt-in dialog for Android apps in case metrics are already enabled on the device. User has no way to deactivate them using opt-in dialog.">
-    This device currently sends diagnostic and usage data to Google. You can change this at any time in your device <ph name="BEGIN_LINK1">&lt;a href="#" id="settings-link"&gt;</ph>settings<ph name="END_LINK1">&lt;/a&gt;<ex>&lt;/a&gt;</ex></ph>. <ph name="BEGIN_LINK2">&lt;a href="#" id="learn-more-link-metrics"&gt;</ph>Learn More<ph name="END_LINK2">&lt;/a&gt;<ex>&lt;/a&gt;</ex></ph>
+    Send system data. This device currently automatically sends diagnostic and device and app usage data to Google. You can change this at any time in your device <ph name="BEGIN_LINK1">&lt;a href="#" id="settings-link"&gt;</ph>settings<ph name="END_LINK1">&lt;/a&gt;<ex>&lt;/a&gt;</ex></ph>. If you turned on additional Web &#38; App Activity, this information will be stored with your account so you can manage it in My Activity. <ph name="BEGIN_LINK2">&lt;a href="#" id="learn-more-link-metrics"&gt;</ph>Learn More<ph name="END_LINK2">&lt;/a&gt;<ex>&lt;/a&gt;</ex></ph>
   </message>
   <message name="IDS_ARC_OPT_IN_DIALOG_METRICS_DISABLED" desc="Message in the opt-in dialog for Android apps in case metrics are disabled on the device. User has an option to active them using opt-in dialog">
-    Automatically send diagnostic and usage data to Google. You can change this at any time in your device <ph name="BEGIN_LINK1">&lt;a href="#" id="settings-link"&gt;</ph>settings<ph name="END_LINK1">&lt;/a&gt;<ex>&lt;/a&gt;</ex></ph>. <ph name="BEGIN_LINK2">&lt;a href="#" id="learn-more-link-metrics"&gt;</ph>Learn More<ph name="END_LINK2">&lt;/a&gt;<ex>&lt;/a&gt;</ex></ph>
+    Send system data. Automatically send diagnostic and device and app usage data to Google. You can change this at any time in your device <ph name="BEGIN_LINK1">&lt;a href="#" id="settings-link"&gt;</ph>settings<ph name="END_LINK1">&lt;/a&gt;<ex>&lt;/a&gt;</ex></ph>. If you turned on additional Web &#38; App Activity, this information will be stored with your account so you can manage it in My Activity. <ph name="BEGIN_LINK2">&lt;a href="#" id="learn-more-link-metrics"&gt;</ph>Learn More<ph name="END_LINK2">&lt;/a&gt;<ex>&lt;/a&gt;</ex></ph>
   </message>
   <message name="IDS_ARC_OPT_IN_DIALOG_BACKUP_RESTORE" desc="Message in the opt-in dialog for users to enable Backup and Restore for Android apps.">
-    Automatically back up and restore Play app data to Google Drive. <ph name="BEGIN_LINK1">&lt;a href="#" id="learn-more-link-backup-restore"&gt;</ph>Learn More<ph name="END_LINK1">&lt;/a&gt;<ex>&lt;/a&gt;</ex></ph>
+    Back up to Google Drive. Easily restore your data or switch device at any time. Your backup includes app data. <ph name="BEGIN_LINK1">&lt;a href="#" id="learn-more-link-backup-restore"&gt;</ph>Learn More<ph name="END_LINK1">&lt;/a&gt;<ex>&lt;/a&gt;</ex></ph>
   </message>
   <message name="IDS_ARC_OOBE_TERMS_DIALOG_METRICS_MANAGED_ENABLED" desc="Message in the Arc Terms OOBE dialog in case metrics are managed on the device and on.">
-    This device currently sends diagnostic and usage data to Google. This setting is enforced by the owner. <ph name="BEGIN_LINK1">&lt;a href="#" id="learn-more-link-metrics"&gt;</ph>Learn More<ph name="END_LINK1">&lt;/a&gt;<ex>&lt;/a&gt;</ex></ph>
+    Send system data. This device currently automatically sends diagnostic and device and app usage data to Google. This setting is enforced by the owner. If you turned on additional Web &#38; App Activity, this information will be stored with your account so you can manage it in My Activity. <ph name="BEGIN_LINK1">&lt;a href="#" id="learn-more-link-metrics"&gt;</ph>Learn More<ph name="END_LINK1">&lt;/a&gt;<ex>&lt;/a&gt;</ex></ph>
   </message>
-  <message name="IDS_ARC_OOBE_TERMS_DIALOG_METRICS_MANAGED_DISABLED" desc="Message in the Arc Terms OOBE dialog in case metrics are enabled on the device and off.">
-    The owner may choose to send diagnostic and usage data for this device to Google. <ph name="BEGIN_LINK1">&lt;a href="#" id="learn-more-link-metrics"&gt;</ph>Learn More<ph name="END_LINK1">&lt;a&gt;<ex>&lt;/a&gt;</ex></ph>
+  <message name="IDS_ARC_OOBE_TERMS_DIALOG_METRICS_MANAGED_DISABLED" desc="Message in the Arc Terms OOBE dialog in case metrics are managed on the device and off.">
+    Send system data. Automatically send diagnostic and device and app usage data to Google. This setting is enforced by the owner. The owner may choose to send diagnostic and usage data for this device to Google. You may view this in settings. If you turned on additional Web &#38; App Activity, this information will be stored with your account so you can manage it in My Activity. <ph name="BEGIN_LINK1">&lt;a href="#" id="learn-more-link-metrics"&gt;</ph>Learn More<ph name="END_LINK1">&lt;/a&gt;<ex>&lt;/a&gt;</ex></ph>
   </message>
-  <message name="IDS_ARC_OPT_IN_LOCATION_SETTING" desc="Message in the opt-in dialog for Android apps for the user to turn on Google location services">
-    Let Google’s location service help apps find your location quickly and accurately, which can reduce battery consumption. Anonymous location data will be sent to Google, even when no apps are running. <ph name="BEGIN_LINK1">&lt;a href="#" id="learn-more-link-location-service"&gt;</ph>Learn More<ph name="END_LINK1">&lt;/a&gt;<ex>&lt;/a&gt;</ex></ph>
+  <message name="IDS_ARC_OOBE_TERMS_DIALOG_METRICS_ENABLED" desc="Message in the Arc Terms OOBE dialog in case metrics are already enabled on the device.">
+    Send system data. This device currently automatically sends diagnostic and device and app usage data to Google. You can change this at any time in your device settings. If you turned on additional Web &#38; App Activity, this information will be stored with your account so you can manage it in My Activity. <ph name="BEGIN_LINK1">&lt;a href="#" id="learn-more-link-metrics"&gt;</ph>Learn More<ph name="END_LINK1">&lt;/a&gt;<ex>&lt;/a&gt;</ex></ph>
+  </message>
+  <message name="IDS_ARC_OPT_IN_LOCATION_SETTING" desc="Message in the opt-in dialog for Android apps for the user to turn on Google location services.">
+    Help apps find location. Use Google’s location service to help improve location for apps. Google may collect location data periodically and use this data in an anonymous way to improve location accuracy and location-based services. <ph name="BEGIN_LINK1">&lt;a href="#" id="learn-more-link-location-service"&gt;</ph>Learn More<ph name="END_LINK1">&lt;/a&gt;<ex>&lt;/a&gt;</ex></ph>
+  </message>
+  <message name="IDS_ARC_OPT_IN_PAI" desc="Message in the opt-in dialog for Play auto install.">
+    Install updates &#38; apps. By continuing, you agree that this device may also automatically download and install updates and apps from Google, your carrier, and your device's manufacturer, possibly using cellular data. Some of these apps may offer in-app purchases. You can remove these apps at any time. <ph name="BEGIN_LINK1">&lt;a href="#" id="learn-more-link-pai"&gt;</ph>Learn More<ph name="END_LINK1">&lt;/a&gt;<ex>&lt;/a&gt;</ex></ph>
+  </message>
+  <message name="IDS_ARC_OPT_IN_GOOGLE_SERVICE_CONFIRMATION" desc="Message in the opt-in dialog for Accepting Google services.">
+    By clicking the "I Agree" button, you agree to the processing described above for these Google services.
   </message>
   <message name="IDS_ARC_OPT_IN_LEARN_MORE_CLOSE" desc="Text for close button in learn more dialog">
     Close
   </message>
   <message name="IDS_ARC_OPT_IN_LEARN_MORE_STATISTICS" desc="Message shown in pop up overlay dialog when user clicks learn more UMA">
-    <ph name="BEGIN_PARAGRAPH1">&lt;p&gt;</ph>This is general information about your device and how you use it, such as battery level, how often you use your apps, the quality and duration of your network connections (like Wi-Fi and Bluetooth), and crash reports when things aren’t working the way they should. It will be used to improve Google’s products and services for everyone. Some aggregated information will help partners, such as Android developers, make their apps and products better, too.<ph name="END_PARAGRAPH1">&lt;/p&gt;</ph>
-    <ph name="BEGIN_PARAGRAPH2">&lt;p&gt;</ph>You can turn this on or off a any time in the Android apps Settings. This doesn’t affect your device’s ability to send the information it needs to receive essential services such as system updates and security.<ph name="END_PARAGRAPH2">&lt;/p&gt;</ph>
+    <ph name="BEGIN_PARAGRAPH1">&lt;p&gt;</ph>This is general information about your device and how you use it (such as battery level, app usage, and network connectivity). The data will be used to improve Google's products and services for everyone. Some aggregated information will help partners, such as Android developers, make their apps and products better, too.<ph name="END_PARAGRAPH1">&lt;/p&gt;</ph>
+    <ph name="BEGIN_PARAGRAPH2">&lt;p&gt;</ph>Turning off this feature doesn't affect your device's ability to send the information needed for essential services such as system updates and security.<ph name="END_PARAGRAPH2">&lt;/p&gt;</ph>
+    <ph name="BEGIN_PARAGRAPH3">&lt;p&gt;</ph>You can control this feature from Settings &gt; Google. Select Usage &#38; diagnostics from the menu.<ph name="END_PARAGRAPH3">&lt;/p&gt;</ph>
   </message>
   <message name="IDS_ARC_OPT_IN_LEARN_MORE_BACKUP_AND_RESTORE" desc="Message shown in pop up overlay dialog when user clicks learn more backup and restore">
-    <ph name="BEGIN_PARAGRAPH1">&lt;p&gt;</ph>When you turn on automatic backup, device and app data is periodically saved to a private folder in Google Drive. App data can be any data that an app has saved (based on developer settings), including potentially sensitive data such as contacts, messages, and photos.<ph name="END_PARAGRAPH1">&lt;/p&gt;</ph>
-    <ph name="BEGIN_PARAGRAPH2">&lt;p&gt;</ph>Backup data will not count towards your Drive storage quota. Large files, or files developers have chosen to exclude from the service will not be backed up.<ph name="END_PARAGRAPH2">&lt;/p&gt;</ph>
+    <ph name="BEGIN_PARAGRAPH1">&lt;p&gt;</ph>Back up to Google Drive. Easily restore your data or switch device at any time. Your backup includes app data.<ph name="END_PARAGRAPH1">&lt;/p&gt;</ph>
+    <ph name="BEGIN_PARAGRAPH2">&lt;p&gt;</ph>App data can be any data that an app has saved (based on developer settings), including potentially sensitive data such as contacts, messages, and photos.<ph name="END_PARAGRAPH2">&lt;/p&gt;</ph>
+    <ph name="BEGIN_PARAGRAPH3">&lt;p&gt;</ph>Backup data will not count toward your Drive storage quota.<ph name="END_PARAGRAPH3">&lt;/p&gt;</ph>
+    <ph name="BEGIN_PARAGRAPH4">&lt;p&gt;</ph>You can turn this service off in Settings.<ph name="END_PARAGRAPH4">&lt;/p&gt;</ph>
   </message>
   <message name="IDS_ARC_OPT_IN_LEARN_MORE_LOCATION_SERVICES" desc="Message shown in pop up overlay dialog when user clicks learn more location services">
-    <ph name="BEGIN_PARAGRAPH">&lt;p&gt;</ph>Google’s location service uses sources like Wi-Fi to help estimate your device’s location faster and more accurately. When you turn on Google’s location services, your device enters a mode that uses Wi-Fi to provide location information. You can turn this off in location settings anytime.<ph name="END_PARAGRAPH">&lt;/p&gt;</ph>
+    <ph name="BEGIN_PARAGRAPH1">&lt;p&gt;</ph>Help apps find location. Use Google’s location service to help improve location for apps. Google may collect location data periodically and use this data in an anonymous way to improve location accuracy and location-based services.<ph name="END_PARAGRAPH1">&lt;/p&gt;</ph>
+    <ph name="BEGIN_PARAGRAPH2">&lt;p&gt;</ph>Google's location service uses sources like Wi-Fi, mobile networks, and sensors to help estimate your device’s location. This service is active when your device’s Location setting is on.<ph name="END_PARAGRAPH2">&lt;/p&gt;</ph>
+    <ph name="BEGIN_PARAGRAPH3">&lt;p&gt;</ph>You can turn off Location by turning off the main Location setting on your device. You can also turn off the use of Wi-Fi, mobile networks, and sensors for location in location settings.<ph name="END_PARAGRAPH3">&lt;/p&gt;</ph>
+  </message>
+  <message name="IDS_ARC_OPT_IN_LEARN_MORE_PAI_SERVICE" desc="Message shown in pop up overlay dialog when user clicks learn more play auto install services.">
+    To remove apps, go to Settings &gt; Apps or Application manager. Then tap the app you want to uninstall (you may need to swipe right or left to find the app). Then tap Uninstall or Disable.
   </message>
   <message name="IDS_ARC_OPT_IN_PRIVACY_POLICY_LINK" desc="Text of the Link to Goolge Privacy Policy in opt-in dialog">
     Google privacy policy
@@ -4512,7 +4620,7 @@
     Installing the Google Play Store on your <ph name="DEVICE_TYPE">$1<ex>Chromebook</ex></ph>. This could take a few minutes.
   </message>
   <message name="IDS_ARC_OOBE_TERMS_HEADING" desc="Heading of the Arc Terms OOBE dialog.">
-    Google Play Terms of Service
+    Google Play apps and services
   </message>
   <message name="IDS_ARC_OOBE_TERMS_DESCRIPTION" desc="Description of the Arc Terms OOBE dialog.">
     Use Google Play to install Android apps
@@ -4524,7 +4632,7 @@
     Google Play Terms of Service cannot be loaded. Please retry.
   </message>
   <message name="IDS_ARC_OOBE_TERMS_BUTTON_ACCEPT" desc="Accept button of the Arc Terms OOBE dialog.">
-    Agree
+    I Agree
   </message>
   <message name="IDS_ARC_OOBE_TERMS_BUTTON_SKIP" desc="Skip button of the Arc Terms OOBE dialog.">
     Skip
@@ -4554,10 +4662,10 @@
     Done
   </message>
   <message name="IDS_ARC_MIGRATE_ENCRYPTION_NOTIFICATION_TITLE" desc="Title of the notification to navigate the user to first update the device encryption before running Android apps.">
-    Install OS update
+    Install critical update
   </message>
   <message name="IDS_ARC_MIGRATE_ENCRYPTION_NOTIFICATION_MESSAGE" desc="Main message of the notification to navigate the user to first update the device encryption before running Android apps.">
-    To use Android apps, sign in again and update.
+    To use Android apps and keep your <ph name="DEVICE_TYPE">$1<ex>Chromebook</ex></ph> working properly, sign in again and update.
   </message>
   <message name="IDS_ARC_MIGRATE_ENCRYPTION_NOTIFICATION_LOW_BATTERY_MESSAGE" desc="Main message of the notification to navigate the user to first update the device encryption before running Android apps.">
     To use Android apps, charge &amp; update your <ph name="DEVICE_TYPE">$1<ex>Chromebook</ex></ph>.
@@ -4571,6 +4679,15 @@
   <message name="IDS_ARC_MIGRATE_ENCRYPTION_SUCCESS_MESSAGE" desc="Message of the toast shown on the first sign-in after the successfully completed migration needed for using Android apps.">
     You can now use Android apps.
   </message>
+  <message name="IDS_ARC_USB_PERMISSION_TITLE" desc="Titlebar of Android app USB permissions prompt window">
+    Confirm USB Permission
+  </message>
+  <message name="IDS_ARC_USB_SCAN_DEVICE_LIST_PERMISSION_HEADING" desc="Heading text in the content area of the Android app scan device list permission prompt. Tells the user the app will be able to scan attached USB device list if confirmed.">
+    Allow "<ph name="APP_NAME">$1<ex>Gmail Checker</ex></ph>" to get the list of your attached USB devices?
+  </message>
+  <message name="IDS_ARC_USB_ACCESS_PERMISSION_HEADING" desc="Heading text in the content area of the Android app USB device access permission prompt. Tells the user the app will be able to access the usb device if confirmed.">
+    Allow "<ph name="APP_NAME">$1<ex>Gmail Checker</ex></ph>" to access:
+  </message>
   <message name="IDS_VOICE_INTERACTION_VALUE_PROP_LOADING" desc="Loading message of the voice interaction value prop dialog.">
     Loading Google Assistant...
   </message>
@@ -4578,7 +4695,7 @@
     Google Assistant
   </message>
   <message name="IDS_VOICE_INTERACTION_VALUE_PROP_LOAD_ERROR_MESSAGE" desc="Load error message of the voice interaction value prop dialog.">
-    Google Assistant was unable to load, please retry.
+    Google Assistant was unable to load, please check your network connection and retry.
   </message>
   <message name="IDS_VOICE_INTERACTION_VALUE_PROP_SKIP_BUTTON" desc="Button label for skipping voice interaction value prop upon error.">
     Skip
@@ -4691,6 +4808,12 @@
   <message name="IDS_PIN_UNLOCK_FEATURE_NOTIFIER_NAME" desc="The name of PIN unlock feature notifier that is a system component">
     PIN Unlock Feature
   </message>
+  <message name="IDS_PIN_UNLOCK_MIGRATION_PROMPT" desc="String shown in a notification asking the user to re-enter their PIN so it can be used in sign-in.">
+    Re-enter your PIN to use it to sign in to your device.
+  </message>
+  <message name="IDS_PIN_UNLOCK_MIGRATION_PROMPT_CONTINUE" desc="Continue button in notification prompt.">
+    Continue
+  </message>
 
   <message name="IDS_WIFI_SCANNING_MESSAGE" desc="Scanning for wifi networks">
     Searching for Wi-Fi networks...
@@ -4721,7 +4844,7 @@
   <message name="IDS_SCREENSHOT_NOTIFICATION_BUTTON_COPY_TO_CLIPBOARD" desc="The button label for the screenshot notification which copies the screenshot image to clipboard on click.">
     Copy to clipboard
   </message>
-  <message name="IDS_SCREENSHOT_NOTIFICATION_BUTTON_ANNOTATE" desc="The label for the screenshot notification button that opens the note-taking app to annotate the screenhsot.">
+  <message name="IDS_SCREENSHOT_NOTIFICATION_BUTTON_ANNOTATE" desc="The label for the screenshot notification button that opens the note-taking app to annotate the screenshot.">
     Annotate image
   </message>
 
@@ -4732,9 +4855,6 @@
   <message name="IDS_HATS_NOTIFICATION_BODY" desc="The body of the notification for Happiness Tracking Survey.">
     Let us know how we’re doing.
   </message>
-  <message name="IDS_HATS_NOTIFICATION_TAKE_SURVEY_BUTTON" desc="The title of the button in the notification for Happiness Tracking Survey to take the said survey.">
-    Take survey
-  </message>
 
   <!-- Lock screen note app toast dialog -->
   <message name="IDS_LOCK_SCREEN_NOTE_APP_TOAST_DIALOG_TITLE" desc="Title of the dialog shown to the user when they first launch note taking app from the lock screen - the title contains the launched app's name.">
@@ -4742,5 +4862,52 @@
   </message>
   <message name="IDS_LOCK_SCREEN_NOTE_APP_TOAST_DIALOG_MESSAGE" desc="Message shown in the body of the dialog shown to the user when they launch note taking app from the lock screen for the first time - the message has a placeholder for the launched app's name.">
     Lock screen notes are automatically saved to <ph name="LOCK_SCREEN_APP_NAME">$1<ex>Lock Screen Enabled App</ex></ph>. Your most recent note will remain on the lock screen.
+  </message>
+
+  <!-- Launcher Searchable Chrome OS internal apps -->
+  <message name="IDS_INTERNAL_APP_KEYBOARD_SHORTCUT_VIEWER" desc="The name of keyboard shortcut viewer app.">
+    Shortcuts
+  </message>
+  <message name="IDS_LAUNCHER_SEARCHABLE_KEYBOARD_SHORTCUT_VIEWER" desc="The string can be used to search keyboard shortcut viewer app.">
+    Keyboard Shortcut Helper
+  </message>
+  <message name="IDS_INTERNAL_APP_SETTINGS" desc="The name of Settings.">
+    Settings
+  </message>
+
+  <message name="IDS_CROSTINI_INSTALLER_TITLE" desc="Title of the Crostini installer, a dialog for installing the 'Terminal'.">
+    <ph name="APP_NAME">$1<ex>Terminal</ex></ph> for <ph name="DEVICE_TYPE">$2<ex>Chromebook</ex></ph>
+  </message>
+  <message name="IDS_CROSTINI_INSTALLER_BODY" desc="Description for the Crostini installer, a dialog for installing the 'Terminal'.">
+    Develop on your <ph name="DEVICE_TYPE">$1<ex>Chromebook</ex></ph>. You can run your favorite native apps and command-line tools seamlessly and securely.
+
+Installing the <ph name="APP_NAME">$2<ex>Terminal</ex></ph> will download <ph name="DOWNLOAD_SIZE">$3<ex>200MB</ex></ph> of data.
+  </message>
+  <message name="IDS_CROSTINI_INSTALLER_INSTALL_BUTTON" desc="Label for the button in the Crostini installer dialog to begin installing the 'Terminal'.">
+    Install
+  </message>
+  <message name="IDS_CROSTINI_INSTALLER_INSTALLING" desc="Text shown in the Crostini installer dialog while the 'Terminal' is installing.">
+    Installing <ph name="APP_NAME">$1<ex>Terminal</ex></ph>...
+  </message>
+  <message name="IDS_CROSTINI_INSTALLER_ERROR_TITLE" desc="Title of the Crostini installer when an error occurs.">
+    Error installing <ph name="APP_NAME">$1<ex>Terminal</ex></ph>...
+  </message>
+  <message name="IDS_CROSTINI_INSTALLER_COMPLETE" desc="Text shown in the Crostini installer dialog when installation is complete.">
+    Finished installing <ph name="APP_NAME">$1<ex>Terminal</ex></ph>.
+  </message>
+  <message name="IDS_CROSTINI_INSTALLER_LOAD_TERMINA_ERROR" desc="Text shown in the Crostini installer dialog when the 'Termina' component fails to load">
+    ERROR: Failed to load Termina component.
+  </message>
+  <message name="IDS_CROSTINI_INSTALLER_START_CONCIERGE_ERROR" desc="Text shown in the Crostini installer dialog when the 'Concierge' client fails to start">
+    ERROR: Failed to start Concierge client.
+  </message>
+  <message name="IDS_CROSTINI_INSTALLER_CREATE_DISK_IMAGE_ERROR" desc="Text shown in the Crostini installer dialog when the failing to create the disk image">
+    ERROR: Failed to create disk image.
+  </message>
+  <message name="IDS_CROSTINI_INSTALLER_START_TERMINA_VM_ERROR" desc="Text shown in the Crostini installer dialog when the 'Termina VM' fails to start">
+    ERROR: Failed to start Termina VM.
+  </message>
+  <message name="IDS_CROSTINI_INSTALLER_START_CONTAINER_ERROR" desc="Text shown in the Crostini installer dialog when the container fails to start inside the 'Termina VM'">
+    ERROR: Failed to start container inside Termina VM.
   </message>
 </grit-part>

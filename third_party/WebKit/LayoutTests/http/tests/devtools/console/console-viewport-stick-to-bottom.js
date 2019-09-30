@@ -9,41 +9,26 @@
   await TestRunner.evaluateInPagePromise(`
       function populateConsoleWithMessages(count)
       {
-          for (var i = 0; i < count - 1; ++i)
+          for (var i = 0; i < count; ++i)
               console.log("Multiline\\nMessage #" + i);
-          console.log("hello %cworld", "color: blue");
       }
 
-      //# sourceURL=console-viewport-selection.js
+      //# sourceURL=console-viewport-stick-to-bottom.js
     `);
+  await ConsoleTestRunner.waitUntilConsoleEditorLoaded();
 
   var viewportHeight = 200;
   ConsoleTestRunner.fixConsoleViewportDimensions(600, viewportHeight);
   var consoleView = Console.ConsoleView.instance();
   var viewport = consoleView._viewport;
-  const minimumViewportMessagesCount = 10;
   const messagesCount = 150;
-  const middleMessage = messagesCount / 2;
-  var viewportMessagesCount;
 
-  logMessagesToConsole(messagesCount, () => TestRunner.runTestSuite(testSuite));
+  logMessagesToConsole(messagesCount, async () => {
+    await ConsoleTestRunner.waitForPendingViewportUpdates();
+    TestRunner.runTestSuite(testSuite);
+  });
 
   var testSuite = [
-    function verifyViewportIsTallEnough(next) {
-      viewport.invalidate();
-      viewport.forceScrollItemToBeFirst(0);
-      viewportMessagesCount = viewport.lastVisibleIndex() - viewport.firstVisibleIndex() + 1;
-      if (viewportMessagesCount < minimumViewportMessagesCount) {
-        TestRunner.addResult(String.sprintf(
-            'Test cannot be run as viewport is not tall enough. It is required to contain at least %d messages, but %d only fit',
-            minimumViewportMessagesCount, viewportMessagesCount));
-        TestRunner.completeTest();
-        return;
-      }
-      TestRunner.addResult(String.sprintf('Viewport contains %d messages', viewportMessagesCount));
-      next();
-    },
-
     function testScrollViewportToBottom(next) {
       consoleView._immediatelyScrollToBottom();
       dumpAndContinue(next);
@@ -52,7 +37,8 @@
     function testConsoleSticksToBottom(next) {
       logMessagesToConsole(messagesCount, onMessagesDumped);
 
-      function onMessagesDumped() {
+      async function onMessagesDumped() {
+        await ConsoleTestRunner.waitForPendingViewportUpdates();
         dumpAndContinue(next);
       }
     },
@@ -65,8 +51,11 @@
       dumpAndContinue(next);
     },
 
-    function testChangingPromptTextShouldJumpToBottom(next) {
+    function testChangingPromptTextShouldRestickAtBottom(next) {
       TestRunner.addSniffer(Console.ConsoleView.prototype, '_promptTextChangedForTest', onContentChanged);
+      // Since eventSender.keyDown() does not scroll prompt into view, simulate
+      // behavior by setting a large scrollTop.
+      consoleView._viewport.element.scrollTop = 1000000;
       var editorElement = consoleView._prompt.setText('a');
 
       function onContentChanged() {
@@ -93,8 +82,8 @@
       ConsoleTestRunner.evaluateInConsole('1 + 1');
 
       /**
-             * @param {boolean} muted
-             */
+       * @param {boolean} muted
+       */
       function onMessageAdded(muted) {
         TestRunner.addResult('New messages were muted: ' + muted);
         TestRunner.addSniffer(
@@ -104,8 +93,8 @@
       }
 
       /**
-             * @param {boolean} muted
-             */
+       * @param {boolean} muted
+       */
       function onMouseUpScheduledRefresh(muted) {
         TestRunner.addResult('Refresh was scheduled after dirty state');
       }
@@ -115,17 +104,22 @@
       }
     },
 
-    function testShouldNotJumpToBottomWhenPromptFillsEntireViewport(next) {
-      var text = 'Foo';
-      for (var i = 0; i < viewportHeight; i++)
-        text += '\n';
-      Console.ConsoleView.clearConsole();
-      consoleView._prompt.setText(text);
-      viewport.element.scrollTop -= 10;
+    function testShouldNotJumpToBottomWhenMultilinePromptIsBelowMessages(next) {
+      // Set scrollTop above the bottom.
+      viewport.element.scrollTop = viewport.element.scrollHeight - viewport.element.clientHeight - 10;
+      consoleView._prompt.setText('Foo\n\nbar');
 
-      var keyEvent = TestRunner.createKeyEvent('a');
-      viewport._contentElement.dispatchEvent(keyEvent);
-      consoleView._promptElement.dispatchEvent(new Event('input'));
+      dumpAndContinue(next);
+    },
+
+    function testShouldNotJumpToBottomWhenPromptFillsEntireViewport(next) {
+      consoleView._prompt.setText('Foo' + '\n'.repeat(viewportHeight));
+
+      // Set scrollTop above the bottom.
+      viewport.element.scrollTop = viewport.element.scrollHeight - viewport.element.clientHeight - 10;
+
+      // Trigger prompt text change.
+      consoleView._prompt.setText('Bar' + '\n'.repeat(viewportHeight));
 
       dumpAndContinue(next);
     }

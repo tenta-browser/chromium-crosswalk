@@ -6,21 +6,10 @@
 
 #include "base/strings/utf_string_conversions.h"
 #include "net/base/escape.h"
-#include "third_party/WebKit/public/platform/WebString.h"
-#include "third_party/WebKit/public/platform/WebURL.h"
+#include "third_party/blink/public/platform/web_string.h"
+#include "third_party/blink/public/platform/web_url.h"
 
 namespace content {
-
-std::string URLToMarkup(const blink::WebURL& url,
-                        const blink::WebString& title) {
-  std::string markup("<a href=\"");
-  markup.append(url.GetString().Utf8());
-  markup.append("\">");
-  // TODO(darin): HTML escape this
-  markup.append(net::EscapeForHTML(title.Utf8()));
-  markup.append("</a>");
-  return markup;
-}
 
 std::string URLToImageMarkup(const blink::WebURL& url,
                              const blink::WebString& title) {

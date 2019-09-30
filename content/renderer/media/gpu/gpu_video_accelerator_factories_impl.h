@@ -17,7 +17,6 @@
 #include "base/single_thread_task_runner.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/unguessable_token.h"
-#include "components/viz/common/resources/buffer_to_texture_target_map.h"
 #include "content/child/thread_safe_sender.h"
 #include "content/common/content_export.h"
 #include "media/mojo/interfaces/video_encode_accelerator.mojom.h"
@@ -47,6 +46,8 @@ namespace content {
 // The GpuVideoAcceleratorFactoriesImpl can be constructed on any thread,
 // but subsequent calls to all public methods of the class must be called from
 // the |task_runner_|, as provided during construction.
+// |context_provider| should not support locking and will be bound to
+// |task_runner_| where all the operations on the context should also happen.
 class CONTENT_EXPORT GpuVideoAcceleratorFactoriesImpl
     : public media::GpuVideoAcceleratorFactories {
  public:
@@ -59,7 +60,6 @@ class CONTENT_EXPORT GpuVideoAcceleratorFactoriesImpl
       const scoped_refptr<base::SingleThreadTaskRunner>& task_runner,
       const scoped_refptr<ui::ContextProviderCommandBuffer>& context_provider,
       bool enable_gpu_memory_buffer_video_frames,
-      const viz::BufferToTextureTargetMap& image_texture_targets,
       bool enable_video_accelerator,
       media::mojom::VideoEncodeAcceleratorProviderPtrInfo unbound_vea_provider);
 
@@ -90,9 +90,10 @@ class CONTENT_EXPORT GpuVideoAcceleratorFactoriesImpl
 
   bool ShouldUseGpuMemoryBuffersForVideoFrames() const override;
   unsigned ImageTextureTarget(gfx::BufferFormat format) override;
-  OutputFormat VideoFrameOutputFormat() override;
-  std::unique_ptr<media::GpuVideoAcceleratorFactories::ScopedGLContextLock>
-  GetGLContextLock() override;
+  OutputFormat VideoFrameOutputFormat(size_t bit_depth) override;
+
+  gpu::gles2::GLES2Interface* ContextGL() override;
+  void BindContextToTaskRunner();
   bool CheckContextLost();
   std::unique_ptr<base::SharedMemory> CreateSharedMemory(size_t size) override;
   scoped_refptr<base::SingleThreadTaskRunner> GetTaskRunner() override;
@@ -104,8 +105,9 @@ class CONTENT_EXPORT GpuVideoAcceleratorFactoriesImpl
 
   viz::ContextProvider* GetMediaContextProvider() override;
 
-  void ReleaseContextProvider();
-  scoped_refptr<ui::ContextProviderCommandBuffer> ContextProviderMainThread();
+  void SetRenderingColorSpace(const gfx::ColorSpace& color_space) override;
+
+  bool CheckContextProviderLost();
 
   ~GpuVideoAcceleratorFactoriesImpl() override;
 
@@ -117,31 +119,34 @@ class CONTENT_EXPORT GpuVideoAcceleratorFactoriesImpl
       const scoped_refptr<base::SingleThreadTaskRunner>& task_runner,
       const scoped_refptr<ui::ContextProviderCommandBuffer>& context_provider,
       bool enable_gpu_memory_buffer_video_frames,
-      const viz::BufferToTextureTargetMap& image_texture_targets,
       bool enable_video_accelerator,
       media::mojom::VideoEncodeAcceleratorProviderPtrInfo unbound_vea_provider);
 
   void BindVideoEncodeAcceleratorProviderOnTaskRunner(
       media::mojom::VideoEncodeAcceleratorProviderPtrInfo unbound_vea_provider);
 
-  scoped_refptr<base::SingleThreadTaskRunner> main_thread_task_runner_;
-  scoped_refptr<base::SingleThreadTaskRunner> task_runner_;
-  scoped_refptr<gpu::GpuChannelHost> gpu_channel_host_;
+  void ReleaseContextProvider();
+  void SetContextProviderLost();
 
-  // Shared pointer to a shared context provider that should be accessed
-  // and set only on the main thread.
-  scoped_refptr<ui::ContextProviderCommandBuffer> context_provider_refptr_;
+  const scoped_refptr<base::SingleThreadTaskRunner> main_thread_task_runner_;
+  const scoped_refptr<base::SingleThreadTaskRunner> task_runner_;
+  const scoped_refptr<gpu::GpuChannelHost> gpu_channel_host_;
 
-  // Raw pointer to a context provider accessed from the media thread.
-  ui::ContextProviderCommandBuffer* context_provider_;
+  // Shared pointer to a shared context provider. It is initially set on main
+  // thread, but all subsequent access and destruction should happen only on the
+  // media thread.
+  scoped_refptr<ui::ContextProviderCommandBuffer> context_provider_;
+  // Signals if |context_provider_| is alive on the media thread.
+  bool context_provider_lost_;
 
   base::UnguessableToken channel_token_;
 
   // Whether gpu memory buffers should be used to hold video frames data.
-  bool enable_gpu_memory_buffer_video_frames_;
-  const viz::BufferToTextureTargetMap image_texture_targets_;
+  const bool enable_gpu_memory_buffer_video_frames_;
   // Whether video acceleration encoding/decoding should be enabled.
   const bool video_accelerator_enabled_;
+
+  gfx::ColorSpace rendering_color_space_;
 
   gpu::GpuMemoryBufferManager* const gpu_memory_buffer_manager_;
 

@@ -22,12 +22,10 @@
 #include "base/values.h"
 #include "build/build_config.h"
 #include "cc/trees/layer_tree_host.h"
-#include "content/common/content_switches_internal.h"
 #include "content/common/frame_messages.h"
 #include "content/common/frame_owner_properties.h"
 #include "content/common/frame_replication_state.h"
 #include "content/common/renderer.mojom.h"
-#include "content/common/site_isolation_policy.h"
 #include "content/common/view_messages.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/native_web_keyboard_event.h"
@@ -36,9 +34,9 @@
 #include "content/public/common/browser_side_navigation_policy.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/common/page_zoom.h"
-#include "content/public/common/resource_request_body.h"
 #include "content/public/common/url_constants.h"
 #include "content/public/common/url_utils.h"
+#include "content/public/common/use_zoom_for_dsf_policy.h"
 #include "content/public/renderer/content_renderer_client.h"
 #include "content/public/renderer/document_state.h"
 #include "content/public/renderer/navigation_state.h"
@@ -47,7 +45,6 @@
 #include "content/public/test/render_view_test.h"
 #include "content/public/test/test_utils.h"
 #include "content/renderer/accessibility/render_accessibility_impl.h"
-#include "content/renderer/devtools/devtools_agent.h"
 #include "content/renderer/gpu/render_widget_compositor.h"
 #include "content/renderer/history_entry.h"
 #include "content/renderer/history_serialization.h"
@@ -63,26 +60,29 @@
 #include "content/test/test_render_frame.h"
 #include "net/base/net_errors.h"
 #include "net/cert/cert_status_flags.h"
+#include "services/network/public/cpp/resource_request_body.h"
+#include "services/network/public/mojom/request_context_frame_type.mojom.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/WebKit/public/platform/WebData.h"
-#include "third_party/WebKit/public/platform/WebHTTPBody.h"
-#include "third_party/WebKit/public/platform/WebRuntimeFeatures.h"
-#include "third_party/WebKit/public/platform/WebString.h"
-#include "third_party/WebKit/public/platform/WebURLResponse.h"
-#include "third_party/WebKit/public/platform/modules/serviceworker/WebServiceWorkerNetworkProvider.h"
-#include "third_party/WebKit/public/web/WebDevToolsAgent.h"
-#include "third_party/WebKit/public/web/WebDeviceEmulationParams.h"
-#include "third_party/WebKit/public/web/WebDocumentLoader.h"
-#include "third_party/WebKit/public/web/WebFrameContentDumper.h"
-#include "third_party/WebKit/public/web/WebHistoryCommitType.h"
-#include "third_party/WebKit/public/web/WebHistoryItem.h"
-#include "third_party/WebKit/public/web/WebInputMethodController.h"
-#include "third_party/WebKit/public/web/WebLocalFrame.h"
-#include "third_party/WebKit/public/web/WebPerformance.h"
-#include "third_party/WebKit/public/web/WebScriptSource.h"
-#include "third_party/WebKit/public/web/WebSettings.h"
-#include "third_party/WebKit/public/web/WebView.h"
-#include "third_party/WebKit/public/web/WebWindowFeatures.h"
+#include "third_party/blink/public/platform/modules/serviceworker/web_service_worker_network_provider.h"
+#include "third_party/blink/public/platform/scheduler/test/renderer_scheduler_test_support.h"
+#include "third_party/blink/public/platform/web_data.h"
+#include "third_party/blink/public/platform/web_http_body.h"
+#include "third_party/blink/public/platform/web_runtime_features.h"
+#include "third_party/blink/public/platform/web_string.h"
+#include "third_party/blink/public/platform/web_url_response.h"
+#include "third_party/blink/public/web/web_device_emulation_params.h"
+#include "third_party/blink/public/web/web_document_loader.h"
+#include "third_party/blink/public/web/web_frame_content_dumper.h"
+#include "third_party/blink/public/web/web_global_object_reuse_policy.h"
+#include "third_party/blink/public/web/web_history_commit_type.h"
+#include "third_party/blink/public/web/web_history_item.h"
+#include "third_party/blink/public/web/web_input_method_controller.h"
+#include "third_party/blink/public/web/web_local_frame.h"
+#include "third_party/blink/public/web/web_performance.h"
+#include "third_party/blink/public/web/web_script_source.h"
+#include "third_party/blink/public/web/web_settings.h"
+#include "third_party/blink/public/web/web_view.h"
+#include "third_party/blink/public/web/web_window_features.h"
 #include "ui/accessibility/ax_modes.h"
 #include "ui/events/base_event_utils.h"
 #include "ui/events/event.h"
@@ -91,12 +91,18 @@
 #include "ui/gfx/range/range.h"
 #include "ui/native_theme/native_theme_features.h"
 
+#if defined(OS_ANDROID)
+#include "third_party/blink/public/platform/web_coalesced_input_event.h"
+#include "third_party/blink/public/platform/web_gesture_device.h"
+#include "third_party/blink/public/platform/web_gesture_event.h"
+#include "third_party/blink/public/platform/web_input_event.h"
+#endif
+
 #if defined(OS_WIN)
 #include "base/win/windows_version.h"
 #endif
 
 #if defined(USE_AURA) && defined(USE_X11)
-#include "base/memory/ptr_util.h"
 #include "ui/events/event_constants.h"
 #include "ui/events/keycodes/keyboard_code_conversion.h"
 #include "ui/events/test/events_test_utils.h"
@@ -172,13 +178,6 @@ class WebUITestWebUIControllerFactory : public WebUIControllerFactory {
   }
 };
 
-// Timestamps logged close to each other under low resolution timers
-// are more likely to record the same value. Allow for this by relaxing
-// constraints on systems with these timers.
-bool TimeTicksGT(const base::TimeTicks& x, const base::TimeTicks& y) {
-  return base::TimeTicks::IsHighResolution() ? x > y : x >= y;
-}
-
 // FrameReplicationState is normally maintained in the browser process,
 // but the function below provides a way for tests to construct a partial
 // FrameReplicationState within the renderer process.  We say "partial",
@@ -247,7 +246,6 @@ class RenderViewImplTest : public RenderViewTest {
   void GoToOffsetWithParams(int offset,
                             const PageState& state,
                             const CommonNavigationParams common_params,
-                            const StartNavigationParams start_params,
                             RequestNavigationParams request_params) {
     EXPECT_TRUE(common_params.transition & ui::PAGE_TRANSITION_FORWARD_BACK);
     int pending_offset = offset + view()->history_list_offset_;
@@ -257,7 +255,7 @@ class RenderViewImplTest : public RenderViewTest {
     request_params.pending_history_list_offset = pending_offset;
     request_params.current_history_list_offset = view()->history_list_offset_;
     request_params.current_history_list_length = view()->history_list_length_;
-    frame()->Navigate(common_params, start_params, request_params);
+    frame()->Navigate(common_params, request_params);
 
     // The load actually happens asynchronously, so we pump messages to process
     // the pending continuation.
@@ -401,6 +399,12 @@ class RenderViewImplTest : public RenderViewTest {
         PageMsg_SetZoomLevel_Command::USE_CURRENT_TEMPORARY_MODE, level);
   }
 
+  int GetScrollbarWidth() {
+    blink::WebView* webview = view()->webview();
+    return webview->Size().width -
+           webview->MainFrame()->VisibleContentRect().width;
+  }
+
   // Closes a view created during the test, i.e. not the |view()|. Checks that
   // the main frame is detached and deleted, and makes sure the view does not
   // leak.
@@ -413,104 +417,6 @@ class RenderViewImplTest : public RenderViewTest {
 
  private:
   std::unique_ptr<MockKeyboard> mock_keyboard_;
-};
-
-class DevToolsAgentTest : public RenderViewImplTest {
- public:
-  void Attach() {
-    notifications_ = std::vector<std::string>();
-    expecting_pause_ = false;
-    agent()->GetWebAgent()->Attach(17);
-    agent()->send_protocol_message_callback_for_test_ = base::Bind(
-       &DevToolsAgentTest::OnDevToolsMessage, base::Unretained(this));
-  }
-
-  void Detach() {
-    agent()->send_protocol_message_callback_for_test_.Reset();
-    agent()->GetWebAgent()->Detach(17);
-  }
-
-  bool IsPaused() {
-    return agent()->paused_;
-  }
-
-  void DispatchDevToolsMessage(const std::string& method,
-                               const std::string& message) {
-    agent()->DispatchOnInspectorBackend(17, 1, method, message);
-  }
-
-  void CloseWhilePaused() {
-    EXPECT_TRUE(IsPaused());
-    view()->NotifyOnClose();
-  }
-
-  void OnDevToolsMessage(int,
-                         int,
-                         const std::string& message,
-                         const std::string&) {
-    last_message_ = base::WrapUnique(static_cast<base::DictionaryValue*>(
-        base::JSONReader::Read(message).release()));
-    int id;
-    if (!last_message_->GetInteger("id", &id)) {
-      std::string notification;
-      EXPECT_TRUE(last_message_->GetString("method", &notification));
-      notifications_.push_back(notification);
-
-      if (notification == "Debugger.paused" && expecting_pause_) {
-        base::ListValue* call_frames;
-        EXPECT_TRUE(last_message_->GetList("params.callFrames", &call_frames));
-        if (call_frames) {
-          EXPECT_EQ(call_frames_count_,
-                    static_cast<int>(call_frames->GetSize()));
-        }
-        expecting_pause_ = false;
-        base::ThreadTaskRunnerHandle::Get()->PostTask(
-            FROM_HERE,
-            base::BindOnce(&DevToolsAgentTest::DispatchDevToolsMessage,
-                           base::Unretained(this), "Debugger.resume",
-                           "{\"id\":100,\"method\":\"Debugger.resume\"}"));
-      }
-
-      if (notification == "Page.windowOpen") {
-        window_open_notification_ =
-            base::WrapUnique(static_cast<base::DictionaryValue*>(
-                base::JSONReader::Read(message).release()));
-      }
-    }
-  }
-
-  int CountNotifications(const std::string& notification) {
-    int result = 0;
-    for (const std::string& s : notifications_) {
-      if (s == notification)
-        ++result;
-    }
-    return result;
-  }
-
-  base::DictionaryValue* LastReceivedMessage() {
-    return last_message_.get();
-  }
-
-  void ExpectPauseAndResume(int call_frames_count) {
-    expecting_pause_ = true;
-    call_frames_count_ = call_frames_count;
-  }
-
-  base::DictionaryValue* WindowOpenNotification() {
-    return window_open_notification_.get();
-  }
-
- private:
-  DevToolsAgent* agent() {
-    return frame()->devtools_agent();
-  }
-
-  std::vector<std::string> notifications_;
-  std::unique_ptr<base::DictionaryValue> last_message_;
-  std::unique_ptr<base::DictionaryValue> window_open_notification_;
-  int call_frames_count_;
-  bool expecting_pause_;
 };
 
 class RenderViewImplBlinkSettingsTest : public RenderViewImplTest {
@@ -537,11 +443,17 @@ class RenderViewImplScaleFactorTest : public RenderViewImplBlinkSettingsTest {
     ResizeParams params;
     params.screen_info.device_scale_factor = dsf;
     params.new_size = gfx::Size(100, 100);
-    params.physical_backing_size = gfx::Size(200, 200);
+    params.compositor_viewport_pixel_size = gfx::Size(200, 200);
     params.visible_viewport_size = params.new_size;
+    params.auto_resize_enabled = view()->auto_resize_mode();
+    params.auto_resize_sequence_number = view()->auto_resize_sequence_number();
+    params.min_size_for_auto_resize = view()->min_size_for_auto_resize();
+    params.max_size_for_auto_resize = view()->max_size_for_auto_resize();
     params.needs_resize_ack = false;
+    params.content_source_id = view()->GetContentSourceId();
     view()->OnResize(params);
-    ASSERT_EQ(dsf, view()->device_scale_factor_);
+    ASSERT_EQ(dsf, view()->GetWebScreenInfo().device_scale_factor);
+    ASSERT_EQ(dsf, view()->GetOriginalScreenInfo().device_scale_factor);
   }
 
   void TestEmulatedSizeDprDsf(int width, int height, float dpr,
@@ -573,6 +485,81 @@ class RenderViewImplScaleFactorTest : public RenderViewImplBlinkSettingsTest {
                                   ->device_scale_factor());
   }
 };
+
+#if defined(OS_ANDROID)
+class TapCallbackFilter : public IPC::Listener {
+ public:
+  explicit TapCallbackFilter(
+      base::RepeatingCallback<void(const gfx::Rect&, const gfx::Size&)>
+          callback)
+      : callback_(callback) {}
+
+  bool OnMessageReceived(const IPC::Message& msg) override {
+    bool handled = true;
+    IPC_BEGIN_MESSAGE_MAP(TapCallbackFilter, msg)
+      IPC_MESSAGE_HANDLER(ViewHostMsg_ShowDisambiguationPopup,
+                          OnShowDisambiguationPopup)
+      IPC_MESSAGE_UNHANDLED(handled = false)
+    IPC_END_MESSAGE_MAP()
+    return handled;
+  }
+
+  void OnShowDisambiguationPopup(const gfx::Rect& rect_pixels,
+                                 const gfx::Size& size,
+                                 base::SharedMemoryHandle handle) {
+    callback_.Run(rect_pixels, size);
+  }
+
+ private:
+  base::RepeatingCallback<void(const gfx::Rect&, const gfx::Size&)> callback_;
+};
+
+static blink::WebCoalescedInputEvent FatTap(int x,
+                                            int y,
+                                            int width,
+                                            int height) {
+  blink::WebGestureEvent event(
+      blink::WebInputEvent::kGestureTap, blink::WebInputEvent::kNoModifiers,
+      blink::WebInputEvent::GetStaticTimeStampForTests(),
+      blink::kWebGestureDeviceTouchscreen);
+  event.SetPositionInWidget(gfx::PointF(x, y));
+  event.data.tap.width = width;
+  event.data.tap.height = height;
+  return blink::WebCoalescedInputEvent(event);
+}
+
+TEST_F(RenderViewImplScaleFactorTest, TapDisambiguatorSize) {
+  DoSetUp();
+  base::CommandLine::ForCurrentProcess()->AppendSwitch(
+      switches::kEnableUseZoomForDSF);
+  const float device_scale = 2.625f;
+  SetDeviceScaleFactor(device_scale);
+  EXPECT_EQ(device_scale, view()->GetDeviceScaleFactor());
+
+  LoadHTML(
+      "<style type=\"text/css\">"
+      " a {"
+      "  display: block;"
+      "  width: 40px;"
+      "  height: 40px;"
+      "  background-color:#ccccff;"
+      " }"
+      "</style>"
+      "<body style=\"margin: 0px\">"
+      "<a href=\"#\">link </a>"
+      "<a href=\"#\">link </a>"
+      "</body>");
+  std::unique_ptr<TapCallbackFilter> callback_filter(
+      new TapCallbackFilter(base::BindRepeating(
+          [](const gfx::Rect& rect_pixels, const gfx::Size& canvas_size) {
+            EXPECT_EQ(rect_pixels, gfx::Rect(28, 68, 24, 24));
+            EXPECT_EQ(canvas_size, gfx::Size(48, 48));
+          })));
+  render_thread_->sink().AddFilter(callback_filter.get());
+  view()->webview()->HandleInputEvent(FatTap(40, 80, 200, 200));
+  render_thread_->sink().RemoveFilter(callback_filter.get());
+}
+#endif
 
 // Ensure that the main RenderFrame is deleted and cleared from the RenderView
 // after closing it.
@@ -613,7 +600,6 @@ TEST_F(RenderViewImplTest, OnNavStateChanged) {
 TEST_F(RenderViewImplTest, OnNavigationHttpPost) {
   // An http url will trigger a resource load so cannot be used here.
   CommonNavigationParams common_params;
-  StartNavigationParams start_params;
   RequestNavigationParams request_params;
   common_params.url = GURL("data:text/html,<div>Page</div>");
   common_params.navigation_type = FrameMsg_Navigate_Type::DIFFERENT_DOCUMENT;
@@ -623,11 +609,12 @@ TEST_F(RenderViewImplTest, OnNavigationHttpPost) {
   // Set up post data.
   const char raw_data[] = "post \0\ndata";
   const size_t length = arraysize(raw_data);
-  scoped_refptr<ResourceRequestBody> post_data(new ResourceRequestBody);
+  scoped_refptr<network::ResourceRequestBody> post_data(
+      new network::ResourceRequestBody);
   post_data->AppendBytes(raw_data, length);
   common_params.post_data = post_data;
 
-  frame()->Navigate(common_params, start_params, request_params);
+  frame()->Navigate(common_params, request_params);
   base::RunLoop().RunUntilIdle();
 
   auto last_commit_params = frame()->TakeLastCommitParams();
@@ -669,8 +656,7 @@ TEST_F(RenderViewImplTest, OnNavigationLoadDataWithBaseURL) {
       "data:text/html,<html><head><title>Data page</title></head></html>";
 
   render_thread_->sink().ClearMessages();
-  frame()->Navigate(common_params, StartNavigationParams(),
-                    request_params);
+  frame()->Navigate(common_params, request_params);
   const IPC::Message* frame_title_msg = nullptr;
   do {
     base::RunLoop().RunUntilIdle();
@@ -697,27 +683,23 @@ TEST_F(RenderViewImplTest, DecideNavigationPolicy) {
   request.SetFetchRequestMode(network::mojom::FetchRequestMode::kNavigate);
   request.SetFetchCredentialsMode(
       network::mojom::FetchCredentialsMode::kInclude);
-  request.SetFetchRedirectMode(blink::WebURLRequest::kFetchRedirectModeManual);
-  request.SetFrameType(blink::WebURLRequest::kFrameTypeTopLevel);
+  request.SetFetchRedirectMode(network::mojom::FetchRedirectMode::kManual);
+  request.SetFrameType(network::mojom::RequestContextFrameType::kTopLevel);
   request.SetRequestContext(blink::WebURLRequest::kRequestContextInternal);
   blink::WebFrameClient::NavigationPolicyInfo policy_info(request);
   policy_info.navigation_type = blink::kWebNavigationTypeLinkClicked;
   policy_info.default_policy = blink::kWebNavigationPolicyCurrentTab;
   blink::WebNavigationPolicy policy =
       frame()->DecidePolicyForNavigation(policy_info);
-  if (!IsBrowserSideNavigationEnabled()) {
-    EXPECT_EQ(blink::kWebNavigationPolicyCurrentTab, policy);
-  } else {
-    // If this is a renderer-initiated navigation that just begun, it should
-    // stop and be sent to the browser.
-    EXPECT_EQ(blink::kWebNavigationPolicyHandledByClient, policy);
+  // If this is a renderer-initiated navigation that just begun, it should
+  // stop and be sent to the browser.
+  EXPECT_EQ(blink::kWebNavigationPolicyHandledByClient, policy);
 
-    // If this a navigation that is ready to commit, it should be handled
-    // locally.
-    request.SetCheckForBrowserSideNavigation(false);
-    policy = frame()->DecidePolicyForNavigation(policy_info);
-    EXPECT_EQ(blink::kWebNavigationPolicyCurrentTab, policy);
-  }
+  // If this a navigation that is ready to commit, it should be handled
+  // locally.
+  request.SetCheckForBrowserSideNavigation(false);
+  policy = frame()->DecidePolicyForNavigation(policy_info);
+  EXPECT_EQ(blink::kWebNavigationPolicyCurrentTab, policy);
 
   // Verify that form posts to WebUI URLs will be sent to the browser process.
   blink::WebURLRequest form_request(GURL("chrome://foo"));
@@ -822,6 +804,61 @@ TEST_F(RenderViewImplTest, DecideNavigationPolicyForWebUI) {
   CloseRenderView(new_view);
 }
 
+// This test verifies that when device emulation is enabled, RenderFrameProxy
+// continues to receive the original ScreenInfo and not the emualted
+// ScreenInfo.
+TEST_F(RenderViewImplScaleFactorTest, DeviceEmulationWithOOPIF) {
+  DoSetUp();
+
+  // This test should only run with --site-per-process.
+  if (!AreAllSitesIsolatedForTesting())
+    return;
+
+  const float device_scale = 2.0f;
+  float compositor_dsf = IsUseZoomForDSFEnabled() ? 1.f : device_scale;
+  SetDeviceScaleFactor(device_scale);
+
+  LoadHTML(
+      "<body style='min-height:1000px;'>"
+      "  <iframe src='data:text/html,frame 1'></iframe>"
+      "</body>");
+
+  WebFrame* web_frame = frame()->GetWebFrame();
+  ASSERT_TRUE(web_frame->FirstChild()->IsWebLocalFrame());
+  TestRenderFrame* child_frame = static_cast<TestRenderFrame*>(
+      RenderFrame::FromWebFrame(web_frame->FirstChild()->ToWebLocalFrame()));
+  ASSERT_TRUE(child_frame);
+
+  child_frame->SwapOut(kProxyRoutingId + 1, true,
+                       ReconstructReplicationStateForTesting(child_frame));
+  EXPECT_TRUE(web_frame->FirstChild()->IsWebRemoteFrame());
+  RenderFrameProxy* child_proxy = RenderFrameProxy::FromWebFrame(
+      web_frame->FirstChild()->ToWebRemoteFrame());
+  ASSERT_TRUE(child_proxy);
+
+  // Verify that the system device scale factor has propagated into the
+  // RenderFrameProxy.
+  EXPECT_EQ(device_scale,
+            view()->GetWidget()->GetWebScreenInfo().device_scale_factor);
+  EXPECT_EQ(device_scale,
+            view()->GetWidget()->GetOriginalScreenInfo().device_scale_factor);
+  EXPECT_EQ(device_scale, child_proxy->screen_info().device_scale_factor);
+
+  TestEmulatedSizeDprDsf(640, 480, 3.f, compositor_dsf);
+
+  // Verify that the RenderFrameProxy device scale factor is still the same.
+  EXPECT_EQ(3.f, view()->GetWidget()->GetWebScreenInfo().device_scale_factor);
+  EXPECT_EQ(device_scale,
+            view()->GetWidget()->GetOriginalScreenInfo().device_scale_factor);
+  EXPECT_EQ(device_scale, child_proxy->screen_info().device_scale_factor);
+
+  view()->OnDisableDeviceEmulation();
+
+  blink::WebDeviceEmulationParams params;
+  view()->OnEnableDeviceEmulation(params);
+  // Don't disable here to test that emulation is being shutdown properly.
+}
+
 // Verify that security origins are replicated properly to RenderFrameProxies
 // when swapping out.
 TEST_F(RenderViewImplTest, OriginReplicationForSwapOut) {
@@ -899,20 +936,19 @@ TEST_F(RenderViewImplScaleFactorTest, UpdateDSFAfterSwapIn) {
       routing_id, std::move(stub_interface_provider), kProxyRoutingId,
       MSG_ROUTING_NONE, MSG_ROUTING_NONE, MSG_ROUTING_NONE,
       base::UnguessableToken::Create(), replication_state, nullptr,
-      widget_params, FrameOwnerProperties());
+      widget_params, FrameOwnerProperties(), /*has_committed_real_load=*/true);
   TestRenderFrame* provisional_frame =
       static_cast<TestRenderFrame*>(RenderFrameImpl::FromRoutingID(routing_id));
   EXPECT_TRUE(provisional_frame);
 
   // Navigate to other page, which triggers the swap in.
   CommonNavigationParams common_params;
-  StartNavigationParams start_params;
   RequestNavigationParams request_params;
   common_params.url = GURL("data:text/html,<div>Page</div>");
   common_params.navigation_type = FrameMsg_Navigate_Type::DIFFERENT_DOCUMENT;
   common_params.transition = ui::PAGE_TRANSITION_TYPED;
 
-  provisional_frame->Navigate(common_params, start_params, request_params);
+  provisional_frame->Navigate(common_params, request_params);
 
   EXPECT_EQ(device_scale, view()->GetDeviceScaleFactor());
   EXPECT_EQ(device_scale, view()->webview()->ZoomFactorForDeviceScaleFactor());
@@ -950,7 +986,7 @@ TEST_F(RenderViewImplTest, DetachingProxyAlsoDestroysProvisionalFrame) {
       routing_id, std::move(stub_interface_provider), kProxyRoutingId,
       MSG_ROUTING_NONE, frame()->GetRoutingID(), MSG_ROUTING_NONE,
       base::UnguessableToken::Create(), replication_state, nullptr,
-      widget_params, FrameOwnerProperties());
+      widget_params, FrameOwnerProperties(), /*has_committed_real_load=*/true);
   {
     TestRenderFrame* provisional_frame = static_cast<TestRenderFrame*>(
         RenderFrameImpl::FromRoutingID(routing_id));
@@ -990,9 +1026,6 @@ TEST_F(RenderViewImplTest, SetZoomLevelAfterCrossProcessNavigation) {
   main_frame->SwapOut(kProxyRoutingId, true,
                       ReconstructReplicationStateForTesting(main_frame));
   EXPECT_TRUE(view()->webview()->MainFrame()->IsWebRemoteFrame());
-
-  // This should not cause a crash.
-  view()->OnDeviceScaleFactorChanged();
 }
 
 // Test that we get the correct UpdateState message when we go back twice
@@ -1052,7 +1085,7 @@ TEST_F(RenderViewImplTest,  DISABLED_LastCommittedUpdateState) {
   request_params_C.pending_history_list_offset = 2;
   request_params_C.nav_entry_id = 3;
   request_params_C.page_state = state_C;
-  frame()->Navigate(common_params_C, StartNavigationParams(), request_params_C);
+  frame()->Navigate(common_params_C, request_params_C);
   base::RunLoop().RunUntilIdle();
   render_thread_->sink().ClearMessages();
 
@@ -1071,7 +1104,7 @@ TEST_F(RenderViewImplTest,  DISABLED_LastCommittedUpdateState) {
   request_params_B.pending_history_list_offset = 1;
   request_params_B.nav_entry_id = 2;
   request_params_B.page_state = state_B;
-  frame()->Navigate(common_params_B, StartNavigationParams(), request_params_B);
+  frame()->Navigate(common_params_B, request_params_B);
 
   // Back to page A and commit.
   CommonNavigationParams common_params;
@@ -1084,7 +1117,7 @@ TEST_F(RenderViewImplTest,  DISABLED_LastCommittedUpdateState) {
   request_params.pending_history_list_offset = 0;
   request_params.nav_entry_id = 1;
   request_params.page_state = state_A;
-  frame()->Navigate(common_params, StartNavigationParams(), request_params);
+  frame()->Navigate(common_params, request_params);
   base::RunLoop().RunUntilIdle();
 
   // Now ensure that the UpdateState message we receive is consistent
@@ -1103,29 +1136,24 @@ TEST_F(RenderViewImplTest,  DISABLED_LastCommittedUpdateState) {
 // changes.
 TEST_F(RenderViewImplTest, OnImeTypeChanged) {
   // Load an HTML page consisting of two input fields.
-  LoadHTML("<html>"
-           "<head>"
-           "</head>"
-           "<body>"
-           "<input id=\"test1\" type=\"text\" value=\"some text\"></input>"
-           "<input id=\"test2\" type=\"password\"></input>"
-           "<input id=\"test3\" type=\"text\" inputmode=\"verbatim\"></input>"
-           "<input id=\"test4\" type=\"text\" inputmode=\"latin\"></input>"
-           "<input id=\"test5\" type=\"text\" inputmode=\"latin-name\"></input>"
-           "<input id=\"test6\" type=\"text\" inputmode=\"latin-prose\">"
-               "</input>"
-           "<input id=\"test7\" type=\"text\" inputmode=\"full-width-latin\">"
-               "</input>"
-           "<input id=\"test8\" type=\"text\" inputmode=\"kana\"></input>"
-           "<input id=\"test9\" type=\"text\" inputmode=\"katakana\"></input>"
-           "<input id=\"test10\" type=\"text\" inputmode=\"numeric\"></input>"
-           "<input id=\"test11\" type=\"text\" inputmode=\"tel\"></input>"
-           "<input id=\"test12\" type=\"text\" inputmode=\"email\"></input>"
-           "<input id=\"test13\" type=\"text\" inputmode=\"url\"></input>"
-           "<input id=\"test14\" type=\"text\" inputmode=\"unknown\"></input>"
-           "<input id=\"test15\" type=\"text\" inputmode=\"verbatim\"></input>"
-           "</body>"
-           "</html>");
+  LoadHTML(
+      "<html>"
+      "<head>"
+      "</head>"
+      "<body>"
+      "<input id=\"test1\" type=\"text\" value=\"some text\"></input>"
+      "<input id=\"test2\" type=\"password\"></input>"
+      "<input id=\"test3\" type=\"text\" inputmode=\"none\"></input>"
+      "<input id=\"test4\" type=\"text\" inputmode=\"text\"></input>"
+      "<input id=\"test5\" type=\"text\" inputmode=\"tel\"></input>"
+      "<input id=\"test6\" type=\"text\" inputmode=\"url\"></input>"
+      "<input id=\"test7\" type=\"text\" inputmode=\"email\"></input>"
+      "<input id=\"test8\" type=\"text\" inputmode=\"numeric\"></input>"
+      "<input id=\"test9\" type=\"text\" inputmode=\"decimal\"></input>"
+      "<input id=\"test10\" type=\"text\" inputmode=\"search\"></input>"
+      "<input id=\"test11\" type=\"text\" inputmode=\"unknown\"></input>"
+      "</body>"
+      "</html>");
   render_thread_->sink().ClearMessages();
 
   struct InputModeTestCase {
@@ -1133,20 +1161,16 @@ TEST_F(RenderViewImplTest, OnImeTypeChanged) {
     ui::TextInputMode expected_mode;
   };
   static const InputModeTestCase kInputModeTestCases[] = {
-     {"test1", ui::TEXT_INPUT_MODE_DEFAULT},
-     {"test3", ui::TEXT_INPUT_MODE_VERBATIM},
-     {"test4", ui::TEXT_INPUT_MODE_LATIN},
-     {"test5", ui::TEXT_INPUT_MODE_LATIN_NAME},
-     {"test6", ui::TEXT_INPUT_MODE_LATIN_PROSE},
-     {"test7", ui::TEXT_INPUT_MODE_FULL_WIDTH_LATIN},
-     {"test8", ui::TEXT_INPUT_MODE_KANA},
-     {"test9", ui::TEXT_INPUT_MODE_KATAKANA},
-     {"test10", ui::TEXT_INPUT_MODE_NUMERIC},
-     {"test11", ui::TEXT_INPUT_MODE_TEL},
-     {"test12", ui::TEXT_INPUT_MODE_EMAIL},
-     {"test13", ui::TEXT_INPUT_MODE_URL},
-     {"test14", ui::TEXT_INPUT_MODE_DEFAULT},
-     {"test15", ui::TEXT_INPUT_MODE_VERBATIM},
+      {"test1", ui::TEXT_INPUT_MODE_DEFAULT},
+      {"test3", ui::TEXT_INPUT_MODE_NONE},
+      {"test4", ui::TEXT_INPUT_MODE_TEXT},
+      {"test5", ui::TEXT_INPUT_MODE_TEL},
+      {"test6", ui::TEXT_INPUT_MODE_URL},
+      {"test7", ui::TEXT_INPUT_MODE_EMAIL},
+      {"test8", ui::TEXT_INPUT_MODE_NUMERIC},
+      {"test9", ui::TEXT_INPUT_MODE_DECIMAL},
+      {"test10", ui::TEXT_INPUT_MODE_SEARCH},
+      {"test11", ui::TEXT_INPUT_MODE_DEFAULT},
   };
 
   const int kRepeatCount = 10;
@@ -1162,7 +1186,8 @@ TEST_F(RenderViewImplTest, OnImeTypeChanged) {
     view()->UpdateTextInputState();
     const IPC::Message* msg = render_thread_->sink().GetMessageAt(0);
     EXPECT_TRUE(msg != nullptr);
-    EXPECT_EQ(ViewHostMsg_TextInputStateChanged::ID, msg->type());
+    EXPECT_EQ(static_cast<uint32_t>(ViewHostMsg_TextInputStateChanged::ID),
+              msg->type());
     ViewHostMsg_TextInputStateChanged::Param params;
     ViewHostMsg_TextInputStateChanged::Read(msg, &params);
     TextInputState p = std::get<0>(params);
@@ -1183,7 +1208,8 @@ TEST_F(RenderViewImplTest, OnImeTypeChanged) {
     view()->UpdateTextInputState();
     msg = render_thread_->sink().GetMessageAt(0);
     EXPECT_TRUE(msg != nullptr);
-    EXPECT_EQ(ViewHostMsg_TextInputStateChanged::ID, msg->type());
+    EXPECT_EQ(static_cast<uint32_t>(ViewHostMsg_TextInputStateChanged::ID),
+              msg->type());
     ViewHostMsg_TextInputStateChanged::Read(msg, &params);
     p = std::get<0>(params);
     type = p.type;
@@ -1208,7 +1234,8 @@ TEST_F(RenderViewImplTest, OnImeTypeChanged) {
       base::RunLoop().RunUntilIdle();
       const IPC::Message* msg = render_thread_->sink().GetMessageAt(0);
       EXPECT_TRUE(msg != nullptr);
-      EXPECT_EQ(ViewHostMsg_TextInputStateChanged::ID, msg->type());
+      EXPECT_EQ(static_cast<uint32_t>(ViewHostMsg_TextInputStateChanged::ID),
+                msg->type());
       ViewHostMsg_TextInputStateChanged::Read(msg, &params);
       p = std::get<0>(params);
       type = p.type;
@@ -1416,8 +1443,7 @@ TEST_F(RenderViewImplTest, DISABLED_DidFailProvisionalLoadWithErrorForError) {
   CommonNavigationParams common_params;
   common_params.navigation_type = FrameMsg_Navigate_Type::DIFFERENT_DOCUMENT;
   common_params.url = GURL("data:text/html,test data");
-  frame()->Navigate(common_params, StartNavigationParams(),
-                    RequestNavigationParams());
+  frame()->Navigate(common_params, RequestNavigationParams());
 
   // An error occurred.
   view()->GetMainRenderFrame()->DidFailProvisionalLoad(
@@ -1436,8 +1462,7 @@ TEST_F(RenderViewImplTest, DidFailProvisionalLoadWithErrorForCancellation) {
   CommonNavigationParams common_params;
   common_params.navigation_type = FrameMsg_Navigate_Type::DIFFERENT_DOCUMENT;
   common_params.url = GURL("data:text/html,test data");
-  frame()->Navigate(common_params, StartNavigationParams(),
-                    RequestNavigationParams());
+  frame()->Navigate(common_params, RequestNavigationParams());
 
   // A cancellation occurred.
   view()->GetMainRenderFrame()->DidFailProvisionalLoad(
@@ -1501,14 +1526,13 @@ TEST_F(RenderViewImplTest, AndroidContextMenuSelectionOrdering) {
   WebGestureEvent gesture_event(
       WebInputEvent::kGestureLongPress, WebInputEvent::kNoModifiers,
       ui::EventTimeStampToSeconds(ui::EventTimeForNow()));
-  gesture_event.x = 250;
-  gesture_event.y = 250;
+  gesture_event.SetPositionInWidget(gfx::PointF(250, 250));
 
   SendWebGestureEvent(gesture_event);
 
   scoped_refptr<content::MessageLoopRunner> message_loop_runner =
       new content::MessageLoopRunner;
-  base::ThreadTaskRunnerHandle::Get()->PostTask(
+  blink::scheduler::GetSingleThreadTaskRunnerForTesting()->PostTask(
       FROM_HERE, message_loop_runner->QuitClosure());
 
   EXPECT_FALSE(render_thread_->sink().GetUniqueMessageMatching(
@@ -1808,7 +1832,7 @@ TEST_F(RenderViewImplTest, NavigateSubframe) {
   TestRenderFrame* subframe =
       static_cast<TestRenderFrame*>(RenderFrameImpl::FromWebFrame(
           frame()->GetWebFrame()->FindFrameByName("frame")));
-  subframe->Navigate(common_params, StartNavigationParams(), request_params);
+  subframe->Navigate(common_params, request_params);
   FrameLoadWaiter(subframe).Wait();
 
   // Copy the document content to std::wstring and compare with the
@@ -1877,15 +1901,15 @@ class RendererErrorPageTest : public RenderViewImplTest {
       return url == "http://example.com/suppress";
     }
 
-    void GetNavigationErrorStrings(content::RenderFrame* render_frame,
-                                   const blink::WebURLRequest& failed_request,
-                                   const blink::WebURLError& error,
-                                   std::string* error_html,
-                                   base::string16* error_description) override {
+    void PrepareErrorPage(content::RenderFrame* render_frame,
+                          const blink::WebURLRequest& failed_request,
+                          const blink::WebURLError& error,
+                          std::string* error_html,
+                          base::string16* error_description) override {
       if (error_html)
         *error_html = "A suffusion of yellow.";
     }
-    void GetNavigationErrorStringsForHttpStatusError(
+    void PrepareErrorPageForHttpStatusError(
         content::RenderFrame* render_frame,
         const blink::WebURLRequest& failed_request,
         const GURL& url,
@@ -1917,8 +1941,7 @@ TEST_F(RendererErrorPageTest, MAYBE_Suppresses) {
   common_params.navigation_type = FrameMsg_Navigate_Type::DIFFERENT_DOCUMENT;
   common_params.url = GURL("data:text/html,test data");
   TestRenderFrame* main_frame = static_cast<TestRenderFrame*>(frame());
-  main_frame->Navigate(common_params, StartNavigationParams(),
-                       RequestNavigationParams());
+  main_frame->Navigate(common_params, RequestNavigationParams());
 
   // An error occurred.
   main_frame->DidFailProvisionalLoad(error, blink::kWebStandardCommit);
@@ -1945,8 +1968,7 @@ TEST_F(RendererErrorPageTest, MAYBE_DoesNotSuppress) {
   common_params.navigation_type = FrameMsg_Navigate_Type::DIFFERENT_DOCUMENT;
   common_params.url = GURL("data:text/html,test data");
   TestRenderFrame* main_frame = static_cast<TestRenderFrame*>(frame());
-  main_frame->Navigate(common_params, StartNavigationParams(),
-                       RequestNavigationParams());
+  main_frame->Navigate(common_params, RequestNavigationParams());
 
   // An error occurred.
   main_frame->DidFailProvisionalLoad(error, blink::kWebStandardCommit);
@@ -1977,8 +1999,7 @@ TEST_F(RendererErrorPageTest, MAYBE_HttpStatusCodeErrorWithEmptyBody) {
   common_params.navigation_type = FrameMsg_Navigate_Type::DIFFERENT_DOCUMENT;
   common_params.url = GURL("data:text/html,test data");
   TestRenderFrame* main_frame = static_cast<TestRenderFrame*>(frame());
-  main_frame->Navigate(common_params, StartNavigationParams(),
-                       RequestNavigationParams());
+  main_frame->Navigate(common_params, RequestNavigationParams());
 
   // Emulate a 4xx/5xx main resource response with an empty body.
   main_frame->DidReceiveResponse(response);
@@ -2131,8 +2152,7 @@ TEST_F(RenderViewImplTest, RendererNavigationStartTransmittedToBrowser) {
 TEST_F(RenderViewImplTest, BrowserNavigationStart) {
   auto common_params = MakeCommonNavigationParams(-TimeDelta::FromSeconds(1));
 
-  frame()->Navigate(common_params, StartNavigationParams(),
-                    RequestNavigationParams());
+  frame()->Navigate(common_params, RequestNavigationParams());
   FrameHostMsg_DidStartProvisionalLoad::Param nav_params =
       ProcessAndReadIPC<FrameHostMsg_DidStartProvisionalLoad>();
   EXPECT_EQ(common_params.navigation_start, std::get<2>(nav_params));
@@ -2148,8 +2168,7 @@ TEST_F(RenderViewImplTest, BrowserNavigationStartSanitized) {
   auto late_common_params = MakeCommonNavigationParams(TimeDelta::FromDays(42));
   late_common_params.method = "POST";
 
-  frame()->Navigate(late_common_params, StartNavigationParams(),
-                    RequestNavigationParams());
+  frame()->Navigate(late_common_params, RequestNavigationParams());
   base::RunLoop().RunUntilIdle();
   base::Time after_navigation =
       base::Time::Now() + base::TimeDelta::FromDays(1);
@@ -2160,24 +2179,19 @@ TEST_F(RenderViewImplTest, BrowserNavigationStartSanitized) {
 }
 
 // Checks that a browser-initiated navigation in an initial document that has
-// been accessed does not use browser-side timestamp (there may be arbitrary
+// been accessed uses browser-side timestamp (there may be arbitrary
 // content and/or scripts injected, including beforeunload handler that shows
 // a confirmation dialog).
-// If PlzNavigate is enabled, browser-side timestamp is always used.
 TEST_F(RenderViewImplTest, NavigationStartWhenInitialDocumentWasAccessed) {
   // Trigger a didAccessInitialDocument notification.
   ExecuteJavaScriptForTests("document.title = 'Hi!';");
 
   auto common_params = MakeCommonNavigationParams(-TimeDelta::FromSeconds(1));
-  frame()->Navigate(common_params, StartNavigationParams(),
-                    RequestNavigationParams());
+  frame()->Navigate(common_params, RequestNavigationParams());
 
   FrameHostMsg_DidStartProvisionalLoad::Param nav_params =
       ProcessAndReadIPC<FrameHostMsg_DidStartProvisionalLoad>();
-  if (!IsBrowserSideNavigationEnabled())
-    EXPECT_GT(std::get<2>(nav_params), common_params.navigation_start);
-  else
-    EXPECT_EQ(common_params.navigation_start, std::get<2>(nav_params));
+  EXPECT_EQ(common_params.navigation_start, std::get<2>(nav_params));
 }
 
 TEST_F(RenderViewImplTest, NavigationStartForReload) {
@@ -2195,21 +2209,13 @@ TEST_F(RenderViewImplTest, NavigationStartForReload) {
 
   // The browser navigation_start should not be used because beforeunload will
   // be fired during Navigate.
-  frame()->Navigate(common_params, StartNavigationParams(),
-                    RequestNavigationParams());
+  frame()->Navigate(common_params, RequestNavigationParams());
 
   FrameHostMsg_DidStartProvisionalLoad::Param host_nav_params =
       ProcessAndReadIPC<FrameHostMsg_DidStartProvisionalLoad>();
 
-  if (!IsBrowserSideNavigationEnabled()) {
-    // The browser navigation_start should not be used because beforeunload was
-    // fired during Navigate.
-    EXPECT_PRED2(TimeTicksGT, std::get<2>(host_nav_params),
-                 common_params.navigation_start);
-  } else {
-    // PlzNavigate: the browser navigation_start is always used.
-    EXPECT_EQ(common_params.navigation_start, std::get<2>(host_nav_params));
-  }
+  // The browser navigation_start is always used.
+  EXPECT_EQ(common_params.navigation_start, std::get<2>(host_nav_params));
 }
 
 TEST_F(RenderViewImplTest, NavigationStartForSameProcessHistoryNavigation) {
@@ -2229,19 +2235,12 @@ TEST_F(RenderViewImplTest, NavigationStartForSameProcessHistoryNavigation) {
   common_params_back.navigation_type =
       FrameMsg_Navigate_Type::HISTORY_DIFFERENT_DOCUMENT;
   GoToOffsetWithParams(-1, back_state, common_params_back,
-                       StartNavigationParams(), RequestNavigationParams());
+                       RequestNavigationParams());
   FrameHostMsg_DidStartProvisionalLoad::Param host_nav_params =
       ProcessAndReadIPC<FrameHostMsg_DidStartProvisionalLoad>();
-  if (!IsBrowserSideNavigationEnabled()) {
-    // The browser navigation_start should not be used because beforeunload was
-    // fired during GoToOffsetWithParams.
-    EXPECT_PRED2(TimeTicksGT, std::get<2>(host_nav_params),
-                 common_params_back.navigation_start);
-  } else {
-    // PlzNavigate: the browser navigation_start is always used.
-    EXPECT_EQ(common_params_back.navigation_start,
-              std::get<2>(host_nav_params));
-  }
+
+  // The browser navigation_start is always used.
+  EXPECT_EQ(common_params_back.navigation_start, std::get<2>(host_nav_params));
   render_thread_->sink().ClearMessages();
 
   // Go forward.
@@ -2252,16 +2251,11 @@ TEST_F(RenderViewImplTest, NavigationStartForSameProcessHistoryNavigation) {
   common_params_forward.navigation_type =
       FrameMsg_Navigate_Type::HISTORY_DIFFERENT_DOCUMENT;
   GoToOffsetWithParams(1, forward_state, common_params_forward,
-                       StartNavigationParams(), RequestNavigationParams());
+                       RequestNavigationParams());
   FrameHostMsg_DidStartProvisionalLoad::Param host_nav_params2 =
       ProcessAndReadIPC<FrameHostMsg_DidStartProvisionalLoad>();
-  if (!IsBrowserSideNavigationEnabled()) {
-    EXPECT_PRED2(TimeTicksGT, std::get<2>(host_nav_params2),
-                 common_params_forward.navigation_start);
-  } else {
-    EXPECT_EQ(common_params_forward.navigation_start,
-              std::get<2>(host_nav_params2));
-  }
+  EXPECT_EQ(common_params_forward.navigation_start,
+            std::get<2>(host_nav_params2));
 }
 
 TEST_F(RenderViewImplTest, NavigationStartForCrossProcessHistoryNavigation) {
@@ -2277,7 +2271,7 @@ TEST_F(RenderViewImplTest, NavigationStartForCrossProcessHistoryNavigation) {
   request_params.pending_history_list_offset = 1;
   request_params.current_history_list_offset = 0;
   request_params.current_history_list_length = 1;
-  frame()->Navigate(common_params, StartNavigationParams(), request_params);
+  frame()->Navigate(common_params, request_params);
 
   FrameHostMsg_DidStartProvisionalLoad::Param host_nav_params =
       ProcessAndReadIPC<FrameHostMsg_DidStartProvisionalLoad>();
@@ -2285,37 +2279,46 @@ TEST_F(RenderViewImplTest, NavigationStartForCrossProcessHistoryNavigation) {
 }
 
 TEST_F(RenderViewImplTest, PreferredSizeZoomed) {
-  LoadHTML("<body style='margin:0;'><div style='display:inline-block; "
-           "width:400px; height:400px;'/></body>");
-  view()->webview()->MainFrame()->ToWebLocalFrame()->SetCanHaveScrollbars(
-      false);
+  LoadHTML(
+      "<body style='margin:0;'>"
+      "<div style='display:inline-block; "
+      "width:400px; height:400px;'/></body>");
+
+  // For unknown reasons, setting fixed scrollbar width using
+  // ::-webkit-scrollbar makes Mac bots flaky (crbug.com/785088).
+  // Measure native scrollbar width instead.
+  int scrollbar_width = GetScrollbarWidth();
   EnablePreferredSizeMode();
 
   gfx::Size size = GetPreferredSize();
-  EXPECT_EQ(gfx::Size(400, 400), size);
+  EXPECT_EQ(gfx::Size(400 + scrollbar_width, 400), size);
 
   SetZoomLevel(ZoomFactorToZoomLevel(2.0));
   size = GetPreferredSize();
-  EXPECT_EQ(gfx::Size(800, 800), size);
+  EXPECT_EQ(gfx::Size(800 + scrollbar_width, 800), size);
 }
 
 TEST_F(RenderViewImplScaleFactorTest, PreferredSizeWithScaleFactor) {
   DoSetUp();
-  LoadHTML("<body style='margin:0;'><div style='display:inline-block; "
-           "width:400px; height:400px;'/></body>");
-  view()->webview()->MainFrame()->ToWebLocalFrame()->SetCanHaveScrollbars(
-      false);
+  LoadHTML(
+      "<body style='margin:0;'><div style='display:inline-block; "
+      "width:400px; height:400px;'/></body>");
+
+  // For unknown reasons, setting fixed scrollbar width using
+  // ::-webkit-scrollbar makes Mac bots flaky (crbug.com/785088).
+  // Measure native scrollbar width instead.
+  int scrollbar_width = GetScrollbarWidth();
   EnablePreferredSizeMode();
 
   gfx::Size size = GetPreferredSize();
-  EXPECT_EQ(gfx::Size(400, 400), size);
+  EXPECT_EQ(gfx::Size(400 + scrollbar_width, 400), size);
 
   // The size is in DIP. Changing the scale factor should not change
   // the preferred size. (Caveat: a page may apply different layout for
   // high DPI, in which case, the size may differ.)
   SetDeviceScaleFactor(2.f);
   size = GetPreferredSize();
-  EXPECT_EQ(gfx::Size(400, 400), size);
+  EXPECT_EQ(gfx::Size(400 + scrollbar_width, 400), size);
 }
 
 // Ensure the RenderViewImpl history list is properly updated when starting a
@@ -2325,17 +2328,56 @@ TEST_F(RenderViewImplTest, HistoryIsProperlyUpdatedOnNavigation) {
   EXPECT_EQ(0, view()->HistoryBackListCount() +
                    view()->HistoryForwardListCount() + 1);
 
-  // Receive a Navigate message with history parameters.
+  // Receive a CommitNavigation message with history parameters.
   RequestNavigationParams request_params;
-  request_params.current_history_list_length = 2;
   request_params.current_history_list_offset = 1;
-  request_params.pending_history_list_offset = 2;
-  frame()->Navigate(CommonNavigationParams(), StartNavigationParams(),
-                    request_params);
+  request_params.current_history_list_length = 2;
+  frame()->Navigate(CommonNavigationParams(), request_params);
 
-  // The history list in RenderView should have been updated.
+  // The current history list in RenderView is updated.
   EXPECT_EQ(1, view()->HistoryBackListCount());
   EXPECT_EQ(2, view()->HistoryBackListCount() +
+                   view()->HistoryForwardListCount() + 1);
+}
+
+// Ensure the RenderViewImpl history list is properly updated when starting a
+// new history browser-initiated navigation.
+TEST_F(RenderViewImplTest, HistoryIsProperlyUpdatedOnHistoryNavigation) {
+  EXPECT_EQ(0, view()->HistoryBackListCount());
+  EXPECT_EQ(0, view()->HistoryBackListCount() +
+                   view()->HistoryForwardListCount() + 1);
+
+  // Receive a CommitNavigation message with history parameters.
+  RequestNavigationParams request_params;
+  request_params.current_history_list_offset = 1;
+  request_params.current_history_list_length = 25;
+  request_params.pending_history_list_offset = 12;
+  request_params.nav_entry_id = 777;
+  frame()->Navigate(CommonNavigationParams(), request_params);
+
+  // The current history list in RenderView is updated.
+  EXPECT_EQ(12, view()->HistoryBackListCount());
+  EXPECT_EQ(25, view()->HistoryBackListCount() +
+                    view()->HistoryForwardListCount() + 1);
+}
+
+// Ensure the RenderViewImpl history list is properly updated when starting a
+// new history browser-initiated navigation with should_clear_history_list
+TEST_F(RenderViewImplTest, HistoryIsProperlyUpdatedOnShouldClearHistoryList) {
+  EXPECT_EQ(0, view()->HistoryBackListCount());
+  EXPECT_EQ(0, view()->HistoryBackListCount() +
+                   view()->HistoryForwardListCount() + 1);
+
+  // Receive a CommitNavigation message with history parameters.
+  RequestNavigationParams request_params;
+  request_params.current_history_list_offset = 12;
+  request_params.current_history_list_length = 25;
+  request_params.should_clear_history_list = true;
+  frame()->Navigate(CommonNavigationParams(), request_params);
+
+  // The current history list in RenderView is updated.
+  EXPECT_EQ(0, view()->HistoryBackListCount());
+  EXPECT_EQ(1, view()->HistoryBackListCount() +
                    view()->HistoryForwardListCount() + 1);
 }
 
@@ -2393,6 +2435,54 @@ TEST_F(RenderViewImplTest, DispatchBeforeUnloadCanDetachFrame) {
   // Simulates a BeforeUnload IPC received from the browser.
   frame()->OnMessageReceived(
       FrameMsg_BeforeUnload(frame()->GetRoutingID(), false));
+
+  render_thread_->sink().RemoveFilter(callback_filter.get());
+}
+
+// IPC Listener that runs a callback when a javascript modal dialog is
+// triggered.
+class AlertCallbackFilter : public IPC::Listener {
+ public:
+  explicit AlertCallbackFilter(
+      base::RepeatingCallback<void(const base::string16&)> callback)
+      : callback_(std::move(callback)) {}
+
+  bool OnMessageReceived(const IPC::Message& msg) override {
+    bool handled = true;
+    IPC_BEGIN_MESSAGE_MAP(AlertCallbackFilter, msg)
+      IPC_MESSAGE_HANDLER(FrameHostMsg_RunJavaScriptDialog,
+                          OnRunJavaScriptDialog)
+      IPC_MESSAGE_UNHANDLED(handled = false)
+    IPC_END_MESSAGE_MAP()
+    return handled;
+  }
+
+  // Not really part of IPC::Listener but required to intercept a sync msg.
+  void Send(const IPC::Message* msg) { delete msg; }
+
+  void OnRunJavaScriptDialog(const base::string16& message,
+                             const base::string16&,
+                             JavaScriptDialogType,
+                             bool*,
+                             base::string16*) {
+    callback_.Run(message);
+  }
+
+ private:
+  base::RepeatingCallback<void(const base::string16&)> callback_;
+};
+
+// Test that invoking one of the modal dialogs doesn't crash.
+TEST_F(RenderViewImplTest, ModalDialogs) {
+  LoadHTML("<body></body>");
+
+  std::unique_ptr<AlertCallbackFilter> callback_filter(new AlertCallbackFilter(
+      base::BindRepeating([](const base::string16& msg) {
+        EXPECT_EQ(base::UTF8ToUTF16("Please don't crash"), msg);
+      })));
+  render_thread_->sink().AddFilter(callback_filter.get());
+
+  frame()->GetWebFrame()->Alert(WebString::FromUTF8("Please don't crash"));
 
   render_thread_->sink().RemoveFilter(callback_filter.get());
 }
@@ -2605,167 +2695,5 @@ TEST_F(RenderViewImplScaleFactorTest, AutoResizeWithoutZoomForDSF) {
 }
 
 #endif
-
-TEST_F(DevToolsAgentTest, DevToolsResumeOnClose) {
-  Attach();
-  EXPECT_FALSE(IsPaused());
-  DispatchDevToolsMessage("Debugger.enable",
-                          "{\"id\":1,\"method\":\"Debugger.enable\"}");
-
-  // Executing javascript will pause the thread and create nested run loop.
-  // Posting task simulates message coming from browser.
-  base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::BindOnce(&DevToolsAgentTest::CloseWhilePaused,
-                                base::Unretained(this)));
-  ExecuteJavaScriptForTests("debugger;");
-
-  // CloseWhilePaused should resume execution and continue here.
-  EXPECT_FALSE(IsPaused());
-  Detach();
-}
-
-TEST_F(DevToolsAgentTest, RuntimeEnableForcesContexts) {
-  LoadHTML("<body>page<iframe></iframe></body>");
-  Attach();
-  DispatchDevToolsMessage("Runtime.enable",
-                          "{\"id\":1,\"method\":\"Runtime.enable\"}");
-  EXPECT_EQ(2, CountNotifications("Runtime.executionContextCreated"));
-}
-
-TEST_F(DevToolsAgentTest, RuntimeEnableForcesContextsAfterNavigation) {
-  Attach();
-  DispatchDevToolsMessage("Runtime.enable",
-                          "{\"id\":1,\"method\":\"Runtime.enable\"}");
-  EXPECT_EQ(0, CountNotifications("Runtime.executionContextCreated"));
-  LoadHTML("<body>page<iframe></iframe></body>");
-  EXPECT_EQ(2, CountNotifications("Runtime.executionContextCreated"));
-}
-
-TEST_F(DevToolsAgentTest, RuntimeEvaluateRunMicrotasks) {
-  LoadHTML("<body>page</body>");
-  Attach();
-  DispatchDevToolsMessage("Runtime.enable",
-                          "{\"id\":1,\"method\":\"Runtime.enable\"}");
-  DispatchDevToolsMessage("Runtime.evaluate",
-                          "{\"id\":2,"
-                          "\"method\":\"Runtime.evaluate\","
-                          "\"params\":{"
-                          "\"expression\":\"Promise.resolve().then("
-                          "() => console.log(42));\""
-                          "}"
-                          "}");
-  EXPECT_EQ(1, CountNotifications("Runtime.consoleAPICalled"));
-}
-
-TEST_F(DevToolsAgentTest, RuntimeCallFunctionOnRunMicrotasks) {
-  LoadHTML("<body>page</body>");
-  Attach();
-  DispatchDevToolsMessage("Runtime.enable",
-                          "{\"id\":1,\"method\":\"Runtime.enable\"}");
-  DispatchDevToolsMessage("Runtime.evaluate",
-                          "{\"id\":2,"
-                          "\"method\":\"Runtime.evaluate\","
-                          "\"params\":{"
-                          "\"expression\":\"window\""
-                          "}"
-                          "}");
-
-  base::DictionaryValue* root = LastReceivedMessage();
-  const base::Value* object_id;
-  ASSERT_TRUE(root->Get("result.result.objectId", &object_id));
-  std::string object_id_str;
-  EXPECT_TRUE(base::JSONWriter::Write(*object_id, &object_id_str));
-
-  DispatchDevToolsMessage("Runtime.callFunctionOn",
-                          "{\"id\":3,"
-                          "\"method\":\"Runtime.callFunctionOn\","
-                          "\"params\":{"
-                          "\"objectId\":" +
-                              object_id_str +
-                              ","
-                              "\"functionDeclaration\":\"function foo(){ "
-                              "Promise.resolve().then(() => "
-                              "console.log(239))}\""
-                              "}"
-                              "}");
-  EXPECT_EQ(1, CountNotifications("Runtime.consoleAPICalled"));
-}
-
-TEST_F(DevToolsAgentTest, CallFramesInIsolatedWorld) {
-  LoadHTML("<body>page</body>");
-  blink::WebScriptSource source1(
-      WebString::FromUTF8("function func1() { debugger; }"));
-  frame()->GetWebFrame()->ExecuteScriptInIsolatedWorld(17, &source1, 1);
-
-  Attach();
-  DispatchDevToolsMessage("Debugger.enable",
-                          "{\"id\":1,\"method\":\"Debugger.enable\"}");
-
-  ExpectPauseAndResume(3);
-  blink::WebScriptSource source2(
-      WebString::FromUTF8("function func2() { func1(); }; func2();"));
-  frame()->GetWebFrame()->ExecuteScriptInIsolatedWorld(17, &source2, 1);
-
-  EXPECT_FALSE(IsPaused());
-  Detach();
-}
-
-TEST_F(DevToolsAgentTest, WindowOpenWithEmptyURL) {
-  Attach();
-  DispatchDevToolsMessage("Page.enable",
-                          "{\"id\":1,\"method\":\"Page.enable\"}");
-  LoadHTMLWithUrlOverride("<script>window.open()</script>",
-                          "https://www.example.com");
-
-  base::DictionaryValue* notification = WindowOpenNotification();
-  EXPECT_TRUE(notification);
-  const base::Value* params_value = notification->FindKey("params");
-  EXPECT_TRUE(params_value && params_value->is_dict());
-  const base::Value* url_value = params_value->FindKey("url");
-  EXPECT_TRUE(url_value);
-  EXPECT_EQ(url::kAboutBlankURL, url_value->GetString());
-}
-
-TEST_F(DevToolsAgentTest, WindowOpenWithRelativeURL) {
-  // Enable browser side navigation to avoid actually load url for the new
-  // window.
-  base::CommandLine::ForCurrentProcess()->AppendSwitch(
-      switches::kEnableBrowserSideNavigation);
-  Attach();
-  DispatchDevToolsMessage("Page.enable",
-                          "{\"id\":1,\"method\":\"Page.enable\"}");
-  LoadHTMLWithUrlOverride("<script>window.open('path')</script>",
-                          "https://www.example.com");
-
-  base::DictionaryValue* notification = WindowOpenNotification();
-  EXPECT_TRUE(notification);
-  const base::Value* params_value = notification->FindKey("params");
-  EXPECT_TRUE(params_value && params_value->is_dict());
-  const base::Value* url_value = params_value->FindKey("url");
-  EXPECT_TRUE(url_value);
-  EXPECT_EQ("https://www.example.com/path", url_value->GetString());
-}
-
-TEST_F(DevToolsAgentTest, WindowOpenFromClick) {
-  // Enable browser side navigation to avoid actually load url for the new
-  // window.
-  base::CommandLine::ForCurrentProcess()->AppendSwitch(
-      switches::kEnableBrowserSideNavigation);
-  Attach();
-  DispatchDevToolsMessage("Page.enable",
-                          "{\"id\":1,\"method\":\"Page.enable\"}");
-  LoadHTMLWithUrlOverride(
-      "<a id='my_anchor' href='/anchor' target='_blank'> </a>\n"
-      "<script>document.getElementById('my_anchor').click();</script>",
-      "https://www.example.com");
-
-  base::DictionaryValue* notification = WindowOpenNotification();
-  EXPECT_TRUE(notification);
-  const base::Value* params_value = notification->FindKey("params");
-  EXPECT_TRUE(params_value && params_value->is_dict());
-  const base::Value* url_value = params_value->FindKey("url");
-  EXPECT_TRUE(url_value);
-  EXPECT_EQ("https://www.example.com/anchor", url_value->GetString());
-}
 
 }  // namespace content

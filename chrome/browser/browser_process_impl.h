@@ -22,18 +22,19 @@
 #include "base/timer/timer.h"
 #include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
-#include "chrome/common/features.h"
+#include "chrome/common/buildflags.h"
 #include "components/keep_alive_registry/keep_alive_state_observer.h"
-#include "components/nacl/common/features.h"
+#include "components/nacl/common/buildflags.h"
 #include "components/prefs/pref_change_registrar.h"
-#include "content/public/common/network_service.mojom.h"
-#include "extensions/features/features.h"
-#include "media/media_features.h"
-#include "ppapi/features/features.h"
-#include "printing/features/features.h"
+#include "extensions/buildflags/buildflags.h"
+#include "media/media_buildflags.h"
+#include "ppapi/buildflags/buildflags.h"
+#include "printing/buildflags/buildflags.h"
+#include "services/network/public/mojom/network_service.mojom.h"
 
 class ChromeChildProcessWatcher;
 class ChromeDeviceClient;
+class ChromeMetricsServicesManagerClient;
 class ChromeResourceDispatcherHostDelegate;
 class DevToolsAutoOpener;
 class RemoteDebuggingServer;
@@ -41,6 +42,10 @@ class PrefRegistrySimple;
 
 #if BUILDFLAG(ENABLE_PLUGINS)
 class PluginsResourceService;
+#endif
+
+#if BUILDFLAG(ENABLE_WEBRTC)
+class WebRtcEventLogManager;
 #endif
 
 namespace base {
@@ -61,9 +66,13 @@ class ChromeNetLog;
 }
 
 namespace policy {
-class BrowserPolicyConnector;
+class ChromeBrowserPolicyConnector;
 class PolicyService;
-};
+}  // namespace policy
+
+namespace resource_coordinator {
+class TabLifecycleUnitSource;
+}
 
 // Real implementation of BrowserProcess that creates and returns the services.
 class BrowserProcessImpl : public BrowserProcess,
@@ -73,6 +82,9 @@ class BrowserProcessImpl : public BrowserProcess,
   explicit BrowserProcessImpl(
       base::SequencedTaskRunner* local_state_task_runner);
   ~BrowserProcessImpl() override;
+
+  // Called to complete initialization.
+  void Init();
 
   // Called before the browser threads are created.
   void PreCreateThreads(const base::CommandLine& command_line);
@@ -111,14 +123,11 @@ class BrowserProcessImpl : public BrowserProcess,
   extensions::EventRouterForwarder* extension_event_router_forwarder() override;
   NotificationUIManager* notification_ui_manager() override;
   NotificationPlatformBridge* notification_platform_bridge() override;
-  message_center::MessageCenter* message_center() override;
-  policy::BrowserPolicyConnector* browser_policy_connector() override;
+  policy::ChromeBrowserPolicyConnector* browser_policy_connector() override;
   policy::PolicyService* policy_service() override;
   IconManager* icon_manager() override;
   GpuModeManager* gpu_mode_manager() override;
-  GpuProfileCache* gpu_profile_cache() override;
-  void CreateDevToolsHttpProtocolHandler(const std::string& ip,
-                                         uint16_t port) override;
+  void CreateDevToolsProtocolHandler() override;
   void CreateDevToolsAutoOpener() override;
   bool IsShuttingDown() override;
   printing::PrintJobManager* print_job_manager() override;
@@ -172,16 +181,13 @@ class BrowserProcessImpl : public BrowserProcess,
   void CreateWatchdogThread();
   void CreateProfileManager();
   void CreateLocalState();
-  void CreateViewedPageTracker();
   void CreateIconManager();
   void CreateIntranetRedirectDetector();
   void CreateNotificationPlatformBridge();
   void CreateNotificationUIManager();
-  void CreateStatusTrayManager();
   void CreatePrintPreviewDialogController();
   void CreateBackgroundPrintingManager();
   void CreateSafeBrowsingService();
-  void CreateSafeBrowsingDetectionService();
   void CreateSubresourceFilterRulesetService();
   void CreateOptimizationGuideService();
   void CreateStatusTray();
@@ -202,19 +208,24 @@ class BrowserProcessImpl : public BrowserProcess,
   void Pin();
   void Unpin();
 
+  // |metrics_services_manager_| owns this.
+  ChromeMetricsServicesManagerClient* metrics_services_manager_client_ =
+      nullptr;
+
   std::unique_ptr<metrics_services_manager::MetricsServicesManager>
       metrics_services_manager_;
 
   std::unique_ptr<IOThread> io_thread_;
 
-  bool created_watchdog_thread_;
+  bool created_watchdog_thread_ = false;
   std::unique_ptr<WatchDogThread> watchdog_thread_;
 
-  bool created_browser_policy_connector_;
+  bool created_browser_policy_connector_ = false;
   // Must be destroyed after |local_state_|.
-  std::unique_ptr<policy::BrowserPolicyConnector> browser_policy_connector_;
+  std::unique_ptr<policy::ChromeBrowserPolicyConnector>
+      browser_policy_connector_;
 
-  bool created_profile_manager_;
+  bool created_profile_manager_ = false;
   std::unique_ptr<ProfileManager> profile_manager_;
 
   std::unique_ptr<PrefService> local_state_;
@@ -224,10 +235,8 @@ class BrowserProcessImpl : public BrowserProcess,
   std::unique_ptr<content::NetworkConnectionTracker>
       network_connection_tracker_;
 
-  bool created_icon_manager_;
+  bool created_icon_manager_ = false;
   std::unique_ptr<IconManager> icon_manager_;
-
-  std::unique_ptr<GpuProfileCache> gpu_profile_cache_;
 
   std::unique_ptr<GpuModeManager> gpu_mode_manager_;
 
@@ -254,35 +263,37 @@ class BrowserProcessImpl : public BrowserProcess,
       background_printing_manager_;
 #endif
 
+#if !defined(OS_ANDROID)
   // Manager for desktop notification UI.
-  bool created_notification_ui_manager_;
+  bool created_notification_ui_manager_ = false;
   std::unique_ptr<NotificationUIManager> notification_ui_manager_;
+#endif
 
   std::unique_ptr<IntranetRedirectDetector> intranet_redirect_detector_;
 
   std::unique_ptr<StatusTray> status_tray_;
 
-  bool created_notification_bridge_;
+  bool created_notification_bridge_ = false;
   std::unique_ptr<NotificationPlatformBridge> notification_bridge_;
 
-#if BUILDFLAG(ENABLE_BACKGROUND)
+#if BUILDFLAG(ENABLE_BACKGROUND_MODE)
   std::unique_ptr<BackgroundModeManager> background_mode_manager_;
 #endif
 
-  bool created_safe_browsing_service_;
+  bool created_safe_browsing_service_ = false;
   scoped_refptr<safe_browsing::SafeBrowsingService> safe_browsing_service_;
 
-  bool created_subresource_filter_ruleset_service_;
+  bool created_subresource_filter_ruleset_service_ = false;
   std::unique_ptr<subresource_filter::ContentRulesetService>
       subresource_filter_ruleset_service_;
 
-  bool created_optimization_guide_service_;
+  bool created_optimization_guide_service_ = false;
   std::unique_ptr<optimization_guide::OptimizationGuideService>
       optimization_guide_service_;
 
-  bool shutting_down_;
+  bool shutting_down_ = false;
 
-  bool tearing_down_;
+  bool tearing_down_ = false;
 
   // Ensures that all the print jobs are finished before closing the browser.
   std::unique_ptr<printing::PrintJobManager> print_job_manager_;
@@ -341,6 +352,12 @@ class BrowserProcessImpl : public BrowserProcess,
 #if BUILDFLAG(ENABLE_WEBRTC)
   // Lazily initialized.
   std::unique_ptr<WebRtcLogUploader> webrtc_log_uploader_;
+
+  // WebRtcEventLogManager is a singleton which is instaniated before anything
+  // that needs it, and lives until ~BrowserProcessImpl(). This allows it to
+  // safely post base::Unretained(this) references to an internally owned task
+  // queue, since after ~BrowserProcessImpl(), those tasks would no longer run.
+  std::unique_ptr<WebRtcEventLogManager> webrtc_event_log_manager_;
 #endif
 
   std::unique_ptr<network_time::NetworkTimeTracker> network_time_tracker_;
@@ -355,9 +372,12 @@ class BrowserProcessImpl : public BrowserProcess,
   // Any change to this #ifdef must be reflected as well in
   // chrome/browser/resource_coordinator/tab_manager_browsertest.cc
   std::unique_ptr<resource_coordinator::TabManager> tab_manager_;
+  std::unique_ptr<resource_coordinator::TabLifecycleUnitSource>
+      tab_lifecycle_unit_source_;
 #endif
 
-  shell_integration::DefaultWebClientState cached_default_web_client_state_;
+  shell_integration::DefaultWebClientState cached_default_web_client_state_ =
+      shell_integration::UNKNOWN_DEFAULT;
 
   std::unique_ptr<physical_web::PhysicalWebDataSource>
       physical_web_data_source_;

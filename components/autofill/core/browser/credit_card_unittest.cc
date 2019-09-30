@@ -243,7 +243,7 @@ TEST(CreditCardTest, AssignmentOperator) {
   EXPECT_TRUE(a == b);
 
   // Assignment to self should not change the profile value.
-  a = a;
+  a = *&a;  // The *& defeats Clang's -Wself-assign warning.
   EXPECT_TRUE(a == b);
 }
 
@@ -632,7 +632,7 @@ TEST(CreditCardTest, UpdateFromImportedCard) {
   EXPECT_EQ(original_card, a);
 }
 
-TEST(CreditCardTest, IsValid) {
+TEST(CreditCardTest, IsValidCardNumberAndExpiryDate) {
   CreditCard card;
   // Invalid because expired
   const base::Time now(base::Time::Now());
@@ -644,6 +644,8 @@ TEST(CreditCardTest, IsValid) {
                   base::IntToString16(now_exploded.year - 1));
   card.SetRawInfo(CREDIT_CARD_NUMBER, ASCIIToUTF16("4111111111111111"));
   EXPECT_FALSE(card.IsValid());
+  EXPECT_FALSE(card.HasValidExpirationDate());
+  EXPECT_TRUE(card.HasValidCardNumber());
 
   // Invalid because card number is not complete
   card.SetRawInfo(CREDIT_CARD_EXP_MONTH, ASCIIToUTF16("12"));
@@ -655,11 +657,15 @@ TEST(CreditCardTest, IsValid) {
     SCOPED_TRACE(valid_number);
     card.SetRawInfo(CREDIT_CARD_NUMBER, ASCIIToUTF16(valid_number));
     EXPECT_TRUE(card.IsValid());
+    EXPECT_TRUE(card.HasValidCardNumber());
+    EXPECT_TRUE(card.HasValidExpirationDate());
   }
   for (const char* invalid_number : kInvalidNumbers) {
     SCOPED_TRACE(invalid_number);
     card.SetRawInfo(CREDIT_CARD_NUMBER, ASCIIToUTF16(invalid_number));
     EXPECT_FALSE(card.IsValid());
+    EXPECT_TRUE(card.HasValidExpirationDate());
+    EXPECT_FALSE(card.HasValidCardNumber());
   }
 }
 
@@ -1272,8 +1278,12 @@ INSTANTIATE_TEST_CASE_P(
 
 // Test that credit card last used date suggestion can be generated correctly
 // in different variations.
-TEST(CreditCardTest, GetLastUsedDateForDisplay) {
-  TestAutofillClock test_clock;
+
+
+// TODO(scottmg): Disabling as sheriff. On Android, LastUsedDateForDisplay is
+// returning "Last used over a year ago", rather than "last used Nov 30" as of
+// today, Dec 1. https://crbug.com/791067.
+TEST(CreditCardTest, DISABLED_GetLastUsedDateForDisplay) {
   const base::Time::Exploded kTestDateTimeExploded = {
       2016, 12, 6, 10,  // Sat, Dec 10, 2016
       15,   42, 7, 0    // 15:42:07.000

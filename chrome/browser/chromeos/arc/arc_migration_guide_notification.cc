@@ -6,12 +6,11 @@
 
 #include <memory>
 
-#include "ash/resources/vector_icons/vector_icons.h"
+#include "ash/public/cpp/vector_icons/vector_icons.h"
 #include "ash/system/power/power_status.h"
 #include "base/macros.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
-#include "chrome/app/vector_icons/vector_icons.h"
 #include "chrome/browser/chromeos/arc/arc_migration_constants.h"
 #include "chrome/browser/chromeos/arc/arc_util.h"
 #include "chrome/browser/lifetime/application_lifetime.h"
@@ -25,10 +24,8 @@
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/chromeos/devicetype_utils.h"
 #include "ui/gfx/color_palette.h"
-#include "ui/gfx/paint_vector_icon.h"
-#include "ui/message_center/notification.h"
-#include "ui/message_center/notification_delegate.h"
-#include "ui/message_center/public/cpp/message_center_switches.h"
+#include "ui/message_center/public/cpp/notification.h"
+#include "ui/message_center/public/cpp/notification_delegate.h"
 
 namespace arc {
 
@@ -40,75 +37,29 @@ constexpr char kSuccessNotificationId[] = "arc_fs_migration/success";
 constexpr base::TimeDelta kSuccessNotificationDelay =
     base::TimeDelta::FromSeconds(3);
 
-class ArcMigrationGuideNotificationDelegate
-    : public message_center::NotificationDelegate {
- public:
-  ArcMigrationGuideNotificationDelegate() = default;
-
-  // message_center::NotificationDelegate
-  void ButtonClick(int button_index) override { chrome::AttemptUserExit(); }
-  void Click() override { chrome::AttemptUserExit(); }
-
- private:
-  ~ArcMigrationGuideNotificationDelegate() override = default;
-
-  DISALLOW_COPY_AND_ASSIGN(ArcMigrationGuideNotificationDelegate);
-};
-
-class ArcMigrationCompletedNotificationDelegate
-    : public message_center::NotificationDelegate {
- public:
-  explicit ArcMigrationCompletedNotificationDelegate(Profile* profile)
-      : profile_(profile) {}
-
-  // message_center::NotificationDelegate
-  void ButtonClick(int button_index) override {
-    arc::SetArcPlayStoreEnabledForProfile(profile_, true);
-  }
-
-  void Click() override {
-    arc::SetArcPlayStoreEnabledForProfile(profile_, true);
-  }
-
- private:
-  ~ArcMigrationCompletedNotificationDelegate() override = default;
-
-  // Unowned pointer.
-  Profile* const profile_;
-
-  DISALLOW_COPY_AND_ASSIGN(ArcMigrationCompletedNotificationDelegate);
-};
-
 void DoShowArcMigrationSuccessNotification(Profile* profile) {
   message_center::NotifierId notifier_id(
       message_center::NotifierId::SYSTEM_COMPONENT, kNotifierId);
   notifier_id.profile_id =
       multi_user_util::GetAccountIdFromProfile(profile).GetUserEmail();
 
-  std::unique_ptr<message_center::Notification> notification;
-  if (message_center::IsNewStyleNotificationEnabled()) {
-    notification = message_center::Notification::CreateSystemNotification(
-        message_center::NOTIFICATION_TYPE_SIMPLE, kSuccessNotificationId,
-        l10n_util::GetStringUTF16(IDS_ARC_MIGRATE_ENCRYPTION_SUCCESS_TITLE),
-        l10n_util::GetStringUTF16(IDS_ARC_MIGRATE_ENCRYPTION_SUCCESS_MESSAGE),
-        gfx::Image(), base::string16(), GURL(), notifier_id,
-        message_center::RichNotificationData(),
-        scoped_refptr<message_center::NotificationDelegate>(
-            new ArcMigrationCompletedNotificationDelegate(profile)),
-        ash::kNotificationSettingsIcon,
-        message_center::SystemNotificationWarningLevel::NORMAL);
-  } else {
-    notification = std::make_unique<message_center::Notification>(
-        message_center::NOTIFICATION_TYPE_SIMPLE, kSuccessNotificationId,
-        l10n_util::GetStringUTF16(IDS_ARC_MIGRATE_ENCRYPTION_SUCCESS_TITLE),
-        l10n_util::GetStringUTF16(IDS_ARC_MIGRATE_ENCRYPTION_SUCCESS_MESSAGE),
-        gfx::Image(gfx::CreateVectorIcon(kArcMigrateEncryptionNotificationIcon,
-                                         gfx::kPlaceholderColor)),
-        base::string16(), GURL(), notifier_id,
-        message_center::RichNotificationData(),
-        scoped_refptr<message_center::NotificationDelegate>(
-            new ArcMigrationCompletedNotificationDelegate(profile)));
-  }
+  auto delegate =
+      base::MakeRefCounted<message_center::HandleNotificationClickDelegate>(
+          base::BindRepeating(
+              [](Profile* profile) {
+                arc::SetArcPlayStoreEnabledForProfile(profile, true);
+              },
+              profile));
+
+  std::unique_ptr<message_center::Notification> notification =
+      message_center::Notification::CreateSystemNotification(
+          message_center::NOTIFICATION_TYPE_SIMPLE, kSuccessNotificationId,
+          l10n_util::GetStringUTF16(IDS_ARC_MIGRATE_ENCRYPTION_SUCCESS_TITLE),
+          l10n_util::GetStringUTF16(IDS_ARC_MIGRATE_ENCRYPTION_SUCCESS_MESSAGE),
+          gfx::Image(), base::string16(), GURL(), notifier_id,
+          message_center::RichNotificationData(), std::move(delegate),
+          ash::kNotificationSettingsIcon,
+          message_center::SystemNotificationWarningLevel::NORMAL);
 
   NotificationDisplayService::GetForProfile(profile)->Display(
       NotificationHandler::Type::TRANSIENT, *notification);
@@ -133,40 +84,24 @@ void ShowArcMigrationGuideNotification(Profile* profile) {
                               ash::PowerStatus::Get()->GetBatteryPercent() <
                                   kMigrationMinimumBatteryPercent;
 
-  const base::string16 message =
+  const base::string16 message = ui::SubstituteChromeOSDeviceType(
       is_low_battery
-          ? ui::SubstituteChromeOSDeviceType(
-                IDS_ARC_MIGRATE_ENCRYPTION_NOTIFICATION_LOW_BATTERY_MESSAGE)
-          : l10n_util::GetStringUTF16(
-                IDS_ARC_MIGRATE_ENCRYPTION_NOTIFICATION_MESSAGE);
+          ? IDS_ARC_MIGRATE_ENCRYPTION_NOTIFICATION_LOW_BATTERY_MESSAGE
+          : IDS_ARC_MIGRATE_ENCRYPTION_NOTIFICATION_MESSAGE);
 
-  std::unique_ptr<message_center::Notification> notification;
-  if (message_center::IsNewStyleNotificationEnabled()) {
-    notification = message_center::Notification::CreateSystemNotification(
-        message_center::NOTIFICATION_TYPE_SIMPLE, kSuggestNotificationId,
-        l10n_util::GetStringUTF16(
-            IDS_ARC_MIGRATE_ENCRYPTION_NOTIFICATION_TITLE),
-        message, gfx::Image(), base::string16(), GURL(), notifier_id,
-        message_center::RichNotificationData(),
-        scoped_refptr<message_center::NotificationDelegate>(
-            new ArcMigrationGuideNotificationDelegate()),
-        ash::kNotificationSettingsIcon,
-        message_center::SystemNotificationWarningLevel::NORMAL);
-  } else {
-    message_center::RichNotificationData data;
-    data.buttons.push_back(message_center::ButtonInfo(l10n_util::GetStringUTF16(
-        IDS_ARC_MIGRATE_ENCRYPTION_NOTIFICATION_RESTART_BUTTON)));
-    notification = std::make_unique<message_center::Notification>(
-        message_center::NOTIFICATION_TYPE_SIMPLE, kSuggestNotificationId,
-        l10n_util::GetStringUTF16(
-            IDS_ARC_MIGRATE_ENCRYPTION_NOTIFICATION_TITLE),
-        message,
-        gfx::Image(gfx::CreateVectorIcon(kArcMigrateEncryptionNotificationIcon,
-                                         gfx::kPlaceholderColor)),
-        base::string16(), GURL(), notifier_id, data,
-        scoped_refptr<message_center::NotificationDelegate>(
-            new ArcMigrationGuideNotificationDelegate()));
-  }
+  auto delegate =
+      base::MakeRefCounted<message_center::HandleNotificationClickDelegate>(
+          base::BindRepeating(&chrome::AttemptUserExit));
+
+  std::unique_ptr<message_center::Notification> notification =
+      message_center::Notification::CreateSystemNotification(
+          message_center::NOTIFICATION_TYPE_SIMPLE, kSuggestNotificationId,
+          l10n_util::GetStringUTF16(
+              IDS_ARC_MIGRATE_ENCRYPTION_NOTIFICATION_TITLE),
+          message, gfx::Image(), base::string16(), GURL(), notifier_id,
+          message_center::RichNotificationData(), std::move(delegate),
+          ash::kNotificationSettingsIcon,
+          message_center::SystemNotificationWarningLevel::CRITICAL_WARNING);
 
   NotificationDisplayService::GetForProfile(profile)->Display(
       NotificationHandler::Type::TRANSIENT, *notification);

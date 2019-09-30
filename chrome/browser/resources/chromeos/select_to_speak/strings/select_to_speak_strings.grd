@@ -138,18 +138,6 @@
       <message desc="Label for the slowest synthesized speech rate in the Select-to-speak options dialog." name="IDS_SELECT_TO_SPEAK_OPTIONS_RATE_SLOWEST">
         Slowest
       </message>
-      <message desc="Label for slow synthesized speech rate in the Select-to-speak options dialog." name="IDS_SELECT_TO_SPEAK_OPTIONS_RATE_SLOW">
-        Slow
-      </message>
-      <message desc="Label for a normal synthesized speech rate in the Select-to-speak options dialog." name="IDS_SELECT_TO_SPEAK_OPTIONS_RATE_NORMAL">
-        Normal
-      </message>
-      <message desc="Label for fast synthesized speech rate in the Select-to-speak options dialog." name="IDS_SELECT_TO_SPEAK_OPTIONS_RATE_FAST">
-        Fast
-      </message>
-      <message desc="Label for faster synthesized speech rate in the Select-to-speak options dialog." name="IDS_SELECT_TO_SPEAK_OPTIONS_RATE_FASTER">
-        Faster
-      </message>
       <message desc="Label for the fastest synthesized speech rate in the Select-to-speak options dialog." name="IDS_SELECT_TO_SPEAK_OPTIONS_RATE_FASTEST">
         Fastest
       </message>
@@ -182,6 +170,27 @@
       </message>
       <message desc="Example of a word highlight on a light background in the Select-to-speak options dialog." name="IDS_SELECT_TO_SPEAK_OPTIONS_HIGHLIGHT_LIGHT">
         Light background
+      </message>
+      <message desc="Label for the control in the Select-to-speak options dialog where the user can choose the pitch of synthesized speech." name="IDS_SELECT_TO_SPEAK_OPTIONS_PITCH_DESCRIPTION">
+        Select a speech pitch:
+      </message>
+      <message desc="Label for the lowest synthesized speech pitch in the Select-to-speak options dialog." name="IDS_SELECT_TO_SPEAK_OPTIONS_PITCH_LOWEST">
+        Lowest
+      </message>
+      <message desc="Label forer low synthesized speech pitch in the Select-to-speak options dialog." name="IDS_SELECT_TO_SPEAK_OPTIONS_PITCH_LOWER">
+        Lower
+      </message>
+      <message desc="Label for low synthesized speech pitch in the Select-to-speak options dialog." name="IDS_SELECT_TO_SPEAK_OPTIONS_PITCH_LOW">
+        Low
+      </message>
+      <message desc="Label for a normal synthesized speech pitch in the Select-to-speak options dialog." name="IDS_SELECT_TO_SPEAK_OPTIONS_PITCH_NORMAL">
+        Normal
+      </message>
+      <message desc="Label for high synthesized speech pitch in the Select-to-speak options dialog." name="IDS_SELECT_TO_SPEAK_OPTIONS_PITCH_HIGH">
+        High
+      </message>
+      <message desc="Label for highest synthesized speech pitch in the Select-to-speak options dialog." name="IDS_SELECT_TO_SPEAK_OPTIONS_PITCH_HIGHEST">
+        Highest
       </message>
     </messages>
   </release>

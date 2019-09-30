@@ -4,7 +4,6 @@
 
 #include "cc/tiles/eviction_tile_priority_queue.h"
 
-#include "base/memory/ptr_util.h"
 
 namespace cc {
 
@@ -92,11 +91,9 @@ void CreateTilingSetEvictionQueues(
 
 }  // namespace
 
-EvictionTilePriorityQueue::EvictionTilePriorityQueue() {
-}
+EvictionTilePriorityQueue::EvictionTilePriorityQueue() = default;
 
-EvictionTilePriorityQueue::~EvictionTilePriorityQueue() {
-}
+EvictionTilePriorityQueue::~EvictionTilePriorityQueue() = default;
 
 void EvictionTilePriorityQueue::Build(
     const std::vector<PictureLayerImpl*>& active_layers,

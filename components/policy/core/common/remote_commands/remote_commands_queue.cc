@@ -17,8 +17,7 @@
 namespace policy {
 
 RemoteCommandsQueue::RemoteCommandsQueue()
-    : clock_(new base::DefaultTickClock()) {
-}
+    : clock_(base::DefaultTickClock::GetInstance()) {}
 
 RemoteCommandsQueue::~RemoteCommandsQueue() {
   while (!incoming_commands_.empty())
@@ -42,9 +41,8 @@ void RemoteCommandsQueue::AddJob(std::unique_ptr<RemoteCommandJob> job) {
     ScheduleNextJob();
 }
 
-void RemoteCommandsQueue::SetClockForTesting(
-    std::unique_ptr<base::TickClock> clock) {
-  clock_ = std::move(clock);
+void RemoteCommandsQueue::SetClockForTesting(const base::TickClock* clock) {
+  clock_ = clock;
 }
 
 base::TimeTicks RemoteCommandsQueue::GetNowTicks() {
@@ -80,7 +78,7 @@ void RemoteCommandsQueue::ScheduleNextJob() {
   incoming_commands_.pop();
 
   execution_timeout_timer_.Start(FROM_HERE,
-                                 running_command_->GetCommmandTimeout(), this,
+                                 running_command_->GetCommandTimeout(), this,
                                  &RemoteCommandsQueue::OnCommandTimeout);
 
   if (running_command_->Run(clock_->NowTicks(),

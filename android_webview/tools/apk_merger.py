@@ -145,25 +145,6 @@ def AddDiffFiles(diff_files, tmp_dir_32, out_zip, expected_files,
                                  compress=compress)
 
 
-def SignAndAlignApk(tmp_apk, signed_tmp_apk, new_apk, zipalign_path,
-                    keystore_path, key_name, key_password):
-  try:
-    finalize_apk.JarSigner(
-        keystore_path,
-        key_name,
-        key_password,
-        tmp_apk,
-        signed_tmp_apk)
-  except build_utils.CalledProcessError as e:
-    raise ApkMergeFailure('Failed to sign APK: ' + e.output)
-
-  try:
-    finalize_apk.AlignApk(zipalign_path,
-                          signed_tmp_apk,
-                          new_apk)
-  except build_utils.CalledProcessError as e:
-    raise ApkMergeFailure('Failed to align APK: ' + e.output)
-
 def GetSecondaryAbi(apk_zipfile, shared_library):
   ret = ''
   for name in apk_zipfile.namelist():
@@ -193,7 +174,9 @@ def MergeApk(args, tmp_apk, tmp_dir_32, tmp_dir_64):
   UnpackApk(args.apk_64bit, tmp_dir_64)
   UnpackApk(args.apk_32bit, tmp_dir_32)
 
-  ignores = ['META-INF', 'AndroidManifest.xml']
+  # TODO(ssid): unwind file should be included in monochrome apk once all the
+  # official builds start including the file. https://crbug.com/819888.
+  ignores = ['META-INF', 'AndroidManifest.xml', 'unwind_cfi_32']
   if args.ignore_classes_dex:
     ignores += ['classes.dex', 'classes2.dex']
   if args.debug:
@@ -258,16 +241,16 @@ def main():
   tmp_dir_64 = os.path.join(tmp_dir, '64_bit')
   tmp_dir_32 = os.path.join(tmp_dir, '32_bit')
   tmp_apk = os.path.join(tmp_dir, 'tmp.apk')
-  signed_tmp_apk = os.path.join(tmp_dir, 'signed.apk')
   new_apk = args.out_apk
 
   try:
     MergeApk(args, tmp_apk, tmp_dir_32, tmp_dir_64)
 
-    SignAndAlignApk(tmp_apk, signed_tmp_apk, new_apk, args.zipalign_path,
-                    args.keystore_path, args.key_name, args.key_password)
-  except ApkMergeFailure as exc:
-    return 'ERROR: %s' % exc
+    apksigner_path = os.path.join(
+        os.path.dirname(args.zipalign_path), 'apksigner')
+    finalize_apk.FinalizeApk(apksigner_path, args.zipalign_path,
+                             tmp_apk, new_apk, args.keystore_path,
+                             args.key_password, args.key_name)
   finally:
     shutil.rmtree(tmp_dir)
   return 0

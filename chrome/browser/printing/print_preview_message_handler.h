@@ -64,8 +64,10 @@ class PrintPreviewMessageHandler
                                  bool has_custom_page_size_style);
   void OnDidGetPreviewPageCount(
       const PrintHostMsg_DidGetPreviewPageCount_Params& params);
-  void OnDidPreviewPage(const PrintHostMsg_DidPreviewPage_Params& params);
+  void OnDidPreviewPage(content::RenderFrameHost* render_frame_host,
+                        const PrintHostMsg_DidPreviewPage_Params& params);
   void OnMetafileReadyForPrinting(
+      content::RenderFrameHost* render_frame_host,
       const PrintHostMsg_DidPreviewDocument_Params& params);
   void OnPrintPreviewFailed(int document_cookie);
   void OnPrintPreviewCancelled(int document_cookie);
@@ -76,11 +78,11 @@ class PrintPreviewMessageHandler
   void NotifyUIPreviewPageReady(
       int page_number,
       int request_id,
-      scoped_refptr<base::RefCountedBytes> data_bytes);
+      scoped_refptr<base::RefCountedMemory> data_bytes);
   void NotifyUIPreviewDocumentReady(
       int page_count,
       int request_id,
-      scoped_refptr<base::RefCountedBytes> data_bytes);
+      scoped_refptr<base::RefCountedMemory> data_bytes);
 
   // Callbacks for pdf compositor client.
   void OnCompositePdfPageDone(int page_number,

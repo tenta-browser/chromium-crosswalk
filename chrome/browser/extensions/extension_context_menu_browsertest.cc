@@ -614,7 +614,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionContextMenuBrowserTest, Separators) {
   ExtensionTestMessageListener listener1("test1 create finished", false);
   ui_test_utils::NavigateToURL(browser(),
                                GURL(extension->GetResourceURL("test1.html")));
-  listener1.WaitUntilSatisfied();
+  EXPECT_TRUE(listener1.WaitUntilSatisfied());
 
   GURL url("http://www.google.com/");
   std::unique_ptr<TestRenderViewContextMenu> menu(
@@ -642,7 +642,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionContextMenuBrowserTest, Separators) {
   ExtensionTestMessageListener listener2("test2 create finished", false);
   ui_test_utils::NavigateToURL(browser(),
                                GURL(extension->GetResourceURL("test2.html")));
-  listener2.WaitUntilSatisfied();
+  EXPECT_TRUE(listener2.WaitUntilSatisfied());
   menu =
       TestRenderViewContextMenu::Create(GetWebContents(), url, GURL(), GURL());
   ASSERT_TRUE(menu->GetMenuModelAndItemIndex(
@@ -851,4 +851,42 @@ IN_PROC_BROWSER_TEST_F(ExtensionContextMenuBrowserTest,
 
   browser()->profile()->DestroyOffTheRecordProfile();
   ASSERT_EQ(1u, GetItems().size());
+}
+
+// Tests updating checkboxes' checked state to true and false.
+IN_PROC_BROWSER_TEST_F(ExtensionContextMenuBrowserTest, UpdateCheckboxes) {
+  ExtensionTestMessageListener listener_context_menu_created("Menu created",
+                                                             false);
+
+  const extensions::Extension* extension =
+      LoadContextMenuExtension("checkboxes");
+  ASSERT_TRUE(extension);
+
+  ASSERT_TRUE(listener_context_menu_created.WaitUntilSatisfied());
+
+  GURL page_url("http://www.google.com");
+
+  // Create and build our test context menu.
+  std::unique_ptr<TestRenderViewContextMenu> menu(
+      TestRenderViewContextMenu::Create(GetWebContents(), page_url, GURL(),
+                                        GURL()));
+
+  VerifyRadioItemSelectionState(menu.get(), extension->id(), "checkbox1",
+                                false);
+  VerifyRadioItemSelectionState(menu.get(), extension->id(), "checkbox2", true);
+
+  ExtensionTestMessageListener listener_item1_clicked("onclick normal item",
+                                                      false);
+  ExtensionTestMessageListener listener_unchecked_checkbox2(
+      "checkbox2 unchecked", false);
+  // Clicking the regular item calls chrome.contextMenus.update to uncheck the
+  // second checkbox item.
+  ExecuteCommand(menu.get(), extension->id(), "item1");
+  ASSERT_TRUE(listener_item1_clicked.WaitUntilSatisfied());
+  ASSERT_TRUE(listener_unchecked_checkbox2.WaitUntilSatisfied());
+
+  VerifyRadioItemSelectionState(menu.get(), extension->id(), "checkbox1",
+                                false);
+  VerifyRadioItemSelectionState(menu.get(), extension->id(), "checkbox2",
+                                false);
 }

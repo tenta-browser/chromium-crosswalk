@@ -27,15 +27,16 @@ import android.widget.TextView.OnEditorActionListener;
 import org.chromium.base.Callback;
 import org.chromium.base.annotations.CalledByNative;
 import org.chromium.base.annotations.JNINamespace;
+import org.chromium.components.content_view.ContentView;
 import org.chromium.content.browser.ActivityContentVideoViewEmbedder;
 import org.chromium.content.browser.ContentVideoViewEmbedder;
-import org.chromium.content.browser.ContentView;
-import org.chromium.content.browser.ContentViewCore;
 import org.chromium.content.browser.ContentViewCoreImpl;
 import org.chromium.content.browser.ContentViewRenderView;
 import org.chromium.content_public.browser.ActionModeCallbackHelper;
+import org.chromium.content_public.browser.ContentViewCore;
 import org.chromium.content_public.browser.LoadUrlParams;
 import org.chromium.content_public.browser.NavigationController;
+import org.chromium.content_public.browser.SelectionPopupController;
 import org.chromium.content_public.browser.WebContents;
 import org.chromium.ui.base.WindowAndroid;
 
@@ -124,6 +125,7 @@ public class Shell extends LinearLayout {
         mWindow = null;
         mNativeShell = 0;
         mContentViewCore.destroy();
+        mWebContents = null;
     }
 
     /**
@@ -145,7 +147,8 @@ public class Shell extends LinearLayout {
     protected void onFinishInflate() {
         super.onFinishInflate();
 
-        mProgressDrawable = (ClipDrawable) findViewById(R.id.toolbar).getBackground();
+        View toolbar = findViewById(R.id.toolbar);
+        mProgressDrawable = (ClipDrawable) toolbar.getBackground();
         initializeUrlField();
         initializeNavigationButtons();
     }
@@ -297,14 +300,15 @@ public class Shell extends LinearLayout {
     @CalledByNative
     private void initFromNativeTabContents(WebContents webContents) {
         Context context = getContext();
-        mContentViewCore = (ContentViewCoreImpl) ContentViewCore.create(context, "");
-        ContentView cv = ContentView.createContentView(context, mContentViewCore);
+        ContentView cv = ContentView.createContentView(context, webContents);
         mViewAndroidDelegate = new ShellViewAndroidDelegate(cv);
-        mContentViewCore.initialize(mViewAndroidDelegate, cv, webContents, mWindow);
-        mContentViewCore.setActionModeCallback(defaultActionCallback());
-        mWebContents = mContentViewCore.getWebContents();
+        mContentViewCore = (ContentViewCoreImpl) ContentViewCore.create(
+                context, "", webContents, mViewAndroidDelegate, cv, mWindow);
+        mWebContents = webContents;
+        SelectionPopupController controller = SelectionPopupController.fromWebContents(webContents);
+        controller.setActionModeCallback(defaultActionCallback());
         mNavigationController = mWebContents.getNavigationController();
-        if (getParent() != null) mContentViewCore.onShow();
+        if (getParent() != null) mWebContents.onShow();
         if (mWebContents.getVisibleUrl() != null) {
             mUrlTextView.setText(mWebContents.getVisibleUrl());
         }
@@ -313,7 +317,7 @@ public class Shell extends LinearLayout {
                         FrameLayout.LayoutParams.MATCH_PARENT,
                         FrameLayout.LayoutParams.MATCH_PARENT));
         cv.requestFocus();
-        mContentViewRenderView.setCurrentContentViewCore(mContentViewCore);
+        mContentViewRenderView.setCurrentWebContents(mWebContents);
     }
 
     /**
@@ -322,7 +326,8 @@ public class Shell extends LinearLayout {
      */
     private ActionMode.Callback defaultActionCallback() {
         final ActionModeCallbackHelper helper =
-                mContentViewCore.getActionModeCallbackHelper();
+                SelectionPopupController.fromWebContents(mWebContents)
+                        .getActionModeCallbackHelper();
 
         return new ActionMode.Callback() {
             @Override
@@ -375,6 +380,11 @@ public class Shell extends LinearLayout {
         if (mOverlayModeChangedCallbackForTesting != null) {
             mOverlayModeChangedCallbackForTesting.onResult(useOverlayMode);
         }
+    }
+
+    @CalledByNative
+    public void sizeTo(int width, int height) {
+        mWebContents.setSize(width, height);
     }
 
     public void setOverayModeChangedCallbackForTesting(Callback<Boolean> callback) {

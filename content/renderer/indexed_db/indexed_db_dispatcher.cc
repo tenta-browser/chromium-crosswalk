@@ -12,8 +12,8 @@
 #include "content/renderer/indexed_db/indexed_db_key_builders.h"
 #include "content/renderer/indexed_db/webidbcursor_impl.h"
 #include "ipc/ipc_channel.h"
-#include "third_party/WebKit/public/platform/modules/indexeddb/WebIDBDatabaseCallbacks.h"
-#include "third_party/WebKit/public/platform/modules/indexeddb/WebIDBObservation.h"
+#include "third_party/blink/public/platform/modules/indexeddb/web_idb_database_callbacks.h"
+#include "third_party/blink/public/platform/modules/indexeddb/web_idb_observation.h"
 
 using blink::WebIDBKey;
 using blink::WebIDBObservation;
@@ -25,7 +25,7 @@ static base::LazyInstance<ThreadLocalPointer<IndexedDBDispatcher>>::Leaky
 
 namespace {
 
-IndexedDBDispatcher* const kHasBeenDeleted =
+IndexedDBDispatcher* const kDeletedIndexedDBDispatcherMarker =
     reinterpret_cast<IndexedDBDispatcher*>(0x1);
 
 }  // unnamed namespace
@@ -39,11 +39,12 @@ IndexedDBDispatcher::~IndexedDBDispatcher() {
   mojo_owned_callback_state_.clear();
   mojo_owned_database_callback_state_.clear();
 
-  g_idb_dispatcher_tls.Pointer()->Set(kHasBeenDeleted);
+  g_idb_dispatcher_tls.Pointer()->Set(kDeletedIndexedDBDispatcherMarker);
 }
 
 IndexedDBDispatcher* IndexedDBDispatcher::ThreadSpecificInstance() {
-  if (g_idb_dispatcher_tls.Pointer()->Get() == kHasBeenDeleted) {
+  if (g_idb_dispatcher_tls.Pointer()->Get() ==
+      kDeletedIndexedDBDispatcherMarker) {
     NOTREACHED() << "Re-instantiating TLS IndexedDBDispatcher.";
     g_idb_dispatcher_tls.Pointer()->Set(nullptr);
   }

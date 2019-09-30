@@ -31,14 +31,12 @@ class KeyboardController;
 
 namespace ui {
 class EventHandler;
-class MenuModel;
+class SimpleMenuModel;
 class WindowTreeHost;
 }
 
 namespace views {
-class MenuModelAdapter;
 class MenuRunner;
-class Widget;
 }
 
 namespace wm {
@@ -47,8 +45,6 @@ class ScopedCaptureClient;
 
 namespace ash {
 class AlwaysOnTopController;
-class AnimatingWallpaperWidgetController;
-class AshTouchExplorationManager;
 class AshWindowTreeHost;
 class LockScreenActionBackgroundController;
 enum class LoginStatus;
@@ -61,6 +57,7 @@ class StatusAreaWidget;
 class SystemModalContainerLayoutManager;
 class SystemTray;
 class SystemWallpaperController;
+class TouchExplorationManager;
 class TouchHudDebug;
 class TouchHudProjection;
 class WallpaperWidgetController;
@@ -122,14 +119,8 @@ class ASH_EXPORT RootWindowController {
 
   Shelf* shelf() const { return shelf_.get(); }
 
-  // Initializes the shelf for this root window and notifies observers.
-  void InitializeShelf();
-
   // Returns the instance of the sidebar.
   Sidebar* sidebar() { return sidebar_.get(); }
-
-  // Enables projection touch HUD.
-  void SetTouchHudProjectionEnabled(bool enable);
 
   // Get touch HUDs associated with this root window controller.
   TouchHudDebug* touch_hud_debug() const { return touch_hud_debug_; }
@@ -198,24 +189,11 @@ class ASH_EXPORT RootWindowController {
   WallpaperWidgetController* wallpaper_widget_controller() {
     return wallpaper_widget_controller_.get();
   }
-  void SetWallpaperWidgetController(WallpaperWidgetController* controller);
-
-  AnimatingWallpaperWidgetController* animating_wallpaper_widget_controller() {
-    return animating_wallpaper_widget_controller_.get();
-  }
-  void SetAnimatingWallpaperWidgetController(
-      AnimatingWallpaperWidgetController* controller);
 
   LockScreenActionBackgroundController*
   lock_screen_action_background_controller() {
     return lock_screen_action_background_controller_.get();
   }
-
-  // Called when the wallpaper animation is finished. Updates
-  // |system_wallpaper_| to be black and drops |boot_splash_screen_| and moves
-  // the wallpaper controller into the root window controller. |widget| holds
-  // the wallpaper image, or NULL if the wallpaper is a solid color.
-  void OnWallpaperAnimationFinished(views::Widget* widget);
 
   // Deletes associated objects and clears the state, but doesn't delete
   // the root window yet. This is used to delete a secondary displays'
@@ -245,9 +223,6 @@ class ASH_EXPORT RootWindowController {
   // Deactivate virtual keyboard on current root window controller.
   void DeactivateKeyboard(keyboard::KeyboardController* keyboard_controller);
 
-  // Tests if a window is associated with the virtual keyboard.
-  bool IsVirtualKeyboardWindow(aura::Window* window);
-
   // If touch exploration is enabled, update the touch exploration
   // controller so that synthesized touch events are anchored at this point.
   void SetTouchAccessibilityAnchorPoint(const gfx::Point& anchor_point);
@@ -255,11 +230,15 @@ class ASH_EXPORT RootWindowController {
   // Shows a context menu at the |location_in_screen|.
   void ShowContextMenu(const gfx::Point& location_in_screen,
                        ui::MenuSourceType source_type);
+  void HideContextMenu();
 
   // Called when the login status changes after login (such as lock/unlock).
   void UpdateAfterLoginStatusChange(LoginStatus status);
 
  private:
+  FRIEND_TEST_ALL_PREFIXES(RootWindowControllerTest,
+                           ContextMenuDisappearsInTabletMode);
+
   // TODO(sky): remove this. Temporary during ash-mus unification.
   // http://crbug.com/671246.
   friend class WindowManager;
@@ -276,6 +255,9 @@ class ASH_EXPORT RootWindowController {
 
   void InitLayoutManagers();
 
+  // Initializes the shelf for this root window and notifies observers.
+  void InitializeShelf();
+
   // Creates the containers (aura::Windows) used by the shell.
   void CreateContainers();
 
@@ -289,8 +271,12 @@ class ASH_EXPORT RootWindowController {
   // this.
   void ResetRootForNewWindowsIfNecessary();
 
-  // Callback for MenuModelAdapter.
-  void OnMenuClosed();
+  // Callback for MenuRunner.
+  void OnMenuClosed(const base::TimeTicks desktop_context_menu_show_time);
+
+  // Passed as callback to |wallpaper_widget_controller_| - run when the
+  // wallpaper widget is first set.
+  void OnFirstWallpaperWidgetSet();
 
   std::unique_ptr<AshWindowTreeHost> ash_host_;
   std::unique_ptr<aura::WindowTreeHost> mus_window_tree_host_;
@@ -302,15 +288,12 @@ class ASH_EXPORT RootWindowController {
   wm::RootWindowLayoutManager* root_window_layout_manager_ = nullptr;
 
   std::unique_ptr<WallpaperWidgetController> wallpaper_widget_controller_;
-  std::unique_ptr<AnimatingWallpaperWidgetController>
-      animating_wallpaper_widget_controller_;
   std::unique_ptr<WorkspaceController> workspace_controller_;
 
   std::unique_ptr<AlwaysOnTopController> always_on_top_controller_;
 
   // Manages the context menu.
-  std::unique_ptr<ui::MenuModel> menu_model_;
-  std::unique_ptr<views::MenuModelAdapter> menu_model_adapter_;
+  std::unique_ptr<ui::SimpleMenuModel> menu_model_;
   std::unique_ptr<views::MenuRunner> menu_runner_;
 
   std::unique_ptr<StackingController> stacking_controller_;
@@ -329,7 +312,7 @@ class ASH_EXPORT RootWindowController {
 
   // Responsible for initializing TouchExplorationController when spoken
   // feedback is on.
-  std::unique_ptr<AshTouchExplorationManager> touch_exploration_manager_;
+  std::unique_ptr<TouchExplorationManager> touch_exploration_manager_;
 
   // Heads-up displays for touch events. These HUDs are not owned by the root
   // window controller and manage their own lifetimes.
@@ -343,6 +326,10 @@ class ASH_EXPORT RootWindowController {
 
   std::unique_ptr<LockScreenActionBackgroundController>
       lock_screen_action_background_controller_;
+
+  // Whether child windows have been closed during shutdown. Exists to avoid
+  // calling related cleanup code more than once.
+  bool did_close_child_windows_ = false;
 
   static std::vector<RootWindowController*>* root_window_controllers_;
 

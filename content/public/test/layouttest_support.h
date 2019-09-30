@@ -12,7 +12,7 @@
 
 #include "base/callback_forward.h"
 #include "cc/layers/texture_layer.h"
-#include "third_party/WebKit/public/platform/modules/screen_orientation/WebScreenOrientationType.h"
+#include "third_party/blink/public/platform/modules/screen_orientation/web_screen_orientation_type.h"
 
 class GURL;
 
@@ -23,7 +23,6 @@ struct WebSize;
 class WebURLRequest;
 class WebView;
 class WebWidget;
-class WebURLResponse;
 }
 
 namespace device {
@@ -46,6 +45,8 @@ namespace content {
 class RenderFrame;
 class RendererGamepadProvider;
 class RenderView;
+class StoragePartition;
+struct Manifest;
 
 // Turn the browser process into layout test mode.
 void EnableBrowserLayoutTestMode();
@@ -53,7 +54,8 @@ void EnableBrowserLayoutTestMode();
 // Terminates all workers and notifies when complete. This is used for
 // testing when it is important to make sure that all shared worker activity
 // has stopped.
-void TerminateAllSharedWorkersForTesting(base::OnceClosure callback);
+void TerminateAllSharedWorkersForTesting(StoragePartition* storage_partition,
+                                         base::OnceClosure callback);
 
 ///////////////////////////////////////////////////////////////////////////////
 // The following methods are meant to be used from a renderer.
@@ -98,10 +100,9 @@ void EnableWebTestProxyCreation(
     const WidgetProxyCreationCallback& widget_proxy_creation_callback,
     const FrameProxyCreationCallback& frame_proxy_creation_callback);
 
-typedef base::Callback<void(const blink::WebURLResponse& response,
-                            const std::string& data)> FetchManifestCallback;
-void FetchManifest(blink::WebView* view, const GURL& url,
-                   const FetchManifestCallback&);
+typedef base::OnceCallback<void(const GURL&, const Manifest&)>
+    FetchManifestCallback;
+void FetchManifest(blink::WebView* view, FetchManifestCallback callback);
 
 // Sets gamepad provider to be used for layout tests.
 void SetMockGamepadProvider(std::unique_ptr<RendererGamepadProvider> provider);
@@ -152,8 +153,12 @@ gfx::ColorSpace GetTestingColorSpace(const std::string& name);
 void SetDeviceColorSpace(RenderView* render_view,
                          const gfx::ColorSpace& color_space);
 
-// Sets the scan duration to 0.
-void SetTestBluetoothScanDuration();
+// Sets the scan duration to reflect the given setting.
+enum class BluetoothTestScanDurationSetting {
+  kImmediateTimeout,  // Set the scan duration to 0 seconds.
+  kNeverTimeout,  // Set the scan duration to base::TimeDelta::Max() seconds.
+};
+void SetTestBluetoothScanDuration(BluetoothTestScanDurationSetting setting);
 
 // Enables or disables synchronous resize mode. When enabled, all window-sizing
 // machinery is short-circuited inside the renderer. This mode is necessary for

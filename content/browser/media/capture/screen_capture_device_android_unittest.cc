@@ -4,7 +4,6 @@
 
 #include "content/browser/media/capture/screen_capture_device_android.h"
 
-#include "base/memory/ptr_util.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -42,7 +41,7 @@ class MockDeviceClient : public media::VideoCaptureDevice::Client {
                              media::VideoPixelStorage storage,
                              int frame_feedback_id) override {
     EXPECT_EQ(media::PIXEL_FORMAT_I420, format);
-    EXPECT_EQ(media::PIXEL_STORAGE_CPU, storage);
+    EXPECT_EQ(media::VideoPixelStorage::CPU, storage);
     DoReserveOutputBuffer();
     return Buffer();
   }
@@ -66,7 +65,7 @@ class MockDeviceClient : public media::VideoCaptureDevice::Client {
                                    media::VideoPixelStorage storage,
                                    int frame_feedback_id) override {
     EXPECT_EQ(media::PIXEL_FORMAT_I420, format);
-    EXPECT_EQ(media::PIXEL_STORAGE_CPU, storage);
+    EXPECT_EQ(media::VideoPixelStorage::CPU, storage);
     DoResurrectLastOutputBuffer();
     return Buffer();
   }

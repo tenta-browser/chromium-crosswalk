@@ -14,7 +14,6 @@
 #include "base/i18n/file_util_icu.h"
 #include "base/i18n/time_formatting.h"
 #include "base/lazy_instance.h"
-#include "base/memory/ptr_util.h"
 #include "base/path_service.h"
 #include "base/sha1.h"
 #include "base/stl_util.h"
@@ -47,6 +46,7 @@
 #include "components/prefs/pref_service.h"
 #include "components/user_prefs/user_prefs.h"
 #include "content/public/browser/browser_context.h"
+#include "content/public/browser/browser_thread.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/web_contents.h"
 #include "extensions/browser/event_router.h"
@@ -263,7 +263,7 @@ void BookmarkEventRouter::DispatchEvent(
     std::unique_ptr<base::ListValue> event_args) {
   EventRouter* event_router = EventRouter::Get(browser_context_);
   if (event_router) {
-    event_router->BroadcastEvent(base::MakeUnique<extensions::Event>(
+    event_router->BroadcastEvent(std::make_unique<extensions::Event>(
         histogram_value, event_name, std::move(event_args)));
   }
 }
@@ -556,7 +556,7 @@ bool BookmarksSearchFunction::RunOnReady() {
   return true;
 }
 
-bool BookmarksRemoveFunction::RunOnReady() {
+bool BookmarksRemoveFunctionBase::RunOnReady() {
   if (!EditBookmarksEnabled())
     return false;
 
@@ -568,15 +568,21 @@ bool BookmarksRemoveFunction::RunOnReady() {
   if (!GetBookmarkIdAsInt64(params->id, &id))
     return false;
 
-  bool recursive = false;
-  if (name() == BookmarksRemoveTreeFunction::function_name())
-    recursive = true;
-
   BookmarkModel* model = GetBookmarkModel();
   ManagedBookmarkService* managed = GetManagedBookmarkService();
-  if (!bookmark_api_helpers::RemoveNode(model, managed, id, recursive, &error_))
+  if (!bookmark_api_helpers::RemoveNode(model, managed, id, is_recursive(),
+                                        &error_)) {
     return false;
+  }
 
+  return true;
+}
+
+bool BookmarksRemoveFunction::is_recursive() const {
+  return false;
+}
+
+bool BookmarksRemoveTreeFunction::is_recursive() const {
   return true;
 }
 
@@ -690,6 +696,11 @@ bool BookmarksUpdateFunction::RunOnReady() {
     error_ = keys::kModifySpecialError;
     return false;
   }
+  if (!url.is_empty() && node->is_folder()) {
+    error_ = keys::kCannotSetUrlOfFolderError;
+    return false;
+  }
+
   if (has_title)
     model->SetTitle(node, title);
   if (!url.is_empty())

@@ -90,9 +90,6 @@ BrowserNonClientFrameViewMus::BrowserNonClientFrameViewMus(
     BrowserView* browser_view)
     : BrowserNonClientFrameView(frame, browser_view),
       window_icon_(nullptr),
-#if defined(FRAME_AVATAR_BUTTON)
-      profile_switcher_(this),
-#endif
       tab_strip_(nullptr) {
 }
 
@@ -166,14 +163,6 @@ void BrowserNonClientFrameViewMus::UpdateThrobber(bool running) {
     window_icon_->Update();
 }
 
-views::View* BrowserNonClientFrameViewMus::GetProfileSwitcherView() const {
-#if defined(FRAME_AVATAR_BUTTON)
-  return profile_switcher_.view();
-#else
-  return nullptr;
-#endif
-}
-
 void BrowserNonClientFrameViewMus::UpdateClientArea() {
   std::vector<gfx::Rect> additional_client_area;
   int top_container_offset = 0;
@@ -236,6 +225,11 @@ void BrowserNonClientFrameViewMus::UpdateMinimumSize() {
   }
 }
 
+int BrowserNonClientFrameViewMus::GetTabStripLeftInset() const {
+  return BrowserNonClientFrameView::GetTabStripLeftInset() +
+         frame_values().normal_insets.left();
+}
+
 ///////////////////////////////////////////////////////////////////////////////
 // views::NonClientFrameView:
 
@@ -259,8 +253,9 @@ int BrowserNonClientFrameViewMus::NonClientHitTest(const gfx::Point& point) {
   int hit_test = HTCLIENT;
 
 #if defined(FRAME_AVATAR_BUTTON)
-  if (hit_test == HTCAPTION && profile_switcher_.view() &&
-      ConvertedHitTest(this, profile_switcher_.view(), point)) {
+  views::View* profile_switcher_view = GetProfileSwitcherButton();
+  if (hit_test == HTCAPTION && profile_switcher_view &&
+      ConvertedHitTest(this, profile_switcher_view, point)) {
     return HTCLIENT;
   }
 #endif
@@ -314,7 +309,7 @@ void BrowserNonClientFrameViewMus::Layout() {
     LayoutIncognitoButton();
 
 #if defined(FRAME_AVATAR_BUTTON)
-  if (profile_switcher_.view())
+  if (GetProfileSwitcherButton())
     LayoutProfileSwitcher();
 #endif
 
@@ -329,7 +324,7 @@ const char* BrowserNonClientFrameViewMus::GetClassName() const {
 
 void BrowserNonClientFrameViewMus::GetAccessibleNodeData(
     ui::AXNodeData* node_data) {
-  node_data->role = ui::AX_ROLE_TITLE_BAR;
+  node_data->role = ax::mojom::Role::kTitleBar;
 }
 
 gfx::Size BrowserNonClientFrameViewMus::GetMinimumSize() const {
@@ -370,24 +365,12 @@ gfx::ImageSkia BrowserNonClientFrameViewMus::GetFaviconForTabIconView() {
 // BrowserNonClientFrameViewMus, protected:
 
 // BrowserNonClientFrameView:
-void BrowserNonClientFrameViewMus::UpdateProfileIcons() {
+AvatarButtonStyle BrowserNonClientFrameViewMus::GetAvatarButtonStyle() const {
 #if defined(FRAME_AVATAR_BUTTON)
-  if (browser_view()->IsRegularOrGuestSession()) {
-    profile_switcher_.Update(AvatarButtonStyle::NATIVE);
-    return;
-  }
+  return AvatarButtonStyle::NATIVE;
+#else
+  return AvatarButtonStyle::NONE;
 #endif
-  Browser* browser = browser_view()->browser();
-
-  // Similar logic as in BrowserNonClientFrameViewAsh::UpdateProfileIcons (minus
-  // the multi-profile part). That is, no profile indicator for non-tabbed and
-  // non-app browser window, or regular/guest user browser window.
-  if (!browser->is_type_tabbed() && !browser->is_app())
-    return;
-  if (browser_view()->IsRegularOrGuestSession())
-    return;
-
-  UpdateProfileIndicatorIcon();
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -402,24 +385,16 @@ void BrowserNonClientFrameViewMus::TabStripDeleted(TabStrip* tab_strip) {
   tab_strip_ = nullptr;
 }
 
-int BrowserNonClientFrameViewMus::GetTabStripLeftInset() const {
-  const int avatar_right =
-      profile_indicator_icon()
-          ? (kAvatarIconPadding + GetIncognitoAvatarIcon().width())
-          : 0;
-  return avatar_right + kAvatarIconPadding +
-         frame_values().normal_insets.left();
-}
-
 int BrowserNonClientFrameViewMus::GetTabStripRightInset() const {
   const int frame_right_insets = frame_values().normal_insets.right() +
                                  frame_values().max_title_bar_button_width;
   int right_inset = kTabstripRightSpacing + frame_right_insets;
 
 #if defined(FRAME_AVATAR_BUTTON)
-  if (profile_switcher_.view()) {
-    right_inset += kAvatarButtonOffset +
-                   profile_switcher_.view()->GetPreferredSize().width();
+  views::View* profile_switcher_view = GetProfileSwitcherButton();
+  if (profile_switcher_view) {
+    right_inset +=
+        kAvatarButtonOffset + profile_switcher_view->GetPreferredSize().width();
   }
 #endif
 
@@ -433,30 +408,13 @@ bool BrowserNonClientFrameViewMus::UsePackagedAppHeaderStyle() const {
          browser->is_app();
 }
 
-void BrowserNonClientFrameViewMus::LayoutIncognitoButton() {
-  DCHECK(profile_indicator_icon());
-#if !defined(OS_CHROMEOS)
-  // ChromeOS shows avatar on V1 app.
-  DCHECK(browser_view()->IsTabStripVisible());
-#endif
-  gfx::ImageSkia incognito_icon = GetIncognitoAvatarIcon();
-  int avatar_bottom = GetTopInset(false) + browser_view()->GetTabStripHeight() -
-                      kAvatarIconPadding;
-  int avatar_y = avatar_bottom - incognito_icon.height();
-  int avatar_height = incognito_icon.height();
-
-  gfx::Rect avatar_bounds(kAvatarIconPadding, avatar_y, incognito_icon.width(),
-                          avatar_height);
-  profile_indicator_icon()->SetBoundsRect(avatar_bounds);
-  profile_indicator_icon()->SetVisible(true);
-}
-
 void BrowserNonClientFrameViewMus::LayoutProfileSwitcher() {
 #if defined(FRAME_AVATAR_BUTTON)
-  gfx::Size button_size = profile_switcher_.view()->GetPreferredSize();
+  views::View* profile_switcher_view = GetProfileSwitcherButton();
+  gfx::Size button_size = profile_switcher_view->GetPreferredSize();
   int button_x = width() - GetTabStripRightInset() + kAvatarButtonOffset;
-  profile_switcher_.view()->SetBounds(button_x, 0, button_size.width(),
-                                      button_size.height());
+  profile_switcher_view->SetBounds(button_x, 0, button_size.width(),
+                                   button_size.height());
 #endif
 }
 
@@ -485,9 +443,8 @@ int BrowserNonClientFrameViewMus::GetHeaderHeight() const {
 #if defined(OS_CHROMEOS)
   // TODO: move ash_layout_constants to ash/public/cpp.
   const bool restored = !frame()->IsMaximized() && !frame()->IsFullscreen();
-  return GetAshLayoutSize(restored
-                              ? AshLayoutSize::BROWSER_RESTORED_CAPTION_BUTTON
-                              : AshLayoutSize::BROWSER_MAXIMIZED_CAPTION_BUTTON)
+  return GetAshLayoutSize(restored ? AshLayoutSize::kBrowserCaptionRestored
+                                   : AshLayoutSize::kBrowserCaptionMaximized)
       .height();
 #else
   return views::WindowManagerFrameValues::instance().normal_insets.top();

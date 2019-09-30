@@ -3,6 +3,17 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
+      "backgroundColor": "#FFFFFF"
+    },
+    {
+      "name": "Scrolling Layer",
+      "bounds": [800, 600],
+      "drawsContent": false
+    },
+    {
+      "name": "Scrolling Contents Layer",
+      "bounds": [800, 600],
       "contentsOpaque": true,
       "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
@@ -67,11 +78,6 @@
           "reason": "disappeared"
         },
         {
-          "object": "LayoutTableCell TD",
-          "rect": [8, 98, 60, 30],
-          "reason": "disappeared"
-        },
-        {
           "object": "LayoutTableCell TD class='red half'",
           "rect": [8, 98, 60, 30],
           "reason": "geometry"
@@ -100,31 +106,6 @@
           "object": "LayoutTableCell TD class='red half'",
           "rect": [8, 8, 60, 30],
           "reason": "geometry"
-        },
-        {
-          "object": "LayoutTable TABLE",
-          "rect": [8, 372, 60, 19],
-          "reason": "incremental"
-        },
-        {
-          "object": "LayoutTableCell TD class='half'",
-          "rect": [12, 357, 52, 30],
-          "reason": "geometry"
-        },
-        {
-          "object": "LayoutTableCell TD class='half'",
-          "rect": [12, 342, 52, 30],
-          "reason": "geometry"
-        },
-        {
-          "object": "LayoutTableCell TD class='half'",
-          "rect": [12, 327, 52, 30],
-          "reason": "geometry"
-        },
-        {
-          "object": "LayoutTableCell TD class='half'",
-          "rect": [12, 312, 52, 30],
-          "reason": "geometry"
         }
       ]
     }
@@ -133,6 +114,10 @@
     {
       "object": "LayoutBlockFlow CAPTION id='caption1' class='blue half'",
       "reason": "disappeared"
+    },
+    {
+      "object": "LayoutTableSection TBODY",
+      "reason": "geometry"
     },
     {
       "object": "LayoutTableRow TR",
@@ -159,6 +144,10 @@
       "reason": "disappeared"
     },
     {
+      "object": "LayoutTableSection TBODY",
+      "reason": "geometry"
+    },
+    {
       "object": "LayoutTableRow TR",
       "reason": "geometry"
     },
@@ -172,6 +161,10 @@
     },
     {
       "object": "LayoutTableCell TD class='green half'",
+      "reason": "geometry"
+    },
+    {
+      "object": "LayoutTableSection TBODY",
       "reason": "geometry"
     },
     {
@@ -192,7 +185,11 @@
     },
     {
       "object": "LayoutTable TABLE",
-      "reason": "incremental"
+      "reason": "geometry"
+    },
+    {
+      "object": "LayoutTableSection TBODY",
+      "reason": "geometry"
     },
     {
       "object": "LayoutTableRow TR",

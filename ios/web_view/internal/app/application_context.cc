@@ -5,7 +5,6 @@
 #include "ios/web_view/internal/app/application_context.h"
 
 #include "base/command_line.h"
-#include "base/memory/ptr_util.h"
 #include "base/memory/singleton.h"
 #include "base/path_service.h"
 #include "components/flags_ui/pref_service_flags_storage.h"
@@ -19,6 +18,7 @@
 #include "components/ssl_config/ssl_config_service_manager.h"
 #include "components/translate/core/browser/translate_download_manager.h"
 #include "ios/web/public/web_thread.h"
+#include "ios/web_view/cwv_web_view_features.h"
 #include "ios/web_view/internal/app/web_view_io_thread.h"
 #include "net/socket/client_socket_pool_manager.h"
 #include "ui/base/l10n/l10n_util_mac.h"
@@ -30,7 +30,7 @@ ApplicationContext* ApplicationContext::GetInstance() {
 }
 
 ApplicationContext::ApplicationContext() {
-  net_log_ = base::MakeUnique<net_log::ChromeNetLog>();
+  net_log_ = std::make_unique<net_log::ChromeNetLog>();
 
   SetApplicationLocale(l10n_util::GetLocaleOverride());
 }
@@ -40,7 +40,7 @@ ApplicationContext::~ApplicationContext() = default;
 void ApplicationContext::PreCreateThreads() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   web_view_io_thread_ =
-      base::MakeUnique<WebViewIOThread>(GetLocalState(), GetNetLog());
+      std::make_unique<WebViewIOThread>(GetLocalState(), GetNetLog());
 }
 
 void ApplicationContext::SaveState() {
@@ -71,7 +71,10 @@ PrefService* ApplicationContext::GetLocalState() {
     flags_ui::PrefServiceFlagsStorage::RegisterPrefs(pref_registry.get());
     PrefProxyConfigTrackerImpl::RegisterPrefs(pref_registry.get());
     ssl_config::SSLConfigServiceManager::RegisterPrefs(pref_registry.get());
+
+#if BUILDFLAG(IOS_WEB_VIEW_ENABLE_SIGNIN)
     SigninManagerBase::RegisterPrefs(pref_registry.get());
+#endif  // BUILDFLAG(IOS_WEB_VIEW_ENABLE_SIGNIN)
 
     base::FilePath local_state_path;
     PathService::Get(base::DIR_APP_DATA, &local_state_path);

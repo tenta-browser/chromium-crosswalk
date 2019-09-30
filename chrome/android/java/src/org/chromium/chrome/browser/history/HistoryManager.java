@@ -26,6 +26,7 @@ import org.chromium.base.ContextUtils;
 import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.base.metrics.RecordUserAction;
 import org.chromium.chrome.R;
+import org.chromium.chrome.browser.ChromeActivity;
 import org.chromium.chrome.browser.IntentHandler;
 import org.chromium.chrome.browser.document.ChromeLauncherActivity;
 import org.chromium.chrome.browser.favicon.LargeIconBridge;
@@ -39,14 +40,14 @@ import org.chromium.chrome.browser.signin.SigninManager.SignInStateObserver;
 import org.chromium.chrome.browser.snackbar.Snackbar;
 import org.chromium.chrome.browser.snackbar.SnackbarManager;
 import org.chromium.chrome.browser.snackbar.SnackbarManager.SnackbarController;
-import org.chromium.chrome.browser.util.FeatureUtilities;
+import org.chromium.chrome.browser.tabmodel.TabCreatorManager.TabCreator;
+import org.chromium.chrome.browser.tabmodel.TabModel.TabLaunchType;
 import org.chromium.chrome.browser.util.IntentUtils;
-import org.chromium.chrome.browser.widget.selection.SelectableBottomSheetContent.SelectableBottomSheetContentManager;
 import org.chromium.chrome.browser.widget.selection.SelectableListLayout;
-import org.chromium.chrome.browser.widget.selection.SelectableListToolbar;
 import org.chromium.chrome.browser.widget.selection.SelectableListToolbar.SearchDelegate;
 import org.chromium.chrome.browser.widget.selection.SelectionDelegate;
 import org.chromium.chrome.browser.widget.selection.SelectionDelegate.SelectionObserver;
+import org.chromium.content_public.browser.LoadUrlParams;
 import org.chromium.ui.base.Clipboard;
 import org.chromium.ui.base.DeviceFormFactor;
 
@@ -57,8 +58,7 @@ import java.util.List;
  */
 public class HistoryManager implements OnMenuItemClickListener, SignInStateObserver,
                                        SelectionObserver<HistoryItem>, SearchDelegate,
-                                       SnackbarController, PrefObserver,
-                                       SelectableBottomSheetContentManager<HistoryItem> {
+                                       SnackbarController, PrefObserver {
     private static final int FAVICON_MAX_CACHE_SIZE_BYTES = 10 * 1024 * 1024; // 10MB
     private static final int MEGABYTES_TO_BYTES =  1024 * 1024;
     private static final String METRICS_PREFIX = "Android.HistoryPage.";
@@ -118,9 +118,7 @@ public class HistoryManager implements OnMenuItemClickListener, SignInStateObser
         mToolbar = (HistoryManagerToolbar) mSelectableListLayout.initializeToolbar(
                 R.layout.history_toolbar, mSelectionDelegate, R.string.menu_history, null,
                 R.id.normal_menu_group, R.id.selection_mode_menu_group,
-                FeatureUtilities.isChromeHomeEnabled() ? R.color.modern_toolbar_bg
-                                                       : R.color.modern_primary_color,
-                this, true);
+                R.color.modern_primary_color, this, true);
         mToolbar.setManager(this);
         mToolbar.initializeSearchView(this, R.string.history_manager_search, R.id.search_menu_id);
         mToolbar.setInfoMenuItem(R.id.info_menu_id);
@@ -169,7 +167,7 @@ public class HistoryManager implements OnMenuItemClickListener, SignInStateObser
             }});
 
         // 9. Listen to changes in sign in state.
-        SigninManager.get(mActivity).addSignInStateObserver(this);
+        SigninManager.get().addSignInStateObserver(this);
 
         // 10. Create PrefChangeRegistrar to receive notifications on preference changes.
         mPrefChangeRegistrar = new PrefChangeRegistrar();
@@ -239,36 +237,22 @@ public class HistoryManager implements OnMenuItemClickListener, SignInStateObser
         return false;
     }
 
-    @Override
+    /**
+     * @return The view that shows the main browsing history UI.
+     */
     public ViewGroup getView() {
         return mSelectableListLayout;
     }
 
-    @Override
-    public RecyclerView getRecyclerView() {
-        return mRecyclerView;
-    }
-
-    @Override
-    public TextView getEmptyView() {
-        return mEmptyView;
-    }
-
-    @Override
-    public SelectableListToolbar<HistoryItem> detachToolbarView() {
-        return mSelectableListLayout.detachToolbarView();
-    }
-
     /**
-     * Called when the bottom sheet content/activity/native page is destroyed.
+     * Called when the activity/native page is destroyed.
      */
-    @Override
     public void onDestroyed() {
         mSelectableListLayout.onDestroyed();
         mHistoryAdapter.onDestroyed();
         mLargeIconBridge.destroy();
         mLargeIconBridge = null;
-        SigninManager.get(mActivity).removeSignInStateObserver(this);
+        SigninManager.get().removeSignInStateObserver(this);
         mPrefChangeRegistrar.destroy();
     }
 
@@ -293,8 +277,21 @@ public class HistoryManager implements OnMenuItemClickListener, SignInStateObser
      *                     the current tab.
      */
     public void openUrl(String url, Boolean isIncognito, boolean createNewTab) {
-        IntentHandler.startActivityForTrustedIntent(
-                getOpenUrlIntent(url, isIncognito, createNewTab));
+        if (isDisplayedInSeparateActivity()) {
+            IntentHandler.startActivityForTrustedIntent(
+                    getOpenUrlIntent(url, isIncognito, createNewTab));
+            return;
+        }
+
+        ChromeActivity activity = (ChromeActivity) mActivity;
+        if (createNewTab) {
+            TabCreator tabCreator = (isIncognito == null) ? activity.getCurrentTabCreator()
+                                                          : activity.getTabCreator(isIncognito);
+            tabCreator.createNewTab(
+                    new LoadUrlParams(url), TabLaunchType.FROM_LINK, activity.getActivityTab());
+        } else {
+            activity.getActivityTab().loadUrl(new LoadUrlParams(url));
+        }
     }
 
     /**
@@ -314,7 +311,7 @@ public class HistoryManager implements OnMenuItemClickListener, SignInStateObser
 
         // Determine component or class name.
         ComponentName component;
-        if (DeviceFormFactor.isTablet()) {
+        if (DeviceFormFactor.isNonMultiDisplayContextOnTablet(mActivity)) {
             component = mActivity.getComponentName();
         } else {
             component = IntentUtils.safeGetParcelableExtra(
@@ -482,5 +479,15 @@ public class HistoryManager implements OnMenuItemClickListener, SignInStateObser
     @Override
     public void onDismissNoAction(Object actionData) {
         // Handler for the link copied snackbar. Do nothing.
+    }
+
+    @VisibleForTesting
+    TextView getEmptyViewForTests() {
+        return mEmptyView;
+    }
+
+    @VisibleForTesting
+    public RecyclerView getRecyclerViewForTests() {
+        return mRecyclerView;
     }
 }

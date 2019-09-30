@@ -74,10 +74,21 @@ gfx::Image OmniboxClient::GetIconIfExtensionMatch(
   return gfx::Image();
 }
 
+gfx::Image OmniboxClient::GetSizedIcon(const gfx::VectorIcon& vector_icon_type,
+                                       SkColor vector_icon_color) const {
+  return gfx::Image();
+}
+
 bool OmniboxClient::ProcessExtensionKeyword(
     const TemplateURL* template_url,
     const AutocompleteMatch& match,
     WindowOpenDisposition disposition,
     OmniboxNavigationObserver* observer) {
   return false;
+}
+
+gfx::Image OmniboxClient::GetFaviconForPageUrl(
+    const GURL& page_url,
+    FaviconFetchedCallback on_favicon_fetched) {
+  return gfx::Image();
 }

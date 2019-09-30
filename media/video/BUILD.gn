@@ -29,6 +29,7 @@ source_set("video") {
     "half_float_maker.h",
     "jpeg_decode_accelerator.cc",
     "jpeg_decode_accelerator.h",
+    "jpeg_encode_accelerator.cc",
     "jpeg_encode_accelerator.h",
     "picture.cc",
     "picture.h",
@@ -45,8 +46,11 @@ source_set("video") {
     ]
   }
 
-  deps = [
+  public_deps = [
     "//gpu/command_buffer/client:gles2_interface",
+  ]
+
+  deps = [
     "//gpu/command_buffer/common",
     "//media/base",
     "//third_party/libyuv",

@@ -14,7 +14,6 @@
 #include "base/lazy_instance.h"
 #include "base/location.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/ref_counted_memory.h"
 #include "base/memory/weak_ptr.h"
@@ -28,7 +27,6 @@
 #include "content/browser/blob_storage/chrome_blob_storage_context.h"
 #include "content/browser/histogram_internals_request_job.h"
 #include "content/browser/net/view_blob_internals_job_factory.h"
-#include "content/browser/net/view_http_cache_job_factory.h"
 #include "content/browser/resource_context_impl.h"
 #include "content/browser/webui/shared_resources_data_source.h"
 #include "content/browser/webui/url_data_source_impl.h"
@@ -354,11 +352,6 @@ class ChromeProtocolHandler
       net::NetworkDelegate* network_delegate) const override {
     DCHECK(request);
 
-    // Check for chrome://view-http-cache/*, which uses its own job type.
-    if (ViewHttpCacheJobFactory::IsSupportedURL(request->url()))
-      return ViewHttpCacheJobFactory::CreateJobForRequest(request,
-                                                          network_delegate);
-
     // Next check for chrome://blob-internals/, which uses its own job type.
     if (ViewBlobInternalsJobFactory::IsSupportedURL(request->url())) {
       return ViewBlobInternalsJobFactory::CreateJobForRequest(
@@ -525,15 +518,15 @@ bool URLDataManagerBackend::StartRequest(const net::URLRequest* request,
     // on for this path.  Call directly into it from this thread, the IO
     // thread.
     source->source()->StartDataRequest(
-        path, wc_getter,
+        path, std::move(wc_getter),
         base::Bind(&URLDataSourceImpl::SendResponse, source, request_id));
   } else {
     // The DataSource wants StartDataRequest to be called on a specific thread,
     // usually the UI thread, for this path.
     target_runner->PostTask(
-        FROM_HERE,
-        base::BindOnce(&URLDataManagerBackend::CallStartRequest,
-                       base::RetainedRef(source), path, wc_getter, request_id));
+        FROM_HERE, base::BindOnce(&URLDataManagerBackend::CallStartRequest,
+                                  base::RetainedRef(source), path,
+                                  std::move(wc_getter), request_id));
   }
   return true;
 }

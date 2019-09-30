@@ -11,9 +11,9 @@
 #include "base/logging.h"
 #include "base/memory/singleton.h"
 #include "base/threading/thread_checker.h"
-#include "chrome/browser/chromeos/ash_config.h"
 #include "components/arc/arc_bridge_service.h"
 #include "components/arc/arc_browser_context_keyed_service_factory_base.h"
+#include "components/arc/common/video_decode_accelerator.mojom.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/gpu_service_registry.h"
 #include "content/public/common/service_manager_connection.h"
@@ -22,6 +22,7 @@
 #include "services/service_manager/public/cpp/connector.h"
 #include "services/ui/public/interfaces/arc.mojom.h"
 #include "services/ui/public/interfaces/constants.mojom.h"
+#include "ui/base/ui_base_features.h"
 
 namespace arc {
 
@@ -49,7 +50,7 @@ class GpuArcVideoServiceHostFactory
 class VideoAcceleratorFactoryService : public mojom::VideoAcceleratorFactory {
  public:
   VideoAcceleratorFactoryService() {
-    DCHECK_EQ(chromeos::GetAshConfig(), ash::Config::CLASSIC);
+    DCHECK(!base::FeatureList::IsEnabled(features::kMash));
   }
 
   ~VideoAcceleratorFactoryService() override = default;
@@ -72,22 +73,31 @@ class VideoAcceleratorFactoryService : public mojom::VideoAcceleratorFactory {
             std::move(request)));
   }
 
+  void CreateProtectedBufferAllocator(
+      mojom::VideoProtectedBufferAllocatorRequest request) override {
+    content::BrowserThread::PostTask(
+        content::BrowserThread::IO, FROM_HERE,
+        base::BindOnce(&content::BindInterfaceInGpuProcess<
+                           mojom::VideoProtectedBufferAllocator>,
+                       std::move(request)));
+  }
+
  private:
   DISALLOW_COPY_AND_ASSIGN(VideoAcceleratorFactoryService);
 };
 
-class VideoAcceleratorFactoryServiceMus
+class VideoAcceleratorFactoryServiceViz
     : public mojom::VideoAcceleratorFactory {
  public:
-  VideoAcceleratorFactoryServiceMus() {
-    DCHECK_NE(chromeos::GetAshConfig(), ash::Config::CLASSIC);
+  VideoAcceleratorFactoryServiceViz() {
+    DCHECK(base::FeatureList::IsEnabled(features::kMash));
     DETACH_FROM_THREAD(thread_checker_);
     auto* connector =
         content::ServiceManagerConnection::GetForProcess()->GetConnector();
     connector->BindInterface(ui::mojom::kServiceName, &arc_);
   }
 
-  ~VideoAcceleratorFactoryServiceMus() override {
+  ~VideoAcceleratorFactoryServiceViz() override {
     DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   }
 
@@ -103,19 +113,25 @@ class VideoAcceleratorFactoryServiceMus
     arc_->CreateVideoEncodeAccelerator(std::move(request));
   }
 
+  void CreateProtectedBufferAllocator(
+      mojom::VideoProtectedBufferAllocatorRequest request) override {
+    DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
+    arc_->CreateVideoProtectedBufferAllocator(std::move(request));
+  }
+
  private:
   THREAD_CHECKER(thread_checker_);
 
   ui::mojom::ArcPtr arc_;
 
-  DISALLOW_COPY_AND_ASSIGN(VideoAcceleratorFactoryServiceMus);
+  DISALLOW_COPY_AND_ASSIGN(VideoAcceleratorFactoryServiceViz);
 };
 
 std::unique_ptr<mojom::VideoAcceleratorFactory>
 CreateVideoAcceleratorFactory() {
-  if (chromeos::GetAshConfig() == ash::Config::CLASSIC)
-    return std::make_unique<VideoAcceleratorFactoryService>();
-  return std::make_unique<VideoAcceleratorFactoryServiceMus>();
+  if (base::FeatureList::IsEnabled(features::kMash))
+    return std::make_unique<VideoAcceleratorFactoryServiceViz>();
+  return std::make_unique<VideoAcceleratorFactoryService>();
 }
 
 }  // namespace

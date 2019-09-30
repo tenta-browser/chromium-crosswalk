@@ -106,18 +106,6 @@ TEST_F(PaymentRequestCoordinatorTest, StartAndStop) {
   [coordinator setPaymentRequest:payment_request()];
   [coordinator setBrowserState:browser_state()];
 
-  // Mock the coordinator delegate.
-  id check_block = ^BOOL(id value) {
-    EXPECT_TRUE(value == coordinator);
-    return YES;
-  };
-  id delegate = [OCMockObject
-      mockForProtocol:@protocol(PaymentRequestCoordinatorDelegate)];
-  [[delegate expect]
-      paymentRequestCoordinatorDidStop:[OCMArg checkWithBlock:check_block]];
-
-  [coordinator setDelegate:delegate];
-
   [coordinator start];
   // Spin the run loop to trigger the animation.
   base::test::ios::SpinRunLoopWithMaxDelay(base::TimeDelta::FromSecondsD(1));
@@ -137,8 +125,6 @@ TEST_F(PaymentRequestCoordinatorTest, StartAndStop) {
     return !base_view_controller.presentedViewController;
   });
   EXPECT_EQ(nil, base_view_controller.presentedViewController);
-
-  EXPECT_OCMOCK_VERIFY(delegate);
 }
 
 // Tests that calling the ShippingAddressSelectionCoordinator delegate method
@@ -170,7 +156,7 @@ TEST_F(PaymentRequestCoordinatorTest, DidSelectShippingAddress) {
 
   // Call the ShippingAddressSelectionCoordinator delegate method.
   [coordinator shippingAddressSelectionCoordinator:nil
-                          didSelectShippingAddress:profiles().back().get()];
+                          didSelectShippingAddress:profiles().back()];
 }
 
 // Tests that calling the ShippingOptionSelectionCoordinator delegate method
@@ -188,8 +174,8 @@ TEST_F(PaymentRequestCoordinatorTest, DidSelectShippingOption) {
   payments::PaymentShippingOption shipping_option;
   shipping_option.id = "123456";
   shipping_option.label = "1-Day";
-  shipping_option.amount.value = "0.99";
-  shipping_option.amount.currency = "USD";
+  shipping_option.amount->value = "0.99";
+  shipping_option.amount->currency = "USD";
 
   // Mock the coordinator delegate.
   id delegate = [OCMockObject

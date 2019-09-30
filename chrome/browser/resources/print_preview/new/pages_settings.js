@@ -2,7 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-cr.exportPath('print_preview_new');
+(function() {
+'use strict';
 
 /** @enum {number} */
 const PagesInputErrorState = {
@@ -14,7 +15,7 @@ const PagesInputErrorState = {
 Polymer({
   is: 'print-preview-pages-settings',
 
-  behaviors: [SettingsBehavior],
+  behaviors: [SettingsBehavior, print_preview_new.InputBehavior],
 
   properties: {
     /** @type {!print_preview.DocumentInfo} */
@@ -44,6 +45,14 @@ Polymer({
       value: false,
     },
 
+    disabled: Boolean,
+
+    /** @private {number} */
+    errorState_: {
+      type: Number,
+      value: PagesInputErrorState.NO_ERROR,
+    },
+
     /** @private {!Array<number>} */
     pagesToPrint_: {
       type: Array,
@@ -51,18 +60,42 @@ Polymer({
           'inputString_, allSelected_, allPagesArray_)',
     },
 
-    /** @private {!PagesInputErrorState} */
-    errorState_: {
-      type: Number,
-      computed: 'computeErrorState_(pagesToPrint_)',
+    /** @private {!Array<{to: number, from: number}>} */
+    rangesToPrint_: {
+      type: Array,
+      computed: 'computeRangesToPrint_(pagesToPrint_, allPagesArray_)',
     },
-
   },
 
   observers: [
-    'onRangeChange_(errorState_, pagesToPrint_)',
+    'onRangeChange_(errorState_, rangesToPrint_)',
     'onRadioChange_(allSelected_, customSelected_)'
   ],
+
+  listeners: {
+    'input-change': 'onInputChange_',
+  },
+
+  /** @return {!HTMLInputElement} The input field element for InputBehavior. */
+  getInput: function() {
+    return this.$.pageSettingsCustomInput;
+  },
+
+  /**
+   * @param {!CustomEvent} e Contains the new input value.
+   * @private
+   */
+  onInputChange_: function(e) {
+    this.inputString_ = /** @type {string} */ (e.detail);
+  },
+
+  /**
+   * @return {boolean} Whether the controls should be disabled.
+   * @private
+   */
+  getDisabled_: function() {
+    return this.getSetting('pages').valid && this.disabled;
+  },
 
   /**
    * @return {!Array<number>}
@@ -82,10 +115,14 @@ Polymer({
    * @private
    */
   computePagesToPrint_: function() {
-    if (this.allSelected_ || this.inputString_.trim() == '')
+    if (this.allSelected_ || this.inputString_.trim() == '') {
+      this.errorState_ = PagesInputErrorState.NO_ERROR;
       return this.allPagesArray_;
-    if (!this.$$('.user-value').validity.valid)
-      return [];
+    }
+    if (!this.$.pageSettingsCustomInput.validity.valid) {
+      this.errorState_ = PagesInputErrorState.INVALID_SYNTAX;
+      return this.pagesToPrint_;
+    }
 
     const pages = [];
     const added = {};
@@ -97,11 +134,15 @@ Polymer({
         continue;
       const limits = range.split('-');
       let min = parseInt(limits[0], 10);
-      if (min < 1)
-        return [];
+      if (min < 1) {
+        this.errorState_ = PagesInputErrorState.OUT_OF_BOUNDS;
+        return this.pagesToPrint_;
+      }
       if (limits.length == 1) {
-        if (min > maxPage)
-          return [-1];
+        if (min > maxPage) {
+          this.errorState_ = PagesInputErrorState.OUT_OF_BOUNDS;
+          return this.pagesToPrint_;
+        }
         if (!added.hasOwnProperty(min)) {
           pages.push(min);
           added[min] = true;
@@ -114,10 +155,14 @@ Polymer({
         min = 1;
       if (isNaN(max))
         max = maxPage;
-      if (min > max)
-        return [];
-      if (max > maxPage)
-        return [-1];
+      if (min > max) {
+        this.errorState_ = PagesInputErrorState.INVALID_SYNTAX;
+        return this.pagesToPrint_;
+      }
+      if (max > maxPage) {
+        this.errorState_ = PagesInputErrorState.OUT_OF_BOUNDS;
+        return this.pagesToPrint_;
+      }
       for (let i = min; i <= max; i++) {
         if (!added.hasOwnProperty(i)) {
           pages.push(i);
@@ -125,19 +170,49 @@ Polymer({
         }
       }
     }
+    this.errorState_ = PagesInputErrorState.NO_ERROR;
     return pages;
   },
 
   /**
-   * @return {!PagesInputErrorState}
+   * Updates ranges to print.
+   * @return {!Array<{to: number, from: number}>}
    * @private
    */
-  computeErrorState_: function() {
-    if (this.pagesToPrint_.length == 0)
-      return PagesInputErrorState.INVALID_SYNTAX;
-    if (this.pagesToPrint_[0] == -1)
-      return PagesInputErrorState.OUT_OF_BOUNDS;
-    return PagesInputErrorState.NO_ERROR;
+  computeRangesToPrint_: function() {
+    let lastPage = 0;
+    if (this.pagesToPrint_.length == 0 || this.pagesToPrint_[0] == -1 ||
+        this.pagesToPrint_ == this.allPagesArray_)
+      return [];
+
+    let from = this.pagesToPrint_[0];
+    let to = this.pagesToPrint_[0];
+    let ranges = [];
+    for (let page of this.pagesToPrint_.slice(1)) {
+      if (page == to + 1) {
+        to = page;
+        continue;
+      }
+      ranges.push({from: from, to: to});
+      from = page;
+      to = page;
+    }
+    ranges.push({from: from, to: to});
+    return ranges;
+  },
+
+  /**
+   * @return {boolean} Whether pages setting and pagesToPrint_ match.
+   */
+  settingMatches_: function() {
+    const setting = this.getSetting('pages').value;
+    if (setting.length != this.pagesToPrint_.length)
+      return false;
+    for (let index = 0; index < this.pagesToPrint_.length; index++) {
+      if (this.pagesToPrint_[index] != setting[index])
+        return false;
+    }
+    return true;
   },
 
   /**
@@ -148,12 +223,15 @@ Polymer({
   onRangeChange_: function() {
     if (this.errorState_ != PagesInputErrorState.NO_ERROR) {
       this.setSettingValid('pages', false);
-      this.$$('.user-value').classList.add('invalid');
+      this.$.pageSettingsCustomInput.classList.add('invalid');
       return;
     }
-    this.$$('.user-value').classList.remove('invalid');
+    this.$.pageSettingsCustomInput.classList.remove('invalid');
     this.setSettingValid('pages', true);
-    this.setSetting('pages', this.pagesToPrint_);
+    if (!this.settingMatches_()) {
+      this.setSetting('pages', this.pagesToPrint_);
+      this.setSetting('ranges', this.rangesToPrint_);
+    }
   },
 
   /** @private */
@@ -166,7 +244,7 @@ Polymer({
 
   /** @private */
   onCustomRadioClick_: function() {
-    this.$$('#page-settings-custom-input').focus();
+    this.$.pageSettingsCustomInput.focus();
   },
 
   /** @private */
@@ -213,3 +291,4 @@ Polymer({
     return this.errorState_ == PagesInputErrorState.NO_ERROR;
   }
 });
+})();

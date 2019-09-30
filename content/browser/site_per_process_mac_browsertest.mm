@@ -9,6 +9,7 @@
 #include "base/mac/mac_util.h"
 #include "content/browser/renderer_host/render_widget_host_input_event_router.h"
 #include "content/browser/renderer_host/render_widget_host_view_mac.h"
+#include "content/public/browser/browser_thread.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/content_browser_test_utils.h"
 #include "content/public/test/test_utils.h"
@@ -167,7 +168,7 @@ IN_PROC_BROWSER_TEST_F(SitePerProcessMacBrowserTest,
 
   blink::WebMouseWheelEvent scroll_event(
       blink::WebInputEvent::kMouseWheel, blink::WebInputEvent::kNoModifiers,
-      blink::WebInputEvent::kTimeStampForTesting);
+      blink::WebInputEvent::GetStaticTimeStampForTests());
   scroll_event.SetPositionInWidget(1, 1);
   scroll_event.has_precise_scrolling_deltas = true;
   scroll_event.delta_x = 0.0f;
@@ -227,17 +228,12 @@ IN_PROC_BROWSER_TEST_F(SitePerProcessMacBrowserTest,
 
 namespace {
 
-NSEventPhase PhaseForEventType(NSEventType type) {
-  if (type == NSEventTypeBeginGesture)
-    return NSEventPhaseBegan;
-  if (type == NSEventTypeEndGesture)
-    return NSEventPhaseEnded;
-  return NSEventPhaseChanged;
-}
-
-id MockGestureEvent(NSEventType type, double magnification, int x, int y) {
+id MockGestureEvent(NSEventType type,
+                    double magnification,
+                    int x,
+                    int y,
+                    NSEventPhase phase) {
   id event = [OCMockObject mockForClass:[NSEvent class]];
-  NSEventPhase phase = PhaseForEventType(type);
   NSPoint locationInWindow = NSMakePoint(x, y);
   CGFloat deltaX = 0;
   CGFloat deltaY = 0;
@@ -274,21 +270,27 @@ void SendMacTouchpadPinchSequenceWithExpectedTarget(
   auto* root_view_mac = static_cast<RenderWidgetHostViewMac*>(root_view);
   RenderWidgetHostViewCocoa* cocoa_view = root_view_mac->cocoa_view();
 
-  NSEvent* pinchBeginEvent = MockGestureEvent(
-      NSEventTypeBeginGesture, 0, gesture_point.x(), gesture_point.y());
+  NSEvent* pinchBeginEvent =
+      MockGestureEvent(NSEventTypeMagnify, 0, gesture_point.x(),
+                       gesture_point.y(), NSEventPhaseBegan);
   if (ShouldSendGestureEvents())
     [cocoa_view beginGestureWithEvent:pinchBeginEvent];
   [cocoa_view magnifyWithEvent:pinchBeginEvent];
   // We don't check the gesture target yet, since on mac the GesturePinchBegin
   // isn't sent until the first PinchUpdate.
 
-  NSEvent* pinchUpdateEvent = MockGestureEvent(
-      NSEventTypeMagnify, 0.25, gesture_point.x(), gesture_point.y());
+  InputEventAckWaiter waiter(expected_target->GetRenderWidgetHost(),
+                             blink::WebInputEvent::kGesturePinchBegin);
+  NSEvent* pinchUpdateEvent =
+      MockGestureEvent(NSEventTypeMagnify, 0.25, gesture_point.x(),
+                       gesture_point.y(), NSEventPhaseChanged);
   [cocoa_view magnifyWithEvent:pinchUpdateEvent];
+  waiter.Wait();
   EXPECT_EQ(expected_target, router_touchpad_gesture_target);
 
-  NSEvent* pinchEndEvent = MockGestureEvent(
-      NSEventTypeEndGesture, 0, gesture_point.x(), gesture_point.y());
+  NSEvent* pinchEndEvent =
+      MockGestureEvent(NSEventTypeMagnify, 0, gesture_point.x(),
+                       gesture_point.y(), NSEventPhaseEnded);
   [cocoa_view magnifyWithEvent:pinchEndEvent];
   if (ShouldSendGestureEvents())
     [cocoa_view endGestureWithEvent:pinchEndEvent];

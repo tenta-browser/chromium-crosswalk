@@ -26,22 +26,16 @@
 #include "services/ui/public/interfaces/accessibility_manager.mojom.h"
 #include "services/ui/public/interfaces/clipboard.mojom.h"
 #include "services/ui/public/interfaces/display_manager.mojom.h"
+#include "services/ui/public/interfaces/event_injector.mojom.h"
 #include "services/ui/public/interfaces/gpu.mojom.h"
 #include "services/ui/public/interfaces/ime/ime.mojom.h"
-#include "services/ui/public/interfaces/remote_event_dispatcher.mojom.h"
-#include "services/ui/public/interfaces/user_access_manager.mojom.h"
 #include "services/ui/public/interfaces/user_activity_monitor.mojom.h"
 #include "services/ui/public/interfaces/video_detector.mojom.h"
 #include "services/ui/public/interfaces/window_manager_window_tree_factory.mojom.h"
 #include "services/ui/public/interfaces/window_server_test.mojom.h"
 #include "services/ui/public/interfaces/window_tree.mojom.h"
 #include "services/ui/public/interfaces/window_tree_host_factory.mojom.h"
-#include "services/ui/ws/user_id.h"
 #include "services/ui/ws/window_server_delegate.h"
-
-#if defined(USE_OZONE)
-#include "ui/ozone/public/client_native_pixmap_factory_ozone.h"
-#endif
 
 #if defined(OS_CHROMEOS)
 #include "services/ui/public/interfaces/arc.mojom.h"
@@ -66,19 +60,26 @@ class ImageCursorsSet;
 class InputDeviceController;
 class PlatformEventSource;
 
+namespace clipboard {
+class ClipboardImpl;
+}
+
 namespace ws {
+class AccessibilityManager;
 class ThreadedImageCursorsFactory;
 class WindowServer;
+class WindowTreeHostFactory;
 }
 
 class Service : public service_manager::Service,
                 public ws::WindowServerDelegate {
  public:
-  // Contains the configuration necessary to run the UI Service inside the
-  // Window Manager's process.
-  struct InProcessConfig {
-    InProcessConfig();
-    ~InProcessConfig();
+  struct InitParams {
+    InitParams();
+    ~InitParams();
+
+    // UI service runs in its own process (i.e. not embedded in browser or ash).
+    bool running_standalone = false;
 
     // Can be used to load resources.
     scoped_refptr<base::SingleThreadTaskRunner> resource_runner = nullptr;
@@ -95,36 +96,20 @@ class Service : public service_manager::Service,
     bool should_host_viz = true;
 
    private:
-    DISALLOW_COPY_AND_ASSIGN(InProcessConfig);
+    DISALLOW_COPY_AND_ASSIGN(InitParams);
   };
 
-  // |config| should be null when UI Service runs in it's own separate process,
-  // as opposed to inside the Window Manager's process.
-  explicit Service(const InProcessConfig* config = nullptr);
+  explicit Service(const InitParams& params);
   ~Service() override;
-
-  // Call if the ui::Service is being run as a standalone process.
-  void set_running_standalone(bool value) { running_standalone_ = value; }
 
  private:
   // Holds InterfaceRequests received before the first WindowTreeHost Display
   // has been established.
   struct PendingRequest;
-  struct UserState;
-
-  using UserIdToUserState = std::map<ws::UserId, std::unique_ptr<UserState>>;
-
-  bool is_in_process() const { return is_in_process_; }
 
   // Attempts to initialize the resource bundle. Returns true if successful,
   // otherwise false if resources cannot be loaded.
   bool InitializeResources(service_manager::Connector* connector);
-
-  // Returns the user specific state for the user id of |remote_identity|.
-  // Service owns the return value.
-  // TODO(sky): if we allow removal of user ids then we need to close anything
-  // associated with the user (all incoming pipes...) on removal.
-  UserState* GetUserState(const service_manager::Identity& remote_identity);
 
   void AddUserIfNecessary(const service_manager::Identity& remote_identity);
 
@@ -160,8 +145,6 @@ class Service : public service_manager::Service,
 
   void BindIMEDriverRequest(mojom::IMEDriverRequest request);
 
-  void BindUserAccessManagerRequest(mojom::UserAccessManagerRequest request);
-
   void BindUserActivityMonitorRequest(
       mojom::UserActivityMonitorRequest request,
       const service_manager::BindSourceInfo& source_info);
@@ -184,8 +167,7 @@ class Service : public service_manager::Service,
 
   void BindWindowServerTestRequest(mojom::WindowServerTestRequest request);
 
-  void BindRemoteEventDispatcherRequest(
-      mojom::RemoteEventDispatcherRequest request);
+  void BindEventInjectorRequest(mojom::EventInjectorRequest request);
 
   void BindVideoDetectorRequest(mojom::VideoDetectorRequest request);
 
@@ -198,24 +180,18 @@ class Service : public service_manager::Service,
   using PendingRequests = std::vector<std::unique_ptr<PendingRequest>>;
   PendingRequests pending_requests_;
 
-  UserIdToUserState user_id_to_user_state_;
-
   // Provides input-device information via Mojo IPC. Registers Mojo interfaces
   // and must outlive |registry_|.
   InputDeviceServer input_device_server_;
 
-  // True if the UI Service runs inside WM's process, false if it runs inside
-  // its own process.
-  const bool is_in_process_;
+  // True if the UI Service runs runs inside its own process, false if it is
+  // embedded in another process.
+  const bool running_standalone_;
 
   std::unique_ptr<ws::ThreadedImageCursorsFactory>
       threaded_image_cursors_factory_;
 
   bool test_config_;
-
-#if defined(USE_OZONE)
-  std::unique_ptr<gfx::ClientNativePixmapFactory> client_native_pixmap_factory_;
-#endif
 
 #if defined(OS_CHROMEOS)
   std::unique_ptr<InputDeviceController> input_device_controller_;
@@ -248,7 +224,9 @@ class Service : public service_manager::Service,
 
   bool in_destructor_ = false;
 
-  bool running_standalone_ = false;
+  std::unique_ptr<clipboard::ClipboardImpl> clipboard_;
+  std::unique_ptr<ws::AccessibilityManager> accessibility_;
+  std::unique_ptr<ws::WindowTreeHostFactory> window_tree_host_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(Service);
 };

@@ -223,6 +223,7 @@ const char kBSSID[] = "BSSID";
 const char kEAP[] = "EAP";
 const char kFrequency[] = "Frequency";
 const char kFrequencyList[] = "FrequencyList";
+const char kFTEnabled[] = "FTEnabled";
 const char kHexSSID[] = "HexSSID";
 const char kHiddenSSID[] = "HiddenSSID";
 const char kPassphrase[] = "Passphrase";
@@ -389,6 +390,7 @@ const char kShaper[] = "Shaper";
 const char kStaticChallenge[] = "StaticChallenge";
 const char kTLSAuthContents[] = "TLSAuthContents";
 const char kTLSRemote[] = "TLSRemote";
+const char kTLSVersionMin[] = "TLSVersionMin";
 const char kUserAuthenticationType[] = "UserAuthenticationType";
 const char kVerb[] = "Verb";
 const char kVerifyHash[] = "VerifyHash";
@@ -439,6 +441,7 @@ const char kWPAD[] = "WPAD";
 
 namespace substitutes {
 const char kLoginIDField[] = "${LOGIN_ID}";
+const char kPasswordField[] = "${PASSWORD}";
 const char kEmailField[] = "${LOGIN_EMAIL}";
 const char kCertSANEmail[] = "${CERT_SAN_EMAIL}";
 const char kCertSANUPN[] = "${CERT_SAN_UPN}";

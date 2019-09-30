@@ -7,22 +7,21 @@
 #include "base/bind.h"
 #include "base/metrics/histogram_macros.h"
 #include "components/spellcheck/common/spellcheck.mojom.h"
-#include "components/spellcheck/common/spellcheck_messages.h"
 #include "components/spellcheck/common/spellcheck_result.h"
 #include "components/spellcheck/renderer/spellcheck.h"
 #include "components/spellcheck/renderer/spellcheck_language.h"
-#include "components/spellcheck/spellcheck_build_features.h"
+#include "components/spellcheck/spellcheck_buildflags.h"
 #include "content/public/common/service_names.mojom.h"
 #include "content/public/renderer/render_frame.h"
 #include "content/public/renderer/render_thread.h"
 #include "services/service_manager/public/cpp/local_interface_provider.h"
-#include "third_party/WebKit/public/platform/WebVector.h"
-#include "third_party/WebKit/public/web/WebDocument.h"
-#include "third_party/WebKit/public/web/WebElement.h"
-#include "third_party/WebKit/public/web/WebLocalFrame.h"
-#include "third_party/WebKit/public/web/WebTextCheckingCompletion.h"
-#include "third_party/WebKit/public/web/WebTextCheckingResult.h"
-#include "third_party/WebKit/public/web/WebTextDecorationType.h"
+#include "third_party/blink/public/platform/web_vector.h"
+#include "third_party/blink/public/web/web_document.h"
+#include "third_party/blink/public/web/web_element.h"
+#include "third_party/blink/public/web/web_local_frame.h"
+#include "third_party/blink/public/web/web_text_checking_completion.h"
+#include "third_party/blink/public/web/web_text_checking_result.h"
+#include "third_party/blink/public/web/web_text_decoration_type.h"
 
 using blink::WebElement;
 using blink::WebLocalFrame;
@@ -46,8 +45,10 @@ SpellCheckProvider::SpellCheckProvider(
     : content::RenderFrameObserver(render_frame),
       content::RenderFrameObserverTracker<SpellCheckProvider>(render_frame),
       spellcheck_(spellcheck),
-      embedder_provider_(embedder_provider) {
+      embedder_provider_(embedder_provider),
+      weak_factory_(this) {
   DCHECK(spellcheck_);
+  DCHECK(embedder_provider);
   if (render_frame)  // NULL in unit tests.
     render_frame->GetWebFrame()->SetTextCheckClient(this);
 }
@@ -59,9 +60,7 @@ spellcheck::mojom::SpellCheckHost& SpellCheckProvider::GetSpellCheckHost() {
   if (spell_check_host_)
     return *spell_check_host_;
 
-  // nullptr in tests.
-  if (embedder_provider_)
-    embedder_provider_->GetInterface(&spell_check_host_);
+  embedder_provider_->GetInterface(&spell_check_host_);
   return *spell_check_host_;
 }
 
@@ -85,33 +84,18 @@ void SpellCheckProvider::RequestTextChecking(
   last_identifier_ = text_check_completions_.Add(completion);
 
 #if BUILDFLAG(USE_BROWSER_SPELLCHECKER)
-  // TODO(crbug.com/714480): convert the RequestTextCheck IPC to mojo.
   // Text check (unified request for grammar and spell check) is only
   // available for browser process, so we ask the system spellchecker
-  // over IPC or return an empty result if the checker is not available.
-  Send(new SpellCheckHostMsg_RequestTextCheck(routing_id(), last_identifier_,
-                                              text));
+  // over mojo or return an empty result if the checker is not available.
+  GetSpellCheckHost().RequestTextCheck(
+      text, routing_id(),
+      base::BindOnce(&SpellCheckProvider::OnRespondTextCheck,
+                     weak_factory_.GetWeakPtr(), last_identifier_, text));
 #else
-  if (!spell_check_host_ && !content::RenderThread::Get())
-    return;  // NULL in tests that do not provide a spell_check_host_.
   GetSpellCheckHost().CallSpellingService(
-      text, base::Bind(&SpellCheckProvider::OnRespondSpellingService,
-                       base::Unretained(this), last_identifier_, text));
+      text, base::BindOnce(&SpellCheckProvider::OnRespondSpellingService,
+                           weak_factory_.GetWeakPtr(), last_identifier_, text));
 #endif  // !USE_BROWSER_SPELLCHECKER
-}
-
-bool SpellCheckProvider::OnMessageReceived(const IPC::Message& message) {
-#if BUILDFLAG(USE_BROWSER_SPELLCHECKER)
-  bool handled = true;
-  IPC_BEGIN_MESSAGE_MAP(SpellCheckProvider, message)
-    // TODO(crbug.com/714480): convert the RequestTextCheck IPC to mojo.
-    IPC_MESSAGE_HANDLER(SpellCheckMsg_RespondTextCheck, OnRespondTextCheck)
-    IPC_MESSAGE_UNHANDLED(handled = false)
-  IPC_END_MESSAGE_MAP()
-  return handled;
-#else
-  return false;
-#endif
 }
 
 void SpellCheckProvider::FocusedNodeChanged(const blink::WebNode& unused) {
@@ -121,11 +105,13 @@ void SpellCheckProvider::FocusedNodeChanged(const blink::WebNode& unused) {
                            ? WebElement()
                            : frame->GetDocument().FocusedElement();
   bool enabled = !element.IsNull() && element.IsEditable();
-  bool checked = enabled && frame->IsSpellCheckingEnabled();
-
-  // TODO(crbug.com/714480): convert the ToggleSpellCheck IPC to mojo.
-  Send(new SpellCheckHostMsg_ToggleSpellCheck(routing_id(), enabled, checked));
+  bool checked = enabled && IsSpellCheckingEnabled();
+  GetSpellCheckHost().ToggleSpellCheck(enabled, checked);
 #endif  // USE_BROWSER_SPELLCHECKER
+}
+
+bool SpellCheckProvider::IsSpellCheckingEnabled() const {
+  return spellcheck_->IsSpellcheckEnabled();
 }
 
 void SpellCheckProvider::CheckSpelling(
@@ -150,8 +136,6 @@ void SpellCheckProvider::CheckSpelling(
     UMA_HISTOGRAM_COUNTS("SpellCheck.api.check", word.size());
     // If optional_suggestions is not requested, the API is called
     // for marking.  So we use this for counting markable words.
-    if (!spell_check_host_ && !content::RenderThread::Get())
-      return;  // NULL in tests that do not provide a spell_check_host_.
     GetSpellCheckHost().NotifyChecked(word, 0 < length);
   }
 }
@@ -245,13 +229,6 @@ void SpellCheckProvider::OnRespondTextCheck(
   last_results_.Swap(textcheck_results);
 }
 #endif
-
-void SpellCheckProvider::EnableSpellcheck(bool enable) {
-  WebLocalFrame* frame = render_frame()->GetWebFrame();
-  frame->EnableSpellChecking(enable);
-  if (!enable)
-    frame->RemoveSpellingMarkers();
-}
 
 bool SpellCheckProvider::SatisfyRequestFromCache(
     const base::string16& text,

@@ -51,9 +51,9 @@ public abstract class FullscreenManager {
     public abstract int getTopControlsHeight();
 
     /**
-     * @return Whether or not the browser controls are attached to the bottom of the screen.
+     * @return The height of the bottom controls in pixels.
      */
-    public abstract boolean areBrowserControlsAtBottom();
+    public abstract int getBottomControlsHeight();
 
     /**
      * @return The ratio that the browser controls are off screen; this will be a number [0,1]

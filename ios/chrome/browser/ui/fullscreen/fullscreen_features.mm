@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,8 +11,8 @@
 namespace fullscreen {
 namespace features {
 
-const base::Feature kNewFullscreen{"NewFullscreen",
-                                   base::FEATURE_DISABLED_BY_DEFAULT};
+const base::Feature kFullscreenContentInset{"FullscreenContentInset",
+                                            base::FEATURE_DISABLED_BY_DEFAULT};
 
 }  // namespace features
 }  // namespace fullscreen

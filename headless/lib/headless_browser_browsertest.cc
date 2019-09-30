@@ -7,7 +7,6 @@
 #include "base/command_line.h"
 #include "base/files/file_enumerator.h"
 #include "base/files/file_util.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/threading/thread_restrictions.h"
@@ -262,7 +261,7 @@ IN_PROC_BROWSER_TEST_F(HeadlessBrowserTest, HttpProtocolHandler) {
   const std::string kResponseBody = "<p>HTTP response body</p>";
   ProtocolHandlerMap protocol_handlers;
   protocol_handlers[url::kHttpScheme] =
-      base::MakeUnique<TestProtocolHandler>(kResponseBody);
+      std::make_unique<TestProtocolHandler>(kResponseBody);
 
   HeadlessBrowserContext* browser_context =
       browser()
@@ -290,7 +289,7 @@ IN_PROC_BROWSER_TEST_F(HeadlessBrowserTest, HttpsProtocolHandler) {
   const std::string kResponseBody = "<p>HTTPS response body</p>";
   ProtocolHandlerMap protocol_handlers;
   protocol_handlers[url::kHttpsScheme] =
-      base::MakeUnique<TestProtocolHandler>(kResponseBody);
+      std::make_unique<TestProtocolHandler>(kResponseBody);
 
   HeadlessBrowserContext* browser_context =
       browser()
@@ -467,8 +466,8 @@ void URLRequestJobWithCookies::Start() {
   }
   cookie_store->GetCookieListWithOptionsAsync(
       request_->url(), options,
-      base::Bind(&URLRequestJobWithCookies::SaveCookiesAndStart,
-                 weak_factory_.GetWeakPtr()));
+      base::BindOnce(&URLRequestJobWithCookies::SaveCookiesAndStart,
+                     weak_factory_.GetWeakPtr()));
 }
 
 void URLRequestJobWithCookies::SaveCookiesAndStart(
@@ -483,7 +482,7 @@ IN_PROC_BROWSER_TEST_F(HeadlessBrowserTest, ReadCookiesInProtocolHandler) {
   net::CookieList sent_cookies;
   ProtocolHandlerMap protocol_handlers;
   protocol_handlers[url::kHttpsScheme] =
-      base::MakeUnique<ProtocolHandlerWithCookies>(&sent_cookies);
+      std::make_unique<ProtocolHandlerWithCookies>(&sent_cookies);
 
   HeadlessBrowserContext* browser_context =
       browser()
@@ -526,7 +525,8 @@ class CookieSetter {
     web_contents_->GetDevToolsTarget()->AttachClient(devtools_client_.get());
     devtools_client_->GetNetwork()->GetExperimental()->SetCookie(
         std::move(set_cookie_params),
-        base::Bind(&CookieSetter::OnSetCookieResult, base::Unretained(this)));
+        base::BindOnce(&CookieSetter::OnSetCookieResult,
+                       base::Unretained(this)));
   }
 
   ~CookieSetter() {
@@ -830,7 +830,7 @@ class TraceHelper : public tracing::ExperimentalObserver {
       : browser_test_(browser_test),
         target_(target),
         client_(HeadlessDevToolsClient::Create()),
-        tracing_data_(base::MakeUnique<base::ListValue>()) {
+        tracing_data_(std::make_unique<base::ListValue>()) {
     EXPECT_FALSE(target_->IsAttached());
     target_->AttachClient(client_.get());
     EXPECT_TRUE(target_->IsAttached());
@@ -839,7 +839,7 @@ class TraceHelper : public tracing::ExperimentalObserver {
 
     client_->GetTracing()->GetExperimental()->Start(
         tracing::StartParams::Builder().Build(),
-        base::Bind(&TraceHelper::OnTracingStarted, base::Unretained(this)));
+        base::BindOnce(&TraceHelper::OnTracingStarted, base::Unretained(this)));
   }
 
   ~TraceHelper() override {
@@ -969,6 +969,25 @@ IN_PROC_BROWSER_TEST_F(HeadlessBrowserTestAppendCommandLineFlags,
 
   // Used only for lifetime.
   (void)web_contents;
+}
+
+IN_PROC_BROWSER_TEST_F(HeadlessBrowserTest, ServerWantsClientCertificate) {
+  net::SpawnedTestServer::SSLOptions ssl_options;
+  ssl_options.request_client_certificate = true;
+
+  net::SpawnedTestServer server(
+      net::SpawnedTestServer::TYPE_HTTPS, ssl_options,
+      base::FilePath(FILE_PATH_LITERAL("headless/test/data")));
+  EXPECT_TRUE(server.Start());
+
+  HeadlessBrowserContext* browser_context =
+      browser()->CreateBrowserContextBuilder().Build();
+
+  HeadlessWebContents* web_contents =
+      browser_context->CreateWebContentsBuilder()
+          .SetInitialURL(server.GetURL("/hello.html"))
+          .Build();
+  EXPECT_TRUE(WaitForLoad(web_contents));
 }
 
 }  // namespace headless

@@ -18,7 +18,7 @@
 #include "media/base/video_frame.h"
 #include "media/base/video_util.h"
 #include "third_party/webrtc/api/video/i420_buffer.h"
-#include "third_party/webrtc/media/base/videosinkinterface.h"
+#include "third_party/webrtc/api/videosinkinterface.h"
 
 namespace content {
 
@@ -103,14 +103,15 @@ void MediaStreamRemoteVideoSource::RemoteVideoSourceDelegate::OnFrame(
   const base::TimeTicks render_time =
       base::TimeTicks() + incoming_timestamp + time_diff_;
 
-  TRACE_EVENT1("webrtc", "RemoteVideoSourceDelegate::RenderFrame",
-               "Ideal Render Instant", render_time.ToInternalValue());
-
   CHECK_NE(media::kNoTimestamp, incoming_timestamp);
   if (start_timestamp_ == media::kNoTimestamp)
     start_timestamp_ = incoming_timestamp;
   const base::TimeDelta elapsed_timestamp =
       incoming_timestamp - start_timestamp_;
+
+  TRACE_EVENT2("webrtc", "RemoteVideoSourceDelegate::RenderFrame",
+               "Ideal Render Instant", render_time.ToInternalValue(),
+               "Timestamp", elapsed_timestamp.InMicroseconds());
 
   scoped_refptr<media::VideoFrame> video_frame;
   scoped_refptr<webrtc::VideoFrameBuffer> buffer(
@@ -127,7 +128,7 @@ void MediaStreamRemoteVideoSource::RemoteVideoSourceDelegate::OnFrame(
     if (has_alpha) {
       const webrtc::I420ABufferInterface* yuva_buffer = buffer->GetI420A();
       video_frame = media::VideoFrame::WrapExternalYuvaData(
-          media::PIXEL_FORMAT_YV12A, size, gfx::Rect(size), size,
+          media::PIXEL_FORMAT_I420A, size, gfx::Rect(size), size,
           yuva_buffer->StrideY(), yuva_buffer->StrideU(),
           yuva_buffer->StrideV(), yuva_buffer->StrideA(),
           const_cast<uint8_t*>(yuva_buffer->DataY()),
@@ -139,10 +140,10 @@ void MediaStreamRemoteVideoSource::RemoteVideoSourceDelegate::OnFrame(
       media::VideoPixelFormat pixel_format;
       if (buffer->type() == webrtc::VideoFrameBuffer::Type::kI444) {
         yuv_buffer = buffer->GetI444();
-        pixel_format = media::PIXEL_FORMAT_YV24;
+        pixel_format = media::PIXEL_FORMAT_I444;
       } else {
         yuv_buffer = buffer->ToI420();
-        pixel_format = media::PIXEL_FORMAT_YV12;
+        pixel_format = media::PIXEL_FORMAT_I420;
       }
       // Make a shallow copy. Both |frame| and |video_frame| will share a single
       // reference counted frame buffer. Const cast and hope no one will

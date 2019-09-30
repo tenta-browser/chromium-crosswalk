@@ -4,10 +4,9 @@
 
 #include "ui/gfx/skia_paint_util.h"
 
-#include "base/memory/ptr_util.h"
 #include "cc/paint/paint_image_builder.h"
 #include "third_party/skia/include/core/SkColorFilter.h"
-#include "third_party/skia/include/effects/SkBlurMaskFilter.h"
+#include "third_party/skia/include/core/SkMaskFilter.h"
 #include "third_party/skia/include/effects/SkGradientShader.h"
 #include "third_party/skia/include/effects/SkLayerDrawLooper.h"
 #include "ui/gfx/image/image_skia_rep.h"
@@ -40,8 +39,9 @@ sk_sp<cc::PaintShader> CreateImageRepShaderForScale(
 
   return cc::PaintShader::MakeImage(
       cc::PaintImageBuilder::WithDefault()
-          .set_id(cc::PaintImage::kNonLazyStableId)
-          .set_image(SkImage::MakeFromBitmap(image_rep.sk_bitmap()))
+          .set_id(cc::PaintImage::GetNextId())
+          .set_image(SkImage::MakeFromBitmap(image_rep.sk_bitmap()),
+                     cc::PaintImage::GetNextContentId())
           .TakePaintImage(),
       tile_mode, tile_mode, &shader_scale);
 }
@@ -86,11 +86,10 @@ sk_sp<SkDrawLooper> CreateShadowDrawLooper(
                            SkIntToScalar(shadow.y()));
 
     SkPaint* paint = looper_builder.addLayer(layer_info);
-    // SkBlurMaskFilter's blur radius defines the range to extend the blur from
+    // Skia's blur radius defines the range to extend the blur from
     // original mask, which is half of blur amount as defined in ShadowValue.
-    paint->setMaskFilter(SkBlurMaskFilter::Make(
-        kNormal_SkBlurStyle, RadiusToSigma(shadow.blur() / 2),
-        SkBlurMaskFilter::kHighQuality_BlurFlag));
+    paint->setMaskFilter(SkMaskFilter::MakeBlur(
+        kNormal_SkBlurStyle, RadiusToSigma(shadow.blur() / 2)));
     paint->setColorFilter(
         SkColorFilter::MakeModeFilter(shadow.color(), SkBlendMode::kSrcIn));
   }

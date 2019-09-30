@@ -14,15 +14,14 @@
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/singleton.h"
 #include "base/metrics/field_trial_params.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/stringprintf.h"
 #include "base/task_runner.h"
 #include "base/task_scheduler/post_task.h"
-#include "base/threading/sequenced_worker_pool.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "components/data_use_measurement/core/data_use_user_data.h"
 #include "components/favicon/core/favicon_service.h"
@@ -187,8 +186,8 @@ void ProcessIconOnBackgroundThread(
     DCHECK_GT(fallback_icon_size, 0);
     fallback_icon_size = std::min(fallback_icon_size, 128);
   }
-  UMA_HISTOGRAM_SPARSE_SLOWLY("Favicons.LargeIconService.FallbackSize",
-                              fallback_icon_size);
+  base::UmaHistogramSparse("Favicons.LargeIconService.FallbackSize",
+                           fallback_icon_size);
 }
 
 void FinishServerRequestAsynchronously(
@@ -333,10 +332,9 @@ LargeIconWorker::LargeIconWorker(
            base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN})),
       tracker_(tracker),
       fallback_icon_style_(
-          base::MakeUnique<favicon_base::FallbackIconStyle>()) {}
+          std::make_unique<favicon_base::FallbackIconStyle>()) {}
 
-LargeIconWorker::~LargeIconWorker() {
-}
+LargeIconWorker::~LargeIconWorker() {}
 
 void LargeIconWorker::OnIconLookupComplete(
     const GURL& page_url,
@@ -449,7 +447,8 @@ LargeIconService::LargeIconService(
     FaviconService* favicon_service,
     std::unique_ptr<image_fetcher::ImageFetcher> image_fetcher)
     : favicon_service_(favicon_service),
-      image_fetcher_(std::move(image_fetcher)) {
+      image_fetcher_(std::move(image_fetcher)),
+      weak_ptr_factory_(this) {
   large_icon_types_.push_back({favicon_base::IconType::kWebManifestIcon});
   large_icon_types_.push_back({favicon_base::IconType::kFavicon});
   large_icon_types_.push_back({favicon_base::IconType::kTouchIcon});
@@ -458,8 +457,7 @@ LargeIconService::LargeIconService(
   // a DCHECK(image_fetcher_) here.
 }
 
-LargeIconService::~LargeIconService() {
-}
+LargeIconService::~LargeIconService() {}
 
 base::CancelableTaskTracker::TaskId
 LargeIconService::GetLargeIconOrFallbackStyle(
@@ -533,13 +531,11 @@ void LargeIconService::
     return;
   }
 
-  image_fetcher_->SetDataUseServiceName(
-      data_use_measurement::DataUseUserData::LARGE_ICON_SERVICE);
-  image_fetcher_->StartOrQueueNetworkRequest(
-      server_request_url.spec(), server_request_url,
-      base::Bind(&OnFetchIconFromGoogleServerComplete, favicon_service_,
-                 page_url, callback),
-      traffic_annotation);
+  favicon_service_->CanSetOnDemandFavicons(
+      page_url, favicon_base::IconType::kTouchIcon,
+      base::BindOnce(&LargeIconService::OnCanSetOnDemandFaviconComplete,
+                     weak_ptr_factory_.GetWeakPtr(), server_request_url,
+                     page_url, traffic_annotation, callback));
 }
 
 void LargeIconService::TouchIconFromGoogleServer(const GURL& icon_url) {
@@ -590,6 +586,26 @@ LargeIconService::GetLargeIconOrFallbackStyleImpl(
       page_url, large_icon_types_, max_size_in_pixel,
       base::Bind(&LargeIconWorker::OnIconLookupComplete, worker, page_url),
       tracker);
+}
+
+void LargeIconService::OnCanSetOnDemandFaviconComplete(
+    const GURL& server_request_url,
+    const GURL& page_url,
+    const net::NetworkTrafficAnnotationTag& traffic_annotation,
+    const favicon_base::GoogleFaviconServerCallback& callback,
+    bool can_set_on_demand_favicon) {
+  if (!can_set_on_demand_favicon) {
+    callback.Run(GoogleFaviconServerRequestStatus::FAILURE_ICON_EXISTS_IN_DB);
+    return;
+  }
+
+  image_fetcher_->SetDataUseServiceName(
+      data_use_measurement::DataUseUserData::LARGE_ICON_SERVICE);
+  image_fetcher_->FetchImage(
+      server_request_url.spec(), server_request_url,
+      base::BindRepeating(&OnFetchIconFromGoogleServerComplete,
+                          favicon_service_, page_url, callback),
+      traffic_annotation);
 }
 
 }  // namespace favicon

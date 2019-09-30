@@ -10,24 +10,29 @@
 #include "base/bind_helpers.h"
 #include "base/lazy_instance.h"
 #include "base/metrics/histogram_macros.h"
+#include "build/build_config.h"
 #include "content/browser/bad_message.h"
 #include "content/browser/browser_main_loop.h"
 #include "content/browser/media/audio_stream_monitor.h"
-#include "content/browser/media/capture/audio_mirroring_manager.h"
 #include "content/browser/media/media_internals.h"
 #include "content/browser/renderer_host/media/audio_input_device_manager.h"
 #include "content/browser/renderer_host/media/audio_output_authorization_handler.h"
 #include "content/browser/renderer_host/media/audio_output_delegate_impl.h"
-#include "content/browser/renderer_host/media/audio_sync_reader.h"
+#include "content/browser/renderer_host/media/audio_output_stream_observer_impl.h"
 #include "content/browser/renderer_host/media/media_stream_manager.h"
 #include "content/common/media/audio_messages.h"
+#include "content/public/browser/browser_thread.h"
 #include "content/public/browser/content_browser_client.h"
 #include "content/public/browser/media_device_id.h"
 #include "content/public/browser/media_observer.h"
 #include "content/public/browser/render_frame_host.h"
 #include "media/audio/audio_device_description.h"
+#include "media/audio/audio_logging.h"
 #include "media/base/audio_bus.h"
 #include "media/base/limits.h"
+#include "media/mojo/interfaces/audio_logging.mojom.h"
+#include "media/mojo/interfaces/audio_output_stream.mojom.h"
+#include "mojo/public/cpp/bindings/strong_binding.h"
 
 using media::AudioBus;
 using media::AudioManager;
@@ -56,12 +61,10 @@ void ValidateRenderFrameId(int render_process_id,
 AudioRendererHost::AudioRendererHost(int render_process_id,
                                      media::AudioManager* audio_manager,
                                      media::AudioSystem* audio_system,
-                                     AudioMirroringManager* mirroring_manager,
                                      MediaStreamManager* media_stream_manager)
     : BrowserMessageFilter(AudioMsgStart),
       render_process_id_(render_process_id),
       audio_manager_(audio_manager),
-      mirroring_manager_(mirroring_manager),
       media_stream_manager_(media_stream_manager),
       authorization_handler_(audio_system,
                              media_stream_manager,
@@ -255,6 +258,16 @@ void AudioRendererHost::OnCreateStream(int stream_id,
     return;
   }
 
+#if !defined(OS_ANDROID)
+  if (params.IsBitstreamFormat()) {
+    // Bitstream formats are only supported on Android, and shouldn't be created
+    // on other platforms.
+    bad_message::ReceivedBadMessage(this,
+                                    bad_message::ARH_UNEXPECTED_BITSTREAM);
+    return;
+  }
+#endif
+
   // Post a task to the UI thread to check that the |render_frame_id| references
   // a valid render frame. This validation is important for all the reasons
   // stated in the comments above. This does not block stream creation, but will
@@ -269,15 +282,20 @@ void AudioRendererHost::OnCreateStream(int stream_id,
   MediaObserver* const media_observer =
       GetContentClient()->browser()->GetMediaObserver();
 
-  MediaInternals* const media_internals = MediaInternals::GetInstance();
-  std::unique_ptr<media::AudioLog> audio_log = media_internals->CreateAudioLog(
-      media::AudioLogFactory::AUDIO_OUTPUT_CONTROLLER);
-  audio_log->OnCreated(stream_id, params, device_unique_id);
-  media_internals->SetWebContentsTitleForAudioLogEntry(
-      stream_id, render_process_id_, render_frame_id, audio_log.get());
+  media::mojom::AudioLogPtr audio_log_ptr =
+      MediaInternals::GetInstance()->CreateMojoAudioLog(
+          media::AudioLogFactory::AUDIO_OUTPUT_CONTROLLER, stream_id,
+          render_process_id_, render_frame_id);
+  audio_log_ptr->OnCreated(params, device_unique_id);
+
+  media::mojom::AudioOutputStreamObserverPtr observer_ptr;
+  mojo::MakeStrongBinding(std::make_unique<AudioOutputStreamObserverImpl>(
+                              render_process_id_, render_frame_id, stream_id),
+                          mojo::MakeRequest(&observer_ptr));
+
   auto delegate = AudioOutputDelegateImpl::Create(
-      this, audio_manager_, std::move(audio_log), mirroring_manager_,
-      media_observer, stream_id, render_frame_id, render_process_id_, params,
+      this, audio_manager_, std::move(audio_log_ptr), media_observer, stream_id,
+      render_frame_id, render_process_id_, params, std::move(observer_ptr),
       device_unique_id);
   if (delegate)
     delegates_.push_back(std::move(delegate));

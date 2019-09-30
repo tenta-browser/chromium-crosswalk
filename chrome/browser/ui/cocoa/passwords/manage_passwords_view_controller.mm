@@ -34,8 +34,6 @@ NSString* const kDoneTouchBarId = @"DONE";
     [self setSelectable:NO];
     [self setDrawsBackground:NO];
     [self setBezeled:NO];
-    [self setStringValue:l10n_util::GetNSString(
-        IDS_MANAGE_PASSWORDS_NO_PASSWORDS)];
     [self setFont:[NSFont systemFontOfSize:[NSFont smallSystemFontSize]]];
     [[self cell] setWraps:YES];
     [self setFrameSize:NSMakeSize(width, MAXFLOAT)];
@@ -181,7 +179,7 @@ NSString* const kDoneTouchBarId = @"DONE";
 
 - (void)onManageClicked:(id)sender {
   if (self.model)
-    self.model->OnManageLinkClicked();
+    self.model->OnManageClicked();
   [self.delegate viewShouldDismiss];
 }
 

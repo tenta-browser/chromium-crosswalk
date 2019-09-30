@@ -4,13 +4,14 @@
 
 #include "content/public/test/unittest_test_suite.h"
 
+#include "base/base_switches.h"
 #include "base/command_line.h"
 #include "base/logging.h"
 #include "base/rand_util.h"
 #include "base/test/test_suite.h"
 #include "build/build_config.h"
 #include "content/test/test_blink_web_unit_test_support.h"
-#include "third_party/WebKit/public/web/WebKit.h"
+#include "third_party/blink/public/web/blink.h"
 
 #if defined(USE_AURA)
 #include "ui/aura/test/aura_test_suite_setup.h"
@@ -24,6 +25,14 @@ namespace content {
 
 UnitTestTestSuite::UnitTestTestSuite(base::TestSuite* test_suite)
     : test_suite_(test_suite) {
+  const base::CommandLine* command_line =
+      base::CommandLine::ForCurrentProcess();
+  std::string enabled =
+      command_line->GetSwitchValueASCII(switches::kEnableFeatures);
+  std::string disabled =
+      command_line->GetSwitchValueASCII(switches::kDisableFeatures);
+  feature_list_.InitFromCommandLine(enabled, disabled);
+
 #if defined(USE_X11)
   XInitThreads();
 #endif

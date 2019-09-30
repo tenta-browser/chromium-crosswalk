@@ -420,6 +420,11 @@ field **WiFi** must be set to an object of type [WiFi](#WiFi-type).
         *WEP-8021X* or *WPA-EAP*, otherwise ignored) - [EAP](#EAP-type)
     * EAP settings.
 
+* **FTEnabled**
+    * (optional, defaults to *false*) - **boolean**
+    * Indicating if the client should attempt to use Fast Transition with the
+    * network.
+
 * **HexSSID**
     * (optional if **SSID** is set, if so defaults to a hex representation of
       **SSID**) - **string**
@@ -880,6 +885,10 @@ L2TP over IPsec with pre-shared key:
     * (optional) - **string**
     * If set, only allow connections to server hosts with X509 name or common
       name equal to this string.
+
+* **TLSVersionMin**
+    * (optional) - **string**
+    * If set, specifies the minimum TLS protocol version used by OpenVPN.
 
 * **UserAuthenticationType**
     * (optional, defaults to *None*) - **string**
@@ -1755,6 +1764,18 @@ expansions. These allow one ONC to have basic user-specific variations.
 * "${LOGIN_IDX}" -> "${LOGIN_IDX}"
 
 * "X${LOGIN_ID}" -> "Xbobquail"
+
+
+## String Substitutions
+The value of **WiFi.EAP.Password** is subject to string substitution. These
+differ from the **String Expansions** section above in that an exact match of
+the substitution variable is required in order to substitute the real value.
+
+### Example expansions, assuming the user password was *helloworld*:
+
+* "${PASSWORD}" -> "helloworld"
+
+* "${PASSWORD}foo" -> "${PASSWORD}foo"
 
 ## Detection
 

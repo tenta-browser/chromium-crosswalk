@@ -119,6 +119,16 @@ const char kStateRe[] =
     "|地區"                 // zh-TW
     "|^시[·・]?도";         // ko-KR
 
+const char kSearchTermRe[] =
+    "search"
+    "|suche.*"              // de-DE
+    "|搜索"                 // zh-CN zh-TW
+    "|探す|検索"            // ja-JP to search
+    "|recherch.*"           // fr-FR
+    "|busca"                // pt-BR, pt-PT
+    "|جستجو"                // fa
+    "|искать|найти|поиск";  // ru
+
 /////////////////////////////////////////////////////////////////////////////
 // credit_card_field.cc
 /////////////////////////////////////////////////////////////////////////////
@@ -146,6 +156,7 @@ const char kCardNumberRe[] =
     "|카드";                    // ko-KR
 const char kCardCvcRe[] =
     "verification|card.?identification|security.?code|card.?code"
+    "|security.?value"
     "|security.?number|card.?pin|c-v-v"
     "|(cvn|cvv|cvc|csc|cvd|cid|ccv)(field)?"
     "|\\bcid\\b";
@@ -297,12 +308,19 @@ const char kPhoneSuffixRe[] = "suffix";
 const char kPhoneExtensionRe[] =
     "\\bext|ext\\b|extension"
     "|ramal";  // pt-BR, pt-PT
+
+/////////////////////////////////////////////////////////////////////////////
+// validation.cc
+/////////////////////////////////////////////////////////////////////////////
 const char kUPIVirtualPaymentAddressRe[] =
     "^\\w+@("
+    "airtel|"       // My Airtel-Recharge, Bill, Bank
     "allbank|"      // Allahabad Bank UPI
     "andb|"         // Andhra Bank ONE
     "axisbank|"     // Axis Pay
+    "axisgo|"       // Ola
     "barodampay|"   // Baroda MPay
+    "boi|"          // BHIM BOI UPI
     "centralbank|"  // Cent UPI
     "cnrb|"         // Canara Bank UPI - Empower
     "csbpay|"       // CSB UPI
@@ -319,6 +337,8 @@ const char kUPIVirtualPaymentAddressRe[] =
     "indianbank|"   // Indian Bank UPI
     "indus|"        // Indus Pay
     "iob|"          // IOB UPI
+    "jkb|"          // BHIM JK Bank UPI
+    "jsb|"          // JetPay UPI
     "kaypay|"       // KayPay
     "kbl|"          // KBL Smartz
     "kotak|"        // kotak Mahindra Bank
@@ -326,6 +346,10 @@ const char kUPIVirtualPaymentAddressRe[] =
     "lvb|"          // LVB UPay
     "mahb|"         // MAHAUPI
     "obc|"          // Oriental BHIM UPI
+    "okicici|"      // Tez
+    "okhdfcbank|"   // Tez
+    "okaxis|"       // Tez
+    "paytm|"        // Paytm
     "pingpay|"      // Samsung Pay
     "pnb|"          // PNB UPI
     "pockets|"      // Pockets- ICICI Bank
@@ -335,7 +359,7 @@ const char kUPIVirtualPaymentAddressRe[] =
     "scb|"          // Standard Chartered
     "sib|"          // SIB M-Pay (UPI Pay)
     "syndicate|"    // Synd UPI
-    "tjsp|"         // TranZapp
+    "tjsb|"         // TranZapp
     "ubi|"          // United UPI
     "uboi|"         // Union Bank UPI
     "uco|"          // UCO UPI
@@ -347,5 +371,10 @@ const char kUPIVirtualPaymentAddressRe[] =
     "ybl|"          // Yes Pay
     "yesbank"       // NuPay
     ")$";
+
+/////////////////////////////////////////////////////////////////////////////
+// form_structure.cc
+/////////////////////////////////////////////////////////////////////////////
+const char kUrlSearchActionRe[] = "/search(/|((\\w*\\.\\w+)?$))";
 
 }  // namespace autofill

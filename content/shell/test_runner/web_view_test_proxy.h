@@ -16,17 +16,17 @@
 #include "content/shell/test_runner/web_view_test_client.h"
 #include "content/shell/test_runner/web_widget_test_client.h"
 #include "content/shell/test_runner/web_widget_test_proxy.h"
-#include "third_party/WebKit/public/platform/WebDragOperation.h"
-#include "third_party/WebKit/public/platform/WebRect.h"
-#include "third_party/WebKit/public/platform/WebScreenInfo.h"
-#include "third_party/WebKit/public/platform/WebURLError.h"
-#include "third_party/WebKit/public/platform/WebURLRequest.h"
-#include "third_party/WebKit/public/web/WebDOMMessageEvent.h"
-#include "third_party/WebKit/public/web/WebHistoryCommitType.h"
-#include "third_party/WebKit/public/web/WebNavigationPolicy.h"
-#include "third_party/WebKit/public/web/WebTextDirection.h"
-#include "third_party/WebKit/public/web/WebViewClient.h"
-#include "third_party/WebKit/public/web/WebWidgetClient.h"
+#include "third_party/blink/public/platform/web_drag_operation.h"
+#include "third_party/blink/public/platform/web_rect.h"
+#include "third_party/blink/public/platform/web_screen_info.h"
+#include "third_party/blink/public/platform/web_url_error.h"
+#include "third_party/blink/public/platform/web_url_request.h"
+#include "third_party/blink/public/web/web_dom_message_event.h"
+#include "third_party/blink/public/web/web_history_commit_type.h"
+#include "third_party/blink/public/web/web_navigation_policy.h"
+#include "third_party/blink/public/web/web_text_direction.h"
+#include "third_party/blink/public/web/web_view_client.h"
+#include "third_party/blink/public/web/web_widget_client.h"
 
 namespace blink {
 class WebDragData;
@@ -161,9 +161,9 @@ class WebViewTestProxy : public Base, public WebViewTestProxyBase {
   bool IsPointerLocked() override {
     return widget_test_client()->IsPointerLocked();
   }
-  void DidFocus() override {
-    view_test_client()->DidFocus();
-    Base::DidFocus();
+  void DidFocus(blink::WebLocalFrame* calling_frame) override {
+    view_test_client()->DidFocus(calling_frame);
+    Base::DidFocus(calling_frame);
   }
   void SetToolTipText(const blink::WebString& text,
                       blink::WebTextDirection hint) override {
@@ -181,10 +181,6 @@ class WebViewTestProxy : public Base, public WebViewTestProxyBase {
     // Don't forward this call to Base because we don't want to do a real
     // drag-and-drop.
   }
-  void DidChangeContents() override {
-    view_test_client()->DidChangeContents();
-    Base::DidChangeContents();
-  }
   blink::WebView* CreateView(blink::WebLocalFrame* creator,
                              const blink::WebURLRequest& request,
                              const blink::WebWindowFeatures& features,
@@ -200,9 +196,6 @@ class WebViewTestProxy : public Base, public WebViewTestProxyBase {
   }
   void PrintPage(blink::WebLocalFrame* frame) override {
     view_test_client()->PrintPage(frame);
-  }
-  blink::WebSpeechRecognizer* SpeechRecognizer() override {
-    return view_test_client()->SpeechRecognizer();
   }
   blink::WebString AcceptLanguages() override {
     return view_test_client()->AcceptLanguages();

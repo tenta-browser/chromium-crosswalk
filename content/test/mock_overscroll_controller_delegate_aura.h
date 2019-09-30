@@ -30,7 +30,8 @@ class MockOverscrollControllerDelegateAura
   void OnOverscrollComplete(OverscrollMode) override;
   void OnOverscrollModeChange(OverscrollMode old_mode,
                               OverscrollMode new_mode,
-                              OverscrollSource source) override;
+                              OverscrollSource source,
+                              cc::OverscrollBehavior behavior) override;
 
   // MockOverscrollObserver:
   void WaitForUpdate() override;

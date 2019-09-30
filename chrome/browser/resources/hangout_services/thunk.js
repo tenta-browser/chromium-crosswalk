@@ -179,14 +179,13 @@ chrome.runtime.onMessageExternal.addListener(function(
       chrome.webrtcLoggingPrivate.stopAudioDebugRecordings(
           requestInfo, origin, doSendResponse);
       return true;
-    } else if (method == 'logging.startWebRtcEventLogging') {
-      var seconds = message['seconds'] || 0;
-      chrome.webrtcLoggingPrivate.startWebRtcEventLogging(
-          requestInfo, origin, seconds, doSendResponse);
-      return true;
-    } else if (method == 'logging.stopWebRtcEventLogging') {
-      chrome.webrtcLoggingPrivate.stopWebRtcEventLogging(
-          requestInfo, origin, doSendResponse);
+    } else if (method == 'logging.startEventLogging') {
+      var peerConnectionId = message['peerConnectionId'] || '';
+      var maxLogSizeBytes = message['maxLogSizeBytes'] || 0;
+      var metadata = message['metadata'] || '';
+      chrome.webrtcLoggingPrivate.startEventLogging(
+          requestInfo, origin, peerConnectionId, maxLogSizeBytes, metadata,
+          doSendResponse);
       return true;
     } else if (method == 'setAudioExperiments') {
       var experiments = message['experiments'];

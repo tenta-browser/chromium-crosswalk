@@ -4,10 +4,13 @@
 
 #include "ios/web/public/browser_state.h"
 
+#include <memory>
+
+#include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/guid.h"
 #include "base/lazy_instance.h"
 #include "base/location.h"
-#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
 #include "base/process/process_handle.h"
 #include "ios/web/public/certificate_policy_cache.h"
@@ -16,8 +19,12 @@
 #include "ios/web/public/web_client.h"
 #include "ios/web/public/web_thread.h"
 #include "ios/web/webui/url_data_manager_ios_backend.h"
+#include "mojo/public/cpp/bindings/interface_request.h"
+#include "net/url_request/url_request_context_getter.h"
+#include "net/url_request/url_request_context_getter_observer.h"
+#include "services/network/network_context.h"
 #include "services/service_manager/public/cpp/connector.h"
-#include "services/service_manager/public/interfaces/service.mojom.h"
+#include "services/service_manager/public/mojom/service.mojom.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
 #error "This file requires ARC support."
@@ -100,13 +107,64 @@ class BrowserStateServiceManagerConnectionHolder
 
 }  // namespace
 
+// Class that owns a NetworkContext wrapping the BrowserState's
+// URLRequestContext.  This allows using the URLLoaderFactory and
+// NetworkContext APIs while still issuing requests with a URLRequestContext
+// created by a BrowserState subclass.
+//
+// Created on the UI thread by the BrowserState on first use, so the
+// BrowserState can own the NetworkContextOwner.  A task is then posted to the
+// IO thread to create the NetworkContext itself, which has to live on the IO
+// thread, since that's where the URLRequestContext lives.  Destroyed on the IO
+// thread during shutdown, to ensure the NetworkContext is destroyed on the
+// right thread.
+class BrowserState::NetworkContextOwner
+    : public net::URLRequestContextGetterObserver {
+ public:
+  explicit NetworkContextOwner(net::URLRequestContextGetter* request_context)
+      : request_context_(request_context) {
+    DCHECK_CURRENTLY_ON(WebThread::UI);
+  }
+
+  ~NetworkContextOwner() override {
+    DCHECK_CURRENTLY_ON(WebThread::IO);
+    if (request_context_)
+      request_context_->RemoveObserver(this);
+  }
+
+  void InitializeOnIOThread(
+      network::mojom::NetworkContextRequest network_context_request) {
+    DCHECK_CURRENTLY_ON(WebThread::IO);
+    DCHECK(!network_context_);
+
+    network_context_ = std::make_unique<network::NetworkContext>(
+        nullptr, std::move(network_context_request), request_context_);
+    request_context_->AddObserver(this);
+  }
+
+  // net::URLRequestContextGetterObserver implementation:
+  void OnContextShuttingDown() override {
+    DCHECK_CURRENTLY_ON(WebThread::IO);
+
+    // Cancels any pending requests owned by the NetworkContext.
+    network_context_.reset();
+
+    request_context_->RemoveObserver(this);
+    request_context_ = nullptr;
+  }
+
+ private:
+  scoped_refptr<net::URLRequestContextGetter> request_context_;
+  std::unique_ptr<network::NetworkContext> network_context_;
+};
+
 // static
 scoped_refptr<CertificatePolicyCache> BrowserState::GetCertificatePolicyCache(
     BrowserState* browser_state) {
   DCHECK_CURRENTLY_ON(WebThread::UI);
   if (!browser_state->GetUserData(kCertificatePolicyCacheKeyName)) {
     browser_state->SetUserData(kCertificatePolicyCacheKeyName,
-                               base::MakeUnique<CertificatePolicyCacheHandle>(
+                               std::make_unique<CertificatePolicyCacheHandle>(
                                    new CertificatePolicyCache()));
   }
 
@@ -122,13 +180,18 @@ BrowserState::BrowserState() : url_data_manager_ios_backend_(nullptr) {
   // may be passed a content::BrowserContext instead of a BrowserState, attach
   // an empty object to this via a private key.
   SetUserData(kBrowserStateIdentifierKey,
-              base::MakeUnique<SupportsUserData::Data>());
+              std::make_unique<SupportsUserData::Data>());
 }
 
 BrowserState::~BrowserState() {
   CHECK(GetUserData(kMojoWasInitialized))
       << "Attempting to destroy a BrowserState that never called "
       << "Initialize()";
+
+  if (network_context_) {
+    web::WebThread::DeleteSoon(web::WebThread::IO, FROM_HERE,
+                               network_context_owner_.release());
+  }
 
   RemoveBrowserStateFromUserIdMap(this);
 
@@ -143,6 +206,27 @@ BrowserState::~BrowserState() {
     if (!posted)
       delete url_data_manager_ios_backend_;
   }
+}
+
+network::mojom::URLLoaderFactory* BrowserState::GetURLLoaderFactory() {
+  if (!url_loader_factory_) {
+    DCHECK(!network_context_);
+    DCHECK(!network_context_owner_);
+
+    network_context_owner_ =
+        std::make_unique<NetworkContextOwner>(GetRequestContext());
+    WebThread::PostTask(
+        web::WebThread::IO, FROM_HERE,
+        base::BindOnce(&NetworkContextOwner::InitializeOnIOThread,
+                       // This is safe, since the NetworkContextOwner will be
+                       // deleted on the IO thread.
+                       base::Unretained(network_context_owner_.get()),
+                       mojo::MakeRequest(&network_context_)));
+    network_context_->CreateURLLoaderFactory(
+        mojo::MakeRequest(&url_loader_factory_), 0 /* process_id */);
+  }
+
+  return url_loader_factory_.get();
 }
 
 URLDataManagerIOSBackend*
@@ -176,10 +260,10 @@ void BrowserState::Initialize(BrowserState* browser_state,
   RemoveBrowserStateFromUserIdMap(browser_state);
   g_user_id_to_browser_state.Get()[new_id] = browser_state;
   browser_state->SetUserData(kServiceUserId,
-                             base::MakeUnique<ServiceUserIdHolder>(new_id));
+                             std::make_unique<ServiceUserIdHolder>(new_id));
 
   browser_state->SetUserData(kMojoWasInitialized,
-                             base::MakeUnique<base::SupportsUserData::Data>());
+                             std::make_unique<base::SupportsUserData::Data>());
 
   ServiceManagerConnection* service_manager_connection =
       ServiceManagerConnection::Get();
@@ -201,7 +285,7 @@ void BrowserState::Initialize(BrowserState* browser_state,
 
     service_manager_connection->GetConnector()->StartService(identity);
     auto connection_holder =
-        base::MakeUnique<BrowserStateServiceManagerConnectionHolder>(
+        std::make_unique<BrowserStateServiceManagerConnectionHolder>(
             std::move(service_request));
 
     ServiceManagerConnection* connection =

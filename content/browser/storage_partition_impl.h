@@ -24,17 +24,20 @@
 #include "content/browser/cache_storage/cache_storage_context_impl.h"
 #include "content/browser/dom_storage/dom_storage_context_wrapper.h"
 #include "content/browser/indexed_db/indexed_db_context_impl.h"
+#include "content/browser/locks/lock_manager.h"
 #include "content/browser/notifications/platform_notification_context_impl.h"
 #include "content/browser/payments/payment_app_context_impl.h"
 #include "content/browser/push_messaging/push_messaging_context.h"
 #include "content/browser/service_worker/service_worker_context_wrapper.h"
+#include "content/browser/shared_worker/shared_worker_service_impl.h"
 #include "content/browser/url_loader_factory_getter.h"
 #include "content/common/content_export.h"
 #include "content/common/storage_partition_service.mojom.h"
 #include "content/public/browser/storage_partition.h"
-#include "content/public/common/network_service.mojom.h"
 #include "mojo/public/cpp/bindings/binding_set.h"
 #include "net/cookies/cookie_store.h"
+#include "services/network/public/mojom/cookie_manager.mojom.h"
+#include "services/network/public/mojom/network_service.mojom.h"
 #include "storage/browser/quota/special_storage_policy.h"
 
 #if !defined(OS_ANDROID)
@@ -46,6 +49,8 @@ namespace content {
 class BackgroundFetchContext;
 class BlobRegistryWrapper;
 class BlobURLLoaderFactory;
+class PrefetchURLLoaderService;
+class WebPackageContextImpl;
 
 class CONTENT_EXPORT StoragePartitionImpl
     : public StoragePartition,
@@ -66,6 +71,17 @@ class CONTENT_EXPORT StoragePartitionImpl
   static net::CookieStore::CookiePredicate
   CreatePredicateForHostCookies(const GURL& url);
 
+  // Allows overriding the URLLoaderFactory creation for
+  // GetURLLoaderFactoryForBrowserProcess.
+  // Passing a null callback will restore the default behavior.
+  // This method must be called either on the UI thread or before threads start.
+  // This callback is run on the UI thread.
+  using CreateNetworkFactoryCallback =
+      base::Callback<network::mojom::URLLoaderFactoryPtr(
+          network::mojom::URLLoaderFactoryPtr original_factory)>;
+  static void SetGetURLLoaderFactoryForBrowserProcessCallbackForTesting(
+      const CreateNetworkFactoryCallback& url_loader_factory_callback);
+
   void OverrideQuotaManagerForTesting(
       storage::QuotaManager* quota_manager);
   void OverrideSpecialStoragePolicyForTesting(
@@ -75,27 +91,32 @@ class CONTENT_EXPORT StoragePartitionImpl
   base::FilePath GetPath() override;
   net::URLRequestContextGetter* GetURLRequestContext() override;
   net::URLRequestContextGetter* GetMediaURLRequestContext() override;
-  mojom::NetworkContext* GetNetworkContext() override;
-  mojom::URLLoaderFactory* GetURLLoaderFactoryForBrowserProcess() override;
+  network::mojom::NetworkContext* GetNetworkContext() override;
+  scoped_refptr<network::SharedURLLoaderFactory>
+  GetURLLoaderFactoryForBrowserProcess() override;
+  std::unique_ptr<network::SharedURLLoaderFactoryInfo>
+  GetURLLoaderFactoryForBrowserProcessIOThread() override;
+  network::mojom::CookieManager* GetCookieManagerForBrowserProcess() override;
   storage::QuotaManager* GetQuotaManager() override;
   ChromeAppCacheService* GetAppCacheService() override;
   storage::FileSystemContext* GetFileSystemContext() override;
   storage::DatabaseTracker* GetDatabaseTracker() override;
   DOMStorageContextWrapper* GetDOMStorageContext() override;
+  LockManager* GetLockManager();  // override; TODO: Add to interface
   IndexedDBContextImpl* GetIndexedDBContext() override;
   CacheStorageContextImpl* GetCacheStorageContext() override;
   ServiceWorkerContextWrapper* GetServiceWorkerContext() override;
+  SharedWorkerServiceImpl* GetSharedWorkerService() override;
 #if !defined(OS_ANDROID)
   HostZoomMap* GetHostZoomMap() override;
   HostZoomLevelContext* GetHostZoomLevelContext() override;
   ZoomLevelDelegate* GetZoomLevelDelegate() override;
 #endif  // !defined(OS_ANDROID)
   PlatformNotificationContextImpl* GetPlatformNotificationContext() override;
-  void ClearDataForOrigin(
-      uint32_t remove_mask,
-      uint32_t quota_storage_remove_mask,
-      const GURL& storage_origin,
-      net::URLRequestContextGetter* request_context_getter) override;
+  WebPackageContext* GetWebPackageContext() override;
+  void ClearDataForOrigin(uint32_t remove_mask,
+                          uint32_t quota_storage_remove_mask,
+                          const GURL& storage_origin) override;
   void ClearData(uint32_t remove_mask,
                  uint32_t quota_storage_remove_mask,
                  const GURL& storage_origin,
@@ -117,8 +138,9 @@ class CONTENT_EXPORT StoragePartitionImpl
       base::OnceClosure callback) override;
   void Flush() override;
   void ClearBluetoothAllowedDevicesMapForTesting() override;
-  void SetNetworkFactoryForTesting(
-      mojom::URLLoaderFactory* test_factory) override;
+  void FlushNetworkInterfaceForTesting() override;
+  void WaitForDeletionTasksForTesting() override;
+
   BackgroundFetchContext* GetBackgroundFetchContext();
   BackgroundSyncContext* GetBackgroundSyncContext();
   PaymentAppContextImpl* GetPaymentAppContext();
@@ -126,15 +148,14 @@ class CONTENT_EXPORT StoragePartitionImpl
   BluetoothAllowedDevicesMap* GetBluetoothAllowedDevicesMap();
   BlobURLLoaderFactory* GetBlobURLLoaderFactory();
   BlobRegistryWrapper* GetBlobRegistry();
+  PrefetchURLLoaderService* GetPrefetchURLLoaderService();
 
   // mojom::StoragePartitionService interface.
-  void OpenLocalStorage(
-      const url::Origin& origin,
-      mojo::InterfaceRequest<mojom::LevelDBWrapper> request) override;
+  void OpenLocalStorage(const url::Origin& origin,
+                        mojom::LevelDBWrapperRequest request) override;
   void OpenSessionStorage(
-      int64_t namespace_id,
-      const url::Origin& origin,
-      mojo::InterfaceRequest<mojom::LevelDBWrapper> request) override;
+      const std::string& namespace_id,
+      mojom::SessionStorageNamespaceRequest request) override;
 
   scoped_refptr<URLLoaderFactoryGetter> url_loader_factory_getter() {
     return url_loader_factory_getter_;
@@ -151,16 +172,31 @@ class CONTENT_EXPORT StoragePartitionImpl
 
   auto& bindings_for_testing() { return bindings_; }
 
-  struct DataDeletionHelper;
-  struct QuotaManagedDataDeletionHelper;
+  // When this StoragePartition is for guests (e.g., for a <webview> tag), this
+  // is the site URL to use when creating a SiteInstance for a service worker.
+  // Typically one would use the script URL of the service worker (e.g.,
+  // "https://example.com/sw.js"), but if this StoragePartition is for guests,
+  // one must use the "chrome-guest://blahblah" site URL to ensure that the
+  // service worker stays in this StoragePartition. This is an empty GURL if
+  // this StoragePartition is not for guests.
+  void set_site_for_service_worker(const GURL& site_for_service_worker) {
+    site_for_service_worker_ = site_for_service_worker;
+  }
+  const GURL& site_for_service_worker() const {
+    return site_for_service_worker_;
+  }
 
  private:
+  class DataDeletionHelper;
+  class QuotaManagedDataDeletionHelper;
   class NetworkContextOwner;
+  class URLLoaderFactoryForBrowserProcess;
 
   friend class BackgroundSyncManagerTest;
   friend class BackgroundSyncServiceImplTest;
   friend class PaymentAppContentUnitTestBase;
   friend class StoragePartitionImplMap;
+  friend class URLLoaderFactoryForBrowserProcess;
   FRIEND_TEST_ALL_PREFIXES(StoragePartitionShaderClearTest, ClearShaderCache);
   FRIEND_TEST_ALL_PREFIXES(StoragePartitionImplTest,
                            RemoveQuotaManagedDataForeverBoth);
@@ -215,10 +251,11 @@ class CONTENT_EXPORT StoragePartitionImpl
                      const GURL& remove_origin,
                      const OriginMatcherFunction& origin_matcher,
                      const CookieMatcherFunction& cookie_matcher,
-                     net::URLRequestContextGetter* rq_context,
                      const base::Time begin,
                      const base::Time end,
                      base::OnceClosure callback);
+
+  void DeletionHelperDone(base::OnceClosure callback);
 
   // Used by StoragePartitionImplMap.
   //
@@ -241,6 +278,13 @@ class CONTENT_EXPORT StoragePartitionImpl
   // storage configuration info.
   void GetQuotaSettings(storage::OptionalQuotaSettingsCallback callback);
 
+  network::mojom::URLLoaderFactory*
+  GetURLLoaderFactoryForBrowserProcessInternal();
+
+  // |is_in_memory_| and |relative_partition_path_| are cached from
+  // |StoragePartitionImpl::Create()| in order to re-create |NetworkContext|.
+  bool is_in_memory_;
+  base::FilePath relative_partition_path_;
   base::FilePath partition_path_;
   scoped_refptr<net::URLRequestContextGetter> url_request_context_;
   scoped_refptr<net::URLRequestContextGetter> media_url_request_context_;
@@ -250,15 +294,18 @@ class CONTENT_EXPORT StoragePartitionImpl
   scoped_refptr<storage::FileSystemContext> filesystem_context_;
   scoped_refptr<storage::DatabaseTracker> database_tracker_;
   scoped_refptr<DOMStorageContextWrapper> dom_storage_context_;
+  scoped_refptr<LockManager> lock_manager_;
   scoped_refptr<IndexedDBContextImpl> indexed_db_context_;
   scoped_refptr<CacheStorageContextImpl> cache_storage_context_;
   scoped_refptr<ServiceWorkerContextWrapper> service_worker_context_;
+  std::unique_ptr<SharedWorkerServiceImpl> shared_worker_service_;
   scoped_refptr<PushMessagingContext> push_messaging_context_;
   scoped_refptr<storage::SpecialStoragePolicy> special_storage_policy_;
 #if !defined(OS_ANDROID)
   scoped_refptr<HostZoomLevelContext> host_zoom_level_context_;
 #endif  // !defined(OS_ANDROID)
   scoped_refptr<PlatformNotificationContextImpl> platform_notification_context_;
+  std::unique_ptr<WebPackageContextImpl> web_package_context_;
   scoped_refptr<BackgroundFetchContext> background_fetch_context_;
   scoped_refptr<BackgroundSyncContext> background_sync_context_;
   scoped_refptr<PaymentAppContextImpl> payment_app_context_;
@@ -266,6 +313,7 @@ class CONTENT_EXPORT StoragePartitionImpl
   scoped_refptr<BluetoothAllowedDevicesMap> bluetooth_allowed_devices_map_;
   scoped_refptr<BlobURLLoaderFactory> blob_url_loader_factory_;
   scoped_refptr<BlobRegistryWrapper> blob_registry_;
+  scoped_refptr<PrefetchURLLoaderService> prefetch_url_loader_service_;
 
   // BindingSet for StoragePartitionService, using the process id as the
   // binding context type. The process id can subsequently be used during
@@ -278,12 +326,17 @@ class CONTENT_EXPORT StoragePartitionImpl
   // service. When it's disabled, the underlying NetworkContext may either be
   // provided by the embedder, or is created by the StoragePartition and owned
   // by |network_context_owner_|.
-  mojom::NetworkContextPtr network_context_;
+  network::mojom::NetworkContextPtr network_context_;
 
-  // URLLoaderFactory for use in the browser process only. See the method
-  // comment for StoragePartition::GetURLLoaderFactoryForBrowserProcess() for
+  scoped_refptr<URLLoaderFactoryForBrowserProcess>
+      shared_url_loader_factory_for_browser_process_;
+
+  // URLLoaderFactory/CookieManager for use in the browser process only.
+  // See the method comment for
+  // StoragePartition::GetURLLoaderFactoryForBrowserProcess() for
   // more details
-  mojom::URLLoaderFactoryPtr url_loader_factory_for_browser_process_;
+  network::mojom::URLLoaderFactoryPtr url_loader_factory_for_browser_process_;
+  ::network::mojom::CookieManagerPtr cookie_manager_for_browser_process_;
 
   // When the network service is disabled, a NetworkContext is created on the IO
   // thread that wraps access to the URLRequestContext.
@@ -293,6 +346,15 @@ class CONTENT_EXPORT StoragePartitionImpl
   // StoragePartitionImplMap which then owns StoragePartitionImpl. When the
   // BrowserContext is destroyed, |this| will be destroyed too.
   BrowserContext* browser_context_;
+
+  // See comments for site_for_service_worker().
+  GURL site_for_service_worker_;
+
+  // Track number of running deletion. For test use only.
+  int deletion_helpers_running_;
+
+  // Called when all deletions are done. For test use only.
+  base::OnceClosure on_deletion_helpers_done_callback_;
 
   base::WeakPtrFactory<StoragePartitionImpl> weak_factory_;
 

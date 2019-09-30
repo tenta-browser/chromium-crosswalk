@@ -15,7 +15,6 @@
 
 #include "base/callback_forward.h"
 #include "base/containers/hash_tables.h"
-#include "base/memory/linked_ptr.h"
 #include "base/supports_user_data.h"
 #include "content/common/content_export.h"
 #include "net/url_request/url_request_interceptor.h"
@@ -50,6 +49,7 @@ class URLRequestContextGetter;
 }
 
 namespace storage {
+class BlobStorageContext;
 class SpecialStoragePolicy;
 }
 
@@ -80,7 +80,7 @@ class SSLHostStateDelegate;
 // content.
 using ProtocolHandlerMap =
     std::map<std::string,
-             linked_ptr<net::URLRequestJobFactory::ProtocolHandler>>;
+             std::unique_ptr<net::URLRequestJobFactory::ProtocolHandler>>;
 
 // A owning vector of protocol interceptors.
 using URLRequestInterceptorScopedVector =
@@ -132,6 +132,8 @@ class CONTENT_EXPORT BrowserContext : public base::SupportsUserData {
       BrowserContext* browser_context);
 
   using BlobCallback = base::OnceCallback<void(std::unique_ptr<BlobHandle>)>;
+  using BlobContextGetter =
+      base::RepeatingCallback<base::WeakPtr<storage::BlobStorageContext>()>;
 
   // |callback| returns a nullptr scoped_ptr on failure.
   static void CreateMemoryBackedBlob(BrowserContext* browser_context,
@@ -147,6 +149,10 @@ class CONTENT_EXPORT BrowserContext : public base::SupportsUserData {
                                    int64_t size,
                                    const base::Time& expected_modification_time,
                                    BlobCallback callback);
+
+  // Get a BlobStorageContext getter that needs to run on IO thread.
+  static BlobContextGetter GetBlobStorageContext(
+      BrowserContext* browser_context);
 
   // Delivers a push message with |data| to the Service Worker identified by
   // |origin| and |service_worker_registration_id|.
@@ -181,7 +187,7 @@ class CONTENT_EXPORT BrowserContext : public base::SupportsUserData {
 
   // Returns a Service User ID associated with this BrowserContext. This ID is
   // not persistent across runs. See
-  // services/service_manager/public/interfaces/connector.mojom. By default,
+  // services/service_manager/public/mojom/connector.mojom. By default,
   // this user id is randomly generated when Initialize() is called.
   static const std::string& GetServiceUserIdFor(
       BrowserContext* browser_context);
@@ -312,6 +318,7 @@ class CONTENT_EXPORT BrowserContext : public base::SupportsUserData {
 
  private:
   const std::string media_device_id_salt_;
+  bool was_notify_will_be_destroyed_called_ = false;
 };
 
 }  // namespace content

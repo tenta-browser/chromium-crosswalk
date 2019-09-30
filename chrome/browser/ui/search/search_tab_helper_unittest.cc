@@ -85,7 +85,7 @@ class SearchTabHelperTest : public ChromeRenderViewHostTestHarness {
     ChromeRenderViewHostTestHarness::SetUp();
     SearchTabHelper::CreateForWebContents(web_contents());
     auto* search_tab = SearchTabHelper::FromWebContents(web_contents());
-    auto factory = base::MakeUnique<MockEmbeddedSearchClientFactory>();
+    auto factory = std::make_unique<MockEmbeddedSearchClientFactory>();
     ON_CALL(*factory, GetEmbeddedSearchClient())
         .WillByDefault(Return(&mock_embedded_search_client_));
     search_tab->ipc_router_for_testing()
@@ -104,8 +104,8 @@ class SearchTabHelperTest : public ChromeRenderViewHostTestHarness {
   // Creates a sign-in manager for tests.  If |username| is not empty, the
   // testing profile of the WebContents will be connected to the given account.
   void CreateSigninManager(const std::string& username) {
-    SigninManagerBase* signin_manager = static_cast<SigninManagerBase*>(
-        SigninManagerFactory::GetForProfile(profile()));
+    SigninManagerBase* signin_manager =
+        SigninManagerFactory::GetForProfile(profile());
 
     if (!username.empty()) {
       ASSERT_TRUE(signin_manager);

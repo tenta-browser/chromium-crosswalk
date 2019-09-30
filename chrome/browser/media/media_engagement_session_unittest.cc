@@ -5,6 +5,7 @@
 #include "chrome/browser/media/media_engagement_session.h"
 
 #include "base/memory/scoped_refptr.h"
+#include "base/test/histogram_tester.h"
 #include "base/test/simple_test_clock.h"
 #include "chrome/browser/media/media_engagement_service.h"
 #include "chrome/test/base/testing_profile.h"
@@ -94,14 +95,13 @@ class MediaEngagementSessionTest : public testing::Test {
   }
 
   MediaEngagementSessionTest()
-      : origin_(url::Origin::Create(GURL("https://example.com"))),
-        test_clock_(new base::SimpleTestClock()) {}
+      : origin_(url::Origin::Create(GURL("https://example.com"))) {}
 
   ~MediaEngagementSessionTest() override = default;
 
   void SetUp() override {
-    service_ = base::WrapUnique(
-        new MediaEngagementService(&profile_, base::WrapUnique(test_clock_)));
+    service_ =
+        base::WrapUnique(new MediaEngagementService(&profile_, &test_clock_));
   }
 
   MediaEngagementService* service() const { return service_.get(); }
@@ -112,12 +112,23 @@ class MediaEngagementSessionTest : public testing::Test {
     return test_ukm_recorder_;
   }
 
-  base::SimpleTestClock* test_clock() { return test_clock_; }
+  base::SimpleTestClock* test_clock() { return &test_clock_; }
+
+  void SetVisitsAndPlaybacks(int visits, int media_playbacks) {
+    MediaEngagementScore score =
+        service()->CreateEngagementScore(origin().GetURL());
+    score.SetVisits(visits);
+    score.SetMediaPlaybacks(media_playbacks);
+    score.Commit();
+  }
+
+  bool ScoreIsHigh() const {
+    return service()->HasHighEngagement(origin().GetURL());
+  }
 
  private:
   const url::Origin origin_;
-  // Owned by |service_| but keeping a reference to it to manipulate.
-  base::SimpleTestClock* test_clock_;
+  base::SimpleTestClock test_clock_;
 
   content::TestBrowserThreadBundle thread_bundle_;
   TestingProfile profile_;
@@ -127,8 +138,8 @@ class MediaEngagementSessionTest : public testing::Test {
 
 // SmokeTest checking that IsSameOrigin actually does a same origin check.
 TEST_F(MediaEngagementSessionTest, IsSameOrigin) {
-  scoped_refptr<MediaEngagementSession> session =
-      new MediaEngagementSession(service(), origin());
+  scoped_refptr<MediaEngagementSession> session = new MediaEngagementSession(
+      service(), origin(), MediaEngagementSession::RestoreType::kNotRestored);
 
   std::vector<url::Origin> origins = {
       origin(),
@@ -149,8 +160,8 @@ TEST_F(MediaEngagementSessionTest, RecordShortPlaybackIgnored) {
   using Entry = ukm::builders::Media_Engagement_ShortPlaybackIgnored;
   const std::string url_string = origin().GetURL().spec();
 
-  scoped_refptr<MediaEngagementSession> session =
-      new MediaEngagementSession(service(), origin());
+  scoped_refptr<MediaEngagementSession> session = new MediaEngagementSession(
+      service(), origin(), MediaEngagementSession::RestoreType::kNotRestored);
 
   EXPECT_EQ(0u, test_ukm_recorder().GetEntriesByName(Entry::kEntryName).size());
 
@@ -181,8 +192,8 @@ TEST_F(MediaEngagementSessionTest, RecordShortPlaybackIgnored) {
 
 // Set of tests for RegisterAudiblePlayers().
 TEST_F(MediaEngagementSessionTest, RegisterAudiblePlayers) {
-  scoped_refptr<MediaEngagementSession> session =
-      new MediaEngagementSession(service(), origin());
+  scoped_refptr<MediaEngagementSession> session = new MediaEngagementSession(
+      service(), origin(), MediaEngagementSession::RestoreType::kNotRestored);
 
   // Initial checks.
   EXPECT_EQ(0, GetAudiblePlayersDeltaForSession(session.get()));
@@ -208,8 +219,8 @@ TEST_F(MediaEngagementSessionTest, RegisterAudiblePlayers) {
 
 TEST_F(MediaEngagementSessionTest, TotalPlayers) {
   using Entry = ukm::builders::Media_Engagement_SessionFinished;
-  scoped_refptr<MediaEngagementSession> session =
-      new MediaEngagementSession(service(), origin());
+  scoped_refptr<MediaEngagementSession> session = new MediaEngagementSession(
+      service(), origin(), MediaEngagementSession::RestoreType::kNotRestored);
 
   // Initial checks.
   EXPECT_EQ(0, GetAudiblePlayersTotalForSession(session.get()));
@@ -243,9 +254,9 @@ TEST_F(MediaEngagementSessionTest, TotalPlayers) {
 }
 
 // Checks that ukm_source_id_ is set when GetUkmRecorder is called.
-TEST_F(MediaEngagementSessionTest, GetkmRecorder_SetsUkmSourceId) {
-  scoped_refptr<MediaEngagementSession> session =
-      new MediaEngagementSession(service(), origin());
+TEST_F(MediaEngagementSessionTest, GetUkmRecorder_SetsUkmSourceId) {
+  scoped_refptr<MediaEngagementSession> session = new MediaEngagementSession(
+      service(), origin(), MediaEngagementSession::RestoreType::kNotRestored);
 
   EXPECT_EQ(ukm::kInvalidSourceId, GetUkmSourceIdForSession(session.get()));
 
@@ -254,9 +265,9 @@ TEST_F(MediaEngagementSessionTest, GetkmRecorder_SetsUkmSourceId) {
 }
 
 // Checks that GetUkmRecorder() does not return nullptr.
-TEST_F(MediaEngagementSessionTest, GetkmRecorder_NotNull) {
-  scoped_refptr<MediaEngagementSession> session =
-      new MediaEngagementSession(service(), origin());
+TEST_F(MediaEngagementSessionTest, GetUkmRecorder_NotNull) {
+  scoped_refptr<MediaEngagementSession> session = new MediaEngagementSession(
+      service(), origin(), MediaEngagementSession::RestoreType::kNotRestored);
 
   EXPECT_NE(nullptr, GetUkmRecorderForSession(session.get()));
 }
@@ -264,8 +275,8 @@ TEST_F(MediaEngagementSessionTest, GetkmRecorder_NotNull) {
 // Test that RecordSignificantPlayback() sets the significant_playback_recorded_
 // boolean to true.
 TEST_F(MediaEngagementSessionTest, RecordSignificantPlayback_SetsBoolean) {
-  scoped_refptr<MediaEngagementSession> session =
-      new MediaEngagementSession(service(), origin());
+  scoped_refptr<MediaEngagementSession> session = new MediaEngagementSession(
+      service(), origin(), MediaEngagementSession::RestoreType::kNotRestored);
 
   EXPECT_FALSE(session->significant_playback_recorded());
 
@@ -276,8 +287,8 @@ TEST_F(MediaEngagementSessionTest, RecordSignificantPlayback_SetsBoolean) {
 // Test that RecordSignificantPlayback() records playback.
 TEST_F(MediaEngagementSessionTest,
        RecordSignificantPlayback_SetsPendingPlayback) {
-  scoped_refptr<MediaEngagementSession> session =
-      new MediaEngagementSession(service(), origin());
+  scoped_refptr<MediaEngagementSession> session = new MediaEngagementSession(
+      service(), origin(), MediaEngagementSession::RestoreType::kNotRestored);
 
   int expected_visits = 0;
   int expected_playbacks = 0;
@@ -306,8 +317,8 @@ TEST_F(MediaEngagementSessionTest,
 
 // Test that CommitPendingData reset pending_data_to_commit_ after running.
 TEST_F(MediaEngagementSessionTest, CommitPendingData_Reset) {
-  scoped_refptr<MediaEngagementSession> session =
-      new MediaEngagementSession(service(), origin());
+  scoped_refptr<MediaEngagementSession> session = new MediaEngagementSession(
+      service(), origin(), MediaEngagementSession::RestoreType::kNotRestored);
 
   EXPECT_TRUE(HasPendingDataToCommitForSession(session.get()));
 
@@ -324,8 +335,8 @@ TEST_F(MediaEngagementSessionTest, CommitPendingData_Reset) {
 
 // Test that CommitPendingData only update visits field when needed.
 TEST_F(MediaEngagementSessionTest, CommitPendingData_UpdateVisitsAsNeeded) {
-  scoped_refptr<MediaEngagementSession> session =
-      new MediaEngagementSession(service(), origin());
+  scoped_refptr<MediaEngagementSession> session = new MediaEngagementSession(
+      service(), origin(), MediaEngagementSession::RestoreType::kNotRestored);
 
   int expected_visits = 0;
 
@@ -369,8 +380,8 @@ TEST_F(MediaEngagementSessionTest, CommitPendingData_UpdateVisitsAsNeeded) {
 }
 
 TEST_F(MediaEngagementSessionTest, CommitPendingData_UpdatePlaybackWhenNeeded) {
-  scoped_refptr<MediaEngagementSession> session =
-      new MediaEngagementSession(service(), origin());
+  scoped_refptr<MediaEngagementSession> session = new MediaEngagementSession(
+      service(), origin(), MediaEngagementSession::RestoreType::kNotRestored);
 
   int expected_playbacks = 0;
 
@@ -437,8 +448,8 @@ TEST_F(MediaEngagementSessionTest, CommitPendingData_UpdatePlaybackWhenNeeded) {
 }
 
 TEST_F(MediaEngagementSessionTest, CommitPendingData_UpdatePlayersWhenNeeded) {
-  scoped_refptr<MediaEngagementSession> session =
-      new MediaEngagementSession(service(), origin());
+  scoped_refptr<MediaEngagementSession> session = new MediaEngagementSession(
+      service(), origin(), MediaEngagementSession::RestoreType::kNotRestored);
 
   int expected_audible_playbacks = 0;
   int expected_significant_playbacks = 0;
@@ -531,8 +542,8 @@ TEST_F(MediaEngagementSessionTest, RecordUkmMetrics) {
   const std::string url_string = origin().GetURL().spec();
   using Entry = ukm::builders::Media_Engagement_SessionFinished;
 
-  scoped_refptr<MediaEngagementSession> session =
-      new MediaEngagementSession(service(), origin());
+  scoped_refptr<MediaEngagementSession> session = new MediaEngagementSession(
+      service(), origin(), MediaEngagementSession::RestoreType::kNotRestored);
 
   session->RecordSignificantPlayback();
 
@@ -550,7 +561,7 @@ TEST_F(MediaEngagementSessionTest, RecordUkmMetrics) {
                      ukm_entry, Entry::kPlaybacks_TotalName));
     EXPECT_EQ(1, *test_ukm_recorder().GetEntryMetric(ukm_entry,
                                                      Entry::kVisits_TotalName));
-    EXPECT_EQ(0, *test_ukm_recorder().GetEntryMetric(
+    EXPECT_EQ(5, *test_ukm_recorder().GetEntryMetric(
                      ukm_entry, Entry::kEngagement_ScoreName));
     EXPECT_EQ(1, *test_ukm_recorder().GetEntryMetric(
                      ukm_entry, Entry::kPlaybacks_DeltaName));
@@ -566,6 +577,10 @@ TEST_F(MediaEngagementSessionTest, RecordUkmMetrics) {
                      ukm_entry, Entry::kPlayer_Significant_TotalName));
     EXPECT_EQ(0, *test_ukm_recorder().GetEntryMetric(
                      ukm_entry, Entry::kPlaybacks_SecondsSinceLastName));
+    EXPECT_EQ(0, *test_ukm_recorder().GetEntryMetric(
+                     ukm_entry, Entry::kEngagement_IsHigh_ChangesName));
+    EXPECT_EQ(0, *test_ukm_recorder().GetEntryMetric(
+                     ukm_entry, Entry::kEngagement_IsHigh_ChangedName));
   }
 
   SetSignificantPlaybackRecordedForSession(session.get(), false);
@@ -583,8 +598,8 @@ TEST_F(MediaEngagementSessionTest, RecordUkmMetrics) {
                      ukm_entry, Entry::kPlaybacks_TotalName));
     EXPECT_EQ(1, *test_ukm_recorder().GetEntryMetric(ukm_entry,
                                                      Entry::kVisits_TotalName));
-    EXPECT_EQ(0, *test_ukm_recorder().GetEntryMetric(
-                     ukm_entry, Entry::kEngagement_ScoreName));
+    EXPECT_EQ(10, *test_ukm_recorder().GetEntryMetric(
+                      ukm_entry, Entry::kEngagement_ScoreName));
     EXPECT_EQ(1, *test_ukm_recorder().GetEntryMetric(
                      ukm_entry, Entry::kPlaybacks_DeltaName));
     EXPECT_EQ(0, *test_ukm_recorder().GetEntryMetric(
@@ -599,6 +614,69 @@ TEST_F(MediaEngagementSessionTest, RecordUkmMetrics) {
                      ukm_entry, Entry::kPlayer_Significant_TotalName));
     EXPECT_EQ(0, *test_ukm_recorder().GetEntryMetric(
                      ukm_entry, Entry::kPlaybacks_SecondsSinceLastName));
+    EXPECT_EQ(0, *test_ukm_recorder().GetEntryMetric(
+                     ukm_entry, Entry::kEngagement_IsHigh_ChangesName));
+    EXPECT_EQ(0, *test_ukm_recorder().GetEntryMetric(
+                     ukm_entry, Entry::kEngagement_IsHigh_ChangedName));
+  }
+}
+
+TEST_F(MediaEngagementSessionTest, RecordUkmMetrics_Changed_NowHigh) {
+  const std::string url_string = origin().GetURL().spec();
+  using Entry = ukm::builders::Media_Engagement_SessionFinished;
+
+  // Set the visits and playbacks to just below the threshold so the next
+  // significant playback will result in the playback being high.
+  SetVisitsAndPlaybacks(19, 5);
+  EXPECT_FALSE(ScoreIsHigh());
+
+  scoped_refptr<MediaEngagementSession> session = new MediaEngagementSession(
+      service(), origin(), MediaEngagementSession::RestoreType::kNotRestored);
+
+  session->RecordSignificantPlayback();
+
+  EXPECT_EQ(0u, test_ukm_recorder().GetEntriesByName(Entry::kEntryName).size());
+
+  RecordUkmMetricsForSession(session.get());
+
+  {
+    auto ukm_entries = test_ukm_recorder().GetEntriesByName(Entry::kEntryName);
+    EXPECT_EQ(1u, ukm_entries.size());
+
+    auto* ukm_entry = ukm_entries[0];
+    test_ukm_recorder().ExpectEntrySourceHasUrl(ukm_entry, origin().GetURL());
+    EXPECT_EQ(1u, *test_ukm_recorder().GetEntryMetric(
+                      ukm_entry, Entry::kEngagement_IsHigh_ChangedName));
+  }
+}
+
+TEST_F(MediaEngagementSessionTest, RecordUkmMetrics_Changed_WasHigh) {
+  const std::string url_string = origin().GetURL().spec();
+  using Entry = ukm::builders::Media_Engagement_SessionFinished;
+
+  // Set the visits and playbacks to just above the lower threshold and the is
+  // high bit to true so the next visit will cross the threshold.
+  SetVisitsAndPlaybacks(20, 20);
+  SetVisitsAndPlaybacks(20, 4);
+  EXPECT_TRUE(ScoreIsHigh());
+
+  scoped_refptr<MediaEngagementSession> session = new MediaEngagementSession(
+      service(), origin(), MediaEngagementSession::RestoreType::kNotRestored);
+
+  CommitPendingDataForSession(session.get());
+
+  EXPECT_EQ(0u, test_ukm_recorder().GetEntriesByName(Entry::kEntryName).size());
+
+  RecordUkmMetricsForSession(session.get());
+
+  {
+    auto ukm_entries = test_ukm_recorder().GetEntriesByName(Entry::kEntryName);
+    EXPECT_EQ(1u, ukm_entries.size());
+
+    auto* ukm_entry = ukm_entries[0];
+    test_ukm_recorder().ExpectEntrySourceHasUrl(ukm_entry, origin().GetURL());
+    EXPECT_EQ(1u, *test_ukm_recorder().GetEntryMetric(
+                      ukm_entry, Entry::kEngagement_IsHigh_ChangedName));
   }
 }
 
@@ -611,8 +689,8 @@ TEST_F(MediaEngagementSessionTest, DestructorRecordMetrics) {
   EXPECT_EQ(0u, test_ukm_recorder().GetEntriesByName(Entry::kEntryName).size());
 
   {
-    scoped_refptr<MediaEngagementSession> session =
-        new MediaEngagementSession(service(), origin());
+    scoped_refptr<MediaEngagementSession> session = new MediaEngagementSession(
+        service(), origin(), MediaEngagementSession::RestoreType::kNotRestored);
 
     // |session| was destructed.
   }
@@ -627,7 +705,9 @@ TEST_F(MediaEngagementSessionTest, DestructorRecordMetrics) {
 
   {
     scoped_refptr<MediaEngagementSession> other_session =
-        new MediaEngagementSession(service(), other_origin);
+        new MediaEngagementSession(
+            service(), other_origin,
+            MediaEngagementSession::RestoreType::kNotRestored);
     // |other_session| was destructed.
   }
 
@@ -659,8 +739,8 @@ TEST_F(MediaEngagementSessionTest, DestructorCommitDataIfNeeded) {
   }
 
   {
-    scoped_refptr<MediaEngagementSession> session =
-        new MediaEngagementSession(service(), origin());
+    scoped_refptr<MediaEngagementSession> session = new MediaEngagementSession(
+        service(), origin(), MediaEngagementSession::RestoreType::kNotRestored);
 
     // |session| was destructed.
   }
@@ -677,8 +757,8 @@ TEST_F(MediaEngagementSessionTest, DestructorCommitDataIfNeeded) {
   }
 
   {
-    scoped_refptr<MediaEngagementSession> session =
-        new MediaEngagementSession(service(), origin());
+    scoped_refptr<MediaEngagementSession> session = new MediaEngagementSession(
+        service(), origin(), MediaEngagementSession::RestoreType::kNotRestored);
 
     session->RecordSignificantPlayback();
 
@@ -698,8 +778,8 @@ TEST_F(MediaEngagementSessionTest, DestructorCommitDataIfNeeded) {
   }
 
   {
-    scoped_refptr<MediaEngagementSession> session =
-        new MediaEngagementSession(service(), origin());
+    scoped_refptr<MediaEngagementSession> session = new MediaEngagementSession(
+        service(), origin(), MediaEngagementSession::RestoreType::kNotRestored);
 
     session->RegisterAudiblePlayers(2, 2);
 
@@ -721,8 +801,8 @@ TEST_F(MediaEngagementSessionTest, DestructorCommitDataIfNeeded) {
 
   // Pretend there is nothing to commit, nothing should change.
   {
-    scoped_refptr<MediaEngagementSession> session =
-        new MediaEngagementSession(service(), origin());
+    scoped_refptr<MediaEngagementSession> session = new MediaEngagementSession(
+        service(), origin(), MediaEngagementSession::RestoreType::kNotRestored);
 
     SetPendingDataToCommitForSession(session.get(), false, false, false);
 
@@ -742,8 +822,8 @@ TEST_F(MediaEngagementSessionTest, DestructorCommitDataIfNeeded) {
 // Tests that the TimeSinceLastPlayback is set to zero if there is no previous
 // record.
 TEST_F(MediaEngagementSessionTest, TimeSinceLastPlayback_NoPreviousRecord) {
-  scoped_refptr<MediaEngagementSession> session =
-      new MediaEngagementSession(service(), origin());
+  scoped_refptr<MediaEngagementSession> session = new MediaEngagementSession(
+      service(), origin(), MediaEngagementSession::RestoreType::kNotRestored);
 
   EXPECT_TRUE(GetTimeSincePlaybackForSession(session.get()).is_zero());
 
@@ -757,8 +837,8 @@ TEST_F(MediaEngagementSessionTest, TimeSinceLastPlayback_NoPreviousRecord) {
 // Tests that the TimeSinceLastPlayback is set to the delta when there is a
 // previous record.
 TEST_F(MediaEngagementSessionTest, TimeSinceLastPlayback_PreviousRecord) {
-  scoped_refptr<MediaEngagementSession> session =
-      new MediaEngagementSession(service(), origin());
+  scoped_refptr<MediaEngagementSession> session = new MediaEngagementSession(
+      service(), origin(), MediaEngagementSession::RestoreType::kNotRestored);
 
   EXPECT_TRUE(GetTimeSincePlaybackForSession(session.get()).is_zero());
 
@@ -770,4 +850,113 @@ TEST_F(MediaEngagementSessionTest, TimeSinceLastPlayback_PreviousRecord) {
   session->RecordSignificantPlayback();
 
   EXPECT_EQ(42, GetTimeSincePlaybackForSession(session.get()).InSeconds());
+}
+
+TEST_F(MediaEngagementSessionTest, RestoredSession_SimpleVisitNotRecorded) {
+  scoped_refptr<MediaEngagementSession> session = new MediaEngagementSession(
+      service(), origin(), MediaEngagementSession::RestoreType::kRestored);
+
+  EXPECT_FALSE(HasPendingVisitToCommitForSession(session.get()));
+  EXPECT_FALSE(HasPendingDataToCommitForSession(session.get()));
+}
+
+TEST_F(MediaEngagementSessionTest, RestoredSession_PlaybackRecordsVisits) {
+  scoped_refptr<MediaEngagementSession> session = new MediaEngagementSession(
+      service(), origin(), MediaEngagementSession::RestoreType::kRestored);
+
+  int expected_visits = 0;
+  int expected_playbacks = 0;
+
+  {
+    MediaEngagementScore score =
+        service()->CreateEngagementScore(origin().GetURL());
+    expected_visits = score.visits() + 1;
+    expected_playbacks = score.media_playbacks() + 1;
+  }
+
+  session->RecordSignificantPlayback();
+
+  {
+    MediaEngagementScore score =
+        service()->CreateEngagementScore(origin().GetURL());
+    EXPECT_EQ(expected_visits, score.visits());
+    EXPECT_EQ(expected_playbacks, score.media_playbacks());
+  }
+}
+
+TEST_F(MediaEngagementSessionTest, StatusHistogram_NoPlayback) {
+  base::HistogramTester histogram_tester;
+
+  histogram_tester.ExpectTotalCount("Media.Engagement.Session", 0);
+  histogram_tester.ExpectTotalCount("Media.Engagement.Session.Restored", 0);
+
+  {
+    scoped_refptr<MediaEngagementSession> session = new MediaEngagementSession(
+        service(), origin(), MediaEngagementSession::RestoreType::kNotRestored);
+  }
+
+  histogram_tester.ExpectTotalCount("Media.Engagement.Session", 1);
+  histogram_tester.ExpectTotalCount("Media.Engagement.Session.Restored", 0);
+
+  histogram_tester.ExpectBucketCount("Media.Engagement.Session", 0, 1);
+}
+
+TEST_F(MediaEngagementSessionTest, StatusHistogram_Playback) {
+  base::HistogramTester histogram_tester;
+
+  histogram_tester.ExpectTotalCount("Media.Engagement.Session", 0);
+  histogram_tester.ExpectTotalCount("Media.Engagement.Session.Restored", 0);
+
+  {
+    scoped_refptr<MediaEngagementSession> session = new MediaEngagementSession(
+        service(), origin(), MediaEngagementSession::RestoreType::kNotRestored);
+
+    session->RecordSignificantPlayback();
+  }
+
+  histogram_tester.ExpectTotalCount("Media.Engagement.Session", 2);
+  histogram_tester.ExpectTotalCount("Media.Engagement.Session.Restored", 0);
+
+  histogram_tester.ExpectBucketCount("Media.Engagement.Session", 0, 1);
+  histogram_tester.ExpectBucketCount("Media.Engagement.Session", 1, 1);
+}
+
+TEST_F(MediaEngagementSessionTest, StatusHistogram_Restored_NoPlayback) {
+  base::HistogramTester histogram_tester;
+
+  histogram_tester.ExpectTotalCount("Media.Engagement.Session", 0);
+  histogram_tester.ExpectTotalCount("Media.Engagement.Session.Restored", 0);
+
+  {
+    scoped_refptr<MediaEngagementSession> session = new MediaEngagementSession(
+        service(), origin(), MediaEngagementSession::RestoreType::kRestored);
+  }
+
+  histogram_tester.ExpectTotalCount("Media.Engagement.Session", 1);
+  histogram_tester.ExpectTotalCount("Media.Engagement.Session.Restored", 1);
+
+  histogram_tester.ExpectBucketCount("Media.Engagement.Session", 0, 1);
+  histogram_tester.ExpectBucketCount("Media.Engagement.Session.Restored", 0, 1);
+}
+
+TEST_F(MediaEngagementSessionTest, StatusHistogram_Restored_Playback) {
+  base::HistogramTester histogram_tester;
+
+  histogram_tester.ExpectTotalCount("Media.Engagement.Session", 0);
+  histogram_tester.ExpectTotalCount("Media.Engagement.Session.Restored", 0);
+
+  {
+    scoped_refptr<MediaEngagementSession> session = new MediaEngagementSession(
+        service(), origin(), MediaEngagementSession::RestoreType::kRestored);
+
+    session->RecordSignificantPlayback();
+  }
+
+  histogram_tester.ExpectTotalCount("Media.Engagement.Session", 2);
+  histogram_tester.ExpectTotalCount("Media.Engagement.Session.Restored", 2);
+
+  histogram_tester.ExpectBucketCount("Media.Engagement.Session", 0, 1);
+  histogram_tester.ExpectBucketCount("Media.Engagement.Session", 1, 1);
+  histogram_tester.ExpectBucketCount("Media.Engagement.Session.Restored", 0, 1);
+  histogram_tester.ExpectBucketCount("Media.Engagement.Session.Restored", 1, 1);
 }

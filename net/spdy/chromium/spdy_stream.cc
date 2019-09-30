@@ -65,7 +65,7 @@ class SpdyStream::HeadersBufferProducer : public SpdyBufferProducer {
     DCHECK(stream_.get());
   }
 
-  ~HeadersBufferProducer() override {}
+  ~HeadersBufferProducer() override = default;
 
   std::unique_ptr<SpdyBuffer> ProduceBuffer() override {
     if (!stream_.get()) {
@@ -87,7 +87,8 @@ SpdyStream::SpdyStream(SpdyStreamType type,
                        RequestPriority priority,
                        int32_t initial_send_window_size,
                        int32_t max_recv_window_size,
-                       const NetLogWithSource& net_log)
+                       const NetLogWithSource& net_log,
+                       const NetworkTrafficAnnotationTag& traffic_annotation)
     : type_(type),
       stream_id_(0),
       url_(url),
@@ -111,6 +112,7 @@ SpdyStream::SpdyStream(SpdyStreamType type,
       send_bytes_(0),
       recv_bytes_(0),
       write_handler_guard_(false),
+      traffic_annotation_(traffic_annotation),
       weak_ptr_factory_(this) {
   CHECK(type_ == SPDY_BIDIRECTIONAL_STREAM ||
         type_ == SPDY_REQUEST_RESPONSE_STREAM ||
@@ -390,9 +392,13 @@ void SpdyStream::OnHeadersReceived(const SpdyHeaderBlock& response_headers,
           return;
         }
 
-        // Ignore informational headers.
+        // Ignore informational headers like 103 Early Hints.
         // TODO(bnc): Add support for 103 Early Hints, https://crbug.com/671310.
-        if (status / 100 == 1) {
+        // However, do not ignore 101 Switching Protocols, because broken
+        // servers might send this as a response to a WebSocket request,
+        // in which case it needs to pass through so that the WebSocket layer
+        // can signal an error.
+        if (status / 100 == 1 && status != 101) {
           return;
         }
       }
@@ -455,7 +461,14 @@ void SpdyStream::OnHeadersReceived(const SpdyHeaderBlock& response_headers,
   }
 }
 
-void SpdyStream::OnPushPromiseHeadersReceived(SpdyHeaderBlock headers) {
+bool SpdyStream::ShouldRetryRSTPushStream() {
+  // Retry if the stream is a pushed stream, has been claimed, but did not yet
+  // receive response headers
+  return (response_headers_.empty() && type_ == SPDY_PUSH_STREAM && delegate_);
+}
+
+void SpdyStream::OnPushPromiseHeadersReceived(SpdyHeaderBlock headers,
+                                              GURL url) {
   CHECK(!request_headers_valid_);
   CHECK_EQ(io_state_, STATE_IDLE);
   CHECK_EQ(type_, SPDY_PUSH_STREAM);
@@ -464,7 +477,6 @@ void SpdyStream::OnPushPromiseHeadersReceived(SpdyHeaderBlock headers) {
   io_state_ = STATE_RESERVED_REMOTE;
   request_headers_ = std::move(headers);
   request_headers_valid_ = true;
-  url_from_header_block_ = GetUrlFromHeaderBlock(request_headers_);
 }
 
 void SpdyStream::OnDataReceived(std::unique_ptr<SpdyBuffer> buffer) {
@@ -481,6 +493,13 @@ void SpdyStream::OnDataReceived(std::unique_ptr<SpdyBuffer> buffer) {
     const SpdyString error("DATA received after trailers.");
     LogStreamError(ERR_SPDY_PROTOCOL_ERROR, error);
     session_->ResetStream(stream_id_, ERROR_CODE_PROTOCOL_ERROR, error);
+    return;
+  }
+
+  if (io_state_ == STATE_HALF_CLOSED_REMOTE) {
+    const SpdyString error("DATA received on half-closed (remove) stream.");
+    LogStreamError(ERR_SPDY_PROTOCOL_ERROR, error);
+    session_->ResetStream(stream_id_, ERROR_CODE_STREAM_CLOSED, error);
     return;
   }
 
@@ -690,7 +709,6 @@ int SpdyStream::SendRequestHeaders(SpdyHeaderBlock request_headers,
   CHECK_EQ(io_state_, STATE_IDLE);
   request_headers_ = std::move(request_headers);
   request_headers_valid_ = true;
-  url_from_header_block_ = GetUrlFromHeaderBlock(request_headers_);
   pending_send_status_ = send_status;
   session_->EnqueueStreamWrite(
       GetWeakPtr(), SpdyFrameType::HEADERS,
@@ -713,6 +731,12 @@ void SpdyStream::SendData(IOBuffer* data,
 
 bool SpdyStream::GetSSLInfo(SSLInfo* ssl_info) const {
   return session_->GetSSLInfo(ssl_info);
+}
+
+Error SpdyStream::GetTokenBindingSignature(crypto::ECPrivateKey* key,
+                                           TokenBindingType tb_type,
+                                           std::vector<uint8_t>* out) const {
+  return session_->GetTokenBindingSignature(key, tb_type, out);
 }
 
 bool SpdyStream::WasAlpnNegotiated() const {
@@ -785,7 +809,6 @@ size_t SpdyStream::EstimateMemoryUsage() const {
   // once scoped_refptr support is in.
   return SpdyEstimateMemoryUsage(url_) +
          SpdyEstimateMemoryUsage(request_headers_) +
-         SpdyEstimateMemoryUsage(url_from_header_block_) +
          SpdyEstimateMemoryUsage(pending_recv_data_) +
          SpdyEstimateMemoryUsage(response_headers_);
 }

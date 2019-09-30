@@ -73,6 +73,7 @@ struct PolicyProvider::PrefsForManagedDefaultMapEntry {
 // static
 const PolicyProvider::PrefsForManagedDefaultMapEntry
     PolicyProvider::kPrefsForManagedDefault[] = {
+        {CONTENT_SETTINGS_TYPE_ADS, prefs::kManagedDefaultAdsSetting},
         {CONTENT_SETTINGS_TYPE_COOKIES, prefs::kManagedDefaultCookiesSetting},
         {CONTENT_SETTINGS_TYPE_IMAGES, prefs::kManagedDefaultImagesSetting},
         {CONTENT_SETTINGS_TYPE_GEOLOCATION,
@@ -89,6 +90,8 @@ const PolicyProvider::PrefsForManagedDefaultMapEntry
         {CONTENT_SETTINGS_TYPE_POPUPS, prefs::kManagedDefaultPopupsSetting},
         {CONTENT_SETTINGS_TYPE_BLUETOOTH_GUARD,
          prefs::kManagedDefaultWebBluetoothGuardSetting},
+        {CONTENT_SETTINGS_TYPE_USB_GUARD,
+         prefs::kManagedDefaultWebUsbGuardSetting},
 };
 
 // static
@@ -110,6 +113,8 @@ void PolicyProvider::RegisterProfilePrefs(
   registry->RegisterListPref(prefs::kManagedPopupsBlockedForUrls);
   // Preferences for default content setting policies. If a policy is not set of
   // the corresponding preferences below is set to CONTENT_SETTING_DEFAULT.
+  registry->RegisterIntegerPref(prefs::kManagedDefaultAdsSetting,
+                                CONTENT_SETTING_DEFAULT);
   registry->RegisterIntegerPref(prefs::kManagedDefaultCookiesSetting,
                                 CONTENT_SETTING_DEFAULT);
   registry->RegisterIntegerPref(prefs::kManagedDefaultGeolocationSetting,
@@ -127,6 +132,8 @@ void PolicyProvider::RegisterProfilePrefs(
   registry->RegisterIntegerPref(prefs::kManagedDefaultPopupsSetting,
                                 CONTENT_SETTING_DEFAULT);
   registry->RegisterIntegerPref(prefs::kManagedDefaultWebBluetoothGuardSetting,
+                                CONTENT_SETTING_DEFAULT);
+  registry->RegisterIntegerPref(prefs::kManagedDefaultWebUsbGuardSetting,
                                 CONTENT_SETTING_DEFAULT);
 }
 
@@ -162,6 +169,7 @@ PolicyProvider::PolicyProvider(PrefService* prefs) : prefs_(prefs) {
   // the preference default content settings. If a default content settings type
   // is managed any user defined exceptions (patterns) for this type are
   // ignored.
+  pref_change_registrar_.Add(prefs::kManagedDefaultAdsSetting, callback);
   pref_change_registrar_.Add(prefs::kManagedDefaultCookiesSetting, callback);
   pref_change_registrar_.Add(
       prefs::kManagedDefaultGeolocationSetting, callback);
@@ -174,6 +182,8 @@ PolicyProvider::PolicyProvider(PrefService* prefs) : prefs_(prefs) {
   pref_change_registrar_.Add(prefs::kManagedDefaultPluginsSetting, callback);
   pref_change_registrar_.Add(prefs::kManagedDefaultPopupsSetting, callback);
   pref_change_registrar_.Add(prefs::kManagedDefaultWebBluetoothGuardSetting,
+                             callback);
+  pref_change_registrar_.Add(prefs::kManagedDefaultWebUsbGuardSetting,
                              callback);
 }
 

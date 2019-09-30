@@ -86,8 +86,6 @@ class MEDIA_EXPORT MimeUtil {
                                       const std::vector<std::string>& codecs,
                                       bool is_encrypted) const;
 
-  void RemoveProprietaryMediaTypesAndCodecs();
-
   // Checks android platform specific codec restrictions. Returns true if
   // |codec| is supported when contained in |mime_type_lower_case|.
   // |is_encrypted| means the codec will be used with encrypted blocks.
@@ -173,12 +171,6 @@ class MEDIA_EXPORT MimeUtil {
                                 uint8_t video_level,
                                 const VideoColorSpace& eotf,
                                 bool is_encrypted) const;
-
-  // Wrapper around IsCodecSupported for simple codecs that are entirely
-  // described (or implied) by the container mime-type.
-  SupportsType IsSimpleCodecSupported(const std::string& mime_type_lower_case,
-                                      Codec codec,
-                                      bool is_encrypted) const;
 
   // Returns true if |codec| refers to a proprietary codec.
   bool IsCodecProprietary(Codec codec) const;

@@ -46,6 +46,11 @@ void InMemoryTabRestoreService::ClearEntries() {
   helper_.ClearEntries();
 }
 
+void InMemoryTabRestoreService::DeleteNavigationEntries(
+    const DeletionPredicate& predicate) {
+  helper_.DeleteNavigationEntries(predicate);
+}
+
 const TabRestoreService::Entries& InMemoryTabRestoreService::entries() const {
   return helper_.entries();
 }
@@ -56,13 +61,13 @@ std::vector<LiveTab*> InMemoryTabRestoreService::RestoreMostRecentEntry(
 }
 
 std::unique_ptr<TabRestoreService::Tab>
-InMemoryTabRestoreService::RemoveTabEntryById(SessionID::id_type id) {
+InMemoryTabRestoreService::RemoveTabEntryById(SessionID id) {
   return helper_.RemoveTabEntryById(id);
 }
 
 std::vector<LiveTab*> InMemoryTabRestoreService::RestoreEntryById(
     LiveTabContext* context,
-    SessionID::id_type id,
+    SessionID id,
     WindowOpenDisposition disposition) {
   return helper_.RestoreEntryById(context, id, disposition);
 }

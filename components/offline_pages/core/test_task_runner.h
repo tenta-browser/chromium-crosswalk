@@ -8,7 +8,7 @@
 #include <memory>
 
 #include "base/macros.h"
-#include "base/test/test_simple_task_runner.h"
+#include "base/test/test_mock_time_task_runner.h"
 
 namespace offline_pages {
 class Task;
@@ -17,19 +17,22 @@ class Task;
 class TestTaskRunner {
  public:
   explicit TestTaskRunner(
-      scoped_refptr<base::TestSimpleTaskRunner> task_runner);
+      scoped_refptr<base::TestMockTimeTaskRunner> task_runner);
   ~TestTaskRunner();
 
   // Runs task with expectation that it correctly completes.
   // Task is also cleaned up after completing.
   void RunTask(std::unique_ptr<Task> task);
+  // Runs task with expectation that it correctly completes.
+  // Task is not cleaned up after completing.
+  void RunTask(Task* task);
 
  private:
   // Certainly confusing, but internal task runner, is simply a test version of
   // a single thread task runner. It is used for running closures.
   // The difference between that and the encapsulating task runner, is that a
   // task in a Task Queue sense may be build of multiple closures.
-  scoped_refptr<base::TestSimpleTaskRunner> task_runner_;
+  scoped_refptr<base::TestMockTimeTaskRunner> task_runner_;
 
   DISALLOW_COPY_AND_ASSIGN(TestTaskRunner);
 };

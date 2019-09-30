@@ -4,8 +4,11 @@
 
 package org.chromium.chrome.browser.payments.ui;
 
+import android.text.TextUtils;
+
 import org.chromium.base.VisibleForTesting;
 import org.chromium.chrome.R;
+import org.chromium.chrome.browser.widget.prefeditor.EditableOption;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -30,7 +33,7 @@ public class SectionInformation {
     public static final int INVALID_SELECTION = -2;
 
     @PaymentRequestUI.DataType private final int mDataType;
-    protected ArrayList<PaymentOption> mItems;
+    protected ArrayList<EditableOption> mItems;
     private int mSelectedItem;
     public String mErrorMessage;
     @Nullable
@@ -48,8 +51,8 @@ public class SectionInformation {
      *
      * @param defaultItem The only item. It is selected by default.
      */
-    public SectionInformation(@PaymentRequestUI.DataType int sectionType,
-            @Nullable PaymentOption defaultItem) {
+    public SectionInformation(
+            @PaymentRequestUI.DataType int sectionType, @Nullable EditableOption defaultItem) {
         this(sectionType, 0, defaultItem == null ? null : Arrays.asList(defaultItem));
     }
 
@@ -61,7 +64,7 @@ public class SectionInformation {
      * @param itemCollection The items in the section.
      */
     public SectionInformation(@PaymentRequestUI.DataType int sectionType, int selection,
-            Collection<? extends PaymentOption> itemCollection) {
+            Collection<? extends EditableOption> itemCollection) {
         mDataType = sectionType;
         updateItemsWithCollection(selection, itemCollection);
     }
@@ -100,7 +103,7 @@ public class SectionInformation {
      * @param position The index of the item to return.
      * @return The item in the given position or null.
      */
-    public PaymentOption getItem(int position) {
+    public EditableOption getItem(int position) {
         if (mItems == null || mItems.isEmpty() || position < 0 || position >= mItems.size()) {
             return null;
         }
@@ -124,7 +127,7 @@ public class SectionInformation {
      * @param selectedItem The currently selected item, or null of a selection has not yet been
      *                     made.
      */
-    public void setSelectedItem(PaymentOption selectedItem) {
+    public void setSelectedItem(EditableOption selectedItem) {
         if (mItems == null) return;
         for (int i = 0; i < mItems.size(); i++) {
             if (mItems.get(i) == selectedItem) {
@@ -149,7 +152,7 @@ public class SectionInformation {
      *
      * @return The selected item or null if none selected.
      */
-    public PaymentOption getSelectedItem() {
+    public EditableOption getSelectedItem() {
         return getItem(getSelectedItemIndex());
     }
 
@@ -158,10 +161,60 @@ public class SectionInformation {
      *
      * @param item The item to add.
      */
-    public void addAndSelectItem(PaymentOption item) {
+    public void addAndSelectItem(EditableOption item) {
         if (mItems == null) mItems = new ArrayList<>();
         mItems.add(0, item);
         mSelectedItem = 0;
+    }
+
+    /**
+     * Adds the given item at the head of the list if it doesn't exist and selects it if it is
+     * complete, otherwise updates the corresponding item and unselect it if it is incomplete.
+     *
+     * @param item The item to add or update.
+     */
+    public void addAndSelectOrUpdateItem(EditableOption item) {
+        if (mItems == null) mItems = new ArrayList<>();
+        int i = 0;
+        for (; i < mItems.size(); i++) {
+            if (TextUtils.equals(mItems.get(i).getIdentifier(), item.getIdentifier())) {
+                break;
+            }
+        }
+        if (i < mItems.size()) {
+            mItems.set(i, item);
+            if (mSelectedItem == i && !item.isComplete()) mSelectedItem = NO_SELECTION;
+            return;
+        }
+
+        mItems.add(0, item);
+        if (item.isComplete()) {
+            mSelectedItem = 0;
+        } else {
+            mSelectedItem = NO_SELECTION;
+        }
+    }
+
+    /**
+     * Remove the given item and unselect it if it is the selected item. Sets selected item to
+     * INVALID_SELECTION if there is no item in this section.
+     *
+     * @param identifier The identifier of the removed item.
+     */
+    public void removeAndUnselectItem(String identifier) {
+        for (int i = 0; i < mItems.size(); i++) {
+            if (TextUtils.equals(mItems.get(i).getIdentifier(), identifier)) {
+                if (mSelectedItem == i) {
+                    mSelectedItem = NO_SELECTION;
+                } else if (mSelectedItem > 0) {
+                    // Update the selected item index.
+                    mSelectedItem -= mSelectedItem > i ? 1 : 0;
+                }
+                mItems.remove(i);
+                if (mItems.size() == 0) mSelectedItem = INVALID_SELECTION;
+                break;
+            }
+        }
     }
 
     /**
@@ -228,7 +281,7 @@ public class SectionInformation {
      * @return List of items in the section.
      */
     @VisibleForTesting
-    public List<PaymentOption> getItemsForTesting() {
+    public List<EditableOption> getItemsForTesting() {
         return mItems;
     }
 
@@ -239,7 +292,7 @@ public class SectionInformation {
      * @param itemCollection The items in the section.
      */
     protected void updateItemsWithCollection(
-            int selection, @Nullable Collection<? extends PaymentOption> itemCollection) {
+            int selection, @Nullable Collection<? extends EditableOption> itemCollection) {
         if (itemCollection == null || itemCollection.isEmpty()) {
             mSelectedItem = NO_SELECTION;
             mItems = null;

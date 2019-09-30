@@ -6,11 +6,11 @@
 #import <UIKit/UIKit.h>
 #import <XCTest/XCTest.h>
 #include <map>
+#include <memory>
 
 #include "base/bind.h"
 #import "base/mac/bind_objc_block.h"
 #include "base/mac/foundation_util.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/sys_string_conversions.h"
 #include "components/browsing_data/core/pref_names.h"
 #include "components/metrics/metrics_pref_names.h"
@@ -30,7 +30,7 @@
 #import "ios/chrome/test/app/chrome_test_util.h"
 #include "ios/chrome/test/app/navigation_test_util.h"
 #import "ios/chrome/test/app/tab_test_util.h"
-#include "ios/chrome/test/app/web_view_interaction_test_util.h"
+#import "ios/chrome/test/app/web_view_interaction_test_util.h"
 #include "ios/chrome/test/earl_grey/accessibility_util.h"
 #import "ios/chrome/test/earl_grey/chrome_earl_grey.h"
 #import "ios/chrome/test/earl_grey/chrome_earl_grey_ui.h"
@@ -60,8 +60,8 @@ using chrome_test_util::ClearCacheButton;
 using chrome_test_util::ClearCookiesButton;
 using chrome_test_util::ClearSavedPasswordsButton;
 using chrome_test_util::ContentSettingsButton;
-using chrome_test_util::NavigationBarDoneButton;
 using chrome_test_util::SettingsCollectionView;
+using chrome_test_util::SettingsDoneButton;
 using chrome_test_util::SettingsMenuBackButton;
 using chrome_test_util::SettingsMenuPrivacyButton;
 using chrome_test_util::VoiceSearchButton;
@@ -167,7 +167,7 @@ void SetCertificate() {
             channel_id_service->GetChannelIDStore();
         base::Time now = base::Time::Now();
         channel_id_store->SetChannelID(
-            base::MakeUnique<net::ChannelIDStore::ChannelID>(
+            std::make_unique<net::ChannelIDStore::ChannelID>(
                 kTestOrigin1, now, crypto::ECPrivateKey::Create()));
       }));
 
@@ -231,11 +231,11 @@ bool IsCertificateCleared() {
 
   // Check if the Settings menu is displayed. If so, close it.
   error = nil;
-  [[EarlGrey selectElementWithMatcher:NavigationBarDoneButton()]
+  [[EarlGrey selectElementWithMatcher:SettingsDoneButton()]
       assertWithMatcher:grey_notNil()
                   error:&error];
   if (!error) {
-    [[EarlGrey selectElementWithMatcher:NavigationBarDoneButton()]
+    [[EarlGrey selectElementWithMatcher:SettingsDoneButton()]
         performAction:grey_tap()];
   }
 }
@@ -244,7 +244,7 @@ bool IsCertificateCleared() {
 - (void)closeSubSettingsMenu {
   [[EarlGrey selectElementWithMatcher:SettingsMenuBackButton()]
       performAction:grey_tap()];
-  [[EarlGrey selectElementWithMatcher:NavigationBarDoneButton()]
+  [[EarlGrey selectElementWithMatcher:SettingsDoneButton()]
       performAction:grey_tap()];
 }
 
@@ -278,7 +278,7 @@ bool IsCertificateCleared() {
       performAction:grey_tap()];
 
   [self clearBrowsingData];
-  [[EarlGrey selectElementWithMatcher:NavigationBarDoneButton()]
+  [[EarlGrey selectElementWithMatcher:SettingsDoneButton()]
       performAction:grey_tap()];
 }
 
@@ -313,7 +313,7 @@ bool IsCertificateCleared() {
   [[EarlGrey selectElementWithMatcher:ClearSavedPasswordsButton()]
       performAction:grey_tap()];
 
-  [[EarlGrey selectElementWithMatcher:NavigationBarDoneButton()]
+  [[EarlGrey selectElementWithMatcher:SettingsDoneButton()]
       performAction:grey_tap()];
 }
 
@@ -498,7 +498,6 @@ bool IsCertificateCleared() {
 // Tests that clearing the cookies through the UI does clear all of them. Use a
 // local server to navigate to a page that sets then tests a cookie, and then
 // clears the cookie and tests it is not set.
-// TODO(crbug.com/638674): Evaluate if this can move to shared code.
 - (void)testClearCookies {
   // Creates a map of canned responses and set up the test HTML server.
   std::map<GURL, std::pair<std::string, std::string>> response;
@@ -614,7 +613,7 @@ bool IsCertificateCleared() {
   [[EarlGrey selectElementWithMatcher:SettingsCollectionView()]
       assertWithMatcher:grey_notNil()];
 
-  [[EarlGrey selectElementWithMatcher:NavigationBarDoneButton()]
+  [[EarlGrey selectElementWithMatcher:SettingsDoneButton()]
       performAction:grey_tap()];
   GREYAssert(chrome_test_util::CloseAllIncognitoTabs(), @"Tabs did not close");
 }
@@ -623,7 +622,7 @@ bool IsCertificateCleared() {
 - (void)testAccessibilityOnSettingsPage {
   [ChromeEarlGreyUI openSettingsMenu];
   chrome_test_util::VerifyAccessibilityForCurrentScreen();
-  [[EarlGrey selectElementWithMatcher:NavigationBarDoneButton()]
+  [[EarlGrey selectElementWithMatcher:SettingsDoneButton()]
       performAction:grey_tap()];
 }
 

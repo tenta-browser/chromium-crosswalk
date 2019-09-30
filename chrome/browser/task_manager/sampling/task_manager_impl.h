@@ -24,7 +24,7 @@
 #include "chrome/browser/task_manager/sampling/task_manager_io_thread_helper.h"
 #include "chrome/browser/task_manager/task_manager_interface.h"
 #include "gpu/ipc/common/memory_stats.h"
-#include "services/resource_coordinator/public/interfaces/memory_instrumentation/memory_instrumentation.mojom.h"
+#include "services/resource_coordinator/public/cpp/memory_instrumentation/global_memory_dump.h"
 
 namespace task_manager {
 
@@ -46,9 +46,6 @@ class TaskManagerImpl : public TaskManagerInterface,
   base::Time GetStartTime(TaskId task_id) const override;
   base::TimeDelta GetCpuTime(TaskId task_id) const override;
   int64_t GetMemoryFootprintUsage(TaskId task_id) const override;
-  int64_t GetPhysicalMemoryUsage(TaskId task_id) const override;
-  int64_t GetPrivateMemoryUsage(TaskId task_id) const override;
-  int64_t GetSharedMemoryUsage(TaskId task_id) const override;
   int64_t GetSwappedMemoryUsage(TaskId task_id) const override;
   int64_t GetGpuMemoryUsage(TaskId task_id,
                             bool* has_duplicates) const override;
@@ -71,7 +68,7 @@ class TaskManagerImpl : public TaskManagerInterface,
   const base::ProcessHandle& GetProcessHandle(TaskId task_id) const override;
   const base::ProcessId& GetProcessId(TaskId task_id) const override;
   Task::Type GetType(TaskId task_id) const override;
-  int GetTabId(TaskId task_id) const override;
+  SessionID GetTabId(TaskId task_id) const override;
   int GetChildProcessUniqueId(TaskId task_id) const override;
   void GetTerminationStatus(TaskId task_id,
                             base::TerminationStatus* out_status,
@@ -113,7 +110,7 @@ class TaskManagerImpl : public TaskManagerInterface,
       const gpu::VideoMemoryUsageStats& gpu_memory_stats);
   void OnReceivedMemoryDump(
       bool success,
-      memory_instrumentation::mojom::GlobalMemoryDumpPtr ptr);
+      std::unique_ptr<memory_instrumentation::GlobalMemoryDump> dump);
 
   // task_manager::TaskManagerInterface:
   void Refresh() override;

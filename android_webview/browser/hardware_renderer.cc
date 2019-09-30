@@ -4,6 +4,7 @@
 
 #include "android_webview/browser/hardware_renderer.h"
 
+#include <memory>
 #include <utility>
 
 #include "android_webview/browser/aw_gl_surface.h"
@@ -12,10 +13,9 @@
 #include "android_webview/browser/render_thread_manager.h"
 #include "android_webview/browser/surfaces_instance.h"
 #include "android_webview/public/browser/draw_gl.h"
-#include "base/memory/ptr_util.h"
 #include "base/trace_event/trace_event.h"
 #include "components/viz/common/quads/compositor_frame.h"
-#include "components/viz/common/surfaces/local_surface_id_allocator.h"
+#include "components/viz/common/surfaces/parent_local_surface_id_allocator.h"
 #include "components/viz/service/frame_sinks/compositor_frame_sink_support.h"
 #include "components/viz/service/frame_sinks/frame_sink_manager_impl.h"
 #include "ui/gfx/transform.h"
@@ -28,17 +28,15 @@ HardwareRenderer::HardwareRenderer(RenderThreadManager* state)
       last_egl_context_(eglGetCurrentContext()),
       surfaces_(SurfacesInstance::GetOrCreateInstance()),
       frame_sink_id_(surfaces_->AllocateFrameSinkId()),
-      local_surface_id_allocator_(
-          base::MakeUnique<viz::LocalSurfaceIdAllocator>()),
+      parent_local_surface_id_allocator_(
+          std::make_unique<viz::ParentLocalSurfaceIdAllocator>()),
       last_committed_layer_tree_frame_sink_id_(0u),
       last_submitted_layer_tree_frame_sink_id_(0u) {
   DCHECK(last_egl_context_);
   surfaces_->GetFrameSinkManager()->surface_manager()->RegisterFrameSinkId(
       frame_sink_id_);
-#if DCHECK_IS_ON()
   surfaces_->GetFrameSinkManager()->surface_manager()->SetFrameSinkDebugLabel(
       frame_sink_id_, "HardwareRenderer");
-#endif
   CreateNewCompositorFrameSinkSupport();
 }
 
@@ -135,9 +133,8 @@ void HardwareRenderer::DrawGL(AwDrawGLInfo* draw_info) {
       device_scale_factor_ = device_scale_factor;
     }
 
-    bool result = support_->SubmitCompositorFrame(
-        child_id_, std::move(*child_compositor_frame));
-    DCHECK(result);
+    support_->SubmitCompositorFrame(child_id_,
+                                    std::move(*child_compositor_frame));
   }
 
   gfx::Transform transform(gfx::Transform::kSkipInitialization);
@@ -168,7 +165,7 @@ void HardwareRenderer::DrawGL(AwDrawGLInfo* draw_info) {
 
 void HardwareRenderer::AllocateSurface() {
   DCHECK(!child_id_.is_valid());
-  child_id_ = local_surface_id_allocator_->GenerateId();
+  child_id_ = parent_local_surface_id_allocator_->GenerateId();
   surfaces_->AddChildId(viz::SurfaceId(frame_sink_id_, child_id_));
 }
 
@@ -176,7 +173,7 @@ void HardwareRenderer::DestroySurface() {
   DCHECK(child_id_.is_valid());
 
   surfaces_->RemoveChildId(viz::SurfaceId(frame_sink_id_, child_id_));
-  support_->EvictCurrentSurface();
+  support_->EvictLastActivatedSurface();
   child_id_ = viz::LocalSurfaceId();
   surfaces_->GetFrameSinkManager()->surface_manager()->GarbageCollectSurfaces();
 }
@@ -272,7 +269,7 @@ void HardwareRenderer::CreateNewCompositorFrameSinkSupport() {
   constexpr bool is_root = false;
   constexpr bool needs_sync_points = true;
   support_.reset();
-  support_ = viz::CompositorFrameSinkSupport::Create(
+  support_ = std::make_unique<viz::CompositorFrameSinkSupport>(
       this, surfaces_->GetFrameSinkManager(), frame_sink_id_, is_root,
       needs_sync_points);
 }

@@ -98,7 +98,7 @@ class AXTreeSerializer {
 
  private:
   // Return the least common ancestor of a node in the source tree
-  // and a node in the client tree, or NULL if there is no such node.
+  // and a node in the client tree, or nullptr if there is no such node.
   // The least common ancestor is the closest ancestor to |node| (which
   // may be |node| itself) that's in both the source tree and client tree,
   // and for which both the source and client tree agree on their ancestor
@@ -166,14 +166,14 @@ class AXTreeSerializer {
   AXTreeData client_tree_data_;
 
   // Our representation of the client tree.
-  ClientTreeNode* client_root_;
+  ClientTreeNode* client_root_ = nullptr;
 
   // A map from IDs to nodes in the client tree.
   base::hash_map<int32_t, ClientTreeNode*> client_id_map_;
 
   // The maximum number of nodes to serialize in a given call to
   // SerializeChanges, or 0 if there's no maximum.
-  size_t max_node_count_;
+  size_t max_node_count_ = 0;
 };
 
 // In order to keep track of what nodes the client knows about, we keep a
@@ -190,7 +190,7 @@ struct AX_EXPORT ClientTreeNode {
 template <typename AXSourceNode, typename AXNodeData, typename AXTreeData>
 AXTreeSerializer<AXSourceNode, AXNodeData, AXTreeData>::AXTreeSerializer(
     AXTreeSource<AXSourceNode, AXNodeData, AXTreeData>* tree)
-    : tree_(tree), client_root_(NULL), max_node_count_(0) {}
+    : tree_(tree) {}
 
 template <typename AXSourceNode, typename AXNodeData, typename AXTreeData>
 AXTreeSerializer<AXSourceNode, AXNodeData, AXTreeData>::~AXTreeSerializer() {
@@ -200,13 +200,15 @@ AXTreeSerializer<AXSourceNode, AXNodeData, AXTreeData>::~AXTreeSerializer() {
 template <typename AXSourceNode, typename AXNodeData, typename AXTreeData>
 void AXTreeSerializer<AXSourceNode, AXNodeData, AXTreeData>::Reset() {
   client_tree_data_ = AXTreeData();
-  if (!client_root_)
-    return;
 
-  DeleteClientSubtree(client_root_);
-  client_id_map_.erase(client_root_->id);
-  delete client_root_;
-  client_root_ = NULL;
+  // Normally we use DeleteClientSubtree to remove nodes from the tree,
+  // but Reset() needs to work even if the tree is in a broken state.
+  // Instead, iterate over |client_id_map_| to ensure we clear all nodes and
+  // start from scratch.
+  for (auto&& item : client_id_map_)
+    delete item.second;
+  client_id_map_.clear();
+  client_root_ = nullptr;
 }
 
 template <typename AXSourceNode, typename AXNodeData, typename AXTreeData>
@@ -221,7 +223,7 @@ AXSourceNode
 AXTreeSerializer<AXSourceNode, AXNodeData, AXTreeData>::LeastCommonAncestor(
     AXSourceNode node,
     ClientTreeNode* client_node) {
-  if (!tree_->IsValid(node) || client_node == NULL)
+  if (!tree_->IsValid(node) || client_node == nullptr)
     return tree_->GetNull();
 
   std::vector<AXSourceNode> ancestors;
@@ -314,18 +316,18 @@ AXTreeSerializer<AXSourceNode, AXNodeData, AXTreeData>::ClientTreeNodeById(
       client_id_map_.find(id);
   if (iter != client_id_map_.end())
     return iter->second;
-  else
-    return NULL;
+  return nullptr;
 }
 
 template <typename AXSourceNode, typename AXNodeData, typename AXTreeData>
 bool AXTreeSerializer<AXSourceNode, AXNodeData, AXTreeData>::SerializeChanges(
     AXSourceNode node,
     AXTreeUpdateBase<AXNodeData, AXTreeData>* out_update) {
-  // Send the tree data if it's changed since the last update.
+  // Send the tree data if it's changed since the last update, or if
+  // out_update->has_tree_data is already set to true.
   AXTreeData new_tree_data;
   if (tree_->GetTreeData(&new_tree_data) &&
-      new_tree_data != client_tree_data_) {
+      (out_update->has_tree_data || new_tree_data != client_tree_data_)) {
     out_update->has_tree_data = true;
     out_update->tree_data = new_tree_data;
     client_tree_data_ = new_tree_data;
@@ -426,7 +428,7 @@ bool AXTreeSerializer<AXSourceNode, AXNodeData, AXTreeData>::
     client_root_ = new ClientTreeNode();
     client_node = client_root_;
     client_node->id = id;
-    client_node->parent = NULL;
+    client_node->parent = nullptr;
     client_id_map_[client_node->id] = client_node;
   }
 

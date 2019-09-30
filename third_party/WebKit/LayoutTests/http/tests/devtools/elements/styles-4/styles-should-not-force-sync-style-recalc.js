@@ -20,9 +20,6 @@
       .test-8 { font-family: 'Arial'; }
       .test-9 { font-family: 'Arial'; }
       </style>
-      <p>
-      Tests that inspector doesn't force sync layout on operations with CSSOM.<a href="https://code.google.com/p/chromium/issues/detail?id=315885">Bug 315885</a>.
-      </p>
     `);
   await TestRunner.evaluateInPagePromise(`
       function performActions()
@@ -34,13 +31,11 @@
   `);
 
   UI.context.setFlavor(Timeline.TimelinePanel, UI.panels.timeline);
-  PerformanceTestRunner.evaluateWithTimeline('performActions()', callback);
+  await PerformanceTestRunner.evaluateWithTimeline('performActions()');
 
-  function callback() {
-    PerformanceTestRunner.timelineModel().mainThreadEvents().forEach(event => {
-      if (event.name === TimelineModel.TimelineModel.RecordType.UpdateLayoutTree)
-        TestRunner.addResult(event.name);
-    });
-    TestRunner.completeTest();
-  }
+  PerformanceTestRunner.mainTrackEvents().forEach(event => {
+    if (event.name === TimelineModel.TimelineModel.RecordType.UpdateLayoutTree)
+      TestRunner.addResult(event.name);
+  });
+  TestRunner.completeTest();
 })();

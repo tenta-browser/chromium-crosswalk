@@ -12,7 +12,6 @@
 
 #include "base/callback.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/test/histogram_tester.h"
@@ -37,11 +36,8 @@
 #include "content/common/service_worker/service_worker_utils.h"
 #include "content/public/browser/blob_handle.h"
 #include "content/public/common/browser_side_navigation_policy.h"
-#include "content/public/common/request_context_frame_type.h"
 #include "content/public/common/request_context_type.h"
-#include "content/public/common/resource_request_body.h"
 #include "content/public/common/resource_type.h"
-#include "content/public/common/service_worker_modes.h"
 #include "content/public/test/mock_resource_context.h"
 #include "content/public/test/test_browser_context.h"
 #include "content/public/test/test_browser_thread_bundle.h"
@@ -57,19 +53,21 @@
 #include "net/url_request/url_request_job_factory_impl.h"
 #include "net/url_request/url_request_test_job.h"
 #include "net/url_request/url_request_test_util.h"
+#include "services/network/public/cpp/resource_request_body.h"
+#include "services/network/public/mojom/request_context_frame_type.mojom.h"
 #include "storage/browser/blob/blob_data_builder.h"
 #include "storage/browser/blob/blob_storage_context.h"
 #include "storage/browser/blob/blob_url_request_job.h"
 #include "storage/browser/blob/blob_url_request_job_factory.h"
 #include "storage/common/blob_storage/blob_handle.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/WebKit/public/platform/modules/serviceworker/service_worker.mojom.h"
-#include "third_party/WebKit/public/platform/modules/serviceworker/service_worker_event_status.mojom.h"
-#include "third_party/WebKit/public/platform/modules/serviceworker/service_worker_registration.mojom.h"
+#include "third_party/blink/public/mojom/service_worker/service_worker.mojom.h"
+#include "third_party/blink/public/mojom/service_worker/service_worker_event_status.mojom.h"
+#include "third_party/blink/public/mojom/service_worker/service_worker_installed_scripts_manager.mojom.h"
+#include "third_party/blink/public/mojom/service_worker/service_worker_registration.mojom.h"
 
 namespace content {
-
-namespace {
+namespace service_worker_url_request_job_unittest {
 
 const int kProviderID = 100;
 const char kTestData[] = "Here is sample text for the blob.";
@@ -99,9 +97,6 @@ class MockProtocolHandler : public net::URLRequestJobFactory::ProtocolHandler {
   ~MockProtocolHandler() override = default;
 
   void set_resource_type(ResourceType type) { resource_type_ = type; }
-  void set_custom_timeout(base::Optional<base::TimeDelta> timeout) {
-    custom_timeout_ = timeout;
-  }
   void set_simulate_navigation_preload() {
     simulate_navigation_preload_ = true;
   }
@@ -123,11 +118,11 @@ class MockProtocolHandler : public net::URLRequestJobFactory::ProtocolHandler {
         blob_storage_context_, resource_context_,
         network::mojom::FetchRequestMode::kNoCORS,
         network::mojom::FetchCredentialsMode::kOmit,
-        FetchRedirectMode::FOLLOW_MODE, std::string() /* integrity */,
-        false /* keepalive */, resource_type_, REQUEST_CONTEXT_TYPE_HYPERLINK,
-        REQUEST_CONTEXT_FRAME_TYPE_TOP_LEVEL,
-        scoped_refptr<ResourceRequestBody>(), ServiceWorkerFetchType::FETCH,
-        custom_timeout_, delegate_);
+        network::mojom::FetchRedirectMode::kFollow,
+        std::string() /* integrity */, false /* keepalive */, resource_type_,
+        REQUEST_CONTEXT_TYPE_HYPERLINK,
+        network::mojom::RequestContextFrameType::kTopLevel,
+        scoped_refptr<network::ResourceRequestBody>(), delegate_);
     if (simulate_navigation_preload_) {
       job_->set_simulate_navigation_preload_for_test();
     }
@@ -144,7 +139,6 @@ class MockProtocolHandler : public net::URLRequestJobFactory::ProtocolHandler {
   ServiceWorkerURLRequestJob::Delegate* delegate_;
   ResourceType resource_type_;
   bool simulate_navigation_preload_;
-  base::Optional<base::TimeDelta> custom_timeout_;
 };
 
 // Returns a BlobProtocolHandler that uses |blob_storage_context|. Caller owns
@@ -166,8 +160,6 @@ void SaveStatusCallback(ServiceWorkerStatusCode* out_status,
                         ServiceWorkerStatusCode status) {
   *out_status = status;
 }
-
-}  // namespace
 
 // ServiceWorkerURLRequestJobTest is for testing the handling of URL requests by
 // a service worker.
@@ -209,8 +201,7 @@ class ServiceWorkerURLRequestJobTest
 
   void SetUpWithHelper(std::unique_ptr<EmbeddedWorkerTestHelper> helper) {
     helper_ = std::move(helper);
-    helper_->context()->storage()->LazyInitializeForTest(
-        base::BindOnce(&base::DoNothing));
+    helper_->context()->storage()->LazyInitializeForTest(base::DoNothing());
     base::RunLoop().RunUntilIdle();
 
     // Prepare HTTP response info for the version.
@@ -224,18 +215,13 @@ class ServiceWorkerURLRequestJobTest
     http_info->headers = base::MakeRefCounted<net::HttpResponseHeaders>("");
 
     // Create a registration and service worker version.
+    blink::mojom::ServiceWorkerRegistrationOptions options;
+    options.scope = GURL("https://example.com/");
     registration_ = new ServiceWorkerRegistration(
-        blink::mojom::ServiceWorkerRegistrationOptions(
-            GURL("https://example.com/")),
-        1L, helper_->context()->AsWeakPtr());
+        options, 1L, helper_->context()->AsWeakPtr());
     version_ = new ServiceWorkerVersion(
         registration_.get(), GURL("https://example.com/service_worker.js"), 1L,
         helper_->context()->AsWeakPtr());
-    // If script streaming is not enabled, SetMainScriptHttpResponseInfo()
-    // should be called manually since |http_info| which is stored in disk cache
-    // won't be read during SWVersion::StartWorker() in tests.
-    if (!ServiceWorkerUtils::IsScriptStreamingEnabled())
-      version_->SetMainScriptHttpResponseInfo(*http_info);
     std::vector<ServiceWorkerDatabase::ResourceRecord> records;
     records.push_back(WriteToDiskCacheWithCustomResponseInfoSync(
         helper_->context()->storage(), version_->script_url(), 10,
@@ -343,7 +329,7 @@ class ServiceWorkerURLRequestJobTest
                       expected_response, expect_valid_ssl);
   }
 
-  bool HasWork() { return version_->HasWork(); }
+  bool HasWork() { return version_->HasWorkInBrowser(); }
 
   // Runs a request where the active worker starts a request in ACTIVATING state
   // and fails to reach ACTIVATED.
@@ -517,7 +503,7 @@ class DelayHelper : public EmbeddedWorkerTestHelper {
       blink::mojom::ServiceWorkerHostAssociatedPtrInfo service_worker_host,
       mojom::EmbeddedWorkerInstanceHostAssociatedPtrInfo instance_host,
       mojom::ServiceWorkerProviderInfoForStartWorkerPtr provider_info,
-      mojom::ServiceWorkerInstalledScriptsInfoPtr installed_scripts_info)
+      blink::mojom::ServiceWorkerInstalledScriptsInfoPtr installed_scripts_info)
       override {
     embedded_worker_id_ = embedded_worker_id;
     service_worker_version_id_ = service_worker_version_id;
@@ -532,9 +518,9 @@ class DelayHelper : public EmbeddedWorkerTestHelper {
     installed_scripts_info_ = std::move(installed_scripts_info);
   }
 
-  void OnLegacyFetchEvent(
+  void OnFetchEvent(
       int embedded_worker_id,
-      const ServiceWorkerFetchRequest& /* request */,
+      const network::ResourceRequest& /* request */,
       mojom::FetchEventPreloadHandlePtr preload_handle,
       mojom::ServiceWorkerFetchResponseCallbackPtr response_callback,
       mojom::ServiceWorkerEventDispatcher::DispatchFetchEventCallback
@@ -556,7 +542,7 @@ class DelayHelper : public EmbeddedWorkerTestHelper {
   mojom::EmbeddedWorkerInstanceHostAssociatedPtrInfo
       start_worker_instance_host_;
   mojom::ServiceWorkerProviderInfoForStartWorkerPtr provider_info_;
-  mojom::ServiceWorkerInstalledScriptsInfoPtr installed_scripts_info_;
+  blink::mojom::ServiceWorkerInstalledScriptsInfoPtr installed_scripts_info_;
   int embedded_worker_id_ = 0;
   mojom::ServiceWorkerFetchResponseCallbackPtr response_callback_;
   mojom::FetchEventPreloadHandlePtr preload_handle_;
@@ -705,29 +691,15 @@ TEST_F(ServiceWorkerURLRequestJobTest,
       0);
 }
 
-TEST_F(ServiceWorkerURLRequestJobTest, CustomTimeout) {
-  SetUpWithHelper(std::make_unique<EmbeddedWorkerTestHelper>(base::FilePath()));
-
-  version_->SetStatus(ServiceWorkerVersion::ACTIVATED);
-
-  // Set mock clock on version_ to check timeout behavior.
-  tick_clock_.SetNowTicks(base::TimeTicks::Now());
-  version_->SetTickClockForTesting(&tick_clock_);
-
-  protocol_handler_->set_custom_timeout(base::TimeDelta::FromSeconds(5));
-  TestRequest(200, "OK", std::string(), true /* expect_valid_ssl */);
-  EXPECT_EQ(base::TimeDelta::FromSeconds(5), version_->remaining_timeout());
-}
-
 class ProviderDeleteHelper : public EmbeddedWorkerTestHelper {
  public:
   ProviderDeleteHelper() : EmbeddedWorkerTestHelper(base::FilePath()) {}
   ~ProviderDeleteHelper() override {}
 
  protected:
-  void OnLegacyFetchEvent(
+  void OnFetchEvent(
       int /* embedded_worker_id */,
-      const ServiceWorkerFetchRequest& /* request */,
+      const network::ResourceRequest& /* request */,
       mojom::FetchEventPreloadHandlePtr /* preload_handle */,
       mojom::ServiceWorkerFetchResponseCallbackPtr response_callback,
       mojom::ServiceWorkerEventDispatcher::DispatchFetchEventCallback
@@ -815,9 +787,9 @@ class BlobResponder : public EmbeddedWorkerTestHelper {
   ~BlobResponder() override = default;
 
  protected:
-  void OnLegacyFetchEvent(
+  void OnFetchEvent(
       int /* embedded_worker_id */,
-      const ServiceWorkerFetchRequest& /* request */,
+      const network::ResourceRequest& /* request */,
       mojom::FetchEventPreloadHandlePtr /* preload_handle */,
       mojom::ServiceWorkerFetchResponseCallbackPtr response_callback,
       mojom::ServiceWorkerEventDispatcher::DispatchFetchEventCallback
@@ -860,7 +832,7 @@ TEST_F(ServiceWorkerURLRequestJobTest, BlobResponse) {
     expected_response += kTestData;
   }
   std::unique_ptr<storage::BlobDataHandle> blob_handle =
-      blob_storage_context->context()->AddFinishedBlob(blob_data.get());
+      blob_storage_context->context()->AddFinishedBlob(std::move(blob_data));
   SetUpWithHelper(std::make_unique<BlobResponder>(blob_handle->uuid(),
                                                   expected_response.size()));
 
@@ -916,9 +888,9 @@ class StreamResponder : public EmbeddedWorkerTestHelper {
   ~StreamResponder() override {}
 
  protected:
-  void OnLegacyFetchEvent(
+  void OnFetchEvent(
       int /* embedded_worker_id */,
-      const ServiceWorkerFetchRequest& /* request */,
+      const network::ResourceRequest& /* request */,
       mojom::FetchEventPreloadHandlePtr /* preload_handle */,
       mojom::ServiceWorkerFetchResponseCallbackPtr response_callback,
       mojom::ServiceWorkerEventDispatcher::DispatchFetchEventCallback
@@ -1306,9 +1278,9 @@ class FailFetchHelper : public EmbeddedWorkerTestHelper {
   ~FailFetchHelper() override {}
 
  protected:
-  void OnLegacyFetchEvent(
+  void OnFetchEvent(
       int embedded_worker_id,
-      const ServiceWorkerFetchRequest& /* request */,
+      const network::ResourceRequest& /* request */,
       mojom::FetchEventPreloadHandlePtr /* preload_handle */,
       mojom::ServiceWorkerFetchResponseCallbackPtr /* response_callback */,
       mojom::ServiceWorkerEventDispatcher::DispatchFetchEventCallback
@@ -1399,9 +1371,9 @@ class EarlyResponseHelper : public EmbeddedWorkerTestHelper {
   }
 
  protected:
-  void OnLegacyFetchEvent(
+  void OnFetchEvent(
       int /* embedded_worker_id */,
-      const ServiceWorkerFetchRequest& /* request */,
+      const network::ResourceRequest& /* request */,
       mojom::FetchEventPreloadHandlePtr /* preload_handle */,
       mojom::ServiceWorkerFetchResponseCallbackPtr response_callback,
       mojom::ServiceWorkerEventDispatcher::DispatchFetchEventCallback
@@ -1451,10 +1423,10 @@ TEST_F(ServiceWorkerURLRequestJobTest, EarlyResponse) {
   EXPECT_FALSE(info->response_is_in_cache_storage());
   EXPECT_EQ(std::string(), info->response_cache_storage_cache_name());
 
-  EXPECT_TRUE(version_->HasWork());
+  EXPECT_TRUE(version_->HasWorkInBrowser());
   helper->FinishWaitUntil();
   base::RunLoop().RunUntilIdle();
-  EXPECT_FALSE(version_->HasWork());
+  EXPECT_FALSE(version_->HasWorkInBrowser());
 }
 
 // Test cancelling the URLRequest while the fetch event is in flight.
@@ -1479,15 +1451,16 @@ TEST_F(ServiceWorkerURLRequestJobTest, CancelRequest) {
   base::RunLoop().RunUntilIdle();
 
   // Respond to the fetch event.
-  EXPECT_TRUE(version_->HasWork());
+  EXPECT_TRUE(version_->HasWorkInBrowser());
   helper->Respond();
   base::RunLoop().RunUntilIdle();
 
   // The fetch event request should no longer be in-flight.
-  EXPECT_FALSE(version_->HasWork());
+  EXPECT_FALSE(version_->HasWorkInBrowser());
 }
 
 // TODO(kinuko): Add more tests with different response data and also for
 // FallbackToNetwork case.
 
+}  // namespace service_worker_url_request_job_unittest
 }  // namespace content

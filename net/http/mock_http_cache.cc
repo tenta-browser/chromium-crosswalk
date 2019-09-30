@@ -4,11 +4,13 @@
 
 #include "net/http/mock_http_cache.h"
 
+#include <algorithm>
 #include <limits>
 #include <memory>
 #include <utility>
 
 #include "base/bind.h"
+#include "base/callback_helpers.h"
 #include "base/location.h"
 #include "base/single_thread_task_runner.h"
 #include "base/threading/thread_task_runner_handle.h"
@@ -174,6 +176,13 @@ int MockDiskEntry::WriteData(int index,
   if (MockHttpCache::GetTestMode(test_mode_) & TEST_MODE_SYNC_CACHE_WRITE)
     return buf_len;
 
+  if (defer_op_ == DEFER_WRITE) {
+    defer_op_ = DEFER_NONE;
+    resume_callback_ = callback;
+    resume_return_code_ = buf_len;
+    return ERR_IO_PENDING;
+  }
+
   CallbackLater(callback, buf_len);
   return ERR_IO_PENDING;
 }
@@ -314,6 +323,10 @@ int MockDiskEntry::ReadyForSparseIO(const CompletionCallback& callback) {
   // already in the second pass).  Just notify the caller that it finished.
   CallbackLater(callback, 0);
   return ERR_IO_PENDING;
+}
+
+void MockDiskEntry::SetLastUsedTimeForTest(base::Time time) {
+  NOTREACHED();
 }
 
 // If |value| is true, don't deliver any completion callbacks until called
@@ -800,9 +813,8 @@ void MockBlockingBackendFactory::FinishCreation() {
   if (!callback_.is_null()) {
     if (!fail_)
       backend_->reset(new MockDiskCache());
-    CompletionCallback cb = callback_;
-    callback_.Reset();
-    cb.Run(Result());  // This object can be deleted here.
+    // Running the callback might delete |this|.
+    base::ResetAndReturn(&callback_).Run(Result());
   }
 }
 

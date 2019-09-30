@@ -7,12 +7,12 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <string>
 
-#include "net/base/int128.h"
 #include "net/quic/core/quic_packets.h"
 #include "net/quic/core/quic_time.h"
 #include "net/quic/platform/api/quic_export.h"
+#include "net/quic/platform/api/quic_string.h"
+#include "net/quic/platform/api/quic_uint128.h"
 
 namespace net {
 
@@ -54,7 +54,7 @@ class QUIC_EXPORT_PRIVATE QuicConfigValue {
   virtual QuicErrorCode ProcessPeerHello(
       const CryptoHandshakeMessage& peer_hello,
       HelloType hello_type,
-      std::string* error_details) = 0;
+      QuicString* error_details) = 0;
 
  protected:
   const QuicTag tag_;
@@ -106,7 +106,7 @@ class QUIC_EXPORT_PRIVATE QuicNegotiableUint32 : public QuicNegotiableValue {
   // |default_value_|.
   QuicErrorCode ProcessPeerHello(const CryptoHandshakeMessage& peer_hello,
                                  HelloType hello_type,
-                                 std::string* error_details) override;
+                                 QuicString* error_details) override;
 
  private:
   uint32_t max_value_;
@@ -138,7 +138,7 @@ class QUIC_EXPORT_PRIVATE QuicFixedUint32 : public QuicConfigValue {
   // Sets |value_| to the corresponding value from |peer_hello_| if it exists.
   QuicErrorCode ProcessPeerHello(const CryptoHandshakeMessage& peer_hello,
                                  HelloType hello_type,
-                                 std::string* error_details) override;
+                                 QuicString* error_details) override;
 
  private:
   uint32_t send_value_;
@@ -155,15 +155,15 @@ class QUIC_EXPORT_PRIVATE QuicFixedUint128 : public QuicConfigValue {
 
   bool HasSendValue() const;
 
-  uint128 GetSendValue() const;
+  QuicUint128 GetSendValue() const;
 
-  void SetSendValue(uint128 value);
+  void SetSendValue(QuicUint128 value);
 
   bool HasReceivedValue() const;
 
-  uint128 GetReceivedValue() const;
+  QuicUint128 GetReceivedValue() const;
 
-  void SetReceivedValue(uint128 value);
+  void SetReceivedValue(QuicUint128 value);
 
   // If has_send_value is true, serialises |tag_| and |send_value_| to |out|.
   void ToHandshakeMessage(CryptoHandshakeMessage* out) const override;
@@ -171,12 +171,12 @@ class QUIC_EXPORT_PRIVATE QuicFixedUint128 : public QuicConfigValue {
   // Sets |value_| to the corresponding value from |peer_hello_| if it exists.
   QuicErrorCode ProcessPeerHello(const CryptoHandshakeMessage& peer_hello,
                                  HelloType hello_type,
-                                 std::string* error_details) override;
+                                 QuicString* error_details) override;
 
  private:
-  uint128 send_value_;
+  QuicUint128 send_value_;
   bool has_send_value_;
-  uint128 receive_value_;
+  QuicUint128 receive_value_;
   bool has_receive_value_;
 };
 
@@ -207,7 +207,7 @@ class QUIC_EXPORT_PRIVATE QuicFixedTagVector : public QuicConfigValue {
   // it exists.
   QuicErrorCode ProcessPeerHello(const CryptoHandshakeMessage& peer_hello,
                                  HelloType hello_type,
-                                 std::string* error_details) override;
+                                 QuicString* error_details) override;
 
  private:
   QuicTagVector send_values_;
@@ -238,7 +238,7 @@ class QUIC_EXPORT_PRIVATE QuicFixedSocketAddress : public QuicConfigValue {
 
   QuicErrorCode ProcessPeerHello(const CryptoHandshakeMessage& peer_hello,
                                  HelloType hello_type,
-                                 std::string* error_details) override;
+                                 QuicString* error_details) override;
 
  private:
   QuicSocketAddress send_value_;
@@ -393,13 +393,17 @@ class QUIC_EXPORT_PRIVATE QuicConfig {
 
   bool SupportMaxHeaderListSize() const;
 
-  void SetStatelessResetTokenToSend(uint128 stateless_reset_token);
+  void SetStatelessResetTokenToSend(QuicUint128 stateless_reset_token);
 
   bool HasReceivedStatelessResetToken() const;
 
-  uint128 ReceivedStatelessResetToken() const;
+  QuicUint128 ReceivedStatelessResetToken() const;
 
   bool negotiated() const;
+
+  void SetCreateSessionTagIndicators(QuicTagVector tags);
+
+  const QuicTagVector& create_session_tag_indicators() const;
 
   // ToHandshakeMessage serialises the settings in this object as a series of
   // tags /value pairs and adds them to |out|.
@@ -409,7 +413,7 @@ class QUIC_EXPORT_PRIVATE QuicConfig {
   // the corresponding QuicErrorCode and sets detailed error in |error_details|.
   QuicErrorCode ProcessPeerHello(const CryptoHandshakeMessage& peer_hello,
                                  HelloType hello_type,
-                                 std::string* error_details);
+                                 QuicString* error_details);
 
  private:
   friend class test::QuicConfigPeer;
@@ -449,10 +453,6 @@ class QUIC_EXPORT_PRIVATE QuicConfig {
   // Initial session flow control receive window in bytes.
   QuicFixedUint32 initial_session_flow_control_window_bytes_;
 
-  // Socket receive buffer in bytes.
-  // TODO(ianswett): Deprecate once QUIC_VERSION_34 is deprecated.
-  QuicFixedUint32 socket_receive_buffer_;
-
   // Whether tell peer not to attempt connection migration.
   QuicFixedUint32 connection_migration_disabled_;
 
@@ -464,6 +464,11 @@ class QUIC_EXPORT_PRIVATE QuicConfig {
 
   // Stateless reset token used in IETF public reset packet.
   QuicFixedUint128 stateless_reset_token_;
+
+  // List of QuicTags whose presence immediately causes the session to
+  // be created. This allows for CHLOs that are larger than a single
+  // packet to be processed.
+  QuicTagVector create_session_tag_indicators_;
 };
 
 }  // namespace net

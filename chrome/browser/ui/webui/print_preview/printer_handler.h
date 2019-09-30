@@ -11,12 +11,12 @@
 #include "base/callback.h"
 #include "base/memory/ref_counted.h"
 #include "base/strings/string16.h"
-#include "chrome/common/features.h"
+#include "chrome/common/buildflags.h"
 
 namespace base {
 class DictionaryValue;
 class ListValue;
-class RefCountedBytes;
+class RefCountedMemory;
 class Value;
 }
 
@@ -71,6 +71,7 @@ class PrinterHandler {
       printing::StickySettings* sticky_settings);
 
   static std::unique_ptr<PrinterHandler> CreateForLocalPrinters(
+      content::WebContents* preview_web_contents,
       Profile* profile);
 
 #if BUILDFLAG(ENABLE_SERVICE_DISCOVERY)
@@ -126,7 +127,7 @@ class PrinterHandler {
       const base::string16& job_title,
       const std::string& ticket_json,
       const gfx::Size& page_size,
-      const scoped_refptr<base::RefCountedBytes>& print_data,
+      const scoped_refptr<base::RefCountedMemory>& print_data,
       PrintCallback callback) = 0;
 };
 

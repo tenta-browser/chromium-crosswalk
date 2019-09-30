@@ -20,6 +20,10 @@
 #include "headless/public/headless_export.h"
 #include "headless/public/util/moveable_auto_lock.h"
 
+namespace net {
+class NetLog;
+}  // namespace net
+
 namespace ui {
 class Compositor;
 }  // namespace ui
@@ -29,12 +33,14 @@ namespace headless {
 class HeadlessBrowserContextImpl;
 class HeadlessBrowserMainParts;
 
+extern const base::FilePath::CharType kDefaultProfileName[];
+
 // Exported for tests.
 class HEADLESS_EXPORT HeadlessBrowserImpl : public HeadlessBrowser,
                                             public HeadlessDevToolsTarget {
  public:
   HeadlessBrowserImpl(
-      const base::Callback<void(HeadlessBrowser*)>& on_start_callback,
+      base::OnceCallback<void(HeadlessBrowser*)> on_start_callback,
       HeadlessBrowser::Options options);
   ~HeadlessBrowserImpl() override;
 
@@ -65,9 +71,11 @@ class HEADLESS_EXPORT HeadlessBrowserImpl : public HeadlessBrowser,
   void set_browser_main_parts(HeadlessBrowserMainParts* browser_main_parts);
   HeadlessBrowserMainParts* browser_main_parts() const;
 
+  void PreMainMessageLoopRun();
   void RunOnStartCallback();
 
   HeadlessBrowser::Options* options() { return &options_; }
+  net::NetLog* net_log() const { return net_log_.get(); }
 
   HeadlessBrowserContext* CreateBrowserContext(
       HeadlessBrowserContext::Builder* builder);
@@ -96,8 +104,9 @@ class HEADLESS_EXPORT HeadlessBrowserImpl : public HeadlessBrowser,
   ui::Compositor* PlatformGetCompositor(HeadlessWebContentsImpl* web_contents);
 
  protected:
-  base::Callback<void(HeadlessBrowser*)> on_start_callback_;
+  base::OnceCallback<void(HeadlessBrowser*)> on_start_callback_;
   HeadlessBrowser::Options options_;
+  std::unique_ptr<net::NetLog> net_log_;
   HeadlessBrowserMainParts* browser_main_parts_;  // Not owned.
 
   mutable base::Lock browser_contexts_lock_;  // Protects |browser_contexts_|

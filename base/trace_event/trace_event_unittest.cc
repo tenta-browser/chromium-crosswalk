@@ -149,7 +149,7 @@ class TraceEventTestFixture : public testing::Test {
     const char* name = PlatformThread::GetName();
     old_thread_name_ = name ? strdup(name) : nullptr;
 
-    TraceLog::DeleteForTesting();
+    TraceLog::ResetForTesting();
     TraceLog* tracelog = TraceLog::GetInstance();
     ASSERT_TRUE(tracelog);
     ASSERT_FALSE(tracelog->IsEnabled());
@@ -163,7 +163,7 @@ class TraceEventTestFixture : public testing::Test {
     free(old_thread_name_);
     old_thread_name_ = nullptr;
     // We want our singleton torn down after each test.
-    TraceLog::DeleteForTesting();
+    TraceLog::ResetForTesting();
   }
 
   char* old_thread_name_;
@@ -2338,7 +2338,7 @@ TEST_F(TraceEventTestFixture, PrimitiveArgs) {
   dict->GetDictionary("args", &args_dict);
   ASSERT_TRUE(args_dict);
   EXPECT_TRUE(args_dict->Get("float_one", &value));
-  EXPECT_TRUE(value->IsType(Value::Type::DOUBLE));
+  EXPECT_TRUE(value->is_double());
   EXPECT_TRUE(value->GetAsDouble(&double_value));
   EXPECT_EQ(1, double_value);
 
@@ -2348,7 +2348,7 @@ TEST_F(TraceEventTestFixture, PrimitiveArgs) {
   dict->GetDictionary("args", &args_dict);
   ASSERT_TRUE(args_dict);
   EXPECT_TRUE(args_dict->Get("float_half", &value));
-  EXPECT_TRUE(value->IsType(Value::Type::DOUBLE));
+  EXPECT_TRUE(value->is_double());
   EXPECT_TRUE(value->GetAsDouble(&double_value));
   EXPECT_EQ(0.5, double_value);
 
@@ -2358,7 +2358,7 @@ TEST_F(TraceEventTestFixture, PrimitiveArgs) {
   dict->GetDictionary("args", &args_dict);
   ASSERT_TRUE(args_dict);
   EXPECT_TRUE(args_dict->Get("float_neghalf", &value));
-  EXPECT_TRUE(value->IsType(Value::Type::DOUBLE));
+  EXPECT_TRUE(value->is_double());
   EXPECT_TRUE(value->GetAsDouble(&double_value));
   EXPECT_EQ(-0.5, double_value);
 

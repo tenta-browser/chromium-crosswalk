@@ -32,7 +32,7 @@ class RemoteSuggestion {
  public:
   using PtrVector = std::vector<std::unique_ptr<RemoteSuggestion>>;
 
-  enum ContentType { UNKNOWN, VIDEO };
+  enum class ContentType { UNKNOWN, VIDEO };
 
   ~RemoteSuggestion();
 
@@ -128,7 +128,7 @@ class RemoteSuggestion {
  private:
   RemoteSuggestion(const std::vector<std::string>& ids, int remote_category_id);
 
-  // base::MakeUnique doesn't work if the ctor is private.
+  // std::make_unique doesn't work if the ctor is private.
   static std::unique_ptr<RemoteSuggestion> MakeUnique(
       const std::vector<std::string>& ids,
       int remote_category_id);

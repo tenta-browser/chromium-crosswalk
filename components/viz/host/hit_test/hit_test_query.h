@@ -7,18 +7,19 @@
 
 #include <vector>
 
+#include "base/callback.h"
 #include "base/macros.h"
 #include "components/viz/common/hit_test/aggregated_hit_test_region.h"
 #include "components/viz/host/viz_host_export.h"
 #include "mojo/public/cpp/system/buffer.h"
-#include "ui/gfx/geometry/point.h"
+#include "ui/gfx/geometry/point_f.h"
 
 namespace viz {
 
 struct Target {
   FrameSinkId frame_sink_id;
   // Coordinates in the coordinate system of the target FrameSinkId.
-  gfx::Point location_in_target;
+  gfx::PointF location_in_target;
   // Different flags are defined in services/viz/public/interfaces/hit_test/
   // hit_test_region_list.mojom.
   uint32_t flags = 0;
@@ -34,7 +35,8 @@ enum class EventSource {
 // TODO(riajiang): Handle 3d space cases correctly.
 class VIZ_HOST_EXPORT HitTestQuery {
  public:
-  HitTestQuery();
+  explicit HitTestQuery(
+      base::RepeatingClosure shut_down_gpu_callback = base::RepeatingClosure());
   ~HitTestQuery();
 
   // TODO(riajiang): Need to validate the data received.
@@ -77,24 +79,27 @@ class VIZ_HOST_EXPORT HitTestQuery {
   // transfrom-from-e-to-c and transform-from-c-to-b then we get 3 in the
   // coordinate system of b.
   Target FindTargetForLocation(EventSource event_source,
-                               const gfx::Point& location_in_root) const;
+                               const gfx::PointF& location_in_root) const;
 
   // When a target window is already known, e.g. capture/latched window, convert
-  // |location_in_root| to be in the coordinate space of the target.
+  // |location_in_root| to be in the coordinate space of the target and store
+  // that in |transformed_location|. Return true if the transform is successful
+  // and false otherwise.
   // |target_ancestors| contains the FrameSinkId from target to root.
   // |target_ancestors.front()| is the target, and |target_ancestors.back()|
   // is the root.
-  gfx::Point TransformLocationForTarget(
+  bool TransformLocationForTarget(
       EventSource event_source,
       const std::vector<FrameSinkId>& target_ancestors,
-      const gfx::Point& location_in_root) const;
+      const gfx::PointF& location_in_root,
+      gfx::PointF* transformed_location) const;
 
  private:
   // Helper function to find |target| for |location_in_parent| in the |region|,
   // returns true if a target is found and false otherwise. |location_in_parent|
   // is in the coordinate space of |region|'s parent.
   bool FindTargetInRegionForLocation(EventSource event_source,
-                                     const gfx::Point& location_in_parent,
+                                     const gfx::PointF& location_in_parent,
                                      AggregatedHitTestRegion* region,
                                      Target* target) const;
 
@@ -106,13 +111,18 @@ class VIZ_HOST_EXPORT HitTestQuery {
       const std::vector<FrameSinkId>& target_ancestors,
       size_t target_ancestor,
       AggregatedHitTestRegion* region,
-      gfx::Point* location_in_target) const;
+      gfx::PointF* location_in_target) const;
+
+  void ReceivedBadMessageFromGpuProcess() const;
 
   uint32_t handle_buffer_sizes_[2];
   mojo::ScopedSharedBufferMapping handle_buffers_[2];
 
   AggregatedHitTestRegion* active_hit_test_list_ = nullptr;
   uint32_t active_hit_test_list_size_ = 0;
+
+  // Log bad message and shut down Viz process when it is compromised.
+  base::RepeatingClosure bad_message_gpu_callback_;
 
   DISALLOW_COPY_AND_ASSIGN(HitTestQuery);
 };

@@ -32,9 +32,9 @@ namespace {
 // Attempts to get the associated tab info for render frame identified by
 // |render_process_id| and |render_frame_id|. |global_request_id| is also
 // populated in the tab info.
-int32_t GetTabInfoForRequest(int render_process_id,
-                             int render_frame_id,
-                             content::GlobalRequestID global_request_id) {
+SessionID GetTabInfoForRequest(int render_process_id,
+                               int render_frame_id,
+                               content::GlobalRequestID global_request_id) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   // TODO(sclittle): For prerendering tabs, investigate if it's possible to find
   // the original tab that initiated the prerender.
@@ -51,7 +51,7 @@ int32_t GetTabInfoForRequest(int render_process_id,
 void AnnotateDataUse(
     std::unique_ptr<DataUse> data_use,
     const data_usage::DataUseAnnotator::DataUseConsumerCallback& callback,
-    int32_t tab_info) {
+    SessionID tab_info) {
   DCHECK(data_use);
 
   data_use->tab_id = tab_info;
@@ -75,7 +75,7 @@ void TabIdAnnotator::Annotate(net::URLRequest* request,
       request->GetUserData(TabIdProvider::kTabIdProviderUserDataKey));
   if (existing_tab_id_provider) {
     existing_tab_id_provider->ProvideTabId(
-        base::BindOnce(&AnnotateDataUse, base::Passed(&data_use), callback));
+        base::BindOnce(&AnnotateDataUse, std::move(data_use), callback));
     return;
   }
 
@@ -86,7 +86,8 @@ void TabIdAnnotator::Annotate(net::URLRequest* request,
           request, &render_process_id, &render_frame_id)) {
     // Run the callback immediately with a tab ID of -1 if the request has no
     // render frame.
-    AnnotateDataUse(std::move(data_use), callback, -1 /* tab_id */);
+    AnnotateDataUse(std::move(data_use), callback,
+                    /*tab_id=*/SessionID::InvalidValue());
     return;
   }
 
@@ -104,7 +105,7 @@ void TabIdAnnotator::Annotate(net::URLRequest* request,
                         base::BindOnce(&GetTabInfoForRequest, render_process_id,
                                        render_frame_id, global_request_id)));
   tab_id_provider->ProvideTabId(
-      base::BindOnce(&AnnotateDataUse, base::Passed(&data_use), callback));
+      base::BindOnce(&AnnotateDataUse, std::move(data_use), callback));
 
   request->SetUserData(TabIdProvider::kTabIdProviderUserDataKey,
                        std::move(tab_id_provider));

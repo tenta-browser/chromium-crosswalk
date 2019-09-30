@@ -14,8 +14,13 @@
 #include "base/bind.h"
 #include "base/logging.h"
 #import "base/mac/bind_objc_block.h"
-#include "base/memory/ptr_util.h"
+#import "base/strings/sys_string_conversions.h"
 #import "base/test/ios/wait_util.h"
+#include "base/test/scoped_feature_list.h"
+#import "ios/web/navigation/wk_navigation_util.h"
+#import "ios/web/public/crw_navigation_item_storage.h"
+#import "ios/web/public/crw_session_storage.h"
+#include "ios/web/public/features.h"
 #import "ios/web/public/java_script_dialog_presenter.h"
 #include "ios/web/public/load_committed_details.h"
 #import "ios/web/public/test/fakes/fake_navigation_context.h"
@@ -184,7 +189,7 @@ class WebStateImplTest : public web::WebTest {
  protected:
   WebStateImplTest() : web::WebTest() {
     web::WebState::CreateParams params(GetBrowserState());
-    web_state_ = base::MakeUnique<web::WebStateImpl>(params);
+    web_state_ = std::make_unique<web::WebStateImpl>(params);
   }
 
   std::unique_ptr<WebStateImpl> web_state_;
@@ -285,6 +290,11 @@ TEST_F(WebStateImplTest, ObserverTest) {
   EXPECT_EQ(web_state_.get(), observer->was_shown_info()->web_state);
   EXPECT_TRUE(web_state_->IsVisible());
 
+  // Test that WasShown() callback is not called for the second time.
+  observer = std::make_unique<TestWebStateObserver>(web_state_.get());
+  web_state_->WasShown();
+  EXPECT_FALSE(observer->was_shown_info());
+
   // Test that WasHidden() is called.
   ASSERT_TRUE(web_state_->IsVisible());
   ASSERT_FALSE(observer->was_hidden_info());
@@ -292,6 +302,11 @@ TEST_F(WebStateImplTest, ObserverTest) {
   ASSERT_TRUE(observer->was_hidden_info());
   EXPECT_EQ(web_state_.get(), observer->was_hidden_info()->web_state);
   EXPECT_FALSE(web_state_->IsVisible());
+
+  // Test that WasHidden() callback is not called for the second time.
+  observer = std::make_unique<TestWebStateObserver>(web_state_.get());
+  web_state_->WasHidden();
+  EXPECT_FALSE(observer->was_hidden_info());
 
   // Test that LoadProgressChanged() is called.
   ASSERT_FALSE(observer->change_loading_progress_info());
@@ -326,12 +341,14 @@ TEST_F(WebStateImplTest, ObserverTest) {
   // Test that DocumentSubmitted() is called.
   ASSERT_FALSE(observer->submit_document_info());
   const std::string kTestFormName("form-name");
-  BOOL user_initiated = true;
-  web_state_->OnDocumentSubmitted(kTestFormName, user_initiated);
+  bool user_initiated = true;
+  bool is_main_frame = false;
+  web_state_->OnDocumentSubmitted(kTestFormName, user_initiated, is_main_frame);
   ASSERT_TRUE(observer->submit_document_info());
   EXPECT_EQ(web_state_.get(), observer->submit_document_info()->web_state);
   EXPECT_EQ(kTestFormName, observer->submit_document_info()->form_name);
   EXPECT_EQ(user_initiated, observer->submit_document_info()->user_initiated);
+  EXPECT_EQ(is_main_frame, observer->submit_document_info()->is_main_frame);
 
   // Test that FormActivityRegistered() is called.
   ASSERT_FALSE(observer->form_activity_info());
@@ -342,6 +359,7 @@ TEST_F(WebStateImplTest, ObserverTest) {
   params.type = "type";
   params.value = "value";
   params.input_missing = true;
+  params.is_main_frame = false;
   web_state_->OnFormActivityRegistered(params);
   ASSERT_TRUE(observer->form_activity_info());
   EXPECT_EQ(web_state_.get(), observer->form_activity_info()->web_state);
@@ -354,6 +372,7 @@ TEST_F(WebStateImplTest, ObserverTest) {
   EXPECT_EQ(params.type, observer->form_activity_info()->form_activity.type);
   EXPECT_EQ(params.value, observer->form_activity_info()->form_activity.value);
   EXPECT_TRUE(observer->form_activity_info()->form_activity.input_missing);
+  EXPECT_FALSE(observer->form_activity_info()->form_activity.is_main_frame);
 
   // Test that FaviconUrlUpdated() is called.
   ASSERT_FALSE(observer->update_favicon_url_candidates_info());
@@ -443,7 +462,6 @@ TEST_F(WebStateImplTest, ObserverTest) {
       observer->commit_navigation_info()->load_details;
   EXPECT_EQ(details.item, actual_details.item);
   EXPECT_EQ(details.previous_item_index, actual_details.previous_item_index);
-  EXPECT_EQ(details.previous_url, actual_details.previous_url);
   EXPECT_EQ(details.is_in_page, actual_details.is_in_page);
 
   // Test that OnPageLoaded() is called with success when there is no error.
@@ -458,7 +476,7 @@ TEST_F(WebStateImplTest, ObserverTest) {
   EXPECT_TRUE(observer->load_page_info()->success);
 
   // Test that OnTitleChanged() is called.
-  observer = base::MakeUnique<TestWebStateObserver>(web_state_.get());
+  observer = std::make_unique<TestWebStateObserver>(web_state_.get());
   ASSERT_FALSE(observer->title_was_set_info());
   web_state_->OnTitleChanged();
   ASSERT_TRUE(observer->title_was_set_info());
@@ -470,6 +488,28 @@ TEST_F(WebStateImplTest, ObserverTest) {
   EXPECT_TRUE(observer->web_state_destroyed_info());
 
   EXPECT_EQ(nullptr, observer->web_state());
+}
+
+// Tests that placeholder navigations are not visible to WebStateObservers.
+TEST_F(WebStateImplTest, PlaceholderNavigationNotExposedToObservers) {
+  TestWebStateObserver observer(web_state_.get());
+  FakeNavigationContext context;
+  context.SetUrl(
+      wk_navigation_util::CreatePlaceholderUrlForUrl(GURL("chrome://newtab")));
+
+  // Test that OnPageLoaded() is not called.
+  web_state_->OnPageLoaded(context.GetUrl(), true /* load_success */);
+  EXPECT_FALSE(observer.load_page_info());
+  web_state_->OnPageLoaded(context.GetUrl(), false /* load_success */);
+  EXPECT_FALSE(observer.load_page_info());
+
+  // Test that OnNavigationStarted() is not called.
+  web_state_->OnNavigationStarted(&context);
+  EXPECT_FALSE(observer.did_start_navigation_info());
+
+  // Test that OnNavigationFinished() is not called.
+  web_state_->OnNavigationFinished(&context);
+  EXPECT_FALSE(observer.did_finish_navigation_info());
 }
 
 // Tests that WebStateDelegate methods appropriately called.
@@ -801,7 +841,7 @@ TEST_F(WebStateImplTest, FaviconUpdateForSameDocumentNavigations) {
   EXPECT_FALSE(observer->update_favicon_url_candidates_info());
 
   // Callback is called when icons were fetched.
-  observer = base::MakeUnique<TestWebStateObserver>(web_state_.get());
+  observer = std::make_unique<TestWebStateObserver>(web_state_.get());
   web::FaviconURL favicon_url(GURL("https://chromium.test/"),
                               web::FaviconURL::IconType::kTouchIcon,
                               {gfx::Size(5, 6)});
@@ -836,6 +876,41 @@ TEST_F(WebStateImplTest, FaviconUpdateForSameDocumentNavigations) {
   context.SetIsSameDocument(true);
   web_state_->OnNavigationFinished(&context);
   EXPECT_FALSE(observer->update_favicon_url_candidates_info());
+}
+
+// Tests that BuildSessionStorage() and GetTitle() return information about the
+// most recently restored session if no navigation item has been committed.
+TEST_F(WebStateImplTest, UncommittedRestoreSession) {
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitAndEnableFeature(
+      web::features::kSlimNavigationManager);
+
+  CRWSessionStorage* session_storage = [[CRWSessionStorage alloc] init];
+  session_storage.lastCommittedItemIndex = 0;
+  CRWNavigationItemStorage* item_storage =
+      [[CRWNavigationItemStorage alloc] init];
+  item_storage.title = base::SysNSStringToUTF16(@"Title");
+  session_storage.itemStorages = @[ item_storage ];
+
+  web::WebState::CreateParams params(GetBrowserState());
+  WebStateImpl web_state(params, session_storage);
+
+  CRWSessionStorage* extracted_session_storage =
+      web_state.BuildSessionStorage();
+  EXPECT_EQ(0, extracted_session_storage.lastCommittedItemIndex);
+  EXPECT_EQ(1U, extracted_session_storage.itemStorages.count);
+  EXPECT_NSEQ(@"Title", base::SysUTF16ToNSString(web_state.GetTitle()));
+}
+
+TEST_F(WebStateImplTest, NoUncommittedRestoreSession) {
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitAndEnableFeature(
+      web::features::kSlimNavigationManager);
+
+  CRWSessionStorage* session_storage = web_state_->BuildSessionStorage();
+  EXPECT_EQ(-1, session_storage.lastCommittedItemIndex);
+  EXPECT_NSEQ(@[], session_storage.itemStorages);
+  EXPECT_TRUE(web_state_->GetTitle().empty());
 }
 
 }  // namespace web

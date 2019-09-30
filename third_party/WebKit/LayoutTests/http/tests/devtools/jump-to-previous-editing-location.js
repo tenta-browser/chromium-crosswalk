@@ -8,7 +8,6 @@
   await TestRunner.loadModule('sources_test_runner');
   await TestRunner.showPanel('sources');
   await TestRunner.addScriptTag('resources/example-fileset-for-test.js');
-  await TestRunner.addScriptTag('resources/editor-test.js');
   await TestRunner.addScriptTag('resources/jump-text.js');
 
   var panel = UI.panels.sources;
@@ -209,7 +208,7 @@
         var anchorURI = uiSourceCode.url();
         var anchor = linkifier.linkifyScriptLocation(SDK.targetManager.mainTarget(), null, anchorURI, 10, 1);
         var info = Components.Linkifier._linkInfo(anchor);
-        Common.Revealer.revealPromise(info.uiLocation).then(function() {
+        Common.Revealer.reveal(info.uiLocation).then(function() {
           TestRunner.addResult('Selection: ' + panel.visibleView.textEditor.selection().toString());
           dumpSelection('Showed anchor in ' + anchorURI.split('/').pop() + ' with line 333 column 3');
           rollback();

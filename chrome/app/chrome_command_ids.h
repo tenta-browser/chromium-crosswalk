@@ -12,6 +12,8 @@
 // than the corresponding #define labels.  If you change a given command's
 // number, any NIB files that refer to it will also need to be updated.
 
+// clang-format off
+
 // Values below IDC_MinimumLabelValue are reserved for dynamic menu items.
 #define IDC_MinimumLabelValue           4000
 
@@ -29,8 +31,6 @@
 #define IDC_RELOAD_BYPASSING_CACHE      33007
 #define IDC_LOAD_NEW_TAB_PAGE           33008
 #define IDC_RELOAD_CLEARING_CACHE       33009
-#define IDC_BACKSPACE_BACK              33010
-#define IDC_BACKSPACE_FORWARD           33011
 
 // Window management commands
 #define IDC_NEW_WINDOW                  34000
@@ -72,10 +72,13 @@
 #define IDC_RESTORE_WINDOW              34052
 #endif
 
+#define IDC_OPEN_IN_PWA_WINDOW          34053
+
 // Hosted app commands
 #define IDC_COPY_URL                    34060
 #define IDC_OPEN_IN_CHROME              34061
 #define IDC_SITE_SETTINGS               34062
+#define IDC_HOSTED_APP_MENU_APP_INFO    34063
 
 // Page-related commands
 #define IDC_BOOKMARK_PAGE               35000
@@ -119,7 +122,7 @@
 #define IDC_FOCUS_NEXT_PANE             39004
 #define IDC_FOCUS_PREVIOUS_PANE         39005
 #define IDC_FOCUS_BOOKMARKS             39006
-#define IDC_FOCUS_INFOBARS              39007
+#define IDC_FOCUS_INACTIVE_POPUP_FOR_ACCESSIBILITY 39007
 
 // Show various bits of UI
 #define IDC_OPEN_FILE                   40000
@@ -218,7 +221,6 @@
 #define IDC_HISTORY_MENU                46000     // OSX only
 #define IDC_PROFILE_MAIN_MENU           46100     // OSX only
 #define IDC_INPUT_METHODS_MENU          46300     // Linux only
-#define IDC_TOUCH_HUD_PROJECTION_TOGGLE 46400     // ChromeOS only
 
 // The range of command ids reserved for context menus added by web content.
 #define IDC_CONTENT_CONTEXT_CUSTOM_FIRST 47000
@@ -278,9 +280,6 @@
 #define IDC_CONTENT_CONTEXT_NO_SPELLING_SUGGESTIONS 50155
 #define IDC_CONTENT_CONTEXT_SPELLING_SUGGESTION 50156
 #define IDC_CONTENT_CONTEXT_SPELLING_TOGGLE 50157
-#define IDC_CONTENT_CONTEXT_SPEECH_MENU 50158
-#define IDC_CONTENT_CONTEXT_SPEECH_START_SPEAKING 50159
-#define IDC_CONTENT_CONTEXT_SPEECH_STOP_SPEAKING 50160
 #define IDC_CONTENT_CONTEXT_INSPECTBACKGROUNDPAGE 50161
 #define IDC_CONTENT_CONTEXT_RELOAD_PACKAGED_APP 50162
 #define IDC_CONTENT_CONTEXT_RESTART_PACKAGED_APP 50163
@@ -311,6 +310,8 @@
 #define IDC_CONTENT_CONTEXT_OPEN_WITH13 50202
 #define IDC_CONTENT_CONTEXT_OPEN_WITH14 50203
 #define IDC_CONTENT_CONTEXT_OPEN_WITH_LAST IDC_CONTENT_CONTEXT_OPEN_WITH14
+// Context menu items that provide fast access to input methods.
+#define IDC_CONTENT_CONTEXT_EMOJI 50210
 // Context menu items in the bookmark bar
 #define IDC_BOOKMARK_BAR_OPEN_ALL 51000
 #define IDC_BOOKMARK_BAR_OPEN_ALL_NEW_WINDOW 51001

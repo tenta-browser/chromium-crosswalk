@@ -8,11 +8,9 @@
 
 namespace cc {
 
-FakeTileManagerClient::FakeTileManagerClient() {
-}
+FakeTileManagerClient::FakeTileManagerClient() = default;
 
-FakeTileManagerClient::~FakeTileManagerClient() {
-}
+FakeTileManagerClient::~FakeTileManagerClient() = default;
 
 std::unique_ptr<RasterTilePriorityQueue>
 FakeTileManagerClient::BuildRasterQueue(TreePriority tree_priority,
@@ -25,8 +23,8 @@ FakeTileManagerClient::BuildEvictionQueue(TreePriority tree_priority) {
   return nullptr;
 }
 
-gfx::ColorSpace FakeTileManagerClient::GetRasterColorSpace() const {
-  return gfx::ColorSpace();
+RasterColorSpace FakeTileManagerClient::GetRasterColorSpace() const {
+  return RasterColorSpace();
 }
 
 size_t FakeTileManagerClient::GetFrameIndexForImage(

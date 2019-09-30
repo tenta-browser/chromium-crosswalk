@@ -3,8 +3,9 @@
 // found in the LICENSE file.
 
 #include "gpu/ipc/common/gpu_info_struct_traits.h"
+#include "build/build_config.h"
 
-#include "mojo/common/time_struct_traits.h"
+#include "mojo/public/cpp/base/time_mojom_traits.h"
 
 namespace mojo {
 
@@ -17,46 +18,6 @@ bool StructTraits<gpu::mojom::GpuDeviceDataView, gpu::GPUInfo::GPUDevice>::Read(
   out->active = data.active();
   return data.ReadVendorString(&out->vendor_string) &&
          data.ReadDeviceString(&out->device_string);
-}
-
-// static
-gpu::mojom::CollectInfoResult
-EnumTraits<gpu::mojom::CollectInfoResult, gpu::CollectInfoResult>::ToMojom(
-    gpu::CollectInfoResult collect_info_result) {
-  switch (collect_info_result) {
-    case gpu::CollectInfoResult::kCollectInfoNone:
-      return gpu::mojom::CollectInfoResult::kCollectInfoNone;
-    case gpu::CollectInfoResult::kCollectInfoSuccess:
-      return gpu::mojom::CollectInfoResult::kCollectInfoSuccess;
-    case gpu::CollectInfoResult::kCollectInfoNonFatalFailure:
-      return gpu::mojom::CollectInfoResult::kCollectInfoNonFatalFailure;
-    case gpu::CollectInfoResult::kCollectInfoFatalFailure:
-      return gpu::mojom::CollectInfoResult::kCollectInfoFatalFailure;
-  }
-  NOTREACHED() << "Invalid CollectInfoResult value:" << collect_info_result;
-  return gpu::mojom::CollectInfoResult::kCollectInfoNone;
-}
-
-// static
-bool EnumTraits<gpu::mojom::CollectInfoResult, gpu::CollectInfoResult>::
-    FromMojom(gpu::mojom::CollectInfoResult input,
-              gpu::CollectInfoResult* out) {
-  switch (input) {
-    case gpu::mojom::CollectInfoResult::kCollectInfoNone:
-      *out = gpu::CollectInfoResult::kCollectInfoNone;
-      return true;
-    case gpu::mojom::CollectInfoResult::kCollectInfoSuccess:
-      *out = gpu::CollectInfoResult::kCollectInfoSuccess;
-      return true;
-    case gpu::mojom::CollectInfoResult::kCollectInfoNonFatalFailure:
-      *out = gpu::CollectInfoResult::kCollectInfoNonFatalFailure;
-      return true;
-    case gpu::mojom::CollectInfoResult::kCollectInfoFatalFailure:
-      *out = gpu::CollectInfoResult::kCollectInfoFatalFailure;
-      return true;
-  }
-  NOTREACHED() << "Invalid CollectInfoResult value:" << input;
-  return false;
 }
 
 // static
@@ -254,16 +215,21 @@ bool StructTraits<gpu::mojom::GpuInfoDataView, gpu::GPUInfo>::Read(
   out->sandboxed = data.sandboxed();
   out->in_process_gpu = data.in_process_gpu();
   out->passthrough_cmd_decoder = data.passthrough_cmd_decoder();
+  out->direct_composition = data.direct_composition();
   out->supports_overlays = data.supports_overlays();
   out->can_support_threaded_texture_mailbox =
       data.can_support_threaded_texture_mailbox();
-  out->process_crash_count = data.process_crash_count();
   out->jpeg_decode_accelerator_supported =
       data.jpeg_decode_accelerator_supported();
 
 #if defined(USE_X11)
   out->system_visual = data.system_visual();
   out->rgba_visual = data.rgba_visual();
+#endif
+
+#if defined(OS_WIN)
+  out->supports_dx12 = data.supports_dx12();
+  out->supports_vulkan = data.supports_vulkan();
 #endif
 
   return data.ReadInitializationTime(&out->initialization_time) &&
@@ -284,10 +250,7 @@ bool StructTraits<gpu::mojom::GpuInfoDataView, gpu::GPUInfo>::Read(
          data.ReadGlWsVendor(&out->gl_ws_vendor) &&
          data.ReadGlWsVersion(&out->gl_ws_version) &&
          data.ReadGlWsExtensions(&out->gl_ws_extensions) &&
-         data.ReadBasicInfoState(&out->basic_info_state) &&
-         data.ReadContextInfoState(&out->context_info_state) &&
 #if defined(OS_WIN)
-         data.ReadDxDiagnosticsInfoState(&out->dx_diagnostics_info_state) &&
          data.ReadDxDiagnostics(&out->dx_diagnostics) &&
 #endif
          data.ReadVideoDecodeAcceleratorCapabilities(

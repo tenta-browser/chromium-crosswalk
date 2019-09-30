@@ -7,10 +7,10 @@
 #include <utility>
 
 #include "base/bind.h"
-#include "base/memory/ptr_util.h"
 #include "build/build_config.h"
 #include "chrome/browser/net/spdyproxy/data_reduction_proxy_chrome_settings.h"
 #include "chrome/browser/previews/previews_infobar_delegate.h"
+#include "chrome/browser/previews/previews_infobar_tab_helper.h"
 #include "chrome/browser/previews/previews_service.h"
 #include "chrome/browser/previews/previews_service_factory.h"
 #include "chrome/browser/profiles/profile.h"
@@ -46,12 +46,13 @@ void AddPreviewNavigationToBlackListCallback(
     content::BrowserContext* browser_context,
     const GURL& url,
     previews::PreviewsType type,
+    uint64_t page_id,
     bool opt_out) {
   PreviewsService* previews_service = PreviewsServiceFactory::GetForProfile(
       Profile::FromBrowserContext(browser_context));
   if (previews_service && previews_service->previews_ui_service()) {
-    previews_service->previews_ui_service()->AddPreviewNavigation(url, type,
-                                                                  opt_out);
+    previews_service->previews_ui_service()->AddPreviewNavigation(
+        url, type, opt_out, page_id);
   }
 }
 
@@ -66,20 +67,28 @@ void OnLoFiResponseReceivedOnUI(content::WebContents* web_contents) {
   previews::PreviewsUIService* previews_ui_service =
       previews_service ? previews_service->previews_ui_service() : nullptr;
 
+  PreviewsInfoBarTabHelper* infobar_tab_helper =
+      PreviewsInfoBarTabHelper::FromWebContents(web_contents);
+
+  uint64_t page_id = 0;
+  if (infobar_tab_helper && infobar_tab_helper->previews_user_data()) {
+    page_id = infobar_tab_helper->previews_user_data()->page_id();
+  }
+
   PreviewsInfoBarDelegate::Create(
       web_contents, previews::PreviewsType::LOFI,
       base::Time() /* previews_freshness */, true /* is_data_saver_user */,
       false /* is_reload */,
-      base::Bind(&AddPreviewNavigationToBlackListCallback,
-                 web_contents->GetBrowserContext(),
-                 web_contents->GetController()
-                     .GetLastCommittedEntry()
-                     ->GetRedirectChain()[0],
-                 previews::PreviewsType::LOFI),
+      base::BindOnce(&AddPreviewNavigationToBlackListCallback,
+                     web_contents->GetBrowserContext(),
+                     web_contents->GetController()
+                         .GetLastCommittedEntry()
+                         ->GetRedirectChain()[0],
+                     previews::PreviewsType::LOFI, page_id),
       previews_ui_service);
 }
 
-} // namespace
+}  // namespace
 
 std::unique_ptr<data_reduction_proxy::DataReductionProxyIOData>
 CreateDataReductionProxyChromeIOData(
@@ -96,16 +105,16 @@ CreateDataReductionProxyChromeIOData(
   std::unique_ptr<data_reduction_proxy::DataReductionProxyIOData>
       data_reduction_proxy_io_data(
           new data_reduction_proxy::DataReductionProxyIOData(
-              DataReductionProxyChromeSettings::GetClient(), net_log,
+              DataReductionProxyChromeSettings::GetClient(), prefs, net_log,
               io_task_runner, ui_task_runner, enabled, GetUserAgent(),
               version_info::GetChannelString(chrome::GetChannel())));
 
   data_reduction_proxy_io_data->set_lofi_decider(
-      base::MakeUnique<data_reduction_proxy::ContentLoFiDecider>());
+      std::make_unique<data_reduction_proxy::ContentLoFiDecider>());
   data_reduction_proxy_io_data->set_resource_type_provider(
-      base::MakeUnique<data_reduction_proxy::ContentResourceTypeProvider>());
+      std::make_unique<data_reduction_proxy::ContentResourceTypeProvider>());
   data_reduction_proxy_io_data->set_lofi_ui_service(
-      base::MakeUnique<data_reduction_proxy::ContentLoFiUIService>(
+      std::make_unique<data_reduction_proxy::ContentLoFiUIService>(
           ui_task_runner, base::Bind(&OnLoFiResponseReceivedOnUI)));
 
   return data_reduction_proxy_io_data;

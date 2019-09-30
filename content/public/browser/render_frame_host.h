@@ -15,8 +15,8 @@
 #include "content/public/common/file_chooser_params.h"
 #include "ipc/ipc_listener.h"
 #include "ipc/ipc_sender.h"
-#include "third_party/WebKit/common/page/page_visibility_state.mojom.h"
-#include "third_party/WebKit/public/platform/WebSuddenTerminationDisablerType.h"
+#include "third_party/blink/public/mojom/page/page_visibility_state.mojom.h"
+#include "third_party/blink/public/platform/web_sudden_termination_disabler_type.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/native_widget_types.h"
 #include "url/gurl.h"
@@ -24,8 +24,10 @@
 
 namespace blink {
 class AssociatedInterfaceProvider;
+namespace mojom {
 enum class FeaturePolicyFeature;
-}
+}  // namespace mojom
+}  // namespace blink
 
 namespace base {
 class UnguessableToken;
@@ -68,11 +70,6 @@ class CONTENT_EXPORT RenderFrameHost : public IPC::Listener,
   // is present only to support Android WebView and must not be used in other
   // configurations.
   static void AllowInjectingJavaScriptForAndroidWebView();
-
-  // Temporary hack to enable data URLs on Android Webview until PlzNavigate
-  // ships.
-  static void AllowDataUrlNavigationForAndroidWebView();
-  static bool IsDataUrlNavigationAllowedForAndroidWebView();
 #endif
 
   // Returns a RenderFrameHost given its accessibility tree ID.
@@ -82,6 +79,14 @@ class CONTENT_EXPORT RenderFrameHost : public IPC::Listener,
   // and |routing_id|. This routing ID pair may represent a placeholder for
   // frame that is currently rendered in a different process than |process_id|.
   static int GetFrameTreeNodeIdForRoutingId(int process_id, int routing_id);
+
+  // Returns the RenderFrameHost corresponding to the |placeholder_routing_id|
+  // in the given |render_process_id|. The returned RenderFrameHost will always
+  // be in a different process.  It may be null if the placeholder is not found
+  // in the given process, which may happen if the frame was recently deleted
+  // or swapped to |render_process_id| itself.
+  static RenderFrameHost* FromPlaceholderId(int render_process_id,
+                                            int placeholder_routing_id);
 
   ~RenderFrameHost() override {}
 
@@ -299,7 +304,7 @@ class CONTENT_EXPORT RenderFrameHost : public IPC::Listener,
   // Returns true if the given Feature Policy |feature| is enabled for this
   // RenderFrameHost and is allowed to be used by it. Use this in the browser
   // process to determine whether access to a feature is allowed.
-  virtual bool IsFeatureEnabled(blink::FeaturePolicyFeature feature) = 0;
+  virtual bool IsFeatureEnabled(blink::mojom::FeaturePolicyFeature feature) = 0;
 
   // Opens view-source tab for the document last committed in this
   // RenderFrameHost.

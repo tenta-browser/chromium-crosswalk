@@ -107,6 +107,16 @@ cr.define('extensions', function() {
       'observeIdVisibility_(inDevMode, showingDetails_, data.id)',
     ],
 
+    /** @private string */
+    a11yAssociation_: function() {
+      // Don't use I18nBehavior.i18n because of additional checks it performs.
+      // Polymer ensures that this string is not stamped into arbitrary HTML.
+      // |this.data.name| can contain any data including html tags.
+      // ex: "My <video> download extension!"
+      return loadTimeData.getStringF(
+          'extensionA11yAssociation', this.data.name);
+    },
+
     /** @private */
     observeIdVisibility_: function(inDevMode, showingDetails, id) {
       Polymer.dom.flush();
@@ -336,8 +346,8 @@ cr.define('extensions', function() {
      * @private
      */
     computeExtraInspectLabel_: function() {
-      return loadTimeData.getStringF(
-          'itemInspectViewsExtra', this.data.views.length - 1);
+      return this.i18n(
+          'itemInspectViewsExtra', (this.data.views.length - 1).toString());
     },
 
     /**
@@ -347,7 +357,7 @@ cr.define('extensions', function() {
     hasWarnings_: function() {
       return this.data.disableReasons.corruptInstall ||
           this.data.disableReasons.suspiciousInstall ||
-          !!this.data.blacklistText;
+          this.data.runtimeWarnings.length > 0 || !!this.data.blacklistText;
     },
 
     /**

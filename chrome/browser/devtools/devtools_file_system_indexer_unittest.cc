@@ -5,6 +5,7 @@
 #include <set>
 
 #include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/files/file_util.h"
 #include "base/path_service.h"
 #include "base/run_loop.h"
@@ -48,9 +49,10 @@ TEST_F(DevToolsFileSystemIndexerTest, BasicUsage) {
       base_test_path.Append(FILE_PATH_LITERAL("devtools"))
           .Append(FILE_PATH_LITERAL("indexer"));
 
+  std::vector<std::string> excluded_folders;
   scoped_refptr<DevToolsFileSystemIndexer::FileSystemIndexingJob> job =
-      indexer_->IndexPath(index_path.AsUTF8Unsafe(), base::Bind([](int) {}),
-                          base::Bind([](int) {}),
+      indexer_->IndexPath(index_path.AsUTF8Unsafe(), excluded_folders,
+                          base::DoNothing(), base::DoNothing(),
                           base::Bind(&DevToolsFileSystemIndexerTest::SetDone,
                                      base::Unretained(this)));
 

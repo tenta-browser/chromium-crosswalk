@@ -18,7 +18,6 @@
 #include "base/containers/circular_deque.h"
 #include "base/files/file_util.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/posix/eintr_wrapper.h"
 #include "base/strings/string_number_conversions.h"
@@ -29,6 +28,7 @@
 #include "base/threading/thread_restrictions.h"
 #include "chrome/browser/media_galleries/chromeos/mtp_device_task_helper_map_service.h"
 #include "chrome/browser/media_galleries/chromeos/snapshot_file_details.h"
+#include "components/services/filesystem/public/interfaces/types.mojom.h"
 #include "net/base/io_buffer.h"
 #include "third_party/cros_system_api/dbus/service_constants.h"
 
@@ -330,13 +330,14 @@ void CloseStorageAndDestroyTaskHelperOnUIThread(
 // - When |file_path| is a directory, base::File::FILE_ERROR_NOT_A_FILE is set.
 // - When |file_path| does not exist, base::File::FILE_ERROR_NOT_FOUND is set.
 // - For other error cases, base::File::FILE_ERROR_FAILED is set.
-std::pair<int, base::File::Error> OpenFileDescriptor(const char* file_path,
-                                                     const int flags) {
+std::pair<int, base::File::Error> OpenFileDescriptor(
+    const base::FilePath& file_path,
+    const int flags) {
   base::AssertBlockingAllowed();
 
-  if (base::DirectoryExists(base::FilePath(file_path)))
+  if (base::DirectoryExists(file_path))
     return std::make_pair(-1, base::File::FILE_ERROR_NOT_A_FILE);
-  int file_descriptor = open(file_path, flags);
+  int file_descriptor = open(file_path.value().c_str(), flags);
   if (file_descriptor >= 0)
     return std::make_pair(file_descriptor, base::File::FILE_OK);
   if (errno == ENOENT)
@@ -458,7 +459,7 @@ void MTPDeviceDelegateImplLinux::MTPFileNode::EnsureChildExists(
     return;
 
   children_[name] =
-      base::MakeUnique<MTPFileNode>(id, name, this, file_id_to_node_map_);
+      std::make_unique<MTPFileNode>(id, name, this, file_id_to_node_map_);
 }
 
 void MTPDeviceDelegateImplLinux::MTPFileNode::ClearNonexistentChildren(
@@ -1516,8 +1517,7 @@ void MTPDeviceDelegateImplLinux::OnGetDestFileInfoErrorToCopyFileFromLocal(
 
   base::PostTaskWithTraitsAndReplyWithResult(
       FROM_HERE, {base::MayBlock(), base::TaskPriority::BACKGROUND},
-      base::Bind(&OpenFileDescriptor, source_file_path.value().c_str(),
-                 O_RDONLY),
+      base::Bind(&OpenFileDescriptor, source_file_path, O_RDONLY),
       base::Bind(&MTPDeviceDelegateImplLinux::OnDidOpenFDToCopyFileFromLocal,
                  weak_ptr_factory_.GetWeakPtr(), device_file_path,
                  success_callback, error_callback));
@@ -1589,14 +1589,16 @@ void MTPDeviceDelegateImplLinux::OnDidReadDirectory(
 
   storage::AsyncFileUtil::EntryList file_list;
   for (const auto& mtp_entry : mtp_entries) {
-    storage::DirectoryEntry entry;
-    entry.name = mtp_entry.name;
-    entry.is_directory = mtp_entry.file_info.is_directory;
+    filesystem::mojom::DirectoryEntry entry;
+    entry.name = base::FilePath(mtp_entry.name);
+    entry.type = mtp_entry.file_info.is_directory
+                     ? filesystem::mojom::FsFileType::DIRECTORY
+                     : filesystem::mojom::FsFileType::REGULAR_FILE;
     file_list.push_back(entry);
 
     // Refresh the in memory tree.
-    dir_node->EnsureChildExists(entry.name, mtp_entry.file_id);
-    child_nodes_seen_.insert(entry.name);
+    dir_node->EnsureChildExists(entry.name.value(), mtp_entry.file_id);
+    child_nodes_seen_.insert(entry.name.value());
 
     // Add to |file_info_cache_|.
     file_info_cache_[dir_path.Append(entry.name)] = mtp_entry;

@@ -5,6 +5,9 @@
 (async function() {
   TestRunner.addResult(`Tests refreshing the database information and data views.\n`);
   await TestRunner.loadModule('application_test_runner');
+    // Note: every test that uses a storage API must manually clean-up state from previous tests.
+  await ApplicationTestRunner.resetState();
+
   await TestRunner.loadModule('console_test_runner');
   await TestRunner.showPanel('resources');
 
@@ -15,6 +18,7 @@
   var keyPath = 'testKey';
 
   var indexedDBModel = TestRunner.mainTarget.model(Resources.IndexedDBModel);
+  indexedDBModel._throttler._timeout = 100000;  // Disable live updating.
   var databaseId;
 
   function waitRefreshDatabase() {
@@ -51,24 +55,6 @@
     UI.panels.resources._sidebar.indexedDBListTreeElement.refreshIndexedDB();
   }
 
-  function dumpObjectStores() {
-    TestRunner.addResult('Dumping ObjectStore data:');
-
-    var idbDatabaseTreeElement = UI.panels.resources._sidebar.indexedDBListTreeElement._idbDatabaseTreeElements[0];
-    for (var i = 0; i < idbDatabaseTreeElement.childCount(); ++i) {
-      var objectStoreTreeElement = idbDatabaseTreeElement.childAt(i);
-      TestRunner.addResult('    Object store: ' + objectStoreTreeElement.title);
-      var entries = objectStoreTreeElement._view._entries;
-      if (!entries.length) {
-        TestRunner.addResult('            (no entries)');
-        continue;
-      }
-      for (var j = 0; j < entries.length; ++j) {
-        TestRunner.addResult('            Key = ' + entries[j].key._value + ', value = ' + entries[j].value);
-      }
-    }
-  }
-
   // Initial tree
   ApplicationTestRunner.dumpIndexedDBTree();
 
@@ -97,34 +83,34 @@
   await waitRefreshDatabase();
   TestRunner.addResult('Created second objectstore.');
   ApplicationTestRunner.dumpIndexedDBTree();
-
-  // Load objectstore data views
-  for (var i = 0; i < idbDatabaseTreeElement.childCount(); ++i) {
-    var objectStoreTreeElement = idbDatabaseTreeElement.childAt(i);
-    objectStoreTreeElement.onselect(false);
-  }
+  ApplicationTestRunner.dumpObjectStores();
 
   // Add entries
   await ApplicationTestRunner.addIDBValueAsync(databaseName, objectStoreName1, 'testKey', 'testValue');
   TestRunner.addResult('Added ' + objectStoreName1 + ' entry.');
-  dumpObjectStores();
+  ApplicationTestRunner.dumpObjectStores();
 
   // Refresh database view
   await waitRefreshDatabase();
-  await waitUpdateDataView();  // Wait for second objectstore data to load on page.
+  await waitUpdateDataView();  // Wait for indexes and second object store to refresh.
+  await waitUpdateDataView();
+  await waitUpdateDataView();
   TestRunner.addResult('Refreshed database view.');
-  dumpObjectStores();
+  ApplicationTestRunner.dumpObjectStores();
 
   // Add entries
   await ApplicationTestRunner.addIDBValueAsync(databaseName, objectStoreName2, 'testKey2', 'testValue2');
   TestRunner.addResult('Added ' + objectStoreName2 + ' entry.');
-  dumpObjectStores();
+  ApplicationTestRunner.dumpObjectStores();
 
   // Right-click refresh database view
   await waitRefreshDatabaseRightClick();
-  await waitUpdateDataView();  // Wait for second objectstore data to load on page.
+  await waitUpdateDataView();  // Wait for indexes and second object store to refresh.
+  await waitUpdateDataView();
+  await waitUpdateDataView();
   TestRunner.addResult('Right-click refreshed database.');
-  dumpObjectStores();
+  ApplicationTestRunner.dumpObjectStores();
 
+  await ApplicationTestRunner.deleteDatabaseAsync(databaseName);
   TestRunner.completeTest();
 })();

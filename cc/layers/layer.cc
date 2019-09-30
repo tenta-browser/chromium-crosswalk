@@ -65,10 +65,10 @@ Layer::Inputs::Inputs(int layer_id)
       has_will_change_transform_hint(false),
       trilinear_filtering(false),
       hide_layer_and_subtree(false),
-      client(nullptr),
+      client_rawptr(nullptr),
       overscroll_behavior(OverscrollBehavior::kOverscrollBehaviorTypeAuto) {}
 
-Layer::Inputs::~Inputs() {}
+Layer::Inputs::~Inputs() = default;
 
 scoped_refptr<Layer> Layer::Create() {
   return base::WrapRefCounted(new Layer());
@@ -151,7 +151,7 @@ void Layer::SetLayerTreeHost(LayerTreeHost* host) {
     inputs_.mask_layer->SetLayerTreeHost(host);
 
   if (host && !host->IsUsingLayerLists() &&
-      GetMutatorHost()->HasAnyAnimation(element_id())) {
+      GetMutatorHost()->IsElementAnimating(element_id())) {
     host->SetNeedsCommit();
   }
 }
@@ -290,7 +290,9 @@ void Layer::SetBounds(const gfx::Size& size) {
   if (!layer_tree_host_)
     return;
 
-  if (masks_to_bounds()) {
+  // Both bounds clipping and mask clipping can result in new areas of subtrees
+  // being exposed on a bounds change. Ensure the damaged areas are updated.
+  if (masks_to_bounds() || inputs_.mask_layer.get()) {
     SetSubtreePropertyChanged();
     SetPropertyTreesNeedRebuild();
   }
@@ -318,6 +320,25 @@ void Layer::SetOverscrollBehavior(const OverscrollBehavior& behavior) {
     auto& scroll_tree = layer_tree_host_->property_trees()->scroll_tree;
     if (auto* scroll_node = scroll_tree.Node(scroll_tree_index_))
       scroll_node->overscroll_behavior = behavior;
+    else
+      SetPropertyTreesNeedRebuild();
+  }
+
+  SetNeedsCommit();
+}
+
+void Layer::SetSnapContainerData(base::Optional<SnapContainerData> data) {
+  DCHECK(IsPropertyChangeAllowed());
+  if (snap_container_data() == data)
+    return;
+  inputs_.snap_container_data = std::move(data);
+  if (!layer_tree_host_)
+    return;
+
+  if (scrollable()) {
+    auto& scroll_tree = layer_tree_host_->property_trees()->scroll_tree;
+    if (auto* scroll_node = scroll_tree.Node(scroll_tree_index_))
+      scroll_node->snap_container_data = inputs_.snap_container_data;
     else
       SetPropertyTreesNeedRebuild();
   }
@@ -1141,6 +1162,13 @@ void Layer::SetStickyPositionConstraint(
   SetNeedsCommit();
 }
 
+void Layer::SetLayerClient(base::WeakPtr<LayerClient> client) {
+  inputs_.client = std::move(client);
+  // Both binds the weak_ptr to the main thread and stores a rawptr for access
+  // during commit.
+  inputs_.client_rawptr = client.get();
+}
+
 bool Layer::IsSnapped() {
   return scrollable();
 }
@@ -1295,8 +1323,15 @@ bool Layer::HasNonAAPaint() const {
 
 std::unique_ptr<base::trace_event::ConvertableToTraceFormat>
 Layer::TakeDebugInfo() {
-  if (inputs_.client)
-    return inputs_.client->TakeDebugInfo(this);
+  // TakeDebugInfo is called from the compositor thread while the main thread is
+  // blocked so we use the raw client pointer as we can't check whether the
+  // reference is safe on the weak pointer.
+  // TODO(flackr): Remove client_rawptr and figure out if we can take the debug
+  // info from the main thread and store it on inputs before doing the commit or
+  // make a WeakPtr which understands the commit and allows checked access from
+  // the compositor thread. https://crbug.com/826455
+  if (inputs_.client_rawptr)
+    return inputs_.client_rawptr->TakeDebugInfo(this);
   else
     return nullptr;
 }
@@ -1322,7 +1357,7 @@ void Layer::SetMayContainVideo(bool yes) {
 
 void Layer::SetScrollbarsHiddenFromImplSide(bool hidden) {
   if (inputs_.client)
-    inputs_.client->didChangeScrollbarsHidden(hidden);
+    inputs_.client->didChangeScrollbarsHiddenIfOverlay(hidden);
 }
 
 // On<Property>Animated is called due to an ongoing accelerated animation.
@@ -1350,7 +1385,7 @@ void Layer::OnTransformAnimated(const gfx::Transform& transform) {
 
 bool Layer::HasTickingAnimationForTesting() const {
   return layer_tree_host_
-             ? GetMutatorHost()->HasTickingAnimationForTesting(element_id())
+             ? GetMutatorHost()->HasTickingKeyframeModelForTesting(element_id())
              : false;
 }
 

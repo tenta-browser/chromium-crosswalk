@@ -91,20 +91,20 @@
 
   function dumpUserTimings() {
     var model = PerformanceTestRunner.timelineModel();
-    var asyncEvents = model.mainThreadAsyncEvents();
-
-    asyncEvents.forEach(function(eventGroup) {
-      eventGroup.forEach(function(event) {
-        if (event.hasCategory(TimelineModel.TimelineModel.Category.UserTiming))
-          TestRunner.addResult(event.name);
-      });
-    });
+    var asyncEvents;
+    for (const track of model.tracks()) {
+      if (track.type === TimelineModel.TimelineModel.TrackType.UserTiming) {
+        for (const event of track.asyncEvents) {
+          if (event.hasCategory(TimelineModel.TimelineModel.Category.UserTiming))
+            TestRunner.addResult(event.name);
+        }
+      }
+    }
   }
 
-  function performActions(actions, next) {
-    PerformanceTestRunner.evaluateWithTimeline(actions, _ => {
-      dumpUserTimings();
-      next();
-    });
+  async function performActions(actions, next) {
+    await PerformanceTestRunner.evaluateWithTimeline(actions);
+    dumpUserTimings();
+    next();
   }
 })();

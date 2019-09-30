@@ -12,18 +12,23 @@
 
 namespace content {
 class DevToolsAgentHost;
+class DevToolsAgentHostClient;
 }
 
 class BrowserHandler;
 class PageHandler;
+class TargetHandler;
 class WindowManagerHandler;
 
 class ChromeDevToolsSession : public protocol::FrontendChannel {
  public:
-  ChromeDevToolsSession(content::DevToolsAgentHost* agent_host, int session_id);
+  ChromeDevToolsSession(content::DevToolsAgentHost* agent_host,
+                        content::DevToolsAgentHostClient* client);
   ~ChromeDevToolsSession() override;
 
   protocol::UberDispatcher* dispatcher() { return dispatcher_.get(); }
+
+  TargetHandler* target_handler() { return target_handler_.get(); }
 
  private:
   // protocol::FrontendChannel:
@@ -35,11 +40,12 @@ class ChromeDevToolsSession : public protocol::FrontendChannel {
   void flushProtocolNotifications() override;
 
   content::DevToolsAgentHost* const agent_host_;
-  const int session_id_;
+  content::DevToolsAgentHostClient* const client_;
 
   std::unique_ptr<protocol::UberDispatcher> dispatcher_;
   std::unique_ptr<BrowserHandler> browser_handler_;
   std::unique_ptr<PageHandler> page_handler_;
+  std::unique_ptr<TargetHandler> target_handler_;
 #if defined(OS_CHROMEOS)
   std::unique_ptr<WindowManagerHandler> window_manager_protocl_handler_;
 #endif

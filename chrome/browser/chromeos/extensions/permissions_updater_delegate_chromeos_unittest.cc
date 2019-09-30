@@ -7,11 +7,11 @@
 #include <string>
 
 #include "base/files/file_path.h"
-#include "base/memory/ptr_util.h"
 #include "base/values.h"
 #include "chromeos/login/login_state.h"
 #include "chromeos/login/scoped_test_public_session_login_state.h"
 #include "extensions/common/extension.h"
+#include "extensions/common/extension_builder.h"
 #include "extensions/common/manifest.h"
 #include "extensions/common/manifest_constants.h"
 #include "extensions/common/permissions/api_permission.h"
@@ -31,18 +31,10 @@ const char kWhitelistedId[] = "cbkkbcmdlboombapidmoeolnmdacpkch";
 const char kBogusId[] = "bogus";
 
 scoped_refptr<Extension> CreateExtension(const std::string& id) {
-  std::string error;
-  base::DictionaryValue manifest;
-  manifest.SetString(manifest_keys::kName, "test");
-  manifest.SetString(manifest_keys::kVersion, "0.1");
-  scoped_refptr<Extension> extension = Extension::Create(
-      base::FilePath(),
-      Manifest::INTERNAL,
-      manifest,
-      Extension::NO_FLAGS,
-      id,
-      &error);
-  return extension;
+  return ExtensionBuilder("test")
+      .SetLocation(Manifest::INTERNAL)
+      .SetID(id)
+      .Build();
 }
 
 std::unique_ptr<const PermissionSet> CreatePermissions(
@@ -60,7 +52,7 @@ std::unique_ptr<const PermissionSet> CreatePermissions(
       URLPattern(URLPattern::SCHEME_ALL, "<all_urls>")});
   URLPatternSet scriptable_hosts({
     URLPattern(URLPattern::SCHEME_ALL, "http://www.wikipedia.com/*")});
-  auto permissions = base::MakeUnique<const PermissionSet>(
+  auto permissions = std::make_unique<const PermissionSet>(
       apis, manifest, explicit_hosts, scriptable_hosts);
   return permissions;
 }

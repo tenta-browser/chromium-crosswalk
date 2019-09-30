@@ -4,7 +4,11 @@
 
 #include "components/omnibox/browser/autocomplete_controller.h"
 
-#include <stddef.h>
+#include <inttypes.h>
+
+#include <cstddef>
+#include <memory>
+#include <numeric>
 #include <set>
 #include <string>
 #include <utility>
@@ -12,12 +16,13 @@
 #include "base/feature_list.h"
 #include "base/format_macros.h"
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
+#include "base/trace_event/memory_dump_manager.h"
+#include "base/trace_event/memory_usage_estimator.h"
 #include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
 #include "components/omnibox/browser/autocomplete_controller_delegate.h"
@@ -245,7 +250,7 @@ AutocompleteController::AutocompleteController(
     // that would come with it.
     if (!ClipboardRecentContent::GetInstance()) {
       ClipboardRecentContent::SetInstance(
-          base::MakeUnique<ClipboardRecentContentGeneric>());
+          std::make_unique<ClipboardRecentContentGeneric>());
     }
 #endif
     // ClipboardRecentContent can be null in iOS tests.  For non-iOS, we
@@ -262,9 +267,15 @@ AutocompleteController::AutocompleteController(
     if (physical_web_provider)
       providers_.push_back(physical_web_provider);
   }
+
+  base::trace_event::MemoryDumpManager::GetInstance()->RegisterDumpProvider(
+      this, "AutocompleteController", base::ThreadTaskRunnerHandle::Get());
 }
 
 AutocompleteController::~AutocompleteController() {
+  base::trace_event::MemoryDumpManager::GetInstance()->UnregisterDumpProvider(
+      this);
+
   // The providers may have tasks outstanding that hold refs to them.  We need
   // to ensure they won't call us back if they outlive us.  (Practically,
   // calling Stop() should also cancel those tasks and make it so that we hold
@@ -498,9 +509,9 @@ void AutocompleteController::UpdateResult(
 
   // Need to validate before invoking CopyOldMatches as the old matches are not
   // valid against the current input.
-#ifndef NDEBUG
+#if DCHECK_IS_ON()
   result_.Validate();
-#endif
+#endif  // DCHECK_IS_ON()
 
   if (!done_) {
     // This conditional needs to match the conditional in Start that invokes
@@ -731,4 +742,30 @@ void AutocompleteController::StopHelper(bool clear_result,
     // touch the edit... this is all a mess and should be cleaned up :(
     NotifyChanged(false);
   }
+}
+
+bool AutocompleteController::OnMemoryDump(
+    const base::trace_event::MemoryDumpArgs& args,
+    base::trace_event::ProcessMemoryDump* process_memory_dump) {
+  size_t res = 0;
+
+  // provider_client_ seems to be small enough to ignore it.
+
+  // TODO(dyaroshev): implement memory estimation for scoped_refptr in
+  // base::trace_event.
+  res += std::accumulate(providers_.begin(), providers_.end(), 0u,
+                         [](size_t sum, const auto& provider) {
+                           return sum + sizeof(AutocompleteProvider) +
+                                  provider->EstimateMemoryUsage();
+                         });
+
+  res += input_.EstimateMemoryUsage();
+  res += result_.EstimateMemoryUsage();
+
+  auto* dump = process_memory_dump->CreateAllocatorDump(
+      base::StringPrintf("omnibox/autocomplete_controller/0x%" PRIXPTR,
+                         reinterpret_cast<uintptr_t>(this)));
+  dump->AddScalar(base::trace_event::MemoryAllocatorDump::kNameSize,
+                  base::trace_event::MemoryAllocatorDump::kUnitsBytes, res);
+  return true;
 }

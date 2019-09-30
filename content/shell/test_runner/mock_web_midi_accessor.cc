@@ -12,8 +12,8 @@
 #include "content/shell/test_runner/test_runner.h"
 #include "content/shell/test_runner/web_test_delegate.h"
 #include "content/shell/test_runner/web_test_runner.h"
-#include "third_party/WebKit/public/platform/WebString.h"
-#include "third_party/WebKit/public/platform/modules/webmidi/WebMIDIAccessorClient.h"
+#include "third_party/blink/public/platform/modules/webmidi/web_midi_accessor_client.h"
+#include "third_party/blink/public/platform/web_string.h"
 
 using midi::mojom::PortState;
 using midi::mojom::Result;
@@ -61,7 +61,7 @@ void MockWebMIDIAccessor::StartSession() {
 void MockWebMIDIAccessor::SendMIDIData(unsigned port_index,
                                        const unsigned char* data,
                                        size_t length,
-                                       double timestamp) {
+                                       base::TimeTicks timestamp) {
   // Emulate a loopback device for testing. Make sure if an input port that has
   // the same index exists.
   if (port_index < next_input_port_index_)

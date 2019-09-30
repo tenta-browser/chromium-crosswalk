@@ -27,6 +27,19 @@
 #include "ui/accessibility/platform/ax_platform_node_delegate.h"
 #include "ui/accessibility/platform/ax_platform_node_win.h"
 
+// These nonstandard GUIDs are taken directly from the Mozilla sources
+// (accessible/src/msaa/nsAccessNodeWrap.cpp); some documentation is here:
+// http://developer.mozilla.org/en/Accessibility/AT-APIs/ImplementationFeatures/MSAA
+const GUID GUID_ISimpleDOM = {0x0c539790,
+                              0x12e4,
+                              0x11cf,
+                              {0xb6, 0x61, 0x00, 0xaa, 0x00, 0x4c, 0xd6, 0xd8}};
+const GUID GUID_IAccessibleContentDocument = {
+    0xa5d8e1f3,
+    0x3571,
+    0x4d8f,
+    {0x95, 0x21, 0x07, 0xed, 0x28, 0xfb, 0x07, 0x2e}};
+
 namespace ui {
 enum TextBoundaryDirection;
 enum TextBoundaryType;
@@ -467,7 +480,7 @@ class __declspec(uuid("562072fe-3390-43b1-9e2c-dd4118f5ac79"))
   // Retrieve the value of an attribute from the string attribute map and
   // if found and nonempty, allocate a new BSTR (with SysAllocString)
   // and return S_OK. If not found or empty, return S_FALSE.
-  HRESULT GetStringAttributeAsBstr(ui::AXStringAttribute attribute,
+  HRESULT GetStringAttributeAsBstr(ax::mojom::StringAttribute attribute,
                                    BSTR* value_bstr);
 
   // Merges the given spelling attributes, i.e. document marker information,

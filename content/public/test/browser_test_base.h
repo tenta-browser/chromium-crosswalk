@@ -22,6 +22,9 @@ class FilePath;
 
 namespace content {
 
+class BrowserMainParts;
+class WebContents;
+
 class BrowserTestBase : public testing::Test {
  public:
   BrowserTestBase();
@@ -46,6 +49,9 @@ class BrowserTestBase : public testing::Test {
   // Override this to add command line flags specific to your test.
   virtual void SetUpCommandLine(base::CommandLine* command_line) {}
 
+  // Override this to disallow accesses to be production-compatible.
+  virtual bool AllowFileAccessFromFiles() const;
+
   // Returns the host resolver being used for the tests. Subclasses might want
   // to configure it inside tests.
   net::RuleBasedHostResolverProc* host_resolver() {
@@ -64,6 +70,10 @@ class BrowserTestBase : public testing::Test {
 
   // Override this for things you would normally override TearDown for.
   virtual void TearDownInProcessBrowserTestFixture() {}
+
+  // Called after the BrowserMainParts have been created, and before
+  // PreEarlyInitialization() has been called.
+  virtual void CreatedBrowserMainParts(BrowserMainParts* browser_main_parts) {}
 
   // This is invoked from main after browser_init/browser_main have completed.
   // This prepares for the test by creating a new browser and doing any other
@@ -129,6 +139,12 @@ class BrowserTestBase : public testing::Test {
   // Returns true if the test will be using GL acceleration via a software GL.
   bool UsingSoftwareGL() const;
 
+  // Should be in PreRunTestOnMainThread, with the initial WebContents for the
+  // main window. This allows the test harness to watch it for navigations so
+  // that it can sync the host_resolver() rules to the out-of-process network
+  // code necessary.
+  void SetInitialWebContents(WebContents* web_contents);
+
   // Temporary
   // TODO(jam): remove this.
   void disable_io_checks() { disable_io_checks_ = true; }
@@ -163,6 +179,9 @@ class BrowserTestBase : public testing::Test {
   // When true, do compositing with the software backend instead of using GL.
   bool use_software_compositing_;
 
+  // Initial WebContents to watch for navigations during SetUpOnMainThread.
+  WebContents* initial_web_contents_ = nullptr;
+
   // Whether SetUp was called. This value is checked in the destructor of this
   // class to ensure that SetUp was called. If it's not called, the test will
   // not run and report a false positive result.
@@ -172,6 +191,8 @@ class BrowserTestBase : public testing::Test {
   // paths don't make file access. Keep this for now since src/chrome didn't
   // check this.
   bool disable_io_checks_;
+
+  bool initialized_network_process_ = false;
 
 #if defined(OS_POSIX)
   bool handle_sigterm_;

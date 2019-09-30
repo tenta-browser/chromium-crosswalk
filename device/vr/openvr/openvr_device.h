@@ -9,8 +9,8 @@
 
 #include "base/macros.h"
 #include "base/single_thread_task_runner.h"
+#include "device/vr/public/mojom/vr_service.mojom.h"
 #include "device/vr/vr_device_base.h"
-#include "device/vr/vr_service.mojom.h"
 #include "mojo/public/cpp/bindings/binding.h"
 
 namespace vr {
@@ -26,11 +26,14 @@ class OpenVRDevice : public VRDeviceBase {
   OpenVRDevice(vr::IVRSystem* vr);
   ~OpenVRDevice() override;
 
+  void Shutdown();
+
   // VRDeviceBase
   void RequestPresent(
       VRDisplayImpl* display,
       mojom::VRSubmitFrameClientPtr submit_client,
       mojom::VRPresentationProviderRequest request,
+      mojom::VRRequestPresentOptionsPtr present_options,
       mojom::VRDisplayHost::RequestPresentCallback callback) override;
   void ExitPresent() override;
 
@@ -38,7 +41,8 @@ class OpenVRDevice : public VRDeviceBase {
 
   void OnRequestPresentResult(
       mojom::VRDisplayHost::RequestPresentCallback callback,
-      bool result);
+      bool result,
+      mojom::VRDisplayFrameTransportOptionsPtr transport_options);
 
  private:
   // VRDeviceBase

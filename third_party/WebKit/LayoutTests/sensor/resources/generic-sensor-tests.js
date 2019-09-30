@@ -4,7 +4,11 @@
 // a called by the test to provide the mock values for sensor. |verifyReading|
 // is called so that the value read in JavaScript are the values expected (the ones
 // sent by |updateReading|).
-function runGenericSensorTests(sensorType, updateReading, verifyReading) {
+function runGenericSensorTests(sensorType,
+                               updateReading,
+                               verifyReading,
+                               verifyRemappedReading,
+                               featurePolicies) {
   sensor_test(sensor => {
     sensor.mockSensorProvider.setGetSensorShouldFail(true);
     let sensorObject = new sensorType;
@@ -19,7 +23,23 @@ function runGenericSensorTests(sensorType, updateReading, verifyReading) {
 
       sensorObject.onerror = wrapper.callback;
     });
-  }, `${sensorType.name}: Test that onerror is send when sensor is not supported.`);
+  }, `${sensorType.name}: Test that onerror is sent when sensor is not supported.`);
+
+  sensor_test(sensor => {
+    sensor.mockSensorProvider.setPermissionsDenied(true);
+    let sensorObject = new sensorType;
+    sensorObject.start();
+    return new Promise((resolve, reject) => {
+      let wrapper = new CallbackWrapper(event => {
+        assert_false(sensorObject.activated);
+        assert_equals(event.error.name, 'NotAllowedError');
+        sensorObject.onerror = null;
+        resolve();
+      }, reject);
+
+      sensorObject.onerror = wrapper.callback;
+    });
+  }, `${sensorType.name}: Test that onerror is sent when permissions are not granted.`);
 
   sensor_test(async sensor => {
     let sensorObject = new sensorType({frequency: 560});
@@ -220,7 +240,7 @@ function runGenericSensorTests(sensorType, updateReading, verifyReading) {
   }, `${sensorType.name}: Test that onreading is called and sensor reading is valid (continuous reporting).`);
 
   sensor_test(async sensor => {
-    let sensorObject = new sensorType;
+    let sensorObject = new sensorType({frequency: 60});
     sensorObject.start();
 
     let mockSensor = await sensor.mockSensorProvider.getCreatedSensor();
@@ -246,7 +266,7 @@ function runGenericSensorTests(sensorType, updateReading, verifyReading) {
  visibility changes.`);
 
   sensor_test(async sensor => {
-    let sensorObject = new sensorType;
+    let sensorObject = new sensorType({frequency: 60});
     sensorObject.start();
 
     // Create a focused editbox inside a cross-origin iframe, sensor notification must suspend.
@@ -314,9 +334,10 @@ function runGenericSensorTests(sensorType, updateReading, verifyReading) {
   }, `${sensorType.name}: Test that sensor reading is correct.`);
 
   async function checkFrequencyHintWorks(sensor) {
-    let fastSensor = new sensorType({frequency: 30});
-    let slowSensor = new sensorType({frequency: 5});
-    slowSensor.start();
+    let fastSensor = new sensorType({frequency: 60});
+    fastSensor.start();
+
+    let slowSensor;  // To be initialized later.
 
     let mockSensor = await sensor.mockSensorProvider.getCreatedSensor();
     await mockSensor.setUpdateSensorReadingFunction(updateReading);
@@ -324,27 +345,37 @@ function runGenericSensorTests(sensorType, updateReading, verifyReading) {
       let fastSensorNotifiedCounter = 0;
       let slowSensorNotifiedCounter = 0;
 
-      let fastSensorWrapper = new CallbackWrapper(() => {
-        fastSensorNotifiedCounter++;
-      }, reject);
-
       let slowSensorWrapper = new CallbackWrapper(() => {
-        slowSensorNotifiedCounter++;
-        if (slowSensorNotifiedCounter == 1) {
-            fastSensor.start();
-        } else if (slowSensorNotifiedCounter == 3) {
+        // Skip the initial notification that always comes immediately.
+        if (slowSensorNotifiedCounter === 1) {
           assert_true(fastSensorNotifiedCounter > 2,
                       "Fast sensor overtakes the slow one");
           fastSensor.stop();
           slowSensor.stop();
           resolve(mockSensor);
         }
+
+        slowSensorNotifiedCounter++;
+      }, reject);
+
+      let fastSensorWrapper = new CallbackWrapper(() => {
+        if (fastSensorNotifiedCounter === 0) {
+          // For Magnetometer and ALS, the maximum frequency is less than 60Hz
+          // we make "slow" sensor 4 times slower than the actual applied
+          // frequency, so that the "fast" sensor will immediately overtake it
+          // despite the notification adjustments.
+          const slowFrequency = mockSensor.getSamplingFrequency() * 0.25;
+          slowSensor = new sensorType({frequency: slowFrequency});
+          slowSensor.onreading = slowSensorWrapper.callback;
+          slowSensor.onerror = reject;
+          slowSensor.start();
+        }
+
+        fastSensorNotifiedCounter++;
       }, reject);
 
       fastSensor.onreading = fastSensorWrapper.callback;
-      slowSensor.onreading = slowSensorWrapper.callback;
       fastSensor.onerror = reject;
-      slowSensor.onerror = reject;
     });
     return mockSensor.removeConfigurationCalled();
   }
@@ -360,6 +391,7 @@ function runGenericSensorTests(sensorType, updateReading, verifyReading) {
   promise_test(() => {
     return new Promise((resolve,reject) => {
       let iframe = document.createElement('iframe');
+      iframe.allow = featurePolicies.join(' \'none\'; ') + ' \'none\';';
       iframe.srcdoc = '<script>' +
                       '  window.onmessage = message => {' +
                       '    if (message.data === "LOADED") {' +
@@ -382,10 +414,38 @@ function runGenericSensorTests(sensorType, updateReading, verifyReading) {
         }
       }
     });
-  }, `${sensorType.name}: Test that sensor cannot be constructed within iframe.`);
+  }, `${sensorType.name}: Test that sensor cannot be constructed within iframe disallowed to use feature policy.`);
+
+  promise_test(() => {
+    return new Promise((resolve,reject) => {
+      let iframe = document.createElement('iframe');
+      iframe.allow = featurePolicies.join(';') + ';';
+      iframe.srcdoc = '<script>' +
+                      '  window.onmessage = message => {' +
+                      '    if (message.data === "LOADED") {' +
+                      '      try {' +
+                      '        new ' + sensorType.name + '();' +
+                      '        parent.postMessage("PASS", "*");' +
+                      '      } catch (e) {' +
+                      '        parent.postMessage("FAIL", "*");' +
+                      '      }' +
+                      '    }' +
+                      '   };' +
+                      '<\/script>';
+      iframe.onload = () => iframe.contentWindow.postMessage('LOADED', '*');
+      document.body.appendChild(iframe);
+      window.onmessage = message => {
+        if (message.data == 'PASS') {
+          resolve();
+        } else if (message.data == 'FAIL') {
+          reject();
+        }
+      }
+    });
+  }, `${sensorType.name}: Test that sensor can be constructed within an iframe allowed to use feature policy.`);
 
   sensor_test(async sensor => {
-    let sensorObject = new sensorType();
+    let sensorObject = new sensorType({frequency: 60});
     let timestamp = 0;
     sensorObject.start();
 
@@ -419,4 +479,40 @@ function runGenericSensorTests(sensorType, updateReading, verifyReading) {
     });
     return mockSensor.removeConfigurationCalled();
   }, `${sensorType.name}: Test that fresh reading is fetched on start().`);
+
+  sensor_test(async sensor => {
+    if (!verifyRemappedReading) {
+      // The sensorType does not represent a spatial sensor.
+      return;
+    }
+
+    let sensor1 = new sensorType({frequency: 60});
+    let sensor2 = new sensorType({frequency: 60, referenceFrame: "screen"});
+
+    sensor1.start();
+    sensor2.start();
+
+    let mockSensor = await sensor.mockSensorProvider.getCreatedSensor();
+    await mockSensor.setUpdateSensorReadingFunction(update_sensor_reading);
+    await new Promise((resolve, reject) => {
+      let wrapper = new CallbackWrapper(() => {
+        assert_true(verifyReading(sensor1));
+        assert_true(verifyRemappedReading(sensor2));
+
+        sensor1.stop();
+        assert_true(verifyReading(sensor1, true /*should be null*/));
+        assert_true(verifyRemappedReading(sensor2));
+
+        sensor2.stop();
+        assert_true(verifyRemappedReading(sensor2, true /*should be null*/));
+
+        resolve(mockSensor);
+      }, reject);
+
+      sensor1.onreading = wrapper.callback;
+      sensor1.onerror = reject;
+      sensor2.onerror = reject;
+    });
+    return mockSensor.removeConfigurationCalled();
+  }, `${sensorType.name}: Test that reading is mapped to the screen coordinates`);
 }

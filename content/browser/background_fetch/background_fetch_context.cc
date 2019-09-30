@@ -10,6 +10,7 @@
 #include "content/browser/background_fetch/background_fetch_job_controller.h"
 #include "content/browser/background_fetch/background_fetch_registration_id.h"
 #include "content/browser/background_fetch/background_fetch_registration_notifier.h"
+#include "content/browser/background_fetch/background_fetch_scheduler.h"
 #include "content/browser/service_worker/service_worker_context_wrapper.h"
 #include "content/public/browser/background_fetch_delegate.h"
 #include "content/public/browser/browser_context.h"
@@ -47,6 +48,7 @@ BackgroundFetchContext::BackgroundFetchContext(
       registration_notifier_(
           std::make_unique<BackgroundFetchRegistrationNotifier>()),
       delegate_proxy_(browser_context_->GetBackgroundFetchDelegate()),
+      scheduler_(std::make_unique<BackgroundFetchScheduler>(&data_manager_)),
       weak_factory_(this) {
   // Although this lives only on the IO thread, it is constructed on UI thread.
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
@@ -101,19 +103,28 @@ void BackgroundFetchContext::StartFetch(
     const BackgroundFetchRegistrationId& registration_id,
     const std::vector<ServiceWorkerFetchRequest>& requests,
     const BackgroundFetchOptions& options,
+    const SkBitmap& icon,
     blink::mojom::BackgroundFetchService::FetchCallback callback) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
 
   data_manager_.CreateRegistration(
-      registration_id, requests, options,
+      registration_id, requests, options, icon,
       base::BindOnce(&BackgroundFetchContext::DidCreateRegistration,
-                     weak_factory_.GetWeakPtr(), registration_id, options,
+                     weak_factory_.GetWeakPtr(), registration_id, options, icon,
                      std::move(callback)));
+}
+
+void BackgroundFetchContext::GetIconDisplaySize(
+    blink::mojom::BackgroundFetchService::GetIconDisplaySizeCallback callback) {
+  DCHECK_CURRENTLY_ON(BrowserThread::IO);
+
+  delegate_proxy_.GetIconDisplaySize(std::move(callback));
 }
 
 void BackgroundFetchContext::DidCreateRegistration(
     const BackgroundFetchRegistrationId& registration_id,
     const BackgroundFetchOptions& options,
+    const SkBitmap& icon,
     blink::mojom::BackgroundFetchService::FetchCallback callback,
     blink::mojom::BackgroundFetchError error,
     std::unique_ptr<BackgroundFetchRegistration> registration) {
@@ -127,7 +138,7 @@ void BackgroundFetchContext::DidCreateRegistration(
 
   DCHECK(registration);
   // Create the BackgroundFetchJobController to do the actual fetching.
-  CreateController(registration_id, options, *registration.get());
+  CreateController(registration_id, options, icon, *registration.get());
   std::move(callback).Run(error, *registration.get());
 }
 
@@ -138,23 +149,23 @@ void BackgroundFetchContext::AddRegistrationObserver(
 }
 
 void BackgroundFetchContext::UpdateUI(
-    const std::string& unique_id,
+    const BackgroundFetchRegistrationId& registration_id,
     const std::string& title,
     blink::mojom::BackgroundFetchService::UpdateUICallback callback) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
 
   // The registration must a) still be active, or b) have completed/failed (not
   // aborted) with the waitUntil promise from that event not yet resolved.
-  if (!job_controllers_.count(unique_id)) {
+  if (!job_controllers_.count(registration_id.unique_id())) {
     std::move(callback).Run(blink::mojom::BackgroundFetchError::INVALID_ID);
     return;
   }
 
   data_manager_.UpdateRegistrationUI(
-      unique_id, title,
+      registration_id, title,
       base::BindOnce(&BackgroundFetchContext::DidUpdateStoredUI,
-                     weak_factory_.GetWeakPtr(), unique_id, title,
-                     std::move(callback)));
+                     weak_factory_.GetWeakPtr(), registration_id.unique_id(),
+                     title, std::move(callback)));
 }
 
 void BackgroundFetchContext::DidUpdateStoredUI(
@@ -178,11 +189,13 @@ void BackgroundFetchContext::DidUpdateStoredUI(
 void BackgroundFetchContext::CreateController(
     const BackgroundFetchRegistrationId& registration_id,
     const BackgroundFetchOptions& options,
+    const SkBitmap& icon,
     const BackgroundFetchRegistration& registration) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
 
   auto controller = std::make_unique<BackgroundFetchJobController>(
-      &delegate_proxy_, registration_id, options, registration, &data_manager_,
+      &delegate_proxy_, registration_id, options, icon, registration,
+      scheduler_.get(),
       // Safe because JobControllers are destroyed before RegistrationNotifier.
       base::BindRepeating(&BackgroundFetchRegistrationNotifier::Notify,
                           base::Unretained(registration_notifier_.get())),
@@ -197,9 +210,7 @@ void BackgroundFetchContext::CreateController(
       data_manager_.GetTotalNumberOfRequests(registration_id),
       std::vector<std::string>() /* outstanding download GUIDs */);
 
-  // Start fetching the first few requests immediately. At some point in the
-  // future we may want a more elaborate scheduling mechanism here.
-  controller->Start();
+  scheduler_->AddJobController(controller.get());
 
   job_controllers_.insert(
       std::make_pair(registration_id.unique_id(), std::move(controller)));
@@ -248,8 +259,8 @@ void BackgroundFetchContext::DidMarkForDeletion(
 
     CleanupRegistration(registration_id, {});
 
-    event_dispatcher_.DispatchBackgroundFetchAbortEvent(
-        registration_id, base::Bind(&base::DoNothing));
+    event_dispatcher_.DispatchBackgroundFetchAbortEvent(registration_id,
+                                                        base::DoNothing());
   } else {
     data_manager_.GetSettledFetchesForRegistration(
         registration_id,
@@ -277,21 +288,23 @@ void BackgroundFetchContext::DidGetSettledFetches(
   if (background_fetch_succeeded) {
     event_dispatcher_.DispatchBackgroundFetchedEvent(
         registration_id, std::move(settled_fetches),
-        base::Bind(&BackgroundFetchContext::CleanupRegistration,
-                   weak_factory_.GetWeakPtr(), registration_id,
-                   // The blob uuid is sent as part of |settled_fetches|. Bind
-                   // |blob_data_handles| to the callback to keep them alive
-                   // until the waitUntil event is resolved.
-                   std::move(blob_data_handles)));
+        base::BindOnce(
+            &BackgroundFetchContext::CleanupRegistration,
+            weak_factory_.GetWeakPtr(), registration_id,
+            // The blob uuid is sent as part of |settled_fetches|. Bind
+            // |blob_data_handles| to the callback to keep them alive
+            // until the waitUntil event is resolved.
+            std::move(blob_data_handles)));
   } else {
     event_dispatcher_.DispatchBackgroundFetchFailEvent(
         registration_id, std::move(settled_fetches),
-        base::Bind(&BackgroundFetchContext::CleanupRegistration,
-                   weak_factory_.GetWeakPtr(), registration_id,
-                   // The blob uuid is sent as part of |settled_fetches|. Bind
-                   // |blob_data_handles| to the callback to keep them alive
-                   // until the waitUntil event is resolved.
-                   std::move(blob_data_handles)));
+        base::BindOnce(
+            &BackgroundFetchContext::CleanupRegistration,
+            weak_factory_.GetWeakPtr(), registration_id,
+            // The blob uuid is sent as part of |settled_fetches|. Bind
+            // |blob_data_handles| to the callback to keep them alive
+            // until the waitUntil event is resolved.
+            std::move(blob_data_handles)));
   }
 }
 
@@ -316,8 +329,8 @@ void BackgroundFetchContext::CleanupRegistration(
   // as a fallback in that case, and deletes the registration on next startup.
   registration_notifier_->AddGarbageCollectionCallback(
       registration_id.unique_id(),
-      base::Bind(&BackgroundFetchContext::LastObserverGarbageCollected,
-                 weak_factory_.GetWeakPtr(), registration_id));
+      base::BindOnce(&BackgroundFetchContext::LastObserverGarbageCollected,
+                     weak_factory_.GetWeakPtr(), registration_id));
 }
 
 void BackgroundFetchContext::LastObserverGarbageCollected(

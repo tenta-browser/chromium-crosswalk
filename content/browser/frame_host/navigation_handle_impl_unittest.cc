@@ -84,8 +84,6 @@ class NavigationHandleImplTest : public RenderViewHostImplTestHarness {
   void SetUp() override {
     RenderViewHostImplTestHarness::SetUp();
     CreateNavigationHandle();
-    EXPECT_EQ(REQUEST_CONTEXT_TYPE_UNSPECIFIED,
-              test_handle_->request_context_type_);
     contents()->GetMainFrame()->InitializeRenderFrameIfNeeded();
   }
 
@@ -113,9 +111,6 @@ class NavigationHandleImplTest : public RenderViewHostImplTestHarness {
     // It's safe to use base::Unretained since the NavigationHandle is owned by
     // the NavigationHandleImplTest.
     test_handle_->WillStartRequest(
-        "GET", nullptr, Referrer(), false, ui::PAGE_TRANSITION_LINK, false,
-        REQUEST_CONTEXT_TYPE_LOCATION,
-        blink::WebMixedContentContextType::kBlockable,
         base::Bind(&NavigationHandleImplTest::UpdateThrottleCheckResult,
                    base::Unretained(this)));
   }
@@ -151,7 +146,7 @@ class NavigationHandleImplTest : public RenderViewHostImplTestHarness {
     // It's safe to use base::Unretained since the NavigationHandle is owned by
     // the NavigationHandleImplTest.
     test_handle_->WillFailRequest(
-        ssl_info, false,
+        ssl_info,
         base::Bind(&NavigationHandleImplTest::UpdateThrottleCheckResult,
                    base::Unretained(this)));
   }
@@ -172,7 +167,7 @@ class NavigationHandleImplTest : public RenderViewHostImplTestHarness {
     test_handle_->WillProcessResponse(
         main_test_rfh(), scoped_refptr<net::HttpResponseHeaders>(),
         net::HttpResponseInfo::CONNECTION_INFO_QUIC_35, net::HostPortPair(),
-        net::SSLInfo(), GlobalRequestID(), false, false, false, base::Closure(),
+        net::SSLInfo(), GlobalRequestID(), false, false, false,
         base::Bind(&NavigationHandleImplTest::UpdateThrottleCheckResult,
                    base::Unretained(this)));
   }
@@ -262,7 +257,16 @@ class NavigationHandleImplTest : public RenderViewHostImplTestHarness {
         base::TimeTicks::Now(), 0,
         false,                  // started_from_context_menu
         CSPDisposition::CHECK,  // should_check_main_world_csp
-        false);                 // is_form_submission
+        false,                  // is_form_submission
+        base::nullopt,          // suggested_filename
+        nullptr,                // navigation_ui_data
+        "GET", net::HttpRequestHeaders(),
+        nullptr,  // resource_request_body
+        Referrer(),
+        false,  // has_user_gesture
+        ui::PAGE_TRANSITION_LINK,
+        false,  // is_external_protocol
+        REQUEST_CONTEXT_TYPE_LOCATION);
   }
 
  private:
@@ -956,7 +960,6 @@ TEST_F(NavigationHandleImplTest, BlockRequestCustomNetErrorAndErrorHTML) {
 
 TEST_F(NavigationHandleImplTest, BlockRequestCustomNetErrorInRedirect) {
   // BLOCK_REQUEST on redirect requires PlzNavigate.
-  EnableBrowserSideNavigation();
   TestNavigationThrottle* block_throttle = CreateTestNavigationThrottle(
       {NavigationThrottle::BLOCK_REQUEST, net::ERR_FILE_NOT_FOUND});
   EXPECT_TRUE(call_counts_match(block_throttle, 0, 0, 0, 0));
@@ -977,7 +980,6 @@ TEST_F(NavigationHandleImplTest, BlockRequestCustomNetErrorInRedirect) {
 TEST_F(NavigationHandleImplTest,
        BlockRequestCustomNetErrorAndErrorHTMLInRedirect) {
   // BLOCK_REQUEST on redirect requires PlzNavigate.
-  EnableBrowserSideNavigation();
   std::string expected_error_page_content("<html><body>test</body></html>");
   TestNavigationThrottle* block_throttle = CreateTestNavigationThrottle(
       {NavigationThrottle::BLOCK_REQUEST, net::ERR_FILE_NOT_FOUND,
@@ -1044,11 +1046,7 @@ TEST_F(NavigationHandleImplTest, DeletionByNavigationThrottle) {
   AddDeletingNavigationThrottle();
   SimulateWillStartRequest();
   EXPECT_EQ(nullptr, test_handle());
-  if (IsBrowserSideNavigationEnabled()) {
-    EXPECT_FALSE(was_callback_called());
-  } else {
-    EXPECT_EQ(NavigationThrottle::CANCEL_AND_IGNORE, callback_result());
-  }
+  EXPECT_FALSE(was_callback_called());
 
   // Test deletion in WillStartRequest after being deferred.
   CreateNavigationHandle();
@@ -1058,11 +1056,7 @@ TEST_F(NavigationHandleImplTest, DeletionByNavigationThrottle) {
   EXPECT_NE(nullptr, test_handle());
   Resume();
   EXPECT_EQ(nullptr, test_handle());
-  if (IsBrowserSideNavigationEnabled()) {
-    EXPECT_FALSE(was_callback_called());
-  } else {
-    EXPECT_EQ(NavigationThrottle::CANCEL_AND_IGNORE, callback_result());
-  }
+  EXPECT_FALSE(was_callback_called());
 
   // Test deletion in WillRedirectRequest.
   CreateNavigationHandle();
@@ -1070,11 +1064,7 @@ TEST_F(NavigationHandleImplTest, DeletionByNavigationThrottle) {
   AddDeletingNavigationThrottle();
   SimulateWillRedirectRequest();
   EXPECT_EQ(nullptr, test_handle());
-  if (IsBrowserSideNavigationEnabled()) {
-    EXPECT_FALSE(was_callback_called());
-  } else {
-    EXPECT_EQ(NavigationThrottle::CANCEL_AND_IGNORE, callback_result());
-  }
+  EXPECT_FALSE(was_callback_called());
 
   // Test deletion in WillRedirectRequest after being deferred.
   CreateNavigationHandle();
@@ -1085,11 +1075,7 @@ TEST_F(NavigationHandleImplTest, DeletionByNavigationThrottle) {
   EXPECT_NE(nullptr, test_handle());
   Resume();
   EXPECT_EQ(nullptr, test_handle());
-  if (IsBrowserSideNavigationEnabled()) {
-    EXPECT_FALSE(was_callback_called());
-  } else {
-    EXPECT_EQ(NavigationThrottle::CANCEL_AND_IGNORE, callback_result());
-  }
+  EXPECT_FALSE(was_callback_called());
 
   // Test deletion in WillFailRequest.
   CreateNavigationHandle();
@@ -1097,9 +1083,7 @@ TEST_F(NavigationHandleImplTest, DeletionByNavigationThrottle) {
   AddDeletingNavigationThrottle();
   SimulateWillFailRequest(net::ERR_CERT_DATE_INVALID);
   EXPECT_EQ(nullptr, test_handle());
-  if (IsBrowserSideNavigationEnabled()) {
-    EXPECT_FALSE(was_callback_called());
-  }
+  EXPECT_FALSE(was_callback_called());
 
   // Test deletion in WillFailRequest after being deferred.
   CreateNavigationHandle();
@@ -1110,9 +1094,7 @@ TEST_F(NavigationHandleImplTest, DeletionByNavigationThrottle) {
   EXPECT_NE(nullptr, test_handle());
   Resume();
   EXPECT_EQ(nullptr, test_handle());
-  if (IsBrowserSideNavigationEnabled()) {
-    EXPECT_FALSE(was_callback_called());
-  }
+  EXPECT_FALSE(was_callback_called());
 
   // Test deletion in WillProcessResponse.
   CreateNavigationHandle();
@@ -1120,11 +1102,7 @@ TEST_F(NavigationHandleImplTest, DeletionByNavigationThrottle) {
   AddDeletingNavigationThrottle();
   SimulateWillProcessResponse();
   EXPECT_EQ(nullptr, test_handle());
-  if (IsBrowserSideNavigationEnabled()) {
-    EXPECT_FALSE(was_callback_called());
-  } else {
-    EXPECT_EQ(NavigationThrottle::CANCEL_AND_IGNORE, callback_result());
-  }
+  EXPECT_FALSE(was_callback_called());
 
   // Test deletion in WillProcessResponse after being deferred.
   CreateNavigationHandle();
@@ -1135,11 +1113,7 @@ TEST_F(NavigationHandleImplTest, DeletionByNavigationThrottle) {
   EXPECT_NE(nullptr, test_handle());
   Resume();
   EXPECT_EQ(nullptr, test_handle());
-  if (IsBrowserSideNavigationEnabled()) {
-    EXPECT_FALSE(was_callback_called());
-  } else {
-    EXPECT_EQ(NavigationThrottle::CANCEL_AND_IGNORE, callback_result());
-  }
+  EXPECT_FALSE(was_callback_called());
 }
 
 // Checks that data from the SSLInfo passed into SimulateWillStartRequest() is

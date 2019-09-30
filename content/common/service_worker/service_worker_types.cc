@@ -4,7 +4,6 @@
 
 #include "content/common/service_worker/service_worker_types.h"
 
-#include "content/public/common/service_worker_modes.h"
 #include "net/base/load_flags.h"
 #include "storage/common/blob_storage/blob_handle.h"
 
@@ -20,8 +19,19 @@ const char kServiceWorkerGetRegistrationErrorPrefix[] =
     "Failed to get a ServiceWorkerRegistration: ";
 const char kServiceWorkerGetRegistrationsErrorPrefix[] =
     "Failed to get ServiceWorkerRegistration objects: ";
-const char kFetchScriptError[] =
+const char kServiceWorkerFetchScriptError[] =
     "An unknown error occurred when fetching the script.";
+const char kServiceWorkerBadHTTPResponseError[] =
+    "A bad HTTP response code (%d) was received when fetching the script.";
+const char kServiceWorkerSSLError[] =
+    "An SSL certificate error occurred when fetching the script.";
+const char kServiceWorkerBadMIMEError[] =
+    "The script has an unsupported MIME type ('%s').";
+const char kServiceWorkerNoMIMEError[] =
+    "The script does not have a MIME type.";
+const char kServiceWorkerRedirectError[] =
+    "The script resource is behind a redirect, which is disallowed.";
+const char kServiceWorkerAllowed[] = "Service-Worker-Allowed";
 
 ServiceWorkerFetchRequest::ServiceWorkerFetchRequest() = default;
 
@@ -48,7 +58,6 @@ ServiceWorkerFetchRequest::~ServiceWorkerFetchRequest() {}
 size_t ServiceWorkerFetchRequest::EstimatedStructSize() {
   size_t size = sizeof(ServiceWorkerFetchRequest);
   size += url.spec().size();
-  size += blob_uuid.size();
   size += client_id.size();
 
   for (const auto& key_and_value : headers) {
@@ -146,19 +155,5 @@ size_t ServiceWorkerResponse::EstimatedStructSize() {
   size += side_data_blob_uuid.size();
   return size;
 }
-
-ServiceWorkerClientQueryOptions::ServiceWorkerClientQueryOptions()
-    : client_type(blink::mojom::ServiceWorkerClientType::kWindow),
-      include_uncontrolled(false) {}
-
-ExtendableMessageEventSource::ExtendableMessageEventSource() {}
-
-ExtendableMessageEventSource::ExtendableMessageEventSource(
-    const ServiceWorkerClientInfo& client_info)
-    : client_info(client_info) {}
-
-ExtendableMessageEventSource::ExtendableMessageEventSource(
-    const blink::mojom::ServiceWorkerObjectInfo& service_worker_info)
-    : service_worker_info(service_worker_info) {}
 
 }  // namespace content

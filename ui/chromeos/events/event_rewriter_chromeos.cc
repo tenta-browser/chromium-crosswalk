@@ -11,7 +11,6 @@
 #include "base/command_line.h"
 #include "base/logging.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
@@ -723,6 +722,11 @@ bool EventRewriterChromeOS::RewriteModifierKeys(const ui::KeyEvent& key_event,
     // XK_ISO_Level3_Shift with Mod3Mask, not XF86XK_Launch7).
     case ui::DomCode::F16:
     case ui::DomCode::CAPS_LOCK:
+      // This key is already remapped to Mod3 in remapping based on DomKey. Skip
+      // more remapping.
+      if (IsISOLevel5ShiftUsedByCurrentInputMethod() && remapped_key)
+        break;
+
       characteristic_flag = ui::EF_CAPS_LOCK_ON;
       remapped_key =
           GetRemappedKey(prefs::kLanguageRemapCapsLockKeyTo, delegate_);
@@ -883,26 +887,6 @@ void EventRewriterChromeOS::RewriteExtendedKeys(const ui::KeyEvent& key_event,
   DCHECK(key_event.type() == ui::ET_KEY_PRESSED ||
          key_event.type() == ui::ET_KEY_RELEASED);
   MutableKeyState incoming = *state;
-
-  if ((incoming.flags &
-       (ui::EF_COMMAND_DOWN | ui::EF_ALT_DOWN | ui::EF_CONTROL_DOWN)) ==
-      (ui::EF_COMMAND_DOWN | ui::EF_ALT_DOWN)) {
-    // Search + Alt + Arrow keys are used to move window between displays, do
-    // not do remappings on these.
-    static const KeyboardRemapping::Condition kUseExistingKeys[] = {
-        {// Alt+Left
-         ui::EF_ALT_DOWN | ui::EF_COMMAND_DOWN, ui::VKEY_LEFT},
-        {// Alt+Right
-         ui::EF_ALT_DOWN | ui::EF_COMMAND_DOWN, ui::VKEY_RIGHT},
-        {// Alt+Up
-         ui::EF_ALT_DOWN | ui::EF_COMMAND_DOWN, ui::VKEY_UP},
-        {// Alt+Down
-         ui::EF_ALT_DOWN | ui::EF_COMMAND_DOWN, ui::VKEY_DOWN}};
-    for (const auto& condition : kUseExistingKeys) {
-      if (MatchKeyboardRemapping(*state, condition))
-        return;
-    }
-  }
 
   if ((incoming.flags & (ui::EF_COMMAND_DOWN | ui::EF_ALT_DOWN)) ==
       (ui::EF_COMMAND_DOWN | ui::EF_ALT_DOWN)) {

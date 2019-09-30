@@ -62,14 +62,14 @@
 #include "ppapi/shared_impl/var.h"
 #include "ppapi/shared_impl/var_tracker.h"
 #include "ppapi/thunk/enter.h"
-#include "third_party/WebKit/public/platform/WebSecurityOrigin.h"
-#include "third_party/WebKit/public/platform/WebURLRequest.h"
-#include "third_party/WebKit/public/platform/WebURLResponse.h"
-#include "third_party/WebKit/public/web/WebAssociatedURLLoader.h"
-#include "third_party/WebKit/public/web/WebAssociatedURLLoaderClient.h"
-#include "third_party/WebKit/public/web/WebDocument.h"
-#include "third_party/WebKit/public/web/WebLocalFrame.h"
-#include "third_party/WebKit/public/web/WebPluginContainer.h"
+#include "third_party/blink/public/platform/web_security_origin.h"
+#include "third_party/blink/public/platform/web_url_request.h"
+#include "third_party/blink/public/platform/web_url_response.h"
+#include "third_party/blink/public/web/web_associated_url_loader.h"
+#include "third_party/blink/public/web/web_associated_url_loader_client.h"
+#include "third_party/blink/public/web/web_document.h"
+#include "third_party/blink/public/web/web_local_frame.h"
+#include "third_party/blink/public/web/web_plugin_container.h"
 
 #if defined(OS_WIN)
 #include "base/win/scoped_handle.h"
@@ -268,7 +268,7 @@ class ManifestServiceProxy : public ManifestServiceChannel::Delegate {
         process_type_ != kPNaClTranslatorProcessType) {
       // Return an error.
       base::ThreadTaskRunnerHandle::Get()->PostTask(
-          FROM_HERE, base::Bind(callback, base::Passed(base::File()), 0, 0));
+          FROM_HERE, base::BindOnce(callback, base::File(), 0, 0));
       return;
     }
 
@@ -284,7 +284,7 @@ class ManifestServiceProxy : public ManifestServiceChannel::Delegate {
     if (!ManifestResolveKey(pp_instance_, is_helper_process, key, &url,
                             &pnacl_options)) {
       base::ThreadTaskRunnerHandle::Get()->PostTask(
-          FROM_HERE, base::Bind(callback, base::Passed(base::File()), 0, 0));
+          FROM_HERE, base::BindOnce(callback, base::File(), 0, 0));
       return;
     }
 
@@ -342,6 +342,12 @@ blink::WebURLRequest CreateWebURLRequest(const blink::WebDocument& document,
     request.SetFetchCredentialsMode(
         network::mojom::FetchCredentialsMode::kOmit);
   }
+
+  // Plug-ins should not load via service workers as plug-ins may have their own
+  // origin checking logic that may get confused if service workers respond with
+  // resources from another origin.
+  // https://w3c.github.io/ServiceWorker/#implementer-concerns
+  request.SetSkipServiceWorker(true);
 
   return request;
 }
@@ -433,11 +439,6 @@ void PPBNaClPrivate::LaunchSelLdr(
   instance_info.url = GURL(alleged_url);
 
   uint32_t perm_bits = ppapi::PERMISSION_NONE;
-  // Conditionally block 'Dev' interfaces. We do this for the NaCl process, so
-  // it's clearer to developers when they are using 'Dev' inappropriately. We
-  // must also check on the trusted side of the proxy.
-  if (load_manager->DevInterfacesEnabled())
-    perm_bits |= ppapi::PERMISSION_DEV;
   instance_info.permissions =
       ppapi::PpapiPermissions::GetForCommandLine(perm_bits);
 
@@ -1033,6 +1034,10 @@ void DownloadManifestToBuffer(PP_Instance instance,
   std::unique_ptr<blink::WebAssociatedURLLoader> url_loader(
       CreateAssociatedURLLoader(document, gurl));
   blink::WebURLRequest request = CreateWebURLRequest(document, gurl);
+
+  // Requests from plug-ins must skip service workers, see the comment in
+  // CreateWebURLRequest.
+  DCHECK(request.GetSkipServiceWorker());
 
   // ManifestDownloader deletes itself after invoking the callback.
   ManifestDownloader* manifest_downloader = new ManifestDownloader(

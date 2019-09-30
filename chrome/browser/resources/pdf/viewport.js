@@ -3,6 +3,22 @@
 // found in the LICENSE file.
 
 /**
+ * @typedef {{
+ *   x: number,
+ *   y: number
+ * }}
+ */
+let Point;
+
+/**
+ * @typedef {{
+ *   x: number | undefined,
+ *   y: number | undefined
+ * }}
+ */
+let PartialPoint;
+
+/**
  * Returns the height of the intersection of two rectangles.
  * @param {Object} rect1 the first rect
  * @param {Object} rect2 the second rect
@@ -254,7 +270,7 @@ Viewport.prototype = {
 
   /**
    * Scroll the viewport to the specified position.
-   * @type {Object} position the position to scroll to.
+   * @type {Object} position The position to scroll to.
    */
   set position(position) {
     this.window_.scrollTo(position.x, position.y + this.topToolbarHeight_);
@@ -798,15 +814,16 @@ Viewport.prototype = {
    * @param {number} page the index of the page to go to. zero-based.
    */
   goToPage: function(page) {
-    this.goToPageAndY(page, 0);
+    this.goToPageAndXY(page, 0, 0);
   },
 
   /**
    * Go to the given y position in the given page index.
    * @param {number} page the index of the page to go to. zero-based.
+   * @param {number} x the x position in the page to go to.
    * @param {number} y the y position in the page to go to.
    */
-  goToPageAndY: function(page, y) {
+  goToPageAndXY: function(page, x, y) {
     this.mightZoom_(() => {
       if (this.pageDimensions_.length === 0)
         return;
@@ -822,7 +839,7 @@ Viewport.prototype = {
       if (!this.isPagedMode())
         toolbarOffset = this.topToolbarHeight_;
       this.position = {
-        x: dimensions.x * this.zoom,
+        x: (dimensions.x + x) * this.zoom,
         y: (dimensions.y + y) * this.zoom - toolbarOffset
       };
       this.updateViewport_();
@@ -905,5 +922,38 @@ Viewport.prototype = {
     return (
         this.fittingType_ == FittingType.FIT_TO_PAGE ||
         this.fittingType_ == FittingType.FIT_TO_HEIGHT);
+  },
+
+  /**
+   * Scroll the viewport to the specified position.
+   *
+   * @param {!PartialPoint} point The position to which to move the viewport.
+   */
+  scrollTo: function(point) {
+    let changed = false;
+    const newPosition = this.position;
+    if (point.x !== undefined && point.x != newPosition.x) {
+      newPosition.x = point.x;
+      changed = true;
+    }
+    if (point.y !== undefined && point.y != newPosition.y) {
+      newPosition.y = point.y;
+      changed = true;
+    }
+
+    if (changed)
+      this.position = newPosition;
+  },
+
+  /**
+   * Scroll the viewport by the specified delta.
+   *
+   * @param {!Point} delta The delta by which to move the viewport.
+   */
+  scrollBy: function(delta) {
+    const newPosition = this.position;
+    newPosition.x += delta.x;
+    newPosition.y += delta.y;
+    this.scrollTo(newPosition);
   }
 };

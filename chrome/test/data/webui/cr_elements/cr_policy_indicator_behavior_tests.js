@@ -4,7 +4,7 @@
 
 /** @fileoverview Suite of tests for CrPolicyIndicatorBehavior. */
 suite('CrPolicyIndicatorBehavior', function() {
-  var TestIndicator;
+  let TestIndicator;
   suiteSetup(function() {
     TestIndicator = Polymer({
       is: 'test-indicator',
@@ -13,7 +13,7 @@ suite('CrPolicyIndicatorBehavior', function() {
     });
   });
 
-  var indicator;
+  let indicator;
   setup(function() {
     indicator = new TestIndicator;
   });
@@ -44,6 +44,24 @@ suite('CrPolicyIndicatorBehavior', function() {
         'differs',
         indicator.getIndicatorTooltip(
             indicator.indicatorType, indicator.indicatorSourceName, false));
+  });
+
+  test('extension indicator', function() {
+    indicator.indicatorType = CrPolicyIndicatorType.EXTENSION;
+    indicator.indicatorSourceName = 'Extension name';
+
+    assertTrue(indicator.indicatorVisible);
+    assertEquals('cr:extension', indicator.indicatorIcon);
+    assertEquals('extension: Extension name', indicator.indicatorTooltip);
+  });
+
+  test('extension indicator without extension name', function() {
+    indicator.indicatorType = CrPolicyIndicatorType.EXTENSION;
+    indicator.indicatorSourceName = '';
+
+    assertTrue(indicator.indicatorVisible);
+    assertEquals('cr:extension', indicator.indicatorIcon);
+    assertEquals('extension', indicator.indicatorTooltip);
   });
 
   if (cr.isChromeOS) {

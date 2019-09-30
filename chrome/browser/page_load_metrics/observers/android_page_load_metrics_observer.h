@@ -30,6 +30,9 @@ class AndroidPageLoadMetricsObserver
   void OnFirstContentfulPaintInPage(
       const page_load_metrics::mojom::PageLoadTiming& timing,
       const page_load_metrics::PageLoadExtraInfo& extra_info) override;
+  void OnFirstMeaningfulPaintInMainFrameDocument(
+      const page_load_metrics::mojom::PageLoadTiming& timing,
+      const page_load_metrics::PageLoadExtraInfo& extra_info) override;
   void OnLoadEventStart(
       const page_load_metrics::mojom::PageLoadTiming& timing,
       const page_load_metrics::PageLoadExtraInfo& info) override;
@@ -44,6 +47,8 @@ class AndroidPageLoadMetricsObserver
       : web_contents_(web_contents),
         network_quality_provider_(network_quality_provider) {}
 
+  virtual void ReportNewNavigation();
+
   virtual void ReportNetworkQualityEstimate(
       net::EffectiveConnectionType connection_type,
       int64_t http_rtt_ms,
@@ -51,6 +56,9 @@ class AndroidPageLoadMetricsObserver
 
   virtual void ReportFirstContentfulPaint(int64_t navigation_start_tick,
                                           int64_t first_contentful_paint_ms);
+
+  virtual void ReportFirstMeaningfulPaint(int64_t navigation_start_tick,
+                                          int64_t first_meaningful_paint_ms);
 
   virtual void ReportLoadEventStart(int64_t navigation_start_tick,
                                     int64_t load_event_start_ms);
@@ -67,6 +75,7 @@ class AndroidPageLoadMetricsObserver
   content::WebContents* web_contents_;
 
   bool did_dispatch_on_main_resource_ = false;
+  int64_t navigation_id_ = -1;
 
   net::NetworkQualityEstimator::NetworkQualityProvider*
       network_quality_provider_ = nullptr;

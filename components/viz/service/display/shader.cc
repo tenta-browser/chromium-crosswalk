@@ -207,8 +207,7 @@ void VertexShader::Init(GLES2Interface* context,
     uniforms.push_back("uvTexScale");
     uniforms.push_back("uvTexOffset");
   }
-  if (has_matrix_)
-    uniforms.push_back("matrix");
+  uniforms.push_back("matrix");
   if (has_vertex_opacity_)
     uniforms.push_back("opacity");
   if (aa_mode_ == USE_AA) {
@@ -241,8 +240,7 @@ void VertexShader::Init(GLES2Interface* context,
     uv_tex_scale_location_ = locations[index++];
     uv_tex_offset_location_ = locations[index++];
   }
-  if (has_matrix_)
-    matrix_location_ = locations[index++];
+  matrix_location_ = locations[index++];
   if (has_vertex_opacity_)
     vertex_opacity_location_ = locations[index++];
   if (aa_mode_ == USE_AA) {
@@ -290,7 +288,6 @@ std::string VertexShader::GetShaderString() const {
       SRC("vec4 pos = vec4(quad[vertex_index], a_position.z, a_position.w);");
       break;
   }
-  if (has_matrix_) {
     if (use_uniform_arrays_) {
       HDR("uniform mat4 matrix[NUM_QUADS];");
       SRC("gl_Position = matrix[quad_index] * pos;");
@@ -298,9 +295,6 @@ std::string VertexShader::GetShaderString() const {
       HDR("uniform mat4 matrix;");
       SRC("gl_Position = matrix * pos;");
     }
-  } else {
-    SRC("gl_Position = pos;");
-  }
 
   // Compute the anti-aliasing edge distances.
   if (aa_mode_ == USE_AA) {
@@ -348,7 +342,7 @@ std::string VertexShader::GetShaderString() const {
         break;
       case TEX_COORD_TRANSFORM_TRANSLATED_VEC4:
         SRC("texCoord = texCoord + vec2(0.5);");
-      // Fall through...
+        FALLTHROUGH;
       case TEX_COORD_TRANSFORM_VEC4:
         if (use_uniform_arrays_) {
           HDR("uniform TexCoordPrecision vec4 vertexTexTransform[NUM_QUADS];");
@@ -469,6 +463,11 @@ void FragmentShader::Init(GLES2Interface* context,
     uniforms.push_back("lut_texture");
     uniforms.push_back("lut_size");
   }
+  if (has_output_color_matrix_)
+    uniforms.emplace_back("output_color_matrix");
+
+  if (has_tint_color_matrix_)
+    uniforms.emplace_back("tint_color_matrix");
 
   locations.resize(uniforms.size());
 
@@ -525,6 +524,13 @@ void FragmentShader::Init(GLES2Interface* context,
     lut_texture_location_ = locations[index++];
     lut_size_location_ = locations[index++];
   }
+
+  if (has_output_color_matrix_)
+    output_color_matrix_location_ = locations[index++];
+
+  if (has_tint_color_matrix_)
+    tint_color_matrix_location_ = locations[index++];
+
   DCHECK_EQ(index, locations.size());
 }
 
@@ -932,7 +938,7 @@ std::string FragmentShader::GetShaderSource() const {
       break;
   }
 
-  // Apply LUT based color conversion.
+  // Apply color conversion.
   switch (color_conversion_mode_) {
     case COLOR_CONVERSION_MODE_LUT:
       HDR("uniform sampler2D lut_texture;");
@@ -949,13 +955,30 @@ std::string FragmentShader::GetShaderSource() const {
       HDR("             LutLookup(sampler, pos.xy + vec2(0, 1.0 / size)),");
       HDR("             pos.z - layer);");
       HDR("}");
+      // Un-premultiply by alpha.
+      if (premultiply_alpha_mode_ != NON_PREMULTIPLIED_ALPHA) {
+        SRC("// un-premultiply alpha");
+        SRC("if (texColor.a > 0.0) texColor.rgb /= texColor.a;");
+      }
       SRC("texColor.rgb = LUT(lut_texture, texColor.xyz, lut_size).xyz;");
+      SRC("texColor.rgb *= texColor.a;");
       break;
     case COLOR_CONVERSION_MODE_SHADER:
       header += color_transform_->GetShaderSource();
+      // Un-premultiply by alpha.
+      if (premultiply_alpha_mode_ != NON_PREMULTIPLIED_ALPHA) {
+        SRC("// un-premultiply alpha");
+        SRC("if (texColor.a > 0.0) texColor.rgb /= texColor.a;");
+      }
       SRC("texColor.rgb = DoColorConversion(texColor.xyz);");
+      SRC("texColor.rgb *= texColor.a;");
       break;
     case COLOR_CONVERSION_MODE_NONE:
+      // Premultiply by alpha.
+      if (premultiply_alpha_mode_ == NON_PREMULTIPLIED_ALPHA) {
+        SRC("// Premultiply alpha");
+        SRC("texColor.rgb *= texColor.a;");
+      }
       break;
   }
 
@@ -1009,6 +1032,20 @@ std::string FragmentShader::GetShaderSource() const {
   if (swizzle_mode_ == DO_SWIZZLE) {
     SRC("// Apply swizzle");
     SRC("texColor = texColor.bgra;\n");
+  }
+
+  // Finally apply the output color matrix to texColor.
+  if (has_output_color_matrix_) {
+    HDR("uniform mat4 output_color_matrix;");
+    SRC("// Apply the output color matrix");
+    SRC("texColor = output_color_matrix * texColor;");
+  }
+
+  // Tint the final color. Used for debugging composited content.
+  if (has_tint_color_matrix_) {
+    HDR("uniform mat4 tint_color_matrix;");
+    SRC("// Apply the tint color matrix");
+    SRC("texColor = tint_color_matrix * texColor;");
   }
 
   // Include header text for alpha.

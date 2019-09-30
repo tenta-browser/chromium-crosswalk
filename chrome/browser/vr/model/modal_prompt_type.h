@@ -12,7 +12,10 @@ namespace vr {
 enum ModalPromptType {
   kModalPromptTypeNone,
   kModalPromptTypeExitVRForSiteInfo,
+  kModalPromptTypeExitVRForConnectionInfo,
   kModalPromptTypeExitVRForVoiceSearchRecordAudioOsPermission,
+  kModalPromptTypeGenericUnsupportedFeature,
+  kModalPromptTypeUpdateKeyboard,
 };
 
 UiUnsupportedMode GetReasonForPrompt(ModalPromptType prompt);

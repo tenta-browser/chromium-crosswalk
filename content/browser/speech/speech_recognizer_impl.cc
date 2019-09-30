@@ -15,6 +15,7 @@
 #include "content/browser/browser_main_loop.h"
 #include "content/browser/media/media_internals.h"
 #include "content/browser/speech/audio_buffer.h"
+#include "content/public/browser/browser_thread.h"
 #include "content/public/browser/speech_recognition_event_listener.h"
 #include "media/audio/audio_manager.h"
 #include "media/audio/audio_system.h"
@@ -189,8 +190,9 @@ SpeechRecognizerImpl::SpeechRecognizerImpl(
       audio_manager_(audio_manager),
       recognition_engine_(engine),
       endpointer_(kAudioSampleRate),
-      audio_log_(MediaInternals::GetInstance()->CreateAudioLog(
-          media::AudioLogFactory::AUDIO_INPUT_CONTROLLER)),
+      audio_log_(MediaInternals::GetInstance()->CreateMojoAudioLog(
+          media::AudioLogFactory::AUDIO_INPUT_CONTROLLER,
+          0 /* component_id */)),
       is_dispatching_event_(false),
       provisional_results_(provisional_results),
       end_of_utterance_(false),
@@ -275,7 +277,7 @@ SpeechRecognizerImpl::~SpeechRecognizerImpl() {
   if (audio_controller_.get()) {
     audio_controller_->Close(base::BindOnce(
         &KeepAudioControllerRefcountedForDtor, audio_controller_));
-    audio_log_->OnClosed(0);
+    audio_log_->OnClosed();
   }
 }
 
@@ -646,7 +648,7 @@ SpeechRecognizerImpl::StartRecording(const FSMEventArgs&) {
         SpeechRecognitionError(SPEECH_RECOGNITION_ERROR_AUDIO_CAPTURE));
   }
 
-  audio_log_->OnCreated(0, input_parameters, device_id_);
+  audio_log_->OnCreated(input_parameters, device_id_);
 
   // The endpointer needs to estimate the environment/background noise before
   // starting to treat the audio as user input. We wait in the state
@@ -654,7 +656,7 @@ SpeechRecognizerImpl::StartRecording(const FSMEventArgs&) {
   // to user input mode.
   endpointer_.SetEnvironmentEstimationMode();
   audio_controller_->Record();
-  audio_log_->OnStarted(0);
+  audio_log_->OnStarted();
   return STATE_STARTING;
 }
 
@@ -857,7 +859,7 @@ void SpeechRecognizerImpl::CloseAudioControllerAsynchronously() {
       base::BindOnce(&SpeechRecognizerImpl::OnAudioClosed, this,
                      base::RetainedRef(audio_controller_)));
   audio_controller_ = nullptr;  // The controller is still refcounted by Bind.
-  audio_log_->OnClosed(0);
+  audio_log_->OnClosed();
 }
 
 int SpeechRecognizerImpl::GetElapsedTimeMs() const {

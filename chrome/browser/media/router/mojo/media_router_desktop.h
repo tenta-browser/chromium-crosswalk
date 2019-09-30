@@ -7,8 +7,11 @@
 
 #include "base/gtest_prod_util.h"
 #include "build/build_config.h"
-#include "chrome/browser/media/router/mojo/extension_media_route_provider_proxy.h"
 #include "chrome/browser/media/router/mojo/media_router_mojo_impl.h"
+#include "chrome/browser/media/router/mojo/media_sink_service_status.h"
+#include "chrome/browser/media/router/providers/cast/dual_media_sink_service.h"
+#include "chrome/browser/media/router/providers/dial/dial_media_route_provider.h"
+#include "chrome/browser/media/router/providers/extension/extension_media_route_provider_proxy.h"
 
 namespace content {
 class RenderFrameHost;
@@ -19,8 +22,8 @@ class Extension;
 }
 
 namespace media_router {
-class CastMediaSinkService;
-class DialMediaSinkService;
+class CastMediaRouteProvider;
+class DualMediaSinkService;
 class WiredDisplayMediaRouteProvider;
 
 // MediaRouter implementation that uses the MediaRouteProvider implemented in
@@ -45,33 +48,39 @@ class MediaRouterDesktop : public MediaRouterMojoImpl {
 
   // MediaRouter implementation.
   void OnUserGesture() override;
+  base::Value GetState() const override;
 
  protected:
   // MediaRouterMojoImpl override:
-  base::Optional<mojom::MediaRouteProvider::Id> GetProviderIdForPresentation(
+  base::Optional<MediaRouteProviderId> GetProviderIdForPresentation(
       const std::string& presentation_id) override;
 
  private:
-  friend class MediaRouterDesktopTest;
+  template <bool>
+  friend class MediaRouterDesktopTestBase;
   friend class MediaRouterFactory;
-  FRIEND_TEST_ALL_PREFIXES(MediaRouterDesktopTest, TestProvideSinks);
+  FRIEND_TEST_ALL_PREFIXES(MediaRouterDesktopTest, ProvideSinks);
 
-  enum class FirewallCheck {
-    // Skips the firewall check for the benefit of unit tests so they do not
-    // have to depend on the system's firewall configuration.
-    SKIP_FOR_TESTING,
-    // Perform the firewall check (default).
-    RUN,
-  };
+  // This constructor performs a firewall check on Windows and is not suitable
+  // for use in unit tests; instead use the constructor below.
+  explicit MediaRouterDesktop(content::BrowserContext* context);
 
+  // Used by tests only. This constructor skips the firewall check so unit tests
+  // do not have to depend on the system's firewall configuration.
   MediaRouterDesktop(content::BrowserContext* context,
-                     FirewallCheck check_firewall = FirewallCheck::RUN);
+                     DualMediaSinkService* media_sink_service);
 
   // mojom::MediaRouter implementation.
   void RegisterMediaRouteProvider(
-      mojom::MediaRouteProvider::Id provider_id,
+      MediaRouteProviderId provider_id,
       mojom::MediaRouteProviderPtr media_route_provider_ptr,
       mojom::MediaRouter::RegisterMediaRouteProviderCallback callback) override;
+  void OnSinksReceived(MediaRouteProviderId provider_id,
+                       const std::string& media_source,
+                       const std::vector<MediaSinkInternal>& internal_sinks,
+                       const std::vector<url::Origin>& origins) override;
+  void GetMediaSinkServiceStatus(
+      mojom::MediaRouter::GetMediaSinkServiceStatusCallback callback) override;
 
   // Registers a Mojo pointer to the extension MRP with
   // |extension_provider_proxy_| and does initializations specific to the
@@ -85,15 +94,16 @@ class MediaRouterDesktop : public MediaRouterMojoImpl {
   void BindToMojoRequest(mojo::InterfaceRequest<mojom::MediaRouter> request,
                          const extensions::Extension& extension);
 
-  // Starts browser side sink discovery.
-  void StartDiscovery();
+  // Provides the current list of sinks from |media_sink_service_| to the
+  // extension. Also registers with |media_sink_service_| to listen for updates.
+  void ProvideSinksToExtension();
 
   // Notifies the Media Router that the list of MediaSinks discovered by a
   // MediaSinkService has been updated.
   // |provider_name|: Name of the MediaSinkService providing the sinks.
   // |sinks|: sinks discovered by MediaSinkService.
   void ProvideSinks(const std::string& provider_name,
-                    std::vector<MediaSinkInternal> sinks);
+                    const std::vector<MediaSinkInternal>& sinks);
 
   // Initializes MRPs and adds them to |media_route_providers_|.
   void InitializeMediaRouteProviders();
@@ -101,6 +111,8 @@ class MediaRouterDesktop : public MediaRouterMojoImpl {
   // Helper methods for InitializeMediaRouteProviders().
   void InitializeExtensionMediaRouteProviderProxy();
   void InitializeWiredDisplayMediaRouteProvider();
+  void InitializeCastMediaRouteProvider();
+  void InitializeDialMediaRouteProvider();
 
 #if defined(OS_WIN)
   // Ensures that mDNS discovery is enabled in the MRPM extension. This can be
@@ -121,15 +133,23 @@ class MediaRouterDesktop : public MediaRouterMojoImpl {
   // MediaRouteProvider for casting to local screens.
   std::unique_ptr<WiredDisplayMediaRouteProvider> wired_display_provider_;
 
-  // Media sink service for DIAL devices.
-  std::unique_ptr<DialMediaSinkService> dial_media_sink_service_;
+  // MediaRouteProvider for casting to Cast devices.
+  std::unique_ptr<CastMediaRouteProvider, base::OnTaskRunnerDeleter>
+      cast_provider_;
 
-  // Media sink service for CAST devices.
-  std::unique_ptr<CastMediaSinkService> cast_media_sink_service_;
+  // MediaRouteProvider for DIAL.
+  std::unique_ptr<DialMediaRouteProvider> dial_provider_;
+
+  DualMediaSinkService* media_sink_service_;
+  DualMediaSinkService::Subscription media_sink_service_subscription_;
 
   // A flag to ensure that we record the provider version once, during the
   // initial event page wakeup attempt.
   bool provider_version_was_recorded_ = false;
+
+  // A status object that keeps track of sinks discovered by media sink
+  // services.
+  MediaSinkServiceStatus media_sink_service_status_;
 
 #if defined(OS_WIN)
   // A flag to ensure that mDNS discovery is only enabled on Windows when there

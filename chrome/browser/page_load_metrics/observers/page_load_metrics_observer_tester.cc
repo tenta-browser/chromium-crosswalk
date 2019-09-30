@@ -8,7 +8,6 @@
 #include <string>
 #include <utility>
 
-#include "base/memory/ptr_util.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
 #include "chrome/browser/page_load_metrics/metrics_web_contents_observer.h"
@@ -19,7 +18,7 @@
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/common/resource_type.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/WebKit/public/platform/WebInputEvent.h"
+#include "third_party/blink/public/platform/web_input_event.h"
 #include "url/gurl.h"
 
 namespace page_load_metrics {
@@ -42,7 +41,7 @@ class TestPageLoadMetricsEmbedderInterface
   }
 
   std::unique_ptr<base::Timer> CreateTimer() override {
-    auto timer = base::MakeUnique<test::WeakMockTimer>();
+    auto timer = std::make_unique<test::WeakMockTimer>();
     test_->SetMockTimer(timer->AsWeakPtr());
     return std::move(timer);
   }
@@ -62,7 +61,7 @@ PageLoadMetricsObserverTester::PageLoadMetricsObserverTester(
       web_contents_(web_contents),
       observer_(MetricsWebContentsObserver::CreateForWebContents(
           web_contents,
-          base::MakeUnique<TestPageLoadMetricsEmbedderInterface>(this))) {}
+          std::make_unique<TestPageLoadMetricsEmbedderInterface>(this))) {}
 
 PageLoadMetricsObserverTester::~PageLoadMetricsObserverTester() {}
 

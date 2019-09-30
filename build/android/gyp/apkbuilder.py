@@ -193,10 +193,6 @@ def _MergePakInfoFiles(pak_info_path, asset_list):
     if src.endswith('.pak'):
       with open(src + '.info', 'r') as src_info_file:
         lines.update(src_info_file.readlines())
-  # Ensure that parent dirs exist before writing new files.
-  info_dir = os.path.dirname(pak_info_path)
-  if not os.path.exists(info_dir):
-    os.makedirs(info_dir)
   with open(pak_info_path, 'w') as merged_info_file:
     merged_info_file.writelines(sorted(lines))
 
@@ -246,9 +242,6 @@ def main(args):
   def on_stale_md5():
     tmp_apk = options.output_apk + '.tmp'
     try:
-      # TODO(agrieve): It would be more efficient to combine this step
-      # with finalize_apk(), which sometimes aligns and uncompresses the
-      # native libraries.
       with zipfile.ZipFile(options.resource_apk) as resource_apk, \
            zipfile.ZipFile(tmp_apk, 'w', zipfile.ZIP_DEFLATED) as out_apk:
         def copy_resource(zipinfo):

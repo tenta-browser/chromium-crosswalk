@@ -30,8 +30,10 @@ using storage::OriginInfo;
 namespace content {
 
 // Declared to shorten the line lengths.
-static const storage::StorageType kTemp = storage::kStorageTypeTemporary;
-static const storage::StorageType kPerm = storage::kStorageTypePersistent;
+static const blink::mojom::StorageType kTemp =
+    blink::mojom::StorageType::kTemporary;
+static const blink::mojom::StorageType kPerm =
+    blink::mojom::StorageType::kPersistent;
 
 // Mock tracker class the mocks up those methods of the tracker
 // that are used by the QuotaClient.
@@ -46,9 +48,8 @@ class MockDatabaseTracker : public DatabaseTracker {
 
   bool GetOriginInfo(const std::string& origin_identifier,
                      OriginInfo* info) override {
-    std::map<GURL, MockOriginInfo>::const_iterator found =
-        mock_origin_infos_.find(
-            storage::GetOriginFromIdentifier(origin_identifier));
+    auto found = mock_origin_infos_.find(
+        storage::GetOriginFromIdentifier(origin_identifier));
     if (found == mock_origin_infos_.end())
       return false;
     *info = OriginInfo(found->second);
@@ -57,20 +58,14 @@ class MockDatabaseTracker : public DatabaseTracker {
 
   bool GetAllOriginIdentifiers(
       std::vector<std::string>* origins_identifiers) override {
-    std::map<GURL, MockOriginInfo>::const_iterator iter;
-    for (iter = mock_origin_infos_.begin(); iter != mock_origin_infos_.end();
-         ++iter) {
-      origins_identifiers->push_back(iter->second.GetOriginIdentifier());
-    }
+    for (const auto& origin_info : mock_origin_infos_)
+      origins_identifiers->push_back(origin_info.second.GetOriginIdentifier());
     return true;
   }
 
   bool GetAllOriginsInfo(std::vector<OriginInfo>* origins_info) override {
-    std::map<GURL, MockOriginInfo>::const_iterator iter;
-    for (iter = mock_origin_infos_.begin(); iter != mock_origin_infos_.end();
-         ++iter) {
-      origins_info->push_back(OriginInfo(iter->second));
-    }
+    for (const auto& origin_info : mock_origin_infos_)
+      origins_info->push_back(OriginInfo(origin_info.second));
     return true;
   }
 
@@ -91,7 +86,7 @@ class MockDatabaseTracker : public DatabaseTracker {
     callback.Run(net::OK);
   }
 
-  void AddMockDatabase(const GURL& origin, const char* name, int size) {
+  void AddMockDatabase(const url::Origin& origin, const char* name, int size) {
     MockOriginInfo& info = mock_origin_infos_[origin];
     info.set_origin(storage::GetIdentifierFromOrigin(origin));
     info.AddMockDatabase(base::ASCIIToUTF16(name), size);
@@ -120,27 +115,27 @@ class MockDatabaseTracker : public DatabaseTracker {
 
   int delete_called_count_;
   bool async_delete_;
-  std::map<GURL, MockOriginInfo> mock_origin_infos_;
+  std::map<url::Origin, MockOriginInfo> mock_origin_infos_;
 };
 
 // Base class for our test fixtures.
 class DatabaseQuotaClientTest : public testing::Test {
  public:
-  const GURL kOriginA;
-  const GURL kOriginB;
-  const GURL kOriginOther;
+  const url::Origin kOriginA;
+  const url::Origin kOriginB;
+  const url::Origin kOriginOther;
 
   DatabaseQuotaClientTest()
-      : kOriginA("http://host"),
-        kOriginB("http://host:8000"),
-        kOriginOther("http://other"),
+      : kOriginA(url::Origin::Create(GURL("http://host"))),
+        kOriginB(url::Origin::Create(GURL("http://host:8000"))),
+        kOriginOther(url::Origin::Create(GURL("http://other"))),
         usage_(0),
         mock_tracker_(new MockDatabaseTracker),
         weak_factory_(this) {}
 
   int64_t GetOriginUsage(storage::QuotaClient* client,
-                         const GURL& origin,
-                         storage::StorageType type) {
+                         const url::Origin& origin,
+                         blink::mojom::StorageType type) {
     usage_ = 0;
     client->GetOriginUsage(
         origin, type,
@@ -151,8 +146,9 @@ class DatabaseQuotaClientTest : public testing::Test {
     return usage_;
   }
 
-  const std::set<GURL>& GetOriginsForType(storage::QuotaClient* client,
-                                          storage::StorageType type) {
+  const std::set<url::Origin>& GetOriginsForType(
+      storage::QuotaClient* client,
+      blink::mojom::StorageType type) {
     origins_.clear();
     client->GetOriginsForType(
         type, base::AdaptCallbackForRepeating(
@@ -162,9 +158,9 @@ class DatabaseQuotaClientTest : public testing::Test {
     return origins_;
   }
 
-  const std::set<GURL>& GetOriginsForHost(storage::QuotaClient* client,
-                                          storage::StorageType type,
-                                          const std::string& host) {
+  const std::set<url::Origin>& GetOriginsForHost(storage::QuotaClient* client,
+                                                 blink::mojom::StorageType type,
+                                                 const std::string& host) {
     origins_.clear();
     client->GetOriginsForHost(
         type, host,
@@ -176,16 +172,16 @@ class DatabaseQuotaClientTest : public testing::Test {
   }
 
   bool DeleteOriginData(storage::QuotaClient* client,
-                        storage::StorageType type,
-                        const GURL& origin) {
-    delete_status_ = storage::kQuotaStatusUnknown;
+                        blink::mojom::StorageType type,
+                        const url::Origin& origin) {
+    delete_status_ = blink::mojom::QuotaStatusCode::kUnknown;
     client->DeleteOriginData(
         origin, type,
         base::AdaptCallbackForRepeating(
             base::BindOnce(&DatabaseQuotaClientTest::OnDeleteOriginDataComplete,
                            weak_factory_.GetWeakPtr())));
     base::RunLoop().RunUntilIdle();
-    return delete_status_ == storage::kQuotaStatusOk;
+    return delete_status_ == blink::mojom::QuotaStatusCode::kOk;
   }
 
   MockDatabaseTracker* mock_tracker() { return mock_tracker_.get(); }
@@ -193,18 +189,18 @@ class DatabaseQuotaClientTest : public testing::Test {
  private:
   void OnGetOriginUsageComplete(int64_t usage) { usage_ = usage; }
 
-  void OnGetOriginsComplete(const std::set<GURL>& origins) {
+  void OnGetOriginsComplete(const std::set<url::Origin>& origins) {
     origins_ = origins;
   }
 
-  void OnDeleteOriginDataComplete(storage::QuotaStatusCode status) {
+  void OnDeleteOriginDataComplete(blink::mojom::QuotaStatusCode status) {
     delete_status_ = status;
   }
 
   base::test::ScopedTaskEnvironment scoped_task_environment_;
   int64_t usage_;
-  std::set<GURL> origins_;
-  storage::QuotaStatusCode delete_status_;
+  std::set<url::Origin> origins_;
+  blink::mojom::QuotaStatusCode delete_status_;
   scoped_refptr<MockDatabaseTracker> mock_tracker_;
   base::WeakPtrFactory<DatabaseQuotaClientTest> weak_factory_;
 };
@@ -229,7 +225,8 @@ TEST_F(DatabaseQuotaClientTest, GetOriginsForHost) {
   EXPECT_EQ(kOriginA.host(), kOriginB.host());
   EXPECT_NE(kOriginA.host(), kOriginOther.host());
 
-  std::set<GURL> origins = GetOriginsForHost(&client, kTemp, kOriginA.host());
+  std::set<url::Origin> origins =
+      GetOriginsForHost(&client, kTemp, kOriginA.host());
   EXPECT_TRUE(origins.empty());
 
   mock_tracker()->AddMockDatabase(kOriginA, "fooDB", 1000);
@@ -254,7 +251,7 @@ TEST_F(DatabaseQuotaClientTest, GetOriginsForType) {
   EXPECT_TRUE(GetOriginsForType(&client, kPerm).empty());
 
   mock_tracker()->AddMockDatabase(kOriginA, "fooDB", 1000);
-  std::set<GURL> origins = GetOriginsForType(&client, kTemp);
+  std::set<url::Origin> origins = GetOriginsForType(&client, kTemp);
   EXPECT_EQ(origins.size(), 1ul);
   EXPECT_TRUE(origins.find(kOriginA) != origins.end());
 

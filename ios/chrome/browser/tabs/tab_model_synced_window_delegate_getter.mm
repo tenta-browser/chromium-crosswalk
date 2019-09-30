@@ -36,7 +36,7 @@ TabModelSyncedWindowDelegatesGetter::GetSyncedWindowDelegates() {
     for (TabModel* tabModel in tabModels) {
       if (tabModel.currentTab) {
         sync_sessions::SyncedWindowDelegate* synced_window_delegate =
-            [tabModel syncedWindowDelegate];
+            tabModel.syncedWindowDelegate;
         synced_window_delegates[synced_window_delegate->GetSessionId()] =
             synced_window_delegate;
       }
@@ -47,7 +47,7 @@ TabModelSyncedWindowDelegatesGetter::GetSyncedWindowDelegates() {
 }
 
 const sync_sessions::SyncedWindowDelegate*
-TabModelSyncedWindowDelegatesGetter::FindById(SessionID::id_type session_id) {
+TabModelSyncedWindowDelegatesGetter::FindById(SessionID session_id) {
   for (const auto& iter : GetSyncedWindowDelegates()) {
     if (session_id == iter.second->GetSessionId())
       return iter.second;

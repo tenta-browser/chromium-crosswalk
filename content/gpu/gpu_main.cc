@@ -11,7 +11,6 @@
 #include "base/lazy_instance.h"
 #include "base/message_loop/message_loop.h"
 #include "base/metrics/histogram_macros.h"
-#include "base/metrics/statistics_recorder.h"
 #include "base/rand_util.h"
 #include "base/run_loop.h"
 #include "base/strings/string_number_conversions.h"
@@ -31,6 +30,7 @@
 #include "content/public/common/content_switches.h"
 #include "content/public/common/main_function_params.h"
 #include "content/public/common/result_codes.h"
+#include "content/public/gpu/content_gpu_client.h"
 #include "gpu/command_buffer/service/gpu_switches.h"
 #include "gpu/config/gpu_driver_bug_list.h"
 #include "gpu/config/gpu_info_collector.h"
@@ -41,7 +41,7 @@
 #include "gpu/ipc/service/gpu_config.h"
 #include "gpu/ipc/service/gpu_init.h"
 #include "gpu/ipc/service/gpu_watchdog_thread.h"
-#include "media/gpu/features.h"
+#include "media/gpu/buildflags.h"
 #include "third_party/angle/src/gpu_info_util/SystemInfo.h"
 #include "third_party/skia/include/core/SkGraphics.h"
 #include "ui/events/platform/platform_event_source.h"
@@ -66,14 +66,15 @@
 #if defined(OS_WIN)
 #include "base/win/scoped_com_initializer.h"
 #include "base/win/windows_version.h"
-#include "media/gpu/dxva_video_decode_accelerator_win.h"
-#include "media/gpu/media_foundation_video_encode_accelerator_win.h"
+#include "media/gpu/windows/dxva_video_decode_accelerator_win.h"
+#include "media/gpu/windows/media_foundation_video_encode_accelerator_win.h"
 #include "sandbox/win/src/sandbox.h"
 #endif
 
 #if defined(USE_X11)
-#include "ui/base/x/x11_util.h"     // nogncheck
-#include "ui/gfx/x/x11_switches.h"  // nogncheck
+#include "ui/base/x/x11_util.h"       // nogncheck
+#include "ui/gfx/x/x11_connection.h"  // nogncheck
+#include "ui/gfx/x/x11_switches.h"    // nogncheck
 #endif
 
 #if defined(OS_LINUX)
@@ -87,6 +88,7 @@
 
 #if defined(OS_MACOSX)
 #include "base/message_loop/message_pump_mac.h"
+#include "sandbox/mac/seatbelt.h"
 #include "services/service_manager/sandbox/mac/sandbox_mac.h"
 #endif
 
@@ -95,8 +97,16 @@
 #endif
 
 #if BUILDFLAG(USE_VAAPI)
-#include "media/gpu/vaapi_wrapper.h"
+#include "media/gpu/vaapi/vaapi_wrapper.h"
 #endif
+
+#if defined(OS_MACOSX)
+extern "C" {
+void _LSSetApplicationLaunchServicesServerConnectionStatus(
+    uint64_t flags,
+    bool (^connection_allowed)(CFDictionaryRef));
+};
+#endif  // defined(OS_MACOSX)
 
 namespace content {
 
@@ -168,7 +178,7 @@ class ContentSandboxHelper : public gpu::GpuSandboxHelper {
 #elif defined(OS_WIN)
     return StartSandboxWindows(sandbox_info_);
 #elif defined(OS_MACOSX)
-    return service_manager::SandboxMac::IsCurrentlyActive();
+    return sandbox::Seatbelt::IsSandboxed();
 #else
     return false;
 #endif
@@ -240,6 +250,11 @@ int GpuMain(const MainFunctionParams& parameters) {
     main_message_loop.reset(
         new base::MessageLoop(base::MessageLoop::TYPE_DEFAULT));
 #elif defined(USE_X11)
+    // Depending on how Chrome is running there are multiple threads that can
+    // make Xlib function calls. Call XInitThreads() here to be safe, even if
+    // some configurations don't strictly need it.
+    gfx::InitializeThreadedX11();
+
     // We need a UI loop so that we can grab the Expose events. See GLSurfaceGLX
     // and https://crbug.com/326995.
     ui::SetDefaultX11ErrorHandlers();
@@ -260,6 +275,9 @@ int GpuMain(const MainFunctionParams& parameters) {
     // https://crbug.com/312462#c51 and https://crbug.com/783298
     std::unique_ptr<base::MessagePump> pump(new base::MessagePumpNSRunLoop());
     main_message_loop.reset(new base::MessageLoop(std::move(pump)));
+
+    // Tell LaunchServices to continue without a connection to the daemon.
+    _LSSetApplicationLaunchServicesServerConnectionStatus(0, nullptr);
 #else
     main_message_loop.reset(
         new base::MessageLoop(base::MessageLoop::TYPE_DEFAULT));
@@ -267,9 +285,6 @@ int GpuMain(const MainFunctionParams& parameters) {
   }
 
   base::PlatformThread::SetName("CrGpuMain");
-
-  // Initializes StatisticsRecorder which tracks UMA histograms.
-  base::StatisticsRecorder::Initialize();
 
 #if defined(OS_ANDROID) || defined(OS_CHROMEOS)
   // Set thread priority before sandbox initialization.
@@ -305,6 +320,11 @@ int GpuMain(const MainFunctionParams& parameters) {
 #endif
 
   GpuProcess gpu_process(io_thread_priority);
+
+  auto* client = GetContentClient()->gpu();
+  if (client)
+    client->PostIOThreadCreated(gpu_process.io_task_runner());
+
   GpuChildThread* child_thread = new GpuChildThread(
       std::move(gpu_init), std::move(deferred_messages.Get()));
   deferred_messages.Get().clear();
@@ -359,11 +379,8 @@ bool StartSandboxLinux(gpu::GpuWatchdogThread* watchdog_thread,
       gpu_info && angle::IsAMD(gpu_info->active_gpu().vendor_id);
   sandbox_options.accelerated_video_decode_enabled =
       !gpu_prefs.disable_accelerated_video_decode;
-
-#if defined(OS_CHROMEOS)
-  sandbox_options.vaapi_accelerated_video_encode_enabled =
-      !gpu_prefs.disable_vaapi_accelerated_video_encode;
-#endif
+  sandbox_options.accelerated_video_encode_enabled =
+      !gpu_prefs.disable_accelerated_video_encode;
 
   bool res = service_manager::SandboxLinux::GetInstance()->InitializeSandbox(
       service_manager::SandboxTypeFromCommandLine(

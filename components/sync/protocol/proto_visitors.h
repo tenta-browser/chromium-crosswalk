@@ -135,10 +135,6 @@ VISIT_PROTO_FIELDS(const sync_pb::ArcPackageSpecifics& proto) {
   VISIT(last_backup_time);
 }
 
-VISIT_PROTO_FIELDS(const sync_pb::ArticleAttachments& proto) {
-  VISIT(distilled_article);
-}
-
 VISIT_PROTO_FIELDS(const sync_pb::ArticlePage& proto) {
   VISIT(url);
 }
@@ -147,20 +143,6 @@ VISIT_PROTO_FIELDS(const sync_pb::ArticleSpecifics& proto) {
   VISIT(entry_id);
   VISIT(title);
   VISIT_REP(pages);
-  VISIT(attachments);
-}
-
-VISIT_PROTO_FIELDS(const sync_pb::AttachmentIdProto& proto) {
-  VISIT(unique_id);
-}
-
-VISIT_PROTO_FIELDS(const sync_pb::AttachmentMetadata& proto) {
-  VISIT_REP(record);
-}
-
-VISIT_PROTO_FIELDS(const sync_pb::AttachmentMetadataRecord& proto) {
-  VISIT(id);
-  VISIT(is_on_server);
 }
 
 VISIT_PROTO_FIELDS(const sync_pb::AutofillCullingFlags& proto) {
@@ -348,6 +330,7 @@ VISIT_PROTO_FIELDS(const sync_pb::DeviceInfoSpecifics& proto) {
   VISIT(sync_user_agent);
   VISIT(chrome_version);
   VISIT(signin_scoped_device_id);
+  VISIT(last_updated_timestamp);
 }
 
 VISIT_PROTO_FIELDS(const sync_pb::DictionarySpecifics& proto) {
@@ -475,14 +458,8 @@ VISIT_PROTO_FIELDS(const sync_pb::FaviconTrackingSpecifics& proto) {
   VISIT(is_bookmarked);
 }
 
-VISIT_PROTO_FIELDS(
-    const sync_pb::UserEventSpecifics::FieldTrial::FieldTrialPair& proto) {
-  VISIT(name_id);
-  VISIT(group_id);
-}
-
 VISIT_PROTO_FIELDS(const sync_pb::UserEventSpecifics::FieldTrial& proto) {
-  VISIT_REP(field_trial_pairs);
+  VISIT_REP(variation_ids);
 }
 
 VISIT_PROTO_FIELDS(const sync_pb::GcmChannelFlags& proto) {
@@ -605,6 +582,12 @@ VISIT_PROTO_FIELDS(const sync_pb::NavigationRedirect& proto) {
   VISIT(url);
 }
 
+VISIT_PROTO_FIELDS(const sync_pb::ReplacedNavigation& proto) {
+  VISIT(first_committed_url);
+  VISIT(first_timestamp_msec);
+  VISIT_ENUM(first_page_transition);
+}
+
 VISIT_PROTO_FIELDS(const sync_pb::NigoriSpecifics& proto) {
   VISIT(encryption_keybag);
   VISIT(keybag_is_frozen);
@@ -701,6 +684,8 @@ VISIT_PROTO_FIELDS(const sync_pb::ReadingListSpecifics& proto) {
   VISIT(creation_time_us);
   VISIT(update_time_us);
   VISIT_ENUM(status);
+  VISIT(first_read_time_us);
+  VISIT(update_title_time_us);
 }
 
 VISIT_PROTO_FIELDS(const sync_pb::SearchEngineSpecifics& proto) {
@@ -759,11 +744,6 @@ VISIT_PROTO_FIELDS(const sync_pb::SessionWindow& proto) {
   VISIT_ENUM(browser_type);
 }
 
-VISIT_PROTO_FIELDS(const sync_pb::SourceInfo& proto) {
-  VISIT_ENUM(source);
-  VISIT_REP(type_hint);
-}
-
 VISIT_PROTO_FIELDS(const sync_pb::SyncCycleCompletedEventInfo& proto) {
   VISIT(num_encryption_conflicts);
   VISIT(num_hierarchy_conflicts);
@@ -771,7 +751,7 @@ VISIT_PROTO_FIELDS(const sync_pb::SyncCycleCompletedEventInfo& proto) {
   VISIT(num_updates_downloaded);
   VISIT(num_reflected_updates_downloaded);
   VISIT(caller_info);
-  VISIT_REP(source_info);
+  VISIT_ENUM(get_updates_origin);
 }
 
 VISIT_PROTO_FIELDS(const sync_pb::SyncEntity& proto) {
@@ -794,7 +774,6 @@ VISIT_PROTO_FIELDS(const sync_pb::SyncEntity& proto) {
   VISIT(specifics);
   VISIT(folder);
   VISIT(client_defined_unique_tag);
-  VISIT_REP(attachment_id);
   VISIT_BYTES(ordinal_in_parent);
   VISIT(bookmarkdata);
 }
@@ -867,6 +846,7 @@ VISIT_PROTO_FIELDS(const sync_pb::TabNavigation& proto) {
   VISIT_ENUM(password_state);
   VISIT(task_id);
   VISIT_REP(ancestor_task_id);
+  VISIT(replaced_navigation);
 }
 
 VISIT_PROTO_FIELDS(const sync_pb::ThemeSpecifics& proto) {
@@ -889,11 +869,12 @@ VISIT_PROTO_FIELDS(const sync_pb::UserEventSpecifics::Translation& proto) {
 }
 
 VISIT_PROTO_FIELDS(const sync_pb::UserEventSpecifics::UserConsent& proto) {
-  VISIT(feature);
-  VISIT_REP(consent_grd_ids);
-  VISIT_REP(placeholder_replacements);
+  VISIT_ENUM(feature);
+  VISIT_REP(description_grd_ids);
+  VISIT(confirmation_grd_id);
   VISIT(locale);
   VISIT_ENUM(status);
+  VISIT(account_id);
 }
 
 VISIT_PROTO_FIELDS(const sync_pb::TypeHint& proto) {

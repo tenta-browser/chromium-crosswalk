@@ -33,7 +33,6 @@
 #include "base/test/multiprocess_test.h"
 #include "base/test/test_switches.h"
 #include "base/test/test_timeouts.h"
-#include "base/threading/sequenced_worker_pool.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -61,6 +60,10 @@
 
 #if defined(OS_IOS)
 #include "base/test/test_support_ios.h"
+#endif
+
+#if defined(OS_LINUX)
+#include "base/test/fontconfig_util_linux.h"
 #endif
 
 namespace base {
@@ -457,10 +460,11 @@ void TestSuite::Initialize() {
 #endif
 #endif
 
-  // Enable SequencedWorkerPool in tests.
-  // TODO(fdoray): Remove this once the SequencedWorkerPool to TaskScheduler
-  // redirection experiment concludes https://crbug.com/622400.
-  SequencedWorkerPool::EnableForProcess();
+#if defined(OS_LINUX)
+  // TODO(thomasanderson): Call TearDownFontconfig() in Shutdown().  It would
+  // currently crash because of leaked FcFontSet's in font_fallback_linux.cc.
+  SetUpFontconfig();
+#endif
 
   CatchMaybeTests();
   ResetCommandLine();

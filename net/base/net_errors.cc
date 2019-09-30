@@ -4,12 +4,23 @@
 
 #include "net/base/net_errors.h"
 
+#include "net/quic/core/quic_error_codes.h"
+
 namespace net {
 
 const char kErrorDomain[] = "net";
 
 std::string ErrorToString(int error) {
   return "net::" + ErrorToShortString(error);
+}
+
+std::string ExtendedErrorToString(int error, int extended_error_code) {
+  if (error == ERR_QUIC_PROTOCOL_ERROR && extended_error_code != 0) {
+    return std::string("net::ERR_QUIC_PROTOCOL_ERROR.") +
+           QuicErrorCodeToString(
+               static_cast<QuicErrorCode>(extended_error_code));
+  }
+  return ErrorToString(error);
 }
 
 std::string ErrorToShortString(int error) {
@@ -84,7 +95,7 @@ Error FileErrorToNetError(base::File::Error file_error) {
       return ERR_ACCESS_DENIED;
     case base::File::FILE_ERROR_MAX:
       NOTREACHED();
-    // fallthrough
+      FALLTHROUGH;
     case base::File::FILE_ERROR_NOT_A_DIRECTORY:
     case base::File::FILE_ERROR_NOT_A_FILE:
     case base::File::FILE_ERROR_NOT_EMPTY:

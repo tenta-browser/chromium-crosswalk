@@ -25,7 +25,8 @@ class HardwareDisplayPlaneManagerAtomic : public HardwareDisplayPlaneManager {
   bool ValidatePrimarySize(const OverlayPlane& primary,
                            const drmModeModeInfo& mode) override;
 
- private:
+  void RequestPlanesReadyCallback(const OverlayPlaneList& planes,
+                                  base::OnceClosure callback) override;
   bool SetPlaneData(HardwareDisplayPlaneList* plane_list,
                     HardwareDisplayPlane* hw_plane,
                     const OverlayPlane& overlay,
@@ -33,6 +34,7 @@ class HardwareDisplayPlaneManagerAtomic : public HardwareDisplayPlaneManager {
                     const gfx::Rect& src_rect,
                     CrtcController* crtc) override;
 
+ private:
   std::unique_ptr<HardwareDisplayPlane> CreatePlane(
       uint32_t plane_id,
       uint32_t possible_crtcs) override;

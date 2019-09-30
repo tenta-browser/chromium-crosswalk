@@ -10,6 +10,7 @@ goog.provide('cvox.ChromeVoxBackground');
 
 goog.require('ChromeVoxState');
 goog.require('Msgs');
+goog.require('constants');
 goog.require('cvox.AbstractEarcons');
 goog.require('cvox.BrailleBackground');
 goog.require('cvox.BrailleCaptionsBackground');
@@ -87,7 +88,7 @@ cvox.ChromeVoxBackground.setPref = function(pref, value, announce) {
     cvox.BrailleCaptionsBackground.setActive(!!value);
   } else if (pref == 'position') {
     cvox.ChromeVox.position =
-        /** @type {Object<string, cvox.Point>} */ (JSON.parse(
+        /** @type {Object<string, constants.Point>} */ (JSON.parse(
             /** @type {string} */ (value)));
   }
   window['prefs'].setPref(pref, value);
@@ -282,6 +283,12 @@ cvox.ChromeVoxBackground.prototype.injectChromeVoxIntoTabs = function(tabs) {
  */
 cvox.ChromeVoxBackground.prototype.onTtsMessage = function(msg) {
   if (msg['action'] == 'speak') {
+    // The only caller sending this message is a ChromeVox Classic api client.
+    // Disallow empty strings.
+    if (msg['text'] == '') {
+      return;
+    }
+
     this.tts.speak(
         msg['text'],
         /** cvox.QueueMode */ msg['queueMode'], msg['properties']);

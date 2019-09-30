@@ -11,17 +11,19 @@
 #include <string>
 #include <vector>
 
+#include "base/auto_reset.h"
 #include "base/files/file_path.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/threading/thread_checker.h"
+#include "base/version.h"
+#include "extensions/buildflags/buildflags.h"
 #include "extensions/common/extension_id.h"
 #include "extensions/common/extension_resource.h"
 #include "extensions/common/hashed_extension_id.h"
 #include "extensions/common/install_warning.h"
 #include "extensions/common/manifest.h"
 #include "extensions/common/url_pattern_set.h"
-#include "extensions/features/features.h"
 #include "url/gurl.h"
 
 #if !BUILDFLAG(ENABLE_EXTENSIONS)
@@ -44,17 +46,22 @@ class PermissionsParser;
 // RuntimeData is protected by a lock.
 class Extension : public base::RefCountedThreadSafe<Extension> {
  public:
+  // Do not renumber or reorder these values, as they are stored on-disk in the
+  // user's preferences.
   enum State {
     DISABLED = 0,
-    ENABLED,
+    ENABLED = 1,
+
     // An external extension that the user uninstalled. We should not reinstall
     // such extensions on startup.
-    EXTERNAL_EXTENSION_UNINSTALLED,
+    EXTERNAL_EXTENSION_UNINSTALLED = 2,
+
     // DEPRECATED: Special state for component extensions.
-    // Maintained as a placeholder since states may be stored to disk.
-    ENABLED_COMPONENT_DEPRECATED,
-    // Add new states here as this enum is stored in prefs.
-    NUM_STATES
+    // ENABLED_COMPONENT_DEPRECATED = 3,
+
+    // Do not add more values. State is being removed.
+    // https://crbug.com/794205.
+    NUM_STATES = 4,
   };
 
   // A base class for parsed manifest data that APIs want to store on
@@ -241,11 +248,11 @@ class Extension : public base::RefCountedThreadSafe<Extension> {
   Manifest::Location location() const;
   const ExtensionId& id() const;
   const HashedExtensionId& hashed_id() const;
-  const base::Version* version() const { return version_.get(); }
+  const base::Version& version() const { return version_; }
   const std::string& version_name() const { return version_name_; }
   const std::string VersionString() const;
   const std::string GetVersionForDisplay() const;
-  const std::string& name() const { return name_; }
+  const std::string& name() const { return display_name_; }
   const std::string& short_name() const { return short_name_; }
   const std::string& non_localized_name() const { return non_localized_name_; }
   // Base64-encoded version of the key used to sign this extension.
@@ -312,6 +319,9 @@ class Extension : public base::RefCountedThreadSafe<Extension> {
   void AddWebExtentPattern(const URLPattern& pattern);
   const URLPatternSet& web_extent() const { return extent_; }
 
+  using ScopedAllowLegacyExtensions = std::unique_ptr<base::AutoReset<bool>>;
+  static ScopedAllowLegacyExtensions allow_legacy_extensions_for_testing();
+
  private:
   friend class base::RefCountedThreadSafe<Extension>;
 
@@ -360,7 +370,7 @@ class Extension : public base::RefCountedThreadSafe<Extension> {
   // might be wrapped with unicode bidi control characters so that it is
   // displayed correctly in RTL context.
   // NOTE: Name is UTF-8 and may contain non-ascii characters.
-  std::string name_;
+  std::string display_name_;
 
   // A non-localized version of the extension's name. This is useful for
   // debug output.
@@ -401,7 +411,7 @@ class Extension : public base::RefCountedThreadSafe<Extension> {
   GURL extension_url_;
 
   // The extension's version.
-  std::unique_ptr<base::Version> version_;
+  base::Version version_;
 
   // The extension's user visible version name.
   std::string version_name_;
@@ -460,7 +470,10 @@ struct ExtensionInfo {
                 Manifest::Location location);
   ~ExtensionInfo();
 
+  // Note: This may be null (e.g. for unpacked extensions retrieved from the
+  // Preferences file).
   std::unique_ptr<base::DictionaryValue> extension_manifest;
+
   ExtensionId extension_id;
   base::FilePath extension_path;
   Manifest::Location extension_location;

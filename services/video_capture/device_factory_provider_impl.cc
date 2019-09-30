@@ -4,7 +4,6 @@
 
 #include "services/video_capture/device_factory_provider_impl.h"
 
-#include "base/memory/ptr_util.h"
 #include "media/capture/video/fake_video_capture_device_factory.h"
 #include "media/capture/video/video_capture_buffer_pool.h"
 #include "media/capture/video/video_capture_buffer_tracker.h"
@@ -56,7 +55,12 @@ void DeviceFactoryProviderImpl::LazyInitializeDeviceFactory() {
           base::ThreadTaskRunnerHandle::Get(),
           // TODO(jcliang): Create a GpuMemoryBufferManager from GpuService
           // here.
-          nullptr);
+          nullptr,
+          // TODO(mojahsu): Create a GpuJpegDecoderMojoFactoryCB here.
+          base::BindRepeating(
+              [](media::mojom::JpegDecodeAcceleratorRequest) {}),
+          base::BindRepeating(
+              [](media::mojom::JpegEncodeAcceleratorRequest) {}));
   auto video_capture_system = std::make_unique<media::VideoCaptureSystemImpl>(
       std::move(media_device_factory));
 

@@ -13,16 +13,27 @@
 #include "services/viz/public/interfaces/hit_test/hit_test_region_list.mojom.h"
 
 namespace viz {
-
-class FrameSinkManagerImpl;
+class LatestLocalSurfaceIdLookupDelegate;
 
 // HitTestManager manages the collection of HitTestRegionList objects
 // submitted in calls to SubmitCompositorFrame.  This collection is
 // used by HitTestAggregator.
 class VIZ_SERVICE_EXPORT HitTestManager : public SurfaceObserver {
  public:
-  explicit HitTestManager(FrameSinkManagerImpl* frame_sink_manager);
+  explicit HitTestManager(SurfaceManager* surface_manager);
   virtual ~HitTestManager();
+
+  // SurfaceObserver:
+  void OnSurfaceCreated(const SurfaceId& surface_id) override {}
+  void OnFirstSurfaceActivation(const SurfaceInfo& surface_info) override {}
+  void OnSurfaceActivated(const SurfaceId& surface_id,
+                          base::Optional<base::TimeDelta> duration) override;
+  void OnSurfaceDestroyed(const SurfaceId& surface_id) override {}
+  bool OnSurfaceDamaged(const SurfaceId& surface_id,
+                        const BeginFrameAck& ack) override;
+  void OnSurfaceDiscarded(const SurfaceId& surface_id) override;
+  void OnSurfaceDamageExpected(const SurfaceId& surface_id,
+                               const BeginFrameArgs& args) override {}
 
   // Called when HitTestRegionList is submitted along with every call
   // to SubmitCompositorFrame.
@@ -32,31 +43,17 @@ class VIZ_SERVICE_EXPORT HitTestManager : public SurfaceObserver {
       mojom::HitTestRegionListPtr hit_test_region_list);
 
   // Returns the HitTestRegionList corresponding to the given
-  // surface_id and the active CompositorFrame matched by frame_index.
+  // |frame_sink_id| and the active CompositorFrame matched by frame_index.
   const mojom::HitTestRegionList* GetActiveHitTestRegionList(
-      const SurfaceId& surface_id) const;
-
-  // SurfaceObserver:
-  void OnFirstSurfaceActivation(const SurfaceInfo& surface_info) override {}
-  void OnSurfaceActivated(const SurfaceId& surface_id) override;
-  void OnSurfaceDestroyed(const SurfaceId& surface_id) override {}
-  bool OnSurfaceDamaged(const SurfaceId& surface_id,
-                        const BeginFrameAck& ack) override;
-  void OnSurfaceDiscarded(const SurfaceId& surface_id) override;
-  void OnSurfaceDamageExpected(const SurfaceId& surface_id,
-                               const BeginFrameArgs& args) override {}
-  void OnSurfaceSubtreeDamaged(const SurfaceId& surface_id) override {}
+      LatestLocalSurfaceIdLookupDelegate* delegate,
+      const FrameSinkId& frame_sink_id) const;
 
  private:
-  friend class TestHitTestManager;
-
   bool ValidateHitTestRegionList(
       const SurfaceId& surface_id,
       const mojom::HitTestRegionListPtr& hit_test_region_list);
-  bool ValidateHitTestRegion(const SurfaceId& surface_id,
-                             const mojom::HitTestRegionPtr& hit_test_region);
 
-  FrameSinkManagerImpl* const frame_sink_manager_;
+  SurfaceManager* const surface_manager_;
 
   std::map<SurfaceId, base::flat_map<uint64_t, mojom::HitTestRegionListPtr>>
       hit_test_region_lists_;

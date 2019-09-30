@@ -9,13 +9,14 @@
 
 #include "base/callback.h"
 #include "base/json/json_writer.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/string_util.h"
 #include "base/values.h"
 #include "chrome/browser/search/one_google_bar/one_google_bar_data.h"
 #include "chrome/common/chrome_content_client.h"
 #include "components/google/core/browser/google_url_tracker.h"
 #include "components/google/core/browser/google_util.h"
+#include "components/signin/core/browser/chrome_connected_header_helper.h"
+#include "components/signin/core/browser/signin_header_helper.h"
 #include "components/variations/net/variations_http_headers.h"
 #include "content/public/common/service_manager_connection.h"
 #include "net/base/load_flags.h"
@@ -28,7 +29,7 @@
 
 namespace {
 
-const char kApiPath[] = "/async/newtab_ogb";
+const char kNewTabOgbApiPath[] = "/async/newtab_ogb";
 
 const char kResponsePreamble[] = ")]}'";
 
@@ -135,6 +136,7 @@ class OneGoogleBarFetcherImpl::AuthenticatedURLFetcher
                           const GURL& google_base_url,
                           const std::string& application_locale,
                           const base::Optional<std::string>& api_url_override,
+                          bool account_consistency_mirror_required,
                           FetchDoneCallback callback);
   ~AuthenticatedURLFetcher() override = default;
 
@@ -151,6 +153,9 @@ class OneGoogleBarFetcherImpl::AuthenticatedURLFetcher
   const GURL google_base_url_;
   const std::string application_locale_;
   const base::Optional<std::string> api_url_override_;
+#if defined(OS_CHROMEOS)
+  const bool account_consistency_mirror_required_;
+#endif
 
   FetchDoneCallback callback_;
 
@@ -163,15 +168,20 @@ OneGoogleBarFetcherImpl::AuthenticatedURLFetcher::AuthenticatedURLFetcher(
     const GURL& google_base_url,
     const std::string& application_locale,
     const base::Optional<std::string>& api_url_override,
+    bool account_consistency_mirror_required,
     FetchDoneCallback callback)
     : request_context_(request_context),
       google_base_url_(google_base_url),
       application_locale_(application_locale),
       api_url_override_(api_url_override),
+#if defined(OS_CHROMEOS)
+      account_consistency_mirror_required_(account_consistency_mirror_required),
+#endif
       callback_(std::move(callback)) {}
 
 GURL OneGoogleBarFetcherImpl::AuthenticatedURLFetcher::GetApiUrl() const {
-  GURL api_url = google_base_url_.Resolve(api_url_override_.value_or(kApiPath));
+  GURL api_url =
+      google_base_url_.Resolve(api_url_override_.value_or(kNewTabOgbApiPath));
 
   // Add the "hl=" parameter.
   api_url = net::AppendQueryParameter(api_url, "hl", application_locale_);
@@ -189,11 +199,33 @@ std::string
 OneGoogleBarFetcherImpl::AuthenticatedURLFetcher::GetExtraRequestHeaders(
     const GURL& url) const {
   net::HttpRequestHeaders headers;
-  // Note: It's OK to pass |is_signed_in| false if it's unknown, as it does
-  // not affect transmission of experiments coming from the variations server.
-  variations::AppendVariationHeaders(url,
-                                     /*incognito=*/false, /*uma_enabled=*/false,
-                                     /*is_signed_in=*/false, &headers);
+  // Note: It's OK to pass SignedIn::kNo if it's unknown, as it does not affect
+  // transmission of experiments coming from the variations server.
+  variations::AppendVariationHeaders(url, variations::InIncognito::kNo,
+                                     variations::SignedIn::kNo, &headers);
+#if defined(OS_CHROMEOS)
+  signin::ChromeConnectedHeaderHelper chrome_connected_header_helper(
+      account_consistency_mirror_required_
+          ? signin::AccountConsistencyMethod::kMirror
+          : signin::AccountConsistencyMethod::kDisabled);
+  int profile_mode = signin::PROFILE_MODE_DEFAULT;
+  if (account_consistency_mirror_required_) {
+    // For the child account case (where currently
+    // |account_consistency_mirror_required_| is true on Chrome OS), we always
+    // want to disable adding an account and going to incognito.
+    profile_mode = signin::PROFILE_MODE_INCOGNITO_DISABLED |
+                   signin::PROFILE_MODE_ADD_ACCOUNT_DISABLED;
+  }
+  std::string chrome_connected_header_value =
+      chrome_connected_header_helper.BuildRequestHeader(
+          /*is_header_request=*/true, url,
+          // Account ID is only needed for (drive|docs).google.com.
+          /*account_id=*/std::string(), profile_mode);
+  if (!chrome_connected_header_value.empty()) {
+    headers.SetHeader(signin::kChromeConnectedHeader,
+                      chrome_connected_header_value);
+  }
+#endif
   return headers.ToString();
 }
 
@@ -242,11 +274,13 @@ OneGoogleBarFetcherImpl::OneGoogleBarFetcherImpl(
     net::URLRequestContextGetter* request_context,
     GoogleURLTracker* google_url_tracker,
     const std::string& application_locale,
-    const base::Optional<std::string>& api_url_override)
+    const base::Optional<std::string>& api_url_override,
+    bool account_consistency_mirror_required)
     : request_context_(request_context),
       google_url_tracker_(google_url_tracker),
       application_locale_(application_locale),
       api_url_override_(api_url_override),
+      account_consistency_mirror_required_(account_consistency_mirror_required),
       weak_ptr_factory_(this) {}
 
 OneGoogleBarFetcherImpl::~OneGoogleBarFetcherImpl() = default;
@@ -262,8 +296,9 @@ void OneGoogleBarFetcherImpl::Fetch(OneGoogleCallback callback) {
   // Note: If there is an ongoing request, abandon it. It's possible that
   // something has changed in the meantime (e.g. signin state) that would make
   // the result obsolete.
-  pending_request_ = base::MakeUnique<AuthenticatedURLFetcher>(
+  pending_request_ = std::make_unique<AuthenticatedURLFetcher>(
       request_context_, google_base_url, application_locale_, api_url_override_,
+      account_consistency_mirror_required_,
       base::BindOnce(&OneGoogleBarFetcherImpl::FetchDone,
                      base::Unretained(this)));
   pending_request_->Start();

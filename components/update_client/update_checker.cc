@@ -6,21 +6,21 @@
 
 #include <stddef.h>
 
+#include <algorithm>
 #include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "base/bind.h"
-#include "base/bind_helpers.h"
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/task_scheduler/post_task.h"
 #include "base/threading/thread_checker.h"
 #include "base/threading/thread_task_runner_handle.h"
+#include "build/build_config.h"
 #include "components/update_client/component.h"
 #include "components/update_client/configurator.h"
 #include "components/update_client/persisted_data.h"
@@ -50,12 +50,13 @@ bool IsEncryptionRequired(const IdToComponentPtrMap& components) {
 
 class UpdateCheckerImpl : public UpdateChecker {
  public:
-  UpdateCheckerImpl(const scoped_refptr<Configurator>& config,
+  UpdateCheckerImpl(scoped_refptr<Configurator> config,
                     PersistedData* metadata);
   ~UpdateCheckerImpl() override;
 
   // Overrides for UpdateChecker.
-  void CheckForUpdates(const std::vector<std::string>& ids_checked,
+  void CheckForUpdates(const std::string& session_id,
+                       const std::vector<std::string>& ids_checked,
                        const IdToComponentPtrMap& components,
                        const std::string& additional_attributes,
                        bool enabled_component_updates,
@@ -63,7 +64,8 @@ class UpdateCheckerImpl : public UpdateChecker {
 
  private:
   void ReadUpdaterStateAttributes();
-  void CheckForUpdatesHelper(const IdToComponentPtrMap& components,
+  void CheckForUpdatesHelper(const std::string& session_id,
+                             const IdToComponentPtrMap& components,
                              const std::string& additional_attributes,
                              bool enabled_component_updates);
   void OnRequestSenderComplete(const IdToComponentPtrMap& components,
@@ -89,7 +91,7 @@ class UpdateCheckerImpl : public UpdateChecker {
   DISALLOW_COPY_AND_ASSIGN(UpdateCheckerImpl);
 };
 
-UpdateCheckerImpl::UpdateCheckerImpl(const scoped_refptr<Configurator>& config,
+UpdateCheckerImpl::UpdateCheckerImpl(scoped_refptr<Configurator> config,
                                      PersistedData* metadata)
     : config_(config), metadata_(metadata) {}
 
@@ -98,6 +100,7 @@ UpdateCheckerImpl::~UpdateCheckerImpl() {
 }
 
 void UpdateCheckerImpl::CheckForUpdates(
+    const std::string& session_id,
     const std::vector<std::string>& ids_checked,
     const IdToComponentPtrMap& components,
     const std::string& additional_attributes,
@@ -113,17 +116,27 @@ void UpdateCheckerImpl::CheckForUpdates(
       base::BindOnce(&UpdateCheckerImpl::ReadUpdaterStateAttributes,
                      base::Unretained(this)),
       base::BindOnce(&UpdateCheckerImpl::CheckForUpdatesHelper,
-                     base::Unretained(this), base::ConstRef(components),
-                     additional_attributes, enabled_component_updates));
+                     base::Unretained(this), session_id,
+                     base::ConstRef(components), additional_attributes,
+                     enabled_component_updates));
 }
 
 // This function runs on the blocking pool task runner.
 void UpdateCheckerImpl::ReadUpdaterStateAttributes() {
-  const bool is_machine_install = !config_->IsPerUserInstall();
-  updater_state_attributes_ = UpdaterState::GetState(is_machine_install);
+#if defined(OS_WIN)
+  // On Windows, the Chrome and the updater install modes are matched by design.
+  updater_state_attributes_ =
+      UpdaterState::GetState(!config_->IsPerUserInstall());
+#elif defined(OS_MACOSX) && !defined(OS_IOS)
+  // MacOS ignores this value in the current implementation but this may change.
+  updater_state_attributes_ = UpdaterState::GetState(false);
+#else
+// Other platforms don't have updaters.
+#endif  // OS_WIN
 }
 
 void UpdateCheckerImpl::CheckForUpdatesHelper(
+    const std::string& session_id,
     const IdToComponentPtrMap& components,
     const std::string& additional_attributes,
     bool enabled_component_updates) {
@@ -133,13 +146,26 @@ void UpdateCheckerImpl::CheckForUpdatesHelper(
   if (IsEncryptionRequired(components))
     RemoveUnsecureUrls(&urls);
 
-  request_sender_ = base::MakeUnique<RequestSender>(config_);
+  // Components in this update check are either all foreground, or all
+  // background since this member is inherited from the component's update
+  // context. Pick the state of the first component to use in the update check.
+  DCHECK(!components.empty());
+  const bool is_foreground = components.at(ids_checked_[0])->is_foreground();
+  DCHECK(
+      std::all_of(components.cbegin(), components.cend(),
+                  [is_foreground](IdToComponentPtrMap::const_reference& elem) {
+                    return is_foreground == elem.second->is_foreground();
+                  }));
+
+  request_sender_ = std::make_unique<RequestSender>(config_);
   request_sender_->Send(
-      config_->EnabledCupSigning(),
-      BuildUpdateCheckRequest(*config_, ids_checked_, components, metadata_,
-                              additional_attributes, enabled_component_updates,
-                              updater_state_attributes_),
       urls,
+      BuildUpdateCheckExtraRequestHeaders(config_, ids_checked_, is_foreground),
+      BuildUpdateCheckRequest(*config_, session_id, ids_checked_, components,
+                              metadata_, additional_attributes,
+                              enabled_component_updates,
+                              updater_state_attributes_),
+      config_->EnabledCupSigning(),
       base::BindOnce(&UpdateCheckerImpl::OnRequestSenderComplete,
                      base::Unretained(this), base::ConstRef(components)));
 }
@@ -222,9 +248,9 @@ void UpdateCheckerImpl::UpdateCheckFailed(const IdToComponentPtrMap& components,
 }  // namespace
 
 std::unique_ptr<UpdateChecker> UpdateChecker::Create(
-    const scoped_refptr<Configurator>& config,
+    scoped_refptr<Configurator> config,
     PersistedData* persistent) {
-  return base::MakeUnique<UpdateCheckerImpl>(config, persistent);
+  return std::make_unique<UpdateCheckerImpl>(config, persistent);
 }
 
 }  // namespace update_client

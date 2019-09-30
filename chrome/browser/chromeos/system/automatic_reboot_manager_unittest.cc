@@ -39,7 +39,6 @@
 #include "content/public/browser/notification_source.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "ui/message_center/message_center.h"
 
 using ::testing::_;
 using ::testing::Invoke;
@@ -373,7 +372,7 @@ void AutomaticRebootManagerBasicTest::SetRebootAfterUpdate(
   reboot_after_update_ = reboot_after_update;
   local_state_.SetManagedPref(
       prefs::kRebootAfterUpdate,
-      base::MakeUnique<base::Value>(reboot_after_update));
+      std::make_unique<base::Value>(reboot_after_update));
   task_runner_->RunUntilIdle();
   EXPECT_EQ(expect_reboot ? 1 : 0,
             power_manager_client_->num_request_restart_calls());
@@ -388,7 +387,7 @@ void AutomaticRebootManagerBasicTest::SetUptimeLimit(
   } else {
     local_state_.SetManagedPref(
         prefs::kUptimeLimit,
-        base::MakeUnique<base::Value>(static_cast<int>(limit.InSeconds())));
+        std::make_unique<base::Value>(static_cast<int>(limit.InSeconds())));
   }
   task_runner_->RunUntilIdle();
   EXPECT_EQ(expect_reboot ? 1 : 0,
@@ -456,8 +455,8 @@ void AutomaticRebootManagerBasicTest::ExpectNoRebootRequest() {
 
 void AutomaticRebootManagerBasicTest::CreateAutomaticRebootManager(
     bool expect_reboot) {
-  automatic_reboot_manager_.reset(new AutomaticRebootManager(
-      std::unique_ptr<base::TickClock>(task_runner_->GetMockTickClock())));
+  automatic_reboot_manager_.reset(
+      new AutomaticRebootManager(task_runner_->GetMockTickClock()));
   automatic_reboot_manager_observer_.Init(automatic_reboot_manager_.get());
   task_runner_->RunUntilIdle();
   EXPECT_EQ(expect_reboot ? 1 : 0,

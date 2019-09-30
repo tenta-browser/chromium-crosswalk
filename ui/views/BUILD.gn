@@ -4,6 +4,7 @@
 
 import("//build/buildflag_header.gni")
 import("//build/config/features.gni")
+import("//build/config/jumbo.gni")
 import("//build/config/ui.gni")
 import("//components/vector_icons/vector_icons.gni")
 import("//testing/test.gni")
@@ -21,14 +22,24 @@ aggregate_vector_icons("views_vector_icons") {
   icons = [
     "checkbox_active.icon",
     "checkbox_normal.icon",
-    "menu_check.1x.icon",
+    "close.icon",
+    "ic_close.icon",
+    "info.icon",
+    "launch.icon",
     "menu_check.icon",
     "menu_radio_empty.icon",
     "menu_radio_selected.icon",
+    "new_incognito_window.icon",
+    "new_tab.icon",
+    "new_window.icon",
+    "open.icon",
+    "options.icon",
+    "pin.icon",
     "radio_button_active.icon",
     "radio_button_normal.icon",
-    "submenu_arrow.1x.icon",
     "submenu_arrow.icon",
+    "uninstall.icon",
+    "unpin.icon",
   ]
 }
 
@@ -38,11 +49,11 @@ buildflag_header("features") {
       [ "ENABLE_NATIVE_WINDOW_NAV_BUTTONS=$enable_native_window_nav_buttons" ]
 }
 
-component("views") {
+jumbo_component("views") {
   all_dependent_configs = [ ":flags" ]
 
   public = [
-    "accessibility/native_view_accessibility.h",
+    "accessibility/view_accessibility.h",
     "accessible_pane_view.h",
     "animation/bounds_animator.h",
     "animation/bounds_animator_observer.h",
@@ -109,6 +120,7 @@ component("views") {
     "controls/label.h",
     "controls/link.h",
     "controls/link_listener.h",
+    "controls/menu/menu_closure_animation_mac.h",
     "controls/menu/menu_config.h",
     "controls/menu/menu_controller.h",
     "controls/menu/menu_controller_delegate.h",
@@ -166,6 +178,7 @@ component("views") {
     "controls/tree/tree_view.h",
     "controls/tree/tree_view_controller.h",
     "controls/tree/tree_view_drawing_provider.h",
+    "controls/views_text_services_context_menu.h",
     "debug_utils.h",
     "drag_controller.h",
     "drag_utils.h",
@@ -248,6 +261,7 @@ component("views") {
   ]
 
   sources = [
+    "accessibility/view_accessibility.cc",
     "accessible_pane_view.cc",
     "animation/bounds_animator.cc",
     "animation/flood_fill_ink_drop_ripple.cc",
@@ -304,6 +318,7 @@ component("views") {
     "controls/label.cc",
     "controls/link.cc",
     "controls/menu/display_change_listener_mac.cc",
+    "controls/menu/menu_closure_animation_mac.mm",
     "controls/menu/menu_config.cc",
     "controls/menu/menu_config_chromeos.cc",
     "controls/menu/menu_config_linux.cc",
@@ -353,6 +368,8 @@ component("views") {
     "controls/tree/tree_view.cc",
     "controls/tree/tree_view_controller.cc",
     "controls/tree/tree_view_drawing_provider.cc",
+    "controls/views_text_services_context_menu.cc",
+    "controls/views_text_services_context_menu_mac.mm",
     "debug_utils.cc",
     "drag_utils.cc",
     "drag_utils_mac.mm",
@@ -462,7 +479,7 @@ component("views") {
     ":views_vector_icons",
     "//base",
     "//components/vector_icons",
-    "//ui/accessibility:ax_gen",
+    "//ui/accessibility:ax_enums_mojo",
     "//ui/base",
     "//ui/base/ime",
     "//ui/compositor",
@@ -621,6 +638,7 @@ component("views") {
     deps += [
       "//services/ui/public/interfaces",
       "//ui/aura",
+      "//ui/platform_window",
       "//ui/touch_selection",
       "//ui/wm",
       "//ui/wm/public",
@@ -680,8 +698,15 @@ component("views") {
     }
   }
 
+  if (is_linux) {
+    sources += [ "widget/desktop_aura/desktop_window_tree_host_platform.cc" ]
+    public += [ "widget/desktop_aura/desktop_window_tree_host_platform.h" ]
+  }
+
   if (is_mac) {
+    sources -= [ "controls/views_text_services_context_menu.cc" ]
     deps += [
+      "//components/crash/core/common",
       "//ui/accelerated_widget_mac",
       "//ui/events:dom_keycode_converter",
     ]
@@ -702,8 +727,6 @@ component("views") {
       "accessibility/native_view_accessibility_win.cc",
       "accessibility/native_view_accessibility_win.h",
     ]
-  } else {
-    sources += [ "accessibility/native_view_accessibility_stub.cc" ]
   }
 
   if (is_fuchsia) {
@@ -711,7 +734,7 @@ component("views") {
   }
 }
 
-static_library("test_support_internal") {
+jumbo_source_set("test_support_internal") {
   testonly = true
   sources = [
     "animation/test/flood_fill_ink_drop_ripple_test_api.cc",
@@ -738,8 +761,6 @@ static_library("test_support_internal") {
     "animation/test/test_ink_drop_ripple_observer.h",
     "controls/textfield/textfield_test_api.cc",
     "controls/textfield/textfield_test_api.h",
-    "corewm/test/tooltip_aura_test_api.cc",
-    "corewm/test/tooltip_aura_test_api.h",
     "test/capture_tracking_view.cc",
     "test/capture_tracking_view.h",
     "test/combobox_test_api.cc",
@@ -780,6 +801,8 @@ static_library("test_support_internal") {
     "test/views_test_helper_mac.mm",
     "test/widget_test.cc",
     "test/widget_test.h",
+    "test/widget_test_api.cc",
+    "test/widget_test_api.h",
     "test/widget_test_mac.mm",
     "test/x11_property_change_waiter.cc",
     "test/x11_property_change_waiter.h",
@@ -800,7 +823,7 @@ static_library("test_support_internal") {
     "//base/test:test_support",
     "//gpu/ipc/service",
     "//ipc:test_support",
-    "//mojo/edk/system",
+    "//mojo/edk",
     "//skia",
     "//testing/gtest",
     "//ui/base",
@@ -825,6 +848,8 @@ static_library("test_support_internal") {
 
   if (use_aura) {
     sources += [
+      "corewm/test/tooltip_aura_test_api.cc",
+      "corewm/test/tooltip_aura_test_api.h",
       "corewm/tooltip_controller_test_helper.cc",
       "corewm/tooltip_controller_test_helper.h",
       "test/desktop_test_views_delegate_aura.cc",
@@ -865,7 +890,7 @@ static_library("test_support_internal") {
   }
 }
 
-static_library("test_support") {
+jumbo_static_library("test_support") {
   testonly = true
   public_deps = [
     ":test_support_internal",
@@ -910,6 +935,7 @@ source_set("views_unittests_sources") {
     "cocoa/drag_drop_client_mac_unittest.mm",
     "controls/button/blue_button_unittest.cc",
     "controls/button/button_unittest.cc",
+    "controls/button/checkbox_unittest.cc",
     "controls/button/image_button_factory_unittest.cc",
     "controls/button/image_button_unittest.cc",
     "controls/button/label_button_label_unittest.cc",
@@ -918,6 +944,7 @@ source_set("views_unittests_sources") {
     "controls/button/radio_button_unittest.cc",
     "controls/button/toggle_button_unittest.cc",
     "controls/combobox/combobox_unittest.cc",
+    "controls/image_view_unittest.cc",
     "controls/label_unittest.cc",
     "controls/menu/menu_controller_unittest.cc",
     "controls/menu/menu_item_view_unittest.cc",
@@ -1111,7 +1138,7 @@ test("views_unittests") {
 
   deps = [
     ":views_unittests_sources",
-    "//mojo/edk/system",
+    "//mojo/edk",
   ]
 }
 
@@ -1129,7 +1156,7 @@ source_set("views_interactive_ui_tests") {
     ":views",
     "//base",
     "//base/test:test_support",
-    "//mojo/edk/system",
+    "//mojo/edk",
     "//skia",
     "//testing/gtest",
     "//ui/base:test_support",
@@ -1176,4 +1203,25 @@ source_set("views_interactive_ui_tests") {
   if (is_chromeos) {
     sources -= [ "corewm/desktop_capture_controller_unittest.cc" ]
   }
+}
+
+test("views_perftests") {
+  sources = [
+    "controls/label_perftest.cc",
+    "views_perftests.cc",
+  ]
+
+  deps = [
+    ":test_support",
+    "//base/test:test_support",
+    "//cc/base:base",
+    "//mojo/edk",
+    "//testing/perf",
+    "//ui/resources:ui_test_pak",
+  ]
+
+  data_deps = [
+    "//ui/resources:ui_test_pak_data",
+    "//testing:run_perf_test",
+  ]
 }

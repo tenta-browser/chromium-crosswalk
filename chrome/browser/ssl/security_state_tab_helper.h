@@ -11,7 +11,7 @@
 #include "components/security_state/core/security_state.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/browser/web_contents_user_data.h"
-#include "third_party/WebKit/public/platform/WebSecurityStyle.h"
+#include "third_party/blink/public/platform/web_security_style.h"
 
 namespace content {
 class NavigationHandle;
@@ -30,15 +30,12 @@ class SecurityStateTabHelper
   void GetSecurityInfo(
       security_state::SecurityInfo* result) const;
 
-  // Called when the NavigationEntry's SSLStatus or other security
-  // information changes.
-  void VisibleSecurityStateChanged();
-
   // content::WebContentsObserver:
   void DidStartNavigation(
       content::NavigationHandle* navigation_handle) override;
   void DidFinishNavigation(
       content::NavigationHandle* navigation_handle) override;
+  void DidChangeVisibleSecurityState() override;
   void WebContentsDestroyed() override;
 
  private:

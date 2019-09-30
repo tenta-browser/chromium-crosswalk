@@ -36,10 +36,14 @@
           on-keys-pressed="onKeysPress_"></iron-a11y-keys>
       <div class="start">
         <paper-input id="newWord" no-label-float value="{{newWordValue_}}"
-            label="$i18n{addDictionaryWordLabel}"></paper-input>
+            label="$i18n{addDictionaryWordLabel}"
+            invalid="[[isWordInvalid_(newWordValue_)]]"
+            error-message="[[isWordInvalid_(newWordValue_,
+                '$i18nPolymer{addDictionaryWordDuplicateError}',
+                '$i18nPolymer{addDictionaryWordLengthError}')]]"></paper-input>
       </div>
-      <paper-button class="secondary-button" on-tap="onAddWordTap_"
-          disabled="[[!validateWord_(newWordValue_)]]" id="addWord">
+      <paper-button class="secondary-button" on-click="onAddWordTap_"
+          disabled="[[disableAddButton_(newWordValue_)]]" id="addWord">
         $i18n{addDictionaryWordButton}
       </paper-button>
     </div>
@@ -53,18 +57,18 @@
           <template>
             <div class="list-item">
               <div class="word text-elide">[[item]]</div>
-              <button is="paper-icon-button-light" class="icon-clear"
-                  on-tap="onRemoveWordTap_" tabindex$="[[tabIndex]]">
-              </button>
+              <paper-icon-button-light class="icon-clear">
+                <button on-click="onRemoveWordTap_" tabindex$="[[tabIndex]]">
+                </button>
+              </paper-icon-button-light>
             </div>
           </template>
         </iron-list>
       </template>
-      <template is="dom-if" if="[[!hasWords_(words_.length)]]">
-        <div id="noWordsLabel" class="list-item">
-          $i18n{noCustomDictionaryWordsFound}
-        </div>
-      </template>
+      <div id="noWordsLabel" class="list-item"
+          hidden$="[[hasWords_(words_.length)]]">
+        $i18n{noCustomDictionaryWordsFound}
+      </div>
     </div>
   </template>
   <script src="edit_dictionary_page.js"></script>

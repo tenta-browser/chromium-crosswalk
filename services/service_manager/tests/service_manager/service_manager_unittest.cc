@@ -31,8 +31,8 @@
 #include "services/service_manager/public/cpp/service.h"
 #include "services/service_manager/public/cpp/service_context.h"
 #include "services/service_manager/public/cpp/service_test.h"
-#include "services/service_manager/public/interfaces/constants.mojom.h"
-#include "services/service_manager/public/interfaces/service_manager.mojom.h"
+#include "services/service_manager/public/mojom/constants.mojom.h"
+#include "services/service_manager/public/mojom/service_manager.mojom.h"
 #include "services/service_manager/runner/common/client_util.h"
 #include "services/service_manager/tests/service_manager/service_manager_unittest.mojom.h"
 
@@ -244,7 +244,8 @@ class ServiceManagerTest : public test::ServiceTest,
 
   void StartTarget() {
     base::FilePath target_path;
-    CHECK(base::PathService::Get(base::DIR_EXE, &target_path));
+    CHECK(base::PathService::Get(base::DIR_ASSETS, &target_path));
+
 #if defined(OS_WIN)
     target_path = target_path.Append(
         FILE_PATH_LITERAL("service_manager_unittest_target.exe"));
@@ -580,6 +581,11 @@ TEST_F(ServiceManagerTest, ClientProcessCapabilityEnforced) {
 
   // And still only one service instance around.
   EXPECT_EQ(1u, instances().size());
+}
+
+TEST_F(ServiceManagerTest, ClonesDisconnectedConnectors) {
+  Connector connector((mojom::ConnectorPtrInfo()));
+  EXPECT_TRUE(connector.Clone());
 }
 
 }  // namespace service_manager

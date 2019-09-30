@@ -5,6 +5,7 @@
 #include "chrome/browser/ssl/ssl_error_handler.h"
 
 #include <stdint.h>
+#include <memory>
 #include <unordered_set>
 #include <utility>
 
@@ -28,7 +29,7 @@
 #include "chrome/browser/ssl/ssl_blocking_page.h"
 #include "chrome/browser/ssl/ssl_cert_reporter.h"
 #include "chrome/browser/ssl/ssl_error_assistant.h"
-#include "chrome/common/features.h"
+#include "chrome/common/buildflags.h"
 #include "chrome/common/pref_names.h"
 #include "components/network_time/network_time_tracker.h"
 #include "components/prefs/pref_service.h"
@@ -55,6 +56,11 @@
 #elif defined(OS_CHROMEOS)
 #include "chrome/browser/chromeos/policy/browser_policy_connector_chromeos.h"
 #endif  // #if defined(OS_WIN)
+
+#if defined(OS_ANDROID)
+#include "base/android/jni_android.h"
+#include "chrome/browser/ssl/captive_portal_helper_android.h"
+#endif
 
 const base::Feature kMITMSoftwareInterstitial{"MITMSoftwareInterstitial",
                                               base::FEATURE_ENABLED_BY_DEFAULT};
@@ -101,10 +107,9 @@ bool IsSuperfish(const scoped_refptr<net::X509Certificate>& cert) {
       {0xB6, 0xFE, 0x91, 0x51, 0x40, 0x2B, 0xAD, 0x1C, 0x06, 0xD7, 0xE6,
        0x6D, 0xB6, 0x7A, 0x26, 0xAA, 0x73, 0x56, 0xF2, 0xE6, 0xC6, 0x44,
        0xDB, 0xCF, 0x9F, 0x98, 0x96, 0x8F, 0xF6, 0x32, 0xE1, 0xB7}};
-  for (const net::X509Certificate::OSCertHandle& intermediate :
-       cert->GetIntermediateCertificates()) {
+  for (const auto& intermediate : cert->intermediate_buffers()) {
     net::SHA256HashValue hash =
-        net::X509Certificate::CalculateFingerprint256(intermediate);
+        net::X509Certificate::CalculateFingerprint256(intermediate.get());
     if (hash == kSuperfishFingerprint) {
       return true;
     }
@@ -205,6 +210,11 @@ class ConfigSingleton {
   const std::string MatchKnownMITMSoftware(
       const scoped_refptr<net::X509Certificate> cert);
 
+  // Returns a DynamicInterstitialInfo that matches with |ssl_info|. If is no
+  // match, return null.
+  base::Optional<DynamicInterstitialInfo> MatchDynamicInterstitial(
+      const net::SSLInfo& ssl_info);
+
   // Testing methods:
   void ResetForTesting();
   void SetInterstitialDelayForTesting(const base::TimeDelta& delay);
@@ -213,6 +223,8 @@ class ConfigSingleton {
   void SetClockForTesting(base::Clock* clock);
   void SetNetworkTimeTrackerForTesting(
       network_time::NetworkTimeTracker* tracker);
+  void SetReportNetworkConnectivityCallbackForTesting(
+      base::OnceClosure callback);
 
   void SetErrorAssistantProto(
       std::unique_ptr<chrome_browser_ssl::SSLErrorAssistantConfig>
@@ -226,6 +238,10 @@ class ConfigSingleton {
   void SetOSReportsCaptivePortalForTesting(bool os_reports_captive_portal);
   bool DoesOSReportCaptivePortalForTesting() const;
 
+  base::OnceClosure report_network_connectivity_callback() {
+    return std::move(report_network_connectivity_callback_);
+  }
+
  private:
   base::TimeDelta interstitial_delay_;
 
@@ -238,6 +254,8 @@ class ConfigSingleton {
   base::Clock* testing_clock_ = nullptr;
 
   network_time::NetworkTimeTracker* network_time_tracker_ = nullptr;
+
+  base::OnceClosure report_network_connectivity_callback_;
 
   enum EnterpriseManaged {
     ENTERPRISE_MANAGED_STATUS_NOT_SET,
@@ -261,7 +279,7 @@ ConfigSingleton::ConfigSingleton()
           base::TimeDelta::FromMilliseconds(kInterstitialDelayInMilliseconds)),
       is_enterprise_managed_for_testing_(ENTERPRISE_MANAGED_STATUS_NOT_SET),
       os_captive_portal_status_for_testing_(OS_CAPTIVE_PORTAL_STATUS_NOT_SET),
-      ssl_error_assistant_(base::MakeUnique<SSLErrorAssistant>()) {}
+      ssl_error_assistant_(std::make_unique<SSLErrorAssistant>()) {}
 
 base::TimeDelta ConfigSingleton::interstitial_delay() const {
   return interstitial_delay_;
@@ -311,6 +329,11 @@ void ConfigSingleton::SetClockForTesting(base::Clock* clock) {
 void ConfigSingleton::SetNetworkTimeTrackerForTesting(
     network_time::NetworkTimeTracker* tracker) {
   network_time_tracker_ = tracker;
+}
+
+void ConfigSingleton::SetReportNetworkConnectivityCallbackForTesting(
+    base::OnceClosure closure) {
+  report_network_connectivity_callback_ = std::move(closure);
 }
 
 void ConfigSingleton::SetEnterpriseManagedForTesting(bool enterprise_managed) {
@@ -380,6 +403,11 @@ const std::string ConfigSingleton::MatchKnownMITMSoftware(
   return ssl_error_assistant_->MatchKnownMITMSoftware(cert);
 }
 
+base::Optional<DynamicInterstitialInfo>
+ConfigSingleton::MatchDynamicInterstitial(const net::SSLInfo& ssl_info) {
+  return ssl_error_assistant_->MatchDynamicInterstitial(ssl_info);
+}
+
 class SSLErrorHandlerDelegateImpl : public SSLErrorHandler::Delegate {
  public:
   SSLErrorHandlerDelegateImpl(
@@ -420,9 +448,10 @@ class SSLErrorHandlerDelegateImpl : public SSLErrorHandler::Delegate {
   void ShowCaptivePortalInterstitial(const GURL& landing_url) override;
   void ShowMITMSoftwareInterstitial(const std::string& mitm_software_name,
                                     bool is_enterprise_managed) override;
-  void ShowSSLInterstitial() override;
+  void ShowSSLInterstitial(const GURL& support_url) override;
   void ShowBadClockInterstitial(const base::Time& now,
                                 ssl_errors::ClockState clock_state) override;
+  void ReportNetworkConnectivity(base::OnceClosure callback) override;
 
  private:
   // Calls the |blocking_page_ready_callback_| if it's not null, else calls
@@ -516,12 +545,12 @@ void SSLErrorHandlerDelegateImpl::ShowMITMSoftwareInterstitial(
       decision_callback_));
 }
 
-void SSLErrorHandlerDelegateImpl::ShowSSLInterstitial() {
+void SSLErrorHandlerDelegateImpl::ShowSSLInterstitial(const GURL& support_url) {
   // Show SSL blocking page. The interstitial owns the blocking page.
   OnBlockingPageReady(SSLBlockingPage::Create(
       web_contents_, cert_error_, ssl_info_, request_url_, options_mask_,
-      base::Time::NowFromSystemTime(), std::move(ssl_cert_reporter_),
-      is_superfish_, decision_callback_));
+      base::Time::NowFromSystemTime(), support_url,
+      std::move(ssl_cert_reporter_), is_superfish_, decision_callback_));
 }
 
 void SSLErrorHandlerDelegateImpl::ShowBadClockInterstitial(
@@ -531,6 +560,18 @@ void SSLErrorHandlerDelegateImpl::ShowBadClockInterstitial(
   OnBlockingPageReady(new BadClockBlockingPage(
       web_contents_, cert_error_, ssl_info_, request_url_, now, clock_state,
       std::move(ssl_cert_reporter_), decision_callback_));
+}
+
+void SSLErrorHandlerDelegateImpl::ReportNetworkConnectivity(
+    base::OnceClosure callback) {
+#if defined(OS_ANDROID)
+  chrome::android::ReportNetworkConnectivity(
+      base::android::AttachCurrentThread());
+#else
+// Nothing to do on other platforms.
+#endif
+  if (callback)
+    std::move(callback).Run();
 }
 
 void SSLErrorHandlerDelegateImpl::OnBlockingPageReady(
@@ -554,6 +595,7 @@ int IsCertErrorFatal(int cert_error) {
     case net::ERR_CERT_NAME_CONSTRAINT_VIOLATION:
     case net::ERR_CERT_VALIDITY_TOO_LONG:
     case net::ERR_CERTIFICATE_TRANSPARENCY_REQUIRED:
+    case net::ERR_CERT_SYMANTEC_LEGACY:
       return false;
     case net::ERR_CERT_CONTAINS_ERRORS:
     case net::ERR_CERT_REVOKED:
@@ -580,7 +622,6 @@ void SSLErrorHandler::HandleSSLError(
     int cert_error,
     const net::SSLInfo& ssl_info,
     const GURL& request_url,
-    bool should_ssl_errors_be_fatal,
     bool expired_previous_decision,
     std::unique_ptr<SSLCertReporter> ssl_cert_reporter,
     const base::Callback<void(content::CertificateRequestResultType)>&
@@ -600,7 +641,7 @@ void SSLErrorHandler::HandleSSLError(
   bool is_superfish =
       base::FeatureList::IsEnabled(kSuperfishInterstitial) && is_superfish_cert;
   int options_mask = CalculateOptionsMask(
-      cert_error, hard_override_disabled, should_ssl_errors_be_fatal,
+      cert_error, hard_override_disabled, ssl_info.is_fatal_cert_error,
       is_superfish, expired_previous_decision);
 
   SSLErrorHandler* error_handler = new SSLErrorHandler(
@@ -641,6 +682,13 @@ void SSLErrorHandler::SetClockForTesting(base::Clock* testing_clock) {
 void SSLErrorHandler::SetNetworkTimeTrackerForTesting(
     network_time::NetworkTimeTracker* tracker) {
   g_config.Pointer()->SetNetworkTimeTrackerForTesting(tracker);
+}
+
+// static
+void SSLErrorHandler::SetReportNetworkConnectivityCallbackForTesting(
+    base::OnceClosure closure) {
+  g_config.Pointer()->SetReportNetworkConnectivityCallbackForTesting(
+      std::move(closure));
 }
 
 // static
@@ -710,6 +758,13 @@ void SSLErrorHandler::StartHandlingError() {
     return;
   }
 
+  base::Optional<DynamicInterstitialInfo> dynamic_interstitial =
+      g_config.Pointer()->MatchDynamicInterstitial(ssl_info_);
+  if (dynamic_interstitial) {
+    ShowDynamicInterstitial(dynamic_interstitial.value());
+    return;
+  }
+
   // Ideally, a captive portal interstitial should only be displayed if the only
   // SSL error is a name mismatch error. However, captive portal detector always
   // opens a new tab if it detects a portal ignoring the types of SSL errors. To
@@ -718,6 +773,8 @@ void SSLErrorHandler::StartHandlingError() {
   if (IsCaptivePortalInterstitialEnabled() &&
       (g_config.Pointer()->DoesOSReportCaptivePortalForTesting() ||
        delegate_->DoesOSReportCaptivePortal())) {
+    delegate_->ReportNetworkConnectivity(
+        g_config.Pointer()->report_network_connectivity_callback());
     RecordUMA(OS_REPORTS_CAPTIVE_PORTAL);
     ShowCaptivePortalInterstitial(GURL());
     return;
@@ -730,12 +787,16 @@ void SSLErrorHandler::StartHandlingError() {
   // name-mismatch. If there are multiple errors, it indicates that the captive
   // portal landing page itself will have SSL errors, and so it's not a very
   // helpful place to direct the user to go.
-  if (base::FeatureList::IsEnabled(kCaptivePortalCertificateList) &&
-      only_error_is_name_mismatch &&
-      g_config.Pointer()->IsKnownCaptivePortalCertificate(ssl_info_)) {
-    RecordUMA(CAPTIVE_PORTAL_CERT_FOUND);
-    ShowCaptivePortalInterstitial(GURL());
-    return;
+  if (only_error_is_name_mismatch) {
+    delegate_->ReportNetworkConnectivity(
+        g_config.Pointer()->report_network_connectivity_callback());
+
+    if (base::FeatureList::IsEnabled(kCaptivePortalCertificateList) &&
+        g_config.Pointer()->IsKnownCaptivePortalCertificate(ssl_info_)) {
+      RecordUMA(CAPTIVE_PORTAL_CERT_FOUND);
+      ShowCaptivePortalInterstitial(GURL());
+      return;
+    }
   }
 
   // The MITM software interstitial is displayed if and only if:
@@ -843,7 +904,7 @@ void SSLErrorHandler::ShowSSLInterstitial() {
   RecordUMA(delegate_->IsErrorOverridable()
                 ? SHOW_SSL_INTERSTITIAL_OVERRIDABLE
                 : SHOW_SSL_INTERSTITIAL_NONOVERRIDABLE);
-  delegate_->ShowSSLInterstitial();
+  delegate_->ShowSSLInterstitial(GURL());
   // Once an interstitial is displayed, no need to keep the handler around.
   // This is the equivalent of "delete this".
   web_contents_->RemoveUserData(UserDataKey());
@@ -857,6 +918,29 @@ void SSLErrorHandler::ShowBadClockInterstitial(
   // Once an interstitial is displayed, no need to keep the handler around.
   // This is the equivalent of "delete this".
   web_contents_->RemoveUserData(UserDataKey());
+}
+
+void SSLErrorHandler::ShowDynamicInterstitial(
+    const DynamicInterstitialInfo dynamic_interstitial) {
+  switch (dynamic_interstitial.interstitial_type) {
+    case chrome_browser_ssl::DynamicInterstitial::INTERSTITIAL_PAGE_NONE:
+      NOTREACHED();
+      return;
+    case chrome_browser_ssl::DynamicInterstitial::INTERSTITIAL_PAGE_SSL:
+      delegate_->ShowSSLInterstitial(dynamic_interstitial.support_url);
+      return;
+    case chrome_browser_ssl::DynamicInterstitial::
+        INTERSTITIAL_PAGE_CAPTIVE_PORTAL:
+      delegate_->ShowCaptivePortalInterstitial(GURL());
+      return;
+    case chrome_browser_ssl::DynamicInterstitial::
+        INTERSTITIAL_PAGE_MITM_SOFTWARE:
+      DCHECK(!dynamic_interstitial.mitm_software_name.empty());
+      delegate_->ShowMITMSoftwareInterstitial(
+          dynamic_interstitial.mitm_software_name,
+          g_config.Pointer()->IsEnterpriseManaged());
+      return;
+  }
 }
 
 void SSLErrorHandler::CommonNameMismatchHandlerCallback(

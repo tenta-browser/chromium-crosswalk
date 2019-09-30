@@ -23,7 +23,10 @@ class FakeOAuth2TokenServiceDelegate : public OAuth2TokenServiceDelegate {
 
   // Overriden to make sure it works on Android.
   bool RefreshTokenIsAvailable(const std::string& account_id) const override;
-  bool RefreshTokenHasError(const std::string& account_id) const override;
+  GoogleServiceAuthError GetAuthError(
+      const std::string& account_id) const override;
+  void UpdateAuthError(const std::string& account_id,
+                       const GoogleServiceAuthError& error) override;
 
   std::vector<std::string> GetAccounts() override;
   void RevokeAllCredentials() override;
@@ -40,8 +43,7 @@ class FakeOAuth2TokenServiceDelegate : public OAuth2TokenServiceDelegate {
     request_context_ = request_context;
   }
 
-  void SetLastErrorForAccount(const std::string& account_id,
-                              const GoogleServiceAuthError& error);
+  std::string GetRefreshToken(const std::string& account_id) const;
 
  private:
   struct AccountInfo {
@@ -53,7 +55,6 @@ class FakeOAuth2TokenServiceDelegate : public OAuth2TokenServiceDelegate {
 
   void IssueRefreshTokenForUser(const std::string& account_id,
                                 const std::string& token);
-  std::string GetRefreshToken(const std::string& account_id) const;
 
   // Maps account ids to info.
   typedef std::map<std::string, linked_ptr<AccountInfo>> AccountInfoMap;

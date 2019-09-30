@@ -29,6 +29,7 @@ namespace content {
 namespace {
 
 media::MediaUrlInterceptor* g_media_url_interceptor = nullptr;
+const float kDefaultVolume = 1.0;
 
 }  // namespace
 
@@ -38,6 +39,7 @@ MediaPlayerRenderer::MediaPlayerRenderer(int process_id,
     : render_process_id_(process_id),
       routing_id_(routing_id),
       has_error_(false),
+      volume_(kDefaultVolume),
       weak_factory_(this) {
   DCHECK_EQ(static_cast<RenderFrameHostImpl*>(
                 RenderFrameHost::FromID(process_id, routing_id))
@@ -121,6 +123,8 @@ void MediaPlayerRenderer::CreateMediaPlayer(
       true));  // allow_crendentials
 
   media_player_->Initialize();
+  UpdateVolume();
+
   init_cb.Run(media::PIPELINE_OK);
 }
 
@@ -199,7 +203,8 @@ void MediaPlayerRenderer::SetVolume(float volume) {
 
 void MediaPlayerRenderer::UpdateVolume() {
   float volume = web_contents_muted_ ? 0 : volume_;
-  media_player_->SetVolume(volume);
+  if (media_player_)
+    media_player_->SetVolume(volume);
 }
 
 base::TimeDelta MediaPlayerRenderer::GetMediaTime() {
@@ -268,10 +273,12 @@ void MediaPlayerRenderer::OnSeekComplete(int player_id,
 
 void MediaPlayerRenderer::OnError(int player_id, int error) {
   // Some errors are forwarded to the MediaPlayerListener, but are of no
-  // importance to us. Ignore these errors, which are reported as error 0 by
-  // MediaPlayerListener.
-  if (!error)
+  // importance to us. Ignore these errors, which are reported as
+  // MEDIA_ERROR_INVALID_CODE by MediaPlayerListener.
+  if (error ==
+      media::MediaPlayerAndroid::MediaErrorType::MEDIA_ERROR_INVALID_CODE) {
     return;
+  }
 
   LOG(ERROR) << __func__ << " Error: " << error;
   has_error_ = true;

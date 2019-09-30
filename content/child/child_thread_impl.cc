@@ -17,7 +17,6 @@
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
 #include "base/message_loop/timer_slack.h"
 #include "base/metrics/field_trial.h"
@@ -34,6 +33,7 @@
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/timer/elapsed_timer.h"
 #include "base/trace_event/memory_dump_manager.h"
+#include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
 #include "components/tracing/child/child_trace_message_filter.h"
 #include "content/child/child_histogram_fetcher_impl.h"
@@ -62,8 +62,8 @@
 #include "mojo/public/cpp/system/platform_handle.h"
 #include "services/device/public/cpp/power_monitor/power_monitor_broadcast_source.h"
 #include "services/resource_coordinator/public/cpp/memory_instrumentation/client_process_impl.h"
-#include "services/resource_coordinator/public/interfaces/memory_instrumentation/memory_instrumentation.mojom.h"
-#include "services/resource_coordinator/public/interfaces/service_constants.mojom.h"
+#include "services/resource_coordinator/public/mojom/memory_instrumentation/memory_instrumentation.mojom.h"
+#include "services/resource_coordinator/public/mojom/service_constants.mojom.h"
 #include "services/service_manager/public/cpp/connector.h"
 #include "services/service_manager/public/cpp/interface_provider.h"
 #include "services/service_manager/runner/common/client_util.h"
@@ -76,10 +76,6 @@
 
 #if defined(OS_MACOSX)
 #include "base/allocator/allocator_interception_mac.h"
-#endif
-
-#if defined(OS_WIN)
-#include "content/child/dwrite_font_proxy/dwrite_font_proxy_init_impl_win.h"
 #endif
 
 namespace content {
@@ -235,6 +231,7 @@ base::LazyInstance<QuitClosure>::DestructorAtExit g_quit_closure =
 
 std::unique_ptr<mojo::edk::IncomingBrokerClientInvitation>
 InitializeMojoIPCChannel() {
+  TRACE_EVENT0("startup", "InitializeMojoIPCChannel");
   mojo::edk::ScopedPlatformHandle platform_channel;
 #if defined(OS_WIN)
   if (base::CommandLine::ForCurrentProcess()->HasSwitch(
@@ -328,8 +325,9 @@ ChildThreadImpl::Options::Builder::AutoStartServiceManagerConnection(
 }
 
 ChildThreadImpl::Options::Builder&
-ChildThreadImpl::Options::Builder::ConnectToBrowser(bool connect_to_browser) {
-  options_.connect_to_browser = connect_to_browser;
+ChildThreadImpl::Options::Builder::ConnectToBrowser(
+    bool connect_to_browser_parms) {
+  options_.connect_to_browser = connect_to_browser_parms;
   return *this;
 }
 
@@ -342,8 +340,8 @@ ChildThreadImpl::Options::Builder::AddStartupFilter(
 
 ChildThreadImpl::Options::Builder&
 ChildThreadImpl::Options::Builder::IPCTaskRunner(
-    scoped_refptr<base::SingleThreadTaskRunner> ipc_task_runner) {
-  options_.ipc_task_runner = ipc_task_runner;
+    scoped_refptr<base::SingleThreadTaskRunner> ipc_task_runner_parms) {
+  options_.ipc_task_runner = ipc_task_runner_parms;
   return *this;
 }
 
@@ -431,6 +429,7 @@ void ChildThreadImpl::ConnectChannel(
 }
 
 void ChildThreadImpl::Init(const Options& options) {
+  TRACE_EVENT0("startup", "ChildThreadImpl::Init");
   g_lazy_tls.Pointer()->Set(this);
   on_channel_error_called_ = false;
   message_loop_ = base::MessageLoop::current();
@@ -521,9 +520,15 @@ void ChildThreadImpl::Init(const Options& options) {
   if (!base::PowerMonitor::Get() && service_manager_connection_) {
     auto power_monitor_source =
         std::make_unique<device::PowerMonitorBroadcastSource>(
-            GetConnector(), GetIOTaskRunner());
+            GetIOTaskRunner());
+    auto* source_ptr = power_monitor_source.get();
     power_monitor_.reset(
         new base::PowerMonitor(std::move(power_monitor_source)));
+    // The two-phase init is necessary to ensure that the process-wide
+    // PowerMonitor is set before the power monitor source receives incoming
+    // communication from the browser process (see https://crbug.com/821790 for
+    // details)
+    source_ptr->Init(GetConnector());
   }
 
 #if defined(OS_POSIX)
@@ -583,10 +588,6 @@ void ChildThreadImpl::Init(const Options& options) {
     field_trial_syncer_->InitFieldTrialObserving(
         *base::CommandLine::ForCurrentProcess());
   }
-
-#if defined(OS_WIN)
-  UpdateDWriteFontProxySender(thread_safe_sender());
-#endif
 }
 
 void ChildThreadImpl::InitTracing() {
@@ -607,8 +608,8 @@ void ChildThreadImpl::InitTracing() {
   channel_->AddFilter(new tracing::ChildTraceMessageFilter(
       ChildProcess::current()->io_task_runner()));
 
-  chrome_trace_event_agent_ =
-      std::make_unique<tracing::ChromeTraceEventAgent>(GetConnector());
+  chrome_trace_event_agent_ = std::make_unique<tracing::ChromeTraceEventAgent>(
+      GetConnector(), false /* request_clock_sync_marker_on_android */);
 }
 
 ChildThreadImpl::~ChildThreadImpl() {
@@ -677,6 +678,22 @@ mojom::FontCacheWin* ChildThreadImpl::GetFontCacheWin() {
   }
   return font_cache_win_ptr_.get();
 }
+#elif defined(OS_MACOSX)
+bool ChildThreadImpl::LoadFont(const base::string16& font_name,
+                               float font_point_size,
+                               mojo::ScopedSharedBufferHandle* out_font_data,
+                               uint32_t* out_font_id) {
+  return GetFontLoaderMac()->LoadFont(font_name, font_point_size, out_font_data,
+                                      out_font_id);
+}
+
+mojom::FontLoaderMac* ChildThreadImpl::GetFontLoaderMac() {
+  if (!font_loader_mac_ptr_) {
+    GetConnector()->BindInterface(mojom::kBrowserServiceName,
+                                  &font_loader_mac_ptr_);
+  }
+  return font_loader_mac_ptr_.get();
+}
 #endif
 
 void ChildThreadImpl::RecordAction(const base::UserMetricsAction& action) {
@@ -741,7 +758,9 @@ void ChildThreadImpl::OnAssociatedInterfaceRequest(
   if (interface_name == mojom::RouteProvider::Name_) {
     DCHECK(!route_provider_binding_.is_bound());
     route_provider_binding_.Bind(
-        mojom::RouteProviderAssociatedRequest(std::move(handle)));
+        mojom::RouteProviderAssociatedRequest(std::move(handle)),
+        ipc_task_runner_ ? ipc_task_runner_
+                         : base::ThreadTaskRunnerHandle::Get());
   } else {
     LOG(ERROR) << "Request for unknown Channel-associated interface: "
                << interface_name;
@@ -763,14 +782,14 @@ void ChildThreadImpl::ProcessShutdown() {
   base::RunLoop::QuitCurrentWhenIdleDeprecated();
 }
 
-void ChildThreadImpl::SetIPCLoggingEnabled(bool enable) {
 #if BUILDFLAG(IPC_MESSAGE_LOG_ENABLED)
+void ChildThreadImpl::SetIPCLoggingEnabled(bool enable) {
   if (enable)
     IPC::Logging::GetInstance()->Enable();
   else
     IPC::Logging::GetInstance()->Disable();
-#endif  //  IPC_MESSAGE_LOG_ENABLED
 }
+#endif  //  IPC_MESSAGE_LOG_ENABLED
 
 void ChildThreadImpl::OnChildControlRequest(
     mojom::ChildControlRequest request) {
@@ -800,7 +819,7 @@ void ChildThreadImpl::OnProcessFinalRelease() {
 
 void ChildThreadImpl::EnsureConnected() {
   VLOG(0) << "ChildThreadImpl::EnsureConnected()";
-  base::Process::Current().Terminate(0, false);
+  base::Process::TerminateCurrentProcessImmediately(0);
 }
 
 void ChildThreadImpl::GetRoute(

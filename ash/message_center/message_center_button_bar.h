@@ -10,6 +10,7 @@
 #include "ui/compositor/layer_animation_observer.h"
 #include "ui/views/controls/button/button.h"
 #include "ui/views/controls/button/image_button.h"
+#include "ui/views/controls/separator.h"
 #include "ui/views/view.h"
 
 namespace views {
@@ -31,11 +32,10 @@ class MessageCenterButtonBar : public views::View,
                                public views::ButtonListener,
                                public ui::ImplicitAnimationObserver {
  public:
-  MessageCenterButtonBar(
-      MessageCenterView* message_center_view,
-      message_center::MessageCenter* message_center,
-      bool settings_initially_visible,
-      const base::string16& title);
+  MessageCenterButtonBar(MessageCenterView* message_center_view,
+                         message_center::MessageCenter* message_center,
+                         bool settings_initially_visible,
+                         bool locked);
   ~MessageCenterButtonBar() override;
 
   void SetQuietModeState(bool is_quiet_mode);
@@ -44,6 +44,7 @@ class MessageCenterButtonBar : public views::View,
   void ChildVisibilityChanged(views::View* child) override;
   void Layout() override;
   gfx::Size CalculatePreferredSize() const override;
+  void GetAccessibleNodeData(ui::AXNodeData* node_data) override;
 
   // Overridden from views::ButtonListener:
   void ButtonPressed(views::Button* sender, const ui::Event& event) override;
@@ -61,14 +62,13 @@ class MessageCenterButtonBar : public views::View,
   ASH_EXPORT views::Button* GetCloseAllButtonForTest() const;
   ASH_EXPORT views::Button* GetSettingsButtonForTest() const;
   ASH_EXPORT views::Button* GetQuietModeButtonForTest() const;
+  ASH_EXPORT views::Button* GetCollapseButtonForTest() const;
 
   // Sometimes we shouldn't see the back arrow (not in settings).
   void SetBackArrowVisible(bool visible);
 
-  // Update the label of the title.
-  void SetTitle(const base::string16& title);
-
-  void SetButtonsVisible(bool visible);
+  // Updates notification label and buttons for state specified by |locked|.
+  void SetIsLocked(bool locked);
 
  private:
   MessageCenterView* message_center_view() const {
@@ -78,16 +78,28 @@ class MessageCenterButtonBar : public views::View,
     return message_center_;
   }
 
+  // Returns title for state specified by |message_center_visible|.
+  base::string16 GetTitle(bool message_center_visible) const;
+
+  // Updates notification label for state specified by |message_center_visible|.
+  void UpdateLabel(bool message_center_visible);
+
+  void SetButtonsVisible(bool locked);
+
   MessageCenterView* message_center_view_;
   message_center::MessageCenter* message_center_;
 
   // Sub-views of the button bar.
   views::Label* notification_label_;
   views::View* button_container_;
-  views::ImageButton* close_all_button_;
-  views::ImageButton* settings_button_;
+  views::ToggleImageButton* close_all_button_;
+  // A view of a separator between |close_all_button_| and |quiet_mode_button_|.
+  views::Separator* separator_1_;
   views::ToggleImageButton* quiet_mode_button_;
-  views::ImageButton* collapse_button_;
+  // A view of a separator between |quiet_mode_button_| and |settings_button_|.
+  views::Separator* separator_2_;
+  views::ToggleImageButton* settings_button_;
+  views::ToggleImageButton* collapse_button_;
 
   bool collapse_button_visible_ = false;
 

@@ -26,6 +26,7 @@ import android.preference.PreferenceCategory;
 import android.preference.PreferenceFragment;
 import android.preference.PreferenceScreen;
 import android.support.annotation.Nullable;
+import android.support.v4.app.FragmentActivity;
 import android.widget.ListView;
 
 import org.chromium.base.ApiCompatibilityUtils;
@@ -135,8 +136,7 @@ public class AccountManagementFragment extends PreferenceFragment
             badgeConfig = new ProfileDataCache.BadgeConfig(
                     badge, new Point(badgePositionX, badgePositionY), badgeBorderSize);
         }
-        mProfileDataCache =
-                new ProfileDataCache(getActivity(), mProfile, avatarImageSize, badgeConfig);
+        mProfileDataCache = new ProfileDataCache(getActivity(), avatarImageSize, badgeConfig);
     }
 
     @Override
@@ -150,7 +150,7 @@ public class AccountManagementFragment extends PreferenceFragment
     @Override
     public void onResume() {
         super.onResume();
-        SigninManager.get(getActivity()).addSignInStateObserver(this);
+        SigninManager.get().addSignInStateObserver(this);
         mProfileDataCache.addObserver(this);
         ProfileSyncService syncService = ProfileSyncService.get();
         if (syncService != null) {
@@ -164,7 +164,7 @@ public class AccountManagementFragment extends PreferenceFragment
     @Override
     public void onPause() {
         super.onPause();
-        SigninManager.get(getActivity()).removeSignInStateObserver(this);
+        SigninManager.get().removeSignInStateObserver(this);
         mProfileDataCache.removeObserver(this);
         ProfileSyncService syncService = ProfileSyncService.get();
         if (syncService != null) {
@@ -234,13 +234,17 @@ public class AccountManagementFragment extends PreferenceFragment
                     AccountManagementScreenHelper.logEvent(
                             ProfileAccountManagementMetrics.TOGGLE_SIGNOUT, mGaiaServiceType);
 
-                    String managementDomain =
-                            SigninManager.get(getActivity()).getManagementDomain();
+                    String managementDomain = SigninManager.get().getManagementDomain();
                     if (managementDomain != null) {
                         // Show the 'You are signing out of a managed account' dialog.
+
+                        // TODO(https://crbug.com/710657): Migrate to AccountManagementFragment to
+                        // extend android.support.v7.preference.Preference and remove this cast.
+                        FragmentActivity fragmentActivity = (FragmentActivity) getActivity();
                         ConfirmManagedSyncDataDialog.showSignOutFromManagedAccountDialog(
-                                AccountManagementFragment.this, getFragmentManager(),
-                                getResources(), managementDomain);
+                                AccountManagementFragment.this,
+                                fragmentActivity.getSupportFragmentManager(), getResources(),
+                                managementDomain);
                     } else {
                         // Show the 'You are signing out' dialog.
                         SignOutDialogFragment signOutFragment = new SignOutDialogFragment();
@@ -436,7 +440,7 @@ public class AccountManagementFragment extends PreferenceFragment
 
         final Activity activity = getActivity();
         final DialogFragment clearDataProgressDialog = new ClearDataProgressDialog();
-        SigninManager.get(activity).signOut(null, new SigninManager.WipeDataHooks() {
+        SigninManager.get().signOut(null, new SigninManager.WipeDataHooks() {
             @Override
             public void preWipeData() {
                 clearDataProgressDialog.show(

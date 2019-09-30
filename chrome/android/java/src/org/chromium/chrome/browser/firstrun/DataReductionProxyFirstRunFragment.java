@@ -5,6 +5,7 @@
 package org.chromium.chrome.browser.firstrun;
 
 import android.os.Bundle;
+import android.support.v4.app.Fragment;
 import android.support.v7.widget.SwitchCompat;
 import android.view.LayoutInflater;
 import android.view.View;
@@ -19,7 +20,14 @@ import org.chromium.chrome.browser.preferences.datareduction.DataReductionPromoU
 /**
  * The First Run Experience fragment that allows the user to opt in to Data Saver.
  */
-public class DataReductionProxyFirstRunFragment extends FirstRunPage {
+public class DataReductionProxyFirstRunFragment extends Fragment implements FirstRunFragment {
+    /** FRE page that instantiates this fragment. */
+    public static class Page implements FirstRunPage<DataReductionProxyFirstRunFragment> {
+        @Override
+        public DataReductionProxyFirstRunFragment instantiateFragment() {
+            return new DataReductionProxyFirstRunFragment();
+        }
+    }
 
     @Override
     public View onCreateView(
@@ -51,7 +59,7 @@ public class DataReductionProxyFirstRunFragment extends FirstRunPage {
         nextButton.setOnClickListener(new OnClickListener() {
             @Override
             public void onClick(View v) {
-                advanceToNextPage();
+                getPageDelegate().advanceToNextPage();
             }
         });
 

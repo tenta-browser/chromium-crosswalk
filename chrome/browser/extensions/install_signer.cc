@@ -15,7 +15,6 @@
 #include "base/json/json_writer.h"
 #include "base/lazy_instance.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/process/process_info.h"
@@ -36,7 +35,7 @@
 #include "net/url_request/url_fetcher_delegate.h"
 #include "net/url_request/url_request_context_getter.h"
 #include "net/url_request/url_request_status.h"
-#include "rlz/features/features.h"
+#include "rlz/buildflags/buildflags.h"
 #include "url/gurl.h"
 
 #if BUILDFLAG(ENABLE_RLZ)
@@ -127,7 +126,7 @@ bool ValidateExpireDateFormat(const std::string& input) {
 void SetExtensionIdSet(base::DictionaryValue* dictionary,
                        const char* key,
                        const ExtensionIdSet& ids) {
-  auto id_list = base::MakeUnique<base::ListValue>();
+  auto id_list = std::make_unique<base::ListValue>();
   for (ExtensionIdSet::const_iterator i = ids.begin(); i != ids.end(); ++i)
     id_list->AppendString(*i);
   dictionary->Set(key, std::move(id_list));

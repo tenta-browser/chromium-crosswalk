@@ -13,11 +13,11 @@
 #include "content/public/common/content_client.h"
 #include "content/public/renderer/content_renderer_client.h"
 #include "content/renderer/media/audio_device_factory.h"
-#include "content/renderer/media/media_stream_renderer_factory_impl.h"
 #include "content/renderer/media/render_media_log.h"
 #include "content/renderer/media/renderer_webmediaplayer_delegate.h"
+#include "content/renderer/media/stream/media_stream_renderer_factory_impl.h"
+#include "content/renderer/media/stream/webmediaplayer_ms.h"
 #include "content/renderer/media/web_media_element_source_utils.h"
-#include "content/renderer/media/webmediaplayer_ms.h"
 #include "content/renderer/render_frame_impl.h"
 #include "content/renderer/render_thread_impl.h"
 #include "content/renderer/render_view_impl.h"
@@ -30,17 +30,17 @@
 #include "media/blink/webencryptedmediaclient_impl.h"
 #include "media/blink/webmediaplayer_impl.h"
 #include "media/filters/context_3d.h"
-#include "media/media_features.h"
+#include "media/media_buildflags.h"
 #include "media/renderers/default_renderer_factory.h"
 #include "media/video/gpu_video_accelerator_factories.h"
 #include "mojo/public/cpp/bindings/associated_interface_ptr.h"
 #include "services/service_manager/public/cpp/connect.h"
 #include "services/service_manager/public/cpp/interface_provider.h"
 #include "services/ui/public/cpp/gpu/context_provider_command_buffer.h"
-#include "third_party/WebKit/public/platform/WebSurfaceLayerBridge.h"
-#include "third_party/WebKit/public/platform/WebVideoFrameSubmitter.h"
-#include "third_party/WebKit/public/web/WebKit.h"
-#include "third_party/WebKit/public/web/WebLocalFrame.h"
+#include "third_party/blink/public/platform/web_surface_layer_bridge.h"
+#include "third_party/blink/public/platform/web_video_frame_submitter.h"
+#include "third_party/blink/public/web/blink.h"
+#include "third_party/blink/public/web/web_local_frame.h"
 #include "url/origin.h"
 
 #if defined(OS_ANDROID)
@@ -71,16 +71,7 @@
 
 #if BUILDFLAG(ENABLE_MEDIA_REMOTING)
 #include "media/remoting/courier_renderer_factory.h"    // nogncheck
-#include "media/remoting/remoting_cdm_controller.h"     // nogncheck
-#include "media/remoting/remoting_cdm_factory.h"        // nogncheck
 #include "media/remoting/renderer_controller.h"         // nogncheck
-#include "media/remoting/shared_session.h"              // nogncheck
-#include "media/remoting/sink_availability_observer.h"  // nogncheck
-#endif
-
-#if BUILDFLAG(ENABLE_LIBRARY_CDMS)
-#include "content/renderer/media/cdm/pepper_cdm_wrapper_impl.h"
-#include "content/renderer/media/cdm/render_cdm_factory.h"
 #endif
 
 namespace {
@@ -146,19 +137,6 @@ void MediaFactory::SetupMojo() {
 
   remote_interfaces_ = render_frame_->GetRemoteInterfaces();
   DCHECK(remote_interfaces_);
-
-#if BUILDFLAG(ENABLE_MEDIA_REMOTING)
-  // Create the SinkAvailabilityObserver to monitor the remoting sink
-  // availablity.
-  media::mojom::RemotingSourcePtr remoting_source;
-  auto remoting_source_request = mojo::MakeRequest(&remoting_source);
-  media::mojom::RemoterPtr remoter;
-  GetRemoterFactory()->Create(std::move(remoting_source),
-                              mojo::MakeRequest(&remoter));
-  remoting_sink_observer_ =
-      std::make_unique<media::remoting::SinkAvailabilityObserver>(
-          std::move(remoting_source_request), std::move(remoter));
-#endif  // BUILDFLAG(ENABLE_MEDIA_REMOTING)
 }
 
 #if defined(OS_ANDROID)
@@ -255,8 +233,9 @@ blink::WebMediaPlayer* MediaFactory::CreateMediaPlayer(
 
   // This must be created for every new WebMediaPlayer, each instance generates
   // a new player id which is used to collate logs on the browser side.
-  std::unique_ptr<media::MediaLog> media_log(
-      new RenderMediaLog(url::Origin(security_origin).GetURL()));
+  std::unique_ptr<media::MediaLog> media_log(new RenderMediaLog(
+      url::Origin(security_origin).GetURL(),
+      render_frame_->GetTaskRunner(blink::TaskType::kInternalMedia)));
 
   base::WeakPtr<media::MediaObserver> media_observer;
 
@@ -276,15 +255,16 @@ blink::WebMediaPlayer* MediaFactory::CreateMediaPlayer(
   DCHECK_EQ(static_cast<FrameFetchContext*>(fetch_context_.get())->frame(),
             web_frame);
 
-  if (!watch_time_recorder_provider_) {
-    remote_interfaces_->GetInterface(
-        mojo::MakeRequest(&watch_time_recorder_provider_));
-  }
+  media::mojom::MediaMetricsProviderPtr metrics_provider;
+  remote_interfaces_->GetInterface(mojo::MakeRequest(&metrics_provider));
 
   scoped_refptr<base::SingleThreadTaskRunner>
       video_frame_compositor_task_runner;
   std::unique_ptr<blink::WebVideoFrameSubmitter> submitter;
-  if (base::FeatureList::IsEnabled(media::kUseSurfaceLayerForVideo)) {
+  bool use_surface_layer_for_video =
+      base::FeatureList::IsEnabled(media::kUseSurfaceLayerForVideo) &&
+      !RenderThreadImpl::current()->IsGpuCompositingDisabled();
+  if (use_surface_layer_for_video) {
     // TODO(lethalantidote): Use a separate task_runner. https://crbug/753605.
     video_frame_compositor_task_runner =
         render_thread->GetMediaThreadTaskRunner();
@@ -298,7 +278,8 @@ blink::WebMediaPlayer* MediaFactory::CreateMediaPlayer(
     video_frame_compositor_task_runner =
         render_thread->compositor_task_runner()
             ? render_thread->compositor_task_runner()
-            : base::ThreadTaskRunnerHandle::Get();
+            : render_frame_->GetTaskRunner(
+                  blink::TaskType::kInternalMediaRealTime);
   }
 
   DCHECK(layer_tree_view);
@@ -319,11 +300,15 @@ blink::WebMediaPlayer* MediaFactory::CreateMediaPlayer(
           media_observer, max_keyframe_distance_to_disable_background_video,
           max_keyframe_distance_to_disable_background_video_mse,
           enable_instant_source_buffer_gc, embedded_media_experience_enabled,
-          watch_time_recorder_provider_.get(),
-          base::Bind(&MediaFactory::CreateVideoDecodeStatsRecorder,
-                     base::Unretained(this)),
+          std::move(metrics_provider),
           base::Bind(&blink::WebSurfaceLayerBridge::Create, layer_tree_view),
-          RenderThreadImpl::current()->SharedMainThreadContextProvider()));
+          RenderThreadImpl::current()->SharedMainThreadContextProvider(),
+          use_surface_layer_for_video,
+          base::BindRepeating(
+              &RenderFrameImpl::OnPictureInPictureSurfaceIdUpdated,
+              base::Unretained(render_frame_)),
+          base::BindRepeating(&RenderFrameImpl::OnExitPictureInPicture,
+                              base::Unretained(render_frame_))));
 
   std::unique_ptr<media::VideoFrameCompositor> vfc =
       std::make_unique<media::VideoFrameCompositor>(
@@ -346,10 +331,7 @@ blink::WebMediaPlayer* MediaFactory::CreateMediaPlayer(
 blink::WebEncryptedMediaClient* MediaFactory::EncryptedMediaClient() {
   if (!web_encrypted_media_client_) {
     web_encrypted_media_client_.reset(new media::WebEncryptedMediaClientImpl(
-        GetCdmFactory(), render_frame_->GetMediaPermission(),
-        new RenderMediaLog(
-            url::Origin(render_frame_->GetWebFrame()->GetSecurityOrigin())
-                .GetURL())));
+        GetCdmFactory(), render_frame_->GetMediaPermission()));
   }
   return web_encrypted_media_client_.get();
 }
@@ -370,12 +352,11 @@ MediaFactory::CreateRendererFactorySelector(
 #if defined(OS_ANDROID)
   DCHECK(remote_interfaces_);
 
-  // The only MojoRendererService that is registered at the RenderFrameHost
-  // level uses the MediaPlayerRenderer as its underlying media::Renderer.
   auto mojo_media_player_renderer_factory =
       std::make_unique<media::MojoRendererFactory>(
+          media::mojom::HostedRendererType::kMediaPlayer,
           media::MojoRendererFactory::GetGpuFactoriesCB(),
-          remote_interfaces_->get());
+          GetMediaInterfaceFactory());
 
   // Always give |factory_selector| a MediaPlayerRendererClient factory. WMPI
   // might fallback to it if the final redirected URL is an HLS url.
@@ -405,6 +386,7 @@ MediaFactory::CreateRendererFactorySelector(
     factory_selector->AddFactory(
         media::RendererFactorySelector::FactoryType::MOJO,
         std::make_unique<media::MojoRendererFactory>(
+            media::mojom::HostedRendererType::kDefault,
             base::Bind(&RenderThreadImpl::GetGpuFactories,
                        base::Unretained(render_thread)),
             GetMediaInterfaceFactory()));
@@ -433,9 +415,8 @@ MediaFactory::CreateRendererFactorySelector(
   GetRemoterFactory()->Create(std::move(remoting_source),
                               mojo::MakeRequest(&remoter));
   using RemotingController = media::remoting::RendererController;
-  std::unique_ptr<RemotingController> remoting_controller(
-      new RemotingController(new media::remoting::SharedSession(
-          std::move(remoting_source_request), std::move(remoter))));
+  auto remoting_controller = std::make_unique<RemotingController>(
+      std::move(remoting_source_request), std::move(remoter));
   *out_media_observer = remoting_controller->GetWeakPtr();
 
   auto courier_factory =
@@ -467,11 +448,14 @@ blink::WebMediaPlayer* MediaFactory::CreateWebMediaPlayerForMediaStream(
   scoped_refptr<base::SingleThreadTaskRunner> compositor_task_runner =
       render_thread->compositor_task_runner();
   if (!compositor_task_runner.get())
-    compositor_task_runner = base::ThreadTaskRunnerHandle::Get();
+    compositor_task_runner =
+        render_frame_->GetTaskRunner(blink::TaskType::kInternalMediaRealTime);
 
   return new WebMediaPlayerMS(
       frame, client, GetWebMediaPlayerDelegate(),
-      std::make_unique<RenderMediaLog>(url::Origin(security_origin).GetURL()),
+      std::make_unique<RenderMediaLog>(
+          url::Origin(security_origin).GetURL(),
+          render_frame_->GetTaskRunner(blink::TaskType::kInternalMedia)),
       CreateMediaStreamRendererFactory(), render_thread->GetIOTaskRunner(),
       compositor_task_runner, render_thread->GetMediaThreadTaskRunner(),
       render_thread->GetWorkerTaskRunner(), render_thread->GetGpuFactories(),
@@ -534,42 +518,14 @@ media::mojom::RemoterFactory* MediaFactory::GetRemoterFactory() {
 #endif
 
 media::CdmFactory* MediaFactory::GetCdmFactory() {
-  blink::WebLocalFrame* web_frame = render_frame_->GetWebFrame();
-  DCHECK(web_frame);
-
   if (cdm_factory_)
     return cdm_factory_.get();
 
-#if BUILDFLAG(ENABLE_LIBRARY_CDMS)
-  static_assert(
-      BUILDFLAG(ENABLE_MOJO_CDM),
-      "Mojo CDM should always be enabled when library CDM is enabled");
-  if (base::FeatureList::IsEnabled(media::kMojoCdm)) {
-    cdm_factory_.reset(new media::MojoCdmFactory(GetMediaInterfaceFactory()));
-  } else {
-    cdm_factory_.reset(new RenderCdmFactory(
-        base::Bind(&PepperCdmWrapperImpl::Create, web_frame)));
-  }
-#elif BUILDFLAG(ENABLE_MOJO_CDM)
+#if BUILDFLAG(ENABLE_MOJO_CDM)
   cdm_factory_.reset(new media::MojoCdmFactory(GetMediaInterfaceFactory()));
-#endif  // BUILDFLAG(ENABLE_LIBRARY_CDMS)
-
-#if BUILDFLAG(ENABLE_MEDIA_REMOTING)
-  cdm_factory_.reset(new media::remoting::RemotingCdmFactory(
-      std::move(cdm_factory_), GetRemoterFactory(),
-      std::move(remoting_sink_observer_)));
-#endif  // BUILDFLAG(ENABLE_MEDIA_REMOTING)
+#endif  // BUILDFLAG(ENABLE_MOJO_CDM)
 
   return cdm_factory_.get();
-}
-
-media::mojom::VideoDecodeStatsRecorderPtr
-MediaFactory::CreateVideoDecodeStatsRecorder() {
-  DCHECK(remote_interfaces_);
-  media::mojom::VideoDecodeStatsRecorderPtr recorder_ptr;
-  service_manager::GetInterface(remote_interfaces_->get(), &recorder_ptr);
-
-  return recorder_ptr;
 }
 
 #if BUILDFLAG(ENABLE_MOJO_MEDIA)

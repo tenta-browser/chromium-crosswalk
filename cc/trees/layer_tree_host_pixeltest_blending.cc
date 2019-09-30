@@ -73,7 +73,8 @@ class LayerTreeHostBlendingPixelTest : public LayerTreeHostPixelResourceTest {
       const viz::RendererSettings& renderer_settings,
       double refresh_rate,
       scoped_refptr<viz::ContextProvider> compositor_context_provider,
-      scoped_refptr<viz::ContextProvider> worker_context_provider) override {
+      scoped_refptr<viz::RasterContextProvider> worker_context_provider)
+      override {
     viz::RendererSettings modified_renderer_settings = renderer_settings;
     modified_renderer_settings.force_antialiasing = force_antialiasing_;
     modified_renderer_settings.force_blending_with_shaders =
@@ -157,8 +158,10 @@ class LayerTreeHostBlendingPixelTest : public LayerTreeHostPixelResourceTest {
     layer->SetBounds(gfx::Size(width, height));
     layer->SetImage(PaintImageBuilder::WithDefault()
                         .set_id(PaintImage::GetNextId())
-                        .set_image(backing_store->makeImageSnapshot())
-                        .TakePaintImage());
+                        .set_image(backing_store->makeImageSnapshot(),
+                                   PaintImage::GetNextContentId())
+                        .TakePaintImage(),
+                    SkMatrix::I(), false);
     return layer;
   }
 
@@ -182,8 +185,10 @@ class LayerTreeHostBlendingPixelTest : public LayerTreeHostPixelResourceTest {
                      paint);
     mask->SetImage(PaintImageBuilder::WithDefault()
                        .set_id(PaintImage::GetNextId())
-                       .set_image(surface->makeImageSnapshot())
-                       .TakePaintImage());
+                       .set_image(surface->makeImageSnapshot(),
+                                  PaintImage::GetNextContentId())
+                       .TakePaintImage(),
+                   SkMatrix::I(), false);
     layer->SetMaskLayer(mask.get());
   }
 

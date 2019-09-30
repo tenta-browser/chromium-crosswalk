@@ -28,11 +28,13 @@ settings.ContentSettingsTypes = {
   AUTOMATIC_DOWNLOADS: 'multiple-automatic-downloads',
   BACKGROUND_SYNC: 'background-sync',
   MIDI_DEVICES: 'midi-sysex',
-  USB_DEVICES: 'usb-chooser-data',
+  USB_DEVICES: 'usb-devices',
   ZOOM_LEVELS: 'zoom-levels',
-  PROTECTED_CONTENT: 'protectedContent',
+  PROTECTED_CONTENT: 'protected-content',
   ADS: 'ads',
   CLIPBOARD: 'clipboard',
+  SENSORS: 'sensors',
+  PAYMENT_HANDLER: 'payment-handler',
 };
 
 /**
@@ -57,7 +59,6 @@ settings.ContentSetting = {
  * @enum {string}
  */
 settings.SiteSettingSource = {
-  ADS_BLOCKED: 'ads-blocked',
   ADS_FILTER_BLACKLIST: 'ads-filter-blacklist',
   DEFAULT: 'default',
   // This source is for the Protected Media Identifier / Protected Content
@@ -73,12 +74,12 @@ settings.SiteSettingSource = {
 
 /**
  * A category value to use for the All Sites list.
- * @const {string}
+ * @type {string}
  */
 settings.ALL_SITES = 'all-sites';
 
 /**
  * An invalid subtype value.
- * @const {string}
+ * @type {string}
  */
 settings.INVALID_CATEGORY_SUBTYPE = '';

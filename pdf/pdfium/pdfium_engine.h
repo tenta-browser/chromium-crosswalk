@@ -27,6 +27,7 @@
 #include "ppapi/cpp/input_event.h"
 #include "ppapi/cpp/point.h"
 #include "ppapi/cpp/var_array.h"
+#include "ppapi/utility/completion_callback_factory.h"
 #include "third_party/pdfium/public/fpdf_dataavail.h"
 #include "third_party/pdfium/public/fpdf_formfill.h"
 #include "third_party/pdfium/public/fpdf_progressive.h"
@@ -79,7 +80,10 @@ class PDFiumEngine : public PDFEngine,
   void SelectAll() override;
   int GetNumberOfPages() override;
   pp::VarArray GetBookmarks() override;
-  int GetNamedDestinationPage(const std::string& destination) override;
+  base::Optional<PDFEngine::NamedDestination> GetNamedDestination(
+      const std::string& destination) override;
+  gfx::PointF TransformPagePoint(int page_index,
+                                 const gfx::PointF& page_xy) override;
   int GetMostVisiblePage() override;
   pp::Rect GetPageRect(int index) override;
   pp::Rect GetPageBoundsRect(int index) override;
@@ -111,6 +115,10 @@ class PDFiumEngine : public PDFEngine,
   void MoveRangeSelectionExtent(const pp::Point& extent) override;
   void SetSelectionBounds(const pp::Point& base,
                           const pp::Point& extent) override;
+  void GetSelection(uint32_t* selection_start_page_index,
+                    uint32_t* selection_start_char_index,
+                    uint32_t* selection_end_page_index,
+                    uint32_t* selection_end_char_index) override;
 
   // DocumentLoader::Client implementation.
   pp::Instance* GetPluginInstance() override;
@@ -124,8 +132,6 @@ class PDFiumEngine : public PDFEngine,
 
   void UnsupportedFeature(int type);
   void FontSubstituted();
-
-  std::string current_find_text() const { return current_find_text_; }
 
   FPDF_DOCUMENT doc() { return doc_; }
   FPDF_FORMHANDLE form() { return form_; }
@@ -174,26 +180,6 @@ class PDFiumEngine : public PDFEngine,
     PDFiumPage::LinkTarget target_;
 
     DISALLOW_COPY_AND_ASSIGN(MouseDownState);
-  };
-
-  // Used to store the state of a text search.
-  class FindTextIndex {
-   public:
-    FindTextIndex();
-    ~FindTextIndex();
-
-    bool valid() const { return valid_; }
-    void Invalidate();
-
-    size_t GetIndex() const;
-    void SetIndex(size_t index);
-    size_t IncrementIndex();
-
-   private:
-    bool valid_;    // Whether |index_| is valid or not.
-    size_t index_;  // The current search result, 0-based.
-
-    DISALLOW_COPY_AND_ASSIGN(FindTextIndex);
   };
 
   friend class SelectionChangeInvalidator;
@@ -309,9 +295,14 @@ class PDFiumEngine : public PDFEngine,
   bool OnMouseDown(const pp::MouseInputEvent& event);
   bool OnMouseUp(const pp::MouseInputEvent& event);
   bool OnMouseMove(const pp::MouseInputEvent& event);
+  void OnMouseEnter(const pp::MouseInputEvent& event);
   bool OnKeyDown(const pp::KeyboardInputEvent& event);
   bool OnKeyUp(const pp::KeyboardInputEvent& event);
   bool OnChar(const pp::KeyboardInputEvent& event);
+
+  // Decide what cursor should be displayed.
+  PP_CursorType_Dev DetermineCursorType(PDFiumPage::Area area,
+                                        int form_type) const;
 
   bool ExtendSelection(int page_index, int char_index);
 
@@ -453,7 +444,8 @@ class PDFiumEngine : public PDFEngine,
                  int* stride) const;
 
   // Called when the selection changes.
-  void OnSelectionChanged();
+  void OnSelectionTextChanged();
+  void OnSelectionPositionChanged();
 
   // Common code shared by RotateClockwise() and RotateCounterclockwise().
   void RotateInternal();
@@ -477,6 +469,10 @@ class PDFiumEngine : public PDFEngine,
                                      int form_type);
 
   bool PageIndexInBounds(int index) const;
+
+  // Gets the height of the top toolbar in screen coordinates. This is
+  // independent of whether it is hidden or not at the moment.
+  float GetToolbarHeightInScreenCoords();
 
   void ScheduleTouchTimer(const pp::TouchInputEvent& event);
   void KillTouchTimer(int timer_id);
@@ -656,8 +652,8 @@ class PDFiumEngine : public PDFEngine,
   std::string url_;
   std::string headers_;
   pp::CompletionCallbackFactory<PDFiumEngine> find_factory_;
-
   pp::CompletionCallbackFactory<PDFiumEngine> password_factory_;
+
   // Set to true if the user is being prompted for their password. Will be set
   // to false after the user finishes getting their password.
   bool getting_password_ = false;
@@ -709,6 +705,12 @@ class PDFiumEngine : public PDFEngine,
   // True if left mouse button is currently being held down.
   bool mouse_left_button_down_;
 
+  // True if middle mouse button is currently being held down.
+  bool mouse_middle_button_down_;
+
+  // Last known position while performing middle mouse button pan.
+  pp::Point mouse_middle_button_last_position_;
+
   // The current text used for searching.
   std::string current_find_text_;
   // The results found.
@@ -718,10 +720,10 @@ class PDFiumEngine : public PDFEngine,
   // Where to stop searching.
   int last_page_to_search_ = -1;
   int last_character_index_to_search_ = -1;  // -1 if search until end of page.
-  // Which result the user has currently selected.
-  FindTextIndex current_find_index_;
-  // Where to resume searching.
-  FindTextIndex resume_find_index_;
+  // Which result the user has currently selected. (0-based)
+  base::Optional<size_t> current_find_index_;
+  // Where to resume searching. (0-based)
+  base::Optional<size_t> resume_find_index_;
 
   // Permissions bitfield.
   unsigned long permissions_;

@@ -11,18 +11,22 @@
 #include "base/run_loop.h"
 #include "base/strings/stringprintf.h"
 #include "base/threading/thread_task_runner_handle.h"
-#include "chrome/browser/infobars/infobar_service.h"
+#include "chrome/browser/infobars/mock_infobar_service.h"
 #include "chrome/browser/loader/chrome_navigation_data.h"
 #include "chrome/browser/net/spdyproxy/data_reduction_proxy_chrome_settings.h"
 #include "chrome/browser/net/spdyproxy/data_reduction_proxy_chrome_settings_factory.h"
 #include "chrome/browser/previews/previews_infobar_tab_helper.h"
 #include "chrome/test/base/chrome_render_view_host_test_harness.h"
+#include "components/data_reduction_proxy/core/browser/data_reduction_proxy_compression_stats.h"
+#include "components/data_reduction_proxy/core/browser/data_reduction_proxy_service.h"
+#include "components/data_reduction_proxy/core/browser/data_reduction_proxy_settings.h"
 #include "components/data_reduction_proxy/core/browser/data_reduction_proxy_test_utils.h"
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_headers.h"
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_pref_names.h"
+#include "components/data_reduction_proxy/proto/data_store.pb.h"
+#include "components/offline_pages/buildflags/buildflags.h"
 #include "components/offline_pages/core/offline_page_item.h"
 #include "components/offline_pages/core/request_header/offline_page_header.h"
-#include "components/offline_pages/features/features.h"
 #include "components/prefs/pref_registry_simple.h"
 #include "components/previews/core/previews_user_data.h"
 #include "components/proxy_config/proxy_config_pref_names.h"
@@ -48,7 +52,7 @@ class PreviewsInfoBarTabHelperUnitTest
 #if BUILDFLAG(ENABLE_OFFLINE_PAGES)
     offline_pages::OfflinePageTabHelper::CreateForWebContents(web_contents());
 #endif  // BUILDFLAG(ENABLE_OFFLINE_PAGES)
-    InfoBarService::CreateForWebContents(web_contents());
+    MockInfoBarService::CreateForWebContents(web_contents());
     PreviewsInfoBarTabHelper::CreateForWebContents(web_contents());
     test_handle_ = content::NavigationHandle::CreateNavigationHandleForTesting(
         GURL(kTestUrl), main_rfh());
@@ -84,29 +88,21 @@ class PreviewsInfoBarTabHelperUnitTest
     ChromeRenderViewHostTestHarness::TearDown();
   }
 
-  void SetPreviewsState(content::PreviewsState previews_state) {
+  void SetCommittedPreviewsType(previews::PreviewsType previews_type) {
     ChromeNavigationData* nav_data =
         static_cast<ChromeNavigationData*>(test_handle_->GetNavigationData());
-    if (nav_data) {
-      nav_data->set_previews_state(previews_state);
+    if (nav_data && nav_data->previews_user_data()) {
+      nav_data->previews_user_data()->SetCommittedPreviewsType(previews_type);
       return;
     }
     std::unique_ptr<ChromeNavigationData> chrome_nav_data(
         new ChromeNavigationData());
-    chrome_nav_data->set_previews_state(previews_state);
+    std::unique_ptr<previews::PreviewsUserData> previews_user_data(
+        new previews::PreviewsUserData(1));
+    previews_user_data->SetCommittedPreviewsType(previews_type);
+    chrome_nav_data->set_previews_user_data(std::move(previews_user_data));
     content::WebContentsTester::For(web_contents())
         ->SetNavigationData(test_handle_.get(), std::move(chrome_nav_data));
-  }
-
-  void SimulateWillProcessResponseWithProxyHeader() {
-    std::string headers = base::StringPrintf(
-        "HTTP/1.1 200 OK\n%s: %s\n\n",
-        data_reduction_proxy::chrome_proxy_content_transform_header(),
-        data_reduction_proxy::lite_page_directive());
-    test_handle_->CallWillProcessResponseForTesting(
-        main_rfh(),
-        net::HttpUtil::AssembleRawHeaders(headers.c_str(), headers.size()));
-    SimulateCommit();
   }
 
   void SimulateWillProcessResponse() {
@@ -135,30 +131,35 @@ class PreviewsInfoBarTabHelperUnitTest
       return;
     }
     std::unique_ptr<ChromeNavigationData> navigation_data =
-        base::MakeUnique<ChromeNavigationData>();
+        std::make_unique<ChromeNavigationData>();
     navigation_data->set_previews_user_data(std::move(previews_user_data));
     content::WebContentsTester::For(web_contents())
         ->SetNavigationData(test_handle_.get(), std::move(navigation_data));
   }
 
- private:
-  std::unique_ptr<content::NavigationHandle> test_handle_;
+  InfoBarService* infobar_service() {
+    return InfoBarService::FromWebContents(web_contents());
+  }
+
+ protected:
   std::unique_ptr<data_reduction_proxy::DataReductionProxyTestContext>
       drp_test_context_;
+
+ private:
+  std::unique_ptr<content::NavigationHandle> test_handle_;
 };
 
-TEST_F(PreviewsInfoBarTabHelperUnitTest, CreateLitePageInfoBar) {
+TEST_F(PreviewsInfoBarTabHelperUnitTest,
+       DidFinishNavigationCreatesLitePageInfoBar) {
   PreviewsInfoBarTabHelper* infobar_tab_helper =
       PreviewsInfoBarTabHelper::FromWebContents(web_contents());
   EXPECT_FALSE(infobar_tab_helper->displayed_preview_infobar());
 
-  SetPreviewsState(content::SERVER_LITE_PAGE_ON);
-  SimulateWillProcessResponseWithProxyHeader();
+  SetCommittedPreviewsType(previews::PreviewsType::LITE_PAGE);
+  SimulateWillProcessResponse();
   CallDidFinishNavigation();
 
-  InfoBarService* infobar_service =
-      InfoBarService::FromWebContents(web_contents());
-  EXPECT_EQ(1U, infobar_service->infobar_count());
+  EXPECT_EQ(1U, infobar_service()->infobar_count());
   EXPECT_TRUE(infobar_tab_helper->displayed_preview_infobar());
 
   // Navigate to reset the displayed state.
@@ -168,39 +169,37 @@ TEST_F(PreviewsInfoBarTabHelperUnitTest, CreateLitePageInfoBar) {
   EXPECT_FALSE(infobar_tab_helper->displayed_preview_infobar());
 }
 
-TEST_F(PreviewsInfoBarTabHelperUnitTest, NoLitePageInfoBarWithoutProxyHeader) {
+TEST_F(PreviewsInfoBarTabHelperUnitTest,
+       DidFinishNavigationCreatesNoScriptPreviewsInfoBar) {
   PreviewsInfoBarTabHelper* infobar_tab_helper =
       PreviewsInfoBarTabHelper::FromWebContents(web_contents());
   EXPECT_FALSE(infobar_tab_helper->displayed_preview_infobar());
 
-  SetPreviewsState(content::SERVER_LITE_PAGE_ON);
+  SetCommittedPreviewsType(previews::PreviewsType::NOSCRIPT);
   SimulateWillProcessResponse();
   CallDidFinishNavigation();
 
-  InfoBarService* infobar_service =
-      InfoBarService::FromWebContents(web_contents());
-  EXPECT_EQ(0U, infobar_service->infobar_count());
-  EXPECT_FALSE(infobar_tab_helper->displayed_preview_infobar());
-}
-
-TEST_F(PreviewsInfoBarTabHelperUnitTest, CreateNoScriptPreviewsInfoBar) {
-  PreviewsInfoBarTabHelper* infobar_tab_helper =
-      PreviewsInfoBarTabHelper::FromWebContents(web_contents());
-  EXPECT_FALSE(infobar_tab_helper->displayed_preview_infobar());
-
-  SetPreviewsState(content::SERVER_LITE_PAGE_ON | content::NOSCRIPT_ON);
-  SimulateWillProcessResponse();
-  CallDidFinishNavigation();
-
-  InfoBarService* infobar_service =
-      InfoBarService::FromWebContents(web_contents());
-  EXPECT_EQ(1U, infobar_service->infobar_count());
+  EXPECT_EQ(1U, infobar_service()->infobar_count());
   EXPECT_TRUE(infobar_tab_helper->displayed_preview_infobar());
 
   // Navigate to reset the displayed state.
   content::WebContentsTester::For(web_contents())
       ->NavigateAndCommit(GURL(kTestUrl));
 
+  EXPECT_FALSE(infobar_tab_helper->displayed_preview_infobar());
+}
+
+TEST_F(PreviewsInfoBarTabHelperUnitTest,
+       DidFinishNavigationDoesNotCreateLoFiPreviewsInfoBar) {
+  PreviewsInfoBarTabHelper* infobar_tab_helper =
+      PreviewsInfoBarTabHelper::FromWebContents(web_contents());
+  EXPECT_FALSE(infobar_tab_helper->displayed_preview_infobar());
+
+  SetCommittedPreviewsType(previews::PreviewsType::LOFI);
+  SimulateWillProcessResponse();
+  CallDidFinishNavigation();
+
+  EXPECT_EQ(0U, infobar_service()->infobar_count());
   EXPECT_FALSE(infobar_tab_helper->displayed_preview_infobar());
 }
 
@@ -212,7 +211,7 @@ TEST_F(PreviewsInfoBarTabHelperUnitTest, TestPreviewsIDSet) {
 
   uint64_t id = 5u;
   std::unique_ptr<previews::PreviewsUserData> previews_user_data =
-      base::MakeUnique<previews::PreviewsUserData>(id);
+      std::make_unique<previews::PreviewsUserData>(id);
   set_previews_user_data(std::move(previews_user_data));
 
   CallDidFinishNavigation();
@@ -232,22 +231,71 @@ TEST_F(PreviewsInfoBarTabHelperUnitTest, CreateOfflineInfoBar) {
       PreviewsInfoBarTabHelper::FromWebContents(web_contents());
   EXPECT_FALSE(infobar_tab_helper->displayed_preview_infobar());
 
+  content::WebContentsTester::For(web_contents())
+      ->SetMainFrameMimeType("multipart/related");
+
   SimulateCommit();
   offline_pages::OfflinePageItem item;
   item.url = GURL(kTestUrl);
+  item.file_size = 100;
+  int64_t expected_file_size = .55 * item.file_size;
   offline_pages::OfflinePageHeader header;
   offline_pages::OfflinePageTabHelper::FromWebContents(web_contents())
-      ->SetOfflinePage(item, header, true);
+      ->SetOfflinePage(
+          item, header,
+          offline_pages::OfflinePageTrustedState::TRUSTED_AS_IN_INTERNAL_DIR,
+          true);
+
+  auto* data_reduction_proxy_settings =
+      DataReductionProxyChromeSettingsFactory::GetForBrowserContext(
+          web_contents()->GetBrowserContext());
+
+  EXPECT_TRUE(data_reduction_proxy_settings->data_reduction_proxy_service()
+                  ->compression_stats()
+                  ->DataUsageMapForTesting()
+                  .empty());
+
+  drp_test_context_->pref_service()->SetBoolean("data_usage_reporting.enabled",
+                                                true);
+  base::RunLoop().RunUntilIdle();
+
   CallDidFinishNavigation();
 
-  InfoBarService* infobar_service =
-      InfoBarService::FromWebContents(web_contents());
-  EXPECT_EQ(1U, infobar_service->infobar_count());
+  EXPECT_EQ(1U, infobar_service()->infobar_count());
   EXPECT_TRUE(infobar_tab_helper->displayed_preview_infobar());
 
   // Navigate to reset the displayed state.
   content::WebContentsTester::For(web_contents())
       ->NavigateAndCommit(GURL(kTestUrl));
+
+  EXPECT_EQ(0, data_reduction_proxy_settings->data_reduction_proxy_service()
+                   ->compression_stats()
+                   ->GetHttpReceivedContentLength());
+
+  // Returns the value the total original size of all HTTP content received from
+  // the network.
+  EXPECT_EQ(expected_file_size,
+            data_reduction_proxy_settings->data_reduction_proxy_service()
+                ->compression_stats()
+                ->GetHttpOriginalContentLength());
+
+  EXPECT_FALSE(data_reduction_proxy_settings->data_reduction_proxy_service()
+                   ->compression_stats()
+                   ->DataUsageMapForTesting()
+                   .empty());
+
+  // Normalize the host name.
+  std::string host = GURL(kTestUrl).host();
+  size_t pos = host.find("://");
+  if (pos != std::string::npos)
+    host = host.substr(pos + 3);
+
+  EXPECT_EQ(expected_file_size,
+            data_reduction_proxy_settings->data_reduction_proxy_service()
+                ->compression_stats()
+                ->DataUsageMapForTesting()
+                .find(host)
+                ->second->original_size());
 
   EXPECT_FALSE(infobar_tab_helper->displayed_preview_infobar());
 }

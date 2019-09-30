@@ -2,7 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/memory/ptr_util.h"
 #include "base/trace_event/trace_event_argument.h"
 #include "cc/base/math_util.h"
 #include "cc/layers/layer.h"
@@ -22,7 +21,7 @@ ClipNode::ClipNode(const ClipNode& other) = default;
 
 ClipNode& ClipNode::operator=(const ClipNode& other) = default;
 
-ClipNode::~ClipNode() {}
+ClipNode::~ClipNode() = default;
 
 bool ClipNode::operator==(const ClipNode& other) const {
   return id == other.id && parent_id == other.parent_id &&

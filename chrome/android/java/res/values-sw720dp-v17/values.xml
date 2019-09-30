@@ -5,8 +5,7 @@
      found in the LICENSE file.
 -->
 <resources xmlns:android="http://schemas.android.com/apk/res/android">
-    <!-- Whether the device is a tablet or large tablet. Used to determine which resources the OS
-         loaded. -->
-    <bool name="is_tablet">true</bool>
-    <bool name="is_large_tablet">true</bool>
+    <!-- Whether the device is a phone, tablet or large tablet. Used to determine which resources
+         the OS loaded. -->
+    <integer name="min_screen_width_bucket">3</integer>
 </resources>

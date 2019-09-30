@@ -5,7 +5,6 @@
 #include "chrome/browser/ntp_tiles/chrome_popular_sites_factory.h"
 
 #include "base/bind.h"
-#include "base/memory/ptr_util.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/search_engines/template_url_service_factory.h"
@@ -16,7 +15,7 @@
 
 std::unique_ptr<ntp_tiles::PopularSites>
 ChromePopularSitesFactory::NewForProfile(Profile* profile) {
-  return base::MakeUnique<ntp_tiles::PopularSitesImpl>(
+  return std::make_unique<ntp_tiles::PopularSitesImpl>(
       profile->GetPrefs(), TemplateURLServiceFactory::GetForProfile(profile),
       g_browser_process->variations_service(), profile->GetRequestContext(),
       base::Bind(

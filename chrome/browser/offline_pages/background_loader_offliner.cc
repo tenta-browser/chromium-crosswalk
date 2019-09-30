@@ -57,7 +57,7 @@ std::string AddHistogramSuffix(const ClientId& client_id,
 }
 
 void RecordErrorCauseUMA(const ClientId& client_id, int error_code) {
-  UMA_HISTOGRAM_SPARSE_SLOWLY(
+  base::UmaHistogramSparse(
       AddHistogramSuffix(client_id,
                          "OfflinePages.Background.LoadingErrorStatusCode"),
       error_code);
@@ -214,13 +214,13 @@ bool BackgroundLoaderOffliner::LoadAndSave(
   if (IsOfflinePagesRenovationsEnabled()) {
     // Lazily create PageRenovationLoader
     if (!page_renovation_loader_)
-      page_renovation_loader_ = base::MakeUnique<PageRenovationLoader>();
+      page_renovation_loader_ = std::make_unique<PageRenovationLoader>();
 
     // Set up PageRenovator for this offlining instance.
-    auto script_injector = base::MakeUnique<RenderFrameScriptInjector>(
+    auto script_injector = std::make_unique<RenderFrameScriptInjector>(
         loader_->web_contents()->GetMainFrame(),
         ISOLATED_WORLD_ID_CHROME_INTERNAL);
-    page_renovator_ = base::MakeUnique<PageRenovator>(
+    page_renovator_ = std::make_unique<PageRenovator>(
         page_renovation_loader_.get(), std::move(script_injector),
         request.url());
   }
@@ -281,6 +281,33 @@ bool BackgroundLoaderOffliner::HandleTimeout(int64_t request_id) {
     }
   }
   return false;
+}
+
+void BackgroundLoaderOffliner::CanDownload(
+    const base::Callback<void(bool)>& callback) {
+  if (!pending_request_.get()) {
+    callback.Run(false);  // Shouldn't happen though...
+  }
+
+  bool should_allow_downloads = false;
+  Offliner::RequestStatus final_status =
+      Offliner::RequestStatus::LOADING_FAILED_DOWNLOAD;
+  // Check whether we should allow file downloads for this save page request.
+  // If we want to proceed with the file download, fail with
+  // DOWNLOAD_THROTTLED. If we don't want to proceed with the file download,
+  // fail with LOADING_FAILED_DOWNLOAD.
+  if (offline_page_model_->GetPolicyController()->ShouldAllowDownloads(
+          pending_request_.get()->client_id().name_space)) {
+    should_allow_downloads = true;
+    final_status = Offliner::RequestStatus::DOWNLOAD_THROTTLED;
+  }
+
+  callback.Run(should_allow_downloads);
+  SavePageRequest request(*pending_request_.get());
+  completion_callback_.Run(request, final_status);
+  base::ThreadTaskRunnerHandle::Get()->PostTask(
+      FROM_HERE, base::Bind(&BackgroundLoaderOffliner::ResetState,
+                            weak_ptr_factory_.GetWeakPtr()));
 }
 
 void BackgroundLoaderOffliner::MarkLoadStartTime() {
@@ -344,7 +371,7 @@ void BackgroundLoaderOffliner::DidFinishNavigation(
   if (navigation_handle->IsErrorPage()) {
     RecordErrorCauseUMA(pending_request_->client_id(),
                         static_cast<int>(navigation_handle->GetNetErrorCode()));
-    page_load_state_ = RETRIABLE;
+    page_load_state_ = RETRIABLE_NET_ERROR;
   } else {
     int status_code = 200;  // Default to OK.
     // No response header can imply intermediate navigation state.
@@ -357,7 +384,7 @@ void BackgroundLoaderOffliner::DidFinishNavigation(
     // We skip 418 because it's a teapot.
     if (status_code == 301 || (status_code >= 400 && status_code != 418)) {
       RecordErrorCauseUMA(pending_request_->client_id(), status_code);
-      page_load_state_ = RETRIABLE;
+      page_load_state_ = RETRIABLE_HTTP_ERROR;
     }
   }
 
@@ -411,8 +438,11 @@ void BackgroundLoaderOffliner::StartSnapshot() {
   if (page_load_state_ != SUCCESS) {
     Offliner::RequestStatus status;
     switch (page_load_state_) {
-      case RETRIABLE:
-        status = Offliner::RequestStatus::LOADING_FAILED;
+      case RETRIABLE_NET_ERROR:
+        status = Offliner::RequestStatus::LOADING_FAILED_NET_ERROR;
+        break;
+      case RETRIABLE_HTTP_ERROR:
+        status = Offliner::RequestStatus::LOADING_FAILED_HTTP_ERROR;
         break;
       case NONRETRIABLE:
         status = Offliner::RequestStatus::LOADING_FAILED_NO_RETRY;
@@ -465,8 +495,7 @@ void BackgroundLoaderOffliner::StartSnapshot() {
     }
   }
 
-  std::unique_ptr<OfflinePageArchiver> archiver(
-      new OfflinePageMHTMLArchiver(web_contents));
+  std::unique_ptr<OfflinePageArchiver> archiver(new OfflinePageMHTMLArchiver());
 
   OfflinePageModel::SavePageParams params;
   params.url = web_contents->GetLastCommittedURL();
@@ -484,7 +513,7 @@ void BackgroundLoaderOffliner::StartSnapshot() {
     params.original_url = request.url();
 
   offline_page_model_->SavePage(
-      params, std::move(archiver),
+      params, std::move(archiver), web_contents,
       base::Bind(&BackgroundLoaderOffliner::OnPageSaved,
                  weak_ptr_factory_.GetWeakPtr()));
 }
@@ -567,6 +596,7 @@ void BackgroundLoaderOffliner::ResetState() {
 void BackgroundLoaderOffliner::ResetLoader() {
   loader_.reset(
       new background_loader::BackgroundLoaderContents(browser_context_));
+  loader_->SetDelegate(this);
 }
 
 void BackgroundLoaderOffliner::AttachObservers() {

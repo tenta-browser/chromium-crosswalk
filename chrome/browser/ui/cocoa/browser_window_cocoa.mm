@@ -21,7 +21,6 @@
 #include "chrome/browser/shell_integration.h"
 #include "chrome/browser/signin/chrome_signin_helper.h"
 #include "chrome/browser/translate/chrome_translate_client.h"
-#include "chrome/browser/ui/bookmarks/bookmark_bar_constants.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_command_controller.h"
 #include "chrome/browser/ui/browser_commands.h"
@@ -48,10 +47,11 @@
 #include "chrome/browser/ui/cocoa/task_manager_mac.h"
 #import "chrome/browser/ui/cocoa/toolbar/toolbar_controller.h"
 #include "chrome/browser/ui/exclusive_access/exclusive_access_context.h"
+#include "chrome/browser/ui/layout_constants.h"
 #include "chrome/browser/ui/profile_chooser_constants.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
+#include "chrome/common/buildflags.h"
 #include "chrome/common/chrome_switches.h"
-#include "chrome/common/features.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/bookmarks/common/bookmark_pref_names.h"
@@ -154,6 +154,10 @@ void BrowserWindowCocoa::ShowInactive() {
 
 void BrowserWindowCocoa::Hide() {
   [window() orderOut:controller_];
+}
+
+bool BrowserWindowCocoa::IsVisible() const {
+  return [window() isVisible];
 }
 
 void BrowserWindowCocoa::SetBounds(const gfx::Rect& bounds) {
@@ -399,15 +403,6 @@ bool BrowserWindowCocoa::IsFullscreenBubbleVisible() const {
   return false;  // Currently only called from toolkit-views page_info.
 }
 
-void BrowserWindowCocoa::MaybeShowNewBackShortcutBubble(bool forward) {
-  [controller_ exclusiveAccessController]->MaybeShowNewBackShortcutBubble(
-      forward);
-}
-
-void BrowserWindowCocoa::HideNewBackShortcutBubble() {
-  [controller_ exclusiveAccessController]->HideNewBackShortcutBubble();
-}
-
 LocationBar* BrowserWindowCocoa::GetLocationBar() const {
   return [controller_ locationBarBridge];
 }
@@ -455,7 +450,7 @@ void BrowserWindowCocoa::FocusBookmarksToolbar() {
   // Not needed on the Mac.
 }
 
-void BrowserWindowCocoa::FocusInfobars() {
+void BrowserWindowCocoa::FocusInactivePopupForAccessibility() {
   // Not needed on the Mac.
 }
 
@@ -703,7 +698,7 @@ int
 BrowserWindowCocoa::GetRenderViewHeightInsetWithDetachedBookmarkBar() {
   if (browser_->bookmark_bar_state() != BookmarkBar::DETACHED)
     return 0;
-  return chrome::kNTPBookmarkBarHeight;
+  return GetLayoutConstant(BOOKMARK_BAR_NTP_HEIGHT);
 }
 
 void BrowserWindowCocoa::ExecuteExtensionCommand(

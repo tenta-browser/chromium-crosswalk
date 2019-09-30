@@ -20,7 +20,7 @@
 #include "content/public/browser/web_ui.h"
 #include "content/public/browser/web_ui_data_source.h"
 #include "content/public/browser/web_ui_message_handler.h"
-#include "extensions/features/features.h"
+#include "extensions/buildflags/buildflags.h"
 #include "ui/shell_dialogs/select_file_dialog.h"
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)
@@ -97,22 +97,6 @@ class PolicyUIHandler : public content::WebUIMessageHandler,
   // policy enabled (device and/or user), a dictionary containing status
   // information is sent.
   void SendStatus() const;
-
-  // Inserts a description of each policy in |policy_map| into |values|, using
-  // the optional errors in |errors| to determine the status of each policy. If
-  // |convert_values| is true, converts the values to show them in javascript.
-  void GetPolicyValues(const policy::PolicyMap& policy_map,
-                       policy::PolicyErrorMap* errors,
-                       base::DictionaryValue* values,
-                       bool convert_values) const;
-
-  // Returns a dictionary with the values of all set policies, with some values
-  // converted to be shown in javascript, if it is specified.
-  std::unique_ptr<base::DictionaryValue> GetAllPolicyValues(
-      bool convert_values) const;
-
-  void GetChromePolicyValues(base::DictionaryValue* values,
-                             bool convert_values) const;
 
   void WritePoliciesToJSONFile(const base::FilePath& path) const;
 

@@ -9,7 +9,7 @@
 #include "cc/trees/layer_tree_host.h"
 #include "content/common/view_messages.h"
 #include "content/renderer/gpu/render_widget_compositor.h"
-#include "third_party/WebKit/public/web/WebView.h"
+#include "third_party/blink/public/web/web_view.h"
 
 namespace content {
 
@@ -28,25 +28,6 @@ static_assert(int(BROWSER_CONTROLS_STATE_BOTH) ==
 
 blink::WebBrowserControlsState ContentToBlink(BrowserControlsState state) {
   return static_cast<blink::WebBrowserControlsState>(state);
-}
-
-
-// TODO(mvanouwerkerk): Stop calling this code path and delete it.
-void RenderViewImpl::OnUpdateBrowserControlsState(bool enable_hiding,
-                                                  bool enable_showing,
-                                                  bool animate) {
-  // TODO(tedchoc): Investigate why messages are getting here before the
-  //                compositor has been initialized.
-  LOG_IF(WARNING, !compositor_)
-      << "OnUpdateBrowserControlsState was unhandled.";
-  BrowserControlsState constraints = BROWSER_CONTROLS_STATE_BOTH;
-  if (!enable_showing)
-    constraints = BROWSER_CONTROLS_STATE_HIDDEN;
-  if (!enable_hiding)
-    constraints = BROWSER_CONTROLS_STATE_SHOWN;
-  BrowserControlsState current = BROWSER_CONTROLS_STATE_BOTH;
-
-  UpdateBrowserControlsState(constraints, current, animate);
 }
 
 void RenderViewImpl::UpdateBrowserControlsState(

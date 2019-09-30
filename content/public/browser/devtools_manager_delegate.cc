@@ -31,25 +31,14 @@ scoped_refptr<DevToolsAgentHost> DevToolsManagerDelegate::CreateNewTarget(
   return nullptr;
 }
 
-void DevToolsManagerDelegate::SessionCreated(
-    content::DevToolsAgentHost* agent_host,
-    int session_id) {}
-
-void DevToolsManagerDelegate::SessionDestroyed(
-    content::DevToolsAgentHost* agent_host,
-    int session_id) {}
+void DevToolsManagerDelegate::ClientAttached(DevToolsAgentHost* agent_host,
+                                             DevToolsAgentHostClient* client) {}
+void DevToolsManagerDelegate::ClientDetached(DevToolsAgentHost* agent_host,
+                                             DevToolsAgentHostClient* client) {}
 
 bool DevToolsManagerDelegate::HandleCommand(DevToolsAgentHost* agent_host,
-                                            int session_id,
+                                            DevToolsAgentHostClient* client,
                                             base::DictionaryValue* command) {
-  return false;
-}
-
-bool DevToolsManagerDelegate::HandleAsyncCommand(
-    DevToolsAgentHost* agent_host,
-    int session_id,
-    base::DictionaryValue* command,
-    const CommandCallback& callback) {
   return false;
 }
 
@@ -57,9 +46,8 @@ std::string DevToolsManagerDelegate::GetDiscoveryPageHTML() {
   return std::string();
 }
 
-std::string DevToolsManagerDelegate::GetFrontendResource(
-    const std::string& path) {
-  return std::string();
+bool DevToolsManagerDelegate::HasBundledFrontendResources() {
+  return false;
 }
 
 bool DevToolsManagerDelegate::IsBrowserTargetDiscoverable() {

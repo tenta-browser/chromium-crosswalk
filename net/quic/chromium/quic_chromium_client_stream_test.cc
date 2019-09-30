@@ -16,12 +16,14 @@
 #include "net/quic/core/quic_spdy_client_session_base.h"
 #include "net/quic/core/quic_utils.h"
 #include "net/quic/core/spdy_utils.h"
+#include "net/quic/core/tls_client_handshaker.h"
 #include "net/quic/platform/api/quic_ptr_util.h"
 #include "net/quic/test_tools/crypto_test_utils.h"
 #include "net/quic/test_tools/quic_spdy_session_peer.h"
 #include "net/quic/test_tools/quic_test_utils.h"
 #include "net/test/gtest_util.h"
 #include "net/tools/quic/quic_spdy_client_stream.h"
+#include "net/traffic_annotation/network_traffic_annotation_test_helper.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gmock_mutant.h"
 
@@ -105,8 +107,8 @@ class MockQuicClientSessionBase : public QuicSpdyClientSessionBase {
   MOCK_METHOD1(OnHeadersHeadOfLineBlocking, void(QuicTime::Delta delta));
 
   std::unique_ptr<QuicStream> CreateStream(QuicStreamId id) {
-    return QuicMakeUnique<QuicChromiumClientStream>(id, this,
-                                                    NetLogWithSource());
+    return QuicMakeUnique<QuicChromiumClientStream>(
+        id, this, NetLogWithSource(), TRAFFIC_ANNOTATION_FOR_TESTS);
   }
 
   using QuicSession::ActivateStream;
@@ -154,14 +156,18 @@ class QuicChromiumClientStreamTest
     : public ::testing::TestWithParam<QuicTransportVersion> {
  public:
   QuicChromiumClientStreamTest()
-      : crypto_config_(crypto_test_utils::ProofVerifierForTesting()),
-        session_(new MockQuicConnection(&helper_,
-                                        &alarm_factory_,
-                                        Perspective::IS_CLIENT,
-                                        SupportedTransportVersions(GetParam())),
+      : crypto_config_(crypto_test_utils::ProofVerifierForTesting(),
+                       TlsClientHandshaker::CreateSslCtx()),
+        session_(new MockQuicConnection(
+                     &helper_,
+                     &alarm_factory_,
+                     Perspective::IS_CLIENT,
+                     SupportedVersions(
+                         ParsedQuicVersion(PROTOCOL_QUIC_CRYPTO, GetParam()))),
                  &push_promise_index_) {
     stream_ = new QuicChromiumClientStream(kTestStreamId, &session_,
-                                           NetLogWithSource());
+                                           NetLogWithSource(),
+                                           TRAFFIC_ANNOTATION_FOR_TESTS);
     session_.ActivateStream(base::WrapUnique(stream_));
     handle_ = stream_->CreateHandle();
   }
@@ -600,14 +606,9 @@ TEST_P(QuicChromiumClientStreamTest, WritevStreamData) {
       new StringIOBuffer("Just a small payload"));
 
   // All data written.
-  if (session_.can_use_slices()) {
-    EXPECT_CALL(session_, WritevData(stream_, stream_->id(), _, _, _))
-        .WillOnce(Return(QuicConsumedData(buf1->size() + buf2->size(), true)));
-  } else {
     EXPECT_CALL(session_, WritevData(stream_, stream_->id(), _, _, _))
         .WillOnce(Return(QuicConsumedData(buf1->size(), false)))
         .WillOnce(Return(QuicConsumedData(buf2->size(), true)));
-  }
   TestCompletionCallback callback;
   EXPECT_EQ(
       OK, handle_->WritevStreamData({buf1, buf2}, {buf1->size(), buf2->size()},
@@ -620,16 +621,11 @@ TEST_P(QuicChromiumClientStreamTest, WritevStreamDataAsync) {
       new StringIOBuffer("Just a small payload"));
 
   // Only a part of the data is written.
-  if (session_.can_use_slices()) {
-    EXPECT_CALL(session_, WritevData(stream_, stream_->id(), _, _, _))
-        .WillOnce(Return(QuicConsumedData(buf1->size(), false)));
-  } else {
     EXPECT_CALL(session_, WritevData(stream_, stream_->id(), _, _, _))
         // First piece of data is written.
         .WillOnce(Return(QuicConsumedData(buf1->size(), false)))
         // Second piece of data is queued.
         .WillOnce(Return(QuicConsumedData(0, false)));
-  }
   TestCompletionCallback callback;
   EXPECT_EQ(ERR_IO_PENDING,
             handle_->WritevStreamData({buf1.get(), buf2.get()},
@@ -649,8 +645,8 @@ TEST_P(QuicChromiumClientStreamTest, HeadersBeforeHandle) {
   // We don't use stream_ because we want an incoming server push
   // stream.
   QuicStreamId stream_id = GetNthServerInitiatedStreamId(0);
-  QuicChromiumClientStream* stream2 =
-      new QuicChromiumClientStream(stream_id, &session_, NetLogWithSource());
+  QuicChromiumClientStream* stream2 = new QuicChromiumClientStream(
+      stream_id, &session_, NetLogWithSource(), TRAFFIC_ANNOTATION_FOR_TESTS);
   session_.ActivateStream(base::WrapUnique(stream2));
 
   InitializeHeaders();
@@ -672,8 +668,8 @@ TEST_P(QuicChromiumClientStreamTest, HeadersAndDataBeforeHandle) {
   // We don't use stream_ because we want an incoming server push
   // stream.
   QuicStreamId stream_id = GetNthServerInitiatedStreamId(0);
-  QuicChromiumClientStream* stream2 =
-      new QuicChromiumClientStream(stream_id, &session_, NetLogWithSource());
+  QuicChromiumClientStream* stream2 = new QuicChromiumClientStream(
+      stream_id, &session_, NetLogWithSource(), TRAFFIC_ANNOTATION_FOR_TESTS);
   session_.ActivateStream(base::WrapUnique(stream2));
 
   InitializeHeaders();

@@ -7,6 +7,7 @@
 #include "base/android/jni_string.h"
 #include "chrome/browser/profiling_host/profiling_process_host.h"
 #include "chrome/browser/profiling_host/profiling_test_driver.h"
+#include "components/services/heap_profiling/public/cpp/settings.h"
 #include "jni/TestAndroidShim_jni.h"
 
 using base::android::JavaParamRef;
@@ -29,11 +30,19 @@ void TestAndroidShim::Destroy(JNIEnv* env, const JavaParamRef<jobject>& obj) {
 jboolean TestAndroidShim::RunTestForMode(
     JNIEnv* env,
     const base::android::JavaParamRef<jobject>& obj,
-    const base::android::JavaParamRef<jstring>& mode) {
-  profiling::ProfilingTestDriver driver;
-  profiling::ProfilingTestDriver::Options options;
-  options.mode = profiling::ProfilingProcessHost::ConvertStringToMode(
+    const base::android::JavaParamRef<jstring>& mode,
+    jboolean dynamically_start_profiling,
+    const base::android::JavaParamRef<jstring>& stack_mode,
+    jboolean should_sample,
+    jboolean sample_everything) {
+  heap_profiling::ProfilingTestDriver driver;
+  heap_profiling::ProfilingTestDriver::Options options;
+  options.mode = heap_profiling::ConvertStringToMode(
       base::android::ConvertJavaStringToUTF8(mode));
-  options.profiling_already_started = true;
+  options.stack_mode = heap_profiling::ConvertStringToStackMode(
+      base::android::ConvertJavaStringToUTF8(stack_mode));
+  options.profiling_already_started = !dynamically_start_profiling;
+  options.should_sample = should_sample;
+  options.sample_everything = sample_everything;
   return driver.RunTest(options);
 }

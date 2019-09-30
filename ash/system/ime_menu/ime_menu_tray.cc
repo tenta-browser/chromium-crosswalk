@@ -4,7 +4,7 @@
 
 #include "ash/system/ime_menu/ime_menu_tray.h"
 
-#include "ash/accessibility/accessibility_delegate.h"
+#include "ash/accessibility/accessibility_controller.h"
 #include "ash/ash_constants.h"
 #include "ash/ime/ime_controller.h"
 #include "ash/root_window_controller.h"
@@ -25,7 +25,6 @@
 #include "base/metrics/user_metrics.h"
 #include "base/strings/utf_string_conversions.h"
 #include "components/session_manager/session_manager_types.h"
-#include "ui/base/ime/chromeos/input_method_manager.h"
 #include "ui/base/ime/ime_bridge.h"
 #include "ui/base/ime/text_input_client.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -40,8 +39,6 @@
 #include "ui/views/controls/scroll_view.h"
 #include "ui/views/controls/separator.h"
 #include "ui/views/layout/box_layout.h"
-
-using chromeos::input_method::InputMethodManager;
 
 namespace ash {
 
@@ -62,28 +59,6 @@ gfx::Range GetImeListViewRange() {
 void ShowIMESettings() {
   base::RecordAction(base::UserMetricsAction("StatusArea_IME_Detailed"));
   Shell::Get()->system_tray_controller()->ShowIMESettings();
-}
-
-// Records the number of times users click buttons in opt-in IME menu.
-void RecordButtonsClicked(const std::string& button_name) {
-  enum {
-    UNKNOWN = 0,
-    EMOJI = 1,
-    HANDWRITING = 2,
-    VOICE = 3,
-    // SETTINGS is not used for now.
-    SETTINGS = 4,
-    BUTTON_MAX
-  } button = UNKNOWN;
-  if (button_name == "emoji") {
-    button = EMOJI;
-  } else if (button_name == "hwt") {
-    button = HANDWRITING;
-  } else if (button_name == "voice") {
-    button = VOICE;
-  }
-  UMA_HISTOGRAM_ENUMERATION("InputMethod.ImeMenu.EmojiHandwritingVoiceButton",
-                            button, BUTTON_MAX);
 }
 
 // Returns true if the current screen is login or lock screen.
@@ -125,8 +100,7 @@ SystemMenuButton* CreateImeMenuButton(views::ButtonListener* listener,
                                       const gfx::VectorIcon& icon,
                                       int accessible_name_id,
                                       int right_border) {
-  return new SystemMenuButton(listener, TrayPopupInkDropStyle::HOST_CENTERED,
-                              icon, accessible_name_id);
+  return new SystemMenuButton(listener, icon, accessible_name_id);
 }
 
 // The view that contains IME menu title.
@@ -137,9 +111,10 @@ class ImeTitleView : public views::View, public views::ButtonListener {
         views::CreateSolidSidedBorder(0, 0, kSeparatorWidth, 0,
                                       kMenuSeparatorColor),
         gfx::Insets(kMenuSeparatorVerticalPadding - kSeparatorWidth, 0)));
-    auto* box_layout = new views::BoxLayout(views::BoxLayout::kHorizontal);
+    auto box_layout =
+        std::make_unique<views::BoxLayout>(views::BoxLayout::kHorizontal);
     box_layout->set_minimum_cross_axis_size(kTrayPopupItemMinHeight);
-    SetLayoutManager(box_layout);
+    views::BoxLayout* layout_ptr = SetLayoutManager(std::move(box_layout));
     auto* title_label =
         new views::Label(l10n_util::GetStringUTF16(IDS_ASH_STATUS_TRAY_IME));
     title_label->SetBorder(
@@ -149,7 +124,7 @@ class ImeTitleView : public views::View, public views::ButtonListener {
     style.SetupLabel(title_label);
 
     AddChildView(title_label);
-    box_layout->SetFlexForView(title_label, 1);
+    layout_ptr->SetFlexForView(title_label, 1);
 
     if (show_settings_button) {
       settings_button_ = CreateImeMenuButton(
@@ -200,30 +175,34 @@ class ImeButtonsView : public views::View, public views::ButtonListener {
     }
 
     // The |keyset| will be used for drawing input view keyset in IME
-    // extensions. InputMethodManager::ShowKeyboardWithKeyset() will deal with
+    // extensions. ImeMenuTray::ShowKeyboardWithKeyset() will deal with
     // the |keyset| string to generate the right input view url.
-    std::string keyset;
-    if (sender == emoji_button_) {
-      keyset = "emoji";
-      RecordButtonsClicked(keyset);
-    } else if (sender == voice_button_) {
-      keyset = "voice";
-      RecordButtonsClicked(keyset);
-    } else if (sender == handwriting_button_) {
-      keyset = "hwt";
-      RecordButtonsClicked(keyset);
-    } else {
+    using chromeos::input_method::mojom::ImeKeyset;
+    ImeKeyset keyset = ImeKeyset::kNone;
+    if (sender == emoji_button_)
+      keyset = ImeKeyset::kEmoji;
+    else if (sender == voice_button_)
+      keyset = ImeKeyset::kVoice;
+    else if (sender == handwriting_button_)
+      keyset = ImeKeyset::kHandwriting;
+    else
       NOTREACHED();
-    }
 
+    // TODO(dcheng): When https://crbug.com/742517 is fixed, Mojo will generate
+    // a constant for the number of values in the enum. For now, we just define
+    // it here and keep it in sync with the enum.
+    const int kImeKeysetUmaBoundary = 4;
+    UMA_HISTOGRAM_ENUMERATION("InputMethod.ImeMenu.EmojiHandwritingVoiceButton",
+                              keyset, kImeKeysetUmaBoundary);
     ime_menu_tray_->ShowKeyboardWithKeyset(keyset);
   }
 
  private:
   void Init(bool show_emoji, bool show_handwriting, bool show_voice) {
-    auto* box_layout = new views::BoxLayout(views::BoxLayout::kHorizontal);
+    auto box_layout =
+        std::make_unique<views::BoxLayout>(views::BoxLayout::kHorizontal);
     box_layout->set_minimum_cross_axis_size(kTrayPopupItemMinHeight);
-    SetLayoutManager(box_layout);
+    SetLayoutManager(std::move(box_layout));
     SetBorder(views::CreatePaddedBorder(
         views::CreateSolidSidedBorder(kSeparatorWidth, 0, 0, 0,
                                       kMenuSeparatorColor),
@@ -360,45 +339,15 @@ void ImeMenuTray::ShowImeMenuBubbleInternal(bool show_by_click) {
   SetIsActive(true);
 }
 
-void ImeMenuTray::ShowKeyboardWithKeyset(const std::string& keyset) {
+void ImeMenuTray::ShowKeyboardWithKeyset(
+    chromeos::input_method::mojom::ImeKeyset keyset) {
   CloseBubble();
 
-  // Overrides the keyboard url ref to make it shown with the given keyset.
-  if (InputMethodManager::Get())
-    InputMethodManager::Get()->OverrideKeyboardUrlRef(keyset);
-
-  // If onscreen keyboard has been enabled, shows the keyboard directly.
-  keyboard::KeyboardController* keyboard_controller =
-      keyboard::KeyboardController::GetInstance();
-  show_keyboard_ = true;
-  if (keyboard_controller) {
-    keyboard_controller->AddObserver(this);
-    // If the keyboard window hasn't been created yet, it means the extension
-    // cannot receive anything to show the keyboard. Therefore, instead of
-    // relying the extension to show the keyboard, forcibly show the keyboard
-    // window here (which will cause the keyboard window to be created).
-    // Otherwise, the extension will show keyboard by calling private api. The
-    // native side could just skip showing the keyboard.
-    if (!keyboard_controller->IsKeyboardWindowCreated())
-      keyboard_controller->ShowKeyboard(false);
-    return;
-  }
-
-  AccessibilityDelegate* accessibility_delegate =
-      Shell::Get()->accessibility_delegate();
-  // Fails to show the keyboard.
-  if (accessibility_delegate->IsVirtualKeyboardEnabled())
-    return;
-
-  // Onscreen keyboard has not been enabled yet, forces to bring out the
-  // keyboard for one time.
-  force_show_keyboard_ = true;
-  accessibility_delegate->SetVirtualKeyboardEnabled(true);
-  keyboard_controller = keyboard::KeyboardController::GetInstance();
-  if (keyboard_controller) {
-    keyboard_controller->AddObserver(this);
-    keyboard_controller->ShowKeyboard(false);
-  }
+  // This will override the url ref of the keyboard to make it shown with
+  // the given keyset.
+  ime_controller_->OverrideKeyboardKeyset(
+      keyset,
+      base::BindOnce(&ImeMenuTray::ShowKeyboard, base::Unretained(this)));
 }
 
 bool ImeMenuTray::ShouldShowBottomButtons() {
@@ -427,7 +376,7 @@ bool ImeMenuTray::ShouldShowBottomButtons() {
 
 bool ImeMenuTray::ShouldShowKeyboardToggle() const {
   return keyboard_suppressed_ &&
-         !Shell::Get()->accessibility_delegate()->IsVirtualKeyboardEnabled();
+         !Shell::Get()->accessibility_controller()->IsVirtualKeyboardEnabled();
 }
 
 base::string16 ImeMenuTray::GetAccessibleNameForTray() {
@@ -444,8 +393,8 @@ void ImeMenuTray::ClickedOutsideBubble() {
 }
 
 bool ImeMenuTray::PerformAction(const ui::Event& event) {
-  UserMetricsRecorder::RecordUserClick(
-      LoginMetricsRecorder::LockScreenUserClickTarget::kImeTray);
+  UserMetricsRecorder::RecordUserClickOnTray(
+      LoginMetricsRecorder::TrayClickTarget::kImeTray);
   if (bubble_)
     CloseBubble();
   else
@@ -508,18 +457,16 @@ base::string16 ImeMenuTray::GetAccessibleNameForBubble() {
 }
 
 bool ImeMenuTray::ShouldEnableExtraKeyboardAccessibility() {
-  return Shell::Get()->accessibility_delegate()->IsSpokenFeedbackEnabled();
+  return Shell::Get()->accessibility_controller()->IsSpokenFeedbackEnabled();
 }
 
 void ImeMenuTray::HideBubble(const views::TrayBubbleView* bubble_view) {
   HideBubbleWithView(bubble_view);
 }
 
-void ImeMenuTray::OnKeyboardBoundsChanging(const gfx::Rect& new_bounds) {}
-
 void ImeMenuTray::OnKeyboardClosed() {
-  if (InputMethodManager::Get())
-    InputMethodManager::Get()->OverrideKeyboardUrlRef(std::string());
+  ime_controller_->OverrideKeyboardKeyset(
+      chromeos::input_method::mojom::ImeKeyset::kNone);
   keyboard::KeyboardController* keyboard_controller =
       keyboard::KeyboardController::GetInstance();
   if (keyboard_controller)
@@ -546,8 +493,8 @@ void ImeMenuTray::OnKeyboardHidden() {
 
   // If the the IME menu has overriding the input view url, we should write it
   // back to normal keyboard when hiding the input view.
-  if (InputMethodManager::Get())
-    InputMethodManager::Get()->OverrideKeyboardUrlRef(std::string());
+  ime_controller_->OverrideKeyboardKeyset(
+      chromeos::input_method::mojom::ImeKeyset::kNone);
   show_keyboard_ = false;
 
   // If the keyboard is forced to be shown by IME menu for once, we need to
@@ -564,6 +511,41 @@ void ImeMenuTray::OnKeyboardHidden() {
   base::ThreadTaskRunnerHandle::Get()->PostTask(
       FROM_HERE, base::Bind(&ImeMenuTray::DisableVirtualKeyboard,
                             weak_ptr_factory_.GetWeakPtr()));
+}
+
+void ImeMenuTray::ShowKeyboard() {
+  // If onscreen keyboard has been enabled, shows the keyboard directly.
+  keyboard::KeyboardController* keyboard_controller =
+      keyboard::KeyboardController::GetInstance();
+  show_keyboard_ = true;
+  if (keyboard_controller) {
+    keyboard_controller->AddObserver(this);
+    // If the keyboard window hasn't been created yet, it means the extension
+    // cannot receive anything to show the keyboard. Therefore, instead of
+    // relying the extension to show the keyboard, forcibly show the keyboard
+    // window here (which will cause the keyboard window to be created).
+    // Otherwise, the extension will show keyboard by calling private api. The
+    // native side could just skip showing the keyboard.
+    if (!keyboard_controller->IsKeyboardWindowCreated())
+      keyboard_controller->ShowKeyboard(false);
+    return;
+  }
+
+  AccessibilityController* accessibility_controller =
+      Shell::Get()->accessibility_controller();
+  // Fails to show the keyboard.
+  if (accessibility_controller->IsVirtualKeyboardEnabled())
+    return;
+
+  // Onscreen keyboard has not been enabled yet, forces to bring out the
+  // keyboard for one time.
+  force_show_keyboard_ = true;
+  accessibility_controller->SetVirtualKeyboardEnabled(true);
+  keyboard_controller = keyboard::KeyboardController::GetInstance();
+  if (keyboard_controller) {
+    keyboard_controller->AddObserver(this);
+    keyboard_controller->ShowKeyboard(false);
+  }
 }
 
 void ImeMenuTray::OnKeyboardSuppressionChanged(bool suppressed) {
@@ -583,7 +565,7 @@ void ImeMenuTray::UpdateTrayLabel() {
 }
 
 void ImeMenuTray::DisableVirtualKeyboard() {
-  Shell::Get()->accessibility_delegate()->SetVirtualKeyboardEnabled(false);
+  Shell::Get()->accessibility_controller()->SetVirtualKeyboardEnabled(false);
   force_show_keyboard_ = false;
 }
 

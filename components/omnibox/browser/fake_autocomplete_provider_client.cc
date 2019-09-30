@@ -4,8 +4,9 @@
 
 #include "components/omnibox/browser/fake_autocomplete_provider_client.h"
 
+#include <memory>
+
 #include "base/files/file_path.h"
-#include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
 #include "components/bookmarks/browser/bookmark_model.h"
 #include "components/bookmarks/test/test_bookmark_client.h"
@@ -80,6 +81,8 @@ FakeAutocompleteProviderClient::GetShortcutsBackendIfExists() {
   return shortcuts_backend_;
 }
 
-bool FakeAutocompleteProviderClient::IsTabOpenWithURL(const GURL& url) {
+bool FakeAutocompleteProviderClient::IsTabOpenWithURL(
+    const GURL& url,
+    const AutocompleteInput* input) {
   return is_tab_open_with_url_;
 }

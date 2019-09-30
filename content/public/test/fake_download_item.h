@@ -11,15 +11,15 @@
 #include "base/callback_forward.h"
 #include "base/files/file_path.h"
 #include "base/observer_list.h"
-#include "content/public/browser/download_danger_type.h"
-#include "content/public/browser/download_interrupt_reasons.h"
-#include "content/public/browser/download_item.h"
+#include "components/download/public/common/download_danger_type.h"
+#include "components/download/public/common/download_interrupt_reasons.h"
+#include "components/download/public/common/download_item.h"
 #include "ui/base/page_transition_types.h"
 #include "url/gurl.h"
 
 namespace content {
 
-class FakeDownloadItem : public DownloadItem {
+class FakeDownloadItem : public download::DownloadItem {
  public:
   FakeDownloadItem();
   ~FakeDownloadItem() override;
@@ -74,8 +74,8 @@ class FakeDownloadItem : public DownloadItem {
   void SetOriginalUrl(const GURL& url);
   const GURL& GetOriginalUrl() const override;
 
-  void SetLastReason(DownloadInterruptReason last_reason);
-  DownloadInterruptReason GetLastReason() const override;
+  void SetLastReason(download::DownloadInterruptReason last_reason);
+  download::DownloadInterruptReason GetLastReason() const override;
 
   void SetReceivedBytes(int64_t received_bytes);
   int64_t GetReceivedBytes() const override;
@@ -114,6 +114,7 @@ class FakeDownloadItem : public DownloadItem {
   bool IsPaused() const override;
   bool IsTemporary() const override;
   bool CanResume() const override;
+  int64_t GetBytesWasted() const override;
   const GURL& GetReferrerUrl() const override;
   const GURL& GetSiteUrl() const override;
   const GURL& GetTabUrl() const override;
@@ -131,13 +132,14 @@ class FakeDownloadItem : public DownloadItem {
   TargetDisposition GetTargetDisposition() const override;
   const std::string& GetHash() const override;
   void DeleteFile(const base::Callback<void(bool)>& callback) override;
+  download::DownloadFile* GetDownloadFile() override;
   bool IsDangerous() const override;
-  DownloadDangerType GetDangerType() const override;
+  download::DownloadDangerType GetDangerType() const override;
   bool TimeRemaining(base::TimeDelta* remaining) const override;
   int64_t CurrentSpeed() const override;
   int PercentComplete() const override;
   bool AllDataSaved() const override;
-  const std::vector<DownloadItem::ReceivedSlice>& GetReceivedSlices()
+  const std::vector<download::DownloadItem::ReceivedSlice>& GetReceivedSlices()
       const override;
   bool CanShowInFolder() override;
   bool CanOpenDownload() override;
@@ -145,14 +147,15 @@ class FakeDownloadItem : public DownloadItem {
   bool GetOpenWhenComplete() const override;
   bool GetAutoOpened() override;
   bool GetOpened() const override;
-  BrowserContext* GetBrowserContext() const override;
-  WebContents* GetWebContents() const override;
-  void OnContentCheckCompleted(DownloadDangerType danger_type,
-                               DownloadInterruptReason reason) override;
+  void OnContentCheckCompleted(
+      download::DownloadDangerType danger_type,
+      download::DownloadInterruptReason reason) override;
   void SetOpenWhenComplete(bool open) override;
   void SetOpened(bool opened) override;
   void SetDisplayName(const base::FilePath& name) override;
   std::string DebugString(bool verbose) const override;
+  void SimulateErrorForTesting(
+      download::DownloadInterruptReason reason) override;
 
  private:
   base::ObserverList<Observer> observers_;
@@ -168,12 +171,12 @@ class FakeDownloadItem : public DownloadItem {
   base::Time last_access_time_;
   // MAX_DOWNLOAD_STATE is used as the uninitialized state.
   DownloadState download_state_ =
-      DownloadItem::DownloadState::MAX_DOWNLOAD_STATE;
+      download::DownloadItem::DownloadState::MAX_DOWNLOAD_STATE;
   scoped_refptr<const net::HttpResponseHeaders> response_headers_;
   std::string mime_type_;
   GURL original_url_;
-  DownloadInterruptReason last_reason_ =
-      DownloadInterruptReason::DOWNLOAD_INTERRUPT_REASON_NONE;
+  download::DownloadInterruptReason last_reason_ =
+      download::DOWNLOAD_INTERRUPT_REASON_NONE;
   int64_t received_bytes_ = 0;
   int64_t total_bytes_ = 0;
   bool is_transient_ = false;

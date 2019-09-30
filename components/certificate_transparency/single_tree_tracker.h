@@ -13,16 +13,17 @@
 #include "base/memory/memory_pressure_monitor.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
+#include "components/certificate_transparency/sth_observer.h"
 #include "net/base/hash_value.h"
 #include "net/base/network_change_notifier.h"
 #include "net/cert/ct_verifier.h"
 #include "net/cert/signed_tree_head.h"
-#include "net/cert/sth_observer.h"
 #include "net/log/net_log_with_source.h"
 
 namespace net {
 
 class CTLogVerifier;
+class HostResolver;
 class X509Certificate;
 
 namespace ct {
@@ -37,6 +38,38 @@ struct SignedCertificateTimestamp;
 namespace certificate_transparency {
 
 class LogDnsClient;
+
+// Enum indicating whether an SCT can be checked for inclusion and if not,
+// the reason it cannot.
+//
+// Note: The numeric values are used within a histogram and should not change
+// or be re-assigned.
+enum SCTCanBeCheckedForInclusion {
+  // If the SingleTreeTracker does not have a valid STH, then a valid STH is
+  // first required to evaluate whether the SCT can be checked for inclusion
+  // or not.
+  VALID_STH_REQUIRED = 0,
+
+  // If the STH does not cover the SCT (the timestamp in the SCT is greater than
+  // MMD + timestamp in the STH), then a newer STH is needed.
+  NEWER_STH_REQUIRED = 1,
+
+  // When an SCT is observed, if the SingleTreeTracker instance has a valid STH
+  // and the STH covers the SCT (the timestamp in the SCT is less than MMD +
+  // timestamp in the STH), then it can be checked for inclusion.
+  CAN_BE_CHECKED = 2,
+
+  // This SCT was not audited because the queue of pending entries was
+  // full.
+  NOT_AUDITED_QUEUE_FULL = 3,
+
+  // This SCT was not audited because no DNS lookup was done when first
+  // visiting the website that supplied it. It could compromise the user's
+  // privacy to do an inclusion check over DNS in this scenario.
+  NOT_AUDITED_NO_DNS_LOOKUP = 4,
+
+  SCT_CAN_BE_CHECKED_MAX
+};
 
 // Tracks the state of an individual Certificate Transparency Log's Merkle Tree.
 // A CT Log constantly issues Signed Tree Heads, for which every older STH must
@@ -54,11 +87,10 @@ class LogDnsClient;
 //
 // To accomplish this, this class needs to be notified of when new SCTs are
 // observed (which it does by implementing net::CTVerifier::Observer) and when
-// new STHs are observed (which it does by implementing net::ct::STHObserver).
+// new STHs are observed (which it does by implementing STHObserver).
 // Once connected to sources providing that data, the status for a given SCT
 // can be queried by calling GetLogEntryInclusionCheck.
-class SingleTreeTracker : public net::CTVerifier::Observer,
-                          public net::ct::STHObserver {
+class SingleTreeTracker : public net::CTVerifier::Observer, public STHObserver {
  public:
   enum SCTInclusionStatus {
     // SCT was not observed by this class and is not currently pending
@@ -79,24 +111,38 @@ class SingleTreeTracker : public net::CTVerifier::Observer,
     SCT_INCLUDED_IN_LOG,
   };
 
+  // Tracks new STHs and SCTs received that were issued by |ct_log|.
+  // The |dns_client| will be used to obtain inclusion proofs for these SCTs,
+  // where possible. It is not optional.
+  // The |host_resolver| will be used to ensure that DNS requests performed to
+  // obtain inclusion proofs do not compromise the user's privacy. It is not
+  // optional. It is assumed that it caches DNS lookups.
   SingleTreeTracker(scoped_refptr<const net::CTLogVerifier> ct_log,
                     LogDnsClient* dns_client,
+                    net::HostResolver* host_resolver,
                     net::NetLog* net_log);
   ~SingleTreeTracker() override;
 
   // net::ct::CTVerifier::Observer implementation.
-
   // TODO(eranm): Extract CTVerifier::Observer to SCTObserver
-  // Performs an inclusion check for the given certificate if the latest
-  // STH known for this log is older than sct.timestamp + Maximum Merge Delay,
-  // enqueues the SCT for future checking later on.
+  // Enqueues |sct| for later inclusion checking of the given |cert|, so long as
+  // both of the following are true:
+  // a) The latest STH known for this log is older than |sct.timestamp| +
+  //    Maximum Merge Delay.
+  // b) The |hostname| for which this certificate was issued has previously been
+  //    resolved to an IP address using a DNS lookup, and the network has not
+  //    changed since. This ensures that performing an inclusion check over DNS
+  //    will not leak information to the DNS resolver.
   // Should only be called with SCTs issued by the log this instance tracks.
+  // Hostname may be an IP literal, but a DNS lookup will not have been
+  // performed in this case so inclusion checking will not be performed.
   // TODO(eranm): Make sure not to perform any synchronous, blocking operation
   // here as this callback is invoked during certificate validation.
-  void OnSCTVerified(net::X509Certificate* cert,
+  void OnSCTVerified(base::StringPiece hostname,
+                     net::X509Certificate* cert,
                      const net::ct::SignedCertificateTimestamp* sct) override;
 
-  // net::ct::STHObserver implementation.
+  // STHObserver implementation.
   // After verification of the signature over the |sth|, uses this
   // STH for future inclusion checks.
   // Must only be called for STHs issued by the log this instance tracks.
@@ -155,6 +201,10 @@ class SingleTreeTracker : public net::CTVerifier::Observer,
 
   void LogAuditResultToNetLog(const EntryToAudit& entry, bool success);
 
+  // Returns true if |hostname| has previously been looked up using DNS, and the
+  // network has not changed since.
+  bool WasLookedUpOverDNS(base::StringPiece hostname) const;
+
   // Holds the latest STH fetched and verified for this log.
   net::ct::SignedTreeHead verified_sth_;
 
@@ -171,12 +221,11 @@ class SingleTreeTracker : public net::CTVerifier::Observer,
   // of an entry in |checked_entries_| indicates success.
   // To extend support for caching failures, a success indicator should be
   // added to the EntryAuditResult struct.
-  base::MRUCache<net::SHA256HashValue,
-                 EntryAuditResult,
-                 net::SHA256HashValueLessThan>
-      checked_entries_;
+  base::MRUCache<net::SHA256HashValue, EntryAuditResult> checked_entries_;
 
   LogDnsClient* dns_client_;
+
+  net::HostResolver* host_resolver_;
 
   std::unique_ptr<base::MemoryPressureListener> memory_pressure_listener_;
 

@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "base/files/file_enumerator.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/strings/string_split.h"
@@ -93,20 +94,14 @@ int RunClean(const std::vector<std::string>& args) {
     return 1;
   }
 
-  // Read the args.gn file, if any. Not all GN builds have one.
-  base::FilePath gn_args_file = build_dir.AppendASCII("args.gn");
-  std::string args_contents;
-  base::ReadFileToString(gn_args_file, &args_contents);
-
-  base::DeleteFile(build_dir, true);
-
-  // Put back the args.gn file (if any).
-  base::CreateDirectory(build_dir);
-  if (!args_contents.empty()) {
-    if (base::WriteFile(gn_args_file, args_contents.data(),
-                        static_cast<int>(args_contents.size())) == -1) {
-      Err(Location(), std::string("Failed to write args.gn.")).PrintToStdout();
-      return 1;
+  base::FileEnumerator traversal(
+      build_dir, false,
+      base::FileEnumerator::FILES | base::FileEnumerator::DIRECTORIES);
+  for (base::FilePath current = traversal.Next(); !current.empty();
+       current = traversal.Next()) {
+    if (!base::FilePath::CompareEqualIgnoreCase(current.BaseName().value(),
+                                                FILE_PATH_LITERAL("args.gn"))) {
+      base::DeleteFile(current, true);
     }
   }
 

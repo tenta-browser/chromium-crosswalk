@@ -115,9 +115,9 @@ class CompositedScrollingBrowserTest : public ContentBrowserTest {
   int DoTouchScroll(const gfx::Point& point, const gfx::Vector2d& distance) {
     EXPECT_EQ(0, GetScrollTop());
 
-    int scrollHeight = ExecuteScriptAndExtractInt(
+    int scroll_height = ExecuteScriptAndExtractInt(
         "document.getElementById('scroller').scrollHeight");
-    EXPECT_EQ(1000, scrollHeight);
+    EXPECT_EQ(1000, scroll_height);
 
     SyntheticSmoothScrollGestureParams params;
     params.gesture_source_type = SyntheticGestureParams::TOUCH_INPUT;
@@ -151,7 +151,8 @@ class CompositedScrollingBrowserTest : public ContentBrowserTest {
 // crbug.com/543655 for a case where this was broken.
 // Disabled on MacOS because it doesn't support touch input.
 // Disabled on Android due to flakiness, see https://crbug.com/376668.
-#if defined(OS_MACOSX) || defined(OS_ANDROID)
+// Flaky on Windows: crbug.com/804009
+#if defined(OS_MACOSX) || defined(OS_ANDROID) || defined(OS_WIN)
 #define MAYBE_Scroll3DTransformedScroller DISABLED_Scroll3DTransformedScroller
 #else
 #define MAYBE_Scroll3DTransformedScroller Scroll3DTransformedScroller
@@ -159,11 +160,11 @@ class CompositedScrollingBrowserTest : public ContentBrowserTest {
 IN_PROC_BROWSER_TEST_F(CompositedScrollingBrowserTest,
                        MAYBE_Scroll3DTransformedScroller) {
   LoadURL();
-  int scrollDistance =
+  int scroll_distance =
       DoTouchScroll(gfx::Point(50, 150), gfx::Vector2d(0, 100));
   // The scroll distance is increased due to the rotation of the scroller.
   EXPECT_EQ(std::floor(100 / std::cos(gfx::DegToRad(30.f))) - 1,
-            scrollDistance);
+            scroll_distance);
 }
 
 }  // namespace content

@@ -17,8 +17,6 @@
 #include "chrome/services/file_util/zip_file_creator.h"
 #endif
 
-namespace chrome {
-
 namespace {
 
 #if defined(FULL_SAFE_BROWSING)
@@ -36,7 +34,7 @@ void OnZipFileCreatorRequest(
     service_manager::ServiceContextRefFactory* ref_factory,
     chrome::mojom::ZipFileCreatorRequest request) {
   mojo::MakeStrongBinding(
-      std::make_unique<ZipFileCreator>(ref_factory->CreateRef()),
+      std::make_unique<chrome::ZipFileCreator>(ref_factory->CreateRef()),
       std::move(request));
 }
 #endif
@@ -53,8 +51,7 @@ std::unique_ptr<service_manager::Service> FileUtilService::CreateService() {
 
 void FileUtilService::OnStart() {
   ref_factory_ = std::make_unique<service_manager::ServiceContextRefFactory>(
-      base::Bind(&service_manager::ServiceContext::RequestQuit,
-                 base::Unretained(context())));
+      context()->CreateQuitClosure());
 #if defined(OS_CHROMEOS)
   registry_.AddInterface(
       base::Bind(&OnZipFileCreatorRequest, ref_factory_.get()));
@@ -71,5 +68,3 @@ void FileUtilService::OnBindInterface(
     mojo::ScopedMessagePipeHandle interface_pipe) {
   registry_.BindInterface(interface_name, std::move(interface_pipe));
 }
-
-}  //  namespace chrome

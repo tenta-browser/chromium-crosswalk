@@ -12,20 +12,17 @@
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
+#include "base/optional.h"
 #include "base/scoped_observer.h"
 #include "chrome/browser/extensions/extension_uninstall_dialog.h"
 #include "components/keyed_service/core/keyed_service.h"
-#include "content/public/browser/notification_observer.h"
-#include "content/public/browser/notification_registrar.h"
 #include "extensions/browser/extension_registry_observer.h"
-
-namespace content {
-class BrowserContext;
-}
 
 namespace gfx {
 class Image;
 }
+
+class Profile;
 
 namespace extensions {
 
@@ -38,11 +35,10 @@ class ExtensionStorageMonitorIOHelper;
 // that are granted unlimited storage and displays notifications when high
 // usage is detected.
 class ExtensionStorageMonitor : public KeyedService,
-                                public content::NotificationObserver,
                                 public ExtensionRegistryObserver,
                                 public ExtensionUninstallDialog::Delegate {
  public:
-  static ExtensionStorageMonitor* Get(content::BrowserContext* context);
+  static ExtensionStorageMonitor* Get(Profile* profile);
 
   // Indices of buttons in the notification. Exposed for testing.
   enum ButtonIndex {
@@ -50,15 +46,10 @@ class ExtensionStorageMonitor : public KeyedService,
     BUTTON_UNINSTALL
   };
 
-  explicit ExtensionStorageMonitor(content::BrowserContext* context);
+  explicit ExtensionStorageMonitor(Profile* profile);
   ~ExtensionStorageMonitor() override;
 
  private:
-  // content::NotificationObserver overrides:
-  void Observe(int type,
-               const content::NotificationSource& source,
-               const content::NotificationDetails& details) override;
-
   // ExtensionRegistryObserver overrides:
   void OnExtensionLoaded(content::BrowserContext* browser_context,
                          const Extension* extension) override;
@@ -86,15 +77,13 @@ class ExtensionStorageMonitor : public KeyedService,
                      int64_t current_usage,
                      const gfx::Image& image);
   void OnNotificationButtonClick(const std::string& extension_id,
-                                 int button_index);
+                                 base::Optional<int> button_index);
 
   void DisableStorageMonitoring(const std::string& extension_id);
   void StartMonitoringStorage(const Extension* extension);
   void StopMonitoringStorage(const std::string& extension_id);
-  void StopMonitoringAll();
 
   void RemoveNotificationForExtension(const std::string& extension_id);
-  void RemoveAllNotifications();
 
   // Displays the prompt for uninstalling the extension.
   void ShowUninstallPrompt(const std::string& extension_id);
@@ -131,10 +120,9 @@ class ExtensionStorageMonitor : public KeyedService,
   // IDs of extensions that notifications were shown for.
   std::set<std::string> notified_extension_ids_;
 
-  content::BrowserContext* context_;
+  Profile* profile_;
   extensions::ExtensionPrefs* extension_prefs_;
 
-  content::NotificationRegistrar registrar_;
   ScopedObserver<extensions::ExtensionRegistry,
                  extensions::ExtensionRegistryObserver>
       extension_registry_observer_;

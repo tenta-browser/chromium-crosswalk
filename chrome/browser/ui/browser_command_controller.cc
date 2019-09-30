@@ -9,7 +9,7 @@
 #include <string>
 
 #include "base/command_line.h"
-#include "base/debug/debugging_flags.h"
+#include "base/debug/debugging_buildflags.h"
 #include "base/debug/profiler.h"
 #include "base/macros.h"
 #include "base/metrics/user_metrics.h"
@@ -28,12 +28,15 @@
 #include "chrome/browser/shell_integration.h"
 #include "chrome/browser/signin/signin_promo.h"
 #include "chrome/browser/sync/profile_sync_service_factory.h"
+#include "chrome/browser/ui/apps/app_info_dialog.h"
 #include "chrome/browser/ui/bookmarks/bookmark_tab_helper.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_commands.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/chrome_pages.h"
+#include "chrome/browser/ui/extensions/application_launch.h"
 #include "chrome/browser/ui/extensions/hosted_app_browser_controller.h"
+#include "chrome/browser/ui/page_info/page_info_dialog.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/webui/inspect_ui.h"
 #include "chrome/common/content_restriction.h"
@@ -42,7 +45,7 @@
 #include "components/bookmarks/common/bookmark_pref_names.h"
 #include "components/browser_sync/profile_sync_service.h"
 #include "components/dom_distiller/core/dom_distiller_switches.h"
-#include "components/feature_engagement/features.h"
+#include "components/feature_engagement/buildflags.h"
 #include "components/prefs/pref_service.h"
 #include "components/sessions/core/tab_restore_service.h"
 #include "components/signin/core/browser/signin_pref_names.h"
@@ -55,9 +58,7 @@
 #include "content/public/common/service_manager_connection.h"
 #include "content/public/common/url_constants.h"
 #include "extensions/browser/extension_system.h"
-#include "mash/public/interfaces/launchable.mojom.h"
-#include "printing/features/features.h"
-#include "services/service_manager/public/cpp/connector.h"
+#include "printing/buildflags/buildflags.h"
 #include "ui/events/keycodes/keyboard_codes.h"
 
 #if defined(OS_MACOSX)
@@ -70,12 +71,8 @@
 #endif
 
 #if defined(OS_CHROMEOS)
-#include "ash/accelerators/accelerator_commands_classic.h"  // mash-ok
-#include "ash/public/cpp/window_properties.h"
-#include "ash/public/interfaces/window_pin_type.mojom.h"
-#include "chrome/browser/ui/ash/ash_util.h"
+#include "ash/public/cpp/window_pin_type.h"
 #include "chrome/browser/ui/ash/multi_user/multi_user_context_menu.h"
-#include "chrome/browser/ui/ash/multi_user/multi_user_window_manager.h"
 #include "chrome/browser/ui/browser_commands_chromeos.h"
 #include "ui/aura/window.h"
 #include "ui/base/base_window.h"
@@ -314,18 +311,10 @@ bool BrowserCommandController::ExecuteCommandWithDisposition(
   // declaration order in browser.h!
   switch (id) {
     // Navigation commands
-    case IDC_BACKSPACE_BACK:
-      window()->MaybeShowNewBackShortcutBubble(false);
-      break;
     case IDC_BACK:
-      window()->HideNewBackShortcutBubble();
       GoBack(browser_, disposition);
       break;
-    case IDC_BACKSPACE_FORWARD:
-      window()->MaybeShowNewBackShortcutBubble(true);
-      break;
     case IDC_FORWARD:
-      window()->HideNewBackShortcutBubble();
       GoForward(browser_, disposition);
       break;
     case IDC_RELOAD:
@@ -333,7 +322,7 @@ bool BrowserCommandController::ExecuteCommandWithDisposition(
       break;
     case IDC_RELOAD_CLEARING_CACHE:
       ClearCache(browser_);
-      // FALL THROUGH
+      FALLTHROUGH;
     case IDC_RELOAD_BYPASSING_CACHE:
       ReloadBypassingCache(browser_, disposition);
       break;
@@ -416,6 +405,10 @@ bool BrowserCommandController::ExecuteCommandWithDisposition(
       break;
     case IDC_FULLSCREEN:
       chrome::ToggleFullscreenMode(browser_);
+      break;
+    case IDC_OPEN_IN_PWA_WINDOW:
+      base::RecordAction(base::UserMetricsAction("OpenActiveTabInPwaWindow"));
+      ReparentSecureActiveTabIntoPwaWindow(browser_);
       break;
 
 #if defined(OS_CHROMEOS)
@@ -557,8 +550,8 @@ bool BrowserCommandController::ExecuteCommandWithDisposition(
       base::RecordAction(base::UserMetricsAction("Accel_Focus_Bookmarks"));
       FocusBookmarksToolbar(browser_);
       break;
-    case IDC_FOCUS_INFOBARS:
-      FocusInfobars(browser_);
+    case IDC_FOCUS_INACTIVE_POPUP_FOR_ACCESSIBILITY:
+      FocusInactivePopupForAccessibility(browser_);
       break;
     case IDC_FOCUS_NEXT_PANE:
       FocusNextPane(browser_);
@@ -671,20 +664,6 @@ bool BrowserCommandController::ExecuteCommandWithDisposition(
     case IDC_DISTILL_PAGE:
       DistillCurrentPage(browser_);
       break;
-#if defined(OS_CHROMEOS)
-    case IDC_TOUCH_HUD_PROJECTION_TOGGLE:
-      if (ash_util::IsRunningInMash()) {
-        service_manager::Connector* connector =
-            content::ServiceManagerConnection::GetForProcess()->GetConnector();
-        mash::mojom::LaunchablePtr launchable;
-        connector->BindInterface("touch_hud", &launchable);
-        launchable->Launch(mash::mojom::kWindow,
-                           mash::mojom::LaunchMode::DEFAULT);
-      } else {
-        ash::accelerators::ToggleTouchHudProjection();
-      }
-      break;
-#endif
     case IDC_ROUTE_MEDIA:
       RouteMedia(browser_);
       break;
@@ -706,6 +685,10 @@ bool BrowserCommandController::ExecuteCommandWithDisposition(
       ShowSiteSettings(
           browser_,
           browser_->tab_strip_model()->GetActiveWebContents()->GetVisibleURL());
+      break;
+    case IDC_HOSTED_APP_MENU_APP_INFO:
+      ShowPageInfoDialog(browser_->tab_strip_model()->GetActiveWebContents(),
+                         bubble_anchor_util::kAppMenuButton);
       break;
 
     default:
@@ -859,6 +842,7 @@ void BrowserCommandController::InitCommandState() {
   command_updater_.UpdateCommandEnabled(IDC_RESTORE_WINDOW, true);
   command_updater_.UpdateCommandEnabled(IDC_USE_SYSTEM_TITLE_BAR, true);
 #endif
+  command_updater_.UpdateCommandEnabled(IDC_OPEN_IN_PWA_WINDOW, true);
 
   // Page-related commands
   command_updater_.UpdateCommandEnabled(IDC_EMAIL_PAGE_LOCATION, true);
@@ -893,7 +877,6 @@ void BrowserCommandController::InitCommandState() {
                                         !guest_session);
 #if defined(OS_CHROMEOS)
   command_updater_.UpdateCommandEnabled(IDC_TAKE_SCREENSHOT, true);
-  command_updater_.UpdateCommandEnabled(IDC_TOUCH_HUD_PROJECTION_TOGGLE, true);
 #else
   // Chrome OS uses the system tray menu to handle multi-profiles.
   if (normal_window && (guest_session || !profile()->IsOffTheRecord())) {
@@ -918,6 +901,8 @@ void BrowserCommandController::InitCommandState() {
   command_updater_.UpdateCommandEnabled(IDC_OPEN_IN_CHROME,
                                         is_experimental_hosted_app);
   command_updater_.UpdateCommandEnabled(IDC_SITE_SETTINGS,
+                                        is_experimental_hosted_app);
+  command_updater_.UpdateCommandEnabled(IDC_HOSTED_APP_MENU_APP_INFO,
                                         is_experimental_hosted_app);
 
   // Window management commands
@@ -1014,11 +999,7 @@ void BrowserCommandController::UpdateCommandsForTabState() {
     return;
 
   // Navigation commands
-  command_updater_.UpdateCommandEnabled(IDC_BACKSPACE_BACK,
-                                        CanGoBack(browser_));
   command_updater_.UpdateCommandEnabled(IDC_BACK, CanGoBack(browser_));
-  command_updater_.UpdateCommandEnabled(IDC_BACKSPACE_FORWARD,
-                                        CanGoForward(browser_));
   command_updater_.UpdateCommandEnabled(IDC_FORWARD, CanGoForward(browser_));
   command_updater_.UpdateCommandEnabled(IDC_RELOAD, CanReload(browser_));
   command_updater_.UpdateCommandEnabled(IDC_RELOAD_BYPASSING_CACHE,
@@ -1171,7 +1152,7 @@ void BrowserCommandController::UpdateCommandsForFullscreenMode() {
   command_updater_.UpdateCommandEnabled(
       IDC_FOCUS_BOOKMARKS, main_not_fullscreen);
   command_updater_.UpdateCommandEnabled(
-      IDC_FOCUS_INFOBARS, main_not_fullscreen);
+      IDC_FOCUS_INACTIVE_POPUP_FOR_ACCESSIBILITY, main_not_fullscreen);
 
   // Show various bits of UI
   command_updater_.UpdateCommandEnabled(IDC_DEVELOPER_MENU, show_main_ui);
@@ -1202,7 +1183,77 @@ void BrowserCommandController::UpdateCommandsForFullscreenMode() {
 
   UpdateCommandsForBookmarkBar();
   UpdateCommandsForIncognitoAvailability();
+  UpdateCommandsForHostedAppAvailability();
 }
+
+void BrowserCommandController::UpdateCommandsForHostedAppAvailability() {
+  bool has_toolbar =
+      browser_->is_type_tabbed() ||
+      extensions::HostedAppBrowserController::IsForExperimentalHostedAppBrowser(
+          browser_);
+  if (window() && window()->ShouldHideUIForFullscreen())
+    has_toolbar = false;
+  command_updater_.UpdateCommandEnabled(IDC_FOCUS_TOOLBAR, has_toolbar);
+  command_updater_.UpdateCommandEnabled(IDC_FOCUS_NEXT_PANE, has_toolbar);
+  command_updater_.UpdateCommandEnabled(IDC_FOCUS_PREVIOUS_PANE, has_toolbar);
+  command_updater_.UpdateCommandEnabled(IDC_SHOW_APP_MENU, has_toolbar);
+}
+
+#if defined(OS_CHROMEOS)
+namespace {
+
+#if DCHECK_IS_ON()
+// Makes sure that all commands that are not whitelisted are disabled. DCHECKs
+// otherwise. Compiled only in debug mode.
+void NonWhitelistedCommandsAreDisabled(CommandUpdaterImpl* command_updater) {
+  constexpr int kWhitelistedIds[] = {
+    IDC_CUT, IDC_COPY, IDC_PASTE,
+    IDC_FIND, IDC_FIND_NEXT, IDC_FIND_PREVIOUS,
+    IDC_ZOOM_PLUS, IDC_ZOOM_NORMAL, IDC_ZOOM_MINUS,
+  };
+
+  // Go through all the command ids, skip the whitelisted ones.
+  for (int id : command_updater->GetAllIds()) {
+    if (std::find(std::begin(kWhitelistedIds), std::end(kWhitelistedIds), id)
+            != std::end(kWhitelistedIds)) {
+      continue;
+    }
+    DCHECK(!command_updater->IsCommandEnabled(id));
+  }
+}
+#endif
+
+}  // namespace
+
+void BrowserCommandController::UpdateCommandsForLockedFullscreenMode() {
+  bool is_locked_fullscreen = ash::IsWindowTrustedPinned(browser_->window());
+  // Sanity check to make sure this function is called only on state change.
+  DCHECK_NE(is_locked_fullscreen, is_locked_fullscreen_);
+  if (is_locked_fullscreen == is_locked_fullscreen_)
+    return;
+  is_locked_fullscreen_ = is_locked_fullscreen;
+
+  if (is_locked_fullscreen_) {
+    command_updater_.DisableAllCommands();
+    // Update the state of whitelisted commands:
+    // IDC_CUT/IDC_COPY/IDC_PASTE,
+    UpdateCommandsForContentRestrictionState();
+    // IDC_FIND/IDC_FIND_NEXT/IDC_FIND_PREVIOUS,
+    UpdateCommandsForFind();
+    // IDC_ZOOM_PLUS/IDC_ZOOM_NORMAL/IDC_ZOOM_MINUS.
+    UpdateCommandsForZoomState();
+    // All other commands will be disabled (there is an early return in their
+    // corresponding UpdateCommandsFor* functions).
+#if DCHECK_IS_ON()
+    NonWhitelistedCommandsAreDisabled(&command_updater_);
+#endif
+  } else {
+    // Do an init call to re-initialize command state after the
+    // DisableAllCommands.
+    InitCommandState();
+  }
+}
+#endif
 
 #if defined(OS_CHROMEOS)
 namespace {

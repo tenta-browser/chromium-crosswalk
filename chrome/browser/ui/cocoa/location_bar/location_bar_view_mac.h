@@ -81,6 +81,7 @@ class LocationBarViewMac : public LocationBar,
   void UpdateLocationBarVisibility(bool visible, bool animate) override;
   void SaveStateToContents(content::WebContents* contents) override;
   void Revert() override;
+  bool ShowPageInfoDialog(content::WebContents* contents) override;
   const OmniboxView* GetOmniboxView() const override;
   OmniboxView* GetOmniboxView() override;
   LocationBarTesting* GetLocationBarForTesting() override;
@@ -88,6 +89,7 @@ class LocationBarViewMac : public LocationBar,
   // Overridden from LocationBarTesting:
   bool GetBookmarkStarVisibility() override;
   bool TestContentSettingImagePressed(size_t index) override;
+  bool IsContentSettingBubbleShowing(size_t index) override;
 
   // Set/Get the editable state of the field.
   void SetEditable(bool editable);
@@ -119,10 +121,6 @@ class LocationBarViewMac : public LocationBar,
 
   // Get the point in window coordinates for the page info bubble anchor.
   NSPoint GetPageInfoBubblePoint() const;
-
-  // Get the point in window coordinates in the page info icon at which infobar
-  // arrows should point.
-  NSPoint GetInfoBarAnchorPoint() const;
 
   // When any image decorations change, call this to ensure everything is
   // redrawn and laid out if necessary.

@@ -19,8 +19,72 @@ class CHROMEOS_EXPORT FakeSmbProviderClient : public SmbProviderClient {
   void Init(dbus::Bus* bus) override;
 
   // SmbProviderClient override.
-  void Mount(const std::string& share_path, MountCallback callback) override;
-  void Unmount(int32_t mount_id, UnmountCallback callback) override;
+  void Mount(const base::FilePath& share_path, MountCallback callback) override;
+  void Remount(const base::FilePath& share_path,
+               int32_t mount_id,
+               StatusCallback callback) override;
+  void Unmount(int32_t mount_id, StatusCallback callback) override;
+  void ReadDirectory(int32_t mount_id,
+                     const base::FilePath& directory_path,
+                     ReadDirectoryCallback callback) override;
+  void GetMetadataEntry(int32_t mount_id,
+                        const base::FilePath& entry_path,
+                        GetMetdataEntryCallback callback) override;
+  void OpenFile(int32_t mount_id,
+                const base::FilePath& file_path,
+                bool writeable,
+                OpenFileCallback callback) override;
+  void CloseFile(int32_t mount_id,
+                 int32_t file_id,
+                 StatusCallback callback) override;
+  void ReadFile(int32_t mount_id,
+                int32_t file_id,
+                int64_t offset,
+                int32_t length,
+                ReadFileCallback callback) override;
+
+  void DeleteEntry(int32_t mount_id,
+                   const base::FilePath& entry_path,
+                   bool recursive,
+                   StatusCallback callback) override;
+
+  void CreateFile(int32_t mount_id,
+                  const base::FilePath& file_path,
+                  StatusCallback callback) override;
+
+  void Truncate(int32_t mount_id,
+                const base::FilePath& file_path,
+                int64_t length,
+                StatusCallback callback) override;
+
+  void WriteFile(int32_t mount_id,
+                 int32_t file_id,
+                 int64_t offset,
+                 int32_t length,
+                 base::ScopedFD temp_fd,
+                 StatusCallback callback) override;
+
+  void CreateDirectory(int32_t mount_id,
+                       const base::FilePath& directory_path,
+                       bool recursive,
+                       StatusCallback callback) override;
+
+  void MoveEntry(int32_t mount_id,
+                 const base::FilePath& source_path,
+                 const base::FilePath& target_path,
+                 StatusCallback callback) override;
+
+  void CopyEntry(int32_t mount_id,
+                 const base::FilePath& source_path,
+                 const base::FilePath& target_path,
+                 StatusCallback callback) override;
+
+  void GetDeleteList(int32_t mount_id,
+                     const base::FilePath& entry_path,
+                     GetDeleteListCallback callback) override;
+
+  void GetShares(const base::FilePath& server_url,
+                 ReadDirectoryCallback callback) override;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(FakeSmbProviderClient);

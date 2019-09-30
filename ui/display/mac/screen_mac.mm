@@ -170,8 +170,8 @@ class ScreenMac : public Screen {
   }
 
   bool IsWindowUnderCursor(gfx::NativeWindow window) override {
-    NOTIMPLEMENTED();
-    return false;
+    return [NSWindow windowNumberAtPoint:[NSEvent mouseLocation]
+             belowWindowWithWindowNumber:0] == [window windowNumber];
   }
 
   gfx::NativeWindow GetWindowAtScreenPoint(const gfx::Point& point) override {
@@ -206,7 +206,7 @@ class ScreenMac : public Screen {
   Display GetDisplayNearestView(gfx::NativeView view) const override {
     NSWindow* window = [view window];
     if (!window)
-      window = [NSApp keyWindow];
+      return GetPrimaryDisplay();
     return GetDisplayNearestWindow(window);
   }
 

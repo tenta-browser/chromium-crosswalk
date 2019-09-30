@@ -20,6 +20,8 @@
 #include "ui/views/background.h"
 #include "ui/views/layout/box_layout.h"
 
+namespace message_center {
+
 namespace {
 
 // This value should be the same as the duration of reveal animation of
@@ -28,12 +30,9 @@ constexpr auto kBackgroundColorChangeDuration =
     base::TimeDelta::FromMilliseconds(360);
 
 // The initial background color of the view.
-constexpr SkColor kInitialBackgroundColor =
-    message_center::kControlButtonBackgroundColor;
+constexpr SkColor kInitialBackgroundColor = kControlButtonBackgroundColor;
 
 }  // anonymous namespace
-
-namespace message_center {
 
 const char NotificationControlButtonsView::kViewClassName[] =
     "NotificationControlButtonsView";
@@ -44,7 +43,8 @@ NotificationControlButtonsView::NotificationControlButtonsView(
       bgcolor_origin_(kInitialBackgroundColor),
       bgcolor_target_(kInitialBackgroundColor) {
   DCHECK(message_view);
-  SetLayoutManager(new views::BoxLayout(views::BoxLayout::kHorizontal));
+  SetLayoutManager(
+      std::make_unique<views::BoxLayout>(views::BoxLayout::kHorizontal));
 
   // Use layer to change the opacity.
   SetPaintToLayer();
@@ -57,7 +57,7 @@ NotificationControlButtonsView::~NotificationControlButtonsView() = default;
 
 void NotificationControlButtonsView::ShowCloseButton(bool show) {
   if (show && !close_button_) {
-    close_button_ = std::make_unique<message_center::PaddedButton>(this);
+    close_button_ = std::make_unique<PaddedButton>(this);
     close_button_->set_owned_by_client();
     close_button_->SetImage(views::Button::STATE_NORMAL,
                             gfx::CreateVectorIcon(kNotificationCloseButtonIcon,
@@ -80,7 +80,7 @@ void NotificationControlButtonsView::ShowCloseButton(bool show) {
 
 void NotificationControlButtonsView::ShowSettingsButton(bool show) {
   if (show && !settings_button_) {
-    settings_button_ = std::make_unique<message_center::PaddedButton>(this);
+    settings_button_ = std::make_unique<PaddedButton>(this);
     settings_button_->set_owned_by_client();
     settings_button_->SetImage(
         views::Button::STATE_NORMAL,
@@ -155,7 +155,7 @@ void NotificationControlButtonsView::ButtonPressed(views::Button* sender,
   if (close_button_ && sender == close_button_.get()) {
     message_view_->OnCloseButtonPressed();
   } else if (settings_button_ && sender == settings_button_.get()) {
-    message_view_->OnSettingsButtonPressed();
+    message_view_->OnSettingsButtonPressed(event);
   }
 }
 

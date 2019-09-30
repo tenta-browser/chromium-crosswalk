@@ -156,7 +156,7 @@ void RecordShelfItemCounts() {
   for (const ShelfItem& item : Shell::Get()->shelf_model()->items()) {
     if (item.type == TYPE_PINNED_APP || item.type == TYPE_BROWSER_SHORTCUT)
       ++pinned_item_count;
-    else if (item.type != TYPE_APP_LIST)
+    else if (item.type != TYPE_APP_LIST && item.type != TYPE_BACK_BUTTON)
       ++unpinned_item_count;
   }
 
@@ -184,15 +184,19 @@ UserMetricsRecorder::~UserMetricsRecorder() {
 }
 
 // static
-void UserMetricsRecorder::RecordUserClick(
-    LoginMetricsRecorder::LockScreenUserClickTarget target) {
-  DCHECK(Shell::HasInstance());
+void UserMetricsRecorder::RecordUserClickOnTray(
+    LoginMetricsRecorder::TrayClickTarget target) {
   LoginMetricsRecorder* recorder =
       Shell::Get()->metrics()->login_metrics_recorder();
-  if (!LockScreen::IsShown() && !recorder->enabled_for_testing())
-    return;
+  recorder->RecordUserTrayClick(target);
+}
 
-  recorder->RecordUserClickEventOnLockScreen(target);
+// static
+void UserMetricsRecorder::RecordUserClickOnShelfButton(
+    LoginMetricsRecorder::ShelfButtonClickTarget target) {
+  LoginMetricsRecorder* recorder =
+      Shell::Get()->metrics()->login_metrics_recorder();
+  recorder->RecordUserShelfButtonClick(target);
 }
 
 void UserMetricsRecorder::RecordUserMetricsAction(UserMetricsAction action) {
@@ -356,6 +360,7 @@ void UserMetricsRecorder::RecordUserMetricsAction(UserMetricsAction action) {
       break;
     case UMA_STATUS_AREA_NETWORK_SETTINGS_OPENED:
       RecordAction(UserMetricsAction("StatusArea_Network_Settings"));
+      break;
     case UMA_STATUS_AREA_OS_UPDATE_DEFAULT_SELECTED:
       RecordAction(UserMetricsAction("StatusArea_OS_Update_Default_Selected"));
       break;

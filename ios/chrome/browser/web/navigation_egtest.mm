@@ -4,10 +4,10 @@
 
 #import <XCTest/XCTest.h>
 
-#include "base/ios/ios_util.h"
 #include "components/strings/grit/components_strings.h"
-#include "ios/chrome/browser/ui/ui_util.h"
-#include "ios/chrome/test/app/web_view_interaction_test_util.h"
+#import "ios/chrome/browser/ui/uikit_ui_util.h"
+#import "ios/chrome/test/app/chrome_test_util.h"
+#import "ios/chrome/test/app/web_view_interaction_test_util.h"
 #import "ios/chrome/test/earl_grey/chrome_earl_grey.h"
 #import "ios/chrome/test/earl_grey/chrome_matchers.h"
 #import "ios/chrome/test/earl_grey/chrome_test_case.h"
@@ -19,8 +19,10 @@
 #error "This file requires ARC support."
 #endif
 
+using chrome_test_util::ContentSuggestionCollectionView;
 using chrome_test_util::BackButton;
 using chrome_test_util::ForwardButton;
+using chrome_test_util::PurgeCachedWebViewPages;
 using chrome_test_util::OmniboxText;
 using chrome_test_util::TapWebViewElementWithId;
 
@@ -270,6 +272,7 @@ std::unique_ptr<net::test_server::HttpResponse> WindowLocationHashHandlers(
 
   // Tap the back button in the HTML and verify the first URL is loaded.
   [ChromeEarlGrey tapWebViewElementWithID:kGoBackID];
+  [ChromeEarlGrey waitForWebViewContainingText:"pony"];
   [[EarlGrey selectElementWithMatcher:OmniboxText(firstURL.GetContent())]
       assertWithMatcher:grey_notNil()];
 
@@ -305,10 +308,7 @@ std::unique_ptr<net::test_server::HttpResponse> WindowLocationHashHandlers(
       assertWithMatcher:grey_notNil()];
 
   // Verify that the forward button is not enabled.
-  // TODO(crbug.com/638674): Evaluate if size class determination can move to
-  // shared code.
-  if (UIApplication.sharedApplication.keyWindow.traitCollection
-          .horizontalSizeClass == UIUserInterfaceSizeClassCompact) {
+  if (IsCompactWidth()) {
     // In horizontally compact environments, the forward button is not visible.
     [[EarlGrey selectElementWithMatcher:ForwardButton()]
         assertWithMatcher:grey_nil()];
@@ -321,6 +321,25 @@ std::unique_ptr<net::test_server::HttpResponse> WindowLocationHashHandlers(
     [[EarlGrey selectElementWithMatcher:disabledForwardButton]
         assertWithMatcher:grey_notNil()];
   }
+}
+
+// Test back-and-forward navigation from and to NTP.
+- (void)testHistoryBackAndForwardAroundNTP {
+  GREYAssertTrue(self.testServer->Start(), @"Test server failed to start.");
+  const GURL testURL = self.testServer->GetURL(kSimpleFileBasedTestURL);
+  [ChromeEarlGrey loadURL:testURL];
+  [ChromeEarlGrey waitForWebViewContainingText:"pony"];
+
+  // Tap the back button and verify NTP is loaded.
+  [[EarlGrey selectElementWithMatcher:BackButton()] performAction:grey_tap()];
+  [ChromeEarlGrey waitForPageToFinishLoading];
+  [[EarlGrey selectElementWithMatcher:ContentSuggestionCollectionView()]
+      assertWithMatcher:grey_notNil()];
+
+  // Tap the forward button and verify test page is loaded.
+  [[EarlGrey selectElementWithMatcher:ForwardButton()]
+      performAction:grey_tap()];
+  [ChromeEarlGrey waitForWebViewContainingText:"pony"];
 }
 
 // Tests navigating forward via window.history.forward() to an error page.
@@ -368,7 +387,8 @@ std::unique_ptr<net::test_server::HttpResponse> WindowLocationHashHandlers(
   [ChromeEarlGrey loadURL:page1URL];
 
   // Click link to update location.hash and go to new URL (same page).
-  chrome_test_util::TapWebViewElementWithId(kHashChangeWithHistoryLabel);
+  GREYAssert(TapWebViewElementWithId(kHashChangeWithHistoryLabel),
+             @"Failed to tap %s", kHashChangeWithHistoryLabel);
 
   // Navigate back to original URL. This should fire a hashchange event.
   std::string backHashChangeContent = "backHashChange";
@@ -411,14 +431,16 @@ std::unique_ptr<net::test_server::HttpResponse> WindowLocationHashHandlers(
   [ChromeEarlGrey loadURL:page1URL];
 
   // Tap link to replace the location value.
-  TapWebViewElementWithId(kHashChangeWithoutHistoryLabel);
+  GREYAssert(TapWebViewElementWithId(kHashChangeWithoutHistoryLabel),
+             @"Failed to tap %s", kHashChangeWithoutHistoryLabel);
   [[EarlGrey
       selectElementWithMatcher:OmniboxText(
                                    hashChangedWithoutHistoryURL.GetContent())]
       assertWithMatcher:grey_notNil()];
 
   // Tap link to update the location.hash with a new value.
-  TapWebViewElementWithId(kHashChangeWithHistoryLabel);
+  GREYAssert(TapWebViewElementWithId(kHashChangeWithHistoryLabel),
+             @"Failed to tap %s", kHashChangeWithHistoryLabel);
   [[EarlGrey
       selectElementWithMatcher:OmniboxText(
                                    hashChangedWithHistoryURL.GetContent())]
@@ -446,14 +468,16 @@ std::unique_ptr<net::test_server::HttpResponse> WindowLocationHashHandlers(
   [ChromeEarlGrey loadURL:page1URL];
 
   // Tap link to update location.hash with a new value.
-  TapWebViewElementWithId(kHashChangeWithHistoryLabel);
+  GREYAssert(TapWebViewElementWithId(kHashChangeWithHistoryLabel),
+             @"Failed to tap %s", kHashChangeWithHistoryLabel);
   [[EarlGrey
       selectElementWithMatcher:OmniboxText(
                                    hashChangedWithHistoryURL.GetContent())]
       assertWithMatcher:grey_notNil()];
 
   // Tap link to update location.hash with the same value.
-  TapWebViewElementWithId(kHashChangeWithHistoryLabel);
+  GREYAssert(TapWebViewElementWithId(kHashChangeWithHistoryLabel),
+             @"Failed to tap %s", kHashChangeWithHistoryLabel);
 
   // Tap back once to return to original URL.
   [[EarlGrey selectElementWithMatcher:BackButton()] performAction:grey_tap()];
@@ -542,7 +566,8 @@ std::unique_ptr<net::test_server::HttpResponse> WindowLocationHashHandlers(
   // Load index, tap on redirect link, and assert that the page is redirected
   // to the proper destination.
   [ChromeEarlGrey loadURL:indexURL];
-  TapWebViewElementWithId(redirectLabel);
+  GREYAssert(TapWebViewElementWithId(redirectLabel), @"Failed to tap %s",
+             redirectLabel.c_str());
   [ChromeEarlGrey waitForWebViewContainingText:"You've arrived"];
   [[EarlGrey selectElementWithMatcher:OmniboxText(destinationURL.GetContent())]
       assertWithMatcher:grey_notNil()];
@@ -566,6 +591,42 @@ std::unique_ptr<net::test_server::HttpResponse> WindowLocationHashHandlers(
   [[EarlGrey selectElementWithMatcher:ForwardButton()]
       performAction:grey_tap()];
   [ChromeEarlGrey waitForWebViewContainingText:"You've arrived"];
+  [[EarlGrey selectElementWithMatcher:OmniboxText(destinationURL.GetContent())]
+      assertWithMatcher:grey_notNil()];
+}
+
+// Tests that navigating forward from a WebUI URL works when resuming from
+// session restore. This is a regression test for https://crbug.com/814790.
+- (void)testRestoreHistoryToWebUIAndNavigateForward {
+  GREYAssertTrue(self.testServer->Start(), @"Test server failed to start.");
+  const GURL destinationURL = self.testServer->GetURL(kSimpleFileBasedTestURL);
+  [ChromeEarlGrey loadURL:GURL("chrome://version")];
+  [ChromeEarlGrey loadURL:destinationURL];
+  [ChromeEarlGrey goBack];
+
+  GREYAssert(PurgeCachedWebViewPages(), @"History not restored");
+
+  [ChromeEarlGrey waitForWebViewContainingText:"Revision"];
+  [[EarlGrey selectElementWithMatcher:OmniboxText("chrome://version")]
+      assertWithMatcher:grey_notNil()];
+  [ChromeEarlGrey goForward];
+  [ChromeEarlGrey waitForWebViewContainingText:"pony"];
+  [[EarlGrey selectElementWithMatcher:OmniboxText(destinationURL.GetContent())]
+      assertWithMatcher:grey_notNil()];
+}
+
+// Tests that navigating forward from NTP works when resuming from session
+// restore. This is a regression test for https://crbug.com/814790.
+- (void)testRestoreHistoryToNTPAndNavigateForward {
+  GREYAssertTrue(self.testServer->Start(), @"Test server failed to start.");
+  const GURL destinationURL = self.testServer->GetURL(kSimpleFileBasedTestURL);
+  [ChromeEarlGrey loadURL:destinationURL];
+  [ChromeEarlGrey goBack];
+
+  GREYAssert(PurgeCachedWebViewPages(), @"History not restored");
+
+  [ChromeEarlGrey goForward];
+  [ChromeEarlGrey waitForWebViewContainingText:"pony"];
   [[EarlGrey selectElementWithMatcher:OmniboxText(destinationURL.GetContent())]
       assertWithMatcher:grey_notNil()];
 }

@@ -10,10 +10,6 @@
 
 namespace viz {
 
-namespace {
-constexpr uint32_t kDefaultNumberOfFramesToDeadline = 4;
-}
-
 SurfaceDependencyTracker::SurfaceDependencyTracker(
     SurfaceManager* surface_manager)
     : surface_manager_(surface_manager) {}
@@ -117,20 +113,13 @@ void SurfaceDependencyTracker::ActivateLateSurfaceSubtree(Surface* surface) {
       ActivateLateSurfaceSubtree(dependency);
   }
 
-  surface->ActivatePendingFrameForDeadline();
+  surface->ActivatePendingFrameForDeadline(base::nullopt);
 }
 
 void SurfaceDependencyTracker::UpdateSurfaceDeadline(Surface* surface) {
   DCHECK(surface->HasPendingFrame());
 
   const CompositorFrame& pending_frame = surface->GetPendingFrame();
-
-  // Determine an activation deadline for the pending CompositorFrame.
-  bool needs_deadline = pending_frame.metadata.can_activate_before_dependencies;
-  if (!needs_deadline)
-    return;
-
-  bool deadline_changed = false;
 
   // Inherit the deadline from the first parent blocked on this surface.
   auto it = blocked_surfaces_from_dependency_.find(
@@ -141,21 +130,14 @@ void SurfaceDependencyTracker::UpdateSurfaceDeadline(Surface* surface) {
       Surface* parent = surface_manager_->GetSurfaceForId(parent_id);
       if (parent && parent->has_deadline() &&
           parent->activation_dependencies().count(surface->surface_id())) {
-        deadline_changed =
-            surface->InheritActivationDeadlineFrom(parent->deadline());
+        surface->InheritActivationDeadlineFrom(parent);
         break;
       }
     }
   }
-  // If there are no CompositorFrames currently blocked on this surface, then
-  // set a default deadline for this surface.
-  if (!surface->has_deadline()) {
-    surface->SetActivationDeadline(kDefaultNumberOfFramesToDeadline);
-    deadline_changed = true;
-  }
 
-  if (!deadline_changed)
-    return;
+  DCHECK(!surface_manager_->activation_deadline_in_frames() ||
+         surface->has_deadline());
 
   // Recursively propagate the newly set deadline to children.
   for (const SurfaceId& surface_id :

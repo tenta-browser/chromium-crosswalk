@@ -2,7 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/memory/ptr_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "cc/base/lap_timer.h"
 #include "chrome/browser/vr/cpu_surface_provider.h"
@@ -19,7 +18,6 @@ namespace vr {
 
 namespace {
 
-constexpr int kMaximumTextWidthPixels = 512;
 constexpr size_t kNumberOfRuns = 35;
 constexpr float kFontHeightMeters = 0.05f;
 constexpr float kTextWidthMeters = 1.0f;
@@ -30,12 +28,11 @@ class TextPerfTest : public testing::Test {
  public:
   void SetUp() override {
     gl_test_environment_ =
-        base::MakeUnique<GlTestEnvironment>(kPixelHalfScreen);
-    provider_ = base::MakeUnique<GaneshSurfaceProvider>();
+        std::make_unique<GlTestEnvironment>(kPixelHalfScreen);
+    provider_ = std::make_unique<GaneshSurfaceProvider>();
 
-    text_element_ =
-        base::MakeUnique<Text>(kMaximumTextWidthPixels, kFontHeightMeters);
-    text_element_->SetSize(kTextWidthMeters, 0);
+    text_element_ = std::make_unique<Text>(kFontHeightMeters);
+    text_element_->SetFieldWidth(kTextWidthMeters);
     text_element_->Initialize(provider_.get());
   }
 
@@ -46,14 +43,15 @@ class TextPerfTest : public testing::Test {
 
  protected:
   void PrintResults(const std::string& name) {
-    perf_test::PrintResult(name, "", "render_time_avg", timer_.MsPerLap(), "ms",
-                           true);
-    perf_test::PrintResult(name, "", "number_of_runs",
+    perf_test::PrintResult("TextPerfTest", ".render_time_avg", name,
+                           timer_.MsPerLap(), "ms", true);
+    perf_test::PrintResult("TextPerfTest", ".number_of_runs", name,
                            static_cast<size_t>(timer_.NumLaps()), "runs", true);
   }
 
   void RenderAndLapTimer() {
-    static_cast<UiElement*>(text_element_.get())->PrepareToDraw();
+    text_element_->PrepareToDrawForTest();
+    text_element_->UpdateTexture();
     // Make sure all GL commands are applied before we measure the time.
     glFinish();
     timer_.NextLap();
@@ -87,28 +85,6 @@ TEST_F(TextPerfTest, RenderLoremIpsum700Chars) {
     RenderAndLapTimer();
   }
   PrintResults("render_lorem_ipsum_700_chars");
-}
-
-TEST_F(TextPerfTest, RenderLoremIpsum100Chars_NoTextChange) {
-  base::string16 text = base::UTF8ToUTF16(kLoremIpsum100Chars);
-  text_element_->SetText(text);
-  TexturedElement::SetRerenderIfNotDirtyForTesting();
-  timer_.Reset();
-  for (size_t i = 0; i < kNumberOfRuns; i++) {
-    RenderAndLapTimer();
-  }
-  PrintResults("render_lorem_ipsum_100_chars_no_text_change");
-}
-
-TEST_F(TextPerfTest, RenderLoremIpsum700Chars_NoTextChange) {
-  base::string16 text = base::UTF8ToUTF16(kLoremIpsum700Chars);
-  text_element_->SetText(text);
-  TexturedElement::SetRerenderIfNotDirtyForTesting();
-  timer_.Reset();
-  for (size_t i = 0; i < kNumberOfRuns; i++) {
-    RenderAndLapTimer();
-  }
-  PrintResults("render_lorem_ipsum_700_chars_no_text_change");
 }
 
 }  // namespace vr

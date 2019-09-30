@@ -9,12 +9,12 @@
 
 #include "base/macros.h"
 #include "base/strings/utf_string_conversions.h"
-#include "ui/app_list/app_list_constants.h"
 #include "ui/app_list/app_list_features.h"
 #include "ui/app_list/test/app_list_test_view_delegate.h"
 #include "ui/app_list/vector_icons/vector_icons.h"
 #include "ui/app_list/views/app_list_view.h"
-#include "ui/app_list/views/search_box_view_delegate.h"
+#include "ui/chromeos/search_box/search_box_constants.h"
+#include "ui/chromeos/search_box/search_box_view_delegate.h"
 #include "ui/gfx/image/image_skia.h"
 #include "ui/gfx/image/image_unittest_util.h"
 #include "ui/gfx/paint_vector_icon.h"
@@ -51,7 +51,7 @@ class KeyPressCounterView : public views::View {
 };
 
 class SearchBoxViewTest : public views::test::WidgetTest,
-                          public SearchBoxViewDelegate {
+                          public search_box::SearchBoxViewDelegate {
  public:
   SearchBoxViewTest() = default;
   ~SearchBoxViewTest() override = default;
@@ -67,6 +67,7 @@ class SearchBoxViewTest : public views::test::WidgetTest,
 
     widget_ = CreateTopLevelPlatformWidget();
     view_.reset(new SearchBoxView(this, &view_delegate_, app_list_view()));
+    view_->Init();
     widget_->SetBounds(gfx::Rect(0, 0, 300, 200));
     counter_view_ = new KeyPressCounterView();
     widget_->GetContentsView()->AddChildView(view());
@@ -91,19 +92,6 @@ class SearchBoxViewTest : public views::test::WidgetTest,
   }
 
   void SetSearchBoxActive(bool active) { view()->SetSearchBoxActive(active); }
-
-  void SetLongAutoLaunchTimeout() {
-    // Sets a long timeout that lasts longer than the test run.
-    view_delegate_.set_auto_launch_timeout(base::TimeDelta::FromDays(1));
-  }
-
-  base::TimeDelta GetAutoLaunchTimeout() {
-    return view_delegate_.GetAutoLaunchTimeout();
-  }
-
-  void ResetAutoLaunchTimeout() {
-    view_delegate_.set_auto_launch_timeout(base::TimeDelta());
-  }
 
   int GetContentsViewKeyPressCountAndReset() {
     return counter_view_->GetCountAndReset();
@@ -133,14 +121,13 @@ class SearchBoxViewTest : public views::test::WidgetTest,
 
  private:
   // Overridden from SearchBoxViewDelegate:
-  void QueryChanged(SearchBoxView* sender) override {
+  void QueryChanged(search_box::SearchBoxViewBase* sender) override {
     ++query_changed_count_;
     last_query_ = sender->search_box()->text();
   }
 
   void BackButtonPressed() override {}
-
-  void SetSearchResultSelection(bool select) override {}
+  void ActiveChanged(search_box::SearchBoxViewBase* sender) override {}
 
   AppListTestViewDelegate view_delegate_;
   views::Widget* widget_;
@@ -152,29 +139,6 @@ class SearchBoxViewTest : public views::test::WidgetTest,
 
   DISALLOW_COPY_AND_ASSIGN(SearchBoxViewTest);
 };
-
-// TODO(crbug.com/781407) Re-enable the test once voice search is back.
-TEST_F(SearchBoxViewTest, DISABLED_CancelAutoLaunch) {
-  SetLongAutoLaunchTimeout();
-  ASSERT_NE(base::TimeDelta(), GetAutoLaunchTimeout());
-
-  // Normal key event cancels the timeout.
-  KeyPress(ui::VKEY_A);
-  EXPECT_EQ(base::TimeDelta(), GetAutoLaunchTimeout());
-  ResetAutoLaunchTimeout();
-
-  // Unusual key event doesn't cancel -- it will be canceled in
-  // SearchResultListView.
-  SetLongAutoLaunchTimeout();
-  KeyPress(ui::VKEY_DOWN);
-  EXPECT_NE(base::TimeDelta(), GetAutoLaunchTimeout());
-  ResetAutoLaunchTimeout();
-
-  // Clearing search box also cancels.
-  SetLongAutoLaunchTimeout();
-  view()->ClearSearch();
-  EXPECT_EQ(base::TimeDelta(), GetAutoLaunchTimeout());
-}
 
 // Tests that the close button is invisible by default.
 TEST_F(SearchBoxViewTest, CloseButtonInvisibleByDefault) {
@@ -236,8 +200,9 @@ TEST_F(SearchBoxViewTest, SearchBoxInactiveByDefault) {
 TEST_F(SearchBoxViewTest, SearchBoxInactiveSearchBoxGoogle) {
   SetSearchEngineIsGoogle(true);
   SetSearchBoxActive(false);
-  const gfx::ImageSkia expected_icon = gfx::CreateVectorIcon(
-      kIcGoogleBlackIcon, kSearchIconSize, kDefaultSearchboxColor);
+  const gfx::ImageSkia expected_icon =
+      gfx::CreateVectorIcon(kIcGoogleBlackIcon, search_box::kSearchIconSize,
+                            search_box::kDefaultSearchboxColor);
   view()->ModelChanged();
 
   const gfx::ImageSkia actual_icon =
@@ -251,8 +216,9 @@ TEST_F(SearchBoxViewTest, SearchBoxInactiveSearchBoxGoogle) {
 TEST_F(SearchBoxViewTest, SearchBoxActiveSearchEngineGoogle) {
   SetSearchEngineIsGoogle(true);
   SetSearchBoxActive(true);
-  const gfx::ImageSkia expected_icon = gfx::CreateVectorIcon(
-      kIcGoogleColorIcon, kSearchIconSize, kDefaultSearchboxColor);
+  const gfx::ImageSkia expected_icon =
+      gfx::CreateVectorIcon(kIcGoogleColorIcon, search_box::kSearchIconSize,
+                            search_box::kDefaultSearchboxColor);
   view()->ModelChanged();
 
   const gfx::ImageSkia actual_icon =
@@ -267,7 +233,8 @@ TEST_F(SearchBoxViewTest, SearchBoxInactiveSearchEngineNotGoogle) {
   SetSearchEngineIsGoogle(false);
   SetSearchBoxActive(false);
   const gfx::ImageSkia expected_icon = gfx::CreateVectorIcon(
-      kIcSearchEngineNotGoogleIcon, kSearchIconSize, kDefaultSearchboxColor);
+      kIcSearchEngineNotGoogleIcon, search_box::kSearchIconSize,
+      search_box::kDefaultSearchboxColor);
   view()->ModelChanged();
 
   const gfx::ImageSkia actual_icon =
@@ -282,7 +249,8 @@ TEST_F(SearchBoxViewTest, SearchBoxActiveSearchEngineNotGoogle) {
   SetSearchEngineIsGoogle(false);
   SetSearchBoxActive(true);
   const gfx::ImageSkia expected_icon = gfx::CreateVectorIcon(
-      kIcSearchEngineNotGoogleIcon, kSearchIconSize, kDefaultSearchboxColor);
+      kIcSearchEngineNotGoogleIcon, search_box::kSearchIconSize,
+      search_box::kDefaultSearchboxColor);
   view()->ModelChanged();
 
   const gfx::ImageSkia actual_icon =

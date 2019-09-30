@@ -4,9 +4,10 @@
 
 #include "cc/paint/paint_image.h"
 
+#include <memory>
+
 #include "base/atomic_sequence_num.h"
 #include "base/hash.h"
-#include "base/memory/ptr_util.h"
 #include "cc/paint/paint_image_generator.h"
 #include "cc/paint/paint_record.h"
 #include "cc/paint/skia_paint_image_generator.h"
@@ -14,13 +15,14 @@
 
 namespace cc {
 namespace {
-base::AtomicSequenceNumber s_next_id_;
-base::AtomicSequenceNumber s_next_content_id_;
+base::AtomicSequenceNumber g_next_id_;
+base::AtomicSequenceNumber g_next_content_id_;
 }  // namespace
 
 const PaintImage::Id PaintImage::kNonLazyStableId = -1;
 const size_t PaintImage::kDefaultFrameIndex = 0u;
 const PaintImage::Id PaintImage::kInvalidId = -2;
+const PaintImage::ContentId PaintImage::kInvalidContentId = -1;
 
 PaintImage::PaintImage() = default;
 PaintImage::PaintImage(const PaintImage& other) = default;
@@ -37,7 +39,7 @@ bool PaintImage::operator==(const PaintImage& other) const {
     return false;
   if (paint_record_rect_ != other.paint_record_rect_)
     return false;
-  if (paint_record_content_id_ != other.paint_record_content_id_)
+  if (content_id_ != other.content_id_)
     return false;
   if (paint_image_generator_ != other.paint_image_generator_)
     return false;
@@ -72,12 +74,12 @@ PaintImage::DecodingMode PaintImage::GetConservative(DecodingMode one,
 
 // static
 PaintImage::Id PaintImage::GetNextId() {
-  return s_next_id_.GetNext();
+  return g_next_id_.GetNext();
 }
 
 // static
 PaintImage::ContentId PaintImage::GetNextContentId() {
-  return s_next_content_id_.GetNext();
+  return g_next_content_id_.GetNext();
 }
 
 const sk_sp<SkImage>& PaintImage::GetSkImage() const {
@@ -120,7 +122,7 @@ void PaintImage::CreateSkImage() {
         nullptr, nullptr, SkImage::BitDepth::kU8, SkColorSpace::MakeSRGB());
   } else if (paint_image_generator_) {
     cached_sk_image_ =
-        SkImage::MakeFromGenerator(base::MakeUnique<SkiaPaintImageGenerator>(
+        SkImage::MakeFromGenerator(std::make_unique<SkiaPaintImageGenerator>(
             paint_image_generator_, frame_index_));
   }
 
@@ -142,19 +144,16 @@ SkISize PaintImage::GetSupportedDecodeSize(
   return SkISize::Make(width(), height());
 }
 
-SkImageInfo PaintImage::CreateDecodeImageInfo(const SkISize& size,
-                                              SkColorType color_type) const {
-  DCHECK(GetSupportedDecodeSize(size) == size);
-  return SkImageInfo::Make(size.width(), size.height(), color_type,
-                           kPremul_SkAlphaType);
-}
-
 bool PaintImage::Decode(void* memory,
                         SkImageInfo* info,
                         sk_sp<SkColorSpace> color_space,
                         size_t frame_index) const {
   // We only support decode to supported decode size.
   DCHECK(info->dimensions() == GetSupportedDecodeSize(info->dimensions()));
+
+  // We don't support SkImageInfo's with color spaces on them. Color spaces
+  // should always be passed via the |color_space| arg.
+  DCHECK(!info->colorSpace());
 
   // TODO(vmpstr): If we're using a subset_rect_ then the info specifies the
   // requested size relative to the subset. However, the generator isn't aware
@@ -238,15 +237,14 @@ bool PaintImage::ShouldAnimate() const {
 
 PaintImage::FrameKey PaintImage::GetKeyForFrame(size_t frame_index) const {
   DCHECK_LT(frame_index, FrameCount());
-  DCHECK(paint_image_generator_ || paint_record_);
 
   // Query the content id that uniquely identifies the content for this frame
   // from the content provider.
   ContentId content_id = kInvalidContentId;
   if (paint_image_generator_)
     content_id = paint_image_generator_->GetContentIdForFrame(frame_index);
-  else
-    content_id = paint_record_content_id_;
+  else if (paint_record_ || sk_image_)
+    content_id = content_id_;
 
   DCHECK_NE(content_id, kInvalidContentId);
   return FrameKey(content_id, frame_index, subset_rect_);
@@ -274,7 +272,7 @@ sk_sp<SkImage> PaintImage::GetSkImageForFrame(size_t index) const {
     return GetSkImage();
 
   sk_sp<SkImage> image = SkImage::MakeFromGenerator(
-      base::MakeUnique<SkiaPaintImageGenerator>(paint_image_generator_, index));
+      std::make_unique<SkiaPaintImageGenerator>(paint_image_generator_, index));
   if (!subset_rect_.IsEmpty())
     image = image->makeSubset(gfx::RectToSkIRect(subset_rect_));
   return image;

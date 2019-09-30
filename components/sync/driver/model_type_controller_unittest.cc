@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/callback.h"
 #include "base/logging.h"
 #include "base/memory/ref_counted.h"
@@ -189,8 +190,8 @@ class ModelTypeControllerTest : public testing::Test, public FakeSyncClient {
   // Runs any tasks posted on the model thread.
   void PumpModelThread() {
     base::RunLoop run_loop;
-    model_thread_.task_runner()->PostTaskAndReply(
-        FROM_HERE, base::Bind(&base::DoNothing), run_loop.QuitClosure());
+    model_thread_.task_runner()->PostTaskAndReply(FROM_HERE, base::DoNothing(),
+                                                  run_loop.QuitClosure());
     run_loop.Run();
   }
 
@@ -234,9 +235,7 @@ class ModelTypeControllerTest : public testing::Test, public FakeSyncClient {
     association_callback_called_ = true;
   }
 
-  std::unique_ptr<ModelTypeChangeProcessor> CreateProcessor(
-      ModelType type,
-      ModelTypeSyncBridge* bridge) {
+  std::unique_ptr<ModelTypeChangeProcessor> CreateProcessor() {
     std::unique_ptr<TestModelTypeProcessor> processor =
         std::make_unique<TestModelTypeProcessor>(&disable_sync_call_count_);
     processor_ = processor.get();
@@ -245,8 +244,7 @@ class ModelTypeControllerTest : public testing::Test, public FakeSyncClient {
 
   void InitializeModelTypeSyncBridge() {
     if (model_thread_.task_runner()->BelongsToCurrentThread()) {
-      bridge_ = std::make_unique<StubModelTypeSyncBridge>(base::Bind(
-          &ModelTypeControllerTest::CreateProcessor, base::Unretained(this)));
+      bridge_ = std::make_unique<StubModelTypeSyncBridge>(CreateProcessor());
     } else {
       model_thread_.task_runner()->PostTask(
           FROM_HERE,

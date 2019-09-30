@@ -5,7 +5,6 @@
 #include "chrome/test/base/ash_test_environment_chrome.h"
 
 #include "ash/test/ash_test_views_delegate.h"
-#include "base/memory/ptr_util.h"
 #include "ui/views/views_delegate.h"
 
 AshTestEnvironmentChrome::AshTestEnvironmentChrome() {}
@@ -14,5 +13,5 @@ AshTestEnvironmentChrome::~AshTestEnvironmentChrome() {}
 
 std::unique_ptr<ash::AshTestViewsDelegate>
 AshTestEnvironmentChrome::CreateViewsDelegate() {
-  return base::MakeUnique<ash::AshTestViewsDelegate>();
+  return std::make_unique<ash::AshTestViewsDelegate>();
 }

@@ -27,6 +27,7 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Message;
 import android.os.SystemClock;
+import android.support.annotation.IntDef;
 import android.text.TextUtils;
 import android.util.Base64;
 import android.util.Pair;
@@ -57,30 +58,36 @@ import org.chromium.base.TraceEvent;
 import org.chromium.base.VisibleForTesting;
 import org.chromium.base.annotations.CalledByNative;
 import org.chromium.base.annotations.JNINamespace;
+import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.blink_public.web.WebReferrerPolicy;
 import org.chromium.components.autofill.AutofillProvider;
 import org.chromium.components.navigation_interception.InterceptNavigationDelegate;
 import org.chromium.components.navigation_interception.NavigationParams;
 import org.chromium.content.browser.AppWebMessagePort;
-import org.chromium.content.browser.ContentViewCore;
 import org.chromium.content.browser.ContentViewStatics;
-import org.chromium.content.browser.SmartClipProvider;
 import org.chromium.content_public.browser.ChildProcessImportance;
+import org.chromium.content_public.browser.ContentViewCore;
+import org.chromium.content_public.browser.GestureListenerManager;
 import org.chromium.content_public.browser.GestureStateListener;
+import org.chromium.content_public.browser.ImeAdapter;
 import org.chromium.content_public.browser.ImeEventObserver;
 import org.chromium.content_public.browser.JavaScriptCallback;
+import org.chromium.content_public.browser.JavascriptInjector;
 import org.chromium.content_public.browser.LoadUrlParams;
 import org.chromium.content_public.browser.MessagePort;
 import org.chromium.content_public.browser.NavigationController;
 import org.chromium.content_public.browser.NavigationHistory;
 import org.chromium.content_public.browser.SelectionClient;
+import org.chromium.content_public.browser.SelectionPopupController;
+import org.chromium.content_public.browser.SmartClipProvider;
 import org.chromium.content_public.browser.WebContents;
+import org.chromium.content_public.browser.WebContentsAccessibility;
 import org.chromium.content_public.browser.WebContentsInternals;
 import org.chromium.content_public.browser.navigation_controller.LoadURLType;
 import org.chromium.content_public.browser.navigation_controller.UserAgentOverrideOption;
-import org.chromium.content_public.common.BrowserSideNavigationPolicy;
 import org.chromium.content_public.common.ContentUrlConstants;
 import org.chromium.content_public.common.Referrer;
+import org.chromium.content_public.common.UseZoomForDSFPolicy;
 import org.chromium.device.gamepad.GamepadList;
 import org.chromium.net.NetworkChangeNotifier;
 import org.chromium.ui.base.ActivityWindowAndroid;
@@ -126,12 +133,25 @@ public class AwContents implements SmartClipProvider {
 
     private static final double MIN_SCREEN_HEIGHT_PERCENTAGE_FOR_INTERSTITIAL = 0.7;
 
+    private static final String SAMSUNG_WORKAROUND_BASE_URL = "email://";
+    private static final int SAMSUNG_WORKAROUND_DELAY = 200;
+
     private static class ForceAuxiliaryBitmapRendering {
         private static final boolean sResult = lazyCheck();
         private static boolean lazyCheck() {
             return "goldfish".equals(Build.HARDWARE) || "ranchu".equals(Build.HARDWARE)
                     || !nativeHasRequiredHardwareExtensions();
         }
+    }
+
+    // Used to record the UMA histogram WebView.LoadDataWithBaseUrl.HistoryUrl. Since these values
+    // are persisted to logs, they should never be renumbered nor reused.
+    @IntDef({HistoryUrl.EMPTY, HistoryUrl.BASEURL, HistoryUrl.DIFFERENT, HistoryUrl.COUNT})
+    @interface HistoryUrl {
+        int EMPTY = 0;
+        int BASEURL = 1;
+        int DIFFERENT = 2;
+        int COUNT = 3;
     }
 
     /**
@@ -292,6 +312,7 @@ public class AwContents implements SmartClipProvider {
     private AwViewAndroidDelegate mViewAndroidDelegate;
     private WindowAndroidWrapper mWindowAndroid;
     private WebContents mWebContents;
+    private WebContentsInternalsHolder mWebContentsInternalsHolder;
     private NavigationController mNavigationController;
     private final AwContentsClient mContentsClient;
     private AwWebContentsObserver mWebContentsObserver;
@@ -318,8 +339,8 @@ public class AwContents implements SmartClipProvider {
     private boolean mIsViewVisible;
     private boolean mIsWindowVisible;
     private boolean mIsAttachedToWindow;
-    // Visiblity state of |mContentViewCore|.
-    private boolean mIsContentViewCoreVisible;
+    // Visiblity state of |mWebContents|.
+    private boolean mIsContentVisible;
     private boolean mIsUpdateVisibilityTaskPending;
     private Runnable mUpdateVisibilityRunnable;
 
@@ -399,6 +420,8 @@ public class AwContents implements SmartClipProvider {
     // used by WebContents, and AwContents doesn't have to know what's inside the holder.
     private WebContentsInternals mWebContentsInternals;
 
+    private JavascriptInjector mJavascriptInjector;
+
     private static class WebContentsInternalsHolder implements WebContents.InternalsHolder {
         private final WeakReference<AwContents> mAwContentsRef;
 
@@ -419,6 +442,10 @@ public class AwContents implements SmartClipProvider {
         public WebContentsInternals get() {
             AwContents awContents = mAwContentsRef.get();
             return awContents == null ? null : awContents.mWebContentsInternals;
+        }
+
+        public boolean weakRefCleared() {
+            return mAwContentsRef.get() == null;
         }
     }
 
@@ -581,30 +608,11 @@ public class AwContents implements SmartClipProvider {
     private class InterceptNavigationDelegateImpl implements InterceptNavigationDelegate {
         @Override
         public boolean shouldIgnoreNavigation(NavigationParams navigationParams) {
-            final String url = navigationParams.url;
-            boolean ignoreNavigation = false;
-            // Disable old path for sending shouldoverrideurlloadings for popups when
-            // plznavigate is enabled. The callback will come through NavigatorRequest.
-            if (!BrowserSideNavigationPolicy.isBrowserSideNavigationEnabled()
-                    && mDeferredShouldOverrideUrlLoadingIsPendingForPopup) {
-                mDeferredShouldOverrideUrlLoadingIsPendingForPopup = false;
-                // If this is used for all navigations in future, cases for application initiated
-                // load, redirect and backforward should also be filtered out.
-                if (!navigationParams.isPost) {
-                    ignoreNavigation = mContentsClient.shouldIgnoreNavigation(
-                            mContext, url, navigationParams.isMainFrame,
-                            navigationParams.hasUserGesture
-                            || navigationParams.hasUserGestureCarryover,
-                            navigationParams.isRedirect);
-                }
-            }
             // The shouldOverrideUrlLoading call might have resulted in posting messages to the
             // UI thread. Using sendMessage here (instead of calling onPageStarted directly)
             // will allow those to run in order.
-            if (!ignoreNavigation) {
-                mContentsClient.getCallbackHelper().postOnPageStarted(url);
-            }
-            return ignoreNavigation;
+            mContentsClient.getCallbackHelper().postOnPageStarted(navigationParams.url);
+            return false;
         }
     }
 
@@ -676,7 +684,7 @@ public class AwContents implements SmartClipProvider {
 
         @Override
         public void cancelFling() {
-            mContentViewCore.cancelFling(SystemClock.uptimeMillis());
+            mWebContents.getEventForwarder().cancelFling(SystemClock.uptimeMillis());
         }
     }
 
@@ -856,30 +864,24 @@ public class AwContents implements SmartClipProvider {
         onContainerViewChanged();
     }
 
-    private void initializeContentViewCore(ContentViewCore contentViewCore, Context context,
-            ViewAndroidDelegate viewDelegate, InternalAccessDelegate internalDispatcher,
-            WebContents webContents, GestureStateListener gestureStateListener,
+    private void createContentViewCore(ViewAndroidDelegate viewDelegate,
+            InternalAccessDelegate internalDispatcher, WebContents webContents,
             WindowAndroid windowAndroid) {
-        contentViewCore.initialize(viewDelegate, internalDispatcher, webContents, windowAndroid);
-        contentViewCore.setActionModeCallback(
-                new AwActionModeCallback(mContext, this,
-                        contentViewCore.getActionModeCallbackHelper()));
+        mContentViewCore = ContentViewCore.create(mContext, PRODUCT_VERSION, webContents,
+                viewDelegate, internalDispatcher, windowAndroid);
+        mContentViewCore.setHideKeyboardOnBlur(false);
+        SelectionPopupController controller = SelectionPopupController.fromWebContents(webContents);
+        controller.setActionModeCallback(
+                new AwActionModeCallback(mContext, this, controller.getActionModeCallbackHelper()));
         if (mAutofillProvider != null) {
-            contentViewCore.setNonSelectionActionModeCallback(
-                    new AutofillActionModeCallback(context, mAutofillProvider));
+            controller.setNonSelectionActionModeCallback(
+                    new AutofillActionModeCallback(mContext, mAutofillProvider));
         }
-        contentViewCore.setSelectionClient(SelectionClient.createSmartSelectionClient(webContents));
-        contentViewCore.addGestureStateListener(gestureStateListener);
+        controller.setSelectionClient(SelectionClient.createSmartSelectionClient(webContents));
 
         // Listen for dpad events from IMEs (e.g. Samsung Cursor Control) so we know to enable
         // spatial navigation mode to allow these events to move focus out of the WebView.
-        contentViewCore.addImeEventObserver(new ImeEventObserver() {
-            @Override
-            public void onImeEvent() {}
-
-            @Override
-            public void onNodeAttributeUpdated(boolean editable, boolean password) {}
-
+        ImeAdapter.fromWebContents(webContents).addEventObserver(new ImeEventObserver() {
             @Override
             public void onBeforeSendKeyEvent(KeyEvent event) {
                 if (AwContents.isDpadEvent(event)) {
@@ -887,6 +889,14 @@ public class AwContents implements SmartClipProvider {
                 }
             }
         });
+    }
+
+    private boolean isSamsungMailApp() {
+        // There are 2 different Samsung mail apps exhibiting bugs related to
+        // http://crbug.com/781535.
+        String currentPackageName = mContext.getPackageName();
+        return "com.android.email".equals(currentPackageName)
+                || "com.samsung.android.email.composer".equals(currentPackageName);
     }
 
     boolean isFullScreen() {
@@ -1105,11 +1115,10 @@ public class AwContents implements SmartClipProvider {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
             setNewAwContentsPreO(newAwContentsPtr);
         } else {
-            // Move the TextClassifier to the new ContentViewCore.
-            TextClassifier textClassifier =
-                    mContentViewCore == null ? null : mContentViewCore.getCustomTextClassifier();
+            // Move the TextClassifier to the new WebContents.
+            TextClassifier textClassifier = mWebContents != null ? getTextClassifier() : null;
             setNewAwContentsPreO(newAwContentsPtr);
-            if (textClassifier != null) mContentViewCore.setTextClassifier(textClassifier);
+            if (textClassifier != null) setTextClassifier(textClassifier);
         }
     }
 
@@ -1119,8 +1128,10 @@ public class AwContents implements SmartClipProvider {
             destroyNatives();
             mContentViewCore = null;
             mWebContents = null;
+            mWebContentsInternalsHolder = null;
             mWebContentsInternals = null;
             mNavigationController = null;
+            mJavascriptInjector = null;
         }
 
         assert mNativeAwContents == 0 && mCleanupReference == null && mContentViewCore == null;
@@ -1134,17 +1145,17 @@ public class AwContents implements SmartClipProvider {
         WebContents webContents = nativeGetWebContents(mNativeAwContents);
 
         mWindowAndroid = getWindowAndroid(mContext);
-
-        mContentViewCore = ContentViewCore.create(mContext, PRODUCT_VERSION);
         mViewAndroidDelegate =
                 new AwViewAndroidDelegate(mContainerView, mContentsClient, mScrollOffsetManager);
-        initializeContentViewCore(mContentViewCore, mContext, mViewAndroidDelegate,
-                mInternalAccessAdapter, webContents, new AwGestureStateListener(),
+        createContentViewCore(mViewAndroidDelegate, mInternalAccessAdapter, webContents,
                 mWindowAndroid.getWindowAndroid());
         nativeSetJavaPeers(mNativeAwContents, this, mWebContentsDelegate, mContentsClientBridge,
                 mIoThreadClient, mInterceptNavigationDelegate, mAutofillProvider);
         mWebContents = mContentViewCore.getWebContents();
-        mWebContents.setInternalsHolder(new WebContentsInternalsHolder(this));
+        mWebContentsInternalsHolder = new WebContentsInternalsHolder(this);
+        mWebContents.setInternalsHolder(mWebContentsInternalsHolder);
+        GestureListenerManager.fromWebContents(mWebContents)
+                .addListener(new AwGestureStateListener());
 
         mNavigationController = mWebContents.getNavigationController();
         installWebContentsObserver();
@@ -1213,7 +1224,7 @@ public class AwContents implements SmartClipProvider {
         Map<String, Pair<Object, Class>> javascriptInterfaces =
                 new HashMap<String, Pair<Object, Class>>();
         if (mContentViewCore != null) {
-            javascriptInterfaces.putAll(mWebContents.getJavascriptInterfaces());
+            javascriptInterfaces.putAll(getJavascriptInjector().getInterfaces());
         }
 
         setNewAwContents(popupNativeAwContents);
@@ -1239,9 +1250,16 @@ public class AwContents implements SmartClipProvider {
         for (Map.Entry<String, Pair<Object, Class>> entry : javascriptInterfaces.entrySet()) {
             @SuppressWarnings("unchecked")
             Class<? extends Annotation> requiredAnnotation = entry.getValue().second;
-            mWebContents.addPossiblyUnsafeJavascriptInterface(
+            getJavascriptInjector().addPossiblyUnsafeInterface(
                     entry.getValue().first, entry.getKey(), requiredAnnotation);
         }
+    }
+
+    private JavascriptInjector getJavascriptInjector() {
+        if (mJavascriptInjector == null) {
+            mJavascriptInjector = JavascriptInjector.fromWebContents(mWebContents);
+        }
+        return mJavascriptInjector;
     }
 
     @VisibleForTesting
@@ -1344,11 +1362,13 @@ public class AwContents implements SmartClipProvider {
         }
         boolean destroyRunnableHasRun =
                 mCleanupReference != null && mCleanupReference.hasCleanedUp();
+        boolean weakRefsCleared =
+                mWebContentsInternalsHolder != null && mWebContentsInternalsHolder.weakRefCleared();
         if (TRACE && destroyRunnableHasRun && !mIsDestroyed) {
             // Swallow the error. App developers are not going to do anything with an error msg.
             Log.d(TAG, "AwContents is kept alive past CleanupReference by finalizer");
         }
-        return mIsDestroyed || destroyRunnableHasRun;
+        return mIsDestroyed || destroyRunnableHasRun || weakRefsCleared;
     }
 
     @VisibleForTesting
@@ -1407,7 +1427,7 @@ public class AwContents implements SmartClipProvider {
      */
     public void disableJavascriptInterfacesInspection() {
         if (!isDestroyedOrNoOperation(WARN)) {
-            mWebContents.setAllowJavascriptInterfacesInspection(false);
+            getJavascriptInjector().setAllowInspection(false);
         }
     }
 
@@ -1611,6 +1631,11 @@ public class AwContents implements SmartClipProvider {
         return "base64".equals(encoding);
     }
 
+    private static void recordHistoryUrl(@HistoryUrl int value) {
+        RecordHistogram.recordEnumeratedHistogram(
+                "Android.WebView.LoadDataWithBaseUrl.HistoryUrl", value, HistoryUrl.COUNT);
+    }
+
     /**
      * WebView.loadData.
      */
@@ -1635,6 +1660,14 @@ public class AwContents implements SmartClipProvider {
         baseUrl = fixupBase(baseUrl);
         historyUrl = fixupHistory(historyUrl);
 
+        if (historyUrl.equals(ContentUrlConstants.ABOUT_BLANK_DISPLAY_URL)) {
+            recordHistoryUrl(HistoryUrl.EMPTY);
+        } else if (historyUrl.equals(baseUrl)) {
+            recordHistoryUrl(HistoryUrl.BASEURL);
+        } else {
+            recordHistoryUrl(HistoryUrl.DIFFERENT);
+        }
+
         if (baseUrl.startsWith("data:")) {
             // For backwards compatibility with WebViewClassic, we use the value of |encoding|
             // as the charset, as long as it's not "base64".
@@ -1654,6 +1687,14 @@ public class AwContents implements SmartClipProvider {
                 Log.wtf(TAG, "Unable to load data string %s", data, e);
                 return;
             }
+        }
+
+        // This is a workaround for an issue with PlzNavigate and one of Samsung's OEM mail apps.
+        // See http://crbug.com/781535.
+        if (isSamsungMailApp() && SAMSUNG_WORKAROUND_BASE_URL.equals(loadUrlParams.getBaseUrl())) {
+            ThreadUtils.postOnUiThreadDelayed(
+                    () -> loadUrl(loadUrlParams), SAMSUNG_WORKAROUND_DELAY);
+            return;
         }
         loadUrl(loadUrlParams);
     }
@@ -1717,13 +1758,6 @@ public class AwContents implements SmartClipProvider {
         if (!mHasRequestedVisitedHistoryFromClient) {
             mHasRequestedVisitedHistoryFromClient = true;
             requestVisitedHistoryFromClient();
-        }
-
-        if (!BrowserSideNavigationPolicy.isBrowserSideNavigationEnabled()
-                && params.getLoadUrlType() == LoadURLType.DATA && params.getBaseUrl() != null) {
-            // Data loads with a base url will be resolved in Blink, and not cause an onPageStarted
-            // event to be sent. Sending the callback directly from here.
-            mContentsClient.getCallbackHelper().postOnPageStarted(params.getBaseUrl());
         }
     }
 
@@ -1917,6 +1951,13 @@ public class AwContents implements SmartClipProvider {
      */
     public void computeScroll() {
         mAwViewMethods.computeScroll();
+    }
+
+    /**
+     * @see View#onCheckIsTextEditor()
+     */
+    public boolean onCheckIsTextEditor() {
+        return mAwViewMethods.onCheckIsTextEditor();
     }
 
     /**
@@ -2117,7 +2158,7 @@ public class AwContents implements SmartClipProvider {
     }
 
     /**
-     * @see ContentViewCore#getNavigationHistory()
+     * @see NavigationController#getNavigationHistory()
      */
     public NavigationHistory getNavigationHistory() {
         return isDestroyedOrNoOperation(WARN) ? null : mNavigationController.getNavigationHistory();
@@ -2227,7 +2268,8 @@ public class AwContents implements SmartClipProvider {
     public void flingScroll(int velocityX, int velocityY) {
         if (TRACE) Log.i(TAG, "%s flingScroll", this);
         if (isDestroyedOrNoOperation(WARN)) return;
-        mContentViewCore.flingViewport(SystemClock.uptimeMillis(), -velocityX, -velocityY, false);
+        mWebContents.getEventForwarder().startFling(
+                SystemClock.uptimeMillis(), -velocityX, -velocityY, false);
     }
 
     /**
@@ -2376,6 +2418,10 @@ public class AwContents implements SmartClipProvider {
         return mWebContents.hasAccessedInitialDocument();
     }
 
+    private WebContentsAccessibility getWebContentsAccessibility() {
+        return WebContentsAccessibility.fromWebContents(mWebContents);
+    }
+
     @TargetApi(Build.VERSION_CODES.M)
     public void onProvideVirtualStructure(ViewStructure structure) {
         if (isDestroyedOrNoOperation(WARN)) return;
@@ -2386,7 +2432,7 @@ public class AwContents implements SmartClipProvider {
         }
         // for webview, the platform already calculates the scroll (as it is a view) in
         // ViewStructure tree. Do not offset for it in the snapshop x,y position calculations.
-        mContentViewCore.onProvideVirtualStructure(structure, true);
+        getWebContentsAccessibility().onProvideVirtualStructure(structure, true);
     }
 
     public void onProvideAutoFillVirtualStructure(ViewStructure structure, int flags) {
@@ -2439,7 +2485,8 @@ public class AwContents implements SmartClipProvider {
     public void onActivityResult(int requestCode, int resultCode, Intent data) {
         if (isDestroyedOrNoOperation(NO_WARN)) return;
         if (requestCode == PROCESS_TEXT_REQUEST_CODE) {
-            mContentViewCore.onReceivedProcessTextResult(resultCode, data);
+            SelectionPopupController.fromWebContents(mWebContents)
+                    .onReceivedProcessTextResult(resultCode, data);
         } else {
             Log.e(TAG, "Received activity result for an unknown request code %d", requestCode);
         }
@@ -2582,14 +2629,14 @@ public class AwContents implements SmartClipProvider {
     private void updateContentViewCoreVisibility() {
         mIsUpdateVisibilityTaskPending = false;
         if (isDestroyedOrNoOperation(NO_WARN)) return;
-        boolean contentViewCoreVisible = nativeIsVisible(mNativeAwContents);
+        boolean contentVisible = nativeIsVisible(mNativeAwContents);
 
-        if (contentViewCoreVisible && !mIsContentViewCoreVisible) {
-            mContentViewCore.onShow();
-        } else if (!contentViewCoreVisible && mIsContentViewCoreVisible) {
-            mContentViewCore.onHide();
+        if (contentVisible && !mIsContentVisible) {
+            mWebContents.onShow();
+        } else if (!contentVisible && mIsContentVisible) {
+            mWebContents.onHide();
         }
-        mIsContentViewCoreVisible = contentViewCoreVisible;
+        mIsContentVisible = contentVisible;
         updateChildProcessImportance();
     }
 
@@ -2601,7 +2648,7 @@ public class AwContents implements SmartClipProvider {
      */
     @VisibleForTesting
     public boolean isPageVisible() {
-        if (isDestroyedOrNoOperation(NO_WARN)) return mIsContentViewCoreVisible;
+        if (isDestroyedOrNoOperation(NO_WARN)) return mIsContentVisible;
         return nativeIsVisible(mNativeAwContents);
     }
 
@@ -2649,7 +2696,7 @@ public class AwContents implements SmartClipProvider {
     }
 
     /**
-     * @see WebContents#addPossiblyUnsafeJavascriptInterface(Object, String, Class)
+     * @see JavascriptInjector#addPossiblyUnsafeInterface(Object, String, Class)
      */
     @SuppressLint("NewApi")  // JavascriptInterface requires API level 17.
     public void addJavascriptInterface(Object object, String name) {
@@ -2660,17 +2707,17 @@ public class AwContents implements SmartClipProvider {
             requiredAnnotation = JavascriptInterface.class;
         }
 
-        mWebContents.addPossiblyUnsafeJavascriptInterface(object, name, requiredAnnotation);
+        getJavascriptInjector().addPossiblyUnsafeInterface(object, name, requiredAnnotation);
     }
 
     /**
      * @see android.webkit.WebView#removeJavascriptInterface(String)
      */
     public void removeJavascriptInterface(String interfaceName) {
-        if (TRACE) Log.i(TAG, "%s removeJavascriptInterface=%s", this, interfaceName);
+        if (TRACE) Log.i(TAG, "%s removeInterface=%s", this, interfaceName);
         if (isDestroyedOrNoOperation(WARN)) return;
 
-        mWebContents.removeJavascriptInterface(interfaceName);
+        getJavascriptInjector().removeInterface(interfaceName);
     }
 
     /**
@@ -2684,8 +2731,9 @@ public class AwContents implements SmartClipProvider {
     }
 
     public boolean supportsAccessibilityAction(int action) {
-        return isDestroyedOrNoOperation(WARN) ? false
-                : mContentViewCore.supportsAccessibilityAction(action);
+        return isDestroyedOrNoOperation(WARN)
+                ? false
+                : getWebContentsAccessibility().supportsAction(action);
     }
 
     /**
@@ -2747,7 +2795,7 @@ public class AwContents implements SmartClipProvider {
     private void updateChildProcessImportance() {
         @ChildProcessImportance
         int effectiveImportance = ChildProcessImportance.IMPORTANT;
-        if (mRendererPriorityWaivedWhenNotVisible && !mIsContentViewCoreVisible) {
+        if (mRendererPriorityWaivedWhenNotVisible && !mIsContentVisible) {
             effectiveImportance = ChildProcessImportance.NORMAL;
         } else {
             switch (mRendererPriority) {
@@ -2785,13 +2833,13 @@ public class AwContents implements SmartClipProvider {
     }
 
     public void setTextClassifier(TextClassifier textClassifier) {
-        assert mContentViewCore != null;
-        mContentViewCore.setTextClassifier(textClassifier);
+        assert mWebContents != null;
+        SelectionPopupController.fromWebContents(mWebContents).setTextClassifier(textClassifier);
     }
 
     public TextClassifier getTextClassifier() {
-        assert mContentViewCore != null;
-        return mContentViewCore.getTextClassifier();
+        assert mWebContents != null;
+        return SelectionPopupController.fromWebContents(mWebContents).getTextClassifier();
     }
 
     //--------------------------------------------------------------------------------------------
@@ -2947,8 +2995,9 @@ public class AwContents implements SmartClipProvider {
     }
 
     @CalledByNative
-    private void scrollContainerViewTo(int x, int y) {
-        mScrollOffsetManager.scrollContainerViewTo(x, y);
+    private void scrollContainerViewTo(int xPx, int yPx) {
+        // Both xPx and yPx are in physical pixel scale.
+        mScrollOffsetManager.scrollContainerViewTo(xPx, yPx);
     }
 
     @CalledByNative
@@ -2965,7 +3014,7 @@ public class AwContents implements SmartClipProvider {
     @CalledByNative
     private void setAwAutofillClient(AwAutofillClient client) {
         mAwAutofillClient = client;
-        client.init(mContentViewCore);
+        client.init(mContext);
     }
 
     @CalledByNative
@@ -3071,6 +3120,15 @@ public class AwContents implements SmartClipProvider {
     private static void onEvaluateJavaScriptResultForTesting(
             String jsonResult, JavaScriptCallback callback) {
         callback.handleJavaScriptResult(jsonResult);
+    }
+
+    /**
+     * Return the device locale in the same format we use to populate the 'hl' query parameter for
+     * Safe Browsing interstitial urls, as done in BaseUIManager::app_locale().
+     */
+    @VisibleForTesting
+    public static String getSafeBrowsingLocaleForTesting() {
+        return nativeGetSafeBrowsingLocaleForTesting();
     }
 
     // -------------------------------------------------------------------------------------------
@@ -3276,8 +3334,9 @@ public class AwContents implements SmartClipProvider {
 
         @Override
         public InputConnection onCreateInputConnection(EditorInfo outAttrs) {
-            return isDestroyedOrNoOperation(NO_WARN) ? null
-                    : mContentViewCore.onCreateInputConnection(outAttrs);
+            return isDestroyedOrNoOperation(NO_WARN)
+                    ? null
+                    : ImeAdapter.fromWebContents(mWebContents).onCreateInputConnection(outAttrs);
         }
 
         @Override
@@ -3326,10 +3385,16 @@ public class AwContents implements SmartClipProvider {
             if (event.getActionMasked() == MotionEvent.ACTION_DOWN) {
                 // Note this will trigger IPC back to browser even if nothing is
                 // hit.
-                float dipScale = getDeviceScaleFactor();
-                nativeRequestNewHitTestDataAt(mNativeAwContents,
-                        event.getX() / dipScale, event.getY() / dipScale,
-                        Math.max(event.getTouchMajor(), event.getTouchMinor()) / dipScale);
+                float eventX = event.getX();
+                float eventY = event.getY();
+                float touchMajor = Math.max(event.getTouchMajor(), event.getTouchMinor());
+                if (!UseZoomForDSFPolicy.isUseZoomForDSFEnabled()) {
+                    float dipScale = getDeviceScaleFactor();
+                    eventX /= dipScale;
+                    eventY /= dipScale;
+                    touchMajor /= dipScale;
+                }
+                nativeRequestNewHitTestDataAt(mNativeAwContents, eventX, eventY, touchMajor);
             }
 
             if (mOverScrollGlow != null) {
@@ -3425,7 +3490,7 @@ public class AwContents implements SmartClipProvider {
         public void onFocusChanged(boolean focused, int direction, Rect previouslyFocusedRect) {
             if (isDestroyedOrNoOperation(NO_WARN)) return;
             mContainerViewFocused = focused;
-            mContentViewCore.onFocusChanged(focused, false /* hideKeyboardOnBlur */);
+            mContentViewCore.onViewFocusChanged(focused);
         }
 
         @Override
@@ -3438,7 +3503,6 @@ public class AwContents implements SmartClipProvider {
             // update.
             mLayoutSizer.onSizeChanged(w, h, ow, oh);
             nativeOnSizeChanged(mNativeAwContents, w, h, ow, oh);
-            mContentViewCore.onSizeChanged(w, h, ow, oh);
         }
 
         @Override
@@ -3512,16 +3576,24 @@ public class AwContents implements SmartClipProvider {
         }
 
         @Override
+        public boolean onCheckIsTextEditor() {
+            if (isDestroyedOrNoOperation(NO_WARN)) return false;
+            ImeAdapter imeAdapter = ImeAdapter.fromWebContents(mWebContents);
+            return imeAdapter != null ? imeAdapter.onCheckIsTextEditor() : false;
+        }
+
+        @Override
         public AccessibilityNodeProvider getAccessibilityNodeProvider() {
-            return isDestroyedOrNoOperation(WARN) ? null
-                                                  : mContentViewCore.getAccessibilityNodeProvider();
+            if (isDestroyedOrNoOperation(NO_WARN)) return null;
+            WebContentsAccessibility wcax = getWebContentsAccessibility();
+            return wcax != null ? wcax.getAccessibilityNodeProvider() : null;
         }
 
         @Override
         public boolean performAccessibilityAction(final int action, final Bundle arguments) {
-            return isDestroyedOrNoOperation(WARN)
-                    ? false
-                    : mContentViewCore.performAccessibilityAction(action, arguments);
+            if (isDestroyedOrNoOperation(NO_WARN)) return false;
+            WebContentsAccessibility wcax = getWebContentsAccessibility();
+            return wcax != null ? wcax.performAction(action, arguments) : false;
         }
     }
 
@@ -3546,6 +3618,7 @@ public class AwContents implements SmartClipProvider {
     private static native int nativeGetNativeInstanceCount();
     private static native void nativeSetShouldDownloadFavicons();
     private static native void nativeUpdateDefaultLocale(String locale, String localeList);
+    private static native String nativeGetSafeBrowsingLocaleForTesting();
 
     private native void nativeEvaluateJavaScriptOnInterstitialForTesting(
             long nativeAwContents, String script, JavaScriptCallback jsCallback);
@@ -3576,7 +3649,8 @@ public class AwContents implements SmartClipProvider {
     private native void nativeKillRenderProcess(long nativeAwContents);
     private native byte[] nativeGetCertificate(long nativeAwContents);
 
-    // Coordinates in desity independent pixels.
+    // Coordinates are in physical pixels when --use-zoom-for-dsf is enabled.
+    // Otherwise, coordinates are in desity independent pixels.
     private native void nativeRequestNewHitTestDataAt(long nativeAwContents, float x, float y,
             float touchMajor);
     private native void nativeUpdateLastHitTestData(long nativeAwContents);

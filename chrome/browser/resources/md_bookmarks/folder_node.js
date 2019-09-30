@@ -58,6 +58,7 @@ Polymer({
 
   observers: [
     'updateAriaExpanded_(hasChildFolder_, isOpen)',
+    'scrollIntoViewIfNeeded_(isSelectedFolder_)',
   ],
 
   /** @override */
@@ -76,12 +77,6 @@ Polymer({
     });
 
     this.updateFromStore();
-
-    if (this.isSelectedFolder_) {
-      this.async(function() {
-        this.scrollIntoViewIfNeeded();
-      });
-    }
   },
 
   /**
@@ -146,7 +141,7 @@ Polymer({
   changeKeyboardSelection_: function(xDirection, yDirection, currentFocus) {
     let newFocusFolderNode = null;
     const isChildFolderNodeFocused =
-        currentFocus.tagName == 'BOOKMARKS-FOLDER-NODE';
+        currentFocus && currentFocus.tagName == 'BOOKMARKS-FOLDER-NODE';
 
     if (xDirection == 1) {
       // The right arrow opens a folder if closed and goes to the first child
@@ -384,6 +379,17 @@ Polymer({
       this.getFocusTarget().setAttribute('aria-expanded', String(isOpen));
     else
       this.getFocusTarget().removeAttribute('aria-expanded');
+  },
+
+  /**
+   * Scrolls the folder node into view when the folder is selected.
+   * @private
+   */
+  scrollIntoViewIfNeeded_: function() {
+    if (!this.isSelectedFolder_)
+      return;
+
+    this.async(() => this.$.container.scrollIntoViewIfNeeded());
   },
 
   /**

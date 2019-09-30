@@ -7,7 +7,6 @@
 #include <vector>
 
 #include "base/bind.h"
-#include "base/memory/ptr_util.h"
 #include "base/memory/weak_ptr.h"
 #include "base/run_loop.h"
 #include "base/strings/sys_string_conversions.h"
@@ -18,7 +17,7 @@
 #include "base/threading/thread_restrictions.h"
 #include "base/version.h"
 #include "base/win/windows_version.h"
-#include "components/variations/metrics_util.h"
+#include "components/variations/hashing.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace {
@@ -35,7 +34,7 @@ void VerifySystemProfileData(const metrics::SystemProfileProto& system_profile,
   if (base::win::GetVersion() >= base::win::VERSION_WIN8) {
     bool defender_found = false;
     for (const auto& av : system_profile.antivirus_product()) {
-      if (av.product_name_hash() == metrics::HashName(kWindowsDefender)) {
+      if (av.product_name_hash() == variations::HashName(kWindowsDefender)) {
         defender_found = true;
         if (expect_unhashed_value) {
           EXPECT_TRUE(av.has_product_name());
@@ -59,7 +58,7 @@ class AntiVirusMetricsProviderTest : public ::testing::TestWithParam<bool> {
   AntiVirusMetricsProviderTest()
       : got_results_(false),
         expect_unhashed_value_(GetParam()),
-        provider_(base::MakeUnique<AntiVirusMetricsProvider>()),
+        provider_(std::make_unique<AntiVirusMetricsProvider>()),
         weak_ptr_factory_(this) {}
 
   void GetMetricsCallback() {

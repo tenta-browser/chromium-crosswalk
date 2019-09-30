@@ -12,7 +12,6 @@
 #include "ash/system/toast/toast_manager.h"
 #include "ash/touch/touch_devices_controller.h"
 #include "ash/wallpaper/wallpaper_controller.h"
-#include "ash/wallpaper/wallpaper_delegate.h"
 #include "ash/wm/tablet_mode/tablet_mode_controller.h"
 #include "ash/wm/widget_finder.h"
 #include "ash/wm/window_properties.h"
@@ -110,26 +109,28 @@ void HandleToggleWallpaperMode() {
   static int index = 0;
   WallpaperController* wallpaper_controller =
       Shell::Get()->wallpaper_controller();
-  wallpaper::WallpaperInfo info("", wallpaper::WALLPAPER_LAYOUT_STRETCH,
-                                wallpaper::DEFAULT,
-                                base::Time::Now().LocalMidnight());
+  WallpaperInfo info("", WALLPAPER_LAYOUT_STRETCH, DEFAULT,
+                     base::Time::Now().LocalMidnight());
   switch (++index % 4) {
     case 0:
-      Shell::Get()->wallpaper_delegate()->InitializeWallpaper();
+      wallpaper_controller->ShowDefaultWallpaperForTesting();
       break;
     case 1:
-      wallpaper_controller->SetWallpaperImage(
-          CreateWallpaperImage(SK_ColorRED, SK_ColorBLUE), info);
+      wallpaper_controller->ShowWallpaperImage(
+          CreateWallpaperImage(SK_ColorRED, SK_ColorBLUE), info,
+          false /*preview_mode=*/);
       break;
     case 2:
-      info.layout = wallpaper::WALLPAPER_LAYOUT_CENTER;
-      wallpaper_controller->SetWallpaperImage(
-          CreateWallpaperImage(SK_ColorBLUE, SK_ColorGREEN), info);
+      info.layout = WALLPAPER_LAYOUT_CENTER;
+      wallpaper_controller->ShowWallpaperImage(
+          CreateWallpaperImage(SK_ColorBLUE, SK_ColorGREEN), info,
+          false /*preview_mode=*/);
       break;
     case 3:
-      info.layout = wallpaper::WALLPAPER_LAYOUT_CENTER_CROPPED;
-      wallpaper_controller->SetWallpaperImage(
-          CreateWallpaperImage(SK_ColorGREEN, SK_ColorRED), info);
+      info.layout = WALLPAPER_LAYOUT_CENTER_CROPPED;
+      wallpaper_controller->ShowWallpaperImage(
+          CreateWallpaperImage(SK_ColorGREEN, SK_ColorRED), info,
+          false /*preview_mode=*/);
       break;
   }
 }
@@ -143,8 +144,8 @@ void HandleToggleTouchscreen() {
   base::RecordAction(base::UserMetricsAction("Accel_Toggle_Touchscreen"));
   TouchDevicesController* controller = Shell::Get()->touch_devices_controller();
   controller->SetTouchscreenEnabled(
-      !controller->GetTouchscreenEnabled(TouchscreenEnabledSource::USER_PREF),
-      TouchscreenEnabledSource::USER_PREF);
+      !controller->GetTouchscreenEnabled(TouchDeviceEnabledSource::USER_PREF),
+      TouchDeviceEnabledSource::USER_PREF);
 }
 
 void HandleToggleTabletMode() {

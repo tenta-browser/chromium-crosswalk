@@ -9,6 +9,7 @@
 
 #include "base/bind.h"
 #include "base/lazy_instance.h"
+#include "base/optional.h"
 #include "base/strings/string16.h"
 #include "extensions/browser/api/extensions_api_client.h"
 #include "extensions/browser/api/virtual_keyboard_private/virtual_keyboard_delegate.h"
@@ -130,9 +131,41 @@ ExtensionFunction::ResponseAction VirtualKeyboardPrivateSetModeFunction::Run() {
   std::unique_ptr<keyboard::SetMode::Params> params =
       keyboard::SetMode::Params::Create(*args_);
   EXTENSION_FUNCTION_VALIDATE(params);
-  if (!delegate()->SetVirtualKeyboardMode(params->mode))
+  if (!delegate()->SetVirtualKeyboardMode(
+          params->mode, base::nullopt,
+          base::BindOnce(&VirtualKeyboardPrivateSetModeFunction::OnSetMode,
+                         this)))
     return RespondNow(Error(kVirtualKeyboardNotEnabled));
-  return RespondNow(NoArguments());
+  return RespondLater();
+}
+
+void VirtualKeyboardPrivateSetModeFunction::OnSetMode(bool success) {
+  Respond(OneArgument(std::make_unique<base::Value>(success)));
+}
+
+ExtensionFunction::ResponseAction
+VirtualKeyboardPrivateSetContainerBehaviorFunction::Run() {
+  std::unique_ptr<keyboard::SetContainerBehavior::Params> params =
+      keyboard::SetContainerBehavior::Params::Create(*args_);
+  EXTENSION_FUNCTION_VALIDATE(params);
+  base::Optional<gfx::Rect> target_bounds(base::nullopt);
+  if (params->options.bounds) {
+    target_bounds = gfx::Rect(
+        params->options.bounds->top, params->options.bounds->left,
+        params->options.bounds->width, params->options.bounds->height);
+  }
+  if (!delegate()->SetVirtualKeyboardMode(
+          params->options.mode, std::move(target_bounds),
+          base::BindOnce(&VirtualKeyboardPrivateSetContainerBehaviorFunction::
+                             OnSetContainerBehavior,
+                         this)))
+    return RespondNow(Error(kVirtualKeyboardNotEnabled));
+  return RespondLater();
+}
+
+void VirtualKeyboardPrivateSetContainerBehaviorFunction::OnSetContainerBehavior(
+    bool success) {
+  Respond(OneArgument(std::make_unique<base::Value>(success)));
 }
 
 ExtensionFunction::ResponseAction

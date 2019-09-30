@@ -8,6 +8,7 @@
 
 #include "base/guid.h"
 #include "base/logging.h"
+#include "base/strings/strcat.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
@@ -83,9 +84,23 @@ const char* DownloaderToString(CrxDownloader::DownloadMetrics::Downloader d) {
   }
 }
 
+// Returns a formatted string of previousversion and nextversion in an event.
+std::string EventVersions(const Component& component) {
+  std::string event_versions;
+  base::StringAppendF(&event_versions, " previousversion=\"%s\"",
+                      component.previous_version().GetString().c_str());
+  const base::Version& next_version = component.next_version();
+  if (next_version.IsValid()) {
+    base::StringAppendF(&event_versions, " nextversion=\"%s\"",
+                        next_version.GetString().c_str());
+  }
+  return event_versions;
+}
+
 }  // namespace
 
 std::string BuildDownloadCompleteEventElement(
+    const Component& component,
     const CrxDownloader::DownloadMetrics& metrics) {
   using base::StringAppendF;
 
@@ -110,8 +125,9 @@ std::string BuildDownloadCompleteEventElement(
 
   if (metrics.download_time_ms) {
     StringAppendF(&event, " download_time_ms=\"%s\"",
-                  base::Uint64ToString(metrics.download_time_ms).c_str());
+                  base::NumberToString(metrics.download_time_ms).c_str());
   }
+  base::StrAppend(&event, {EventVersions(component)});
   StringAppendF(&event, "/>");
   return event;
 }
@@ -149,6 +165,7 @@ std::string BuildUpdateCompleteEventElement(const Component& component) {
                   component.previous_fp().c_str());
   if (!component.next_fp().empty())
     StringAppendF(&event, " nextfp=\"%s\"", component.next_fp().c_str());
+  base::StrAppend(&event, {EventVersions(component)});
   StringAppendF(&event, "/>");
   return event;
 }
@@ -160,8 +177,10 @@ std::string BuildUninstalledEventElement(const Component& component) {
 
   std::string event;
   StringAppendF(&event, "<event eventtype=\"4\" eventresult=\"1\"");
-  if (component.extra_code1())
+  if (component.extra_code1()) {
     StringAppendF(&event, " extracode1=\"%d\"", component.extra_code1());
+  }
+  base::StrAppend(&event, {EventVersions(component)});
   StringAppendF(&event, "/>");
   return event;
 }
@@ -183,6 +202,7 @@ std::string BuildActionRunEventElement(bool succeeded,
 }
 
 std::string BuildProtocolRequest(
+    const std::string& session_id,
     const std::string& prod_id,
     const std::string& browser_version,
     const std::string& channel,
@@ -203,22 +223,27 @@ std::string BuildProtocolRequest(
   // Constant information for this updater.
   base::StringAppendF(&request, "dedup=\"cr\" acceptformat=\"crx2,crx3\" ");
 
+  // Sesssion id and request id
+  DCHECK(!session_id.empty());
+  DCHECK(!base::StartsWith(session_id, "{", base::CompareCase::SENSITIVE));
+  DCHECK(!base::EndsWith(session_id, "}", base::CompareCase::SENSITIVE));
+  base::StringAppendF(&request, "sessionid=\"{%s}\" requestid=\"{%s}\" ",
+                      session_id.c_str(), base::GenerateGUID().c_str());
+
   // Chrome version and platform information.
-  base::StringAppendF(
-      &request,
-      "version=\"%s-%s\" prodversion=\"%s\" "
-      "requestid=\"{%s}\" lang=\"%s\" updaterchannel=\"%s\" prodchannel=\"%s\" "
-      "os=\"%s\" arch=\"%s\" nacl_arch=\"%s\"",
-      prod_id.c_str(),  // "version" is prefixed by prod_id.
-      browser_version.c_str(),
-      browser_version.c_str(),            // "prodversion"
-      base::GenerateGUID().c_str(),       // "requestid"
-      lang.c_str(),                       // "lang"
-      channel.c_str(),                    // "updaterchannel"
-      channel.c_str(),                    // "prodchannel"
-      UpdateQueryParams::GetOS(),         // "os"
-      UpdateQueryParams::GetArch(),       // "arch"
-      UpdateQueryParams::GetNaclArch());  // "nacl_arch"
+  base::StringAppendF(&request,
+                      "version=\"%s-%s\" prodversion=\"%s\" "
+                      "lang=\"%s\" updaterchannel=\"%s\" prodchannel=\"%s\" "
+                      "os=\"%s\" arch=\"%s\" nacl_arch=\"%s\"",
+                      prod_id.c_str(),  // "version" is prefixed by prod_id.
+                      browser_version.c_str(),
+                      browser_version.c_str(),            // "prodversion"
+                      lang.c_str(),                       // "lang"
+                      channel.c_str(),                    // "updaterchannel"
+                      channel.c_str(),                    // "prodchannel"
+                      UpdateQueryParams::GetOS(),         // "os"
+                      UpdateQueryParams::GetArch(),       // "arch"
+                      UpdateQueryParams::GetNaclArch());  // "nacl_arch"
 #if defined(OS_WIN)
   const bool is_wow64(base::win::OSInfo::GetInstance()->wow64_status() ==
                       base::win::OSInfo::WOW64_ENABLED);
@@ -275,8 +300,29 @@ std::string BuildProtocolRequest(
   return request;
 }
 
+std::map<std::string, std::string> BuildUpdateCheckExtraRequestHeaders(
+    scoped_refptr<Configurator> config,
+    const std::vector<std::string>& ids,
+    bool is_foreground) {
+  // This number of extension ids result in an HTTP header length of about 1KB.
+  constexpr size_t maxExtensionCount = 30;
+  const std::vector<std::string>& app_ids =
+      ids.size() <= maxExtensionCount
+          ? ids
+          : std::vector<std::string>(ids.cbegin(),
+                                     ids.cbegin() + maxExtensionCount);
+  return std::map<std::string, std::string>{
+      {"X-Goog-Update-Updater",
+       base::StringPrintf("%s-%s", config->GetProdId().c_str(),
+                          config->GetBrowserVersion().GetString().c_str())},
+      {"X-Goog-Update-Interactivity", is_foreground ? "fg" : "bg"},
+      {"X-Goog-Update-AppId", base::JoinString(app_ids, ",")},
+  };
+}
+
 std::string BuildUpdateCheckRequest(
     const Configurator& config,
+    const std::string& session_id,
     const std::vector<std::string>& ids_checked,
     const IdToComponentPtrMap& components,
     PersistedData* metadata,
@@ -299,7 +345,10 @@ std::string BuildUpdateCheckRequest(
                         crx_component.version.GetString().c_str());
     if (!brand.empty())
       base::StringAppendF(&app, " brand=\"%s\"", brand.c_str());
-    if (component.on_demand())
+    if (!crx_component.install_source.empty())
+      base::StringAppendF(&app, " installsource=\"%s\"",
+                          crx_component.install_source.c_str());
+    else if (component.is_foreground())
       base::StringAppendF(&app, " installsource=\"ondemand\"");
     for (const auto& attr : installer_attributes) {
       base::StringAppendF(&app, " %s=\"%s\"", attr.first.c_str(),
@@ -364,7 +413,7 @@ std::string BuildUpdateCheckRequest(
 
   // Include the updater state in the update check request.
   return BuildProtocolRequest(
-      config.GetProdId(), config.GetBrowserVersion().GetString(),
+      session_id, config.GetProdId(), config.GetBrowserVersion().GetString(),
       config.GetChannel(), config.GetLang(), config.GetOSLongName(),
       config.GetDownloadPreference(), app_elements, additional_attributes,
       updater_state_attributes);
@@ -377,27 +426,17 @@ std::string BuildEventPingRequest(const Configurator& config,
          component.state() == ComponentState::kUpdated ||
          component.state() == ComponentState::kUninstalled);
 
-  // |next_version| is an optional argument for some ping types. This member
-  // is set by the value returned in the update check response. However, some
-  // of the pings are sent as a result of actions where the response did not
-  // include a manifest, neither a version.
   std::string app =
-      base::StringPrintf("<app appid=\"%s\"", component.id().c_str());
-  base::StringAppendF(&app, " version=\"%s\"",
-                      component.previous_version().GetString().c_str());
-  if (component.next_version().IsValid())
-    base::StringAppendF(&app, " nextversion=\"%s\"",
-                        component.next_version().GetString().c_str());
-  base::StringAppendF(&app, ">");
-  base::StringAppendF(&app, "%s",
-                      base::JoinString(component.events(), "").c_str());
-  base::StringAppendF(&app, "</app>");
+      base::StringPrintf("<app appid=\"%s\">", component.id().c_str());
+  base::StrAppend(&app, component.events());
+  app.append("</app>");
 
   // The ping request does not include any updater state.
-  return BuildProtocolRequest(
-      config.GetProdId(), config.GetBrowserVersion().GetString(),
-      config.GetChannel(), config.GetLang(), config.GetOSLongName(),
-      config.GetDownloadPreference(), app, "", nullptr);
+  return BuildProtocolRequest(component.session_id(), config.GetProdId(),
+                              config.GetBrowserVersion().GetString(),
+                              config.GetChannel(), config.GetLang(),
+                              config.GetOSLongName(),
+                              config.GetDownloadPreference(), app, "", nullptr);
 }
 
 }  // namespace update_client

@@ -8,6 +8,7 @@
 #include <stdint.h>
 
 #include <memory>
+#include <set>
 #include <string>
 
 #include "base/compiler_specific.h"
@@ -16,6 +17,7 @@
 #include "base/memory/ref_counted.h"
 #include "base/values.h"
 #include "build/build_config.h"
+#include "chrome/browser/net/reporting_permissions_checker.h"
 #include "chrome/browser/net/safe_search_util.h"
 #include "components/domain_reliability/monitor.h"
 #include "components/prefs/pref_member.h"
@@ -49,10 +51,6 @@ namespace net {
 class URLRequest;
 }
 
-namespace policy {
-class URLBlacklistManager;
-}
-
 // ChromeNetworkDelegate is the central point from within the chrome code to
 // add hooks into the network stack.
 class ChromeNetworkDelegate : public net::NetworkDelegateImpl {
@@ -66,11 +64,6 @@ class ChromeNetworkDelegate : public net::NetworkDelegateImpl {
 
   // Pass through to ChromeExtensionsNetworkDelegate::set_extension_info_map().
   void set_extension_info_map(extensions::InfoMap* extension_info_map);
-
-  void set_url_blacklist_manager(
-      const policy::URLBlacklistManager* url_blacklist_manager) {
-    url_blacklist_manager_ = url_blacklist_manager;
-  }
 
   // If |profile| is nullptr or not set, events will be broadcast to all
   // profiles, otherwise they will only be sent to the specified profile.
@@ -89,10 +82,6 @@ class ChromeNetworkDelegate : public net::NetworkDelegateImpl {
   // Not inlined because we assign a scoped_refptr, which requires us to include
   // the header file. Here we just forward-declare it.
   void set_cookie_settings(content_settings::CookieSettings* cookie_settings);
-
-  void set_enable_do_not_track(BooleanPrefMember* enable_do_not_track) {
-    enable_do_not_track_ = enable_do_not_track;
-  }
 
   void set_force_google_safe_search(
       BooleanPrefMember* force_google_safe_search) {
@@ -118,6 +107,16 @@ class ChromeNetworkDelegate : public net::NetworkDelegateImpl {
     return domain_reliability_monitor_.get();
   }
 
+  void set_reporting_permissions_checker(
+      std::unique_ptr<ReportingPermissionsChecker>
+          reporting_permissions_checker) {
+    reporting_permissions_checker_ = std::move(reporting_permissions_checker);
+  }
+
+  ReportingPermissionsChecker* reporting_permissions_checker() {
+    return reporting_permissions_checker_.get();
+  }
+
   void set_data_use_aggregator(
       data_usage::DataUseAggregator* data_use_aggregator,
       bool is_data_usage_off_the_record);
@@ -127,7 +126,6 @@ class ChromeNetworkDelegate : public net::NetworkDelegateImpl {
   // This method should be called on the UI thread.
   static void InitializePrefsOnUIThread(
       BooleanPrefMember* enable_referrers,
-      BooleanPrefMember* enable_do_not_track,
       BooleanPrefMember* force_google_safe_search,
       IntegerPrefMember* force_youtube_restrict,
       StringPrefMember* allowed_domains_for_apps,
@@ -198,7 +196,9 @@ class ChromeNetworkDelegate : public net::NetworkDelegateImpl {
       const GURL& target_url,
       const GURL& referrer_url) const override;
   bool OnCanQueueReportingReport(const url::Origin& origin) const override;
-  bool OnCanSendReportingReport(const url::Origin& origin) const override;
+  void OnCanSendReportingReports(std::set<url::Origin> origins,
+                                 base::OnceCallback<void(std::set<url::Origin>)>
+                                     result_callback) const override;
   bool OnCanSetReportingClient(const url::Origin& origin,
                                const GURL& endpoint) const override;
   bool OnCanUseReportingClient(const url::Origin& origin,
@@ -218,15 +218,14 @@ class ChromeNetworkDelegate : public net::NetworkDelegateImpl {
 
   // Weak, owned by our owner.
   BooleanPrefMember* enable_referrers_;
-  BooleanPrefMember* enable_do_not_track_;
   BooleanPrefMember* force_google_safe_search_;
   IntegerPrefMember* force_youtube_restrict_;
   StringPrefMember* allowed_domains_for_apps_;
 
   // Weak, owned by our owner.
-  const policy::URLBlacklistManager* url_blacklist_manager_;
   std::unique_ptr<domain_reliability::DomainReliabilityMonitor>
       domain_reliability_monitor_;
+  std::unique_ptr<ReportingPermissionsChecker> reporting_permissions_checker_;
 
   bool experimental_web_platform_features_enabled_;
 

@@ -14,7 +14,6 @@
 #include "base/json/json_reader.h"
 #include "base/json/json_string_value_serializer.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/path_service.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
@@ -297,7 +296,7 @@ class VersionTest : public DiagnosticsTest {
       RecordFailure(DIAG_RECON_EMPTY_VERSION, "Empty Version");
       return true;
     }
-    std::string version_modifier = chrome::GetChannelString();
+    std::string version_modifier = chrome::GetChannelName();
     if (!version_modifier.empty())
       current_version += " " + version_modifier;
 #if defined(GOOGLE_CHROME_BUILD)
@@ -314,17 +313,17 @@ class VersionTest : public DiagnosticsTest {
 }  // namespace
 
 std::unique_ptr<DiagnosticsTest> MakeDiskSpaceTest() {
-  return base::MakeUnique<DiskSpaceTest>();
+  return std::make_unique<DiskSpaceTest>();
 }
 
 std::unique_ptr<DiagnosticsTest> MakeInstallTypeTest() {
-  return base::MakeUnique<InstallTypeTest>();
+  return std::make_unique<InstallTypeTest>();
 }
 
 std::unique_ptr<DiagnosticsTest> MakeBookMarksTest() {
   base::FilePath path = DiagnosticsTest::GetUserDefaultProfileDir();
   path = path.Append(bookmarks::kBookmarksFileName);
-  return base::MakeUnique<JSONTest>(path, DIAGNOSTICS_JSON_BOOKMARKS_TEST,
+  return std::make_unique<JSONTest>(path, DIAGNOSTICS_JSON_BOOKMARKS_TEST,
                                     2 * kOneMegabyte, JSONTest::NON_CRITICAL);
 }
 
@@ -332,39 +331,39 @@ std::unique_ptr<DiagnosticsTest> MakeLocalStateTest() {
   base::FilePath path;
   PathService::Get(chrome::DIR_USER_DATA, &path);
   path = path.Append(chrome::kLocalStateFilename);
-  return base::MakeUnique<JSONTest>(path, DIAGNOSTICS_JSON_LOCAL_STATE_TEST,
+  return std::make_unique<JSONTest>(path, DIAGNOSTICS_JSON_LOCAL_STATE_TEST,
                                     50 * kOneKilobyte, JSONTest::CRITICAL);
 }
 
 std::unique_ptr<DiagnosticsTest> MakePreferencesTest() {
   base::FilePath path = DiagnosticsTest::GetUserDefaultProfileDir();
   path = path.Append(chrome::kPreferencesFilename);
-  return base::MakeUnique<JSONTest>(path, DIAGNOSTICS_JSON_PREFERENCES_TEST,
+  return std::make_unique<JSONTest>(path, DIAGNOSTICS_JSON_PREFERENCES_TEST,
                                     100 * kOneKilobyte, JSONTest::CRITICAL);
 }
 
 std::unique_ptr<DiagnosticsTest> MakeOperatingSystemTest() {
-  return base::MakeUnique<OperatingSystemTest>();
+  return std::make_unique<OperatingSystemTest>();
 }
 
 std::unique_ptr<DiagnosticsTest> MakeDictonaryDirTest() {
-  return base::MakeUnique<PathTest>(kPathsToTest[0]);
+  return std::make_unique<PathTest>(kPathsToTest[0]);
 }
 
 std::unique_ptr<DiagnosticsTest> MakeLocalStateFileTest() {
-  return base::MakeUnique<PathTest>(kPathsToTest[1]);
+  return std::make_unique<PathTest>(kPathsToTest[1]);
 }
 
 std::unique_ptr<DiagnosticsTest> MakeResourcesFileTest() {
-  return base::MakeUnique<PathTest>(kPathsToTest[2]);
+  return std::make_unique<PathTest>(kPathsToTest[2]);
 }
 
 std::unique_ptr<DiagnosticsTest> MakeUserDirTest() {
-  return base::MakeUnique<PathTest>(kPathsToTest[3]);
+  return std::make_unique<PathTest>(kPathsToTest[3]);
 }
 
 std::unique_ptr<DiagnosticsTest> MakeVersionTest() {
-  return base::MakeUnique<VersionTest>();
+  return std::make_unique<VersionTest>();
 }
 
 }  // namespace diagnostics

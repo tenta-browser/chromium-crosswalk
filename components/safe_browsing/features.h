@@ -21,10 +21,10 @@ namespace safe_browsing {
 // Features list
 extern const base::Feature kAdSamplerCollectButDontSendFeature;
 extern const base::Feature kAdSamplerTriggerFeature;
+extern const base::Feature kCheckByURLLoaderThrottle;
 // Gates logging of GaiaPasswordReuse user events.
 extern const base::Feature kGaiaPasswordReuseReporting;
 extern const base::Feature kGoogleBrandedPhishingWarning;
-extern const base::Feature kParallelUrlCheck;
 
 // Specifies which non-resource HTML Elements to collect based on their tag and
 // attributes. It's a single param containing a comma-separated list of pairs.
@@ -44,7 +44,18 @@ extern const base::Feature kTriggerThrottlerDailyQuotaFeature;
 // only.
 extern const base::Feature kDispatchSafetyNetCheckOffThread;
 
+// Controls whether to add recent navigation events to referrer chain for SBER
+// users if referrer chain is incomplete.
+extern const base::Feature kAppendRecentNavigationEvents;
+
+// Controls whether .rar files downloaded by the user are inspected for being
+// unsafe.
+extern const base::Feature kInspectDownloadedRarFiles;
+
+// Control the Password Protection for Enterprise V1 feature;
+extern const base::Feature kEnterprisePasswordProtectionV1;
+
 base::ListValue GetFeatureStatusList();
 
-#endif  // COMPONENTS_SAFE_BROWSING_FEATURES_H_
 }  // namespace safe_browsing
+#endif  // COMPONENTS_SAFE_BROWSING_FEATURES_H_

@@ -22,7 +22,7 @@
 #include "media/base/timestamp_constants.h"
 #include "media/filters/ffmpeg_demuxer.h"
 #include "media/filters/file_data_source.h"
-#include "media/media_features.h"
+#include "media/media_buildflags.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "testing/perf/perf_test.h"
 
@@ -88,7 +88,7 @@ class StreamReader {
                   bool* end_of_stream,
                   base::TimeDelta* timestamp,
                   media::DemuxerStream::Status status,
-                  const scoped_refptr<media::DecoderBuffer>& buffer);
+                  scoped_refptr<DecoderBuffer> buffer);
   int GetNextStreamIndexToRead();
 
   Streams streams_;
@@ -146,9 +146,9 @@ void StreamReader::OnReadDone(
     bool* end_of_stream,
     base::TimeDelta* timestamp,
     media::DemuxerStream::Status status,
-    const scoped_refptr<media::DecoderBuffer>& buffer) {
+    scoped_refptr<DecoderBuffer> buffer) {
   CHECK_EQ(status, media::DemuxerStream::kOk);
-  CHECK(buffer.get());
+  CHECK(buffer);
   *end_of_stream = buffer->end_of_stream();
   *timestamp = *end_of_stream ? media::kNoTimestamp : buffer->timestamp();
   task_runner->PostTask(FROM_HERE, quit_when_idle_closure);
@@ -216,24 +216,24 @@ static void RunDemuxerBenchmark(const std::string& filename) {
                          "runs/s", true);
 }
 
-#if defined(OS_WIN)
-// http://crbug.com/399002
-#define MAYBE_Demuxer DISABLED_Demuxer
-#else
-#define MAYBE_Demuxer Demuxer
-#endif
-TEST(DemuxerPerfTest, MAYBE_Demuxer) {
-  RunDemuxerBenchmark("bear.ogv");
-  RunDemuxerBenchmark("bear-640x360.webm");
-  RunDemuxerBenchmark("sfx_s16le.wav");
-  RunDemuxerBenchmark("bear.flac");
-#if BUILDFLAG(USE_PROPRIETARY_CODECS)
-  RunDemuxerBenchmark("bear-1280x720.mp4");
-  RunDemuxerBenchmark("sfx.mp3");
-#endif
-#if BUILDFLAG(USE_PROPRIETARY_CODECS) && defined(OS_CHROMEOS)
-  RunDemuxerBenchmark("bear.avi");
-#endif
+class DemuxerPerfTest : public testing::TestWithParam<const char*> {};
+
+TEST_P(DemuxerPerfTest, Demuxer) {
+  RunDemuxerBenchmark(GetParam());
 }
+
+static const char* kDemuxerTestFiles[] {
+  "bear.ogv", "bear-640x360.webm", "sfx.mp3",
+#if BUILDFLAG(USE_PROPRIETARY_CODECS)
+      "bear-1280x720.mp4",
+#endif
+};
+
+// For simplicity we only test containers with above 2% daily usage as measured
+// by the Media.DetectedContainer histogram.
+INSTANTIATE_TEST_CASE_P(
+    /* no prefix */,
+    DemuxerPerfTest,
+    testing::ValuesIn(kDemuxerTestFiles));
 
 }  // namespace media

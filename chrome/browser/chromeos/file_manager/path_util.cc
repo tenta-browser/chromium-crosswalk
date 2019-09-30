@@ -4,8 +4,11 @@
 
 #include "chrome/browser/chromeos/file_manager/path_util.h"
 
+#include "base/barrier_closure.h"
 #include "base/logging.h"
 #include "base/sys_info.h"
+#include "chrome/browser/chromeos/arc/fileapi/arc_documents_provider_root.h"
+#include "chrome/browser/chromeos/arc/fileapi/arc_documents_provider_root_map.h"
 #include "chrome/browser/chromeos/arc/fileapi/chrome_content_provider_url_util.h"
 #include "chrome/browser/chromeos/fileapi/external_file_url_util.h"
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
@@ -35,6 +38,30 @@ constexpr base::FilePath::CharType kArcDownloadRoot[] =
 // Sync with the removable media provider in ARC++ side.
 constexpr char kArcRemovableMediaProviderUrl[] =
     "content://org.chromium.arc.removablemediaprovider/";
+
+Profile* GetPrimaryProfile() {
+  if (!user_manager::UserManager::IsInitialized())
+    return nullptr;
+  const auto* primary_user = user_manager::UserManager::Get()->GetPrimaryUser();
+  if (!primary_user)
+    return nullptr;
+  return chromeos::ProfileHelper::Get()->GetProfileByUser(primary_user);
+}
+
+// Helper function for |ConvertToContentUrls|.
+void OnSingleContentUrlResolved(const base::RepeatingClosure& barrier_closure,
+                                std::vector<GURL>* out_urls,
+                                size_t index,
+                                const GURL& url) {
+  (*out_urls)[index] = url;
+  barrier_closure.Run();
+}
+
+// Helper function for |ConvertToContentUrls|.
+void OnAllContentUrlsResolved(ConvertToContentUrlsCallback callback,
+                              std::unique_ptr<std::vector<GURL>> urls) {
+  std::move(callback).Run(*urls);
+}
 
 }  // namespace
 
@@ -92,14 +119,7 @@ bool ConvertPathToArcUrl(const base::FilePath& path, GURL* arc_url_out) {
 
   // Obtain the primary profile. This information is required because currently
   // only the file systems for the primary profile is exposed to ARC.
-  if (!user_manager::UserManager::IsInitialized())
-    return false;
-  const user_manager::User* primary_user =
-      user_manager::UserManager::Get()->GetPrimaryUser();
-  if (!primary_user)
-    return false;
-  Profile* primary_profile =
-      chromeos::ProfileHelper::Get()->GetProfileByUser(primary_user);
+  Profile* primary_profile = GetPrimaryProfile();
   if (!primary_profile)
     return false;
 
@@ -132,6 +152,59 @@ bool ConvertPathToArcUrl(const base::FilePath& path, GURL* arc_url_out) {
 
   // TODO(kinaba): Add conversion logic once other file systems are supported.
   return false;
+}
+
+void ConvertToContentUrls(
+    const std::vector<storage::FileSystemURL>& file_system_urls,
+    ConvertToContentUrlsCallback callback) {
+  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
+
+  if (file_system_urls.empty()) {
+    std::move(callback).Run(std::vector<GURL>());
+    return;
+  }
+
+  Profile* profile = GetPrimaryProfile();
+  auto* documents_provider_root_map =
+      profile ? arc::ArcDocumentsProviderRootMap::GetForBrowserContext(profile)
+              : nullptr;
+
+  // To keep the original order, prefill |out_urls| with empty URLs and
+  // specify index when updating it like (*out_urls)[index] = url.
+  auto out_urls = std::make_unique<std::vector<GURL>>(file_system_urls.size());
+  auto* out_urls_ptr = out_urls.get();
+  auto barrier = base::BarrierClosure(
+      file_system_urls.size(),
+      base::BindOnce(&OnAllContentUrlsResolved, std::move(callback),
+                     std::move(out_urls)));
+  auto single_content_url_callback =
+      base::BindRepeating(&OnSingleContentUrlResolved, barrier, out_urls_ptr);
+
+  for (size_t index = 0; index < file_system_urls.size(); ++index) {
+    const auto& file_system_url = file_system_urls[index];
+    GURL arc_url;
+    if (file_system_url.mount_type() == storage::kFileSystemTypeExternal &&
+        ConvertPathToArcUrl(file_system_url.path(), &arc_url)) {
+      single_content_url_callback.Run(index, arc_url);
+      continue;
+    }
+
+    if (!documents_provider_root_map) {
+      single_content_url_callback.Run(index, GURL());
+      continue;
+    }
+
+    base::FilePath filepath;
+    auto* documents_provider_root =
+        documents_provider_root_map->ParseAndLookup(file_system_url, &filepath);
+    if (!documents_provider_root) {
+      single_content_url_callback.Run(index, GURL());
+      continue;
+    }
+
+    documents_provider_root->ResolveToContentUrl(
+        filepath, base::BindRepeating(single_content_url_callback, index));
+  }
 }
 
 }  // namespace util

@@ -6,11 +6,11 @@
 
 #include <stddef.h>
 #include <utility>
+#include <vector>
 
 #include "base/bind.h"
 #include "base/lazy_instance.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/threading/thread_task_runner_handle.h"
@@ -23,7 +23,6 @@
 #include "chrome/browser/extensions/install_tracker.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/signin/signin_manager_factory.h"
-#include "chrome/browser/ui/app_list/app_list_service.h"
 #include "chrome/browser/ui/app_list/app_list_util.h"
 #include "chrome/common/extensions/extension_constants.h"
 #include "chrome/common/pref_names.h"
@@ -218,18 +217,20 @@ WebstorePrivateBeginInstallWithManifest3Function::Run() {
   ActiveInstallData install_data(details().id);
   scoped_active_install_.reset(new ScopedActiveInstall(tracker, install_data));
 
-  net::URLRequestContextGetter* context_getter = nullptr;
+  network::mojom::URLLoaderFactory* loader_factory = nullptr;
   if (!icon_url.is_empty()) {
-    context_getter = content::BrowserContext::GetDefaultStoragePartition(
-        browser_context())->GetURLRequestContext();
+    loader_factory =
+        content::BrowserContext::GetDefaultStoragePartition(browser_context())
+            ->GetURLLoaderFactoryForBrowserProcess()
+            .get();
   }
 
   scoped_refptr<WebstoreInstallHelper> helper = new WebstoreInstallHelper(
-      this, details().id, details().manifest, icon_url, context_getter);
+      this, details().id, details().manifest, icon_url);
 
   // The helper will call us back via OnWebstoreParseSuccess or
   // OnWebstoreParseFailure.
-  helper->Start();
+  helper->Start(loader_factory);
 
   // Matched with a Release in OnWebstoreParseSuccess/OnWebstoreParseFailure.
   AddRef();
@@ -495,9 +496,8 @@ WebstorePrivateEnableAppLauncherFunction::
 
 ExtensionFunction::ResponseAction
 WebstorePrivateEnableAppLauncherFunction::Run() {
-  AppListService* app_list_service = AppListService::Get();
-  app_list_service->EnableAppList(chrome_details_.GetProfile(),
-                                  AppListService::ENABLE_VIA_WEBSTORE_LINK);
+  // TODO(crbug.com/822900): Check if this API is still in use and whether we
+  // can remove it.
   return RespondNow(NoArguments());
 }
 
@@ -654,7 +654,7 @@ WebstorePrivateIsPendingCustodianApprovalFunction::Run() {
 
 ExtensionFunction::ResponseValue
 WebstorePrivateIsPendingCustodianApprovalFunction::BuildResponse(bool result) {
-  return OneArgument(base::MakeUnique<base::Value>(result));
+  return OneArgument(std::make_unique<base::Value>(result));
 }
 
 }  // namespace extensions

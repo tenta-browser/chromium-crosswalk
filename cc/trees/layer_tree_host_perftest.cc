@@ -51,7 +51,8 @@ class LayerTreeHostPerfTest : public LayerTreeTest {
       const viz::RendererSettings& renderer_settings,
       double refresh_rate,
       scoped_refptr<viz::ContextProvider> compositor_context_provider,
-      scoped_refptr<viz::ContextProvider> worker_context_provider) override {
+      scoped_refptr<viz::RasterContextProvider> worker_context_provider)
+      override {
     constexpr bool disable_display_vsync = true;
     bool synchronous_composite =
         !HasImplThread() &&
@@ -146,7 +147,8 @@ class LayerTreeHostPerfTestJsonReader : public LayerTreeHostPerfTest {
 
   void BuildTree() override {
     gfx::Size viewport = gfx::Size(720, 1038);
-    layer_tree_host()->SetViewportSize(viewport);
+    layer_tree_host()->SetViewportSizeAndScale(viewport, 1.f,
+                                               viz::LocalSurfaceId());
     scoped_refptr<Layer> root = ParseTreeFromJson(json_,
                                                   &fake_content_layer_client_);
     ASSERT_TRUE(root.get());
@@ -253,7 +255,8 @@ class ScrollingLayerTreePerfTest : public LayerTreeHostPerfTestJsonReader {
     ASSERT_TRUE(scrollable_.get());
   }
 
-  void UpdateLayerTreeHost() override {
+  void UpdateLayerTreeHost(
+      LayerTreeHostClient::VisualStateUpdate requested_update) override {
     if (TestEnded())
       return;
     static const gfx::Vector2d delta = gfx::Vector2d(0, 10);
@@ -321,7 +324,7 @@ class BrowserCompositorInvalidateLayerTreePerfTest
             &BrowserCompositorInvalidateLayerTreePerfTest::ReleaseMailbox,
             base::Unretained(this)));
 
-    gpu::SyncToken next_sync_token(gpu::CommandBufferNamespace::GPU_IO, 0,
+    gpu::SyncToken next_sync_token(gpu::CommandBufferNamespace::GPU_IO,
                                    gpu::CommandBufferId::FromUnsafeValue(1),
                                    next_fence_sync_);
     next_sync_token.SetVerifyFlush();

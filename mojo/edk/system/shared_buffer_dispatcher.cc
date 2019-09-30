@@ -12,7 +12,6 @@
 #include <utility>
 
 #include "base/logging.h"
-#include "mojo/edk/embedder/embedder_internal.h"
 #include "mojo/edk/system/configuration.h"
 #include "mojo/edk/system/node_controller.h"
 #include "mojo/edk/system/options_validation.h"
@@ -240,6 +239,15 @@ MojoResult SharedBufferDispatcher::MapBuffer(
   return MOJO_RESULT_OK;
 }
 
+MojoResult SharedBufferDispatcher::GetBufferInfo(MojoSharedBufferInfo* info) {
+  if (!info)
+    return MOJO_RESULT_INVALID_ARGUMENT;
+
+  base::AutoLock lock(lock_);
+  info->size = shared_buffer_->GetNumBytes();
+  return MOJO_RESULT_OK;
+}
+
 void SharedBufferDispatcher::StartSerialize(uint32_t* num_bytes,
                                             uint32_t* num_ports,
                                             uint32_t* num_platform_handles) {
@@ -263,7 +271,7 @@ bool SharedBufferDispatcher::EndSerialize(void* destination,
   serialized_state->guid_low = guid.GetLowForSerialization();
   serialized_state->padding = 0;
 
-  handles[0] = shared_buffer_->DuplicatePlatformHandle();
+  handles[0] = shared_buffer_->DuplicatePlatformHandleForIPC();
   if (!handles[0].is_valid()) {
     shared_buffer_ = nullptr;
     return false;

@@ -4,7 +4,6 @@
 
 #include "content/browser/appcache/appcache_backend_impl.h"
 
-#include "base/memory/ptr_util.h"
 #include "content/browser/appcache/appcache.h"
 #include "content/browser/appcache/appcache_group.h"
 #include "content/browser/appcache/appcache_service_impl.h"
@@ -88,35 +87,33 @@ bool AppCacheBackendImpl::MarkAsForeignEntry(
 }
 
 bool AppCacheBackendImpl::GetStatusWithCallback(int host_id,
-                                                GetStatusCallback callback,
-                                                void* callback_param) {
+                                                GetStatusCallback* callback) {
   AppCacheHost* host = GetHost(host_id);
   if (!host)
     return false;
 
-  host->GetStatusWithCallback(std::move(callback), callback_param);
+  host->GetStatusWithCallback(std::move(*callback));
   return true;
 }
 
-bool AppCacheBackendImpl::StartUpdateWithCallback(int host_id,
-                                                  StartUpdateCallback callback,
-                                                  void* callback_param) {
+bool AppCacheBackendImpl::StartUpdateWithCallback(
+    int host_id,
+    StartUpdateCallback* callback) {
   AppCacheHost* host = GetHost(host_id);
   if (!host)
     return false;
 
-  host->StartUpdateWithCallback(std::move(callback), callback_param);
+  host->StartUpdateWithCallback(std::move(*callback));
   return true;
 }
 
 bool AppCacheBackendImpl::SwapCacheWithCallback(int host_id,
-                                                SwapCacheCallback callback,
-                                                void* callback_param) {
+                                                SwapCacheCallback* callback) {
   AppCacheHost* host = GetHost(host_id);
   if (!host)
     return false;
 
-  host->SwapCacheWithCallback(std::move(callback), callback_param);
+  host->SwapCacheWithCallback(std::move(*callback));
   return true;
 }
 

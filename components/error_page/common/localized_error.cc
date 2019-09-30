@@ -6,6 +6,7 @@
 
 #include <stddef.h>
 
+#include <memory>
 #include <utility>
 
 #include "base/command_line.h"
@@ -539,7 +540,7 @@ void AddSingleEntryDictionaryToList(base::ListValue* list,
                                     const char* path,
                                     int message_id,
                                     bool insert_as_first_item) {
-  auto suggestion_list_item = base::MakeUnique<base::DictionaryValue>();
+  auto suggestion_list_item = std::make_unique<base::DictionaryValue>();
   suggestion_list_item->SetString(path, l10n_util::GetStringUTF16(message_id));
 
   if (insert_as_first_item) {
@@ -661,7 +662,7 @@ void GetSuggestionsSummaryList(int error_code,
     if (failed_origin.unique())
       return;
 
-    auto suggestion = base::MakeUnique<base::DictionaryValue>();
+    auto suggestion = std::make_unique<base::DictionaryValue>();
     suggestion->SetString("summary",
                           l10n_util::GetStringUTF16(
                               IDS_ERRORPAGES_SUGGESTION_NAVIGATE_TO_ORIGIN));
@@ -915,13 +916,13 @@ void LocalizedError::GetStrings(
   std::string icon_class = GetIconClassForError(error_domain, error_code);
   error_strings->SetString("iconClass", icon_class);
 
-  auto heading = base::MakeUnique<base::DictionaryValue>();
+  auto heading = std::make_unique<base::DictionaryValue>();
   heading->SetString("msg",
                      l10n_util::GetStringUTF16(options.heading_resource_id));
   heading->SetString("hostName", host_name);
   error_strings->Set("heading", std::move(heading));
 
-  auto summary = base::MakeUnique<base::DictionaryValue>();
+  auto summary = std::make_unique<base::DictionaryValue>();
 
   // Set summary message under the heading.
   summary->SetString(
@@ -974,9 +975,9 @@ void LocalizedError::GetStrings(
   if (!params->override_suggestions) {
     // Detailed suggestion information.
     suggestions_details = error_strings->SetList(
-        "suggestionsDetails", base::MakeUnique<base::ListValue>());
+        "suggestionsDetails", std::make_unique<base::ListValue>());
     suggestions_summary_list = error_strings->SetList(
-        "suggestionsSummaryList", base::MakeUnique<base::ListValue>());
+        "suggestionsSummaryList", std::make_unique<base::ListValue>());
   } else {
     suggestions_summary_list = error_strings->SetList(
         "suggestionsSummaryList", std::move(params->override_suggestions));
@@ -1006,7 +1007,7 @@ void LocalizedError::GetStrings(
 #if defined(OS_ANDROID)
     reload_visible = true;
 #endif  // defined(OS_ANDROID)
-    auto reload_button = base::MakeUnique<base::DictionaryValue>();
+    auto reload_button = std::make_unique<base::DictionaryValue>();
     reload_button->SetString(
         "msg", l10n_util::GetStringUTF16(IDS_ERRORPAGES_BUTTON_RELOAD));
     reload_button->SetString("reloadUrl", failed_url.spec());
@@ -1045,7 +1046,7 @@ void LocalizedError::GetStrings(
       (show_saved_copy_primary || show_saved_copy_secondary));
 
   if (show_saved_copy_visible) {
-    auto show_saved_copy_button = base::MakeUnique<base::DictionaryValue>();
+    auto show_saved_copy_button = std::make_unique<base::DictionaryValue>();
     show_saved_copy_button->SetString(
         "msg", l10n_util::GetStringUTF16(
             IDS_ERRORPAGES_BUTTON_SHOW_SAVED_COPY));
@@ -1062,17 +1063,22 @@ void LocalizedError::GetStrings(
   if (!is_post && !reload_visible && !show_saved_copy_visible &&
       !is_incognito && failed_url.is_valid() &&
       failed_url.SchemeIsHTTPOrHTTPS() &&
-      IsSuggested(options.suggestions, SUGGEST_OFFLINE_CHECKS) &&
-      offline_pages::IsOfflinePagesAsyncDownloadEnabled()) {
-    std::unique_ptr<base::DictionaryValue> download_button =
-        base::MakeUnique<base::DictionaryValue>();
-    download_button->SetString(
-        "msg",
-        l10n_util::GetStringUTF16(IDS_ERRORPAGES_BUTTON_DOWNLOAD));
-    download_button->SetString(
-        "disabledMsg",
-        l10n_util::GetStringUTF16(IDS_ERRORPAGES_BUTTON_DOWNLOADING));
-    error_strings->Set("downloadButton", std::move(download_button));
+      IsSuggested(options.suggestions, SUGGEST_OFFLINE_CHECKS)) {
+    error_strings->SetPath(
+        {"downloadButton", "msg"},
+        base::Value(l10n_util::GetStringUTF16(IDS_ERRORPAGES_BUTTON_DOWNLOAD)));
+    error_strings->SetPath({"downloadButton", "disabledMsg"},
+                           base::Value(l10n_util::GetStringUTF16(
+                               IDS_ERRORPAGES_BUTTON_DOWNLOADING)));
+
+    if (offline_pages::ShouldShowAlternateDinoPage()) {
+      // Under the experiment, we will show a disabled reload button
+      // in addition to an enabled download button.
+      error_strings->SetPath(
+          {"reloadButton", "msg"},
+          base::Value(l10n_util::GetStringUTF16(IDS_ERRORPAGES_BUTTON_RELOAD)));
+      error_strings->SetKey("alternateDownloadButtonStyle", base::Value(true));
+    }
   }
 #endif  // defined(OS_ANDROID)
 }

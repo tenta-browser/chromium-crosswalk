@@ -14,7 +14,7 @@
 #include "mojo/public/interfaces/bindings/tests/test_wtf_types.mojom-blink.h"
 #include "mojo/public/interfaces/bindings/tests/test_wtf_types.mojom.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/WebKit/Source/platform/wtf/text/StringHash.h"
+#include "third_party/blink/renderer/platform/wtf/text/string_hash.h"
 
 namespace mojo {
 namespace test {
@@ -128,6 +128,32 @@ TEST_F(WTFTypesTest, Serialization_WTFVectorToWTFVector) {
   EXPECT_EQ(strs, strs2);
 }
 
+TEST_F(WTFTypesTest, Serialization_WTFVectorInlineCapacity) {
+  using MojomType = ArrayDataView<StringDataView>;
+
+  WTF::Vector<WTF::String, 1> strs(4);
+  // strs[0] is null.
+  // strs[1] is empty.
+  strs[1] = "";
+  strs[2] = kHelloWorld;
+  strs[3] = WTF::String::FromUTF8(kUTF8HelloWorld);
+  auto cloned_strs = strs;
+
+  mojo::Message message(0, 0, 0, 0, nullptr);
+  mojo::internal::SerializationContext context;
+  typename mojo::internal::MojomTypeTraits<MojomType>::Data::BufferWriter
+      writer;
+  mojo::internal::ContainerValidateParams validate_params(
+      0, true, new mojo::internal::ContainerValidateParams(0, false, nullptr));
+  mojo::internal::Serialize<MojomType>(cloned_strs, message.payload_buffer(),
+                                       &writer, &validate_params, &context);
+
+  WTF::Vector<WTF::String, 1> strs2;
+  mojo::internal::Deserialize<MojomType>(writer.data(), &strs2, &context);
+
+  EXPECT_EQ(strs, strs2);
+}
+
 TEST_F(WTFTypesTest, Serialization_WTFVectorToStlVector) {
   using MojomType = ArrayDataView<StringDataView>;
 
@@ -235,6 +261,21 @@ TEST_F(WTFTypesTest, SendStringMap) {
                                   loop.QuitClosure()));
     loop.Run();
   }
+}
+
+TEST_F(WTFTypesTest, NestedStruct_CloneAndEquals) {
+  auto a = blink::TestWTFStructWrapper::New();
+  a->nested_struct = blink::TestWTFStruct::New("foo", 1);
+  a->array_struct.push_back(blink::TestWTFStruct::New("bar", 2));
+  a->array_struct.push_back(blink::TestWTFStruct::New("bar", 3));
+  a->map_struct.insert(blink::TestWTFStruct::New("baz", 4),
+                       blink::TestWTFStruct::New("baz", 5));
+  auto b = a.Clone();
+  EXPECT_EQ(a, b);
+  EXPECT_EQ(2u, b->array_struct.size());
+  EXPECT_EQ(1u, b->map_struct.size());
+  EXPECT_NE(blink::TestWTFStructWrapper::New(), a);
+  EXPECT_NE(blink::TestWTFStructWrapper::New(), b);
 }
 
 }  // namespace test

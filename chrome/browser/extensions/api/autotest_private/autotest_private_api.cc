@@ -8,7 +8,6 @@
 #include <utility>
 
 #include "base/lazy_instance.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/values.h"
 #include "build/build_config.h"
@@ -28,15 +27,25 @@
 #include "extensions/common/permissions/permissions_data.h"
 
 #if defined(OS_CHROMEOS)
+#include "ash/public/interfaces/ash_message_center_controller.mojom.h"
+#include "ash/public/interfaces/constants.mojom.h"
+#include "base/feature_list.h"
 #include "chrome/browser/chromeos/arc/arc_util.h"
 #include "chrome/browser/chromeos/login/lock/screen_locker.h"
 #include "chrome/browser/chromeos/system/input_device_settings.h"
 #include "chrome/browser/profiles/profile_manager.h"
+#include "chrome/browser/ui/ash/login_screen_client.h"
+#include "chrome/common/chrome_features.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
 #include "chromeos/dbus/session_manager_client.h"
+#include "chromeos/printing/printer_configuration.h"
 #include "components/user_manager/user_manager.h"
+#include "content/public/common/service_manager_connection.h"
+#include "mojo/public/cpp/bindings/associated_binding.h"
+#include "services/service_manager/public/cpp/connector.h"
+#include "ui/base/ui_base_features.h"
 #include "ui/message_center/message_center.h"
-#include "ui/message_center/notification.h"
+#include "ui/message_center/public/cpp/notification.h"
 #endif
 
 namespace extensions {
@@ -49,7 +58,7 @@ std::unique_ptr<base::ListValue> GetHostPermissions(const Extension* ext,
       effective_perm ? permissions_data->GetEffectiveHostPermissions()
                      : permissions_data->active_permissions().explicit_hosts();
 
-  auto permissions = base::MakeUnique<base::ListValue>();
+  auto permissions = std::make_unique<base::ListValue>();
   for (URLPatternSet::const_iterator perm = pattern_set.begin();
        perm != pattern_set.end();
        ++perm) {
@@ -60,7 +69,7 @@ std::unique_ptr<base::ListValue> GetHostPermissions(const Extension* ext,
 }
 
 std::unique_ptr<base::ListValue> GetAPIPermissions(const Extension* ext) {
-  auto permissions = base::MakeUnique<base::ListValue>();
+  auto permissions = std::make_unique<base::ListValue>();
   std::set<std::string> perm_list =
       ext->permissions_data()->active_permissions().GetAPIsAsStrings();
   for (std::set<std::string>::const_iterator perm = perm_list.begin();
@@ -73,6 +82,38 @@ std::unique_ptr<base::ListValue> GetAPIPermissions(const Extension* ext) {
 bool IsTestMode(content::BrowserContext* context) {
   return AutotestPrivateAPI::GetFactoryInstance()->Get(context)->test_mode();
 }
+
+#if defined(OS_CHROMEOS)
+std::string ConvertToString(message_center::NotificationType type) {
+  switch (type) {
+    case message_center::NOTIFICATION_TYPE_SIMPLE:
+      return "simple";
+    case message_center::NOTIFICATION_TYPE_BASE_FORMAT:
+      return "base_format";
+    case message_center::NOTIFICATION_TYPE_IMAGE:
+      return "image";
+    case message_center::NOTIFICATION_TYPE_MULTIPLE:
+      return "multiple";
+    case message_center::NOTIFICATION_TYPE_PROGRESS:
+      return "progress";
+    case message_center::NOTIFICATION_TYPE_CUSTOM:
+      return "custom";
+  }
+  return "unknown";
+}
+
+std::unique_ptr<base::DictionaryValue> MakeDictionaryFromNotification(
+    const message_center::Notification& notification) {
+  auto result = std::make_unique<base::DictionaryValue>();
+  result->SetString("id", notification.id());
+  result->SetString("type", ConvertToString(notification.type()));
+  result->SetString("title", notification.title());
+  result->SetString("message", notification.message());
+  result->SetInteger("priority", notification.priority());
+  result->SetInteger("progress", notification.progress());
+  return result;
+}
+#endif
 
 }  // namespace
 
@@ -105,17 +146,32 @@ ExtensionFunction::ResponseAction AutotestPrivateShutdownFunction::Run() {
 ExtensionFunction::ResponseAction AutotestPrivateLoginStatusFunction::Run() {
   DVLOG(1) << "AutotestPrivateLoginStatusFunction";
 
-  std::unique_ptr<base::DictionaryValue> result(new base::DictionaryValue);
 #if defined(OS_CHROMEOS)
+  LoginScreenClient::Get()->login_screen()->IsReadyForPassword(base::BindOnce(
+      &AutotestPrivateLoginStatusFunction::OnIsReadyForPassword, this));
+  return RespondLater();
+#else
+  return RespondNow(OneArgument(std::make_unique<base::DictionaryValue>()));
+#endif
+}
+
+#if defined(OS_CHROMEOS)
+void AutotestPrivateLoginStatusFunction::OnIsReadyForPassword(bool is_ready) {
+  auto result = std::make_unique<base::DictionaryValue>();
   const user_manager::UserManager* user_manager =
       user_manager::UserManager::Get();
+
+  // default_screen_locker()->locked() is set when the UI is ready, so this
+  // tells us both views based lockscreen UI and screenlocker are ready.
   const bool is_screen_locked =
-      !!chromeos::ScreenLocker::default_screen_locker();
+      !!chromeos::ScreenLocker::default_screen_locker() &&
+      chromeos::ScreenLocker::default_screen_locker()->locked();
 
   if (user_manager) {
     result->SetBoolean("isLoggedIn", user_manager->IsUserLoggedIn());
     result->SetBoolean("isOwner", user_manager->IsCurrentUserOwner());
     result->SetBoolean("isScreenLocked", is_screen_locked);
+    result->SetBoolean("isReadyForPassword", is_ready);
     if (user_manager->IsUserLoggedIn()) {
       result->SetBoolean("isRegularUser",
                          user_manager->IsLoggedInAsUserWithGaiaAccount());
@@ -143,10 +199,9 @@ ExtensionFunction::ResponseAction AutotestPrivateLoginStatusFunction::Run() {
       result->SetString("userImage", user_image);
     }
   }
-#endif
-
-  return RespondNow(OneArgument(std::move(result)));
+  Respond(OneArgument(std::move(result)));
 }
+#endif
 
 ExtensionFunction::ResponseAction AutotestPrivateLockScreenFunction::Run() {
   DVLOG(1) << "AutotestPrivateLockScreenFunction";
@@ -169,7 +224,7 @@ AutotestPrivateGetExtensionsInfoFunction::Run() {
   ExtensionActionManager* extension_action_manager =
       ExtensionActionManager::Get(browser_context());
 
-  auto extensions_values = base::MakeUnique<base::ListValue>();
+  auto extensions_values = std::make_unique<base::ListValue>();
   ExtensionList all;
   all.insert(all.end(), extensions.begin(), extensions.end());
   all.insert(all.end(), disabled_extensions.begin(), disabled_extensions.end());
@@ -354,45 +409,87 @@ AutotestPrivateSetMouseReverseScrollFunction::Run() {
   return RespondNow(NoArguments());
 }
 
-// static
-std::string AutotestPrivateGetVisibleNotificationsFunction::ConvertToString(
-    message_center::NotificationType type) {
-#if defined(OS_CHROMEOS)
-  switch (type) {
-    case message_center::NOTIFICATION_TYPE_SIMPLE:
-      return "simple";
-    case message_center::NOTIFICATION_TYPE_BASE_FORMAT:
-      return "base_format";
-    case message_center::NOTIFICATION_TYPE_IMAGE:
-      return "image";
-    case message_center::NOTIFICATION_TYPE_MULTIPLE:
-      return "multiple";
-    case message_center::NOTIFICATION_TYPE_PROGRESS:
-      return "progress";
-    case message_center::NOTIFICATION_TYPE_CUSTOM:
-      return "custom";
-  }
-#endif
-  return "unknown";
-}
+AutotestPrivateGetVisibleNotificationsFunction::
+    AutotestPrivateGetVisibleNotificationsFunction() = default;
+AutotestPrivateGetVisibleNotificationsFunction::
+    ~AutotestPrivateGetVisibleNotificationsFunction() = default;
 
 ExtensionFunction::ResponseAction
 AutotestPrivateGetVisibleNotificationsFunction::Run() {
   DVLOG(1) << "AutotestPrivateGetVisibleNotificationsFunction";
   std::unique_ptr<base::ListValue> values(new base::ListValue);
 #if defined(OS_CHROMEOS)
-  for (auto* notification :
-       message_center::MessageCenter::Get()->GetVisibleNotifications()) {
-    auto result = base::MakeUnique<base::DictionaryValue>();
-    result->SetString("id", notification->id());
-    result->SetString("type", ConvertToString(notification->type()));
-    result->SetString("title", notification->title());
-    result->SetString("message", notification->message());
-    result->SetInteger("priority", notification->priority());
-    result->SetInteger("progress", notification->progress());
-    values->Append(std::move(result));
+  if (base::FeatureList::IsEnabled(features::kNativeNotifications) ||
+      base::FeatureList::IsEnabled(features::kMash)) {
+    auto* connection = content::ServiceManagerConnection::GetForProcess();
+    connection->GetConnector()->BindInterface(ash::mojom::kServiceName,
+                                              &controller_);
+    controller_->GetActiveNotifications(base::BindOnce(
+        &AutotestPrivateGetVisibleNotificationsFunction::OnGotNotifications,
+        this));
+    return RespondLater();
   }
 
+  CHECK(message_center::MessageCenter::Get());
+  for (auto* notification :
+       message_center::MessageCenter::Get()->GetVisibleNotifications()) {
+    values->Append(MakeDictionaryFromNotification(*notification));
+  }
+
+#endif
+  return RespondNow(OneArgument(std::move(values)));
+}
+
+#if defined(OS_CHROMEOS)
+void AutotestPrivateGetVisibleNotificationsFunction::OnGotNotifications(
+    const std::vector<message_center::Notification>& notifications) {
+  auto values = std::make_unique<base::ListValue>();
+  for (const auto& notification : notifications) {
+    values->Append(MakeDictionaryFromNotification(notification));
+  }
+  Respond(OneArgument(std::move(values)));
+}
+
+// static
+std::string AutotestPrivateGetPrinterListFunction::GetPrinterType(
+    chromeos::CupsPrintersManager::PrinterClass type) {
+  switch (type) {
+    case chromeos::CupsPrintersManager::PrinterClass::kConfigured:
+      return "configured";
+    case chromeos::CupsPrintersManager::PrinterClass::kEnterprise:
+      return "enterprise";
+    case chromeos::CupsPrintersManager::PrinterClass::kAutomatic:
+      return "automatic";
+    case chromeos::CupsPrintersManager::PrinterClass::kDiscovered:
+      return "discovered";
+    default:
+      return "unknown";
+  }
+}
+#endif
+
+ExtensionFunction::ResponseAction AutotestPrivateGetPrinterListFunction::Run() {
+  DVLOG(1) << "AutotestPrivateGetPrinterListFunction";
+  auto values = std::make_unique<base::ListValue>();
+#if defined(OS_CHROMEOS)
+  Profile* profile = ProfileManager::GetActiveUserProfile();
+  std::unique_ptr<chromeos::CupsPrintersManager> printers_manager =
+      chromeos::CupsPrintersManager::Create(profile);
+  std::vector<chromeos::CupsPrintersManager::PrinterClass> printer_type = {
+      chromeos::CupsPrintersManager::PrinterClass::kConfigured,
+      chromeos::CupsPrintersManager::PrinterClass::kEnterprise,
+      chromeos::CupsPrintersManager::PrinterClass::kAutomatic};
+  for (const auto& type : printer_type) {
+    std::vector<chromeos::Printer> printer_list =
+        printers_manager->GetPrinters(type);
+    for (const auto& printer : printer_list) {
+      auto result = std::make_unique<base::DictionaryValue>();
+      result->SetString("printerName", printer.display_name());
+      result->SetString("printerId", printer.id());
+      result->SetString("printerType", GetPrinterType(type));
+      values->Append(std::move(result));
+    }
+  }
 #endif
   return RespondNow(OneArgument(std::move(values)));
 }
@@ -407,8 +504,8 @@ AutotestPrivateGetPlayStoreStateFunction::Run() {
   if (arc::IsArcAllowedForProfile(profile)) {
     play_store_state.allowed = true;
     play_store_state.enabled =
-        base::MakeUnique<bool>(arc::IsArcPlayStoreEnabledForProfile(profile));
-    play_store_state.managed = base::MakeUnique<bool>(
+        std::make_unique<bool>(arc::IsArcPlayStoreEnabledForProfile(profile));
+    play_store_state.managed = std::make_unique<bool>(
         arc::IsArcPlayStoreEnabledPreferenceManagedForProfile(profile));
   }
 #endif

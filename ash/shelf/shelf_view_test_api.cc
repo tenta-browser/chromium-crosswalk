@@ -47,8 +47,9 @@ int ShelfViewTestAPI::GetButtonCount() {
 }
 
 ShelfButton* ShelfViewTestAPI::GetButton(int index) {
-  // App list button is not a ShelfButton.
-  if (shelf_view_->model_->items()[index].type == ash::TYPE_APP_LIST)
+  // App list and back button are not ShelfButtons.
+  if (shelf_view_->model_->items()[index].type == ash::TYPE_APP_LIST ||
+      shelf_view_->model_->items()[index].type == ash::TYPE_BACK_BUTTON)
     return nullptr;
 
   return static_cast<ShelfButton*>(GetViewAt(index));
@@ -114,6 +115,14 @@ void ShelfViewTestAPI::RunMessageLoopUntilAnimationsDone() {
   base::RunLoop().Run();
 
   shelf_view_->bounds_animator_->RemoveObserver(observer.get());
+}
+
+gfx::Rect ShelfViewTestAPI::GetMenuAnchorRect(const views::View* source,
+                                              const gfx::Point& location,
+                                              ui::MenuSourceType source_type,
+                                              bool context_menu) const {
+  return shelf_view_->GetMenuAnchorRect(source, location, source_type,
+                                        context_menu);
 }
 
 bool ShelfViewTestAPI::CloseMenu() {

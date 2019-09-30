@@ -26,10 +26,10 @@
 #include "ash/window_manager_service.h"
 #include "base/run_loop.h"
 #include "base/strings/string_split.h"
-#include "base/test/sequenced_worker_pool_owner.h"
 #include "chromeos/audio/cras_audio_handler.h"
 #include "chromeos/cryptohome/system_salt_getter.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
+#include "chromeos/dbus/power_policy_controller.h"
 #include "chromeos/network/network_handler.h"
 #include "components/prefs/testing_pref_service.h"
 #include "device/bluetooth/bluetooth_adapter_factory.h"
@@ -45,6 +45,8 @@
 #include "ui/base/material_design/material_design_controller.h"
 #include "ui/base/platform_window_defaults.h"
 #include "ui/base/test/material_design_controller_test_api.h"
+#include "ui/base/ui_base_features.h"
+#include "ui/base/ui_base_switches_util.h"
 #include "ui/compositor/scoped_animation_duration_scale_mode.h"
 #include "ui/compositor/test/context_factories_for_test.h"
 #include "ui/display/display.h"
@@ -52,7 +54,6 @@
 #include "ui/display/manager/display_manager.h"
 #include "ui/display/screen.h"
 #include "ui/display/test/display_manager_test_api.h"
-#include "ui/message_center/message_center.h"
 #include "ui/wm/core/capture_controller.h"
 #include "ui/wm/core/cursor_manager.h"
 #include "ui/wm/core/wm_state.h"
@@ -64,9 +65,7 @@ Config AshTestHelper::config_ = Config::CLASSIC;
 
 AshTestHelper::AshTestHelper(AshTestEnvironment* ash_test_environment)
     : ash_test_environment_(ash_test_environment),
-      test_shell_delegate_(nullptr),
-      dbus_thread_manager_initialized_(false),
-      bluez_dbus_manager_initialized_(false) {
+      command_line_(std::make_unique<base::test::ScopedCommandLine>()) {
   ui::test::EnableTestConfigForPlatformWindows();
   aura::test::InitializeAuraEventGeneratorDelegate();
 }
@@ -74,7 +73,6 @@ AshTestHelper::AshTestHelper(AshTestEnvironment* ash_test_environment)
 AshTestHelper::~AshTestHelper() = default;
 
 void AshTestHelper::SetUp(bool start_session, bool provide_local_state) {
-  command_line_ = std::make_unique<base::test::ScopedCommandLine>();
   // TODO(jamescook): Can we do this without changing command line?
   // Use the origin (1,1) so that it doesn't over
   // lap with the native mouse cursor.
@@ -114,6 +112,18 @@ void AshTestHelper::SetUp(bool start_session, bool provide_local_state) {
       ui::ScopedAnimationDurationScaleMode::ZERO_DURATION));
   ui::InitializeInputMethodForTesting();
 
+  if (config_ == Config::MUS &&
+      !base::FeatureList::IsEnabled(features::kMash)) {
+    ui::ContextFactory* context_factory = nullptr;
+    ui::ContextFactoryPrivate* context_factory_private = nullptr;
+    ui::InitializeContextFactoryForTests(false /* enable_pixel_output */,
+                                         &context_factory,
+                                         &context_factory_private);
+    auto* env = aura::Env::GetInstance();
+    env->set_context_factory(context_factory);
+    env->set_context_factory_private(context_factory_private);
+  }
+
   // Creates Shell and hook with Desktop.
   if (!test_shell_delegate_)
     test_shell_delegate_ = new TestShellDelegate;
@@ -121,13 +131,9 @@ void AshTestHelper::SetUp(bool start_session, bool provide_local_state) {
   if (config_ == Config::CLASSIC) {
     // All of this initialization is done in WindowManagerService for mash.
 
-    // Creates MessageCenter since g_browser_process is not created in
-    // AshTestBase tests.
-    message_center::MessageCenter::Initialize();
-
     if (!chromeos::DBusThreadManager::IsInitialized()) {
       chromeos::DBusThreadManager::Initialize(
-          chromeos::DBusThreadManager::PROCESS_ASH);
+          chromeos::DBusThreadManager::kShared);
       dbus_thread_manager_initialized_ = true;
     }
 
@@ -136,6 +142,12 @@ void AshTestHelper::SetUp(bool start_session, bool provide_local_state) {
           chromeos::DBusThreadManager::Get()->GetSystemBus(),
           chromeos::DBusThreadManager::Get()->IsUsingFakes());
       bluez_dbus_manager_initialized_ = true;
+    }
+
+    if (!chromeos::PowerPolicyController::IsInitialized()) {
+      chromeos::PowerPolicyController::Initialize(
+          chromeos::DBusThreadManager::Get()->GetPowerManagerClient());
+      power_policy_controller_initialized_ = true;
     }
 
     // Create CrasAudioHandler for testing since g_browser_process is not
@@ -163,6 +175,12 @@ void AshTestHelper::SetUp(bool start_session, bool provide_local_state) {
       std::unique_ptr<aura::InputStateLookup>());
 
   Shell* shell = Shell::Get();
+
+  // Cursor is visible by default in tests.
+  // CursorManager is null on MASH.
+  if (shell->cursor_manager())
+    shell->cursor_manager()->ShowCursor();
+
   if (provide_local_state) {
     auto pref_service = std::make_unique<TestingPrefServiceSimple>();
     Shell::RegisterLocalStatePrefs(pref_service->registry());
@@ -187,9 +205,13 @@ void AshTestHelper::SetUp(bool start_session, bool provide_local_state) {
   DisplayConfigurationControllerTestApi(
       shell->display_configuration_controller())
       .DisableDisplayAnimator();
+
+  app_list_test_helper_ = std::make_unique<AppListTestHelper>();
 }
 
 void AshTestHelper::TearDown() {
+  app_list_test_helper_.reset();
+
   window_manager_service_.reset();
 
   // WindowManger owns the Shell in mash.
@@ -202,11 +224,13 @@ void AshTestHelper::TearDown() {
   ash_test_environment_->TearDown();
 
   if (config_ == Config::CLASSIC) {
-    // Remove global message center state.
-    message_center::MessageCenter::Shutdown();
-
     chromeos::SystemSaltGetter::Shutdown();
     chromeos::CrasAudioHandler::Shutdown();
+  }
+
+  if (power_policy_controller_initialized_) {
+    chromeos::PowerPolicyController::Shutdown();
+    power_policy_controller_initialized_ = false;
   }
 
   if (bluez_dbus_manager_initialized_) {
@@ -220,8 +244,7 @@ void AshTestHelper::TearDown() {
     dbus_thread_manager_initialized_ = false;
   }
 
-  if (config_ == Config::CLASSIC)
-    ui::TerminateContextFactoryForTests();
+  ui::TerminateContextFactoryForTests();
 
   ui::ShutdownInputMethodForTesting();
   zero_duration_mode_.reset();
@@ -243,6 +266,20 @@ void AshTestHelper::TearDown() {
 void AshTestHelper::RunAllPendingInMessageLoop() {
   base::RunLoop run_loop;
   run_loop.RunUntilIdle();
+}
+
+void AshTestHelper::NotifyClientAboutAcceleratedWidgets() {
+  if (config_ == Config::CLASSIC)
+    return;
+  if (base::FeatureList::IsEnabled(features::kMash))
+    return;
+  Shell* shell = Shell::Get();
+  window_tree_client_setup_.NotifyClientAboutAcceleratedWidgets(
+      shell->display_manager());
+}
+
+PrefService* AshTestHelper::GetLocalStatePrefService() {
+  return Shell::Get()->local_state_.get();
 }
 
 aura::Window* AshTestHelper::CurrentContext() {
@@ -286,6 +323,7 @@ void AshTestHelper::CreateMashWindowManager() {
   window_tree_client_private_ =
       std::make_unique<aura::WindowTreeClientPrivate>(window_tree_client);
   window_tree_client_private_->CallOnConnect();
+  NotifyClientAboutAcceleratedWidgets();
 }
 
 void AshTestHelper::CreateShell() {

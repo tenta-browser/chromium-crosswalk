@@ -4,4 +4,25 @@
 
 Polymer({
   is: 'print-preview-color-settings',
+
+  behaviors: [SettingsBehavior],
+
+  properties: {
+    disabled: Boolean,
+  },
+
+  observers: ['onColorSettingChange_(settings.color.value)'],
+
+  /**
+   * @param {*} value The new value of the color setting.
+   * @private
+   */
+  onColorSettingChange_: function(value) {
+    this.$$('select').value = /** @type {boolean} */ (value) ? 'color' : 'bw';
+  },
+
+  /** @private */
+  onChange_: function() {
+    this.setSetting('color', this.$$('select').value == 'color');
+  },
 });

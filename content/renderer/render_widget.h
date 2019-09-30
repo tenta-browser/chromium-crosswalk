@@ -15,6 +15,7 @@
 #include <vector>
 
 #include "base/callback.h"
+#include "base/cancelable_callback.h"
 #include "base/compiler_specific.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
@@ -22,13 +23,14 @@
 #include "base/observer_list.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
+#include "cc/input/overscroll_behavior.h"
 #include "cc/input/touch_action.h"
 #include "components/viz/common/surfaces/local_surface_id.h"
+#include "content/common/buildflags.h"
 #include "content/common/content_export.h"
 #include "content/common/cursors/webcursor.h"
 #include "content/common/drag_event_source_info.h"
 #include "content/common/edit_command.h"
-#include "content/common/features.h"
 #include "content/common/widget.mojom.h"
 #include "content/public/common/drop_data.h"
 #include "content/public/common/screen_info.h"
@@ -44,17 +46,17 @@
 #include "ipc/ipc_message.h"
 #include "ipc/ipc_sender.h"
 #include "mojo/public/cpp/bindings/binding.h"
-#include "ppapi/features/features.h"
-#include "third_party/WebKit/public/platform/WebDisplayMode.h"
-#include "third_party/WebKit/public/platform/WebInputEvent.h"
-#include "third_party/WebKit/public/platform/WebRect.h"
-#include "third_party/WebKit/public/platform/WebReferrerPolicy.h"
-#include "third_party/WebKit/public/platform/WebTextInputInfo.h"
-#include "third_party/WebKit/public/web/WebImeTextSpan.h"
-#include "third_party/WebKit/public/web/WebPopupType.h"
-#include "third_party/WebKit/public/web/WebTextDirection.h"
-#include "third_party/WebKit/public/web/WebWidget.h"
-#include "third_party/WebKit/public/web/WebWidgetClient.h"
+#include "ppapi/buildflags/buildflags.h"
+#include "third_party/blink/public/platform/web_display_mode.h"
+#include "third_party/blink/public/platform/web_input_event.h"
+#include "third_party/blink/public/platform/web_rect.h"
+#include "third_party/blink/public/platform/web_referrer_policy.h"
+#include "third_party/blink/public/platform/web_text_input_info.h"
+#include "third_party/blink/public/web/web_ime_text_span.h"
+#include "third_party/blink/public/web/web_popup_type.h"
+#include "third_party/blink/public/web/web_text_direction.h"
+#include "third_party/blink/public/web/web_widget.h"
+#include "third_party/blink/public/web/web_widget_client.h"
 #include "ui/base/ime/text_input_mode.h"
 #include "ui/base/ime/text_input_type.h"
 #include "ui/base/ui_base_types.h"
@@ -72,9 +74,8 @@ class SyncMessageFilter;
 
 namespace blink {
 namespace scheduler {
-class RenderWidgetSchedulingState;
+class WebRenderWidgetSchedulingState;
 }
-struct WebActiveWheelFlingParameters;
 struct WebDeviceEmulationParams;
 class WebDragData;
 class WebFrameWidget;
@@ -83,7 +84,6 @@ class WebImage;
 class WebInputMethodController;
 class WebLocalFrame;
 class WebMouseEvent;
-class WebTappedInfo;
 struct WebPoint;
 }  // namespace blink
 
@@ -100,6 +100,7 @@ struct DidOverscrollParams;
 }
 
 namespace content {
+class BrowserPlugin;
 class CompositorDependencies;
 class ExternalPopupMenu;
 class FrameSwapMessageQueue;
@@ -139,10 +140,12 @@ class CONTENT_EXPORT RenderWidget
  public:
   // Creates a new RenderWidget for a popup. |opener| is the RenderView that
   // this widget lives inside.
-  static RenderWidget* CreateForPopup(RenderViewImpl* opener,
-                                      CompositorDependencies* compositor_deps,
-                                      blink::WebPopupType popup_type,
-                                      const ScreenInfo& screen_info);
+  static RenderWidget* CreateForPopup(
+      RenderViewImpl* opener,
+      CompositorDependencies* compositor_deps,
+      blink::WebPopupType popup_type,
+      const ScreenInfo& screen_info,
+      scoped_refptr<base::SingleThreadTaskRunner> task_runner);
 
   // Creates a new RenderWidget that will be attached to a RenderFrame.
   static RenderWidget* CreateForFrame(int widget_routing_id,
@@ -176,6 +179,8 @@ class CONTENT_EXPORT RenderWidget
   int32_t routing_id() const { return routing_id_; }
 
   CompositorDependencies* compositor_deps() const { return compositor_deps_; }
+
+  // This can return nullptr while the RenderWidget is closing.
   virtual blink::WebWidget* GetWebWidget() const;
 
   // Returns the current instance of WebInputMethodController which is to be
@@ -184,6 +189,9 @@ class CONTENT_EXPORT RenderWidget
   blink::WebInputMethodController* GetInputMethodController() const;
 
   const gfx::Size& size() const { return size_; }
+  const gfx::Size& compositor_viewport_pixel_size() const {
+    return compositor_viewport_pixel_size_;
+  }
   bool is_fullscreen_granted() const { return is_fullscreen_granted_; }
   blink::WebDisplayMode display_mode() const { return display_mode_; }
   bool is_hidden() const { return is_hidden_; }
@@ -195,6 +203,9 @@ class CONTENT_EXPORT RenderWidget
   gfx::Point host_context_menu_location() const {
     return host_context_menu_location_;
   }
+  const gfx::Size& visible_viewport_size() const {
+    return visible_viewport_size_;
+  }
 
   void set_owner_delegate(RenderWidgetOwnerDelegate* owner_delegate) {
     DCHECK(!owner_delegate_);
@@ -202,9 +213,6 @@ class CONTENT_EXPORT RenderWidget
   }
 
   RenderWidgetOwnerDelegate* owner_delegate() const { return owner_delegate_; }
-
-  // ScreenInfo exposed so it can be passed to subframe RenderWidgets.
-  ScreenInfo screen_info() const { return screen_info_; }
 
   // Sets whether this RenderWidget has been swapped out to be displayed by
   // a RenderWidget in a different process.  If so, no new IPC messages will be
@@ -229,6 +237,11 @@ class CONTENT_EXPORT RenderWidget
   void RegisterRenderFrame(RenderFrameImpl* frame);
   void UnregisterRenderFrame(RenderFrameImpl* frame);
 
+  // BrowserPlugins embedded by this RenderWidget register themselves here.
+  // These plugins need to be notified about changes to ScreenInfo.
+  void RegisterBrowserPlugin(BrowserPlugin* browser_plugin);
+  void UnregisterBrowserPlugin(BrowserPlugin* browser_plugin);
+
   // IPC::Listener
   bool OnMessageReceived(const IPC::Message& msg) override;
 
@@ -252,16 +265,18 @@ class CONTENT_EXPORT RenderWidget
   void DidReceiveCompositorFrameAck() override;
   bool IsClosing() const override;
   void RequestScheduleAnimation() override;
-  void UpdateVisualState() override;
+  void UpdateVisualState(VisualStateUpdate requested_update) override;
   void WillBeginCompositorFrame() override;
   std::unique_ptr<cc::SwapPromise> RequestCopyOfOutputForLayoutTest(
       std::unique_ptr<viz::CopyOutputRequest> request) override;
 
   // RenderWidgetInputHandlerDelegate
   void FocusChangeComplete() override;
-  void ObserveGestureEventAndResult(const blink::WebGestureEvent& gesture_event,
-                                    const gfx::Vector2dF& unused_delta,
-                                    bool event_processed) override;
+  void ObserveGestureEventAndResult(
+      const blink::WebGestureEvent& gesture_event,
+      const gfx::Vector2dF& unused_delta,
+      const cc::OverscrollBehavior& overscroll_behavior,
+      bool event_processed) override;
 
   void OnDidHandleKeyEvent() override;
   void OnDidOverscroll(const ui::DidOverscrollParams& params) override;
@@ -283,6 +298,8 @@ class CONTENT_EXPORT RenderWidget
 
   // blink::WebWidgetClient
   blink::WebLayerTreeView* InitializeLayerTreeView() override;
+  void IntrinsicSizingInfoChanged(
+      const blink::WebIntrinsicSizingInfo&) override;
   void DidMeaningfulLayout(blink::WebMeaningfulLayout layout_type) override;
   void DidChangeCursor(const blink::WebCursorInfo&) override;
   void AutoscrollStart(const blink::WebFloatPoint& point) override;
@@ -318,15 +335,6 @@ class CONTENT_EXPORT RenderWidget
   // Override point to obtain that the current input method state and caret
   // position.
   virtual ui::TextInputType GetTextInputType();
-
-#if defined(OS_ANDROID)
-  // Notifies that a tap was not consumed, so showing a UI for the unhandled
-  // tap may be needed.
-  // Performs various checks on the given WebTappedInfo to apply heuristics to
-  // determine if triggering is appropriate.
-  void ShowUnhandledTapUIIfNeeded(
-      const blink::WebTappedInfo& tapped_info) override;
-#endif
 
   // Begins the compositor's scheduler to start producing frames.
   void StartCompositor();
@@ -393,25 +401,39 @@ class CONTENT_EXPORT RenderWidget
     return mouse_lock_dispatcher_.get();
   }
 
-  // When emulated, this returns original device scale factor.
-  float GetOriginalDeviceScaleFactor() const;
+  // Returns the ScreenInfo exposed to Blink. In device emulation, this
+  // may not match the compositor ScreenInfo.
+  const ScreenInfo& GetWebScreenInfo() const;
+
+  // When emulated, this returns the original (non-emulated) ScreenInfo.
+  const ScreenInfo& GetOriginalScreenInfo() const;
 
   // Helper to convert |point| using ConvertWindowToViewport().
   gfx::PointF ConvertWindowPointToViewport(const gfx::PointF& point);
   gfx::Point ConvertWindowPointToViewport(const gfx::Point& point);
 
-  void TransferActiveWheelFlingAnimation(
-      const blink::WebActiveWheelFlingParameters& params);
-
   uint32_t GetContentSourceId();
-  void IncrementContentSourceId();
+  void DidNavigate();
 
+  bool auto_resize_mode() const { return auto_resize_mode_; }
+
+  uint64_t auto_resize_sequence_number() const {
+    return auto_resize_sequence_number_;
+  }
+
+  const gfx::Size& min_size_for_auto_resize() const {
+    return min_size_for_auto_resize_;
+  }
+
+  const gfx::Size& max_size_for_auto_resize() const {
+    return max_size_for_auto_resize_;
+  }
   // MainThreadEventQueueClient overrides.
 
   // Requests a BeginMainFrame callback from the compositor.
   void SetNeedsMainFrame() override;
 
-  int GetWidgetRoutingIdAtPoint(const gfx::Point& point);
+  viz::FrameSinkId GetFrameSinkIdAtPoint(const gfx::Point& point);
 
   void HandleInputEvent(const blink::WebCoalescedInputEvent& input_event,
                         const ui::LatencyInfo& latency_info,
@@ -460,6 +482,8 @@ class CONTENT_EXPORT RenderWidget
 
   void DidResizeOrRepaintAck();
 
+  base::WeakPtr<RenderWidget> AsWeakPtr();
+
  protected:
   // Friend RefCounted so that the dtor can be non-public. Using this class
   // without ref-counting is an error.
@@ -480,6 +504,7 @@ class CONTENT_EXPORT RenderWidget
                bool swapped_out,
                bool hidden,
                bool never_visible,
+               scoped_refptr<base::SingleThreadTaskRunner> task_runner,
                mojom::WidgetRequest widget_request = nullptr);
 
   ~RenderWidget() override;
@@ -506,8 +531,16 @@ class CONTENT_EXPORT RenderWidget
   gfx::Size GetSizeForWebWidget() const;
   virtual void ResizeWebWidget();
 
-  // Close the underlying WebWidget.
+  // Close the underlying WebWidget and stop the compositor.
   virtual void Close();
+
+  // Just Close the WebWidget, in cases where the Close() will be deferred.
+  // It is safe to call this multiple times, which happens in the case of
+  // frame widgets beings closed, since subsequent calls are ignored.
+  void CloseWebWidget();
+
+  // Update the web view's device scale factor.
+  void UpdateWebViewWithDeviceScaleFactor();
 
   // Used to force the size of a window when running layout tests.
   void SetWindowRectSynchronously(const gfx::Rect& new_window_rect);
@@ -516,11 +549,6 @@ class CONTENT_EXPORT RenderWidget
       ExternalPopupMenu* popup,
       RenderWidgetScreenMetricsEmulator* emulator);
 #endif
-
-  void SetLocalSurfaceIdForAutoResize(
-      uint64_t sequence_number,
-      const content::ScreenInfo& screen_info,
-      const viz::LocalSurfaceId& local_surface_id);
 
   // RenderWidget IPC message handlers
   void OnHandleInputEvent(
@@ -531,12 +559,6 @@ class CONTENT_EXPORT RenderWidget
   void OnClose();
   void OnCreatingNewAck();
   virtual void OnResize(const ResizeParams& params);
-  void OnSetLocalSurfaceIdForAutoResize(
-      uint64_t sequence_number,
-      const gfx::Size& min_size,
-      const gfx::Size& max_size,
-      const content::ScreenInfo& screen_info,
-      const viz::LocalSurfaceId& local_surface_id);
   void OnEnableDeviceEmulation(const blink::WebDeviceEmulationParams& params);
   void OnDisableDeviceEmulation();
   virtual void OnWasHidden();
@@ -548,9 +570,6 @@ class CONTENT_EXPORT RenderWidget
   // Request from browser to show context menu.
   virtual void OnShowContextMenu(ui::MenuSourceType source_type,
                                  const gfx::Point& location);
-  // Called when the device scale factor is changed, or the layer tree is
-  // initialized.
-  virtual void OnDeviceScaleFactorChanged();
 
   void OnRepaint(gfx::Size size_to_paint);
   void OnSetTextDirection(blink::WebTextDirection direction);
@@ -558,7 +577,8 @@ class CONTENT_EXPORT RenderWidget
   void OnUpdateScreenRects(const gfx::Rect& view_screen_rect,
                            const gfx::Rect& window_screen_rect);
   void OnUpdateWindowScreenRect(const gfx::Rect& window_screen_rect);
-  void OnSetViewportIntersection(const gfx::Rect& viewport_intersection);
+  void OnSetViewportIntersection(const gfx::Rect& viewport_intersection,
+                                 const gfx::Rect& compositor_visible_rect);
   void OnSetIsInert(bool);
   void OnUpdateRenderThrottlingStatus(bool is_throttled,
                                       bool subtree_throttled);
@@ -584,11 +604,6 @@ class CONTENT_EXPORT RenderWidget
                          blink::WebDragOperation drag_operation);
   void OnDragSourceSystemDragEnded();
 
-  // Notify the compositor about a change in viewport size. This should be
-  // used only with auto resize mode WebWidgets, as normal WebWidgets should
-  // go through OnResize.
-  void AutoResizeCompositor(const viz::LocalSurfaceId& local_surface_id);
-
   void OnOrientationChange();
 
   // Override points to notify derived classes that a paint has happened.
@@ -608,6 +623,12 @@ class CONTENT_EXPORT RenderWidget
   bool next_paint_is_resize_ack() const;
   void set_next_paint_is_resize_ack();
   void set_next_paint_is_repaint_ack();
+  void reset_next_paint_is_resize_ack();
+
+  // Returns a rect that the compositor needs to raster. For a main frame this
+  // is always the entire viewprot, but for out-of-process iframes this can be
+  // constrained to limit overdraw.
+  gfx::Rect ViewportVisibleRect();
 
   // QueueMessage implementation extracted into a static method for easy
   // testing.
@@ -689,13 +710,16 @@ class CONTENT_EXPORT RenderWidget
   // messages.
   WebCursor current_cursor_;
 
-  // The size of the RenderWidget.
+  // The size of the RenderWidget in DIPs. This may differ from
+  // |compositor_viewport_pixel_size_| in the following (and possibly other)
+  // cases: * On Android, for top and bottom controls * On OOPIF, due to
+  // rounding
   gfx::Size size_;
 
-  // The size of the view's backing surface in non-DPI-adjusted pixels.
-  gfx::Size physical_backing_size_;
+  // The size of the compositor's surface in pixels.
+  gfx::Size compositor_viewport_pixel_size_;
 
-  // The size of the visible viewport in DPI-adjusted pixels.
+  // The size of the visible viewport in pixels.
   gfx::Size visible_viewport_size_;
 
   // Flags for the next ViewHostMsg_ResizeOrRepaint_ACK message.
@@ -709,8 +733,19 @@ class CONTENT_EXPORT RenderWidget
   // the browser about an already-completed auto-resize.
   bool need_resize_ack_for_auto_resize_;
 
-  // The sequence number used for ViewHostMsg_UpdateRect.
-  uint64_t resize_or_repaint_ack_num_ = 0;
+  // The sequence number used for the auto-resize request.
+  uint64_t auto_resize_sequence_number_ = 0;
+
+  // The minimum size to use for auto-resize.
+  gfx::Size min_size_for_auto_resize_;
+
+  // The maximum size to use for auto-resize.
+  gfx::Size max_size_for_auto_resize_;
+
+  // A pending ResizeOrRepaintAck callback in response to an auto-resize
+  // initiated by Blink. If auto-resize mode is canceled with an in-flight
+  // Ack, then the Ack will be canceled.
+  base::CancelableOnceClosure auto_resize_ack_callback_;
 
   // Set to true if we should ignore RenderWidget::Show calls.
   bool did_show_;
@@ -742,9 +777,6 @@ class CONTENT_EXPORT RenderWidget
   // being rendered by another process.  If all RenderWidgets in a process are
   // swapped out, the process can exit.
   bool is_swapped_out_;
-
-  // Whether this RenderWidget is for an out-of-process iframe or not.
-  bool for_oopif_;
 
   // Stores information about the current text input.
   blink::WebTextInputInfo text_input_info_;
@@ -797,10 +829,6 @@ class CONTENT_EXPORT RenderWidget
   // Properties of the screen hosting this RenderWidget instance.
   ScreenInfo screen_info_;
 
-  // The device scale factor. This value is computed from the DPI entries in
-  // |screen_info_| on some platforms, and defaults to 1 on other platforms.
-  float device_scale_factor_;
-
   // True if the IME requests updated composition info.
   bool monitor_composition_info_;
 
@@ -824,10 +852,12 @@ class CONTENT_EXPORT RenderWidget
   // visibility state for example.
   base::ObserverList<RenderFrameImpl> render_frames_;
 
+  base::ObserverList<BrowserPlugin> browser_plugins_;
+
   bool has_host_context_menu_location_;
   gfx::Point host_context_menu_location_;
 
-  std::unique_ptr<blink::scheduler::RenderWidgetSchedulingState>
+  std::unique_ptr<blink::scheduler::WebRenderWidgetSchedulingState>
       render_widget_scheduling_state_;
 
   // Mouse Lock dispatcher attached to this view.
@@ -838,7 +868,21 @@ class CONTENT_EXPORT RenderWidget
 
   bool has_added_input_handler_;
 
+  viz::LocalSurfaceId local_surface_id_;
+
  private:
+  // TODO(ekaramad): This method should not be confused with its RenderView
+  // variant, GetWebFrameWidget(). Currently Cast and AndroidWebview's
+  // ContentRendererClients are the only users of the public variant. The public
+  // method will eventually be removed from RenderView and uses of the method
+  // will obtain WebFrameWidget from WebLocalFrame.
+  // Returns the WebFrameWidget associated with this RenderWidget if any.
+  // Returns nullptr if GetWebWidget() returns nullptr or returns a WebWidget
+  // that is not a WebFrameWidget. A WebFrameWidget only makes sense when there
+  // a local root associated with it. RenderWidgetFullscreenPepper and a swapped
+  // out RenderWidgets are amongst the cases where this method returns nullptr.
+  blink::WebFrameWidget* GetFrameWidget() const;
+
   // Applies/Removes the DevTools device emulation transformation to/from a
   // window rect.
   void ScreenRectToEmulatedIfNeeded(blink::WebRect* window_rect) const;
@@ -847,6 +891,11 @@ class CONTENT_EXPORT RenderWidget
   bool CreateWidget(int32_t opener_id,
                     blink::WebPopupType popup_type,
                     int32_t* routing_id);
+
+  void UpdateSurfaceAndScreenInfo(
+      viz::LocalSurfaceId new_local_surface_id,
+      const gfx::Size& new_compositor_viewport_pixel_size,
+      const ScreenInfo& new_screen_info);
 
   // A variant of Send but is fatal if it fails. The browser may
   // be waiting for this IPC Message and if the send fails the browser will
@@ -893,6 +942,9 @@ class CONTENT_EXPORT RenderWidget
   // Indicates whether this widget has focus.
   bool has_focus_;
 
+  // Whether this RenderWidget is for an out-of-process iframe or not.
+  bool for_oopif_;
+
   // A callback into the creator/opener of this widget, to be executed when
   // WebWidgetClient::show() occurs.
   ShowCallback show_callback_;
@@ -928,11 +980,18 @@ class CONTENT_EXPORT RenderWidget
   // to replace it. See https://crbug.com/695579.
   uint32_t current_content_source_id_;
 
-  viz::LocalSurfaceId local_surface_id_;
-
   scoped_refptr<MainThreadEventQueue> input_event_queue_;
 
   mojo::Binding<mojom::Widget> widget_binding_;
+
+  scoped_refptr<base::SingleThreadTaskRunner> task_runner_;
+
+  gfx::Rect compositor_visible_rect_;
+
+  // Cache whether or not we have touch handlers, to reduce IPCs sent.
+  // Different consumers in the browser process makes different assumptions, so
+  // must always send the first IPC regardless of value.
+  base::Optional<bool> has_touch_handlers_;
 
   base::WeakPtrFactory<RenderWidget> weak_ptr_factory_;
 

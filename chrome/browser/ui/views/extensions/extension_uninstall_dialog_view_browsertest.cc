@@ -2,14 +2,20 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <memory>
+
 #include "base/macros.h"
 #include "base/run_loop.h"
+#include "base/test/scoped_feature_list.h"
+#include "chrome/browser/extensions/browsertest_util.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/extension_uninstall_dialog.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/test/test_browser_dialog.h"
+#include "chrome/common/chrome_features.h"
+#include "chrome/common/web_application_info.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/test_utils.h"
@@ -30,12 +36,7 @@ const char kReferrerId[] = "chrome-remove-extension-dialog";
 const char kUninstallUrlPrefKey[] = "uninstall_url";
 
 scoped_refptr<extensions::Extension> BuildTestExtension() {
-  return extensions::ExtensionBuilder()
-      .SetManifest(extensions::DictionaryBuilder()
-                       .Set("name", "foo")
-                       .Set("version", "1.0")
-                       .Build())
-      .Build();
+  return extensions::ExtensionBuilder("foo").Build();
 }
 
 std::string GetActiveUrl(Browser* browser) {
@@ -48,7 +49,7 @@ std::string GetActiveUrl(Browser* browser) {
 void SetUninstallURL(extensions::ExtensionPrefs* prefs,
                      const std::string& extension_id) {
   prefs->UpdateExtensionPref(extension_id, kUninstallUrlPrefKey,
-                             base::MakeUnique<base::Value>(kUninstallUrl));
+                             std::make_unique<base::Value>(kUninstallUrl));
 }
 
 class TestExtensionUninstallDialogDelegate
@@ -132,6 +133,46 @@ IN_PROC_BROWSER_TEST_F(ExtensionUninstallDialogViewBrowserTest,
   run_loop.Run();
   EXPECT_TRUE(delegate.canceled());
 }
+
+#if defined(OS_CHROMEOS)
+// Test that we don't crash when uninstalling an extension from a bookmark app
+// window in Ash. Context: crbug.com/825554
+IN_PROC_BROWSER_TEST_F(ExtensionUninstallDialogViewBrowserTest,
+                       BookmarkAppWindowAshCrash) {
+  base::test::ScopedFeatureList scoped_feature_list_;
+  scoped_feature_list_.InitAndEnableFeature(features::kDesktopPWAWindowing);
+
+  scoped_refptr<extensions::Extension> extension(BuildTestExtension());
+  extensions::ExtensionSystem::Get(browser()->profile())
+      ->extension_service()
+      ->AddExtension(extension.get());
+
+  WebApplicationInfo info;
+  info.app_url = GURL("https://test.com/");
+  const extensions::Extension* bookmark_app =
+      extensions::browsertest_util::InstallBookmarkApp(browser()->profile(),
+                                                       info);
+  Browser* app_browser = extensions::browsertest_util::LaunchAppBrowser(
+      browser()->profile(), bookmark_app);
+
+  std::unique_ptr<extensions::ExtensionUninstallDialog> dialog;
+  {
+    base::RunLoop run_loop;
+    dialog.reset(extensions::ExtensionUninstallDialog::Create(
+        app_browser->profile(), app_browser->window()->GetNativeWindow(),
+        nullptr));
+    run_loop.RunUntilIdle();
+  }
+
+  {
+    base::RunLoop run_loop;
+    dialog->ConfirmUninstall(extension.get(),
+                             extensions::UNINSTALL_REASON_FOR_TESTING,
+                             extensions::UNINSTALL_SOURCE_FOR_TESTING);
+    run_loop.RunUntilIdle();
+  }
+}
+#endif  // defined(OS_CHROMEOS)
 
 // Test that when the user clicks Uninstall on the ExtensionUninstallDialog, the
 // extension's uninstall url (when it is specified) should open and be the
@@ -264,17 +305,16 @@ class ExtensionUninstallDialogViewInteractiveBrowserTest
     EXTENSION_LOCAL_SOURCE,
     EXTENSION_FROM_WEBSTORE,
   };
-  void ShowDialog(const std::string& name) override {
-    extensions::DictionaryBuilder manifest_builder;
-    manifest_builder.Set("name", "ExtensionForRemoval").Set("version", "1.0");
+  void ShowUi(const std::string& name) override {
+    extensions::ExtensionBuilder extension_builder("ExtensionForRemoval");
     if (extension_origin_ == EXTENSION_FROM_WEBSTORE) {
-      manifest_builder.Set("update_url",
-                           extension_urls::GetWebstoreUpdateUrl().spec());
+      extensions::DictionaryBuilder update_url;
+      update_url.Set("update_url",
+                     extension_urls::GetWebstoreUpdateUrl().spec());
+      extension_builder.MergeManifest(update_url.Build());
     }
 
-    extension_ = extensions::ExtensionBuilder()
-                     .SetManifest(manifest_builder.Build())
-                     .Build();
+    extension_ = extension_builder.Build();
     extensions::ExtensionSystem::Get(browser()->profile())
         ->extension_service()
         ->AddExtension(extension_.get());
@@ -284,12 +324,7 @@ class ExtensionUninstallDialogViewInteractiveBrowserTest
         &delegate_));
     if (uninstall_method_ == UNINSTALL_BY_EXTENSION) {
       triggering_extension_ =
-          extensions::ExtensionBuilder()
-              .SetManifest(extensions::DictionaryBuilder()
-                               .Set("name", "TestExtensionRemover")
-                               .Set("version", "1.0")
-                               .Build())
-              .Build();
+          extensions::ExtensionBuilder("TestExtensionRemover").Build();
       dialog_->ConfirmUninstallByExtension(
           extension_.get(), triggering_extension_.get(),
           extensions::UNINSTALL_REASON_FOR_TESTING,
@@ -310,7 +345,7 @@ class ExtensionUninstallDialogViewInteractiveBrowserTest
     uninstall_method_ = uninstall_method;
     extension_origin_ = extension_origin;
 
-    RunDialog();
+    ShowAndVerifyUi();
   }
 
  private:
@@ -336,21 +371,21 @@ class ExtensionUninstallDialogViewInteractiveBrowserTest
 };
 
 IN_PROC_BROWSER_TEST_F(ExtensionUninstallDialogViewInteractiveBrowserTest,
-                       InvokeDialog_ManualUninstall) {
+                       InvokeUi_ManualUninstall) {
   RunTest(MANUAL_UNINSTALL, EXTENSION_LOCAL_SOURCE);
 }
 
 IN_PROC_BROWSER_TEST_F(ExtensionUninstallDialogViewInteractiveBrowserTest,
-                       InvokeDialog_ManualUninstallShowReportAbuse) {
+                       InvokeUi_ManualUninstallShowReportAbuse) {
   RunTest(MANUAL_UNINSTALL, EXTENSION_FROM_WEBSTORE);
 }
 
 IN_PROC_BROWSER_TEST_F(ExtensionUninstallDialogViewInteractiveBrowserTest,
-                       InvokeDialog_UninstallByExtension) {
+                       InvokeUi_UninstallByExtension) {
   RunTest(UNINSTALL_BY_EXTENSION, EXTENSION_LOCAL_SOURCE);
 }
 
 IN_PROC_BROWSER_TEST_F(ExtensionUninstallDialogViewInteractiveBrowserTest,
-                       InvokeDialog_UninstallByExtensionShowReportAbuse) {
+                       InvokeUi_UninstallByExtensionShowReportAbuse) {
   RunTest(UNINSTALL_BY_EXTENSION, EXTENSION_FROM_WEBSTORE);
 }

@@ -17,15 +17,15 @@
 #include "content/renderer/webfileutilities_impl.h"
 #include "content/test/mock_webblob_registry_impl.h"
 #include "content/test/mock_webclipboard_impl.h"
-#include "third_party/WebKit/public/platform/WebURLLoaderMockFactory.h"
+#include "third_party/blink/public/platform/web_url_loader_mock_factory.h"
 
 namespace blink {
 namespace scheduler {
-class RendererScheduler;
+class WebMainThreadScheduler;
 }
 }
 
-namespace cc {
+namespace viz {
 class TestSharedBitmapManager;
 }
 
@@ -44,6 +44,8 @@ class TestBlinkWebUnitTestSupport : public BlinkPlatformImpl {
 
   std::unique_ptr<blink::WebURLLoaderFactory> CreateDefaultURLLoaderFactory()
       override;
+  std::unique_ptr<blink::WebDataConsumerHandle> CreateDataConsumerHandle(
+      mojo::ScopedDataPipeConsumerHandle handle) override;
   blink::WebString UserAgent() override;
   blink::WebString QueryLocalizedString(
       blink::WebLocalizedString::Name name) override;
@@ -67,7 +69,8 @@ class TestBlinkWebUnitTestSupport : public BlinkPlatformImpl {
   blink::WebThread* CurrentThread() override;
 
   std::unique_ptr<viz::SharedBitmap> AllocateSharedBitmap(
-      const blink::WebSize& size) override;
+      const blink::WebSize& size,
+      viz::ResourceFormat format) override;
 
   void GetPluginList(bool refresh,
                      const blink::WebSecurityOrigin& mainFrameOrigin,
@@ -83,9 +86,10 @@ class TestBlinkWebUnitTestSupport : public BlinkPlatformImpl {
   base::ScopedTempDir file_system_root_;
   std::unique_ptr<blink::WebURLLoaderMockFactory> url_loader_factory_;
   cc_blink::WebCompositorSupportImpl compositor_support_;
-  std::unique_ptr<blink::scheduler::RendererScheduler> renderer_scheduler_;
+  std::unique_ptr<blink::scheduler::WebMainThreadScheduler>
+      main_thread_scheduler_;
   std::unique_ptr<blink::WebThread> web_thread_;
-  std::unique_ptr<cc::TestSharedBitmapManager> shared_bitmap_manager_;
+  std::unique_ptr<viz::TestSharedBitmapManager> shared_bitmap_manager_;
 
   base::WeakPtrFactory<TestBlinkWebUnitTestSupport> weak_factory_;
 

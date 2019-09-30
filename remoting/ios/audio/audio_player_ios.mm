@@ -29,7 +29,7 @@ std::unique_ptr<AudioPlayerIos> AudioPlayerIos::CreateAudioPlayer(
       AudioStreamConsumerProxy::Create(audio_thread_runner,
                                        buffer->AudioStreamConsumerAsWeakPtr());
 
-  return base::MakeUnique<AudioPlayerIos>(
+  return std::make_unique<AudioPlayerIos>(
       std::move(consumer_proxy), std::move(supplier), audio_thread_runner);
 }
 
@@ -148,7 +148,7 @@ void AudioPlayerIos::StartOnAudioThread() {
       GenerateOutputQueue((void*)this);
       GenerateOutputBuffers(audio_frame_supplier_->bytes_per_frame());
       state_ = STOPPED;
-    // Fall-through intended.
+      FALLTHROUGH;
     case STOPPED:
       PrimeQueue();
       return;

@@ -28,8 +28,8 @@
 #include "base/time/time.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chromeos/customization/customization_wallpaper_downloader.h"
+#include "chrome/browser/chromeos/customization/customization_wallpaper_util.h"
 #include "chrome/browser/chromeos/extensions/default_app_order.h"
-#include "chrome/browser/chromeos/login/users/wallpaper/wallpaper_manager.h"
 #include "chrome/browser/chromeos/login/wizard_controller.h"
 #include "chrome/browser/chromeos/net/delay_network_call.h"
 #include "chrome/browser/extensions/external_loader.h"
@@ -930,9 +930,8 @@ void ServicesCustomizationDocument::OnOEMWallpaperDownloaded(
     VLOG(1) << "Setting default wallpaper to '"
             << GetCustomizedWallpaperDownloadedFileName().value() << "' ('"
             << wallpaper_url.spec() << "')";
-    WallpaperManager::Get()->SetCustomizedDefaultWallpaper(
-        wallpaper_url,
-        GetCustomizedWallpaperDownloadedFileName(),
+    customization_wallpaper_util::StartSettingCustomizedDefaultWallpaper(
+        wallpaper_url, GetCustomizedWallpaperDownloadedFileName(),
         GetCustomizedWallpaperCacheDir());
   }
   wallpaper_downloader_.reset();

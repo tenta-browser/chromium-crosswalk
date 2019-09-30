@@ -141,7 +141,7 @@ int RealOnMoreData(base::TimeDelta /* delay */,
 }  // namespace
 
 std::ostream& operator<<(std::ostream& os, const AudioParameters& params) {
-  using namespace std;
+  using std::endl;
   os << endl << "format: " << FormatToString(params.format()) << endl
      << "channel layout: " << LayoutToString(params.channel_layout()) << endl
      << "sample rate: " << params.sample_rate() << endl
@@ -420,7 +420,7 @@ class AudioAndroidOutputTest : public testing::Test {
   AudioAndroidOutputTest()
       : loop_(new base::MessageLoopForUI()),
         audio_manager_(AudioManager::CreateForTesting(
-            base::MakeUnique<TestAudioThread>())),
+            std::make_unique<TestAudioThread>())),
         audio_manager_device_info_(audio_manager_.get()),
         audio_output_stream_(NULL) {
     // Flush the message loop to ensure that AudioManager is fully initialized.

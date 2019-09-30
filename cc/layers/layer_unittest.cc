@@ -6,7 +6,6 @@
 
 #include <stddef.h>
 
-#include "base/memory/ptr_util.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "cc/animation/animation_host.h"
 #include "cc/animation/animation_id_provider.h"
@@ -255,6 +254,13 @@ TEST_F(LayerTest, LayerPropertyChangedForSubtree) {
   std::unique_ptr<LayerImpl> dummy_layer1_impl =
       LayerImpl::Create(host_impl_.active_tree(), dummy_layer1->id());
 
+  // Resizing without a mask layer or masks_to_bounds, should only require a
+  // regular commit. Note that a layer and its mask should match sizes, but
+  // the mask isn't in the tree yet, so won't need its own commit.
+  gfx::Size arbitrary_size = gfx::Size(1, 2);
+  EXPECT_SET_NEEDS_COMMIT(1, root->SetBounds(arbitrary_size));
+  EXPECT_SET_NEEDS_COMMIT(0, dummy_layer1->SetBounds(arbitrary_size));
+
   EXPECT_CALL(*layer_tree_host_, SetNeedsFullTreeSync()).Times(1);
   EXECUTE_AND_VERIFY_SUBTREE_CHANGED(root->SetMaskLayer(dummy_layer1.get()));
   EXECUTE_AND_VERIFY_SUBTREE_CHANGES_RESET(
@@ -263,6 +269,12 @@ TEST_F(LayerTest, LayerPropertyChangedForSubtree) {
       child2->PushPropertiesTo(child2_impl.get());
       grand_child->PushPropertiesTo(grand_child_impl.get());
       dummy_layer1->PushPropertiesTo(dummy_layer1_impl.get()));
+
+  // Once there is a mask layer, resizes require subtree properties to update.
+  arbitrary_size = gfx::Size(11, 22);
+  EXPECT_CALL(*layer_tree_host_, SetNeedsCommit()).Times(2);
+  EXECUTE_AND_VERIFY_SUBTREE_CHANGED(root->SetBounds(arbitrary_size));
+  EXECUTE_AND_VERIFY_SUBTREE_CHANGED(dummy_layer1->SetBounds(arbitrary_size));
 
   EXPECT_CALL(*layer_tree_host_, SetNeedsCommit()).Times(1);
   EXECUTE_AND_VERIFY_SUBTREE_CHANGED(root->SetMasksToBounds(true));
@@ -322,7 +334,7 @@ TEST_F(LayerTest, LayerPropertyChangedForSubtree) {
 
   // Should be a different size than previous call, to ensure it marks tree
   // changed.
-  gfx::Size arbitrary_size = gfx::Size(111, 222);
+  arbitrary_size = gfx::Size(111, 222);
   EXPECT_CALL(*layer_tree_host_, SetNeedsCommit()).Times(2);
   EXECUTE_AND_VERIFY_SUBTREE_CHANGED(root->SetBounds(arbitrary_size));
   EXECUTE_AND_VERIFY_SUBTREE_CHANGED(dummy_layer1->SetBounds(arbitrary_size));
@@ -1282,7 +1294,7 @@ class DrawsContentChangeLayer : public Layer {
 
  private:
   DrawsContentChangeLayer() : fake_draws_content_(false) {}
-  ~DrawsContentChangeLayer() override {}
+  ~DrawsContentChangeLayer() override = default;
 
   bool fake_draws_content_;
 };
@@ -1476,9 +1488,9 @@ TEST_F(LayerTest, SetLayerTreeHostNotUsingLayerListsManagesElementId) {
       AnimationTimeline::Create(AnimationIdProvider::NextTimelineId());
   animation_host_->AddAnimationTimeline(timeline);
 
-  AddOpacityTransitionToElementWithPlayer(element_id, timeline, 10.0, 1.f, 0.f,
-                                          false);
-  EXPECT_TRUE(animation_host_->HasAnyAnimation(element_id));
+  AddOpacityTransitionToElementWithAnimation(element_id, timeline, 10.0, 1.f,
+                                             0.f, false);
+  EXPECT_TRUE(animation_host_->IsElementAnimating(element_id));
 
   EXPECT_EQ(nullptr, layer_tree_host_->LayerByElementId(element_id));
   test_layer->SetLayerTreeHost(layer_tree_host_.get());
@@ -1532,9 +1544,9 @@ TEST_F(LayerTestWithLayerLists,
       AnimationTimeline::Create(AnimationIdProvider::NextTimelineId());
   animation_host_->AddAnimationTimeline(timeline);
 
-  AddOpacityTransitionToElementWithPlayer(element_id, timeline, 10.0, 1.f, 0.f,
-                                          false);
-  EXPECT_TRUE(animation_host_->HasAnyAnimation(element_id));
+  AddOpacityTransitionToElementWithAnimation(element_id, timeline, 10.0, 1.f,
+                                             0.f, false);
+  EXPECT_TRUE(animation_host_->IsElementAnimating(element_id));
 
   EXPECT_EQ(nullptr, layer_tree_host_->LayerByElementId(element_id));
   test_layer->SetLayerTreeHost(layer_tree_host_.get());

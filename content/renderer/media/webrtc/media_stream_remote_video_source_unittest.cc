@@ -13,13 +13,14 @@
 #include "base/test/scoped_task_environment.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "content/child/child_process.h"
-#include "content/renderer/media/media_stream_video_track.h"
-#include "content/renderer/media/mock_media_stream_video_sink.h"
+#include "content/renderer/media/stream/media_stream_video_track.h"
+#include "content/renderer/media/stream/mock_media_stream_video_sink.h"
 #include "content/renderer/media/webrtc/mock_peer_connection_dependency_factory.h"
 #include "content/renderer/media/webrtc/track_observer.h"
 #include "media/base/video_frame.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/WebKit/public/web/WebHeap.h"
+#include "third_party/blink/public/platform/scheduler/test/renderer_scheduler_test_support.h"
+#include "third_party/blink/public/web/web_heap.h"
 #include "third_party/webrtc/api/video/i420_buffer.h"
 
 namespace content {
@@ -52,7 +53,7 @@ class MediaStreamRemoteVideoSourceTest
 
   void SetUp() override {
     scoped_refptr<base::SingleThreadTaskRunner> main_thread =
-        base::ThreadTaskRunnerHandle::Get();
+        blink::scheduler::GetSingleThreadTaskRunnerForTesting();
 
     base::WaitableEvent waitable_event(
         base::WaitableEvent::ResetPolicy::MANUAL,
@@ -162,8 +163,8 @@ TEST_F(MediaStreamRemoteVideoSourceTest, StartTrack) {
   track->AddSink(&sink, sink.GetDeliverFrameCB(), false);
   base::RunLoop run_loop;
   base::Closure quit_closure = run_loop.QuitClosure();
-  EXPECT_CALL(sink, OnVideoFrame()).WillOnce(
-      RunClosure(quit_closure));
+  EXPECT_CALL(sink, OnVideoFrame())
+      .WillOnce(RunClosure(std::move(quit_closure)));
   rtc::scoped_refptr<webrtc::I420Buffer> buffer(
       new rtc::RefCountedObject<webrtc::I420Buffer>(320, 240));
 

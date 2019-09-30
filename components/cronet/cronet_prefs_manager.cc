@@ -4,6 +4,9 @@
 
 #include "components/cronet/cronet_prefs_manager.h"
 
+#include <memory>
+
+#include "base/callback.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/location.h"
@@ -27,9 +30,11 @@ namespace {
 // Name of the pref used for HTTP server properties persistence.
 const char kHttpServerPropertiesPref[] = "net.http_server_properties";
 // Name of preference directory.
-const char kPrefsDirectoryName[] = "prefs";
+const base::FilePath::CharType kPrefsDirectoryName[] =
+    FILE_PATH_LITERAL("prefs");
 // Name of preference file.
-const char kPrefsFileName[] = "local_prefs.json";
+const base::FilePath::CharType kPrefsFileName[] =
+    FILE_PATH_LITERAL("local_prefs.json");
 // Current version of disk storage.
 const int32_t kStorageVersion = 1;
 // Version number used when the version of disk storage is unknown.
@@ -57,7 +62,7 @@ bool IsCurrentVersion(const base::FilePath& version_filepath) {
 // TODO(xunjieli): Handle failures.
 void InitializeStorageDirectory(const base::FilePath& dir) {
   // Checks version file and clear old storage.
-  base::FilePath version_filepath = dir.Append("version");
+  base::FilePath version_filepath(dir.AppendASCII("version"));
   if (IsCurrentVersion(version_filepath)) {
     // The version is up to date, so there is nothing to do.
     return;
@@ -85,7 +90,7 @@ void InitializeStorageDirectory(const base::FilePath& dir) {
     DLOG(WARNING) << "Cannot write to version file.";
     return;
   }
-  base::FilePath prefs_dir = dir.Append(FILE_PATH_LITERAL(kPrefsDirectoryName));
+  base::FilePath prefs_dir = dir.Append(kPrefsDirectoryName);
   if (!base::CreateDirectory(prefs_dir)) {
     DLOG(WARNING) << "Cannot create prefs directory";
     return;
@@ -108,11 +113,15 @@ class PrefServiceAdapter
     return pref_service_->GetDictionary(path_);
   }
 
-  void SetServerProperties(const base::DictionaryValue& value) override {
-    return pref_service_->Set(path_, value);
+  void SetServerProperties(const base::DictionaryValue& value,
+                           base::OnceClosure callback) override {
+    pref_service_->Set(path_, value);
+    if (callback)
+      pref_service_->CommitPendingWrite(std::move(callback));
   }
 
-  void StartListeningForUpdates(const base::Closure& callback) override {
+  void StartListeningForUpdates(
+      const base::RepeatingClosure& callback) override {
     pref_change_registrar_.Add(path_, callback);
     // Notify the pref manager that settings are already loaded, as a result
     // of initializing the pref store synchornously.
@@ -207,7 +216,12 @@ CronetPrefsManager::CronetPrefsManager(
   DCHECK(network_task_runner->BelongsToCurrentThread());
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
 
+#if defined(OS_WIN)
+  base::FilePath storage_file_path(
+      base::FilePath::FromUTF8Unsafe(storage_path));
+#else
   base::FilePath storage_file_path(storage_path);
+#endif
 
   // Make sure storage directory has correct version.
   {
@@ -216,8 +230,7 @@ CronetPrefsManager::CronetPrefsManager(
   }
 
   base::FilePath filepath =
-      storage_file_path.Append(FILE_PATH_LITERAL(kPrefsDirectoryName))
-          .Append(FILE_PATH_LITERAL(kPrefsFileName));
+      storage_file_path.Append(kPrefsDirectoryName).Append(kPrefsFileName);
 
   json_pref_store_ = new JsonPrefStore(filepath, file_task_runner,
                                        std::unique_ptr<PrefFilter>());
@@ -227,7 +240,7 @@ CronetPrefsManager::CronetPrefsManager(
   factory.set_user_prefs(json_pref_store_);
   scoped_refptr<PrefRegistrySimple> registry(new PrefRegistrySimple());
   registry->RegisterDictionaryPref(kHttpServerPropertiesPref,
-                                   base::MakeUnique<base::DictionaryValue>());
+                                   std::make_unique<base::DictionaryValue>());
 
   if (enable_network_quality_estimator) {
     // Use lossy prefs to limit the overhead of reading/writing the prefs.
@@ -263,8 +276,8 @@ void CronetPrefsManager::SetupNqePersistence(
     net::NetworkQualityEstimator* nqe) {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   network_qualities_prefs_manager_ =
-      base::MakeUnique<net::NetworkQualitiesPrefsManager>(
-          base::MakeUnique<NetworkQualitiesPrefDelegateImpl>(
+      std::make_unique<net::NetworkQualitiesPrefsManager>(
+          std::make_unique<NetworkQualitiesPrefDelegateImpl>(
               pref_service_.get()));
 
   network_qualities_prefs_manager_->InitializeOnNetworkThread(nqe);
@@ -276,7 +289,7 @@ void CronetPrefsManager::SetupHostCachePersistence(
     net::NetLog* net_log) {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   host_cache_persistence_manager_ =
-      base::MakeUnique<HostCachePersistenceManager>(
+      std::make_unique<HostCachePersistenceManager>(
           host_cache, pref_service_.get(), kHostCachePref,
           base::TimeDelta::FromMilliseconds(host_cache_persistence_delay_ms),
           net_log);

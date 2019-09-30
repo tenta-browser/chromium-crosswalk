@@ -9,7 +9,6 @@
 
 #include "base/callback.h"
 #include "base/json/json_reader.h"
-#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/stl_util.h"
 #include "base/strings/string_piece.h"
@@ -32,7 +31,8 @@ using net::URLRequestStatus;
 
 namespace {
 
-const char kApiUrl[] = "https://safesearch.googleapis.com/v1:classify";
+const char kSafeSearchApiUrl[] =
+    "https://safesearch.googleapis.com/v1:classify";
 const char kDataContentType[] = "application/x-www-form-urlencoded";
 const char kDataFormat[] = "key=%s&urls=%s";
 
@@ -52,8 +52,9 @@ std::unique_ptr<net::URLFetcher> CreateFetcher(
     const std::string& api_key,
     const GURL& url,
     const net::NetworkTrafficAnnotationTag& traffic_annotation) {
-  std::unique_ptr<net::URLFetcher> fetcher = URLFetcher::Create(
-      0, GURL(kApiUrl), URLFetcher::POST, delegate, traffic_annotation);
+  std::unique_ptr<net::URLFetcher> fetcher =
+      URLFetcher::Create(0, GURL(kSafeSearchApiUrl), URLFetcher::POST, delegate,
+                         traffic_annotation);
   fetcher->SetUploadData(kDataContentType, BuildRequestData(api_key, url));
   fetcher->SetRequestContext(context);
   fetcher->SetLoadFlags(net::LOAD_DO_NOT_SEND_COOKIES |

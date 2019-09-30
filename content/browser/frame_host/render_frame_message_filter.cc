@@ -15,14 +15,15 @@
 #include "base/strings/string_util.h"
 #include "base/unguessable_token.h"
 #include "build/build_config.h"
+#include "components/download/public/common/download_url_parameters.h"
 #include "content/browser/bad_message.h"
 #include "content/browser/blob_storage/chrome_blob_storage_context.h"
 #include "content/browser/child_process_security_policy_impl.h"
-#include "content/browser/download/download_stats.h"
 #include "content/browser/frame_host/render_frame_host_impl.h"
 #include "content/browser/gpu/gpu_data_manager_impl.h"
 #include "content/browser/renderer_host/render_widget_helper.h"
 #include "content/browser/resource_context_impl.h"
+#include "content/browser/storage_partition_impl.h"
 #include "content/common/content_constants_internal.h"
 #include "content/common/frame_messages.h"
 #include "content/common/frame_owner_properties.h"
@@ -30,10 +31,8 @@
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/download_manager.h"
-#include "content/public/browser/download_url_parameters.h"
 #include "content/public/browser/storage_partition.h"
 #include "content/public/common/content_constants.h"
-#include "content/public/common/content_features.h"
 #include "gpu/GLES2/gl2extchromium.h"
 #include "mojo/public/cpp/system/message_pipe.h"
 #include "net/base/registry_controlled_domains/registry_controlled_domain.h"
@@ -43,10 +42,11 @@
 #include "net/traffic_annotation/network_traffic_annotation.h"
 #include "net/url_request/url_request_context.h"
 #include "net/url_request/url_request_context_getter.h"
-#include "ppapi/features/features.h"
-#include "services/service_manager/public/interfaces/interface_provider.mojom.h"
+#include "ppapi/buildflags/buildflags.h"
+#include "services/network/public/cpp/features.h"
+#include "services/service_manager/public/mojom/interface_provider.mojom.h"
 #include "storage/browser/blob/blob_storage_context.h"
-#include "third_party/WebKit/common/frame_policy.h"
+#include "third_party/blink/public/common/frame/frame_policy.h"
 #include "url/gurl.h"
 #include "url/origin.h"
 
@@ -96,7 +96,9 @@ void CreateChildFrameOnUI(
   }
 }
 
-void DownloadUrlOnUIThread(std::unique_ptr<DownloadUrlParameters> parameters) {
+void DownloadUrlOnUIThread(
+    std::unique_ptr<download::DownloadUrlParameters> parameters,
+    std::unique_ptr<storage::BlobDataHandle> blob_data_handle) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
   RenderProcessHost* render_process_host =
@@ -107,8 +109,9 @@ void DownloadUrlOnUIThread(std::unique_ptr<DownloadUrlParameters> parameters) {
   BrowserContext* browser_context = render_process_host->GetBrowserContext();
   DownloadManager* download_manager =
       BrowserContext::GetDownloadManager(browser_context);
-  RecordDownloadSource(INITIATED_BY_RENDERER);
-  download_manager->DownloadUrl(std::move(parameters));
+  parameters->set_download_source(download::DownloadSource::FROM_RENDERER);
+  download_manager->DownloadUrl(std::move(parameters),
+                                std::move(blob_data_handle));
 }
 
 // Common functionality for converting a sync renderer message to a callback
@@ -220,23 +223,22 @@ RenderFrameMessageFilter::RenderFrameMessageFilter(
     int render_process_id,
     PluginServiceImpl* plugin_service,
     BrowserContext* browser_context,
-    net::URLRequestContextGetter* request_context,
+    StoragePartition* storage_partition,
     RenderWidgetHelper* render_widget_helper)
     : BrowserMessageFilter(FrameMsgStart),
       BrowserAssociatedInterface<mojom::RenderFrameMessageFilter>(this, this),
 #if BUILDFLAG(ENABLE_PLUGINS)
       plugin_service_(plugin_service),
-      profile_data_directory_(browser_context->GetPath()),
+      profile_data_directory_(storage_partition->GetPath()),
 #endif  // ENABLE_PLUGINS
-      request_context_(request_context),
+      request_context_(storage_partition->GetURLRequestContext()),
       resource_context_(browser_context->GetResourceContext()),
       render_widget_helper_(render_widget_helper),
       incognito_(browser_context->IsOffTheRecord()),
       render_process_id_(render_process_id) {
   network::mojom::CookieManagerPtr cookie_manager;
-  BrowserContext::GetDefaultStoragePartition(browser_context)
-      ->GetNetworkContext()
-      ->GetCookieManager(mojo::MakeRequest(&cookie_manager));
+  storage_partition->GetNetworkContext()->GetCookieManager(
+      mojo::MakeRequest(&cookie_manager));
 
   // The PostTask below could finish before the constructor returns which would
   // lead to this object being destructed prematurely.
@@ -329,27 +331,31 @@ void RenderFrameMessageFilter::DownloadUrl(int render_view_id,
             }
           }
         })");
-  std::unique_ptr<DownloadUrlParameters> parameters(new DownloadUrlParameters(
-      url, render_process_id_, render_view_id, render_frame_id,
-      request_context_.get(), traffic_annotation));
+  std::unique_ptr<download::DownloadUrlParameters> parameters(
+      new download::DownloadUrlParameters(
+          url, render_process_id_, render_view_id, render_frame_id,
+          request_context_.get(), traffic_annotation));
   parameters->set_content_initiated(true);
   parameters->set_suggested_name(suggested_name);
   parameters->set_prompt(use_prompt);
-  parameters->set_referrer(referrer);
+  parameters->set_referrer(referrer.url);
+  parameters->set_referrer_policy(
+      Referrer::ReferrerPolicyForUrlRequest(referrer.policy));
   parameters->set_initiator(initiator);
 
+  std::unique_ptr<storage::BlobDataHandle> blob_data_handle;
   if (url.SchemeIsBlob()) {
     ChromeBlobStorageContext* blob_context =
         GetChromeBlobStorageContextForResourceContext(resource_context_);
-    parameters->set_blob_data_handle(
-        blob_context->context()->GetBlobDataFromPublicURL(url));
+    blob_data_handle = blob_context->context()->GetBlobDataFromPublicURL(url);
     // Don't care if the above fails. We are going to let the download go
     // through and allow it to be interrupted so that the embedder can deal.
   }
 
   BrowserThread::PostTask(
       BrowserThread::UI, FROM_HERE,
-      base::BindOnce(&DownloadUrlOnUIThread, base::Passed(&parameters)));
+      base::BindOnce(&DownloadUrlOnUIThread, std::move(parameters),
+                     std::move(blob_data_handle)));
 }
 
 void RenderFrameMessageFilter::OnCreateChildFrame(
@@ -471,16 +477,18 @@ void RenderFrameMessageFilter::SetCookie(int32_t render_frame_id,
           render_frame_id, options))
     return;
 
-  if (base::FeatureList::IsEnabled(features::kNetworkService)) {
-    // TODO(jam): modify GetRequestContextForURL to work with network service.
-    // Merge this with code path below for non-network service.
+  net::URLRequestContext* context = GetRequestContextForURL(url);
+  // If the embedder overrides the URLRequestContext then always use it, even if
+  // the network service is enabled, instead of the CookieManager associated
+  // this process' StoragePartition.
+  if (base::FeatureList::IsEnabled(network::features::kNetworkService) &&
+      context == request_context_->GetURLRequestContext()) {
     cookie_manager_->SetCanonicalCookie(*cookie, url.SchemeIsCryptographic(),
                                         !options.exclude_httponly(),
                                         net::CookieStore::SetCookiesCallback());
     return;
   }
 
-  net::URLRequestContext* context = GetRequestContextForURL(url);
   // Pass a null callback since we don't care about when the 'set' completes.
   context->cookie_store()->SetCanonicalCookieAsync(
       std::move(cookie), url.SchemeIsCryptographic(),
@@ -513,29 +521,31 @@ void RenderFrameMessageFilter::GetCookies(int render_frame_id,
         net::CookieOptions::SameSiteCookieMode::DO_NOT_INCLUDE);
   }
 
-  if (base::FeatureList::IsEnabled(features::kNetworkService)) {
+  net::URLRequestContext* context = GetRequestContextForURL(url);
+  // If the embedder overrides the URLRequestContext then always use it, even if
+  // the network service is enabled, instead of the CookieManager associated
+  // this process' StoragePartition.
+  if (base::FeatureList::IsEnabled(network::features::kNetworkService) &&
+      context == request_context_->GetURLRequestContext()) {
     // TODO(jam): modify GetRequestContextForURL to work with network service.
     // Merge this with code path below for non-network service.
     cookie_manager_->GetCookieList(
         url, options,
         base::BindOnce(&RenderFrameMessageFilter::CheckPolicyForCookies, this,
                        render_frame_id, url, site_for_cookies,
-                       base::Passed(&callback)));
+                       std::move(callback)));
     return;
   }
 
   // If we crash here, figure out what URL the renderer was requesting.
   // http://crbug.com/99242
-  char url_buf[128];
-  base::strlcpy(url_buf, url.spec().c_str(), arraysize(url_buf));
-  base::debug::Alias(url_buf);
+  DEBUG_ALIAS_FOR_GURL(url_buf, url);
 
-  net::URLRequestContext* context = GetRequestContextForURL(url);
   context->cookie_store()->GetCookieListWithOptionsAsync(
       url, options,
       base::BindOnce(&RenderFrameMessageFilter::CheckPolicyForCookies, this,
                      render_frame_id, url, site_for_cookies,
-                     base::Passed(&callback)));
+                     std::move(callback)));
 }
 
 #if BUILDFLAG(ENABLE_PLUGINS)
@@ -609,9 +619,10 @@ void RenderFrameMessageFilter::OnGetPluginInfo(
 
 void RenderFrameMessageFilter::OnOpenChannelToPepperPlugin(
     const base::FilePath& path,
+    const base::Optional<url::Origin>& origin_lock,
     IPC::Message* reply_msg) {
   plugin_service_->OpenChannelToPpapiPlugin(
-      render_process_id_, path, profile_data_directory_,
+      render_process_id_, path, profile_data_directory_, origin_lock,
       new OpenChannelToPpapiPluginCallback(this, reply_msg));
 }
 

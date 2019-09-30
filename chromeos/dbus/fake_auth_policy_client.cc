@@ -19,14 +19,11 @@
 #include "base/threading/thread_task_runner_handle.h"
 #include "chromeos/chromeos_paths.h"
 #include "chromeos/cryptohome/cryptohome_parameters.h"
-#include "chromeos/cryptohome/cryptohome_util.h"
 #include "chromeos/dbus/cryptohome_client.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
 #include "chromeos/dbus/session_manager_client.h"
 #include "chromeos/login/auth/authpolicy_login_helper.h"
-#include "components/policy/proto/chrome_device_policy.pb.h"
 #include "components/policy/proto/cloud_policy.pb.h"
-#include "components/policy/proto/device_management_backend.pb.h"
 #include "components/signin/core/account_id/account_id.h"
 #include "dbus/message.h"
 #include "third_party/cros_system_api/dbus/service_constants.h"
@@ -61,11 +58,11 @@ void RunSignalCallback(const std::string& interface_name,
 }
 
 void StoreDevicePolicy(
+    const em::ChromeDeviceSettingsProto& device_policy,
     const std::string& machine_name,
     chromeos::AuthPolicyClient::RefreshPolicyCallback callback) {
-  em::ChromeDeviceSettingsProto policy;
   std::string payload;
-  CHECK(policy.SerializeToString(&payload));
+  CHECK(device_policy.SerializeToString(&payload));
 
   em::PolicyFetchResponse response;
   em::PolicyData policy_data;
@@ -95,7 +92,9 @@ void FakeAuthPolicyClient::JoinAdDomain(
     const authpolicy::JoinDomainRequest& request,
     int password_fd,
     JoinCallback callback) {
+  DCHECK(!AuthPolicyLoginHelper::IsAdLocked());
   authpolicy::ErrorType error = authpolicy::ERROR_NONE;
+  std::string machine_domain;
   if (!started_) {
     LOG(ERROR) << "authpolicyd not started";
     error = authpolicy::ERROR_DBUS_FAILURE;
@@ -105,17 +104,28 @@ void FakeAuthPolicyClient::JoinAdDomain(
              request.machine_name().find_first_of(
                  kInvalidMachineNameCharacters) != std::string::npos) {
     error = authpolicy::ERROR_INVALID_MACHINE_NAME;
+  } else if (request.kerberos_encryption_types() ==
+             authpolicy::KerberosEncryptionTypes::ENC_TYPES_LEGACY) {
+    // Pretend that server does not support legacy types.
+    error = authpolicy::ERROR_KDC_DOES_NOT_SUPPORT_ENCRYPTION_TYPE;
   } else {
     std::vector<std::string> parts =
         base::SplitString(request.user_principal_name(), "@",
                           base::TRIM_WHITESPACE, base::SPLIT_WANT_ALL);
     if (parts.size() != 2 || parts[0].empty() || parts[1].empty()) {
       error = authpolicy::ERROR_PARSE_UPN_FAILED;
+    } else {
+      machine_domain = parts[1];
     }
   }
+
   if (error == authpolicy::ERROR_NONE)
     machine_name_ = request.machine_name();
-  PostDelayedClosure(base::BindOnce(std::move(callback), error),
+  if (error != authpolicy::ERROR_NONE)
+    machine_domain.clear();
+  else if (request.has_machine_domain() && !request.machine_domain().empty())
+    machine_domain = request.machine_domain();
+  PostDelayedClosure(base::BindOnce(std::move(callback), error, machine_domain),
                      dbus_operation_delay_);
 }
 
@@ -123,6 +133,7 @@ void FakeAuthPolicyClient::AuthenticateUser(
     const authpolicy::AuthenticateUserRequest& request,
     int password_fd,
     AuthCallback callback) {
+  DCHECK(AuthPolicyLoginHelper::IsAdLocked());
   authpolicy::ErrorType error = authpolicy::ERROR_NONE;
   authpolicy::ActiveDirectoryAccountInfo account_info;
   if (!started_) {
@@ -142,15 +153,16 @@ void FakeAuthPolicyClient::AuthenticateUser(
                      dbus_operation_delay_);
 }
 
-void FakeAuthPolicyClient::GetUserStatus(const std::string& object_guid,
-                                         GetUserStatusCallback callback) {
+void FakeAuthPolicyClient::GetUserStatus(
+    const authpolicy::GetUserStatusRequest& request,
+    GetUserStatusCallback callback) {
   authpolicy::ActiveDirectoryUserStatus user_status;
   user_status.set_password_status(password_status_);
   user_status.set_tgt_status(tgt_status_);
 
   authpolicy::ActiveDirectoryAccountInfo* const account_info =
       user_status.mutable_account_info();
-  account_info->set_account_id(object_guid);
+  account_info->set_account_id(request.account_id());
   if (!display_name_.empty())
     account_info->set_display_name(display_name_);
   if (!given_name_.empty())
@@ -201,7 +213,7 @@ void FakeAuthPolicyClient::RefreshDevicePolicy(RefreshPolicyCallback callback) {
     return;
   }
 
-  StoreDevicePolicy(machine_name_, std::move(callback));
+  StoreDevicePolicy(device_policy_, machine_name_, std::move(callback));
 }
 
 void FakeAuthPolicyClient::RefreshUserPolicy(const AccountId& account_id,
@@ -260,7 +272,7 @@ void FakeAuthPolicyClient::OnDevicePolicyRetrieved(
   policy_data.ParseFromString(response.policy_data());
   if (policy_data.has_device_id())
     machine_name_ = policy_data.device_id();
-  StoreDevicePolicy(machine_name_, std::move(callback));
+  StoreDevicePolicy(device_policy_, machine_name_, std::move(callback));
 }
 
 }  // namespace chromeos

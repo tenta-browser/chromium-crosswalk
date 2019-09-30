@@ -3,6 +3,17 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
+      "backgroundColor": "#FFFFFF"
+    },
+    {
+      "name": "Scrolling Layer",
+      "bounds": [800, 600],
+      "drawsContent": false
+    },
+    {
+      "name": "Scrolling Contents Layer",
+      "bounds": [800, 600],
       "contentsOpaque": true,
       "backgroundColor": "#FFFFFF"
     },
@@ -10,14 +21,7 @@
       "name": "LayoutBlockFlow DIV id='scroller'",
       "position": [8, 8],
       "bounds": [200, 200],
-      "backgroundColor": "#0000FF",
-      "paintInvalidations": [
-        {
-          "object": "LayoutBlockFlow DIV id='scroller'",
-          "rect": [0, 0, 200, 200],
-          "reason": "style change"
-        }
-      ]
+      "backgroundColor": "#0000FF"
     },
     {
       "name": "Scrolling Layer",
@@ -33,7 +37,7 @@
       "backgroundColor": "#0000FF",
       "paintInvalidations": [
         {
-          "object": "LayoutBlockFlow DIV id='scroller'",
+          "object": "Scrolling Contents Layer",
           "rect": [0, 0, 185, 552],
           "reason": "background on scrolling contents layer"
         }

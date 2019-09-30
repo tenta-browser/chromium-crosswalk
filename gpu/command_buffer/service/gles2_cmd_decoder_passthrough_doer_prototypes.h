@@ -2,6 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifndef GPU_COMMAND_BUFFER_SERVICE_GLES2_CMD_DECODER_PASSTHROUGH_DOER_PROTOTYPES_H_
+#define GPU_COMMAND_BUFFER_SERVICE_GLES2_CMD_DECODER_PASSTHROUGH_DOER_PROTOTYPES_H_
+
 error::Error DoActiveTexture(GLenum texture);
 error::Error DoAttachShader(GLuint program, GLuint shader);
 error::Error DoBindAttribLocation(GLuint program,
@@ -802,13 +805,9 @@ error::Error DoDrawElementsInstancedANGLE(GLenum mode,
                                           const void* indices,
                                           GLsizei primcount);
 error::Error DoVertexAttribDivisorANGLE(GLuint index, GLuint divisor);
-error::Error DoProduceTextureCHROMIUM(GLenum target,
-                                      const volatile GLbyte* mailbox);
 error::Error DoProduceTextureDirectCHROMIUM(GLuint texture_client_id,
-                                            GLenum target,
                                             const volatile GLbyte* mailbox);
-error::Error DoCreateAndConsumeTextureINTERNAL(GLenum target,
-                                               GLuint texture_client_id,
+error::Error DoCreateAndConsumeTextureINTERNAL(GLuint texture_client_id,
                                                const volatile GLbyte* mailbox);
 error::Error DoBindUniformLocationCHROMIUM(GLuint program,
                                            GLint location,
@@ -870,7 +869,8 @@ error::Error DoScheduleDCLayerCHROMIUM(
     GLenum filter,
     const GLfloat* bounds_rect);
 error::Error DoCommitOverlayPlanesCHROMIUM();
-error::Error DoSwapInterval(GLint interval);
+error::Error DoSetColorSpaceMetadataCHROMIUM(GLuint texture_id,
+                                             gfx::ColorSpace color_space);
 error::Error DoFlushDriverCachesCHROMIUM();
 error::Error DoMatrixLoadfCHROMIUM(GLenum matrixMode,
                                    const volatile GLfloat* m);
@@ -1009,11 +1009,32 @@ error::Error DoBeginRasterCHROMIUM(GLuint texture_id,
                                    GLuint sk_color,
                                    GLuint msaa_sample_count,
                                    GLboolean can_use_lcd_text,
-                                   GLboolean use_distance_field_text,
-                                   GLint pixel_config);
+                                   GLint color_type,
+                                   GLuint color_space_transfer_cache_id);
+error::Error DoRasterCHROMIUM(GLsizeiptr size, const void* list);
 error::Error DoEndRasterCHROMIUM();
-error::Error DoUnlockTransferCacheEntryCHROMIUM(GLuint64 id);
-error::Error DoDeleteTransferCacheEntryCHROMIUM(GLuint64 id);
+error::Error DoCreateTransferCacheEntryINTERNAL(GLuint entry_type,
+                                                GLuint entry_id,
+                                                GLuint handle_shm_id,
+                                                GLuint handle_shm_offset,
+                                                GLuint data_shm_id,
+                                                GLuint data_shm_offset,
+                                                GLuint data_size);
+error::Error DoUnlockTransferCacheEntryINTERNAL(GLuint entry_type,
+                                                GLuint entry_id);
+error::Error DoDeleteTransferCacheEntryINTERNAL(GLuint entry_type,
+                                                GLuint entry_id);
 error::Error DoWindowRectanglesEXT(GLenum mode,
                                    GLsizei n,
                                    const volatile GLint* box);
+error::Error DoCreateGpuFenceINTERNAL(GLuint gpu_fence_id);
+error::Error DoWaitGpuFenceCHROMIUM(GLuint gpu_fence_id);
+error::Error DoDestroyGpuFenceCHROMIUM(GLuint gpu_fence_id);
+error::Error DoUnpremultiplyAndDitherCopyCHROMIUM(GLuint src_texture,
+                                                  GLuint dst_texture,
+                                                  GLint x,
+                                                  GLint y,
+                                                  GLsizei width,
+                                                  GLsizei height);
+
+#endif  // GPU_COMMAND_BUFFER_SERVICE_GLES2_CMD_DECODER_PASSTHROUGH_DOER_PROTOTYPES_H_

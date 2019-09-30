@@ -29,7 +29,6 @@
 #include "net/tools/quic/test_tools/quic_client_peer.h"
 
 using std::string;
-using testing::_;
 
 namespace net {
 namespace test {
@@ -165,7 +164,7 @@ class MockableQuicClientEpollNetworkHelper
 MockableQuicClient::MockableQuicClient(
     QuicSocketAddress server_address,
     const QuicServerId& server_id,
-    const QuicTransportVersionVector& supported_versions,
+    const ParsedQuicVersionVector& supported_versions,
     EpollServer* epoll_server)
     : MockableQuicClient(server_address,
                          server_id,
@@ -177,7 +176,7 @@ MockableQuicClient::MockableQuicClient(
     QuicSocketAddress server_address,
     const QuicServerId& server_id,
     const QuicConfig& config,
-    const QuicTransportVersionVector& supported_versions,
+    const ParsedQuicVersionVector& supported_versions,
     EpollServer* epoll_server)
     : MockableQuicClient(server_address,
                          server_id,
@@ -190,7 +189,7 @@ MockableQuicClient::MockableQuicClient(
     QuicSocketAddress server_address,
     const QuicServerId& server_id,
     const QuicConfig& config,
-    const QuicTransportVersionVector& supported_versions,
+    const ParsedQuicVersionVector& supported_versions,
     EpollServer* epoll_server,
     std::unique_ptr<ProofVerifier> proof_verifier)
     : QuicClient(
@@ -251,7 +250,7 @@ void MockableQuicClient::set_track_last_incoming_packet(bool track) {
 QuicTestClient::QuicTestClient(
     QuicSocketAddress server_address,
     const string& server_hostname,
-    const QuicTransportVersionVector& supported_versions)
+    const ParsedQuicVersionVector& supported_versions)
     : QuicTestClient(server_address,
                      server_hostname,
                      QuicConfig(),
@@ -261,7 +260,7 @@ QuicTestClient::QuicTestClient(
     QuicSocketAddress server_address,
     const string& server_hostname,
     const QuicConfig& config,
-    const QuicTransportVersionVector& supported_versions)
+    const ParsedQuicVersionVector& supported_versions)
     : client_(new MockableQuicClient(server_address,
                                      QuicServerId(server_hostname,
                                                   server_address.port(),
@@ -276,7 +275,7 @@ QuicTestClient::QuicTestClient(
     QuicSocketAddress server_address,
     const string& server_hostname,
     const QuicConfig& config,
-    const QuicTransportVersionVector& supported_versions,
+    const ParsedQuicVersionVector& supported_versions,
     std::unique_ptr<ProofVerifier> proof_verifier)
     : client_(new MockableQuicClient(server_address,
                                      QuicServerId(server_hostname,
@@ -331,7 +330,6 @@ void QuicTestClient::SendRequestsAndWaitForResponses(
   }
   while (client()->WaitForEvents()) {
   }
-  return;
 }
 
 ssize_t QuicTestClient::GetOrCreateStreamAndSendRequest(
@@ -349,8 +347,8 @@ ssize_t QuicTestClient::GetOrCreateStreamAndSendRequest(
       // May need to retry request if asynchronous rendezvous fails.
       std::unique_ptr<SpdyHeaderBlock> new_headers(
           new SpdyHeaderBlock(headers->Clone()));
-      push_promise_data_to_resend_.reset(new TestClientDataToResend(
-          std::move(new_headers), body, fin, this, std::move(ack_listener)));
+      push_promise_data_to_resend_ = QuicMakeUnique<TestClientDataToResend>(
+          std::move(new_headers), body, fin, this, std::move(ack_listener));
       return 1;
     }
   }
@@ -373,13 +371,13 @@ ssize_t QuicTestClient::GetOrCreateStreamAndSendRequest(
     ret = stream->SendRequest(std::move(spdy_headers), body, fin);
     ++num_requests_;
   } else {
-    stream->WriteOrBufferBody(body.as_string(), fin, ack_listener);
+    stream->WriteOrBufferBody(string(body), fin, ack_listener);
     ret = body.length();
   }
-  if (FLAGS_quic_reloadable_flag_enable_quic_stateless_reject_support) {
+  if (GetQuicReloadableFlag(enable_quic_stateless_reject_support)) {
     std::unique_ptr<SpdyHeaderBlock> new_headers;
     if (headers) {
-      new_headers.reset(new SpdyHeaderBlock(headers->Clone()));
+      new_headers = QuicMakeUnique<SpdyHeaderBlock>(headers->Clone());
     }
     std::unique_ptr<QuicSpdyClientBase::QuicDataToResend> data_to_resend(
         new TestClientDataToResend(std::move(new_headers), body, fin, this,
@@ -459,6 +457,12 @@ string QuicTestClient::SendSynchronousRequest(const string& uri) {
     return "";
   }
   return SendCustomSynchronousRequest(headers, "");
+}
+
+void QuicTestClient::SendConnectivityProbing() {
+  QuicConnection* connection = client()->client_session()->connection();
+  connection->SendConnectivityProbingPacket(connection->writer(),
+                                            connection->peer_address());
 }
 
 void QuicTestClient::SetLatestCreatedStream(QuicSpdyClientStream* stream) {
@@ -714,7 +718,7 @@ void QuicTestClient::OnRendezvousResult(QuicSpdyStream* stream) {
   SetLatestCreatedStream(static_cast<QuicSpdyClientStream*>(stream));
   if (stream) {
     stream->OnDataAvailable();
-  } else if (data_to_resend.get()) {
+  } else if (data_to_resend) {
     data_to_resend->Resend();
   }
 }
@@ -728,8 +732,15 @@ void QuicTestClient::UseConnectionId(QuicConnectionId connection_id) {
   client_->UseConnectionId(connection_id);
 }
 
-void QuicTestClient::MigrateSocket(const QuicIpAddress& new_host) {
-  client_->MigrateSocket(new_host);
+bool QuicTestClient::MigrateSocket(const QuicIpAddress& new_host) {
+  return client_->MigrateSocket(new_host);
+}
+
+bool QuicTestClient::MigrateSocketWithSpecifiedPort(
+    const QuicIpAddress& new_host,
+    int port) {
+  client_->set_local_port(port);
+  return client_->MigrateSocket(new_host);
 }
 
 QuicIpAddress QuicTestClient::bind_to_address() const {
@@ -844,6 +855,21 @@ void QuicTestClient::ClearPerConnectionState() {
   open_streams_.clear();
   closed_stream_states_.clear();
   latest_created_stream_ = nullptr;
+}
+
+void QuicTestClient::WaitForDelayedAcks() {
+  // kWaitDuration is a period of time that is long enough for all delayed
+  // acks to be sent and received on the other end.
+  const QuicTime::Delta kWaitDuration =
+      4 * QuicTime::Delta::FromMilliseconds(kDefaultDelayedAckTimeMs);
+
+  const QuicClock* clock = client()->client_session()->connection()->clock();
+
+  QuicTime wait_until = clock->ApproximateNow() + kWaitDuration;
+  while (clock->ApproximateNow() < wait_until) {
+    // This waits for up to 50 ms.
+    client()->WaitForEvents();
+  }
 }
 
 }  // namespace test

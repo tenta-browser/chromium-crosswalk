@@ -1,5 +1,6 @@
 include_rules = [
   "+chromeos",
+  "+ui/events/platform_event.h",
   # DeviceDataManager is not created in all environments (such as ash when
   # running in mus/mash).
   "-ui/events/devices/device_data_manager.h",
@@ -16,9 +17,5 @@ specific_include_rules = {
   ],
   "touch_transform_controller_unittest.cc": [
     "+ui/events/devices/device_data_manager.h",
-    "+ui/events/test/device_data_manager_test_api.h",
-  ],
-  "touch_device_manager_test_api.cc": [
-    "+ui/events/devices/touchscreen_device.h",
   ],
 }

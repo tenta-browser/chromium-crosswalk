@@ -12,7 +12,6 @@
 #include "ash/session/session_controller.h"
 #include "ash/shell.h"
 #include "ash/strings/grit/ash_strings.h"
-#include "ash/system/system_notifier.h"
 #include "ash/system/tray/label_tray_view.h"
 #include "ash/system/tray/system_tray.h"
 #include "ash/system/tray/system_tray_notifier.h"
@@ -23,11 +22,13 @@
 #include "ui/base/l10n/time_format.h"
 #include "ui/gfx/paint_vector_icon.h"
 #include "ui/message_center/message_center.h"
-#include "ui/message_center/notification.h"
+#include "ui/message_center/public/cpp/notification.h"
 #include "ui/views/view.h"
 
 namespace ash {
 namespace {
+
+const char kNotifierSessionLengthTimeout[] = "ash.session-length-timeout";
 
 // If the remaining session time falls below this threshold, the user should be
 // informed that the session is about to expire.
@@ -160,16 +161,15 @@ void TraySessionLengthLimit::UpdateNotification() {
   data.should_make_spoken_feedback_for_popup_updates =
       (limit_state_ != last_limit_state_);
   std::unique_ptr<message_center::Notification> notification =
-      system_notifier::CreateSystemNotification(
+      message_center::Notification::CreateSystemNotification(
           message_center::NOTIFICATION_TYPE_SIMPLE, kNotificationId,
-          base::string16() /* title */,
-          ComposeNotificationMessage() /* message */,
-          gfx::Image(
-              gfx::CreateVectorIcon(kSystemMenuTimerIcon, kMenuIconColor)),
-          base::string16() /* display_source */, GURL(),
+          ComposeNotificationTitle(),
+          l10n_util::GetStringUTF16(
+              IDS_ASH_STATUS_TRAY_NOTIFICATION_SESSION_LENGTH_LIMIT_MESSAGE),
+          gfx::Image(), base::string16() /* display_source */, GURL(),
           message_center::NotifierId(
               message_center::NotifierId::SYSTEM_COMPONENT,
-              system_notifier::kNotifierSessionLengthTimeout),
+              kNotifierSessionLengthTimeout),
           data, nullptr /* delegate */, kNotificationTimerIcon,
           message_center::SystemNotificationWarningLevel::NORMAL);
   notification->SetSystemPriority();
@@ -193,12 +193,12 @@ void TraySessionLengthLimit::UpdateTrayBubbleView() const {
   tray_bubble_view_->Layout();
 }
 
-base::string16 TraySessionLengthLimit::ComposeNotificationMessage() const {
+base::string16 TraySessionLengthLimit::ComposeNotificationTitle() const {
   return l10n_util::GetStringFUTF16(
-      IDS_ASH_STATUS_TRAY_NOTIFICATION_SESSION_LENGTH_LIMIT,
-      ui::TimeFormat::Detailed(ui::TimeFormat::FORMAT_DURATION,
-                               ui::TimeFormat::LENGTH_LONG, 10,
-                               remaining_session_time_));
+      IDS_ASH_STATUS_TRAY_NOTIFICATION_SESSION_LENGTH_LIMIT_TITLE,
+      ui::TimeFormat::Simple(ui::TimeFormat::FORMAT_DURATION,
+                             ui::TimeFormat::LENGTH_SHORT,
+                             remaining_session_time_));
 }
 
 base::string16 TraySessionLengthLimit::ComposeTrayBubbleMessage() const {

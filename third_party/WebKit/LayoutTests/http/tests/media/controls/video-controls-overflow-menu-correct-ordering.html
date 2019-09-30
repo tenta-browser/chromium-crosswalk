@@ -3,7 +3,6 @@
 <script src="../../resources/testharness.js"></script>
 <script src="../../resources/testharnessreport.js"></script>
 <script src="../../../media-resources/media-controls.js"></script>
-<script src="../../../media-resources/media-file.js"></script>
 <script src="../../../media-resources/overflow-menu.js"></script>
 
 <!--Padding ensures the overflow menu is visible for the tests. -->
@@ -13,7 +12,7 @@
 async_test(function(t) {
   // Set up video
   var video = document.querySelector("video");
-  video.src = findMediaFile("video", "../resources/test");
+  video.src = "../resources/test.ogv";
   video.setAttribute("width", "60");
   // Add captions
   var track = video.addTextTrack("captions");
@@ -36,8 +35,8 @@ async_test(function(t) {
       assert_equals(internals.shadowPseudoId(innerButton), overflowButtonsCSS[i]);
       // Items should be visible
       assert_not_equals(getComputedStyle(child).display, "none");
-      // Buttons shouldn't be visible
-      assert_equals(getComputedStyle(innerButton).display, "none");
+      // Buttons should be visible
+      assert_not_equals(getComputedStyle(innerButton).display, "none");
     }
   });
 });

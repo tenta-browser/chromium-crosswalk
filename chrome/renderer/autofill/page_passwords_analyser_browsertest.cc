@@ -8,9 +8,9 @@
 #include "components/autofill/content/renderer/page_form_analyser_logger.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/WebKit/public/web/WebDocument.h"
-#include "third_party/WebKit/public/web/WebElementCollection.h"
-#include "third_party/WebKit/public/web/WebFormElement.h"
+#include "third_party/blink/public/web/web_document.h"
+#include "third_party/blink/public/web/web_element_collection.h"
+#include "third_party/blink/public/web/web_form_element.h"
 
 namespace autofill {
 
@@ -97,6 +97,13 @@ const char kInferredUsernameAutocompleteAttributes[] =
     "   <input type='password' autocomplete='current-password'>"
     "   <input type='password' autocomplete='new-password'>"
     "   <input type='password' autocomplete='new-password'>"
+    "</form>";
+
+const char kPasswordFieldsWithAndWithoutAutocomplete[] =
+    "<form>"
+    "   <input type='password'>"
+    "   <input type='text'>"
+    "   <input type='password' autocomplete='current-password'>"
     "</form>";
 
 const std::string AutocompleteSuggestionString(const std::string& suggestion) {
@@ -251,6 +258,16 @@ TEST_F(PagePasswordsAnalyserTest, InferredUsernameAutocompleteAttributes) {
   element_index++;  // Skip already annotated password field.
   element_index++;  // Skip already annotated password field.
 
+  RunTestCase();
+}
+
+TEST_F(PagePasswordsAnalyserTest, PasswordFieldWithAndWithoutAutocomplete) {
+  LoadTestCase(kPasswordFieldsWithAndWithoutAutocomplete);
+  Expect(
+      "Multiple forms should be contained in their own "
+      "form elements; break up complex forms into ones that represent a "
+      "single action:",
+      PageFormAnalyserLogger::kVerbose, {0});
   RunTestCase();
 }
 

@@ -6,11 +6,6 @@
   TestRunner.addResult(`Tests that breakpoints are not activated on page reload.Bug 41461\n`);
   await TestRunner.loadModule('sources_test_runner');
   await TestRunner.showPanel('sources');
-  await TestRunner.loadHTML(`
-      <p>
-      Tests that breakpoints are not activated on page reload.<a href="https://bugs.webkit.org/show_bug.cgi?id=41461">Bug 41461</a>
-      </p>
-    `);
   await TestRunner.evaluateInPagePromise(`
       function testFunction()
       {
@@ -36,7 +31,7 @@
 
   function step3() {
     TestRunner.addResult('Main resource was shown.');
-    if (!Bindings.breakpointManager.breakpointsActive())
+    if (!Common.moduleSetting('breakpointsActive').get())
       TestRunner.addResult('Breakpoints are deactivated.');
     else
       TestRunner.addResult('Error: breakpoints are activated.');

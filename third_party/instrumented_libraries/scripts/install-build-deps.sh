@@ -17,7 +17,7 @@ common_packages="\
 atk1.0 \
 dee \
 freetype \
-libappindicator1 \
+libappindicator3-1 \
 libasound2 \
 libatk-bridge2.0-0 \
 libatspi2.0-0 \
@@ -28,11 +28,9 @@ libdbus-1-3 \
 libdbus-glib-1-2 \
 libdbusmenu \
 libdbusmenu-glib4 \
-libdconf1 \
 libexpat1 \
 libffi6 \
 libfontconfig1 \
-libgconf-2-4 \
 libgcrypt11 \
 libgdk-pixbuf2.0-0 \
 libglib2.0-0 \
@@ -40,6 +38,8 @@ libgnome-keyring0 \
 libgpg-error0 \
 libgtk-3-0 \
 libgtk2.0-0 \
+libido3-0.1-0 \
+libindicator3-7 \
 libnspr4 \
 libp11-kit0 \
 libpci3 \

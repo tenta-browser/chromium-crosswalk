@@ -28,8 +28,11 @@ class WindowTree;
 
 namespace aura {
 
+class EmbedRoot;
 class Window;
+class WindowManagerDelegate;
 class WindowMus;
+class WindowTreeClientDelegate;
 class WindowTreeClient;
 class WindowTreeHostMus;
 
@@ -44,6 +47,10 @@ class WindowTreeClientPrivate {
   explicit WindowTreeClientPrivate(Window* window);
   ~WindowTreeClientPrivate();
 
+  static std::unique_ptr<WindowTreeClient> CreateWindowTreeClient(
+      WindowTreeClientDelegate* window_tree_delegate,
+      WindowManagerDelegate* window_manager_delegate);
+
   // Calls OnEmbed() on the WindowTreeClient.
   void OnEmbed(ui::mojom::WindowTree* window_tree);
 
@@ -52,9 +59,6 @@ class WindowTreeClientPrivate {
                                            ui::mojom::WindowDataPtr root_data,
                                            bool parent_drawn);
 
-  // Pretends that |event| has been received from the window server.
-  void CallOnWindowInputEvent(Window* window, std::unique_ptr<ui::Event> event);
-
   // Simulates |event| matching a pointer watcher on the window server.
   void CallOnPointerEventObserved(Window* window,
                                   std::unique_ptr<ui::Event> event);
@@ -62,6 +66,10 @@ class WindowTreeClientPrivate {
   void CallOnCaptureChanged(Window* new_capture, Window* old_capture);
 
   void CallOnConnect();
+
+  // Simulates the EmbedRoot receiving the token from the WindowTree and then
+  // the WindowTree calling OnEmbedFromToken().
+  void CallOnEmbedFromToken(EmbedRoot* embed_root);
 
   WindowTreeHostMusInitParams CallCreateInitParamsForNewDisplay();
 
@@ -72,7 +80,7 @@ class WindowTreeClientPrivate {
 
   bool HasPointerWatcher();
 
-  Window* GetWindowByServerId(Id id);
+  Window* GetWindowByServerId(ui::Id id);
 
   WindowMus* NewWindowFromWindowData(WindowMus* parent,
                                      const ui::mojom::WindowData& window_data);
@@ -81,13 +89,17 @@ class WindowTreeClientPrivate {
 
   bool HasChangeInFlightOfType(ChangeType type);
 
+  void WaitForInitialDisplays();
+
  private:
+  ui::mojom::WindowDataPtr CreateWindowDataForEmbed();
+
   WindowTreeClient* tree_client_impl_;
   uint16_t next_window_id_ = 1u;
 
   DISALLOW_COPY_AND_ASSIGN(WindowTreeClientPrivate);
 };
 
-}  // namespace ui
+}  // namespace aura
 
 #endif  // UI_AURA_TEST_MUS_WINDOW_TREE_CLIENT_PRIVATE_H_

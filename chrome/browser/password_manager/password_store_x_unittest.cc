@@ -13,7 +13,6 @@
 #include "base/bind_helpers.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
@@ -98,7 +97,7 @@ class FailingBackend : public PasswordStoreX::NativeBackend {
     trash.password_value = base::ASCIIToUTF16("trash p. value");
     for (size_t i = 0; i < 3; ++i) {
       trash.origin = GURL(base::StringPrintf("http://trash%zu.com", i));
-      forms.push_back(base::MakeUnique<PasswordForm>(trash));
+      forms.push_back(std::make_unique<PasswordForm>(trash));
     }
     return forms;
   }
@@ -204,7 +203,7 @@ class MockBackend : public PasswordStoreX::NativeBackend {
                  std::vector<std::unique_ptr<PasswordForm>>* forms) override {
     for (size_t i = 0; i < all_forms_.size(); ++i)
       if (all_forms_[i].signon_realm == form.signon_realm)
-        forms->push_back(base::MakeUnique<PasswordForm>(all_forms_[i]));
+        forms->push_back(std::make_unique<PasswordForm>(all_forms_[i]));
     return true;
   }
 
@@ -212,7 +211,7 @@ class MockBackend : public PasswordStoreX::NativeBackend {
       std::vector<std::unique_ptr<PasswordForm>>* forms) override {
     for (size_t i = 0; i < all_forms_.size(); ++i)
       if (!all_forms_[i].blacklisted_by_user)
-        forms->push_back(base::MakeUnique<PasswordForm>(all_forms_[i]));
+        forms->push_back(std::make_unique<PasswordForm>(all_forms_[i]));
     return true;
   }
 
@@ -220,14 +219,14 @@ class MockBackend : public PasswordStoreX::NativeBackend {
       std::vector<std::unique_ptr<PasswordForm>>* forms) override {
     for (size_t i = 0; i < all_forms_.size(); ++i)
       if (all_forms_[i].blacklisted_by_user)
-        forms->push_back(base::MakeUnique<PasswordForm>(all_forms_[i]));
+        forms->push_back(std::make_unique<PasswordForm>(all_forms_[i]));
     return true;
   }
 
   bool GetAllLogins(
       std::vector<std::unique_ptr<PasswordForm>>* forms) override {
     for (size_t i = 0; i < all_forms_.size(); ++i)
-      forms->push_back(base::MakeUnique<PasswordForm>(all_forms_[i]));
+      forms->push_back(std::make_unique<PasswordForm>(all_forms_[i]));
     return true;
   }
 
@@ -304,9 +303,9 @@ std::unique_ptr<PasswordStoreX::NativeBackend> GetBackend(
     BackendType backend_type) {
   switch (backend_type) {
     case FAILING_BACKEND:
-      return base::MakeUnique<FailingBackend>();
+      return std::make_unique<FailingBackend>();
     case WORKING_BACKEND:
-      return base::MakeUnique<MockBackend>();
+      return std::make_unique<MockBackend>();
     default:
       return std::unique_ptr<PasswordStoreX::NativeBackend>();
   }
@@ -338,7 +337,7 @@ class PasswordStoreXTestDelegate {
 PasswordStoreXTestDelegate::PasswordStoreXTestDelegate(BackendType backend_type)
     : backend_type_(backend_type) {
   SetupTempDir();
-  store_ = new PasswordStoreX(base::MakeUnique<password_manager::LoginDatabase>(
+  store_ = new PasswordStoreX(std::make_unique<password_manager::LoginDatabase>(
                                   test_login_db_file_path()),
                               GetBackend(backend_type_));
   store_->Init(syncer::SyncableService::StartSyncFlare(), nullptr);

@@ -4,10 +4,11 @@
 
 #include "chrome/browser/ui/ash/launcher/browser_status_monitor.h"
 
+#include <memory>
+
 #include "ash/public/cpp/shelf_types.h"
 #include "ash/shell.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "chrome/browser/ui/ash/ash_util.h"
 #include "chrome/browser/ui/ash/launcher/browser_shortcut_launcher_item_controller.h"
 #include "chrome/browser/ui/ash/launcher/chrome_launcher_controller.h"
@@ -84,12 +85,12 @@ BrowserStatusMonitor::BrowserStatusMonitor(
       browser_tab_strip_tracker_(this, this, this) {
   DCHECK(launcher_controller_);
   // TODO(crbug.com/557406): Fix this interaction pattern in Mash.
-  if (!ash_util::IsRunningInMash())
+  if (ash::Shell::HasInstance())
     ash::Shell::Get()->activation_client()->AddObserver(this);
 }
 
 BrowserStatusMonitor::~BrowserStatusMonitor() {
-  if (!ash_util::IsRunningInMash())
+  if (ash::Shell::HasInstance())
     ash::Shell::Get()->activation_client()->RemoveObserver(this);
   browser_tab_strip_tracker_.StopObservingAndSendOnBrowserRemoved();
 }
@@ -294,7 +295,7 @@ void BrowserStatusMonitor::AddWebContentsObserver(
   if (webcontents_to_observer_map_.find(contents) ==
       webcontents_to_observer_map_.end()) {
     webcontents_to_observer_map_[contents] =
-        base::MakeUnique<LocalWebContentsObserver>(contents, this);
+        std::make_unique<LocalWebContentsObserver>(contents, this);
   }
 }
 

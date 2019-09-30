@@ -5,7 +5,6 @@
 #include "gpu/ipc/host/shader_disk_cache.h"
 
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/sys_info.h"
 #include "base/threading/thread_checker.h"
 #include "build/build_config.h"
@@ -419,9 +418,9 @@ void ShaderClearHelper::DoClearShaderCache(int rv) {
 ////////////////////////////////////////////////////////////////////////////////
 // ShaderCacheFactory
 
-ShaderCacheFactory::ShaderCacheFactory() {}
+ShaderCacheFactory::ShaderCacheFactory() = default;
 
-ShaderCacheFactory::~ShaderCacheFactory() {}
+ShaderCacheFactory::~ShaderCacheFactory() = default;
 
 void ShaderCacheFactory::SetCacheInfo(int32_t client_id,
                                       const base::FilePath& path) {

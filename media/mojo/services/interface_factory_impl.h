@@ -8,7 +8,7 @@
 #include <memory>
 
 #include "base/macros.h"
-#include "media/mojo/features.h"
+#include "media/mojo/buildflags.h"
 #include "media/mojo/interfaces/interface_factory.mojom.h"
 #include "media/mojo/services/mojo_cdm_service_context.h"
 #include "mojo/public/cpp/bindings/strong_binding_set.h"
@@ -18,7 +18,6 @@
 namespace media {
 
 class CdmFactory;
-class DelayedReleaseServiceContextRef;
 class MediaLog;
 class MojoMediaClient;
 class RendererFactory;
@@ -35,10 +34,13 @@ class InterfaceFactoryImpl : public mojom::InterfaceFactory {
   // mojom::InterfaceFactory implementation.
   void CreateAudioDecoder(mojom::AudioDecoderRequest request) final;
   void CreateVideoDecoder(mojom::VideoDecoderRequest request) final;
-  void CreateRenderer(const std::string& audio_device_id,
+  void CreateRenderer(media::mojom::HostedRendererType type,
+                      const std::string& type_specific_id,
                       mojom::RendererRequest request) final;
   void CreateCdm(const std::string& key_system,
                  mojom::ContentDecryptionModuleRequest request) final;
+  void CreateCdmProxy(const std::string& cdm_guid,
+                      mojom::CdmProxyRequest request) final;
 
  private:
 #if BUILDFLAG(ENABLE_MOJO_RENDERER)
@@ -74,7 +76,11 @@ class InterfaceFactoryImpl : public mojom::InterfaceFactory {
   mojo::StrongBindingSet<mojom::ContentDecryptionModule> cdm_bindings_;
 #endif  // BUILDFLAG(ENABLE_MOJO_CDM)
 
-  std::unique_ptr<DelayedReleaseServiceContextRef> connection_ref_;
+#if BUILDFLAG(ENABLE_LIBRARY_CDMS)
+  mojo::StrongBindingSet<mojom::CdmProxy> cdm_proxy_bindings_;
+#endif  // BUILDFLAG(ENABLE_LIBRARY_CDMS)
+
+  std::unique_ptr<service_manager::ServiceContextRef> connection_ref_;
   MojoMediaClient* mojo_media_client_;
 
   DISALLOW_COPY_AND_ASSIGN(InterfaceFactoryImpl);

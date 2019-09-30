@@ -9,7 +9,6 @@
 #include "base/command_line.h"
 #include "base/location.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_number_conversions.h"
@@ -652,10 +651,11 @@ void SetTouchRadius(ui::TouchEvent* event, float radius_x, float radius_y) {
   ui::PointerDetails details(
       ui::EventPointerType::POINTER_TYPE_TOUCH, event->pointer_details().id,
       radius_x, radius_y, event->pointer_details().force,
-      event->pointer_details().tilt_x, event->pointer_details().tilt_y,
-      event->pointer_details().tangential_pressure,
-      event->pointer_details().twist);
-  event->set_pointer_details(details);
+      event->pointer_details().twist, event->pointer_details().tilt_x,
+      event->pointer_details().tilt_y,
+      event->pointer_details().tangential_pressure);
+
+  event->SetPointerDetailsForTest(details);
 }
 
 }  // namespace
@@ -1905,7 +1905,7 @@ TEST_F(GestureRecognizerTest, AsynchronousGestureRecognition) {
   EXPECT_FALSE(queued_delegate->scroll_end());
 
   // Move the second touch-point enough so that it is considered a pinch. This
-  // should generate both SCROLL_BEGIN and PINCH_BEGIN gestures.
+  // should generate SCROLL_BEGIN, PINCH_BEGIN, and PINCH_UPDATE gestures.
   queued_delegate->Reset();
   delegate->Reset();
   ui::TouchEvent move(
@@ -1968,7 +1968,7 @@ TEST_F(GestureRecognizerTest, AsynchronousGestureRecognition) {
   EXPECT_TRUE(queued_delegate->scroll_update());
   EXPECT_FALSE(queued_delegate->scroll_end());
   EXPECT_TRUE(queued_delegate->pinch_begin());
-  EXPECT_FALSE(queued_delegate->pinch_update());
+  EXPECT_TRUE(queued_delegate->pinch_update());
   EXPECT_FALSE(queued_delegate->pinch_end());
 }
 
@@ -2023,9 +2023,8 @@ TEST_F(GestureRecognizerTest, GestureEventPinchFromScroll) {
       ui::ET_TOUCH_MOVED, gfx::Point(95, 201), tes.Now(),
       ui::PointerDetails(ui::EventPointerType::POINTER_TYPE_TOUCH, kTouchId1));
   DispatchEventUsingWindowDispatcher(&move3);
-  EXPECT_2_EVENTS(delegate->events(),
-                  ui::ET_GESTURE_SCROLL_UPDATE,
-                  ui::ET_GESTURE_PINCH_BEGIN);
+  EXPECT_3_EVENTS(delegate->events(), ui::ET_GESTURE_SCROLL_UPDATE,
+                  ui::ET_GESTURE_PINCH_BEGIN, ui::ET_GESTURE_PINCH_UPDATE);
   EXPECT_EQ(gfx::Rect(10, 10, 85, 191).ToString(),
             delegate->bounding_box().ToString());
 
@@ -2086,10 +2085,10 @@ TEST_F(GestureRecognizerTest, GestureEventPinchFromScrollFromPinch) {
   DispatchEventUsingWindowDispatcher(&press2);
   EXPECT_FALSE(delegate->pinch_begin());
 
-  // Touch move triggers pinch begin.
+  // Touch move triggers pinch begin and update.
   tes.SendScrollEvent(event_sink(), 130, 230, kTouchId1, delegate.get());
   EXPECT_TRUE(delegate->pinch_begin());
-  EXPECT_FALSE(delegate->pinch_update());
+  EXPECT_TRUE(delegate->pinch_update());
 
   // Touch move triggers pinch update.
   tes.SendScrollEvent(event_sink(), 160, 200, kTouchId1, delegate.get());
@@ -2165,10 +2164,9 @@ TEST_F(GestureRecognizerTest, GestureEventPinchFromTap) {
       ui::ET_TOUCH_MOVED, gfx::Point(65, 201), tes.Now(),
       ui::PointerDetails(ui::EventPointerType::POINTER_TYPE_TOUCH, kTouchId1));
   DispatchEventUsingWindowDispatcher(&move3);
-  EXPECT_3_EVENTS(delegate->events(),
-                  ui::ET_GESTURE_SCROLL_BEGIN,
-                  ui::ET_GESTURE_SCROLL_UPDATE,
-                  ui::ET_GESTURE_PINCH_BEGIN);
+  EXPECT_4_EVENTS(delegate->events(), ui::ET_GESTURE_SCROLL_BEGIN,
+                  ui::ET_GESTURE_SCROLL_UPDATE, ui::ET_GESTURE_PINCH_BEGIN,
+                  ui::ET_GESTURE_PINCH_UPDATE);
   EXPECT_EQ(gfx::Rect(10, 10, 55, 191).ToString(),
             delegate->bounding_box().ToString());
 
@@ -2510,9 +2508,8 @@ TEST_F(GestureRecognizerTest, PinchScrollWithPreventDefaultedRelease) {
 
   delegate->Reset();
   delegate->ReceivedAck();
-  EXPECT_2_EVENTS(delegate->events(),
-                  ui::ET_GESTURE_SCROLL_UPDATE,
-                  ui::ET_GESTURE_PINCH_BEGIN);
+  EXPECT_3_EVENTS(delegate->events(), ui::ET_GESTURE_SCROLL_UPDATE,
+                  ui::ET_GESTURE_PINCH_BEGIN, ui::ET_GESTURE_PINCH_UPDATE);
 
   // Ack the first release. Although the release is processed, it should still
   // generate a pinch-end event.
@@ -3801,10 +3798,9 @@ TEST_F(GestureRecognizerTest, CancelAllActiveTouches) {
       ui::ET_TOUCH_MOVED, gfx::Point(350, 300), tes.Now(),
       ui::PointerDetails(ui::EventPointerType::POINTER_TYPE_TOUCH, kTouchId2));
   DispatchEventUsingWindowDispatcher(&move);
-  EXPECT_3_EVENTS(delegate->events(),
-                  ui::ET_GESTURE_SCROLL_BEGIN,
-                  ui::ET_GESTURE_SCROLL_UPDATE,
-                  ui::ET_GESTURE_PINCH_BEGIN);
+  EXPECT_4_EVENTS(delegate->events(), ui::ET_GESTURE_SCROLL_BEGIN,
+                  ui::ET_GESTURE_SCROLL_UPDATE, ui::ET_GESTURE_PINCH_BEGIN,
+                  ui::ET_GESTURE_PINCH_UPDATE);
   EXPECT_EQ(2, handler->touch_pressed_count());
   delegate->Reset();
   handler->Reset();
@@ -4222,7 +4218,7 @@ TEST_F(GestureRecognizerTest, PinchAlternatelyConsumedTest) {
   EXPECT_TRUE(delegate->scroll_begin());
   EXPECT_TRUE(delegate->scroll_update());
   EXPECT_TRUE(delegate->pinch_begin());
-  EXPECT_FALSE(delegate->pinch_update());
+  EXPECT_TRUE(delegate->pinch_update());
   delegate->Reset();
 
   const float expected_scales[] = {1.5f, 1.2f, 1.125f};
@@ -4369,10 +4365,9 @@ TEST_F(GestureRecognizerWithSwitchTest, GestureEventSmallPinchDisabled) {
       ui::PointerDetails(ui::EventPointerType::POINTER_TYPE_TOUCH, kTouchId1));
   DispatchEventUsingWindowDispatcher(&move1);
 
-  EXPECT_3_EVENTS(delegate->events(),
-                  ui::ET_GESTURE_SCROLL_BEGIN,
-                  ui::ET_GESTURE_SCROLL_UPDATE,
-                  ui::ET_GESTURE_PINCH_BEGIN);
+  EXPECT_4_EVENTS(delegate->events(), ui::ET_GESTURE_SCROLL_BEGIN,
+                  ui::ET_GESTURE_SCROLL_UPDATE, ui::ET_GESTURE_PINCH_BEGIN,
+                  ui::ET_GESTURE_PINCH_UPDATE);
 
   // No pinch update occurs, as kCompensateForUnstablePinchZoom is on and
   // |min_pinch_update_span_delta| was nonzero, and this is a very small pinch.
@@ -4412,10 +4407,9 @@ TEST_F(GestureRecognizerTest, GestureEventSmallPinchEnabled) {
       ui::PointerDetails(ui::EventPointerType::POINTER_TYPE_TOUCH, kTouchId1));
   DispatchEventUsingWindowDispatcher(&move1);
 
-  EXPECT_3_EVENTS(delegate->events(),
-                  ui::ET_GESTURE_SCROLL_BEGIN,
-                  ui::ET_GESTURE_SCROLL_UPDATE,
-                  ui::ET_GESTURE_PINCH_BEGIN);
+  EXPECT_4_EVENTS(delegate->events(), ui::ET_GESTURE_SCROLL_BEGIN,
+                  ui::ET_GESTURE_SCROLL_UPDATE, ui::ET_GESTURE_PINCH_BEGIN,
+                  ui::ET_GESTURE_PINCH_UPDATE);
 
   delegate->Reset();
   ui::TouchEvent move2(

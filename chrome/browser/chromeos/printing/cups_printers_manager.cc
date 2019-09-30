@@ -22,6 +22,11 @@
 #include "chrome/browser/chromeos/printing/usb_printer_detector.h"
 #include "chrome/browser/chromeos/printing/zeroconf_printer_detector.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/common/pref_names.h"
+#include "components/policy/policy_constants.h"
+#include "components/pref_registry/pref_registry_syncable.h"
+#include "components/prefs/pref_member.h"
+#include "components/prefs/pref_service.h"
 
 namespace chromeos {
 namespace {
@@ -31,28 +36,35 @@ class CupsPrintersManagerImpl;
 // Since CupsPrintersManager listens to multiple PrinterDetectors, we need to
 // disambiguate incoming observer calls based on their source, and so can't
 // implement PrinterDetector::Observer directly in CupsPrintersManagerImpl.
+//
+// Note that at the time the Proxy is constructed, CupsPrintersManagerImpl's
+// construction may not be complete, so any callbacks into the parent need
+// to be deferred.
 class PrinterDetectorObserverProxy : public PrinterDetector::Observer {
  public:
   PrinterDetectorObserverProxy(CupsPrintersManagerImpl* parent,
                                int id,
                                PrinterDetector* detector)
       : parent_(parent), id_(id), observer_(this) {
+    DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_);
+    // It's ok to Add() before construction is complete because callbacks are on
+    // the same sequence, therefore we will complete construction before any
+    // detection callback will be processed.
     observer_.Add(detector);
   }
-  ~PrinterDetectorObserverProxy() override = default;
+  ~PrinterDetectorObserverProxy() override {
+    DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_);
+  }
 
   // Defined out of line because we need the CupsPrintersManagerImpl
   // definition first.
   void OnPrintersFound(
       const std::vector<PrinterDetector::DetectedPrinter>& printers) override;
 
-  // We don't do anything with OnPrinterScanComplete() at the moment, so just
-  // stub it out.
-  void OnPrinterScanComplete() override {}
-
  private:
   CupsPrintersManagerImpl* parent_;
   int id_;
+  SEQUENCE_CHECKER(sequence_);
   ScopedObserver<PrinterDetector, PrinterDetector::Observer> observer_;
 };
 
@@ -84,10 +96,10 @@ class CupsPrintersManagerImpl : public CupsPrintersManager,
                           std::unique_ptr<PrinterDetector> usb_detector,
                           std::unique_ptr<PrinterDetector> zeroconf_detector,
                           scoped_refptr<PpdProvider> ppd_provider,
-                          PrinterEventTracker* event_tracker)
+                          PrinterEventTracker* event_tracker,
+                          PrefService* pref_service)
       : synced_printers_manager_(synced_printers_manager),
         synced_printers_manager_observer_(this),
-        started_observing_(false),
         usb_detector_(std::move(usb_detector)),
         zeroconf_detector_(std::move(zeroconf_detector)),
         ppd_provider_(std::move(ppd_provider)),
@@ -103,11 +115,17 @@ class CupsPrintersManagerImpl : public CupsPrintersManager,
     // Callbacks may ensue immediately when the observer proxies are set up, so
     // these instantiations must come after everything else is initialized.
     usb_detector_observer_proxy_ =
-        base::MakeUnique<PrinterDetectorObserverProxy>(this, kUsbDetector,
+        std::make_unique<PrinterDetectorObserverProxy>(this, kUsbDetector,
                                                        usb_detector_.get());
+    OnPrintersFound(kUsbDetector, usb_detector_->GetPrinters());
+
     zeroconf_detector_observer_proxy_ =
-        base::MakeUnique<PrinterDetectorObserverProxy>(
+        std::make_unique<PrinterDetectorObserverProxy>(
             this, kZeroconfDetector, zeroconf_detector_.get());
+    OnPrintersFound(kZeroconfDetector, zeroconf_detector_->GetPrinters());
+
+    native_printers_allowed_.Init(prefs::kUserNativePrintersAllowed,
+                                  pref_service);
   }
 
   ~CupsPrintersManagerImpl() override = default;
@@ -115,6 +133,12 @@ class CupsPrintersManagerImpl : public CupsPrintersManager,
   // Public API function.
   std::vector<Printer> GetPrinters(PrinterClass printer_class) const override {
     DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_);
+    if (!native_printers_allowed_.GetValue() && printer_class != kEnterprise) {
+      // If native printers are disabled then simply return an empty vector.
+      LOG(WARNING) << "Attempting to retrieve native printers when "
+                      "UserNativePrintersAllowed is set to false";
+      return {};
+    }
     return printers_.at(printer_class);
   }
 
@@ -130,6 +154,11 @@ class CupsPrintersManagerImpl : public CupsPrintersManager,
   // Public API function.
   void UpdateConfiguredPrinter(const Printer& printer) override {
     DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_);
+    if (!native_printers_allowed_.GetValue()) {
+      LOG(WARNING) << "UpdateConfiguredPrinter() called when "
+                      "UserNativePrintersAllowed is set to false";
+      return;
+    }
     // If this is an 'add' instead of just an update, record the event.
     MaybeRecordInstallation(printer);
     synced_printers_manager_->UpdateConfiguredPrinter(printer);
@@ -161,18 +190,14 @@ class CupsPrintersManagerImpl : public CupsPrintersManager,
     observer_list_.RemoveObserver(observer);
   }
 
-  // Used to initiate the callbacks after the observers have been constructed.
-  void Start() override {
-    if (!started_observing_) {
-      usb_detector_->StartObservers();
-      zeroconf_detector_->StartObservers();
-      started_observing_ = true;
-    }
-  }
-
   // Public API function.
   void PrinterInstalled(const Printer& printer) override {
     DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_);
+    if (!native_printers_allowed_.GetValue()) {
+      LOG(WARNING) << "PrinterInstalled() called when "
+                      "UserNativePrintersAllowed is  set to false";
+      return;
+    }
     MaybeRecordInstallation(printer);
     synced_printers_manager_->PrinterInstalled(printer);
   }
@@ -189,10 +214,16 @@ class CupsPrintersManagerImpl : public CupsPrintersManager,
   // more than just this function.
   std::unique_ptr<Printer> GetPrinter(const std::string& id) const override {
     DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_);
+    if (!native_printers_allowed_.GetValue()) {
+      LOG(WARNING) << "UserNativePrintersAllowed is disabled - only searching "
+                      "enterprise printers";
+      return GetEnterprisePrinter(id);
+    }
+
     for (const auto& printer_list : printers_) {
       for (const auto& printer : printer_list) {
         if (printer.id() == id) {
-          return base::MakeUnique<Printer>(printer);
+          return std::make_unique<Printer>(printer);
         }
       }
     }
@@ -243,6 +274,15 @@ class CupsPrintersManagerImpl : public CupsPrintersManager,
   }
 
  private:
+  std::unique_ptr<Printer> GetEnterprisePrinter(const std::string& id) const {
+    for (const auto& printer : printers_[kEnterprise]) {
+      if (printer.id() == id) {
+        return std::make_unique<Printer>(printer);
+      }
+    }
+    return nullptr;
+  }
+
   // Notify observers on the given classes the the relevant lists have changed.
   void NotifyObservers(
       const std::vector<CupsPrintersManager::PrinterClass>& printer_classes) {
@@ -312,7 +352,7 @@ class CupsPrintersManagerImpl : public CupsPrintersManager,
     const auto* detected = FindDetectedPrinter(printer.id());
 
     // For compatibility with the previous implementation, record USB printers
-    // seperately from other IPP printers.  Eventually we may want to shift
+    // separately from other IPP printers.  Eventually we may want to shift
     // this to be split by autodetected/not autodetected instead of USB/other
     // IPP.
     if (IsUsbPrinter(printer)) {
@@ -372,6 +412,14 @@ class CupsPrintersManagerImpl : public CupsPrintersManager,
         // else here.
         continue;
       }
+
+      // Sometimes the detector can flag a printer as IPP-everywhere compatible;
+      // those printers can go directly into the automatic class without further
+      // processing.
+      if (detected.printer.IsIppEverywhere()) {
+        printers_[kAutomatic].push_back(detected.printer);
+        continue;
+      }
       auto it = detected_printer_ppd_references_.find(detected.printer.id());
       if (it != detected_printer_ppd_references_.end()) {
         if (it->second == nullptr) {
@@ -385,12 +433,11 @@ class CupsPrintersManagerImpl : public CupsPrintersManager,
           *printers_[kAutomatic].back().mutable_ppd_reference() = *it->second;
         }
       } else {
-        // Didn't find an entry for this printer in the PpdReferences cache.
-        // We need to ask PpdProvider whether or not it can determine a
-        // PpdReference.  If there's not already an outstanding request for
-        // one, start one.  When the request comes back, we'll rerun
-        // classification and then should be able to figure out where this
-        // printer belongs.
+        // Didn't find an entry for this printer in the PpdReferences cache.  We
+        // need to ask PpdProvider whether or not it can determine a
+        // PpdReference.  If there's not already an outstanding request for one,
+        // start one.  When the request comes back, we'll rerun classification
+        // and then should be able to figure out where this printer belongs.
         if (!base::ContainsKey(inflight_ppd_reference_resolutions_,
                                detected.printer.id())) {
           inflight_ppd_reference_resolutions_.insert(detected.printer.id());
@@ -462,12 +509,6 @@ class CupsPrintersManagerImpl : public CupsPrintersManager,
   ScopedObserver<SyncedPrintersManager, SyncedPrintersManager::Observer>
       synced_printers_manager_observer_;
 
-  // Represents whether or not the Start() method has been called and
-  // CupsPrintersManager has started to observe the usb and zeroconf printer
-  // detectors. If this is true than subsequent calls to Start() will have no
-  // effect.
-  bool started_observing_;
-
   std::unique_ptr<PrinterDetector> usb_detector_;
   std::unique_ptr<PrinterDetectorObserverProxy> usb_detector_observer_proxy_;
 
@@ -504,11 +545,15 @@ class CupsPrintersManagerImpl : public CupsPrintersManager,
 
   base::ObserverList<CupsPrintersManager::Observer> observer_list_;
 
+  // Holds the current value of the pref |UserNativePrintersAllowed|.
+  BooleanPrefMember native_printers_allowed_;
+
   base::WeakPtrFactory<CupsPrintersManagerImpl> weak_ptr_factory_;
 };
 
 void PrinterDetectorObserverProxy::OnPrintersFound(
     const std::vector<PrinterDetector::DetectedPrinter>& printers) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_);
   parent_->OnPrintersFound(id_, printers);
 }
 
@@ -517,12 +562,13 @@ void PrinterDetectorObserverProxy::OnPrintersFound(
 // static
 std::unique_ptr<CupsPrintersManager> CupsPrintersManager::Create(
     Profile* profile) {
-  return base::MakeUnique<CupsPrintersManagerImpl>(
+  return std::make_unique<CupsPrintersManagerImpl>(
       SyncedPrintersManagerFactory::GetInstance()->GetForBrowserContext(
           profile),
-      UsbPrinterDetector::Create(), ZeroconfPrinterDetector::Create(profile),
+      UsbPrinterDetector::Create(), ZeroconfPrinterDetector::Create(),
       CreatePpdProvider(profile),
-      PrinterEventTrackerFactory::GetInstance()->GetForBrowserContext(profile));
+      PrinterEventTrackerFactory::GetInstance()->GetForBrowserContext(profile),
+      profile->GetPrefs());
 }
 
 // static
@@ -531,10 +577,20 @@ std::unique_ptr<CupsPrintersManager> CupsPrintersManager::Create(
     std::unique_ptr<PrinterDetector> usb_detector,
     std::unique_ptr<PrinterDetector> zeroconf_detector,
     scoped_refptr<PpdProvider> ppd_provider,
-    PrinterEventTracker* event_tracker) {
-  return base::MakeUnique<CupsPrintersManagerImpl>(
+    PrinterEventTracker* event_tracker,
+    PrefService* pref_service) {
+  return std::make_unique<CupsPrintersManagerImpl>(
       synced_printers_manager, std::move(usb_detector),
-      std::move(zeroconf_detector), std::move(ppd_provider), event_tracker);
+      std::move(zeroconf_detector), std::move(ppd_provider), event_tracker,
+      pref_service);
+}
+
+// static
+void CupsPrintersManager::RegisterProfilePrefs(
+    user_prefs::PrefRegistrySyncable* registry) {
+  registry->RegisterBooleanPref(
+      prefs::kUserNativePrintersAllowed, true,
+      user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
 }
 
 }  // namespace chromeos

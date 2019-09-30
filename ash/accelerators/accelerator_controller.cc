@@ -4,23 +4,28 @@
 
 #include "ash/accelerators/accelerator_controller.h"
 
+#include <algorithm>
+#include <cmath>
 #include <string>
 #include <utility>
 
 #include "ash/accelerators/accelerator_commands.h"
-#include "ash/accelerators/accelerator_controller_delegate.h"
 #include "ash/accelerators/debug_commands.h"
 #include "ash/accessibility/accessibility_controller.h"
-#include "ash/accessibility/accessibility_delegate.h"
+#include "ash/app_list/app_list_controller_impl.h"
+#include "ash/debug.h"
 #include "ash/display/display_configuration_controller.h"
 #include "ash/display/display_move_window_util.h"
 #include "ash/focus_cycler.h"
 #include "ash/ime/ime_controller.h"
 #include "ash/ime/ime_switch_type.h"
+#include "ash/magnifier/docked_magnifier_controller.h"
+#include "ash/magnifier/magnification_controller.h"
 #include "ash/media_controller.h"
 #include "ash/multi_profile_uma.h"
 #include "ash/new_window_controller.h"
-#include "ash/public/cpp/ash_switches.h"
+#include "ash/public/cpp/ash_features.h"
+#include "ash/public/cpp/config.h"
 #include "ash/resources/vector_icons/vector_icons.h"
 #include "ash/root_window_controller.h"
 #include "ash/rotator/window_rotation.h"
@@ -29,20 +34,20 @@
 #include "ash/shelf/shelf_widget.h"
 #include "ash/shell.h"
 #include "ash/shell_delegate.h"
-#include "ash/shell_port.h"
 #include "ash/strings/grit/ash_strings.h"
 #include "ash/system/brightness_control_delegate.h"
 #include "ash/system/ime_menu/ime_menu_tray.h"
 #include "ash/system/keyboard_brightness_control_delegate.h"
 #include "ash/system/palette/palette_tray.h"
 #include "ash/system/palette/palette_utils.h"
+#include "ash/system/power/power_button_controller.h"
 #include "ash/system/status_area_widget.h"
-#include "ash/system/system_notifier.h"
 #include "ash/system/toast/toast_data.h"
 #include "ash/system/toast/toast_manager.h"
 #include "ash/system/tray/system_tray.h"
 #include "ash/system/tray/system_tray_notifier.h"
 #include "ash/system/web_notification/web_notification_tray.h"
+#include "ash/touch/touch_hud_debug.h"
 #include "ash/utility/screenshot_controller.h"
 #include "ash/voice_interaction/voice_interaction_controller.h"
 #include "ash/wm/mru_window_tracker.h"
@@ -56,18 +61,17 @@
 #include "base/metrics/histogram_macros.h"
 #include "base/metrics/user_metrics.h"
 #include "base/optional.h"
+#include "base/stl_util.h"
 #include "base/strings/string_split.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/sys_info.h"
 #include "chromeos/chromeos_switches.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
 #include "chromeos/dbus/power_manager_client.h"
 #include "components/user_manager/user_type.h"
 #include "ui/app_list/app_list_constants.h"
-#include "ui/app_list/presenter/app_list.h"
 #include "ui/base/accelerators/accelerator.h"
 #include "ui/base/accelerators/accelerator_manager.h"
-#include "ui/base/ime/chromeos/ime_keyboard.h"
-#include "ui/base/ime/chromeos/input_method_manager.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/chromeos/events/keyboard_layout_util.h"
 #include "ui/compositor/layer.h"
@@ -82,13 +86,14 @@
 
 namespace ash {
 
+const char kNotifierAccelerator[] = "ash.accelerator-controller";
+
 const char kHighContrastToggleAccelNotificationId[] =
     "chrome://settings/accessibility/highcontrast";
 
 namespace {
 
 using base::UserMetricsAction;
-using chromeos::input_method::InputMethodManager;
 using message_center::Notification;
 using message_center::SystemNotificationWarningLevel;
 
@@ -97,26 +102,6 @@ const char kSecondaryUserToastId[] = "voice_interaction_secondary_user";
 const char kUnsupportedLocaleToastId[] = "voice_interaction_locale_unsupported";
 const char kPolicyDisabledToastId[] = "voice_interaction_policy_disabled";
 const int kToastDurationMs = 2500;
-
-// The notification delegate that will be used to open the keyboard shortcut
-// help page when the notification is clicked.
-class DeprecatedAcceleratorNotificationDelegate
-    : public message_center::NotificationDelegate {
- public:
-  DeprecatedAcceleratorNotificationDelegate() = default;
-
-  // message_center::NotificationDelegate:
-  void Click() override {
-    if (!Shell::Get()->session_controller()->IsUserSessionBlocked())
-      Shell::Get()->shell_delegate()->OpenKeyboardShortcutHelpPage();
-  }
-
- private:
-  // Private destructor since NotificationDelegate is ref-counted.
-  ~DeprecatedAcceleratorNotificationDelegate() override = default;
-
-  DISALLOW_COPY_AND_ASSIGN(DeprecatedAcceleratorNotificationDelegate);
-};
 
 // Ensures that there are no word breaks at the "+"s in the shortcut texts such
 // as "Ctrl+Shift+Space".
@@ -161,19 +146,24 @@ void ShowDeprecatedAcceleratorNotification(const char* const notification_id,
                                            int new_shortcut_id) {
   const base::string16 message =
       GetNotificationText(message_id, old_shortcut_id, new_shortcut_id);
+  auto delegate =
+      base::MakeRefCounted<message_center::HandleNotificationClickDelegate>(
+          base::BindRepeating([]() {
+            if (!Shell::Get()->session_controller()->IsUserSessionBlocked())
+              Shell::Get()->shell_delegate()->OpenKeyboardShortcutHelpPage();
+          }));
+
   std::unique_ptr<Notification> notification =
-      system_notifier::CreateSystemNotification(
+      message_center::Notification::CreateSystemNotification(
           message_center::NOTIFICATION_TYPE_SIMPLE, notification_id,
           l10n_util::GetStringUTF16(IDS_DEPRECATED_SHORTCUT_TITLE), message,
-          Shell::Get()->shell_delegate()->GetDeprecatedAcceleratorImage(),
-          base::string16(), GURL(),
+          gfx::Image(), base::string16(), GURL(),
           message_center::NotifierId(
               message_center::NotifierId::SYSTEM_COMPONENT,
-              system_notifier::kNotifierDeprecatedAccelerator),
-          message_center::RichNotificationData(),
-          new DeprecatedAcceleratorNotificationDelegate,
-          kNotificationSettingsIcon, SystemNotificationWarningLevel::NORMAL);
-  notification->set_clickable(true);
+              kNotifierAccelerator),
+          message_center::RichNotificationData(), std::move(delegate),
+          kNotificationKeyboardIcon, SystemNotificationWarningLevel::NORMAL);
+  notification->set_priority(message_center::SYSTEM_PRIORITY);
   message_center::MessageCenter::Get()->AddNotification(
       std::move(notification));
 }
@@ -255,34 +245,18 @@ void HandleLaunchLastApp() {
 }
 
 void HandleMediaNextTrack() {
+  base::RecordAction(UserMetricsAction("Accel_Media_Next_Track"));
   Shell::Get()->media_controller()->HandleMediaNextTrack();
 }
 
 void HandleMediaPlayPause() {
+  base::RecordAction(UserMetricsAction("Accel_Media_PlayPause"));
   Shell::Get()->media_controller()->HandleMediaPlayPause();
 }
 
 void HandleMediaPrevTrack() {
+  base::RecordAction(UserMetricsAction("Accel_Media_Prev_Track"));
   Shell::Get()->media_controller()->HandleMediaPrevTrack();
-}
-
-void HandleMoveWindowBetweenDisplays(AcceleratorAction action) {
-  DisplayMoveWindowDirection direction;
-  if (action == MOVE_WINDOW_TO_ABOVE_DISPLAY) {
-    base::RecordAction(UserMetricsAction("Accel_Move_Window_To_Above_Display"));
-    direction = DisplayMoveWindowDirection::kAbove;
-  } else if (action == MOVE_WINDOW_TO_BELOW_DISPLAY) {
-    base::RecordAction(UserMetricsAction("Accel_Move_Window_To_Below_Display"));
-    direction = DisplayMoveWindowDirection::kBelow;
-  } else if (action == MOVE_WINDOW_TO_LEFT_DISPLAY) {
-    base::RecordAction(UserMetricsAction("Accel_Move_Window_To_Left_Display"));
-    direction = DisplayMoveWindowDirection::kLeft;
-  } else {
-    DCHECK(action == MOVE_WINDOW_TO_RIGHT_DISPLAY);
-    base::RecordAction(UserMetricsAction("Accel_Move_Window_To_Right_Display"));
-    direction = DisplayMoveWindowDirection::kRight;
-  }
-  HandleMoveWindowToDisplay(direction);
 }
 
 void HandleToggleMirrorMode() {
@@ -380,7 +354,7 @@ void HandleRotateScreen() {
       Shell::Get()->display_manager()->GetDisplayInfo(display.id());
   Shell::Get()->display_configuration_controller()->SetDisplayRotation(
       display.id(), GetNextRotation(display_info.GetActiveRotation()),
-      display::Display::ROTATION_SOURCE_USER);
+      display::Display::RotationSource::USER);
 }
 
 void HandleRestoreTab() {
@@ -506,7 +480,7 @@ bool CanHandleToggleAppList(const ui::Accelerator& accelerator,
     // When spoken feedback is enabled, we should neither toggle the list nor
     // consume the key since Search+Shift is one of the shortcuts the a11y
     // feature uses. crbug.com/132296
-    if (Shell::Get()->accessibility_delegate()->IsSpokenFeedbackEnabled())
+    if (Shell::Get()->accessibility_controller()->IsSpokenFeedbackEnabled())
       return false;
   }
   return true;
@@ -516,11 +490,11 @@ void HandleToggleAppList(const ui::Accelerator& accelerator) {
   if (accelerator.key_code() == ui::VKEY_LWIN)
     base::RecordAction(UserMetricsAction("Accel_Search_LWin"));
 
-  Shell::Get()->app_list()->ToggleAppList(
+  Shell::Get()->app_list_controller()->ToggleAppList(
       display::Screen::GetScreen()
           ->GetDisplayNearestWindow(Shell::GetRootWindowForNewWindows())
           .id(),
-      app_list::kSearchKey);
+      app_list::kSearchKey, accelerator.time_stamp());
 }
 
 void HandleToggleFullscreen(const ui::Accelerator& accelerator) {
@@ -608,18 +582,12 @@ bool CanHandleDisableCapsLock(const ui::Accelerator& previous_accelerator) {
     // and released, then ignore the release of the Shift key.
     return false;
   }
-  chromeos::input_method::InputMethodManager* ime =
-      chromeos::input_method::InputMethodManager::Get();
-  chromeos::input_method::ImeKeyboard* keyboard =
-      ime ? ime->GetImeKeyboard() : NULL;
-  return (keyboard && keyboard->CapsLockIsEnabled());
+  return Shell::Get()->ime_controller()->IsCapsLockEnabled();
 }
 
 void HandleDisableCapsLock() {
   base::RecordAction(UserMetricsAction("Accel_Disable_Caps_Lock"));
-  chromeos::input_method::InputMethodManager* ime =
-      chromeos::input_method::InputMethodManager::Get();
-  ime->GetImeKeyboard()->SetCapsLockEnabled(false);
+  Shell::Get()->ime_controller()->SetCapsLockEnabled(false);
 }
 
 void HandleFileManager() {
@@ -639,16 +607,6 @@ bool CanHandleLock() {
 void HandleLock() {
   base::RecordAction(UserMetricsAction("Accel_LockScreen_L"));
   Shell::Get()->session_controller()->LockScreen();
-}
-
-bool CanHandleMoveWindowBetweenDisplays() {
-  if (!switches::IsDisplayMoveWindowAccelsEnabled())
-    return false;
-  display::DisplayManager* display_manager = Shell::Get()->display_manager();
-  // Accelerators to move window between displays on unified desktop mode and
-  // mirror mode is disabled.
-  return !display_manager->IsInUnifiedMode() &&
-         !display_manager->IsInMirrorMode();
 }
 
 PaletteTray* GetPaletteTray() {
@@ -718,7 +676,7 @@ void HandleToggleVoiceInteraction(const ui::Accelerator& accelerator) {
       break;
   }
 
-  Shell::Get()->app_list()->ToggleVoiceInteractionSession();
+  Shell::Get()->app_list_controller()->ToggleVoiceInteractionSession();
 }
 
 void HandleSuspend() {
@@ -746,11 +704,6 @@ void HandleCycleUser(CycleUserDirection direction) {
 
 bool CanHandleToggleCapsLock(const ui::Accelerator& accelerator,
                              const ui::Accelerator& previous_accelerator) {
-  chromeos::input_method::InputMethodManager* ime =
-      chromeos::input_method::InputMethodManager::Get();
-  if (!ime || !ime->GetImeKeyboard())
-    return false;
-
   // This shortcust is set to be trigger on release. Either the current
   // accelerator is a Search release or Alt release.
   if (accelerator.key_code() == ui::VKEY_LWIN &&
@@ -785,10 +738,17 @@ bool CanHandleToggleCapsLock(const ui::Accelerator& accelerator,
 
 void HandleToggleCapsLock() {
   base::RecordAction(UserMetricsAction("Accel_Toggle_Caps_Lock"));
-  chromeos::input_method::InputMethodManager* ime =
-      chromeos::input_method::InputMethodManager::Get();
-  chromeos::input_method::ImeKeyboard* keyboard = ime->GetImeKeyboard();
-  keyboard->SetCapsLockEnabled(!keyboard->CapsLockIsEnabled());
+  ImeController* ime_controller = Shell::Get()->ime_controller();
+  ime_controller->SetCapsLockEnabled(!ime_controller->IsCapsLockEnabled());
+}
+
+bool CanHandleToggleDictation() {
+  return chromeos::switches::AreExperimentalAccessibilityFeaturesEnabled();
+}
+
+void HandleToggleDictation() {
+  base::RecordAction(UserMetricsAction("Accel_Toggle_Dictation"));
+  Shell::Get()->accessibility_controller()->ToggleDictation();
 }
 
 void HandleToggleHighContrast() {
@@ -803,20 +763,19 @@ void HandleToggleHighContrast() {
     // high contrast mode, and that they can press it again to toggle back.
     // The message center automatically only shows this once per session.
     std::unique_ptr<Notification> notification =
-        system_notifier::CreateSystemNotification(
+        Notification::CreateSystemNotification(
             message_center::NOTIFICATION_TYPE_SIMPLE,
             kHighContrastToggleAccelNotificationId,
             l10n_util::GetStringUTF16(IDS_HIGH_CONTRAST_ACCEL_TITLE),
             l10n_util::GetStringUTF16(IDS_HIGH_CONTRAST_ACCEL_MSG),
-            gfx::Image(
-                CreateVectorIcon(kSystemMenuAccessibilityIcon, SK_ColorBLACK)),
-            base::string16() /* display source */, GURL(),
+            gfx::Image(), base::string16() /* display source */, GURL(),
             message_center::NotifierId(
                 message_center::NotifierId::SYSTEM_COMPONENT,
-                system_notifier::kNotifierAccessibility),
+                kNotifierAccelerator),
             message_center::RichNotificationData(), nullptr,
             kNotificationAccessibilityIcon,
             SystemNotificationWarningLevel::NORMAL);
+    notification->set_priority(message_center::SYSTEM_PRIORITY);
     message_center::MessageCenter::Get()->AddNotification(
         std::move(notification));
   } else {
@@ -830,8 +789,10 @@ void HandleToggleHighContrast() {
 void HandleToggleSpokenFeedback() {
   base::RecordAction(UserMetricsAction("Accel_Toggle_Spoken_Feedback"));
 
-  Shell::Get()->accessibility_delegate()->ToggleSpokenFeedback(
-      A11Y_NOTIFICATION_SHOW);
+  AccessibilityController* controller =
+      Shell::Get()->accessibility_controller();
+  controller->SetSpokenFeedbackEnabled(!controller->IsSpokenFeedbackEnabled(),
+                                       A11Y_NOTIFICATION_SHOW);
 }
 
 void HandleVolumeDown(mojom::VolumeController* volume_controller,
@@ -861,16 +822,68 @@ void HandleVolumeUp(mojom::VolumeController* volume_controller,
     volume_controller->VolumeUp();
 }
 
+bool CanHandleActiveMagnifierZoom() {
+  return Shell::Get()->magnification_controller()->IsEnabled() ||
+         (features::IsDockedMagnifierEnabled() &&
+          Shell::Get()->docked_magnifier_controller()->GetEnabled());
+}
+
+// Change the scale of the active magnifier.
+void HandleActiveMagnifierZoom(int delta_index) {
+  // TODO(crbug.com/612331): Mash support.
+  if (Shell::GetAshConfig() == Config::MASH) {
+    NOTIMPLEMENTED();
+    return;
+  }
+
+  if (Shell::Get()->magnification_controller()->IsEnabled()) {
+    Shell::Get()->magnification_controller()->StepToNextScaleValue(delta_index);
+    return;
+  }
+
+  if (features::IsDockedMagnifierEnabled() &&
+      Shell::Get()->docked_magnifier_controller()->GetEnabled()) {
+    Shell::Get()->docked_magnifier_controller()->StepToNextScaleValue(
+        delta_index);
+  }
+}
+
+bool CanHandleTouchHud() {
+  // TODO(crbug.com/612331): Mash support.
+  if (Shell::GetAshConfig() == Config::MASH)
+    return false;
+
+  return RootWindowController::ForTargetRootWindow()->touch_hud_debug();
+}
+
+void HandleTouchHudClear() {
+  // TODO(crbug.com/612331): Mash support.
+  if (Shell::GetAshConfig() == Config::MASH) {
+    NOTIMPLEMENTED();
+    return;
+  }
+  RootWindowController::ForTargetRootWindow()->touch_hud_debug()->Clear();
+}
+
+void HandleTouchHudModeChange() {
+  // TODO(crbug.com/612331): Mash support.
+  if (Shell::GetAshConfig() == Config::MASH) {
+    NOTIMPLEMENTED();
+    return;
+  }
+  RootWindowController* controller =
+      RootWindowController::ForTargetRootWindow();
+  controller->touch_hud_debug()->ChangeToNextMode();
+}
+
 }  // namespace
 
 ////////////////////////////////////////////////////////////////////////////////
 // AcceleratorController, public:
 
 AcceleratorController::AcceleratorController(
-    AcceleratorControllerDelegate* delegate,
     ui::AcceleratorManagerDelegate* manager_delegate)
-    : delegate_(delegate),
-      accelerator_manager_(new ui::AcceleratorManager(manager_delegate)),
+    : accelerator_manager_(new ui::AcceleratorManager(manager_delegate)),
       accelerator_history_(new ui::AcceleratorHistory) {
   Init();
 }
@@ -1006,6 +1019,8 @@ void AcceleratorController::Init() {
   }
   for (size_t i = 0; i < kActionsAllowedAtLockScreenLength; ++i)
     actions_allowed_at_lock_screen_.insert(kActionsAllowedAtLockScreen[i]);
+  for (size_t i = 0; i < kActionsAllowedAtPowerMenuLength; ++i)
+    actions_allowed_at_power_menu_.insert(kActionsAllowedAtPowerMenu[i]);
   for (size_t i = 0; i < kActionsAllowedAtModalWindowLength; ++i)
     actions_allowed_at_modal_window_.insert(kActionsAllowedAtModalWindow[i]);
   for (size_t i = 0; i < kPreferredActionsLength; ++i)
@@ -1107,6 +1122,9 @@ bool AcceleratorController::CanPerformAction(
     case DEBUG_PRINT_WINDOW_HIERARCHY:
     case DEBUG_SHOW_TOAST:
     case DEBUG_TOGGLE_DEVICE_SCALE_FACTOR:
+    case DEBUG_TOGGLE_SHOW_DEBUG_BORDERS:
+    case DEBUG_TOGGLE_SHOW_FPS_COUNTER:
+    case DEBUG_TOGGLE_SHOW_PAINT_RECTS:
     case DEBUG_TOGGLE_TOUCH_PAD:
     case DEBUG_TOGGLE_TOUCH_SCREEN:
     case DEBUG_TOGGLE_TABLET_MODE:
@@ -1120,11 +1138,12 @@ bool AcceleratorController::CanPerformAction(
       return CanHandleDisableCapsLock(previous_accelerator);
     case LOCK_SCREEN:
       return CanHandleLock();
-    case MOVE_WINDOW_TO_ABOVE_DISPLAY:
-    case MOVE_WINDOW_TO_BELOW_DISPLAY:
-    case MOVE_WINDOW_TO_LEFT_DISPLAY:
-    case MOVE_WINDOW_TO_RIGHT_DISPLAY:
-      return CanHandleMoveWindowBetweenDisplays();
+    case MAGNIFIER_ZOOM_IN:
+    case MAGNIFIER_ZOOM_OUT:
+      return CanHandleActiveMagnifierZoom();
+    case MOVE_ACTIVE_WINDOW_BETWEEN_DISPLAYS:
+      return display_move_window_util::
+          CanHandleMoveActiveWindowBetweenDisplays();
     case NEW_INCOGNITO_WINDOW:
       return CanHandleNewIncognitoWindow();
     case NEXT_IME:
@@ -1152,10 +1171,17 @@ bool AcceleratorController::CanPerformAction(
       return CanHandleToggleAppList(accelerator, previous_accelerator);
     case TOGGLE_CAPS_LOCK:
       return CanHandleToggleCapsLock(accelerator, previous_accelerator);
+    case TOGGLE_DICTATION:
+      return CanHandleToggleDictation();
     case TOGGLE_MESSAGE_CENTER_BUBBLE:
       return CanHandleToggleMessageCenterBubble();
     case TOGGLE_MIRROR_MODE:
       return true;
+    case TOUCH_HUD_CLEAR:
+    case TOUCH_HUD_MODE_CHANGE:
+      return CanHandleTouchHud();
+    case UNPIN:
+      return accelerators::CanUnpinWindow();
     case WINDOW_CYCLE_SNAP_LEFT:
     case WINDOW_CYCLE_SNAP_RIGHT:
       return CanHandleWindowSnap();
@@ -1180,6 +1206,8 @@ bool AcceleratorController::CanPerformAction(
     case LAUNCH_APP_6:
     case LAUNCH_APP_7:
     case LAUNCH_LAST_APP:
+    case LOCK_PRESSED:
+    case LOCK_RELEASED:
     case MEDIA_NEXT_TRACK:
     case MEDIA_PLAY_PAUSE:
     case MEDIA_PREV_TRACK:
@@ -1189,6 +1217,8 @@ bool AcceleratorController::CanPerformAction(
     case OPEN_FEEDBACK_PAGE:
     case OPEN_FILE_MANAGER:
     case OPEN_GET_HELP:
+    case POWER_PRESSED:
+    case POWER_RELEASED:
     case PRINT_UI_HIERARCHIES:
     case RESTORE_TAB:
     case ROTATE_WINDOW:
@@ -1211,14 +1241,7 @@ bool AcceleratorController::CanPerformAction(
     case VOLUME_UP:
     case WINDOW_MINIMIZE:
       return true;
-
-    default:
-      // Default switch is temporary until mash transition complete. Needed as
-      // some actions don't yet work with mash.
-      break;
   }
-  return delegate_ && delegate_->HandlesAction(action) &&
-         delegate_->CanPerformAction(action, accelerator, previous_accelerator);
 }
 
 void AcceleratorController::PerformAction(AcceleratorAction action,
@@ -1257,6 +1280,17 @@ void AcceleratorController::PerformAction(AcceleratorAction action,
     case DEBUG_PRINT_WINDOW_HIERARCHY:
     case DEBUG_SHOW_TOAST:
     case DEBUG_TOGGLE_DEVICE_SCALE_FACTOR:
+      debug::PerformDebugActionIfEnabled(action);
+      break;
+    case DEBUG_TOGGLE_SHOW_DEBUG_BORDERS:
+      debug::ToggleShowDebugBorders();
+      break;
+    case DEBUG_TOGGLE_SHOW_FPS_COUNTER:
+      debug::ToggleShowFpsCounter();
+      break;
+    case DEBUG_TOGGLE_SHOW_PAINT_RECTS:
+      debug::ToggleShowPaintRects();
+      break;
     case DEBUG_TOGGLE_TOUCH_PAD:
     case DEBUG_TOGGLE_TOUCH_SCREEN:
     case DEBUG_TOGGLE_TABLET_MODE:
@@ -1327,8 +1361,19 @@ void AcceleratorController::PerformAction(AcceleratorAction action,
     case LAUNCH_LAST_APP:
       HandleLaunchLastApp();
       break;
+    case LOCK_PRESSED:
+    case LOCK_RELEASED:
+      Shell::Get()->power_button_controller()->OnLockButtonEvent(
+          action == LOCK_PRESSED, base::TimeTicks());
+      break;
     case LOCK_SCREEN:
       HandleLock();
+      break;
+    case MAGNIFIER_ZOOM_IN:
+      HandleActiveMagnifierZoom(1);
+      break;
+    case MAGNIFIER_ZOOM_OUT:
+      HandleActiveMagnifierZoom(-1);
       break;
     case MEDIA_NEXT_TRACK:
       HandleMediaNextTrack();
@@ -1339,11 +1384,8 @@ void AcceleratorController::PerformAction(AcceleratorAction action,
     case MEDIA_PREV_TRACK:
       HandleMediaPrevTrack();
       break;
-    case MOVE_WINDOW_TO_ABOVE_DISPLAY:
-    case MOVE_WINDOW_TO_BELOW_DISPLAY:
-    case MOVE_WINDOW_TO_LEFT_DISPLAY:
-    case MOVE_WINDOW_TO_RIGHT_DISPLAY:
-      HandleMoveWindowBetweenDisplays(action);
+    case MOVE_ACTIVE_WINDOW_BETWEEN_DISPLAYS:
+      display_move_window_util::HandleMoveActiveWindowBetweenDisplays();
       break;
     case NEW_INCOGNITO_WINDOW:
       HandleNewIncognitoWindow();
@@ -1369,6 +1411,19 @@ void AcceleratorController::PerformAction(AcceleratorAction action,
     case OPEN_GET_HELP:
       HandleGetHelp();
       break;
+    case POWER_PRESSED:
+    case POWER_RELEASED:
+      if (!base::SysInfo::IsRunningOnChromeOS()) {
+        // There is no powerd, the Chrome OS power manager, in linux desktop,
+        // so call the PowerButtonController here.
+        Shell::Get()->power_button_controller()->OnPowerButtonEvent(
+            action == POWER_PRESSED, base::TimeTicks());
+      }
+      // We don't do anything with these at present on the device,
+      // (power button events are reported to us from powerm via
+      // D-BUS), but we consume them to prevent them from getting
+      // passed to apps -- see http://crbug.com/146609.
+      break;
     case PREVIOUS_IME:
       HandlePreviousIme(accelerator);
       break;
@@ -1385,13 +1440,13 @@ void AcceleratorController::PerformAction(AcceleratorAction action,
       HandleRotateActiveWindow();
       break;
     case SCALE_UI_DOWN:
-      accelerators::ZoomInternalDisplay(false /* down */);
+      accelerators::ZoomDisplay(false /* down */);
       break;
     case SCALE_UI_RESET:
-      accelerators::ResetInternalDisplayZoom();
+      accelerators::ResetDisplayZoom();
       break;
     case SCALE_UI_UP:
-      accelerators::ZoomInternalDisplay(true /* up */);
+      accelerators::ZoomDisplay(true /* up */);
       break;
     case SHOW_IME_MENU_BUBBLE:
       HandleShowImeMenuBubble();
@@ -1438,6 +1493,9 @@ void AcceleratorController::PerformAction(AcceleratorAction action,
     case TOGGLE_CAPS_LOCK:
       HandleToggleCapsLock();
       break;
+    case TOGGLE_DICTATION:
+      HandleToggleDictation();
+      break;
     case TOGGLE_FULLSCREEN:
       HandleToggleFullscreen(accelerator);
       break;
@@ -1465,6 +1523,15 @@ void AcceleratorController::PerformAction(AcceleratorAction action,
     case TOGGLE_WIFI:
       Shell::Get()->system_tray_notifier()->NotifyRequestToggleWifi();
       break;
+    case TOUCH_HUD_CLEAR:
+      HandleTouchHudClear();
+      break;
+    case TOUCH_HUD_MODE_CHANGE:
+      HandleTouchHudModeChange();
+      break;
+    case UNPIN:
+      accelerators::UnpinWindow();
+      break;
     case VOLUME_DOWN:
       HandleVolumeDown(volume_controller_.get(), accelerator);
       break;
@@ -1483,12 +1550,6 @@ void AcceleratorController::PerformAction(AcceleratorAction action,
       break;
     case WINDOW_POSITION_CENTER:
       HandlePositionCenter();
-      break;
-    default:
-      // Temporary until mash transition complete. Needed as some actions
-      // don't yet work with mash.
-      DCHECK(delegate_ && delegate_->HandlesAction(action));
-      delegate_->PerformAction(action, accelerator);
       break;
   }
 }
@@ -1516,12 +1577,16 @@ AcceleratorController::GetAcceleratorProcessingRestriction(int action) const {
           actions_allowed_at_lock_screen_.end()) {
     return RESTRICTION_PREVENT_PROCESSING;
   }
+  if (Shell::Get()->power_button_controller()->IsMenuOpened() &&
+      !base::ContainsKey(actions_allowed_at_power_menu_, action)) {
+    return RESTRICTION_PREVENT_PROCESSING;
+  }
   if (Shell::Get()->shell_delegate()->IsRunningInForcedAppMode() &&
       actions_allowed_in_app_mode_.find(action) ==
           actions_allowed_in_app_mode_.end()) {
     return RESTRICTION_PREVENT_PROCESSING;
   }
-  if (ShellPort::Get()->IsSystemModalWindowOpen() &&
+  if (Shell::IsSystemModalWindowOpen() &&
       actions_allowed_at_modal_window_.find(action) ==
           actions_allowed_at_modal_window_.end()) {
     // Note we prevent the shortcut from propagating so it will not

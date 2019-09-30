@@ -13,14 +13,13 @@
 #include "base/files/scoped_temp_dir.h"
 #include "base/macros.h"
 #include "base/memory/memory_pressure_listener.h"
-#include "base/memory/ptr_util.h"
 #include "base/process/launch.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/test/bind_test_util.h"
 #include "base/threading/thread_restrictions.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "chrome/browser/defaults.h"
-#include "chrome/browser/download/download_prefs.h"
 #include "chrome/browser/first_run/first_run.h"
 #include "chrome/browser/prefs/session_startup_pref.h"
 #include "chrome/browser/profiles/profile.h"
@@ -61,6 +60,7 @@
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/download_test_observer.h"
 #include "content/public/test/test_navigation_observer.h"
+#include "content/public/test/test_utils.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
 #include "ui/base/page_transition_types.h"
 
@@ -142,10 +142,8 @@ class SessionRestoreTest : public InProcessBrowserTest {
     if (url.is_empty()) {
       chrome::NewEmptyWindow(profile);
     } else {
-      chrome::NavigateParams params(profile,
-                                    url,
-                                    ui::PAGE_TRANSITION_LINK);
-      chrome::Navigate(&params);
+      NavigateParams params(profile, url, ui::PAGE_TRANSITION_LINK);
+      Navigate(&params);
     }
     Browser* new_browser = window_observer.WaitForSingleNewBrowser();
     // Stop loading anything more if we are running out of space.
@@ -670,8 +668,8 @@ IN_PROC_BROWSER_TEST_F(SessionRestoreTest, IncognitotoNonIncognito) {
 namespace {
 
 // Verifies that the given NavigationController has exactly two
-// entries that correspond to the given URLs and that all but the last
-// entry have null timestamps.
+// entries that correspond to the given URLs and that all entries have non-null
+// timestamps.
 void VerifyNavigationEntries(
     const content::NavigationController& controller,
     GURL url1, GURL url2) {
@@ -679,7 +677,7 @@ void VerifyNavigationEntries(
   EXPECT_EQ(1, controller.GetCurrentEntryIndex());
   EXPECT_EQ(url1, controller.GetEntryAtIndex(0)->GetURL());
   EXPECT_EQ(url2, controller.GetEntryAtIndex(1)->GetURL());
-  EXPECT_TRUE(controller.GetEntryAtIndex(0)->GetTimestamp().is_null());
+  EXPECT_FALSE(controller.GetEntryAtIndex(0)->GetTimestamp().is_null());
   EXPECT_FALSE(controller.GetEntryAtIndex(1)->GetTimestamp().is_null());
 }
 
@@ -705,7 +703,7 @@ IN_PROC_BROWSER_TEST_F(SessionRestoreTest, RestoreForeignTab) {
   tab.SetFromSyncData(sync_data, base::Time::Now());
   EXPECT_EQ(2U, tab.navigations.size());
   for (size_t i = 0; i < tab.navigations.size(); ++i)
-    EXPECT_TRUE(tab.navigations[i].timestamp().is_null());
+    EXPECT_FALSE(tab.navigations[i].timestamp().is_null());
 
   ASSERT_EQ(1, browser()->tab_strip_model()->count());
 
@@ -784,7 +782,7 @@ IN_PROC_BROWSER_TEST_F(SessionRestoreTest, RestoreForeignSession) {
   // Set up the restore data -- one window with two tabs.
   std::vector<const sessions::SessionWindow*> session;
   sessions::SessionWindow window;
-  auto tab1 = base::MakeUnique<sessions::SessionTab>();
+  auto tab1 = std::make_unique<sessions::SessionTab>();
   {
     sync_pb::SessionTab sync_data;
     sync_data.set_tab_visual_index(0);
@@ -795,7 +793,7 @@ IN_PROC_BROWSER_TEST_F(SessionRestoreTest, RestoreForeignSession) {
   }
   window.tabs.push_back(std::move(tab1));
 
-  auto tab2 = base::MakeUnique<sessions::SessionTab>();
+  auto tab2 = std::make_unique<sessions::SessionTab>();
   {
     sync_pb::SessionTab sync_data;
     sync_data.set_tab_visual_index(1);
@@ -808,7 +806,7 @@ IN_PROC_BROWSER_TEST_F(SessionRestoreTest, RestoreForeignSession) {
 
   // Leave a third tab empty. Should have no effect on restored session, but
   // simulates partially complete foreign session data.
-  window.tabs.push_back(base::MakeUnique<sessions::SessionTab>());
+  window.tabs.push_back(std::make_unique<sessions::SessionTab>());
 
   session.push_back(static_cast<const sessions::SessionWindow*>(&window));
   ui_test_utils::BrowserAddedObserver window_observer;
@@ -851,6 +849,33 @@ IN_PROC_BROWSER_TEST_F(SessionRestoreTest, Basic) {
   Browser* new_browser = QuitBrowserAndRestore(browser(), 1);
   ASSERT_EQ(1u, active_browser_list_->size());
   ASSERT_EQ(url2_,
+            new_browser->tab_strip_model()->GetActiveWebContents()->GetURL());
+  GoBack(new_browser);
+  ASSERT_EQ(url1_,
+            new_browser->tab_strip_model()->GetActiveWebContents()->GetURL());
+}
+
+IN_PROC_BROWSER_TEST_F(SessionRestoreTest, RestoreAfterDelete) {
+  ui_test_utils::NavigateToURL(browser(), url1_);
+  ui_test_utils::NavigateToURL(browser(), url2_);
+  ui_test_utils::NavigateToURL(browser(), url3_);
+
+  content::NavigationController& controller =
+      browser()->tab_strip_model()->GetActiveWebContents()->GetController();
+  // Three urls and the NTP.
+  EXPECT_EQ(4, controller.GetEntryCount());
+  controller.DeleteNavigationEntries(
+      base::BindLambdaForTesting([&](const content::NavigationEntry& entry) {
+        return entry.GetURL() == url2_;
+      }));
+  EXPECT_EQ(3, controller.GetEntryCount());
+
+  Browser* new_browser = QuitBrowserAndRestore(browser(), 1);
+  content::NavigationController& new_controller =
+      new_browser->tab_strip_model()->GetActiveWebContents()->GetController();
+  EXPECT_EQ(3, new_controller.GetEntryCount());
+  ASSERT_EQ(1u, active_browser_list_->size());
+  ASSERT_EQ(url3_,
             new_browser->tab_strip_model()->GetActiveWebContents()->GetURL());
   GoBack(new_browser);
   ASSERT_EQ(url1_,
@@ -959,7 +984,13 @@ IN_PROC_BROWSER_TEST_F(SessionRestoreTest, RestoreWebUI) {
             new_tab->GetMainFrame()->GetEnabledBindings());
 }
 
-IN_PROC_BROWSER_TEST_F(SessionRestoreTest, RestoreWebUISettings) {
+// http://crbug.com/803510 : Flaky on Win7 Tests (dbg)
+#if defined(OS_WIN) && !defined(NDEBUG)
+#define MAYBE_RestoreWebUISettings DISABLED_RestoreWebUISettings
+#else
+#define MAYBE_RestoreWebUISettings RestoreWebUISettings
+#endif
+IN_PROC_BROWSER_TEST_F(SessionRestoreTest, MAYBE_RestoreWebUISettings) {
   const GURL webui_url("chrome://settings");
   ui_test_utils::NavigateToURL(browser(), webui_url);
   content::WebContents* old_tab =
@@ -1102,8 +1133,7 @@ IN_PROC_BROWSER_TEST_F(SessionRestoreTest, ActiveIndexUpdatedAtInsert) {
       browser(), url2_, WindowOpenDisposition::NEW_BACKGROUND_TAB,
       ui_test_utils::BROWSER_TEST_WAIT_FOR_NAVIGATION);
 
-  chrome::NavigateParams navigate_params(browser(), url3_,
-                                         ui::PAGE_TRANSITION_TYPED);
+  NavigateParams navigate_params(browser(), url3_, ui::PAGE_TRANSITION_TYPED);
   navigate_params.tabstrip_index = 0;
   navigate_params.disposition = WindowOpenDisposition::NEW_BACKGROUND_TAB;
   ui_test_utils::NavigateToURL(&navigate_params);
@@ -1214,8 +1244,8 @@ IN_PROC_BROWSER_TEST_F(SessionRestoreTest, PersistAndRestoreUserAgentOverride) {
   // Create a tab with an overridden user agent.
   ui_test_utils::NavigateToURL(browser(), url1_);
   ASSERT_EQ(0, browser()->tab_strip_model()->active_index());
-  browser()->tab_strip_model()->GetWebContentsAt(0)->
-      SetUserAgentOverride("override");
+  browser()->tab_strip_model()->GetWebContentsAt(0)->SetUserAgentOverride(
+      "override", false);
 
   // Create a tab without an overridden user agent.
   ui_test_utils::NavigateToURLWithDisposition(
@@ -1395,8 +1425,8 @@ IN_PROC_BROWSER_TEST_F(SessionRestoreTest, SessionStorage) {
   content::NavigationController* controller =
       &browser()->tab_strip_model()->GetActiveWebContents()->GetController();
   ASSERT_TRUE(controller->GetDefaultSessionStorageNamespace());
-  std::string session_storage_persistent_id =
-      controller->GetDefaultSessionStorageNamespace()->persistent_id();
+  std::string session_storage_id =
+      controller->GetDefaultSessionStorageNamespace()->id();
   Browser* new_browser = QuitBrowserAndRestore(browser(), 1);
   ASSERT_EQ(1u, active_browser_list_->size());
   ASSERT_EQ(url1_,
@@ -1404,10 +1434,9 @@ IN_PROC_BROWSER_TEST_F(SessionRestoreTest, SessionStorage) {
   content::NavigationController* new_controller =
       &new_browser->tab_strip_model()->GetActiveWebContents()->GetController();
   ASSERT_TRUE(new_controller->GetDefaultSessionStorageNamespace());
-  std::string restored_session_storage_persistent_id =
-      new_controller->GetDefaultSessionStorageNamespace()->persistent_id();
-  EXPECT_EQ(session_storage_persistent_id,
-            restored_session_storage_persistent_id);
+  std::string restored_session_storage_id =
+      new_controller->GetDefaultSessionStorageNamespace()->id();
+  EXPECT_EQ(session_storage_id, restored_session_storage_id);
 }
 
 IN_PROC_BROWSER_TEST_F(SessionRestoreTest, SessionStorageAfterTabReplace) {
@@ -1448,15 +1477,9 @@ IN_PROC_BROWSER_TEST_F(SessionRestoreTest, SessionStorageAfterTabReplace) {
 }
 
 IN_PROC_BROWSER_TEST_F(SessionRestoreTest, TabWithDownloadDoesNotGetRestored) {
-  base::ScopedAllowBlockingForTesting allow_blocking;
-  base::ScopedTempDir download_directory;
-  ASSERT_TRUE(download_directory.CreateUniqueTempDir());
   ASSERT_TRUE(embedded_test_server()->Start());
   ASSERT_EQ(Browser::TYPE_TABBED, browser()->type());
 
-  DownloadPrefs* download_prefs =
-      DownloadPrefs::FromBrowserContext(browser()->profile());
-  download_prefs->SetDownloadPath(download_directory.GetPath());
   GURL first_download_url =
       embedded_test_server()->GetURL("/downloads/a_zip_file.zip");
 
@@ -1501,15 +1524,15 @@ IN_PROC_BROWSER_TEST_F(SessionRestoreTest, TabWithDownloadDoesNotGetRestored) {
 
     observer.WaitForFinished();
     EXPECT_EQ(1u, in_progress_counter.NumDownloadsSeenInState(
-                      content::DownloadItem::IN_PROGRESS));
+                      download::DownloadItem::IN_PROGRESS));
     EXPECT_EQ(
-        1u, observer.NumDownloadsSeenInState(content::DownloadItem::COMPLETE));
+        1u, observer.NumDownloadsSeenInState(download::DownloadItem::COMPLETE));
 
     // We still need to verify that the second download that completed above is
     // the new one that we initiated. This would be true iff the DownloadManager
     // has exactly two downloads and they correspond to |first_download_url| and
     // |second_download_url|.
-    std::vector<content::DownloadItem*> downloads;
+    std::vector<download::DownloadItem*> downloads;
     download_manager->GetAllDownloads(&downloads);
     ASSERT_EQ(2u, downloads.size());
     std::set<GURL> download_urls{downloads[0]->GetURL(),

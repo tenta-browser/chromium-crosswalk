@@ -20,7 +20,7 @@
 #include "ios/chrome/browser/search_engines/template_url_service_client_impl.h"
 #include "ios/chrome/browser/search_engines/ui_thread_search_terms_data.h"
 #include "ios/chrome/browser/web_data_service_factory.h"
-#include "rlz/features/features.h"
+#include "rlz/buildflags/buildflags.h"
 
 #if BUILDFLAG(ENABLE_RLZ)
 #include "components/rlz/rlz_tracker.h"  // nogncheck
@@ -43,7 +43,7 @@ std::unique_ptr<KeyedService> BuildTemplateURLService(
     web::BrowserState* context) {
   ios::ChromeBrowserState* browser_state =
       ios::ChromeBrowserState::FromBrowserState(context);
-  return base::MakeUnique<TemplateURLService>(
+  return std::make_unique<TemplateURLService>(
       browser_state->GetPrefs(),
       base::WrapUnique(new ios::UIThreadSearchTermsData(browser_state)),
       ios::WebDataServiceFactory::GetKeywordWebDataForBrowserState(

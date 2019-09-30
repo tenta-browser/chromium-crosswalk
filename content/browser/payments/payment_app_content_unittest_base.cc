@@ -21,7 +21,7 @@
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "mojo/public/cpp/bindings/associated_interface_ptr.h"
 #include "mojo/public/cpp/bindings/interface_request.h"
-#include "third_party/WebKit/public/platform/modules/serviceworker/service_worker_registration.mojom.h"
+#include "third_party/blink/public/mojom/service_worker/service_worker_registration.mojom.h"
 
 namespace content {
 
@@ -69,7 +69,7 @@ class PaymentAppContentUnitTestBase::PaymentAppForWorkerTestHelper
       blink::mojom::ServiceWorkerHostAssociatedPtrInfo service_worker_host,
       mojom::EmbeddedWorkerInstanceHostAssociatedPtrInfo instance_host,
       mojom::ServiceWorkerProviderInfoForStartWorkerPtr provider_info,
-      mojom::ServiceWorkerInstalledScriptsInfoPtr installed_scripts_info)
+      blink::mojom::ServiceWorkerInstalledScriptsInfoPtr installed_scripts_info)
       override {
     ServiceWorkerVersion* version =
         context()->GetLiveVersion(service_worker_version_id);
@@ -145,10 +145,12 @@ PaymentManager* PaymentAppContentUnitTestBase::CreatePaymentManager(
   // Register service worker for payment manager.
   bool called = false;
   int64_t registration_id;
-  blink::mojom::ServiceWorkerRegistrationOptions registration_opt(scope_url);
+  blink::mojom::ServiceWorkerRegistrationOptions registration_opt;
+  registration_opt.scope = scope_url;
   worker_helper_->context()->RegisterServiceWorker(
-      sw_script_url, registration_opt, nullptr,
-      base::Bind(&RegisterServiceWorkerCallback, &called, &registration_id));
+      sw_script_url, registration_opt,
+      base::BindOnce(&RegisterServiceWorkerCallback, &called,
+                     &registration_id));
   base::RunLoop().RunUntilIdle();
   EXPECT_TRUE(called);
 
@@ -161,7 +163,7 @@ PaymentManager* PaymentAppContentUnitTestBase::CreatePaymentManager(
   EXPECT_FALSE(registration->waiting_version());
   EXPECT_FALSE(registration->installing_version());
   registration->active_version()->StopWorker(
-      base::Bind(&StopWorkerCallback, &called));
+      base::BindOnce(&StopWorkerCallback, &called));
   base::RunLoop().RunUntilIdle();
   EXPECT_TRUE(called);
 
@@ -188,7 +190,7 @@ PaymentManager* PaymentAppContentUnitTestBase::CreatePaymentManager(
   for (const auto& candidate_manager :
        payment_app_context()->payment_managers_) {
     if (!base::ContainsKey(existing_managers, candidate_manager.first)) {
-      candidate_manager.first->Init(sw_script_url.spec(), scope_url.spec());
+      candidate_manager.first->Init(sw_script_url, scope_url.spec());
       base::RunLoop().RunUntilIdle();
       return candidate_manager.first;
     }
@@ -203,7 +205,7 @@ void PaymentAppContentUnitTestBase::UnregisterServiceWorker(
   // Unregister service worker.
   bool called = false;
   worker_helper_->context()->UnregisterServiceWorker(
-      scope_url, base::Bind(&UnregisterServiceWorkerCallback, &called));
+      scope_url, base::BindOnce(&UnregisterServiceWorkerCallback, &called));
   base::RunLoop().RunUntilIdle();
   EXPECT_TRUE(called);
 }

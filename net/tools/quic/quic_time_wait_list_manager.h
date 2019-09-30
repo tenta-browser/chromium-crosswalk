@@ -68,7 +68,8 @@ class QuicTimeWaitListManager : public QuicBlockedWriterInterface {
   // and termination packets are expected.
   virtual void AddConnectionIdToTimeWait(
       QuicConnectionId connection_id,
-      QuicTransportVersion version,
+      ParsedQuicVersion version,
+      bool ietf_quic,
       bool connection_rejected_statelessly,
       std::vector<std::unique_ptr<QuicEncryptedPacket>>* termination_packets);
 
@@ -100,8 +101,8 @@ class QuicTimeWaitListManager : public QuicBlockedWriterInterface {
   void TrimTimeWaitListIfNeeded();
 
   // Given a ConnectionId that exists in the time wait list, returns the
-  // QuicTransportVersion associated with it.
-  QuicTransportVersion GetQuicVersionFromConnectionId(
+  // ParsedQuicVersion associated with it.
+  ParsedQuicVersion GetQuicVersionFromConnectionId(
       QuicConnectionId connection_id);
 
   // The number of connections on the time-wait list.
@@ -111,7 +112,8 @@ class QuicTimeWaitListManager : public QuicBlockedWriterInterface {
   // for |supported_versions| to |client_address| from |server_address|.
   virtual void SendVersionNegotiationPacket(
       QuicConnectionId connection_id,
-      const QuicTransportVersionVector& supported_versions,
+      bool ietf_quic,
+      const ParsedQuicVersionVector& supported_versions,
       const QuicSocketAddress& server_address,
       const QuicSocketAddress& client_address);
 
@@ -161,9 +163,10 @@ class QuicTimeWaitListManager : public QuicBlockedWriterInterface {
   // received after the termination of the connection bound to the
   // connection_id.
   struct ConnectionIdData {
-    ConnectionIdData(int num_packets_,
-                     QuicTransportVersion version_,
-                     QuicTime time_added_,
+    ConnectionIdData(int num_packets,
+                     ParsedQuicVersion version,
+                     bool ietf_quic,
+                     QuicTime time_added,
                      bool connection_rejected_statelessly);
 
     ConnectionIdData(const ConnectionIdData& other) = delete;
@@ -172,7 +175,8 @@ class QuicTimeWaitListManager : public QuicBlockedWriterInterface {
     ~ConnectionIdData();
 
     int num_packets;
-    QuicTransportVersion version;
+    ParsedQuicVersion version;
+    bool ietf_quic;
     QuicTime time_added;
     // These packets may contain CONNECTION_CLOSE frames, or SREJ messages.
     std::vector<std::unique_ptr<QuicEncryptedPacket>> termination_packets;

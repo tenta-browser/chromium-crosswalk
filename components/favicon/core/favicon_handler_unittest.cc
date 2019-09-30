@@ -11,8 +11,8 @@
 #include <utility>
 #include <vector>
 
+#include "base/bind_helpers.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
 #include "base/strings/stringprintf.h"
 #include "base/test/histogram_tester.h"
@@ -47,7 +47,6 @@ using testing::Not;
 using testing::Return;
 using testing::_;
 
-using DownloadOutcome = FaviconHandler::DownloadOutcome;
 using IntVector = std::vector<int>;
 using URLVector = std::vector<GURL>;
 using BitmapVector = std::vector<SkBitmap>;
@@ -152,13 +151,14 @@ class FakeImageDownloader {
     }
 
     int download_id = next_download_id_++;
-    base::Closure bound_callback =
-        base::Bind(callback, download_id, response.http_status_code, url,
-                   response.bitmaps, response.original_bitmap_sizes);
+    base::OnceClosure bound_callback = base::BindOnce(
+        std::move(callback), download_id, response.http_status_code, url,
+        response.bitmaps, response.original_bitmap_sizes);
     if (url == manual_callback_url_)
-      manual_callbacks_.push_back(bound_callback);
+      manual_callbacks_.push_back(std::move(bound_callback));
     else
-      base::ThreadTaskRunnerHandle::Get()->PostTask(FROM_HERE, bound_callback);
+      base::ThreadTaskRunnerHandle::Get()->PostTask(FROM_HERE,
+                                                    std::move(bound_callback));
     return download_id;
   }
 
@@ -196,8 +196,8 @@ class FakeImageDownloader {
   bool RunCallbackManually() {
     if (!HasPendingManualCallback())
       return false;
-    for (base::Closure& callback : std::move(manual_callbacks_))
-      callback.Run();
+    for (auto& callback : std::move(manual_callbacks_))
+      std::move(callback).Run();
     return true;
   }
 
@@ -209,7 +209,7 @@ class FakeImageDownloader {
   GURL manual_callback_url_;
 
   // Callback for DownloadImage() request for |manual_callback_url_|.
-  std::vector<base::Closure> manual_callbacks_;
+  std::vector<base::OnceClosure> manual_callbacks_;
 
   // Registered responses.
   std::map<GURL, Response> responses_;
@@ -237,11 +237,13 @@ class FakeManifestDownloader {
     downloads_->push_back(url);
 
     const Response& response = responses_[url];
-    base::Closure bound_callback = base::Bind(callback, response.favicon_urls);
+    base::OnceClosure bound_callback =
+        base::BindOnce(std::move(callback), response.favicon_urls);
     if (url == manual_callback_url_)
-      manual_callbacks_.push_back(bound_callback);
+      manual_callbacks_.push_back(std::move(bound_callback));
     else
-      base::ThreadTaskRunnerHandle::Get()->PostTask(FROM_HERE, bound_callback);
+      base::ThreadTaskRunnerHandle::Get()->PostTask(FROM_HERE,
+                                                    std::move(bound_callback));
   }
 
   void Add(const GURL& manifest_url,
@@ -271,8 +273,8 @@ class FakeManifestDownloader {
   bool RunCallbackManually() {
     if (!HasPendingManualCallback())
       return false;
-    for (base::Closure& callback : std::move(manual_callbacks_))
-      callback.Run();
+    for (auto& callback : std::move(manual_callbacks_))
+      std::move(callback).Run();
     return true;
   }
 
@@ -283,7 +285,7 @@ class FakeManifestDownloader {
   GURL manual_callback_url_;
 
   // Callback for DownloadManifest() request for |manual_callback_url_|.
-  std::vector<base::Closure> manual_callbacks_;
+  std::vector<base::OnceClosure> manual_callbacks_;
 
   // Registered responses.
   std::map<GURL, Response> responses_;
@@ -296,22 +298,20 @@ class MockDelegate : public FaviconHandler::Delegate {
   MockDelegate()
       : fake_image_downloader_(&downloads_),
         fake_manifest_downloader_(&downloads_) {
-    // Delegate image downloading to FakeImageDownloader.
-    ON_CALL(*this, DownloadImage(_, _, _))
-        .WillByDefault(Invoke(&fake_image_downloader_,
-                              &FakeImageDownloader::DownloadImage));
-    // Delegate manifest downloading to FakeManifestDownloader.
-    ON_CALL(*this, DownloadManifest(_, _))
-        .WillByDefault(Invoke(&fake_manifest_downloader_,
-                              &FakeManifestDownloader::DownloadManifest));
   }
 
-  MOCK_METHOD3(DownloadImage,
-               int(const GURL& url,
-                   int max_image_size,
-                   ImageDownloadCallback callback));
-  MOCK_METHOD2(DownloadManifest,
-               void(const GURL& url, ManifestDownloadCallback callback));
+  int DownloadImage(const GURL& url,
+                    int max_image_size,
+                    ImageDownloadCallback callback) override {
+    return fake_image_downloader_.DownloadImage(url, max_image_size,
+                                                std::move(callback));
+  }
+
+  void DownloadManifest(const GURL& url,
+                        ManifestDownloadCallback callback) override {
+    fake_manifest_downloader_.DownloadManifest(url, std::move(callback));
+  }
+
   MOCK_METHOD0(IsOffTheRecord, bool());
   MOCK_METHOD1(IsBookmarked, bool(const GURL& url));
   MOCK_METHOD5(OnFaviconUpdated,
@@ -425,7 +425,12 @@ class FakeFaviconService {
     base::Closure bound_callback =
         base::Bind(callback, results_[page_or_icon_url]);
 
-    if (page_or_icon_url != manual_callback_url_) {
+    // In addition to checking the URL against |manual_callback_url_|, we also
+    // defer responses if there are already pending responses (i.e. a previous
+    // lookup matched |manual_callback_url_|), because requests to the history
+    // should be executed sequentially.
+    if (page_or_icon_url != manual_callback_url_ &&
+        !HasPendingManualCallback()) {
       return tracker->PostTask(base::ThreadTaskRunnerHandle::Get().get(),
                                FROM_HERE, bound_callback);
     }
@@ -433,7 +438,7 @@ class FakeFaviconService {
     // We use PostTaskAndReply() to cause |callback| being run in the current
     // TaskRunner.
     return tracker->PostTaskAndReply(manual_callback_task_runner_.get(),
-                                     FROM_HERE, base::Bind(&base::DoNothing),
+                                     FROM_HERE, base::DoNothing(),
                                      bound_callback);
   }
 
@@ -516,7 +521,7 @@ class FaviconHandlerTest : public testing::Test {
       FaviconDriverObserver::NotificationIconType handler_type,
       const std::vector<FaviconURL>& candidates,
       const GURL& manifest_url = GURL()) {
-    auto handler = base::MakeUnique<FaviconHandler>(&favicon_service_,
+    auto handler = std::make_unique<FaviconHandler>(&favicon_service_,
                                                     &delegate_, handler_type);
     handler->FetchFavicon(kPageURL, /*is_same_document=*/false);
     // The first RunUntilIdle() causes the FaviconService lookups be faster than
@@ -560,12 +565,6 @@ TEST_F(FaviconHandlerTest, GetFaviconFromHistory) {
 
   RunHandlerWithSimpleFaviconCandidates({kIconURL});
   EXPECT_THAT(delegate_.downloads(), IsEmpty());
-  EXPECT_THAT(
-      histogram_tester.GetAllSamples("Favicons.DownloadAttempts.LargeIcons"),
-      IsEmpty());
-  EXPECT_THAT(
-      histogram_tester.GetAllSamples("Favicons.DownloadAttempts.Favicons"),
-      IsEmpty());
 }
 
 // Test that UpdateFaviconsAndFetch() is called with the appropriate parameters
@@ -691,22 +690,6 @@ TEST_F(FaviconHandlerTest, DeleteFaviconMappingsDespitePrior404) {
   RunHandlerWithSimpleFaviconCandidates({kIconURL});
 }
 
-// Test that favicon mappings are not deleted if the feature is disabled.
-TEST_F(FaviconHandlerTest, DoDeleteFaviconMappingsIfFeatureDisabled) {
-  base::test::ScopedFeatureList override_features;
-  override_features.InitAndDisableFeature(kAllowDeletionOfFaviconMappings);
-
-  const GURL kIconURL("http://www.google.com/favicon");
-
-  favicon_service_.fake()->Store(kPageURL, kIconURL,
-                                 CreateRawBitmapResult(kIconURL));
-
-  EXPECT_CALL(favicon_service_, DeleteFaviconMappings(_, _)).Times(0);
-  EXPECT_CALL(delegate_, OnFaviconDeleted(_, _)).Times(0);
-
-  RunHandlerWithSimpleFaviconCandidates(URLVector());
-}
-
 // Test that favicon mappings are deleted for a page in history, when all icons
 // listed in the page return a 404.
 TEST_F(FaviconHandlerTest, DeleteFaviconMappingsDueTo404) {
@@ -760,7 +743,7 @@ TEST_F(FaviconHandlerTest, UpdateFaviconMappingsAndFetchWithMultipleURLs) {
                   base::flat_set<GURL>{kPageURL, kDifferentPageURL},
                   kIconURL16x16, _, _, _, _));
 
-  std::unique_ptr<FaviconHandler> handler = base::MakeUnique<FaviconHandler>(
+  std::unique_ptr<FaviconHandler> handler = std::make_unique<FaviconHandler>(
       &favicon_service_, &delegate_, FaviconDriverObserver::NON_TOUCH_16_DIP);
   handler->FetchFavicon(kPageURL, /*is_same_document=*/false);
   base::RunLoop().RunUntilIdle();
@@ -788,7 +771,7 @@ TEST_F(FaviconHandlerTest, CloneFaviconMappingsForPageInHistory) {
                   kPageURL, favicon_base::IconTypeSet({kFavicon}),
                   base::flat_set<GURL>({kPageURL})));
 
-  std::unique_ptr<FaviconHandler> handler = base::MakeUnique<FaviconHandler>(
+  std::unique_ptr<FaviconHandler> handler = std::make_unique<FaviconHandler>(
       &favicon_service_, &delegate_, FaviconDriverObserver::NON_TOUCH_16_DIP);
   handler->FetchFavicon(kPageURL, /*is_same_document=*/false);
   base::RunLoop().RunUntilIdle();
@@ -805,7 +788,7 @@ TEST_F(FaviconHandlerTest, CloneFaviconMappingsWithMultipleURLs) {
   favicon_service_.fake()->Store(kPageURLInHistory, kIconURL16x16,
                                  CreateRawBitmapResult(kIconURL16x16));
 
-  std::unique_ptr<FaviconHandler> handler = base::MakeUnique<FaviconHandler>(
+  std::unique_ptr<FaviconHandler> handler = std::make_unique<FaviconHandler>(
       &favicon_service_, &delegate_, FaviconDriverObserver::NON_TOUCH_16_DIP);
   handler->FetchFavicon(kPageURL, /*is_same_document=*/false);
   base::RunLoop().RunUntilIdle();
@@ -828,7 +811,7 @@ TEST_F(FaviconHandlerTest, NotCloneFaviconMappingsInIncognito) {
 
   EXPECT_CALL(favicon_service_, CloneFaviconMappingsForPages(_, _, _)).Times(0);
 
-  std::unique_ptr<FaviconHandler> handler = base::MakeUnique<FaviconHandler>(
+  std::unique_ptr<FaviconHandler> handler = std::make_unique<FaviconHandler>(
       &favicon_service_, &delegate_, FaviconDriverObserver::NON_TOUCH_16_DIP);
   handler->FetchFavicon(kPageURL, /*is_same_document=*/false);
   base::RunLoop().RunUntilIdle();
@@ -1311,6 +1294,42 @@ TEST_F(FaviconHandlerTest, RemoveFaviconViaJavascript) {
   base::RunLoop().RunUntilIdle();
 }
 
+// Tests that there is not crash and SetFavicons() is called with the
+// appropriate icon URL in the following scenario:
+// - The database initially has a cached but expired icon for the page.
+// - Initial favicon candidates are received fast, before the history lookup
+//   completes.
+// - Before the history lookup completes, favicon candidates are updated via
+//   javascript to include a different set of icons.
+TEST_F(FaviconHandlerTest,
+       UpdateIconsViaJavascriptAfterFastCandidatesAndExpiredIcon) {
+  EXPECT_CALL(favicon_service_, DeleteFaviconMappings(_, _)).Times(0);
+  EXPECT_CALL(favicon_service_, SetFavicons(_, kIconURL64x64, _, _));
+
+  // Initial database contains a cached by expired icon for |kPageURL|.
+  favicon_service_.fake()->Store(
+      kPageURL, kIconURL16x16,
+      CreateRawBitmapResult(kIconURL16x16, kTouchIcon, /*expired=*/true));
+
+  // Initial candidates are received before the history lookup for |kPageURL| is
+  // finished.
+  favicon_service_.fake()->SetRunCallbackManuallyForUrl(kPageURL);
+  std::unique_ptr<FaviconHandler> handler =
+      RunHandlerWithSimpleFaviconCandidates(URLVector{kIconURL16x16});
+  ASSERT_TRUE(favicon_service_.fake()->HasPendingManualCallback());
+  // Update candidates, now containing a different set of icons.
+  handler->OnUpdateCandidates(
+      kPageURL, {FaviconURL(kIconURL64x64, kFavicon, kEmptySizes)},
+      /*manifest_url=*/GURL());
+  base::RunLoop().RunUntilIdle();
+  // Complete the history lookup for |kPageURL| now.
+  ASSERT_TRUE(favicon_service_.fake()->RunCallbackManually());
+  base::RunLoop().RunUntilIdle();
+
+  EXPECT_THAT(favicon_service_.fake()->db_requests(), ElementsAre(kPageURL));
+  EXPECT_THAT(delegate_.downloads(), ElementsAre(kIconURL64x64));
+}
+
 // Test the favicon which is selected when the web page provides several
 // favicons and none of the favicons are cached in history.
 // The goal of this test is to be more of an integration test than
@@ -1547,6 +1566,27 @@ TEST_F(FaviconHandlerTest, TestSortFavicon) {
           kIconURLWithoutSize1, kIconURLWithoutSize2));
 }
 
+TEST_F(FaviconHandlerTest, TestSortTouchIconLargest) {
+  const GURL kIconURLWithoutSize("http://www.google.com/touchicon-nosize");
+  const GURL kIconURL144x144("http://www.google.com/touchicon144x144");
+  const GURL kIconURL192x192("http://www.google.com/touchicon192x192");
+
+  const std::vector<favicon::FaviconURL> kSourceIconURLs{
+      FaviconURL(kIconURLWithoutSize, kTouchIcon, kEmptySizes),
+      FaviconURL(kIconURL144x144, kTouchIcon,
+                 SizeVector(1U, gfx::Size(144, 144))),
+      FaviconURL(kIconURL192x192, kTouchIcon,
+                 SizeVector(1U, gfx::Size(192, 192))),
+  };
+
+  std::unique_ptr<FaviconHandler> handler = RunHandlerWithCandidates(
+      FaviconDriverObserver::TOUCH_LARGEST, kSourceIconURLs);
+
+  EXPECT_THAT(
+      handler->GetIconURLs(),
+      ElementsAre(kIconURL192x192, kIconURL144x144, kIconURLWithoutSize));
+}
+
 TEST_F(FaviconHandlerTest, TestDownloadLargestFavicon) {
   // Names represent the bitmap sizes per icon.
   const GURL kIconURL1024_512("http://www.google.com/a");
@@ -1643,160 +1683,6 @@ TEST_F(FaviconHandlerTest, TestKeepDownloadedLargestFavicon) {
        FaviconURL(kIconURL16x16, kFavicon, kEmptySizes)});
 }
 
-TEST_F(FaviconHandlerTest, TestRecordMultipleDownloadAttempts) {
-  base::HistogramTester histogram_tester;
-
-  // Try to download the three failing icons and end up logging three attempts.
-  RunHandlerWithCandidates(
-      FaviconDriverObserver::NON_TOUCH_LARGEST,
-      {FaviconURL(GURL("http://www.google.com/a"), kFavicon, kEmptySizes),
-       FaviconURL(GURL("http://www.google.com/b"), kFavicon, kEmptySizes),
-       FaviconURL(GURL("http://www.google.com/c"), kFavicon, kEmptySizes)});
-
-  EXPECT_THAT(
-      histogram_tester.GetAllSamples("Favicons.DownloadAttempts.LargeIcons"),
-      ElementsAre(base::Bucket(/*sample=*/3, /*expected_count=*/1)));
-  EXPECT_THAT(
-      histogram_tester.GetAllSamples("Favicons.DownloadAttempts.Favicons"),
-      IsEmpty());
-  EXPECT_THAT(
-      histogram_tester.GetAllSamples("Favicons.DownloadAttempts.TouchIcons"),
-      IsEmpty());
-}
-
-TEST_F(FaviconHandlerTest, TestRecordSingleFaviconDownloadAttempt) {
-  base::HistogramTester histogram_tester;
-
-  RunHandlerWithSimpleFaviconCandidates({kIconURL16x16});
-
-  EXPECT_THAT(
-      histogram_tester.GetAllSamples("Favicons.DownloadAttempts.Favicons"),
-      ElementsAre(base::Bucket(/*sample=*/1, /*expected_count=*/1)));
-  EXPECT_THAT(
-      histogram_tester.GetAllSamples("Favicons.DownloadAttempts.LargeIcons"),
-      IsEmpty());
-  EXPECT_THAT(
-      histogram_tester.GetAllSamples("Favicons.DownloadAttempts.TouchIcons"),
-      IsEmpty());
-  EXPECT_THAT(
-      histogram_tester.GetAllSamples("Favicons.DownloadOutcome"),
-      ElementsAre(base::Bucket(static_cast<int>(DownloadOutcome::SUCCEEDED),
-                               /*expected_count=*/1)));
-}
-
-TEST_F(FaviconHandlerTest, TestRecordSingleLargeIconDownloadAttempt) {
-  base::HistogramTester histogram_tester;
-
-  RunHandlerWithCandidates(FaviconDriverObserver::NON_TOUCH_LARGEST,
-                           {FaviconURL(kIconURL64x64, kFavicon, kEmptySizes)});
-
-  EXPECT_THAT(
-      histogram_tester.GetAllSamples("Favicons.DownloadAttempts.Favicons"),
-      IsEmpty());
-  EXPECT_THAT(
-      histogram_tester.GetAllSamples("Favicons.DownloadAttempts.LargeIcons"),
-      ElementsAre(base::Bucket(/*sample=*/1, /*expected_count=*/1)));
-  EXPECT_THAT(
-      histogram_tester.GetAllSamples("Favicons.DownloadAttempts.TouchIcons"),
-      IsEmpty());
-  EXPECT_THAT(
-      histogram_tester.GetAllSamples("Favicons.DownloadOutcome"),
-      ElementsAre(base::Bucket(static_cast<int>(DownloadOutcome::SUCCEEDED),
-                               /*expected_count=*/1)));
-}
-
-TEST_F(FaviconHandlerTest, TestRecordSingleTouchIconDownloadAttempt) {
-  base::HistogramTester histogram_tester;
-  RunHandlerWithCandidates(
-      FaviconDriverObserver::TOUCH_LARGEST,
-      {FaviconURL(kIconURL64x64, kTouchIcon, kEmptySizes)});
-
-  EXPECT_THAT(
-      histogram_tester.GetAllSamples("Favicons.DownloadAttempts.LargeIcons"),
-      IsEmpty());
-  EXPECT_THAT(
-      histogram_tester.GetAllSamples("Favicons.DownloadAttempts.Favicons"),
-      IsEmpty());
-  EXPECT_THAT(
-      histogram_tester.GetAllSamples("Favicons.DownloadAttempts.TouchIcons"),
-      ElementsAre(base::Bucket(/*sample=*/1, /*expected_count=*/1)));
-  EXPECT_THAT(
-      histogram_tester.GetAllSamples("Favicons.DownloadOutcome"),
-      ElementsAre(base::Bucket(static_cast<int>(DownloadOutcome::SUCCEEDED),
-                               /*expected_count=*/1)));
-}
-
-TEST_F(FaviconHandlerTest, TestRecordDownloadAttemptsFinishedByCache) {
-  const GURL kIconURL1024x1024("http://www.google.com/a-404-ing-icon");
-  base::HistogramTester histogram_tester;
-  favicon_service_.fake()->Store(
-      GURL("http://so.de"), kIconURL64x64,
-      CreateRawBitmapResult(kIconURL64x64, kFavicon, /*expired=*/false, 64));
-
-  RunHandlerWithCandidates(
-      FaviconDriverObserver::NON_TOUCH_LARGEST,
-      {FaviconURL(kIconURL1024x1024, kFavicon, {gfx::Size(1024, 1024)}),
-       FaviconURL(kIconURL12x12, kFavicon, {gfx::Size(12, 12)}),
-       FaviconURL(kIconURL64x64, kFavicon, {gfx::Size(64, 64)})});
-
-  // Should try only the first (receive 404) and get second icon from cache.
-  EXPECT_THAT(delegate_.downloads(), ElementsAre(kIconURL1024x1024));
-
-  EXPECT_THAT(
-      histogram_tester.GetAllSamples("Favicons.DownloadAttempts.LargeIcons"),
-      ElementsAre(base::Bucket(/*sample=*/1, /*expected_count=*/1)));
-  EXPECT_THAT(
-      histogram_tester.GetAllSamples("Favicons.DownloadAttempts.Favicons"),
-      IsEmpty());
-  EXPECT_THAT(
-      histogram_tester.GetAllSamples("Favicons.DownloadAttempts.TouchIcons"),
-      IsEmpty());
-}
-
-TEST_F(FaviconHandlerTest, TestRecordSingleDownloadAttemptForRefreshingIcons) {
-  base::HistogramTester histogram_tester;
-  favicon_service_.fake()->Store(
-      GURL("http://www.google.com/ps"), kIconURL16x16,
-      CreateRawBitmapResult(kIconURL16x16, kFavicon, /*expired=*/true));
-
-  RunHandlerWithSimpleFaviconCandidates({kIconURL16x16});
-
-  EXPECT_THAT(
-      histogram_tester.GetAllSamples("Favicons.DownloadAttempts.Favicons"),
-      ElementsAre(base::Bucket(/*sample=*/1, /*expected_count=*/1)));
-}
-
-TEST_F(FaviconHandlerTest, TestRecordFailingDownloadAttempt) {
-  base::HistogramTester histogram_tester;
-  const GURL k404IconURL("http://www.google.com/404.png");
-
-  delegate_.fake_image_downloader().AddError(k404IconURL, 404);
-
-  EXPECT_CALL(favicon_service_, UnableToDownloadFavicon(k404IconURL));
-
-  RunHandlerWithSimpleFaviconCandidates({k404IconURL});
-
-  EXPECT_THAT(
-      histogram_tester.GetAllSamples("Favicons.DownloadOutcome"),
-      ElementsAre(base::Bucket(static_cast<int>(DownloadOutcome::FAILED),
-                               /*expected_count=*/1)));
-}
-
-TEST_F(FaviconHandlerTest, TestRecordSkippedDownloadForKnownFailingUrl) {
-  base::HistogramTester histogram_tester;
-  const GURL k404IconURL("http://www.google.com/404.png");
-
-  ON_CALL(favicon_service_, WasUnableToDownloadFavicon(k404IconURL))
-      .WillByDefault(Return(true));
-
-  RunHandlerWithSimpleFaviconCandidates({k404IconURL});
-
-  EXPECT_THAT(
-      histogram_tester.GetAllSamples("Favicons.DownloadOutcome"),
-      ElementsAre(base::Bucket(static_cast<int>(DownloadOutcome::SKIPPED),
-                               /*expected_count=*/1)));
-}
-
 // Test that if a page URL is followed by another page URL which is not
 // considered the same document, favicon candidates listed in the second page
 // get associated to that second page only.
@@ -1811,7 +1697,7 @@ TEST_F(FaviconHandlerTest, SetFaviconsForLastPageUrlOnly) {
                                FaviconDriverObserver::NON_TOUCH_16_DIP,
                                kIconURL12x12, _, _));
 
-  std::unique_ptr<FaviconHandler> handler = base::MakeUnique<FaviconHandler>(
+  std::unique_ptr<FaviconHandler> handler = std::make_unique<FaviconHandler>(
       &favicon_service_, &delegate_, FaviconDriverObserver::NON_TOUCH_16_DIP);
   handler->FetchFavicon(kPageURL, /*is_same_document=*/false);
   base::RunLoop().RunUntilIdle();
@@ -1839,7 +1725,7 @@ TEST_F(FaviconHandlerTest, SetFaviconsForMultipleUrlsWithinDocument) {
                                FaviconDriverObserver::NON_TOUCH_16_DIP,
                                kIconURL12x12, _, _));
 
-  std::unique_ptr<FaviconHandler> handler = base::MakeUnique<FaviconHandler>(
+  std::unique_ptr<FaviconHandler> handler = std::make_unique<FaviconHandler>(
       &favicon_service_, &delegate_, FaviconDriverObserver::NON_TOUCH_16_DIP);
   handler->FetchFavicon(kPageURL, /*is_same_document=*/false);
   base::RunLoop().RunUntilIdle();
@@ -1881,18 +1767,6 @@ class FaviconHandlerManifestsEnabledTest : public FaviconHandlerTest {
 
   DISALLOW_COPY_AND_ASSIGN(FaviconHandlerManifestsEnabledTest);
 };
-
-// Test that the feature for loading icons from Web Manifests can be disabled.
-TEST_F(FaviconHandlerManifestsEnabledTest, IgnoreWebManifestIfDisabled) {
-  const GURL kManifestURL("http://www.google.com/manifest.json");
-  base::test::ScopedFeatureList override_features;
-  override_features.InitAndDisableFeature(kFaviconsFromWebManifest);
-
-  RunHandlerWithSimpleTouchIconCandidates({kIconURL16x16}, kManifestURL);
-  EXPECT_THAT(favicon_service_.fake()->db_requests(),
-              Not(Contains(kManifestURL)));
-  EXPECT_THAT(delegate_.downloads(), Not(Contains(kManifestURL)));
-}
 
 // Test that favicon mappings are deleted when a manifest previously cached in
 // the DB is no longer referenced by the page and the page lists no regular
@@ -2000,6 +1874,136 @@ TEST_F(FaviconHandlerManifestsEnabledTest,
   EXPECT_THAT(favicon_service_.fake()->db_requests(),
               ElementsAre(kPageURL, kManifestURL));
   EXPECT_THAT(delegate_.downloads(), IsEmpty());
+}
+
+// Believed to fix crbug.com/544560.
+// Tests that there is not crash and SetFavicons() is called with the
+// appropriate icon URL in the following scenario:
+// - The database initially has a cached icon for the page (not expired).
+// - Two initial favicon candidates are received fast, before the history lookup
+//   completes. There is no manifest URL initially.
+// - Before the history lookup completes, favicon candidates are updated via
+//   javascript to include a manifest URL.
+// - The manifest lists at least one icon.
+TEST_F(FaviconHandlerManifestsEnabledTest,
+       AddManifestWithIconsViaJavascriptAfterFastCandidates) {
+  EXPECT_CALL(favicon_service_, DeleteFaviconMappings(_, _)).Times(0);
+  EXPECT_CALL(favicon_service_, SetFavicons(_, kManifestURL, _, _));
+
+  // Initial database contains a cached by expired icon for |kPageURL|.
+  favicon_service_.fake()->Store(
+      kPageURL, kIconURL16x16,
+      CreateRawBitmapResult(kIconURL16x16, kTouchIcon));
+
+  // Manifest with icons.
+  const std::vector<favicon::FaviconURL> kManifestIcons = {
+      FaviconURL(kIconURL64x64, kWebManifestIcon, kEmptySizes),
+  };
+  delegate_.fake_manifest_downloader().Add(kManifestURL, kManifestIcons);
+
+  // Initial load does NOT contain a manifest. Regular candidates are received
+  // before the history lookup for |kPageURL| is finished.
+  favicon_service_.fake()->SetRunCallbackManuallyForUrl(kPageURL);
+  std::unique_ptr<FaviconHandler> handler =
+      RunHandlerWithSimpleTouchIconCandidates({kIconURL12x12, kIconURL16x16},
+                                              /*manifest_url=*/GURL());
+  ASSERT_TRUE(favicon_service_.fake()->HasPendingManualCallback());
+  // Update candidates, now containing a manifest URL.
+  handler->OnUpdateCandidates(
+      kPageURL, {FaviconURL(kIconURL16x16, kTouchIcon, kEmptySizes)},
+      kManifestURL);
+  base::RunLoop().RunUntilIdle();
+  // Complete the history lookup for |kPageURL| now.
+  ASSERT_TRUE(favicon_service_.fake()->RunCallbackManually());
+  base::RunLoop().RunUntilIdle();
+
+  EXPECT_THAT(favicon_service_.fake()->db_requests(),
+              ElementsAre(kPageURL, kManifestURL));
+  EXPECT_THAT(delegate_.downloads(), ElementsAre(kManifestURL, kIconURL64x64));
+}
+
+// Believed to fix crbug.com/544560.
+// Tests that there is not crash and SetFavicons() is called with the
+// appropriate icon URL in the following scenario:
+// - The database initially has a cached but expired icon for the page.
+// - Initial favicon candidates are received fast, before the history lookup
+//   completes. There is no manifest URL initially.
+// - Before the history lookup completes, favicon candidates are updated via
+//   javascript to include a manifest URL.
+// - The manifest lists at least one icon.
+TEST_F(FaviconHandlerManifestsEnabledTest,
+       AddManifestWithIconsViaJavascriptAfterFastCandidatesAndExpiredIcon) {
+  EXPECT_CALL(favicon_service_, DeleteFaviconMappings(_, _)).Times(0);
+  EXPECT_CALL(favicon_service_, SetFavicons(_, kManifestURL, _, _));
+
+  // Initial database contains a cached by expired icon for |kPageURL|.
+  favicon_service_.fake()->Store(
+      kPageURL, kIconURL16x16,
+      CreateRawBitmapResult(kIconURL16x16, kTouchIcon, /*expired=*/true));
+
+  // Manifest with icons.
+  const std::vector<favicon::FaviconURL> kManifestIcons = {
+      FaviconURL(kIconURL64x64, kWebManifestIcon, kEmptySizes),
+  };
+  delegate_.fake_manifest_downloader().Add(kManifestURL, kManifestIcons);
+
+  // Initial load does NOT contain a manifest. Regular candidates are received
+  // before the history lookup for |kPageURL| is finished.
+  favicon_service_.fake()->SetRunCallbackManuallyForUrl(kPageURL);
+  std::unique_ptr<FaviconHandler> handler =
+      RunHandlerWithSimpleTouchIconCandidates({kIconURL16x16},
+                                              /*manifest_url=*/GURL());
+  ASSERT_TRUE(favicon_service_.fake()->HasPendingManualCallback());
+  // Update candidates, now containing a manifest URL.
+  handler->OnUpdateCandidates(
+      kPageURL, {FaviconURL(kIconURL16x16, kTouchIcon, kEmptySizes)},
+      kManifestURL);
+  base::RunLoop().RunUntilIdle();
+  // Complete the history lookup for |kPageURL| now.
+  ASSERT_TRUE(favicon_service_.fake()->RunCallbackManually());
+  base::RunLoop().RunUntilIdle();
+
+  EXPECT_THAT(favicon_service_.fake()->db_requests(),
+              ElementsAre(kPageURL, kManifestURL));
+  EXPECT_THAT(delegate_.downloads(), ElementsAre(kManifestURL, kIconURL64x64));
+}
+
+// Believed to fix crbug.com/544560.
+// Same as the test above with the difference that the manifest contains no
+// icons.
+TEST_F(FaviconHandlerManifestsEnabledTest,
+       AddManifestWithoutIconsViaJavascriptAfterFastCandidatesAndExpiredIcon) {
+  EXPECT_CALL(favicon_service_, DeleteFaviconMappings(_, _)).Times(0);
+  EXPECT_CALL(favicon_service_, SetFavicons(_, kIconURL16x16, _, _));
+
+  // Initial database contains a cached by expired icon for |kPageURL|.
+  favicon_service_.fake()->Store(
+      kPageURL, kIconURL16x16,
+      CreateRawBitmapResult(kIconURL16x16, kTouchIcon, /*expired=*/true));
+
+  // Manifest without icons.
+  delegate_.fake_manifest_downloader().Add(kManifestURL,
+                                           std::vector<favicon::FaviconURL>());
+
+  // Initial load does NOT contain a manifest. Regular candidates are received
+  // before the history lookup for |kPageURL| is finished.
+  favicon_service_.fake()->SetRunCallbackManuallyForUrl(kPageURL);
+  std::unique_ptr<FaviconHandler> handler =
+      RunHandlerWithSimpleTouchIconCandidates({kIconURL16x16},
+                                              /*manifest_url=*/GURL());
+  ASSERT_TRUE(favicon_service_.fake()->HasPendingManualCallback());
+  // Update candidates, now containing a manifest URL.
+  handler->OnUpdateCandidates(
+      kPageURL, {FaviconURL(kIconURL16x16, kTouchIcon, kEmptySizes)},
+      kManifestURL);
+  base::RunLoop().RunUntilIdle();
+  // Complete the history lookup for |kPageURL| now.
+  ASSERT_TRUE(favicon_service_.fake()->RunCallbackManually());
+  base::RunLoop().RunUntilIdle();
+
+  EXPECT_THAT(favicon_service_.fake()->db_requests(),
+              ElementsAre(kPageURL, kManifestURL));
+  EXPECT_THAT(delegate_.downloads(), ElementsAre(kManifestURL, kIconURL16x16));
 }
 
 // Test that a favicon corresponding to a web manifest is reported when there is

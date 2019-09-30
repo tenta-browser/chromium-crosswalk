@@ -15,7 +15,6 @@
 #include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_contents.h"
-#include "content/public/common/browser_side_navigation_policy.h"
 #include "content/public/common/console_message_level.h"
 
 namespace subresource_filter {
@@ -51,12 +50,12 @@ SubframeNavigationFilteringThrottle::~SubframeNavigationFilteringThrottle() {
 
 content::NavigationThrottle::ThrottleCheckResult
 SubframeNavigationFilteringThrottle::WillStartRequest() {
-  return DeferToCalculateLoadPolicy(ThrottlingStage::WillStartRequest);
+  return DeferToCalculateLoadPolicy();
 }
 
 content::NavigationThrottle::ThrottleCheckResult
 SubframeNavigationFilteringThrottle::WillRedirectRequest() {
-  return DeferToCalculateLoadPolicy(ThrottlingStage::WillRedirectRequest);
+  return DeferToCalculateLoadPolicy();
 }
 
 content::NavigationThrottle::ThrottleCheckResult
@@ -71,21 +70,19 @@ const char* SubframeNavigationFilteringThrottle::GetNameForLogging() {
 }
 
 content::NavigationThrottle::ThrottleCheckResult
-SubframeNavigationFilteringThrottle::DeferToCalculateLoadPolicy(
-    ThrottlingStage stage) {
+SubframeNavigationFilteringThrottle::DeferToCalculateLoadPolicy() {
   DCHECK_NE(load_policy_, LoadPolicy::DISALLOW);
   if (load_policy_ == LoadPolicy::WOULD_DISALLOW)
     return PROCEED;
   parent_frame_filter_->GetLoadPolicyForSubdocument(
       navigation_handle()->GetURL(),
       base::Bind(&SubframeNavigationFilteringThrottle::OnCalculatedLoadPolicy,
-                 weak_ptr_factory_.GetWeakPtr(), stage));
+                 weak_ptr_factory_.GetWeakPtr()));
   last_defer_timestamp_ = base::TimeTicks::Now();
   return DEFER;
 }
 
 void SubframeNavigationFilteringThrottle::OnCalculatedLoadPolicy(
-    ThrottlingStage stage,
     LoadPolicy policy) {
   DCHECK(!last_defer_timestamp_.is_null());
   load_policy_ = policy;
@@ -107,11 +104,7 @@ void SubframeNavigationFilteringThrottle::OnCalculatedLoadPolicy(
     // Other load policies will be reported in WillProcessResponse.
     NotifyLoadPolicy();
 
-    const bool block_and_collapse_is_supported =
-        content::IsBrowserSideNavigationEnabled() ||
-        stage == ThrottlingStage::WillStartRequest;
-    CancelDeferredNavigation(
-        block_and_collapse_is_supported ? BLOCK_REQUEST_AND_COLLAPSE : CANCEL);
+    CancelDeferredNavigation(BLOCK_REQUEST_AND_COLLAPSE);
   } else {
     Resume();
   }

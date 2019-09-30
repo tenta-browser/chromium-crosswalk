@@ -119,7 +119,7 @@ TEST_F(LockLayoutManagerTest, NorwmalWindowBoundsArePreserved) {
   EXPECT_EQ(bounds.ToString(), window->GetBoundsInScreen().ToString());
 
   gfx::Rect work_area =
-      ScreenUtil::GetDisplayWorkAreaBoundsInParent(window.get());
+      screen_util::GetDisplayWorkAreaBoundsInParent(window.get());
   window->SetBounds(work_area);
 
   EXPECT_EQ(work_area.ToString(), window->GetBoundsInScreen().ToString());
@@ -155,7 +155,7 @@ TEST_F(LockLayoutManagerTest, MaximizedFullscreenWindowBoundsAreEqualToScreen) {
             fullscreen_window->GetBoundsInScreen().ToString());
 
   gfx::Rect work_area =
-      ScreenUtil::GetDisplayWorkAreaBoundsInParent(maximized_window.get());
+      screen_util::GetDisplayWorkAreaBoundsInParent(maximized_window.get());
   maximized_window->SetBounds(work_area);
 
   EXPECT_NE(work_area.ToString(),
@@ -164,7 +164,7 @@ TEST_F(LockLayoutManagerTest, MaximizedFullscreenWindowBoundsAreEqualToScreen) {
             maximized_window->GetBoundsInScreen().ToString());
 
   work_area =
-      ScreenUtil::GetDisplayWorkAreaBoundsInParent(fullscreen_window.get());
+      screen_util::GetDisplayWorkAreaBoundsInParent(fullscreen_window.get());
   fullscreen_window->SetBounds(work_area);
   EXPECT_NE(work_area.ToString(),
             fullscreen_window->GetBoundsInScreen().ToString());
@@ -186,8 +186,8 @@ TEST_F(LockLayoutManagerTest, AccessibilityPanel) {
   ASSERT_TRUE(shelf_layout_manager);
 
   // Set the accessibility panel height.
-  int chromevox_panel_height = 45;
-  shelf_layout_manager->SetChromeVoxPanelHeight(chromevox_panel_height);
+  int accessibility_panel_height = 45;
+  shelf_layout_manager->SetAccessibilityPanelHeight(accessibility_panel_height);
 
   views::Widget::InitParams widget_params(
       views::Widget::InitParams::TYPE_WINDOW_FRAMELESS);
@@ -199,18 +199,18 @@ TEST_F(LockLayoutManagerTest, AccessibilityPanel) {
       display::Screen::GetScreen()->GetPrimaryDisplay();
 
   gfx::Rect target_bounds = primary_display.bounds();
-  target_bounds.Inset(0 /* left */, chromevox_panel_height /* top */,
+  target_bounds.Inset(0 /* left */, accessibility_panel_height /* top */,
                       0 /* right */, 0 /* bottom */);
 
   EXPECT_EQ(target_bounds, window->GetBoundsInScreen());
 
   // Update the accessibility panel height, and verify the window bounds are
   // updated accordingly.
-  chromevox_panel_height = 25;
-  shelf_layout_manager->SetChromeVoxPanelHeight(chromevox_panel_height);
+  accessibility_panel_height = 25;
+  shelf_layout_manager->SetAccessibilityPanelHeight(accessibility_panel_height);
 
   target_bounds = primary_display.bounds();
-  target_bounds.Inset(0 /* left */, chromevox_panel_height /* top */,
+  target_bounds.Inset(0 /* left */, accessibility_panel_height /* top */,
                       0 /* right */, 0 /* bottom */);
 
   EXPECT_EQ(target_bounds, window->GetBoundsInScreen());
@@ -251,13 +251,13 @@ TEST_F(LockLayoutManagerTest, KeyboardBounds) {
   ShowKeyboard(false);
   display_manager()->SetDisplayRotation(
       primary_display.id(), display::Display::ROTATE_90,
-      display::Display::ROTATION_SOURCE_ACTIVE);
+      display::Display::RotationSource::ACTIVE);
   primary_display = display::Screen::GetScreen()->GetPrimaryDisplay();
   screen_bounds = primary_display.bounds();
   EXPECT_EQ(screen_bounds.ToString(), window->GetBoundsInScreen().ToString());
   display_manager()->SetDisplayRotation(
       primary_display.id(), display::Display::ROTATE_0,
-      display::Display::ROTATION_SOURCE_ACTIVE);
+      display::Display::RotationSource::ACTIVE);
 
   // When virtual keyboard overscroll is disabled keyboard bounds do
   // affect window bounds.
@@ -277,6 +277,15 @@ TEST_F(LockLayoutManagerTest, KeyboardBounds) {
 
   keyboard::SetKeyboardOverscrollOverride(
       keyboard::KEYBOARD_OVERSCROLL_OVERRIDE_NONE);
+
+  keyboard->SetContainerType(keyboard::ContainerType::FLOATING,
+                             base::nullopt /* target_bounds */,
+                             base::BindOnce([](bool success) {}));
+  ShowKeyboard(true);
+  primary_display = display::Screen::GetScreen()->GetPrimaryDisplay();
+  screen_bounds = primary_display.bounds();
+  EXPECT_EQ(screen_bounds.ToString(), window->GetBoundsInScreen().ToString());
+  ShowKeyboard(false);
 }
 
 TEST_F(LockLayoutManagerTest, MultipleMonitors) {
@@ -320,7 +329,7 @@ TEST_F(LockLayoutManagerTest, MultipleMonitors) {
   EXPECT_EQ("0,0 300x400", window->GetBoundsInScreen().ToString());
 
   gfx::Rect work_area =
-      ScreenUtil::GetDisplayWorkAreaBoundsInParent(window.get());
+      screen_util::GetDisplayWorkAreaBoundsInParent(window.get());
   window->SetBounds(work_area);
   // Usually work_area takes Shelf into account but that doesn't affect
   // LockScreen container windows.
@@ -335,8 +344,8 @@ TEST_F(LockLayoutManagerTest, AccessibilityPanelWithMultipleMonitors) {
       GetPrimaryShelf()->shelf_layout_manager();
   ASSERT_TRUE(shelf_layout_manager);
 
-  int chromevox_panel_height = 45;
-  shelf_layout_manager->SetChromeVoxPanelHeight(chromevox_panel_height);
+  int accessibility_panel_height = 45;
+  shelf_layout_manager->SetAccessibilityPanelHeight(accessibility_panel_height);
 
   aura::Window::Windows root_windows = Shell::GetAllRootWindows();
 
@@ -350,7 +359,7 @@ TEST_F(LockLayoutManagerTest, AccessibilityPanelWithMultipleMonitors) {
 
   gfx::Rect target_bounds =
       display::Screen::GetScreen()->GetPrimaryDisplay().bounds();
-  target_bounds.Inset(0, chromevox_panel_height, 0, 0);
+  target_bounds.Inset(0, accessibility_panel_height, 0, 0);
   EXPECT_EQ(target_bounds, window->GetBoundsInScreen());
 
   // Restore window with bounds in the second display, the window should be

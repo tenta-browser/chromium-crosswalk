@@ -61,9 +61,10 @@ class MockPasswordManagerClient : public StubPasswordManagerClient {
 
   explicit MockPasswordManagerClient(PasswordStore* store)
       : store_(store), password_manager_(this) {
-    prefs_.registry()->RegisterBooleanPref(prefs::kCredentialsEnableAutosignin,
-                                           true);
-    prefs_.registry()->RegisterBooleanPref(
+    prefs_ = std::make_unique<TestingPrefServiceSimple>();
+    prefs_->registry()->RegisterBooleanPref(prefs::kCredentialsEnableAutosignin,
+                                            true);
+    prefs_->registry()->RegisterBooleanPref(
         prefs::kWasAutoSignInFirstRunExperienceShown, true);
   }
   ~MockPasswordManagerClient() override {}
@@ -83,7 +84,7 @@ class MockPasswordManagerClient : public StubPasswordManagerClient {
 
   PasswordStore* GetPasswordStore() const override { return store_; }
 
-  PrefService* GetPrefs() override { return &prefs_; }
+  PrefService* GetPrefs() const override { return prefs_.get(); }
 
   const PasswordManager* GetPasswordManager() const override {
     return &password_manager_;
@@ -121,12 +122,12 @@ class MockPasswordManagerClient : public StubPasswordManagerClient {
   PasswordFormManager* pending_manager() const { return manager_.get(); }
 
   void set_zero_click_enabled(bool zero_click_enabled) {
-    prefs_.SetBoolean(prefs::kCredentialsEnableAutosignin, zero_click_enabled);
+    prefs_->SetBoolean(prefs::kCredentialsEnableAutosignin, zero_click_enabled);
   }
 
   void set_first_run_seen(bool first_run_seen) {
-    prefs_.SetBoolean(prefs::kWasAutoSignInFirstRunExperienceShown,
-                      first_run_seen);
+    prefs_->SetBoolean(prefs::kWasAutoSignInFirstRunExperienceShown,
+                       first_run_seen);
   }
 
   void set_last_committed_url(GURL last_committed_url) {
@@ -134,7 +135,7 @@ class MockPasswordManagerClient : public StubPasswordManagerClient {
   }
 
  private:
-  TestingPrefServiceSimple prefs_;
+  std::unique_ptr<TestingPrefServiceSimple> prefs_;
   PasswordStore* store_;
   std::unique_ptr<PasswordFormManager> manager_;
   PasswordManager password_manager_;
@@ -457,7 +458,13 @@ TEST_F(CredentialManagerImplTest, StoreFederatedAfterPassword) {
 }
 
 TEST_F(CredentialManagerImplTest, CredentialManagerStoreOverwrite) {
+  // Add an unrelated form to complicate the task.
+  origin_path_form_.preferred = true;
+  store_->AddLogin(origin_path_form_);
   // Populate the PasswordStore with a form.
+  form_.preferred = false;
+  form_.display_name = base::ASCIIToUTF16("Old Name");
+  form_.icon_url = GURL();
   store_->AddLogin(form_);
   RunAllPendingTasks();
 
@@ -465,6 +472,8 @@ TEST_F(CredentialManagerImplTest, CredentialManagerStoreOverwrite) {
   // the password without prompting the user.
   CredentialInfo info(form_, CredentialType::CREDENTIAL_TYPE_PASSWORD);
   info.password = base::ASCIIToUTF16("Totally new password.");
+  info.name = base::ASCIIToUTF16("New Name");
+  info.icon = GURL("https://example.com/icon.png");
   EXPECT_CALL(*client_, PromptUserToSavePasswordPtr(_)).Times(0);
   EXPECT_CALL(*client_, NotifyStorePasswordCalled());
   bool called = false;
@@ -478,9 +487,15 @@ TEST_F(CredentialManagerImplTest, CredentialManagerStoreOverwrite) {
 
   TestPasswordStore::PasswordMap passwords = store_->stored_passwords();
   EXPECT_EQ(1U, passwords.size());
-  EXPECT_EQ(1U, passwords[form_.signon_realm].size());
+  EXPECT_EQ(2U, passwords[form_.signon_realm].size());
+  origin_path_form_.preferred = false;
+  EXPECT_EQ(origin_path_form_, passwords[form_.signon_realm][0]);
   EXPECT_EQ(base::ASCIIToUTF16("Totally new password."),
-            passwords[form_.signon_realm][0].password_value);
+            passwords[form_.signon_realm][1].password_value);
+  EXPECT_EQ(base::ASCIIToUTF16("New Name"),
+            passwords[form_.signon_realm][1].display_name);
+  EXPECT_EQ(GURL("https://example.com/icon.png"),
+            passwords[form_.signon_realm][1].icon_url);
 }
 
 TEST_F(CredentialManagerImplTest,
@@ -1215,7 +1230,7 @@ TEST_F(CredentialManagerImplTest,
 
   // Check that the second request triggered a rejection.
   EXPECT_TRUE(called_2);
-  EXPECT_EQ(CredentialManagerError::PENDINGREQUEST, error_2);
+  EXPECT_EQ(CredentialManagerError::PENDING_REQUEST, error_2);
   EXPECT_FALSE(credential_2);
 
   // Check that the first request resolves.
@@ -1488,6 +1503,24 @@ TEST_F(CredentialManagerImplTest, GetSynthesizedFormForOrigin) {
   EXPECT_EQ(kTestWebOrigin, synthesized.origin.spec());
   EXPECT_EQ(kTestWebOrigin, synthesized.signon_realm);
   EXPECT_EQ(autofill::PasswordForm::SCHEME_HTML, synthesized.scheme);
+}
+
+TEST_F(CredentialManagerImplTest, GetBlacklistedPasswordCredential) {
+  autofill::PasswordForm blacklisted;
+  blacklisted.blacklisted_by_user = true;
+  blacklisted.origin = form_.origin;
+  blacklisted.signon_realm = blacklisted.origin.spec();
+  // Deliberately use a wrong format with a non-empty username to simulate a
+  // leak. See https://crbug.com/817754.
+  blacklisted.username_value = base::ASCIIToUTF16("Username");
+  store_->AddLogin(blacklisted);
+
+  EXPECT_CALL(*client_, PromptUserToChooseCredentialsPtr(_, _, _)).Times(0);
+  EXPECT_CALL(*client_, NotifyUserAutoSigninPtr()).Times(0);
+
+  std::vector<GURL> federations;
+  ExpectCredentialType(CredentialMediationRequirement::kOptional, true,
+                       federations, CredentialType::CREDENTIAL_TYPE_EMPTY);
 }
 
 TEST_F(CredentialManagerImplTest, BlacklistPasswordCredential) {

@@ -5,9 +5,9 @@
 #include "chrome/common/webui_url_constants.h"
 
 #include "base/macros.h"
-#include "components/nacl/common/features.h"
+#include "components/nacl/common/buildflags.h"
 #include "components/safe_browsing/web_ui/constants.h"
-#include "extensions/features/features.h"
+#include "extensions/buildflags/buildflags.h"
 
 namespace chrome {
 
@@ -19,13 +19,11 @@ namespace chrome {
 const char kChromeUIAboutHost[] = "about";
 const char kChromeUIAboutURL[] = "chrome://about/";
 const char kChromeUIAppLauncherPageHost[] = "apps";
-const char kChromeUIAppListStartPageHost[] = "app-list";
 const char kChromeUIAppListStartPageURL[] = "chrome://app-list/";
 const char kChromeUIAppsURL[] = "chrome://apps/";
 const char kChromeUIBluetoothInternalsHost[] = "bluetooth-internals";
 const char kChromeUIBookmarksHost[] = "bookmarks";
 const char kChromeUIBookmarksURL[] = "chrome://bookmarks/";
-const char kChromeUICacheHost[] = "cache";
 const char kChromeUICertificateViewerDialogHost[] = "view-cert-dialog";
 const char kChromeUICertificateViewerDialogURL[] = "chrome://view-cert-dialog/";
 const char kChromeUICertificateViewerHost[] = "view-cert";
@@ -93,6 +91,9 @@ const char kChromeUIMdUserManagerUrl[] = "chrome://md-user-manager/";
 const char kChromeUIMediaEngagementHost[] = "media-engagement";
 const char kChromeUIMediaRouterHost[] = "media-router";
 const char kChromeUIMediaRouterURL[] = "chrome://media-router/";
+const char kChromeUIMediaRouterInternalsHost[] = "media-router-internals";
+const char kChromeUIMediaRouterInternalsURL[] =
+    "chrome://media-router-internals/";
 const char kChromeUIMemoryInternalsHost[] = "memory-internals";
 const char kChromeUINTPTilesInternalsHost[] = "ntp-tiles-internals";
 const char kChromeUINaClHost[] = "nacl";
@@ -197,6 +198,8 @@ const char kChromeUIKeyboardOverlayHost[] = "keyboardoverlay";
 const char kChromeUIKeyboardOverlayURL[] = "chrome://keyboardoverlay/";
 const char kChromeUIMobileSetupHost[] = "mobilesetup";
 const char kChromeUIMobileSetupURL[] = "chrome://mobilesetup/";
+const char kChromeUIMultiDeviceSetupHost[] = "multidevice-setup";
+const char kChromeUIMultiDeviceSetupUrl[] = "chrome://multidevice-setup";
 const char kChromeUINetworkHost[] = "network";
 const char kChromeUIOSCreditsHost[] = "os-credits";
 const char kChromeUIOSCreditsURL[] = "chrome://os-credits/";
@@ -214,6 +217,8 @@ const char kChromeUISysInternalsHost[] = "sys-internals";
 const char kChromeUITermsOemURL[] = "chrome://terms/oem";
 const char kChromeUIUserImageHost[] = "userimage";
 const char kChromeUIUserImageURL[] = "chrome://userimage/";
+const char kChromeUIAssistantOptInHost[] = "assistant-optin";
+const char kChromeUIAssistantOptInURL[] = "chrome://assistant-optin/";
 #endif  // defined(OS_CHROMEOS)
 
 #if defined(OS_WIN)
@@ -285,7 +290,10 @@ const char kStylusSubPage[] = "stylus";
 #else
 const char kCreateProfileSubPage[] = "createProfile";
 const char kManageProfileSubPage[] = "manageProfile";
-#endif
+#endif  // defined(OS_CHROMEOS)
+#if defined(OS_WIN)
+const char kCleanupSubPage[] = "cleanup";
+#endif  // defined(OS_WIN)
 
 // Extension sub pages.
 const char kExtensionConfigureCommandsSubPage[] = "configureCommands";
@@ -295,7 +303,6 @@ const char kExtensionConfigureCommandsSubPage[] = "configureCommands";
 const char* const kChromeHostURLs[] = {
     kChromeUIAboutHost,
     kChromeUIBluetoothInternalsHost,
-    kChromeUICacheHost,
     kChromeUIChromeURLsHost,
     kChromeUIComponentsHost,
     kChromeUICrashesHost,
@@ -329,8 +336,10 @@ const char* const kChromeHostURLs[] = {
     kChromeUISupervisedUserInternalsHost,
     kChromeUISyncInternalsHost,
     kChromeUITaskSchedulerInternalsHost,
+#if !defined(OS_ANDROID)
     kChromeUITermsHost,
     kChromeUIThumbnailListHost,
+#endif
     kChromeUITranslateInternalsHost,
     kChromeUIUsbInternalsHost,
     kChromeUIUserActionsHost,
@@ -345,9 +354,10 @@ const char* const kChromeHostURLs[] = {
     content::kChromeUIMediaInternalsHost,
     content::kChromeUINetworkErrorHost,
     content::kChromeUINetworkErrorsListingHost,
-    content::kChromeUINetworkViewCacheHost,
     content::kChromeUIServiceWorkerInternalsHost,
+#if !defined(OS_ANDROID)
     content::kChromeUITracingHost,
+#endif
     content::kChromeUIWebRTCInternalsHost,
 #if !defined(OS_ANDROID)
 #if !defined(OS_CHROMEOS)
@@ -379,6 +389,7 @@ const char* const kChromeHostURLs[] = {
     kChromeUIPowerHost,
     kChromeUIInternetConfigDialogHost,
     kChromeUIInternetDetailDialogHost,
+    kChromeUIAssistantOptInHost,
 #endif
 #if defined(OS_WIN) || defined(OS_MACOSX) || defined(OS_LINUX)
     kChromeUIDiscardsHost,

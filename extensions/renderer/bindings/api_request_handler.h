@@ -13,7 +13,7 @@
 #include "base/macros.h"
 #include "extensions/renderer/bindings/api_binding_types.h"
 #include "extensions/renderer/bindings/api_last_error.h"
-#include "third_party/WebKit/public/web/WebUserGestureToken.h"
+#include "third_party/blink/public/web/web_user_gesture_token.h"
 #include "v8/include/v8.h"
 
 namespace base {
@@ -73,6 +73,8 @@ class APIRequestHandler {
   // Responds to the request with the given |request_id|, calling the callback
   // with the given |response| arguments.
   // Invalid ids are ignored.
+  // Warning: This can run arbitrary JS code, so the |context| may be
+  // invalidated after this!
   void CompleteRequest(int request_id,
                        const base::ListValue& response,
                        const std::string& error);

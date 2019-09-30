@@ -9,7 +9,6 @@
 #include <vector>
 
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/optional.h"
 #include "base/test/scoped_task_environment.h"
 #include "chrome/browser/search/one_google_bar/one_google_bar_data.h"
@@ -67,9 +66,9 @@ class OneGoogleBarServiceTest : public testing::Test {
 
     cookie_service_.Init(&fetcher_factory_);
 
-    auto fetcher = base::MakeUnique<FakeOneGoogleBarFetcher>();
+    auto fetcher = std::make_unique<FakeOneGoogleBarFetcher>();
     fetcher_ = fetcher.get();
-    service_ = base::MakeUnique<OneGoogleBarService>(&cookie_service_,
+    service_ = std::make_unique<OneGoogleBarService>(&cookie_service_,
                                                      std::move(fetcher));
   }
 

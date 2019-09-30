@@ -139,35 +139,27 @@ var availableTests = [
         }));
   },
   function startActivate() {
-    // Must connect to a network before we can activate it.
-    chrome.networkingPrivate.startConnect(
-        kCellularGuid, callbackPass(function() {
-          chrome.networkingPrivate.startActivate(
-              kCellularGuid, callbackPass(function() {
-                // For non Sprint networks, startActivate will delegate
-                // showing the activation UI to the browser host and not
-                // immediately activate the network.
-                chrome.networkingPrivate.getState(
-                    kCellularGuid, callbackPass(function(state) {
-                      assertEq(ActivationStateType.NOT_ACTIVATED,
-                               state.Cellular.ActivationState);
-                    }));
-              }));
-        }));
+    chrome.networkingPrivate.startActivate(
+      kCellularGuid, callbackPass(function() {
+        // For non Sprint networks, startActivate will delegate
+        // showing the activation UI to the browser host and not
+        // immediately activate the network.
+        chrome.networkingPrivate.getState(
+          kCellularGuid, callbackPass(function(state) {
+            assertEq(ActivationStateType.NOT_ACTIVATED,
+                     state.Cellular.ActivationState);
+          }));
+      }));
   },
   function startActivateSprint() {
-    // Must connect to a network before we can activate it.
-    chrome.networkingPrivate.startConnect(
-        kCellularGuid, callbackPass(function() {
-          chrome.networkingPrivate.startActivate(
-              kCellularGuid, callbackPass(function() {
-                chrome.networkingPrivate.getState(
-                    kCellularGuid, callbackPass(function(state) {
-                      assertEq(ActivationStateType.ACTIVATED,
-                               state.Cellular.ActivationState);
-                    }));
-              }));
-        }));
+    chrome.networkingPrivate.startActivate(
+      kCellularGuid, callbackPass(function() {
+        chrome.networkingPrivate.getState(
+          kCellularGuid, callbackPass(function(state) {
+            assertEq(ActivationStateType.ACTIVATED,
+                     state.Cellular.ActivationState);
+          }));
+      }));
   },
   function startConnectNonexistent() {
     chrome.networkingPrivate.startConnect(
@@ -188,7 +180,7 @@ var availableTests = [
     chrome.networkingPrivate.createNetwork(
       false,  // shared
       { Type: NetworkType.WI_FI,
-        GUID: 'ignored_guid',
+        GUID: 'some_guid',
         WiFi: {
           SSID: 'wifi_created',
           Security: 'WEP-PSK'
@@ -196,7 +188,7 @@ var availableTests = [
       },
       callbackPass(function(guid) {
         assertFalse(guid == '');
-        assertFalse(guid == 'ignored_guid');
+        assertEq('some_guid', guid);
         chrome.networkingPrivate.getProperties(
             guid, callbackPass(function(properties) {
               assertEq(NetworkType.WI_FI, properties.Type);
@@ -600,7 +592,8 @@ var availableTests = [
             ModelID:"test_model_id",
             NetworkTechnology: 'GSM',
             RoamingState: 'Home',
-            SIMLockStatus: {LockEnabled: true, LockType: '', RetriesLeft: 3}
+            SIMLockStatus: {LockEnabled: true, LockType: '', RetriesLeft: 3},
+            Scanning: false,
           },
           ConnectionState: ConnectionStateType.NOT_CONNECTED,
           GUID: kCellularGuid,
@@ -632,6 +625,7 @@ var availableTests = [
             MIN: "test_min",
             ModelID:"test_model_id",
             SIMLockStatus: {LockEnabled: true, LockType: '', RetriesLeft: 3},
+            Scanning: false,
             SignalStrength: 0,
           },
           Connectable: false,

@@ -22,19 +22,6 @@
   perspective: 600px;
 }
 
-.pin-container.pin-enabled {
-  opacity: 1;
-  transition: opacity 200ms ease-in-out 180ms;
-  visibility: visible;
-}
-
-.pin-container.pin-disabled {
-  opacity: 0; /* Opacity is set to 1 after the pin element is loaded. */
-  transition: none;
-  visibility: hidden; /* Needed because pin-keyboard's offsetHeight is
-                         checked to determine if loaded. */
-}
-
 #scroll-container {
   bottom: 0;        /* Allows content overlap with control bar. */
   left: 0;
@@ -97,6 +84,7 @@
 #oobe.terms-of-service #inner-container,
 #oobe.arc-tos #inner-container,
 #oobe.update #inner-container,
+#oobe.update-required #inner-container,
 #oobe.user-image #inner-container,
 #oobe.wrong-hwid #inner-container,
 #oobe.unrecoverable-cryptohome-error #inner-container {
@@ -186,6 +174,7 @@
 #arc-tos-dot,
 #tpm-error-message-dot,
 #wrong-hwid-dot,
+#update-required-dot,
 #unrecoverable-cryptohome-error-dot {
   display: none;
 }

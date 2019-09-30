@@ -4,11 +4,14 @@
 
 #include "components/cryptauth/secure_channel.h"
 
+#include <memory>
+
 #include "base/bind.h"
 #include "base/memory/ptr_util.h"
+#include "chromeos/components/proximity_auth/logging/logging.h"
 #include "components/cryptauth/cryptauth_service.h"
+#include "components/cryptauth/secure_message_delegate_impl.h"
 #include "components/cryptauth/wire_message.h"
-#include "components/proximity_auth/logging/logging.h"
 
 namespace cryptauth {
 
@@ -51,6 +54,8 @@ std::string SecureChannel::StatusToString(const Status& status) {
       return "[authenticating]";
     case Status::AUTHENTICATED:
       return "[authenticated]";
+    case Status::DISCONNECTING:
+      return "[disconnecting]";
     default:
       return "[unknown status]";
   }
@@ -90,7 +95,7 @@ int SecureChannel::SendMessage(const std::string& feature,
   next_sequence_number_++;
 
   queued_messages_.emplace(
-      base::MakeUnique<PendingMessage>(feature, payload, sequence_number));
+      std::make_unique<PendingMessage>(feature, payload, sequence_number));
   ProcessMessageQueue();
 
   return sequence_number;
@@ -98,6 +103,8 @@ int SecureChannel::SendMessage(const std::string& feature,
 
 void SecureChannel::Disconnect() {
   if (connection_->IsConnected()) {
+    TransitionToStatus(Status::DISCONNECTING);
+
     // If |connection_| is active, calling Disconnect() will eventually cause
     // its status to transition to DISCONNECTED, which will in turn cause this
     // class to transition to DISCONNECTED.
@@ -240,7 +247,7 @@ void SecureChannel::Authenticate() {
 
   authenticator_ = DeviceToDeviceAuthenticator::Factory::NewInstance(
       connection_.get(), connection_->remote_device().user_id,
-      cryptauth_service_->CreateSecureMessageDelegate());
+      cryptauth::SecureMessageDelegateImpl::Factory::NewInstance());
   authenticator_->Authenticate(
       base::Bind(&SecureChannel::OnAuthenticationResult,
                  weak_ptr_factory_.GetWeakPtr()));
@@ -274,7 +281,7 @@ void SecureChannel::ProcessMessageQueue() {
 void SecureChannel::OnMessageEncoded(const std::string& feature,
                                      int sequence_number,
                                      const std::string& encoded_message) {
-  connection_->SendMessage(base::MakeUnique<cryptauth::WireMessage>(
+  connection_->SendMessage(std::make_unique<cryptauth::WireMessage>(
       encoded_message, feature, sequence_number));
 }
 

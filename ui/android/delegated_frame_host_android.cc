@@ -6,16 +6,16 @@
 
 #include "base/bind.h"
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "cc/layers/solid_color_layer.h"
 #include "cc/layers/surface_layer.h"
+#include "components/viz/common/features.h"
 #include "components/viz/common/frame_sinks/copy_output_result.h"
 #include "components/viz/common/quads/compositor_frame.h"
 #include "components/viz/common/surfaces/surface_id.h"
 #include "components/viz/host/host_frame_sink_manager.h"
-#include "components/viz/service/frame_sinks/frame_sink_manager_impl.h"
 #include "components/viz/service/surfaces/surface.h"
 #include "ui/android/view_android.h"
+#include "ui/android/window_android.h"
 #include "ui/android/window_android_compositor.h"
 #include "ui/display/display.h"
 #include "ui/display/screen.h"
@@ -26,26 +26,20 @@ namespace ui {
 namespace {
 
 scoped_refptr<cc::SurfaceLayer> CreateSurfaceLayer(
-    viz::SurfaceManager* surface_manager,
-    viz::SurfaceInfo surface_info,
+    const viz::SurfaceId& surface_id,
+    const gfx::Size& size_in_pixels,
     bool surface_opaque) {
   // manager must outlive compositors using it.
-  auto layer = cc::SurfaceLayer::Create(surface_manager->reference_factory());
-  layer->SetPrimarySurfaceId(surface_info.id());
-  layer->SetFallbackSurfaceId(surface_info.id());
-  layer->SetBounds(surface_info.size_in_pixels());
+  auto layer = cc::SurfaceLayer::Create();
+  layer->SetPrimarySurfaceId(surface_id,
+                             cc::DeadlinePolicy::UseDefaultDeadline());
+  layer->SetFallbackSurfaceId(surface_id);
+  layer->SetBounds(size_in_pixels);
   layer->SetIsDrawable(true);
   layer->SetContentsOpaque(surface_opaque);
+  layer->SetHitTestable(true);
 
   return layer;
-}
-
-void CopyOutputRequestCallback(
-    scoped_refptr<cc::Layer> readback_layer,
-    viz::CopyOutputRequest::CopyOutputRequestCallback result_callback,
-    std::unique_ptr<viz::CopyOutputResult> copy_output_result) {
-  readback_layer->RemoveFromParent();
-  std::move(result_callback).Run(std::move(copy_output_result));
 }
 
 }  // namespace
@@ -53,23 +47,21 @@ void CopyOutputRequestCallback(
 DelegatedFrameHostAndroid::DelegatedFrameHostAndroid(
     ui::ViewAndroid* view,
     viz::HostFrameSinkManager* host_frame_sink_manager,
-    viz::FrameSinkManagerImpl* frame_sink_manager,
     Client* client,
     const viz::FrameSinkId& frame_sink_id)
     : frame_sink_id_(frame_sink_id),
       view_(view),
       host_frame_sink_manager_(host_frame_sink_manager),
-      frame_sink_manager_(frame_sink_manager),
       client_(client),
-      begin_frame_source_(this) {
+      begin_frame_source_(this),
+      enable_surface_synchronization_(
+          features::IsSurfaceSynchronizationEnabled()) {
   DCHECK(view_);
   DCHECK(client_);
 
   host_frame_sink_manager_->RegisterFrameSinkId(frame_sink_id_, this);
-#if DCHECK_IS_ON()
   host_frame_sink_manager_->SetFrameSinkDebugLabel(frame_sink_id_,
                                                    "DelegatedFrameHostAndroid");
-#endif
   CreateNewCompositorFrameSinkSupport();
 }
 
@@ -82,7 +74,8 @@ DelegatedFrameHostAndroid::~DelegatedFrameHostAndroid() {
 
 void DelegatedFrameHostAndroid::SubmitCompositorFrame(
     const viz::LocalSurfaceId& local_surface_id,
-    viz::CompositorFrame frame) {
+    viz::CompositorFrame frame,
+    viz::mojom::HitTestRegionListPtr hit_test_region_list) {
   if (local_surface_id != surface_info_.id().local_surface_id()) {
     DestroyDelegatedContent();
     DCHECK(!content_layer_);
@@ -93,17 +86,18 @@ void DelegatedFrameHostAndroid::SubmitCompositorFrame(
         viz::SurfaceId(frame_sink_id_, local_surface_id), 1.f, frame_size);
     has_transparent_background_ = root_pass->has_transparent_background;
 
-    bool result =
-        support_->SubmitCompositorFrame(local_surface_id, std::move(frame));
-    DCHECK(result);
+    support_->SubmitCompositorFrame(local_surface_id, std::move(frame),
+                                    std::move(hit_test_region_list));
 
     content_layer_ =
-        CreateSurfaceLayer(frame_sink_manager_->surface_manager(),
-                           surface_info_, !has_transparent_background_);
+        CreateSurfaceLayer(surface_info_.id(), surface_info_.size_in_pixels(),
+                           !has_transparent_background_);
     view_->GetLayer()->AddChild(content_layer_);
   } else {
-    support_->SubmitCompositorFrame(local_surface_id, std::move(frame));
+    support_->SubmitCompositorFrame(local_surface_id, std::move(frame),
+                                    std::move(hit_test_region_list));
   }
+  compositor_attach_until_frame_lock_.reset();
 }
 
 void DelegatedFrameHostAndroid::DidNotProduceFrame(
@@ -115,40 +109,69 @@ viz::FrameSinkId DelegatedFrameHostAndroid::GetFrameSinkId() const {
   return frame_sink_id_;
 }
 
-void DelegatedFrameHostAndroid::RequestCopyOfSurface(
-    WindowAndroidCompositor* compositor,
-    const gfx::Rect& src_subrect_in_pixel,
-    viz::CopyOutputRequest::CopyOutputRequestCallback result_callback) {
-  DCHECK(surface_info_.is_valid());
-  DCHECK(!result_callback.is_null());
+void DelegatedFrameHostAndroid::CopyFromCompositingSurface(
+    const gfx::Rect& src_subrect,
+    const gfx::Size& output_size,
+    base::OnceCallback<void(const SkBitmap&)> callback) {
+  // TODO(vmpstr): We should defer this request until such time that this
+  // returns true. https://crbug.com/826097.
+  if (!CanCopyFromCompositingSurface()) {
+    std::move(callback).Run(SkBitmap());
+    return;
+  }
 
   scoped_refptr<cc::Layer> readback_layer =
-      CreateSurfaceLayer(frame_sink_manager_->surface_manager(), surface_info_,
+      CreateSurfaceLayer(surface_info_.id(), surface_info_.size_in_pixels(),
                          !has_transparent_background_);
   readback_layer->SetHideLayerAndSubtree(true);
-  compositor->AttachLayerForReadback(readback_layer);
-  std::unique_ptr<viz::CopyOutputRequest> copy_output_request =
+  view_->GetWindowAndroid()->GetCompositor()->AttachLayerForReadback(
+      readback_layer);
+  std::unique_ptr<viz::CopyOutputRequest> request =
       std::make_unique<viz::CopyOutputRequest>(
-          viz::CopyOutputRequest::ResultFormat::RGBA_TEXTURE,
-          base::BindOnce(&CopyOutputRequestCallback, readback_layer,
-                         std::move(result_callback)));
+          viz::CopyOutputRequest::ResultFormat::RGBA_BITMAP,
+          base::BindOnce(
+              [](base::OnceCallback<void(const SkBitmap&)> callback,
+                 scoped_refptr<cc::Layer> readback_layer,
+                 std::unique_ptr<viz::CopyOutputResult> result) {
+                readback_layer->RemoveFromParent();
+                std::move(callback).Run(result->AsSkBitmap());
+              },
+              std::move(callback), std::move(readback_layer)));
 
-  if (!src_subrect_in_pixel.IsEmpty())
-    copy_output_request->set_area(src_subrect_in_pixel);
+  if (src_subrect.IsEmpty()) {
+    request->set_area(gfx::Rect(surface_info_.size_in_pixels()));
+  } else {
+    request->set_area(
+        gfx::ConvertRectToPixel(view_->GetDipScale(), src_subrect));
+  }
 
-  support_->RequestCopyOfSurface(std::move(copy_output_request));
+  if (!output_size.IsEmpty()) {
+    request->set_result_selection(gfx::Rect(output_size));
+    request->SetScaleRatio(
+        gfx::Vector2d(request->area().width(), request->area().height()),
+        gfx::Vector2d(output_size.width(), output_size.height()));
+  }
+
+  support_->RequestCopyOfOutput(local_surface_id_, std::move(request));
+}
+
+bool DelegatedFrameHostAndroid::CanCopyFromCompositingSurface() const {
+  return support_ && surface_info_.is_valid() && view_->GetWindowAndroid() &&
+         view_->GetWindowAndroid()->GetCompositor();
 }
 
 void DelegatedFrameHostAndroid::DestroyDelegatedContent() {
-  if (!surface_info_.is_valid())
-    return;
+  // TakeFallbackContentFrom() can populate |content_layer_| when
+  // |surface_info_| is invalid.
+  if (content_layer_) {
+    content_layer_->RemoveFromParent();
+    content_layer_ = nullptr;
+  }
 
-  DCHECK(content_layer_);
-
-  content_layer_->RemoveFromParent();
-  content_layer_ = nullptr;
-  support_->EvictCurrentSurface();
-  surface_info_ = viz::SurfaceInfo();
+  if (surface_info_.is_valid()) {
+    support_->EvictLastActivatedSurface();
+    surface_info_ = viz::SurfaceInfo();
+  }
 }
 
 bool DelegatedFrameHostAndroid::HasDelegatedContent() const {
@@ -166,6 +189,17 @@ void DelegatedFrameHostAndroid::AttachToCompositor(
     WindowAndroidCompositor* compositor) {
   if (registered_parent_compositor_)
     DetachFromCompositor();
+  // If this is the first frame since the compositor became visible, we want to
+  // take the compositor lock, preventing compositor frames from being produced
+  // until all delegated frames are ready. This improves the resume transition,
+  // preventing flashes. Set a 5 second timeout to prevent locking up the
+  // browser in cases where the renderer hangs or another factor prevents a
+  // frame from being produced. If we already have delegated content, no need
+  // to take the lock.
+  if (compositor->IsDrawingFirstVisibleFrame() && !HasDelegatedContent()) {
+    compositor_attach_until_frame_lock_ =
+        compositor->GetCompositorLock(this, base::TimeDelta::FromSeconds(5));
+  }
   compositor->AddChildFrameSink(frame_sink_id_);
   client_->SetBeginFrameSource(&begin_frame_source_);
   registered_parent_compositor_ = compositor;
@@ -174,10 +208,21 @@ void DelegatedFrameHostAndroid::AttachToCompositor(
 void DelegatedFrameHostAndroid::DetachFromCompositor() {
   if (!registered_parent_compositor_)
     return;
+  compositor_attach_until_frame_lock_.reset();
   client_->SetBeginFrameSource(nullptr);
   support_->SetNeedsBeginFrame(false);
   registered_parent_compositor_->RemoveChildFrameSink(frame_sink_id_);
   registered_parent_compositor_ = nullptr;
+}
+
+void DelegatedFrameHostAndroid::WasResized() {
+  if (enable_surface_synchronization_) {
+    local_surface_id_ = local_surface_id_allocator_.GenerateId();
+
+    // TODO(ericrk): We should handle updating our surface layer with the new
+    // ID. See similar behavior in delegated_frame_host.cc.
+    // https://crbug.com/801350
+  }
 }
 
 void DelegatedFrameHostAndroid::DidReceiveCompositorFrameAck(
@@ -190,10 +235,14 @@ void DelegatedFrameHostAndroid::DidPresentCompositorFrame(
     uint32_t presentation_token,
     base::TimeTicks time,
     base::TimeDelta refresh,
-    uint32_t flags) {}
+    uint32_t flags) {
+  client_->DidPresentCompositorFrame(presentation_token, time, refresh, flags);
+}
 
 void DelegatedFrameHostAndroid::DidDiscardCompositorFrame(
-    uint32_t presentation_token) {}
+    uint32_t presentation_token) {
+  client_->DidDiscardCompositorFrame(presentation_token);
+}
 
 void DelegatedFrameHostAndroid::OnBeginFrame(const viz::BeginFrameArgs& args) {
   begin_frame_source_.OnBeginFrame(args);
@@ -222,6 +271,8 @@ void DelegatedFrameHostAndroid::OnFrameTokenChanged(uint32_t frame_token) {
   client_->OnFrameTokenChanged(frame_token);
 }
 
+void DelegatedFrameHostAndroid::CompositorLockTimedOut() {}
+
 void DelegatedFrameHostAndroid::CreateNewCompositorFrameSinkSupport() {
   constexpr bool is_root = false;
   constexpr bool needs_sync_points = true;
@@ -230,8 +281,24 @@ void DelegatedFrameHostAndroid::CreateNewCompositorFrameSinkSupport() {
       this, frame_sink_id_, is_root, needs_sync_points);
 }
 
-viz::SurfaceId DelegatedFrameHostAndroid::SurfaceId() const {
+const viz::SurfaceId& DelegatedFrameHostAndroid::SurfaceId() const {
   return surface_info_.id();
+}
+
+const viz::LocalSurfaceId& DelegatedFrameHostAndroid::GetLocalSurfaceId()
+    const {
+  return local_surface_id_;
+}
+
+void DelegatedFrameHostAndroid::TakeFallbackContentFrom(
+    DelegatedFrameHostAndroid* other) {
+  if (content_layer_ || !other->content_layer_)
+    return;
+  content_layer_ =
+      CreateSurfaceLayer(other->content_layer_->fallback_surface_id(),
+                         other->content_layer_->bounds(),
+                         other->content_layer_->contents_opaque());
+  view_->GetLayer()->AddChild(content_layer_);
 }
 
 }  // namespace ui

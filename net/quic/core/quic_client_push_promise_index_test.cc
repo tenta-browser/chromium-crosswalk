@@ -4,9 +4,9 @@
 
 #include "net/quic/core/quic_client_push_promise_index.h"
 
-#include <string>
-
 #include "net/quic/core/spdy_utils.h"
+#include "net/quic/core/tls_client_handshaker.h"
+#include "net/quic/platform/api/quic_string.h"
 #include "net/quic/platform/api/quic_test.h"
 #include "net/quic/test_tools/crypto_test_utils.h"
 #include "net/quic/test_tools/mock_quic_client_promised_info.h"
@@ -17,7 +17,6 @@
 using testing::Return;
 using testing::StrictMock;
 using testing::_;
-using std::string;
 
 namespace net {
 namespace test {
@@ -34,7 +33,8 @@ class MockQuicSpdyClientSession : public QuicSpdyClientSession {
             QuicServerId("example.com", 443, PRIVACY_MODE_DISABLED),
             &crypto_config_,
             push_promise_index),
-        crypto_config_(crypto_test_utils::ProofVerifierForTesting()) {}
+        crypto_config_(crypto_test_utils::ProofVerifierForTesting(),
+                       TlsClientHandshaker::CreateSslCtx()) {}
   ~MockQuicSpdyClientSession() override {}
 
   MOCK_METHOD1(CloseStream, void(QuicStreamId stream_id));
@@ -61,7 +61,7 @@ class QuicClientPushPromiseIndexTest : public QuicTest {
     request_[":version"] = "HTTP/1.1";
     request_[":method"] = "GET";
     request_[":scheme"] = "https";
-    url_ = SpdyUtils::GetUrlFromHeaderBlock(request_);
+    url_ = SpdyUtils::GetPromisedUrlFromHeaders(request_);
   }
 
   MockQuicConnectionHelper helper_;
@@ -70,7 +70,7 @@ class QuicClientPushPromiseIndexTest : public QuicTest {
   MockQuicSpdyClientSession session_;
   QuicClientPushPromiseIndex index_;
   SpdyHeaderBlock request_;
-  string url_;
+  QuicString url_;
   MockQuicClientPromisedInfo promised_;
   QuicClientPushPromiseIndex::TryHandle* handle_;
 };

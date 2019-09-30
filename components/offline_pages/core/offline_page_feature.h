@@ -16,13 +16,18 @@ extern const base::Feature kOfflinePagesSvelteConcurrentLoadingFeature;
 extern const base::Feature kOfflinePagesCTFeature;
 extern const base::Feature kOfflinePagesSharingFeature;
 extern const base::Feature kBackgroundLoaderForDownloadsFeature;
-extern const base::Feature kOfflinePagesAsyncDownloadFeature;
 extern const base::Feature kPrefetchingOfflinePagesFeature;
 extern const base::Feature kOfflinePagesLoadSignalCollectingFeature;
 extern const base::Feature kOfflinePagesCTV2Feature;
 extern const base::Feature kOfflinePagesRenovationsFeature;
 extern const base::Feature kOfflinePagesResourceBasedSnapshotFeature;
 extern const base::Feature kOfflinePagesPrefetchingUIFeature;
+extern const base::Feature kOfflinePagesLimitlessPrefetchingFeature;
+extern const base::Feature kOfflinePagesDescriptivePendingStatusFeature;
+extern const base::Feature kOfflinePagesInDownloadHomeOpenInCctFeature;
+extern const base::Feature kOfflinePagesDescriptiveFailStatusFeature;
+extern const base::Feature kOfflinePagesCTSuppressNotificationsFeature;
+extern const base::Feature kOfflinePagesShowAlternateDinoPageFeature;
 
 // The parameter name used to find the experiment tag for prefetching offline
 // pages.
@@ -47,14 +52,15 @@ bool IsBackgroundLoaderForDownloadsEnabled();
 // Returns true if concurrent background loading is enabled for svelte.
 bool IsOfflinePagesSvelteConcurrentLoadingEnabled();
 
-// Returns true if downloading a page asynchonously is enabled.
-bool IsOfflinePagesAsyncDownloadEnabled();
-
 // Returns true if prefetching offline pages is enabled.
 bool IsPrefetchingOfflinePagesEnabled();
 
 // Returns true if we should show UI for prefetched pages.
 bool IsOfflinePagesPrefetchingUIEnabled();
+
+// Returns true if prefetching offline pages should ignore its normal resource
+// usage limits.
+bool IsLimitlessPrefetchingEnabled();
 
 // Returns true if we enable load timing signals to be collected.
 bool IsOfflinePagesLoadSignalCollectingEnabled();
@@ -74,6 +80,25 @@ bool ShouldUseTestingSnapshotDelay();
 
 // Returns true if we should record request origin as part of custom tabs V2.
 bool IsOfflinePagesCTV2Enabled();
+
+// Returns true if descriptive failed download status texts should be used in
+// notifications and Downloads Home.
+bool IsOfflinePagesDescriptiveFailStatusEnabled();
+
+// Returns true if descriptive pending download status texts should be used in
+// notifications and Downloads Home.
+bool IsOfflinePagesDescriptivePendingStatusEnabled();
+
+// Controls whether offline pages opened from the Downloads Home should be
+// opened in CCTs instead of new tabs.
+bool ShouldOfflinePagesInDownloadHomeOpenInCct();
+
+// Returns true if we should suppress completed notifications for certain custom
+// tabs downloads.
+bool IsOfflinePagesSuppressNotificationsEnabled();
+
+// Controls whether we should show a dinosaur page with alternate UI.
+bool ShouldShowAlternateDinoPage();
 
 // Returns an experiment tag provided by the field trial. This experiment tag
 // will be included in a custom header in all requests sent to Offline Prefetch

@@ -12,18 +12,13 @@
           var ws = new WebSocket("ws://127.0.0.1:8880/simple");
           return new Promise((fulfill) => ws.onclose = fulfill);
       }
-
-      if (!window.testRunner)
-          setTimeout(performActions, 2000);
   `);
 
-  PerformanceTestRunner.invokeAsyncWithTimeline('performActions', finish);
+  await PerformanceTestRunner.invokeAsyncWithTimeline('performActions');
 
-  function finish() {
-    PerformanceTestRunner.printTimelineRecordsWithDetails('WebSocketCreate');
-    PerformanceTestRunner.printTimelineRecordsWithDetails('WebSocketSendHandshakeRequest');
-    PerformanceTestRunner.printTimelineRecordsWithDetails('WebSocketReceiveHandshakeResponse');
-    PerformanceTestRunner.printTimelineRecordsWithDetails('WebSocketDestroy');
-    TestRunner.completeTest();
-  }
+  PerformanceTestRunner.printTimelineRecordsWithDetails('WebSocketCreate');
+  PerformanceTestRunner.printTimelineRecordsWithDetails('WebSocketSendHandshakeRequest');
+  PerformanceTestRunner.printTimelineRecordsWithDetails('WebSocketReceiveHandshakeResponse');
+  PerformanceTestRunner.printTimelineRecordsWithDetails('WebSocketDestroy');
+  TestRunner.completeTest();
 })();

@@ -9,17 +9,18 @@
 #include "base/bind.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "chrome/browser/extensions/chrome_zipfile_installer.h"
 #include "chrome/browser/extensions/crx_installer.h"
 #include "chrome/browser/extensions/extension_install_prompt.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/unpacked_installer.h"
-#include "chrome/browser/extensions/zipfile_installer.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/grit/generated_resources.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_ui.h"
 #include "content/public/browser/web_ui_data_source.h"
 #include "content/public/common/drop_data.h"
+#include "content/public/common/service_manager_connection.h"
 #include "extensions/browser/extension_system.h"
 #include "extensions/common/feature_switch.h"
 #include "net/base/filename_util.h"
@@ -43,20 +44,21 @@ void InstallExtensionHandler::GetLocalizedValues(
 void InstallExtensionHandler::RegisterMessages() {
   web_ui()->RegisterMessageCallback(
       "startDrag",
-      base::Bind(&InstallExtensionHandler::HandleStartDragMessage,
-                 base::Unretained(this)));
+      base::BindRepeating(&InstallExtensionHandler::HandleStartDragMessage,
+                          base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
       "stopDrag",
-      base::Bind(&InstallExtensionHandler::HandleStopDragMessage,
-                 base::Unretained(this)));
+      base::BindRepeating(&InstallExtensionHandler::HandleStopDragMessage,
+                          base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
       "installDroppedFile",
-      base::Bind(&InstallExtensionHandler::HandleInstallMessage,
-                 base::Unretained(this)));
+      base::BindRepeating(&InstallExtensionHandler::HandleInstallMessage,
+                          base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
       "installDroppedDirectory",
-      base::Bind(&InstallExtensionHandler::HandleInstallDirectoryMessage,
-                 base::Unretained(this)));
+      base::BindRepeating(
+          &InstallExtensionHandler::HandleInstallDirectoryMessage,
+          base::Unretained(this)));
 }
 
 void InstallExtensionHandler::HandleStartDragMessage(
@@ -99,7 +101,10 @@ void InstallExtensionHandler::HandleInstallMessage(
       web_ui()->GetWebContents()->GetBrowserContext());
 
   if (file_display_name_.MatchesExtension(FILE_PATH_LITERAL(".zip"))) {
-    ZipFileInstaller::Create(ExtensionSystem::Get(profile)->extension_service())
+    ZipFileInstaller::Create(
+        content::ServiceManagerConnection::GetForProcess()->GetConnector(),
+        MakeRegisterInExtensionServiceCallback(
+            ExtensionSystem::Get(profile)->extension_service()))
         ->LoadFromZipFile(file_to_install_);
   } else {
     std::unique_ptr<ExtensionInstallPrompt> prompt(

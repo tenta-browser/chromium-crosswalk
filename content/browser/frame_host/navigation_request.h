@@ -17,10 +17,14 @@
 #include "content/common/content_export.h"
 #include "content/common/frame_message_enums.h"
 #include "content/common/navigation_params.h"
+#include "content/common/navigation_params.mojom.h"
 #include "content/common/navigation_subresource_loader_params.h"
 #include "content/public/browser/navigation_throttle.h"
 #include "content/public/common/previews_state.h"
-#include "mojo/public/cpp/system/data_pipe.h"
+
+namespace network {
+class ResourceRequestBody;
+}
 
 namespace content {
 
@@ -30,7 +34,7 @@ class NavigationControllerImpl;
 class NavigationHandleImpl;
 class NavigationURLLoader;
 class NavigationData;
-class ResourceRequestBody;
+class NavigationUIData;
 class SiteInstanceImpl;
 class StreamHandle;
 struct SubresourceLoaderParams;
@@ -86,9 +90,10 @@ class CONTENT_EXPORT NavigationRequest : public NavigationURLLoaderDelegate {
       PreviewsState previews_state,
       bool is_same_document_history_load,
       bool is_history_navigation_in_new_child,
-      const scoped_refptr<ResourceRequestBody>& post_body,
+      const scoped_refptr<network::ResourceRequestBody>& post_body,
       const base::TimeTicks& navigation_start,
-      NavigationControllerImpl* controller);
+      NavigationControllerImpl* controller,
+      std::unique_ptr<NavigationUIData> navigation_ui_data);
 
   // Creates a request for a renderer-intiated navigation.
   // Note: |body| is sent to the IO thread when calling BeginNavigation, and
@@ -99,10 +104,11 @@ class CONTENT_EXPORT NavigationRequest : public NavigationURLLoaderDelegate {
       FrameTreeNode* frame_tree_node,
       NavigationEntryImpl* entry,
       const CommonNavigationParams& common_params,
-      const BeginNavigationParams& begin_params,
+      mojom::BeginNavigationParamsPtr begin_params,
       int current_history_list_offset,
       int current_history_list_length,
-      bool override_user_agent);
+      bool override_user_agent,
+      scoped_refptr<network::SharedURLLoaderFactory> blob_url_loader_factory);
 
   ~NavigationRequest() override;
 
@@ -112,7 +118,9 @@ class CONTENT_EXPORT NavigationRequest : public NavigationURLLoaderDelegate {
 
   const CommonNavigationParams& common_params() const { return common_params_; }
 
-  const BeginNavigationParams& begin_params() const { return begin_params_; }
+  const mojom::BeginNavigationParams* begin_params() const {
+    return begin_params_.get();
+  }
 
   const RequestNavigationParams& request_params() const {
     return request_params_;
@@ -154,6 +162,8 @@ class CONTENT_EXPORT NavigationRequest : public NavigationURLLoaderDelegate {
     associated_site_instance_type_ = type;
   }
 
+  void set_was_discarded() { request_params_.was_discarded = true; }
+
   NavigationHandleImpl* navigation_handle() const {
     return navigation_handle_.get();
   }
@@ -166,13 +176,8 @@ class CONTENT_EXPORT NavigationRequest : public NavigationURLLoaderDelegate {
   // NavigationRequest for the FrameTreeNode has been destroyed.
   void CreateNavigationHandle();
 
-  // Transfers the ownership of the NavigationHandle to |render_frame_host|.
-  // This should be called when the navigation is ready to commit, because the
-  // NavigationHandle outlives the NavigationRequest. The NavigationHandle's
-  // lifetime is the entire navigation, while the NavigationRequest is
-  // destroyed when a navigation is ready for commit.
-  void TransferNavigationHandleOwnership(
-      RenderFrameHostImpl* render_frame_host);
+  // Returns ownership of the navigation handle.
+  std::unique_ptr<NavigationHandleImpl> TakeNavigationHandle();
 
   void set_on_start_checks_complete_closure_for_testing(
       const base::Closure& closure) {
@@ -195,6 +200,14 @@ class CONTENT_EXPORT NavigationRequest : public NavigationURLLoaderDelegate {
     return devtools_navigation_token_;
   }
 
+  // Called on same-document navigation requests that need to be restarted as
+  // cross-document navigations. This happens when a same-document commit fails
+  // due to another navigation committing in the meantime.
+  void ResetForCrossDocumentRestart();
+
+  void RegisterSubresourceOverride(
+      mojom::TransferrableURLLoaderPtr transferrable_loader);
+
  private:
   // This enum describes the result of a Content Security Policy (CSP) check for
   // the request.
@@ -208,40 +221,42 @@ class CONTENT_EXPORT NavigationRequest : public NavigationURLLoaderDelegate {
 
   NavigationRequest(FrameTreeNode* frame_tree_node,
                     const CommonNavigationParams& common_params,
-                    const BeginNavigationParams& begin_params,
+                    mojom::BeginNavigationParamsPtr begin_params,
                     const RequestNavigationParams& request_params,
                     bool browser_initiated,
                     bool from_begin_navigation,
                     const FrameNavigationEntry* frame_navigation_entry,
-                    const NavigationEntryImpl* navitation_entry);
+                    const NavigationEntryImpl* navitation_entry,
+                    std::unique_ptr<NavigationUIData> navigation_ui_data);
 
   // NavigationURLLoaderDelegate implementation.
   void OnRequestRedirected(
       const net::RedirectInfo& redirect_info,
-      const scoped_refptr<ResourceResponse>& response) override;
-  void OnResponseStarted(const scoped_refptr<ResourceResponse>& response,
-                         std::unique_ptr<StreamHandle> body,
-                         mojo::ScopedDataPipeConsumerHandle consumer_handle,
-                         const net::SSLInfo& ssl_info,
-                         std::unique_ptr<NavigationData> navigation_data,
-                         const GlobalRequestID& request_id,
-                         bool is_download,
-                         bool is_stream,
-                         base::Optional<SubresourceLoaderParams>
-                             subresource_loader_params) override;
+      const scoped_refptr<network::ResourceResponse>& response) override;
+  void OnResponseStarted(
+      const scoped_refptr<network::ResourceResponse>& response,
+      network::mojom::URLLoaderClientEndpointsPtr url_loader_client_endpoints,
+      std::unique_ptr<StreamHandle> body,
+      std::unique_ptr<NavigationData> navigation_data,
+      const GlobalRequestID& request_id,
+      bool is_download,
+      bool is_stream,
+      base::Optional<SubresourceLoaderParams> subresource_loader_params)
+      override;
   void OnRequestFailed(bool has_stale_copy_in_cache,
                        int net_error,
-                       const base::Optional<net::SSLInfo>& ssl_info,
-                       bool should_ssl_errors_be_fatal) override;
+                       const base::Optional<net::SSLInfo>& ssl_info) override;
   void OnRequestStarted(base::TimeTicks timestamp) override;
 
   // A version of OnRequestFailed() that allows skipping throttles, to be used
-  // when a request failed due to a throttle result itself.
-  void OnRequestFailedInternal(bool has_stale_copy_in_cache,
-                               int net_error,
-                               const base::Optional<net::SSLInfo>& ssl_info,
-                               bool should_ssl_errors_be_fatal,
-                               bool skip_throttles);
+  // when a request failed due to a throttle result itself. |error_page_content|
+  // is only used when |skip_throttles| is true.
+  void OnRequestFailedInternal(
+      bool has_stale_copy_in_cache,
+      int net_error,
+      const base::Optional<net::SSLInfo>& ssl_info,
+      bool skip_throttles,
+      const base::Optional<std::string>& error_page_content);
 
   // Called when the NavigationThrottles have been checked by the
   // NavigationHandle.
@@ -295,6 +310,11 @@ class CONTENT_EXPORT NavigationRequest : public NavigationURLLoaderDelegate {
   LegacyProtocolInSubresourceCheckResult CheckLegacyProtocolInSubresource()
       const;
 
+  // Called before a commit. Updates the history index and length held in
+  // RequestNavigationParams. This is used to update this shared state with the
+  // renderer process.
+  void UpdateRequestNavigationParamsHistory();
+
   FrameTreeNode* frame_tree_node_;
 
   // Initialized on creation of the NavigationRequest. Sent to the renderer when
@@ -307,9 +327,17 @@ class CONTENT_EXPORT NavigationRequest : public NavigationURLLoaderDelegate {
   // Note: |request_params_| is not const because service_worker_provider_id
   // and should_create_service_worker will be set in OnResponseStarted.
   CommonNavigationParams common_params_;
-  BeginNavigationParams begin_params_;
+  mojom::BeginNavigationParamsPtr begin_params_;
   RequestNavigationParams request_params_;
   const bool browser_initiated_;
+
+  // Stores the NavigationUIData for this navigation until the NavigationHandle
+  // is created. This can be null if the embedded did not provide a
+  // NavigationUIData at the beginning of the navigation.
+  std::unique_ptr<NavigationUIData> navigation_ui_data_;
+
+  // URLLoaderFactory to facilitate loading blob URLs.
+  scoped_refptr<network::SharedURLLoaderFactory> blob_url_loader_factory_;
 
   NavigationState state_;
 
@@ -346,12 +374,14 @@ class CONTENT_EXPORT NavigationRequest : public NavigationURLLoaderDelegate {
 
   std::unique_ptr<NavigationHandleImpl> navigation_handle_;
 
-  // Holds the ResourceResponse and the StreamHandle (or
-  // DataPipeConsumerHandle) for the navigation while the WillProcessResponse
-  // checks are performed by the NavigationHandle.
-  scoped_refptr<ResourceResponse> response_;
+  // Holds objects received from OnResponseStarted while the WillProcessResponse
+  // checks are performed by the NavigationHandle. Once the checks have been
+  // completed, these objects will be used to continue the navigation.
+  // The URLLoaderClientEndpointsPtr is used when the Network Service or
+  // NavigationMojoResponse is enabled. Otherwise the StreamHandle is used.
+  scoped_refptr<network::ResourceResponse> response_;
   std::unique_ptr<StreamHandle> body_;
-  mojo::ScopedDataPipeConsumerHandle handle_;
+  network::mojom::URLLoaderClientEndpointsPtr url_loader_client_endpoints_;
   net::SSLInfo ssl_info_;
   bool is_download_;
 
@@ -368,6 +398,9 @@ class CONTENT_EXPORT NavigationRequest : public NavigationURLLoaderDelegate {
 
   // See comment on accessor.
   base::UnguessableToken devtools_navigation_token_;
+
+  base::Optional<std::vector<mojom::TransferrableURLLoaderPtr>>
+      subresource_overrides_;
 
   base::WeakPtrFactory<NavigationRequest> weak_factory_;
 

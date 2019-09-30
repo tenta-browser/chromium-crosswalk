@@ -27,7 +27,6 @@
 #include "base/timer/timer.h"
 #include "chromeos/chromeos_switches.h"
 #include "ui/accessibility/ax_node_data.h"
-#include "ui/app_list/presenter/app_list.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/compositor/callback_layer_animation_observer.h"
 #include "ui/compositor/layer_animation_element.h"
@@ -631,7 +630,7 @@ void AssistantOverlay::StartAnimation(bool show_icon) {
       kRippleCircleStartRadiusDip / kRippleCircleInitRadiusDip;
   gfx::Transform transform;
 
-  const gfx::Point center = host_view_->GetAppListButtonCenterPoint();
+  const gfx::Point center = host_view_->GetCenterPoint();
   transform.Translate(center.x() - kRippleCircleStartRadiusDip,
                       center.y() - kRippleCircleStartRadiusDip);
   transform.Scale(scale_factor, scale_factor);
@@ -734,7 +733,7 @@ void AssistantOverlay::StartAnimation(bool show_icon) {
 void AssistantOverlay::BurstAnimation() {
   animation_state_ = AnimationState::BURSTING;
 
-  gfx::Point center = host_view_->GetAppListButtonCenterPoint();
+  gfx::Point center = host_view_->GetCenterPoint();
   gfx::Transform transform;
 
   // Setup ripple animations.
@@ -810,7 +809,7 @@ void AssistantOverlay::WaitingAnimation() {
 
   animation_state_ = AnimationState::WAITING;
 
-  gfx::Point center = host_view_->GetAppListButtonCenterPoint();
+  gfx::Point center = host_view_->GetCenterPoint();
   gfx::Transform transform;
 
   ripple_layer_->SetOpacity(0);
@@ -874,7 +873,7 @@ void AssistantOverlay::EndAnimation() {
       kRippleCircleStartRadiusDip / kRippleCircleInitRadiusDip;
   gfx::Transform transform;
 
-  const gfx::Point center = host_view_->GetAppListButtonCenterPoint();
+  const gfx::Point center = host_view_->GetCenterPoint();
   transform.Translate(center.x() - kRippleCircleStartRadiusDip,
                       center.y() - kRippleCircleStartRadiusDip);
   transform.Scale(scale_factor, scale_factor);

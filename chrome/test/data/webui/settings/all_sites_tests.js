@@ -7,148 +7,33 @@
  * different providers.
  * @type {SiteSettingsPref}
  */
-var prefsMixedProvider = {
-  exceptions: {
-    geolocation: [
-      {
-        embeddingOrigin: '',
-        origin: 'https://[*.]foo.com',
-        setting: 'block',
-        source: 'policy',
-      },
-      {
-        embeddingOrigin: '',
-        origin: 'https://bar.foo.com',
-        setting: 'block',
-        source: 'preference',
-      },
-      {
-        embeddingOrigin: '',
-        origin: 'https://[*.]foo.com',
-        setting: 'block',
-        source: 'preference',
-      },
-    ],
-    images: [],
-  }
-};
+let prefsMixedProvider;
 
 /**
  * An example pref with mixed origin and pattern.
  * @type {SiteSettingsPref}
  */
-var prefsMixedOriginAndPattern = {
-  exceptions: {
-    ads: [],
-    auto_downloads: [],
-    background_sync: [],
-    camera: [],
-    cookies: [],
-    geolocation: [
-      {
-        embeddingOrigin: '',
-        origin: 'https://foo.com',
-        setting: 'allow',
-        source: 'preference',
-      },
-    ],
-    images: [],
-    javascript: [
-      {
-        embeddingOrigin: '',
-        origin: 'https://[*.]foo.com',
-        setting: 'allow',
-        source: 'preference',
-      },
-    ],
-    mic: [],
-    notifications: [],
-    plugins: [],
-    midi_devices: [],
-    protectedContent: [],
-    popups: [],
-    sound: [],
-    unsandboxed_plugins: [],
-    clipboard: [],
-  }
-};
+let prefsMixedOriginAndPattern;
 
 /**
  * An example pref with multiple categories and multiple allow/block
  * state.
  * @type {SiteSettingsPref}
  */
-var prefsVarious = {
-  exceptions: {
-    ads: [],
-    auto_downloads: [],
-    background_sync: [],
-    camera: [],
-    cookies: [],
-    geolocation: [
-      {
-        embeddingOrigin: '',
-        incognito: false,
-        origin: 'https://foo.com',
-        setting: 'allow',
-        source: 'preference',
-      },
-      {
-        embeddingOrigin: '',
-        incognito: false,
-        origin: 'https://bar.com',
-        setting: 'block',
-        source: 'preference',
-      },
-    ],
-    images: [],
-    javascript: [],
-    mic: [],
-    midi_devices: [],
-    notifications: [
-      {
-        embeddingOrigin: '',
-        incognito: false,
-        origin: 'https://google.com',
-        setting: 'block',
-        source: 'preference',
-      },
-      {
-        embeddingOrigin: '',
-        incognito: false,
-        origin: 'https://bar.com',
-        setting: 'block',
-        source: 'preference',
-      },
-      {
-        embeddingOrigin: '',
-        incognito: false,
-        origin: 'https://foo.com',
-        setting: 'block',
-        source: 'preference',
-      },
-    ],
-    plugins: [],
-    protectedContent: [],
-    popups: [],
-    sound: [],
-    unsandboxed_plugins: [],
-    clipboard: [],
-  }
-};
+let prefsVarious;
 
 suite('AllSites', function() {
   /**
    * A site list element created before each test.
    * @type {SiteList}
    */
-  var testElement;
+  let testElement;
 
   /**
    * The mock proxy object to use during test.
    * @type {TestSiteSettingsPrefsBrowserProxy}
    */
-  var browserProxy = null;
+  let browserProxy = null;
 
   suiteSetup(function() {
     CrSettingsPrefs.setInitialized();
@@ -160,6 +45,52 @@ suite('AllSites', function() {
 
   // Initialize a site-list before each test.
   setup(function() {
+    prefsMixedProvider = test_util.createSiteSettingsPrefs(
+        [], [test_util.createContentSettingTypeToValuePair(
+                settings.ContentSettingsTypes.GEOLOCATION, [
+                  test_util.createRawSiteException('https://[*.]foo.com', {
+                    setting: settings.ContentSetting.BLOCK,
+                    source: settings.SiteSettingSource.POLICY,
+                  }),
+                  test_util.createRawSiteException('https://bar.foo.com', {
+                    setting: settings.ContentSetting.BLOCK,
+                  }),
+                  test_util.createRawSiteException('https://[*.]foo.com', {
+                    setting: settings.ContentSetting.BLOCK,
+                  }),
+                ])]);
+
+    prefsMixedOriginAndPattern = test_util.createSiteSettingsPrefs(
+        [], [test_util.createContentSettingTypeToValuePair(
+                settings.ContentSettingsTypes.GEOLOCATION, [
+                  test_util.createRawSiteException('https://foo.com'),
+                  test_util.createRawSiteException('https://[*.]foo.com'),
+                ])]);
+
+    prefsVarious = test_util.createSiteSettingsPrefs([], [
+      test_util.createContentSettingTypeToValuePair(
+          settings.ContentSettingsTypes.GEOLOCATION,
+          [
+            test_util.createRawSiteException('https://foo.com'),
+            test_util.createRawSiteException('https://bar.com', {
+              setting: settings.ContentSetting.BLOCK,
+            })
+          ]),
+      test_util.createContentSettingTypeToValuePair(
+          settings.ContentSettingsTypes.NOTIFICATIONS,
+          [
+            test_util.createRawSiteException('https://google.com', {
+              setting: settings.ContentSetting.BLOCK,
+            }),
+            test_util.createRawSiteException('https://bar.com', {
+              setting: settings.ContentSetting.BLOCK,
+            }),
+            test_util.createRawSiteException('https://foo.com', {
+              setting: settings.ContentSetting.BLOCK,
+            }),
+          ])
+    ]);
+
     browserProxy = new TestSiteSettingsPrefsBrowserProxy();
     settings.SiteSettingsPrefsBrowserProxyImpl.instance_ = browserProxy;
     PolymerTest.clearBody();
@@ -194,11 +125,11 @@ suite('AllSites', function() {
     return browserProxy.whenCalled('getExceptionList')
         .then(function(contentType) {
           // Use resolver to ensure that the list container is populated.
-          var resolver = new PromiseResolver();
+          const resolver = new PromiseResolver();
           testElement.async(resolver.resolve);
           return resolver.promise.then(function() {
-            var item = testElement.$.listContainer.children[0];
-            var name = item.querySelector('#displayName');
+            const item = testElement.$.listContainer.children[0];
+            const name = item.querySelector('#displayName');
             assertTrue(!!name);
           });
         });
@@ -212,7 +143,7 @@ suite('AllSites', function() {
         .then(function(contentType) {
           // Use resolver to ensure asserts bubble up to the framework with
           // meaningful errors.
-          var resolver = new PromiseResolver();
+          const resolver = new PromiseResolver();
           testElement.async(resolver.resolve);
           return resolver.promise.then(function() {
             // All Sites calls getExceptionList for all categories, starting
@@ -228,23 +159,31 @@ suite('AllSites', function() {
                 'If this fails with 5 instead of the expected 3, then ' +
                     'the de-duping of sites is not working for site_list');
             assertEquals(
-                prefsVarious.exceptions.geolocation[1].origin,
+                prefsVarious
+                    .exceptions[settings.ContentSettingsTypes.GEOLOCATION][1]
+                    .origin,
                 testElement.sites[0].origin);
             assertEquals(
-                prefsVarious.exceptions.geolocation[0].origin,
+                prefsVarious
+                    .exceptions[settings.ContentSettingsTypes.GEOLOCATION][0]
+                    .origin,
                 testElement.sites[1].origin);
             assertEquals(
-                prefsVarious.exceptions.notifications[0].origin,
+                prefsVarious
+                    .exceptions[settings.ContentSettingsTypes.NOTIFICATIONS][0]
+                    .origin,
                 testElement.sites[2].origin);
             assertEquals(undefined, testElement.selectedOrigin);
 
             // Validate that the sites are shown in UI and can be selected.
-            var firstItem = testElement.$.listContainer.children[1];
-            var clickable = firstItem.querySelector('.middle');
+            const firstItem = testElement.$.listContainer.children[1];
+            const clickable = firstItem.querySelector('.middle');
             assertNotEquals(undefined, clickable);
             MockInteractions.tap(clickable);
             assertEquals(
-                prefsVarious.exceptions.geolocation[0].origin,
+                prefsVarious
+                    .exceptions[settings.ContentSettingsTypes.GEOLOCATION][0]
+                    .origin,
                 settings.getQueryParameters().get('site'));
           });
         });
@@ -258,7 +197,7 @@ suite('AllSites', function() {
         .then(function(contentType) {
           // Use resolver to ensure asserts bubble up to the framework with
           // meaningful errors.
-          var resolver = new PromiseResolver();
+          const resolver = new PromiseResolver();
           testElement.async(resolver.resolve);
           return resolver.promise.then(function() {
             // All Sites calls getExceptionList for all categories, starting
@@ -278,19 +217,23 @@ suite('AllSites', function() {
                     'the de-duping of sites has been enabled for site_list.');
             if (testElement.sites.length == 1) {
               assertEquals(
-                  prefsMixedOriginAndPattern.exceptions.geolocation[0].origin,
+                  prefsMixedOriginAndPattern
+                      .exceptions[settings.ContentSettingsTypes.GEOLOCATION][0]
+                      .origin,
                   testElement.sites[0].displayName);
             }
 
             assertEquals(undefined, testElement.selectedOrigin);
             // Validate that the sites are shown in UI and can be selected.
-            var firstItem = testElement.$.listContainer.children[0];
-            var clickable = firstItem.querySelector('.middle');
+            const firstItem = testElement.$.listContainer.children[0];
+            const clickable = firstItem.querySelector('.middle');
             assertNotEquals(undefined, clickable);
             MockInteractions.tap(clickable);
             if (testElement.sites.length == 1) {
               assertEquals(
-                  prefsMixedOriginAndPattern.exceptions.geolocation[0].origin,
+                  prefsMixedOriginAndPattern
+                      .exceptions[settings.ContentSettingsTypes.GEOLOCATION][0]
+                      .origin,
                   testElement.sites[0].displayName);
             }
           });

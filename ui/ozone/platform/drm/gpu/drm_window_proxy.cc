@@ -4,6 +4,7 @@
 
 #include "ui/ozone/platform/drm/gpu/drm_window_proxy.h"
 
+#include "ui/gfx/presentation_feedback.h"
 #include "ui/ozone/platform/drm/gpu/drm_thread.h"
 #include "ui/ozone/platform/drm/gpu/overlay_plane.h"
 #include "ui/ozone/platform/drm/gpu/proxy_helpers.h"
@@ -29,9 +30,9 @@ void DrmWindowProxy::SchedulePageFlip(const std::vector<OverlayPlane>& planes,
 void DrmWindowProxy::GetVSyncParameters(
     const gfx::VSyncProvider::UpdateVSyncCallback& callback) {
   drm_thread_->task_runner()->PostTask(
-      FROM_HERE,
-      base::Bind(&DrmThread::GetVSyncParameters, base::Unretained(drm_thread_),
-                 widget_, CreateSafeCallback(callback)));
+      FROM_HERE, base::BindOnce(&DrmThread::GetVSyncParameters,
+                                base::Unretained(drm_thread_), widget_,
+                                CreateSafeCallback(callback)));
 }
 
 }  // namespace ui

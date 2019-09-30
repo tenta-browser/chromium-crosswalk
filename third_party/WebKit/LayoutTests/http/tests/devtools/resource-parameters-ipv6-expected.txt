@@ -1,12 +1,11 @@
 Tests that resources panel shows form data parameters.
 
-  
-
 http://[::1]:8000/devtools/resources/post-target.cgi?queryParam1=queryValue1&queryParam2=
 {
     cache : {
     }
     connection : <string>
+    pageref : "page_1"
     request : {
         bodySize : <number>
         cookies : [
@@ -47,7 +46,7 @@ http://[::1]:8000/devtools/resources/post-target.cgi?queryParam1=queryValue1&que
         content : {
             compression : <number>
             mimeType : "application/xml"
-            size : 14
+            size : <number>
         }
         cookies : [
         ]
@@ -59,7 +58,7 @@ http://[::1]:8000/devtools/resources/post-target.cgi?queryParam1=queryValue1&que
         statusText : "OK"
     }
     serverIPAddress : "[::1]"
-    startedDateTime : <plausible>
+    startedDateTime : <string>
     time : <number>
     timings : <object>
 }

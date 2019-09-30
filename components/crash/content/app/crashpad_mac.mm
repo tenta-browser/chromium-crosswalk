@@ -25,20 +25,20 @@
 #include "third_party/crashpad/crashpad/client/crashpad_client.h"
 #include "third_party/crashpad/crashpad/client/crashpad_info.h"
 #include "third_party/crashpad/crashpad/client/settings.h"
-#include "third_party/crashpad/crashpad/client/simple_string_dictionary.h"
 #include "third_party/crashpad/crashpad/client/simulate_crash.h"
 
 namespace crash_reporter {
 namespace internal {
 
-base::FilePath PlatformCrashpadInitialization(
-    bool initial_client,
-    bool browser_process,
-    bool embedded_handler,
-    const std::string& user_data_dir) {
+base::FilePath PlatformCrashpadInitialization(bool initial_client,
+                                              bool browser_process,
+                                              bool embedded_handler,
+                                              const std::string& user_data_dir,
+                                              const base::FilePath& exe_path) {
   base::FilePath database_path;  // Only valid in the browser process.
   base::FilePath metrics_path;  // Only valid in the browser process.
   DCHECK(!embedded_handler);  // This is not used on Mac.
+  DCHECK(exe_path.empty());   // This is not used on Mac.
 
   if (initial_client) {
     @autoreleasepool {

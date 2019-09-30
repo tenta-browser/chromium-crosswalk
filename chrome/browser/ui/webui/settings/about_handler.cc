@@ -16,7 +16,6 @@
 #include "base/i18n/message_formatter.h"
 #include "base/location.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/string16.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
@@ -284,7 +283,7 @@ AboutHandler* AboutHandler::Create(content::WebUIDataSource* html_source,
           l10n_util::GetStringUTF16(version_info::IsOfficialBuild()
                                         ? IDS_VERSION_UI_OFFICIAL
                                         : IDS_VERSION_UI_UNOFFICIAL),
-          base::UTF8ToUTF16(chrome::GetChannelString()),
+          base::UTF8ToUTF16(chrome::GetChannelName()),
 #if defined(ARCH_CPU_64_BITS)
           l10n_util::GetStringUTF16(IDS_VERSION_UI_64BIT)));
 #else
@@ -336,6 +335,10 @@ AboutHandler* AboutHandler::Create(content::WebUIDataSource* html_source,
   html_source->AddString("aboutUserAgent", GetUserAgent());
   html_source->AddString("aboutJsEngineVersion", V8_VERSION_STRING);
   html_source->AddString("aboutBlinkVersion", content::GetWebKitVersion());
+  html_source->AddString("endOfLifeMessage",
+                         l10n_util::GetStringUTF16(IDS_EOL_NOTIFICATION_EOL));
+  html_source->AddString("endOfLifeLearnMoreURL",
+                         base::ASCIIToUTF16(chrome::kEolNotificationURL));
 #endif
 
   return new AboutHandler();
@@ -343,47 +346,53 @@ AboutHandler* AboutHandler::Create(content::WebUIDataSource* html_source,
 
 void AboutHandler::RegisterMessages() {
   web_ui()->RegisterMessageCallback(
-      "aboutPageReady",
-      base::Bind(&AboutHandler::HandlePageReady, base::Unretained(this)));
+      "aboutPageReady", base::BindRepeating(&AboutHandler::HandlePageReady,
+                                            base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
       "refreshUpdateStatus",
-      base::Bind(&AboutHandler::HandleRefreshUpdateStatus,
-                 base::Unretained(this)));
+      base::BindRepeating(&AboutHandler::HandleRefreshUpdateStatus,
+                          base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
-      "openFeedbackDialog", base::Bind(&AboutHandler::HandleOpenFeedbackDialog,
-                                       base::Unretained(this)));
+      "openFeedbackDialog",
+      base::BindRepeating(&AboutHandler::HandleOpenFeedbackDialog,
+                          base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
-      "openHelpPage",
-      base::Bind(&AboutHandler::HandleOpenHelpPage, base::Unretained(this)));
+      "openHelpPage", base::BindRepeating(&AboutHandler::HandleOpenHelpPage,
+                                          base::Unretained(this)));
 #if defined(OS_CHROMEOS)
   web_ui()->RegisterMessageCallback(
-      "setChannel",
-      base::Bind(&AboutHandler::HandleSetChannel, base::Unretained(this)));
+      "setChannel", base::BindRepeating(&AboutHandler::HandleSetChannel,
+                                        base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
-      "requestUpdate",
-      base::Bind(&AboutHandler::HandleRequestUpdate, base::Unretained(this)));
+      "requestUpdate", base::BindRepeating(&AboutHandler::HandleRequestUpdate,
+                                           base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
       "requestUpdateOverCellular",
-      base::Bind(&AboutHandler::HandleRequestUpdateOverCellular,
-                 base::Unretained(this)));
+      base::BindRepeating(&AboutHandler::HandleRequestUpdateOverCellular,
+                          base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
-      "getVersionInfo",
-      base::Bind(&AboutHandler::HandleGetVersionInfo, base::Unretained(this)));
+      "getVersionInfo", base::BindRepeating(&AboutHandler::HandleGetVersionInfo,
+                                            base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
-      "getRegulatoryInfo", base::Bind(&AboutHandler::HandleGetRegulatoryInfo,
-                                      base::Unretained(this)));
+      "getRegulatoryInfo",
+      base::BindRepeating(&AboutHandler::HandleGetRegulatoryInfo,
+                          base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
-      "getChannelInfo", base::Bind(&AboutHandler::HandleGetChannelInfo,
-                                   base::Unretained(this)));
+      "getChannelInfo", base::BindRepeating(&AboutHandler::HandleGetChannelInfo,
+                                            base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
       "refreshTPMFirmwareUpdateStatus",
-      base::Bind(&AboutHandler::HandleRefreshTPMFirmwareUpdateStatus,
-                 base::Unretained(this)));
+      base::BindRepeating(&AboutHandler::HandleRefreshTPMFirmwareUpdateStatus,
+                          base::Unretained(this)));
+  web_ui()->RegisterMessageCallback(
+      "getHasEndOfLife",
+      base::BindRepeating(&AboutHandler::HandleGetHasEndOfLife,
+                          base::Unretained(this)));
 #endif
 #if defined(OS_MACOSX)
   web_ui()->RegisterMessageCallback(
-      "promoteUpdater",
-      base::Bind(&AboutHandler::PromoteUpdater, base::Unretained(this)));
+      "promoteUpdater", base::BindRepeating(&AboutHandler::PromoteUpdater,
+                                            base::Unretained(this)));
 #endif
 
 #if defined(OS_CHROMEOS)
@@ -595,7 +604,8 @@ void AboutHandler::HandleRefreshTPMFirmwareUpdateStatus(
     const base::ListValue* args) {
   chromeos::tpm_firmware_update::ShouldOfferUpdateViaPowerwash(
       base::Bind(&AboutHandler::RefreshTPMFirmwareUpdateStatus,
-                 weak_factory_.GetWeakPtr()));
+                 weak_factory_.GetWeakPtr()),
+      base::TimeDelta());
 }
 
 void AboutHandler::RefreshTPMFirmwareUpdateStatus(bool update_available) {
@@ -603,6 +613,25 @@ void AboutHandler::RefreshTPMFirmwareUpdateStatus(bool update_available) {
   event->SetBoolean("updateAvailable", update_available);
   FireWebUIListener("tpm-firmware-update-status-changed", *event);
 }
+
+void AboutHandler::HandleGetHasEndOfLife(const base::ListValue* args) {
+  CHECK_EQ(1U, args->GetSize());
+  std::string callback_id;
+  CHECK(args->GetString(0, &callback_id));
+  version_updater_->GetEolStatus(
+      base::BindOnce(&AboutHandler::OnGetEndOfLifeStatus,
+                     weak_factory_.GetWeakPtr(), callback_id));
+}
+
+void AboutHandler::OnGetEndOfLifeStatus(std::string callback_id,
+                                        update_engine::EndOfLifeStatus status) {
+  // Check for EndOfLifeStatus::kEol only because
+  // EndOfLifeStatus::kSecurityOnly state is no longer supported.
+  ResolveJavascriptCallback(
+      base::Value(callback_id),
+      base::Value(status == update_engine::EndOfLifeStatus::kEol));
+}
+
 #endif  // defined(OS_CHROMEOS)
 
 void AboutHandler::RequestUpdate() {
@@ -637,9 +666,9 @@ void AboutHandler::SetUpdateStatus(VersionUpdater::Status status,
     if (!types_msg.empty())
       event->SetString("connectionTypes", types_msg);
     else
-      event->Set("connectionTypes", base::MakeUnique<base::Value>());
+      event->Set("connectionTypes", std::make_unique<base::Value>());
   } else {
-    event->Set("connectionTypes", base::MakeUnique<base::Value>());
+    event->Set("connectionTypes", std::make_unique<base::Value>());
   }
 #endif  // defined(OS_CHROMEOS)
 

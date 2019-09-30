@@ -10,26 +10,11 @@
 #ifndef CONTENT_COMMON_ACCESSIBILITY_MESSAGES_H_
 #error "Failed to include content/common/accessibility_messages.h"
 #endif
-#undef CONTENT_COMMON_APPCACHE_MESSAGES_H_
-#include "content/common/appcache_messages.h"
-#ifndef CONTENT_COMMON_APPCACHE_MESSAGES_H_
-#error "Failed to include content/common/appcache_messages.h"
-#endif
 #undef CONTENT_COMMON_BROWSER_PLUGIN_BROWSER_PLUGIN_MESSAGES_H_
 #include "content/common/browser_plugin/browser_plugin_messages.h"
 #ifndef CONTENT_COMMON_BROWSER_PLUGIN_BROWSER_PLUGIN_MESSAGES_H_
 #error \
     "Failed to include content/common/browser_plugin/browser_plugin_messages.h"
-#endif
-#undef CONTENT_COMMON_CACHE_STORAGE_CACHE_STORAGE_MESSAGES_H_
-#include "content/common/cache_storage/cache_storage_messages.h"
-#ifndef CONTENT_COMMON_CACHE_STORAGE_CACHE_STORAGE_MESSAGES_H_
-#error "Failed to include content/common/cache_storage/cache_storage_messages.h"
-#endif
-#undef CONTENT_COMMON_DEVTOOLS_MESSAGES_H_
-#include "content/common/devtools_messages.h"
-#ifndef CONTENT_COMMON_DEVTOOLS_MESSAGES_H_
-#error "Failed to include content/common/devtools_messages.h"
 #endif
 #undef CONTENT_COMMON_DOM_STORAGE_DOM_STORAGE_MESSAGES_H_
 #include "content/common/dom_storage/dom_storage_messages.h"
@@ -77,12 +62,6 @@
 #ifndef CONTENT_COMMON_MEDIA_MEDIA_PLAYER_DELEGATE_MESSAGES_H_
 #error "Failed to include content/common/media/media_player_delegate_messages.h"
 #endif
-#undef CONTENT_COMMON_MEDIA_MEDIA_STREAM_TRACK_METRICS_HOST_MESSAGES_H_
-#include "content/common/media/media_stream_track_metrics_host_messages.h"
-#ifndef CONTENT_COMMON_MEDIA_MEDIA_STREAM_TRACK_METRICS_HOST_MESSAGES_H_
-#error \
-    "Failed to include content/common/media/media_stream_track_metrics_host_messages.h"
-#endif
 #undef CONTENT_COMMON_MEDIA_MIDI_MESSAGES_H_
 #include "content/common/media/midi_messages.h"
 #ifndef CONTENT_COMMON_MEDIA_MIDI_MESSAGES_H_
@@ -109,12 +88,6 @@
 #ifndef CONTENT_COMMON_RESOURCE_MESSAGES_H_
 #error "Failed to include content/common/resource_messages.h"
 #endif
-#undef CONTENT_COMMON_SERVICE_WORKER_EMBEDDED_WORKER_MESSAGES_H_
-#include "content/common/service_worker/embedded_worker_messages.h"
-#ifndef CONTENT_COMMON_SERVICE_WORKER_EMBEDDED_WORKER_MESSAGES_H_
-#error \
-    "Failed to include content/common/service_worker/embedded_worker_messages.h"
-#endif
 #undef CONTENT_COMMON_SERVICE_WORKER_SERVICE_WORKER_MESSAGES_H_
 #include "content/common/service_worker/service_worker_messages.h"
 #ifndef CONTENT_COMMON_SERVICE_WORKER_SERVICE_WORKER_MESSAGES_H_
@@ -136,7 +109,13 @@
 #ifndef CONTENT_COMMON_VIEW_MESSAGES_H_
 #error "Failed to include content/common/view_messages.h"
 #endif
-#include "media/media_features.h"
+#include "media/media_buildflags.h"
+
+#undef CONTENT_COMMON_SYNC_COMPOSITOR_MESSAGES_H_
+#include "content/common/input/sync_compositor_messages.h"
+#ifndef CONTENT_COMMON_SYNC_COMPOSITOR_MESSAGES_H_
+#error "Failed to include content/common/input/sync_compositor_messages.h"
+#endif
 
 #if BUILDFLAG(ENABLE_WEBRTC)
 #undef CONTENT_COMMON_P2P_MESSAGES_H_
@@ -147,11 +126,6 @@
 #endif
 
 #if defined(OS_ANDROID)
-#undef CONTENT_COMMON_ANDROID_SYNC_COMPOSITOR_MESSAGES_H_
-#include "content/common/android/sync_compositor_messages.h"
-#ifndef CONTENT_COMMON_ANDROID_SYNC_COMPOSITOR_MESSAGES_H_
-#error "Failed to include content/common/android/sync_compositor_messages.h"
-#endif
 #undef CONTENT_COMMON_GIN_JAVA_BRIDGE_MESSAGES_H_
 #include "content/common/gin_java_bridge_messages.h"
 #ifndef CONTENT_COMMON_GIN_JAVA_BRIDGE_MESSAGES_H_
@@ -169,11 +143,3 @@
     "Failed to include content/common/media/surface_view_manager_messages_android.h"
 #endif
 #endif  // defined(OS_ANDROID)
-
-#if defined(OS_WIN)
-#undef CONTENT_COMMON_DWRITE_FONT_PROXY_MESSAGES_H_
-#include "content/common/dwrite_font_proxy_messages.h"
-#ifndef CONTENT_COMMON_DWRITE_FONT_PROXY_MESSAGES_H_
-#error "Failed to include content/common/dwrite_font_proxy_messages.h"
-#endif
-#endif  // defined(OS_WIN)

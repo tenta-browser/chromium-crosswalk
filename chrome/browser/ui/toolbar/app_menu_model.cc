@@ -8,7 +8,7 @@
 #include <cmath>
 
 #include "base/command_line.h"
-#include "base/debug/debugging_flags.h"
+#include "base/debug/debugging_buildflags.h"
 #include "base/debug/profiler.h"
 #include "base/i18n/number_formatting.h"
 #include "base/macros.h"
@@ -54,6 +54,7 @@
 #include "components/prefs/pref_service.h"
 #include "components/signin/core/browser/profile_management_switches.h"
 #include "components/signin/core/browser/signin_manager.h"
+#include "components/signin/core/browser/signin_metrics.h"
 #include "components/strings/grit/components_strings.h"
 #include "components/zoom/zoom_controller.h"
 #include "components/zoom/zoom_event_manager.h"
@@ -69,13 +70,13 @@
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/gfx/image/image.h"
 #include "ui/gfx/image/image_skia.h"
+#include "ui/gfx/text_elider.h"
 
 #if defined(GOOGLE_CHROME_BUILD)
 #include "base/feature_list.h"
 #endif
 
 #if defined(OS_CHROMEOS)
-#include "ash/shell.h"
 #include "chromeos/chromeos_switches.h"
 #endif
 
@@ -90,6 +91,8 @@ using base::UserMetricsAction;
 using content::WebContents;
 
 namespace {
+
+constexpr size_t kMaxAppNameLength = 30;
 
 #if defined(OS_MACOSX)
 // An empty command used because of a bug in AppKit menus.
@@ -106,6 +109,23 @@ base::string16 GetUpgradeDialogMenuItemName() {
   } else {
     return l10n_util::GetStringUTF16(IDS_UPDATE_NOW);
   }
+}
+
+// Returns the appropriate menu label for the IDC_CREATE_HOSTED_APP command.
+base::string16 GetCreateHostedAppMenuItemName(Browser* browser) {
+  if (browser->tab_strip_model()) {
+    WebContents* web_contents =
+        browser->tab_strip_model()->GetActiveWebContents();
+    if (web_contents) {
+      base::string16 app_name =
+          banners::AppBannerManager::GetInstallableAppName(web_contents);
+      if (!app_name.empty()) {
+        return l10n_util::GetStringFUTF16(IDS_INSTALL_TO_OS_LAUNCH_SURFACE,
+                                          app_name);
+      }
+    }
+  }
+  return l10n_util::GetStringUTF16(IDS_ADD_TO_OS_LAUNCH_SURFACE);
 }
 
 }  // namespace
@@ -250,6 +270,7 @@ bool AppMenuModel::IsItemForCommandIdDynamic(int command_id) const {
 #elif defined(OS_WIN)
          command_id == IDC_PIN_TO_START_SCREEN ||
 #endif
+         command_id == IDC_CREATE_HOSTED_APP ||
          command_id == IDC_UPGRADE_DIALOG;
 }
 
@@ -272,6 +293,8 @@ base::string16 AppMenuModel::GetLabelForCommandId(int command_id) const {
       return l10n_util::GetStringUTF16(string_id);
     }
 #endif
+    case IDC_CREATE_HOSTED_APP:
+      return GetCreateHostedAppMenuItemName(browser_);
     case IDC_UPGRADE_DIALOG:
       return GetUpgradeDialogMenuItemName();
     default:
@@ -572,17 +595,38 @@ void AppMenuModel::LogMenuMetrics(int command_id) {
         UMA_HISTOGRAM_MEDIUM_TIMES("WrenchMenu.TimeToAction.Exit", delta);
       LogMenuAction(MENU_ACTION_EXIT);
       break;
+
+    // Hosted App menu.
+    case IDC_COPY_URL:
+      if (!uma_action_recorded_)
+        UMA_HISTOGRAM_MEDIUM_TIMES("WrenchMenu.TimeToAction.CopyUrl", delta);
+      LogMenuAction(MENU_ACTION_COPY_URL);
+      break;
+    case IDC_OPEN_IN_CHROME:
+      if (!uma_action_recorded_) {
+        UMA_HISTOGRAM_MEDIUM_TIMES("WrenchMenu.TimeToAction.OpenInChrome",
+                                   delta);
+      }
+      LogMenuAction(MENU_ACTION_OPEN_IN_CHROME);
+      break;
+    case IDC_SITE_SETTINGS:
+      if (!uma_action_recorded_) {
+        UMA_HISTOGRAM_MEDIUM_TIMES("WrenchMenu.TimeToAction.SiteSettings",
+                                   delta);
+      }
+      LogMenuAction(MENU_ACTION_SITE_SETTINGS);
+      break;
+    case IDC_HOSTED_APP_MENU_APP_INFO:
+      if (!uma_action_recorded_)
+        UMA_HISTOGRAM_MEDIUM_TIMES("WrenchMenu.TimeToAction.AppInfo", delta);
+      LogMenuAction(MENU_ACTION_APP_INFO);
+      break;
   }
 
   if (!uma_action_recorded_) {
     UMA_HISTOGRAM_MEDIUM_TIMES("WrenchMenu.TimeToAction", delta);
     uma_action_recorded_ = true;
   }
-}
-
-void AppMenuModel::LogMenuAction(AppMenuAction action_id) {
-  UMA_HISTOGRAM_ENUMERATION("WrenchMenu.MenuAction", action_id,
-                            LIMIT_MENU_ACTION);
 }
 
 bool AppMenuModel::IsCommandIdChecked(int command_id) const {
@@ -664,6 +708,11 @@ void AppMenuModel::Observe(int type,
   UpdateZoomControls();
 }
 
+void AppMenuModel::LogMenuAction(AppMenuAction action_id) {
+  UMA_HISTOGRAM_ENUMERATION("WrenchMenu.MenuAction", action_id,
+                            LIMIT_MENU_ACTION);
+}
+
 // Note: When adding new menu items please place under an appropriate section.
 // Menu is organised as follows:
 // - Extension toolbar overflow.
@@ -674,7 +723,11 @@ void AppMenuModel::Observe(int type,
 // - Learn about the browser and global customisation e.g. settings, help.
 // - Browser relaunch, quit.
 void AppMenuModel::Build() {
-  CreateActionToolbarOverflowMenu();
+  // Build (and, by extension, Init) should only be called once.
+  DCHECK_EQ(0, GetItemCount());
+
+  if (CreateActionToolbarOverflowMenu())
+    AddSeparator(ui::UPPER_SEPARATOR);
 
   AddItem(IDC_VIEW_INCOMPATIBILITIES,
       l10n_util::GetStringUTF16(IDS_VIEW_INCOMPATIBILITIES));
@@ -696,7 +749,7 @@ void AppMenuModel::Build() {
 
   if (!browser_->profile()->IsOffTheRecord()) {
     recent_tabs_sub_menu_model_ =
-        base::MakeUnique<RecentTabsSubMenuModel>(provider_, browser_);
+        std::make_unique<RecentTabsSubMenuModel>(provider_, browser_);
     AddSubMenuWithStringId(IDC_RECENT_TABS_MENU, IDS_HISTORY_MENU,
                            recent_tabs_sub_menu_model_.get());
   }
@@ -707,7 +760,9 @@ void AppMenuModel::Build() {
                            bookmark_sub_menu_model_.get());
   }
 
+  AddSeparator(ui::LOWER_SEPARATOR);
   CreateZoomMenu();
+  AddSeparator(ui::UPPER_SEPARATOR);
   AddItemWithStringId(IDC_PRINT, IDS_PRINT);
 
   if (media_router::MediaRouterEnabled(browser()->profile()))
@@ -716,7 +771,18 @@ void AppMenuModel::Build() {
   AddItemWithStringId(IDC_FIND, IDS_FIND);
   if (extensions::util::IsNewBookmarkAppsEnabled() &&
       banners::AppBannerManager::IsExperimentalAppBannersEnabled()) {
-    AddItemWithStringId(IDC_CREATE_HOSTED_APP, IDS_ADD_TO_OS_LAUNCH_SURFACE);
+    const extensions::Extension* pwa =
+        extensions::util::GetPwaForSecureActiveTab(browser_);
+    if (pwa) {
+      AddItem(
+          IDC_OPEN_IN_PWA_WINDOW,
+          l10n_util::GetStringFUTF16(
+              IDS_OPEN_IN_APP_WINDOW,
+              gfx::TruncateString(base::UTF8ToUTF16(pwa->name()),
+                                  kMaxAppNameLength, gfx::CHARACTER_BREAK)));
+    } else {
+      AddItem(IDC_CREATE_HOSTED_APP, GetCreateHostedAppMenuItemName(browser_));
+    }
   }
 
   if (base::CommandLine::ForCurrentProcess()->HasSwitch(
@@ -725,9 +791,9 @@ void AppMenuModel::Build() {
   tools_menu_model_.reset(new ToolsMenuModel(this, browser_));
   AddSubMenuWithStringId(
       IDC_MORE_TOOLS_MENU, IDS_MORE_TOOLS_MENU, tools_menu_model_.get());
-  // Append the full menu including separators. The final separator only gets
-  // appended when this is a touch menu - otherwise it would get added twice.
+  AddSeparator(ui::LOWER_SEPARATOR);
   CreateCutCopyPasteMenu();
+  AddSeparator(ui::UPPER_SEPARATOR);
 
   AddItemWithStringId(IDC_OPTIONS, IDS_SETTINGS);
 // The help submenu is only displayed on official Chrome builds. As the
@@ -754,7 +820,7 @@ void AppMenuModel::Build() {
   uma_action_recorded_ = false;
 }
 
-void AppMenuModel::CreateActionToolbarOverflowMenu() {
+bool AppMenuModel::CreateActionToolbarOverflowMenu() {
   // We only add the extensions overflow container if there are any icons that
   // aren't shown in the main container.
   // browser_->window() can return null during startup, and
@@ -770,13 +836,12 @@ void AppMenuModel::CreateActionToolbarOverflowMenu() {
     AddItem(kEmptyMenuItemCommand, base::string16());
 #endif
     AddItem(IDC_EXTENSIONS_OVERFLOW_MENU, base::string16());
-    AddSeparator(ui::UPPER_SEPARATOR);
+    return true;
   }
+  return false;
 }
 
 void AppMenuModel::CreateCutCopyPasteMenu() {
-  AddSeparator(ui::LOWER_SEPARATOR);
-
   // WARNING: Mac does not use the ButtonMenuItemModel, but instead defines the
   // layout for this menu item in AppMenu.xib. It does, however, use the
   // command_id value from AddButtonItem() to identify this special item.
@@ -785,14 +850,9 @@ void AppMenuModel::CreateCutCopyPasteMenu() {
   edit_menu_item_model_->AddGroupItemWithStringId(IDC_COPY, IDS_COPY);
   edit_menu_item_model_->AddGroupItemWithStringId(IDC_PASTE, IDS_PASTE);
   AddButtonItem(IDC_EDIT_MENU, edit_menu_item_model_.get());
-
-  AddSeparator(ui::UPPER_SEPARATOR);
 }
 
 void AppMenuModel::CreateZoomMenu() {
-  // This menu needs to be enclosed by separators.
-  AddSeparator(ui::LOWER_SEPARATOR);
-
   // WARNING: Mac does not use the ButtonMenuItemModel, but instead defines the
   // layout for this menu item in AppMenu.xib. It does, however, use the
   // command_id value from AddButtonItem() to identify this special item.
@@ -805,8 +865,6 @@ void AppMenuModel::CreateZoomMenu() {
   zoom_menu_item_model_->AddItemWithImage(IDC_FULLSCREEN,
                                           IDR_FULLSCREEN_MENU_BUTTON);
   AddButtonItem(IDC_ZOOM_MENU, zoom_menu_item_model_.get());
-
-  AddSeparator(ui::UPPER_SEPARATOR);
 }
 
 void AppMenuModel::UpdateZoomControls() {
@@ -846,8 +904,8 @@ bool AppMenuModel::AddGlobalErrorMenuItems() {
               error->MenuItemIcon());
       menu_items_added = true;
       if (IDC_SHOW_SIGNIN_ERROR == error->MenuItemCommandID()) {
-        base::RecordAction(
-            base::UserMetricsAction("Signin_Impression_FromMenu"));
+        signin_metrics::RecordSigninImpressionUserActionForAccessPoint(
+            signin_metrics::AccessPoint::ACCESS_POINT_MENU);
       }
     }
   }

@@ -4,6 +4,7 @@
 
 package org.chromium.chrome.browser.vr_shell;
 
+import android.view.MotionEvent;
 import android.view.View;
 
 import org.chromium.base.annotations.CalledByNative;
@@ -13,14 +14,15 @@ import org.chromium.content.browser.MotionEventSynthesizer;
 /**
  * Forwards events for Java native UI pages to MotionEventSynthesizer.
  */
-@JNINamespace("vr_shell")
+@JNINamespace("vr")
 public class AndroidUiGestureTarget {
     private final MotionEventSynthesizer mMotionEventSynthesizer;
     private final long mNativePointer;
 
-    public AndroidUiGestureTarget(View target, float scaleFactor, float scrollRatio) {
+    public AndroidUiGestureTarget(
+            View target, float scaleFactor, float scrollRatio, int touchSlop) {
         mMotionEventSynthesizer = new MotionEventSynthesizer(target);
-        mNativePointer = nativeInit(scaleFactor, scrollRatio);
+        mNativePointer = nativeInit(scaleFactor, scrollRatio, touchSlop);
     }
 
     @CalledByNative
@@ -30,7 +32,8 @@ public class AndroidUiGestureTarget {
 
     @CalledByNative
     private void setPointer(int x, int y) {
-        mMotionEventSynthesizer.setPointer(0 /* index */, x, y, 0 /* id */);
+        mMotionEventSynthesizer.setPointer(
+                0 /* index */, x, y, 0 /* id */, MotionEvent.TOOL_TYPE_STYLUS);
     }
 
     @CalledByNative
@@ -38,5 +41,5 @@ public class AndroidUiGestureTarget {
         return mNativePointer;
     }
 
-    private native long nativeInit(float scaleFactor, float scrollRatio);
+    private native long nativeInit(float scaleFactor, float scrollRatio, int touchSlop);
 }

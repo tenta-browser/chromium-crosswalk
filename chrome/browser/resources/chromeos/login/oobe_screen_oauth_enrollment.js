@@ -24,8 +24,6 @@ login.createScreen('OAuthEnrollmentScreen', 'oauth-enrollment', function() {
   /** @const */ var STEP_ACTIVE_DIRECTORY_JOIN_ERROR =
       'active-directory-join-error';
 
-  /** @const */ var HELP_TOPIC_ENROLLMENT = 4631259;
-
   return {
     EXTERNAL_API: [
       'showStep',
@@ -150,9 +148,10 @@ login.createScreen('OAuthEnrollmentScreen', 'oauth-enrollment', function() {
         this.offlineAdUi_.disabled = true;
         this.activeDirectoryMachine_ = e.detail.machinename;
         this.activeDirectoryUsername_ = e.detail.username;
-        chrome.send(
-            'oauthEnrollAdCompleteLogin',
-            [e.detail.machinename, e.detail.username, e.detail.password]);
+        chrome.send('oauthEnrollAdCompleteLogin', [
+          e.detail.machinename, e.detail.distinguished_name,
+          e.detail.encryption_types, e.detail.username, e.detail.password
+        ]);
       }.bind(this));
 
       this.authenticator_.addEventListener(

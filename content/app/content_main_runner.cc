@@ -15,7 +15,7 @@
 
 #include "base/allocator/allocator_check.h"
 #include "base/allocator/allocator_extension.h"
-#include "base/allocator/features.h"
+#include "base/allocator/buildflags.h"
 #include "base/at_exit.h"
 #include "base/base_switches.h"
 #include "base/command_line.h"
@@ -29,7 +29,6 @@
 #include "base/macros.h"
 #include "base/metrics/field_trial.h"
 #include "base/metrics/histogram_base.h"
-#include "base/metrics/statistics_recorder.h"
 #include "base/path_service.h"
 #include "base/process/launch.h"
 #include "base/process/memory.h"
@@ -53,14 +52,17 @@
 #include "content/public/common/content_switches.h"
 #include "content/public/common/main_function_params.h"
 #include "content/public/common/sandbox_init.h"
+#include "content/public/common/zygote_buildflags.h"
 #include "gin/v8_initializer.h"
 #include "media/base/media.h"
-#include "media/media_features.h"
-#include "ppapi/features/features.h"
+#include "media/media_buildflags.h"
+#include "ppapi/buildflags/buildflags.h"
 #include "services/service_manager/embedder/switches.h"
 #include "services/service_manager/sandbox/sandbox_type.h"
 #include "ui/base/ui_base_paths.h"
 #include "ui/base/ui_base_switches.h"
+#include "ui/display/display_switches.h"
+#include "ui/gfx/switches.h"
 
 #if defined(OS_WIN)
 #include <malloc.h>
@@ -87,9 +89,37 @@
 #endif
 #if !defined(OS_MACOSX) && !defined(OS_ANDROID)
 #include "content/zygote/zygote_main.h"
+#include "sandbox/linux/services/libc_interceptor.h"
 #endif
 
 #endif  // OS_POSIX
+
+#if defined(OS_LINUX)
+#include "base/native_library.h"
+#include "base/rand_util.h"
+#include "content/common/font_config_ipc_linux.h"
+#include "content/public/common/common_sandbox_support_linux.h"
+#include "third_party/blink/public/platform/web_font_render_style.h"
+#include "third_party/boringssl/src/include/openssl/crypto.h"
+#include "third_party/boringssl/src/include/openssl/rand.h"
+#include "third_party/skia/include/ports/SkFontConfigInterface.h"
+#include "third_party/skia/include/ports/SkFontMgr.h"
+#include "third_party/skia/include/ports/SkFontMgr_android.h"
+
+#if BUILDFLAG(ENABLE_PLUGINS)
+#include "content/common/pepper_plugin_list.h"
+#include "content/public/common/pepper_plugin_info.h"
+#endif
+
+#if BUILDFLAG(ENABLE_LIBRARY_CDMS)
+#include "content/public/common/cdm_info.h"
+#include "content/public/common/content_client.h"
+#endif
+
+#if BUILDFLAG(ENABLE_WEBRTC)
+#include "third_party/webrtc_overrides/init_webrtc.h"  // nogncheck
+#endif
+#endif  // OS_LINUX
 
 #if !defined(CHROME_MULTIPLE_DLL_BROWSER)
 #include "content/public/gpu/content_gpu_client.h"
@@ -105,10 +135,19 @@
 #if !defined(CHROME_MULTIPLE_DLL_BROWSER) && !defined(CHROME_MULTIPLE_DLL_CHILD)
 #include "content/browser/gpu/gpu_main_thread_factory.h"
 #include "content/browser/renderer_host/render_process_host_impl.h"
-#include "content/browser/utility_process_host_impl.h"
+#include "content/browser/utility_process_host.h"
 #include "content/gpu/in_process_gpu_thread.h"
 #include "content/renderer/in_process_renderer_thread.h"
 #include "content/utility/in_process_utility_thread.h"
+#endif
+
+#if BUILDFLAG(USE_ZYGOTE_HANDLE)
+#include "content/browser/sandbox_host_linux.h"
+#include "content/browser/zygote_host/zygote_communication_linux.h"
+#include "content/browser/zygote_host/zygote_host_impl_linux.h"
+#include "content/public/common/common_sandbox_support_linux.h"
+#include "content/public/common/zygote_handle.h"
+#include "media/base/media_switches.h"
 #endif
 
 namespace content {
@@ -170,39 +209,35 @@ void InitializeFieldTrialAndFeatureList(
 }
 
 #if defined(V8_USE_EXTERNAL_STARTUP_DATA)
-void LoadV8ContextSnapshotFile() {
-#if defined(OS_POSIX) && !defined(OS_MACOSX)
-  base::FileDescriptorStore& file_descriptor_store =
-      base::FileDescriptorStore::GetInstance();
-  base::MemoryMappedFile::Region region;
-  base::ScopedFD fd = file_descriptor_store.MaybeTakeFD(
-      kV8ContextSnapshotDataDescriptor, &region);
-  if (fd.is_valid()) {
-    gin::V8Initializer::LoadV8ContextSnapshotFromFD(fd.get(), region.offset,
-                                                    region.size);
-    return;
-  }
-#endif  // OS_POSIX && !OS_MACOSX
-#if !defined(CHROME_MULTIPLE_DLL_BROWSER)
-  gin::V8Initializer::LoadV8ContextSnapshot();
-#endif  // !CHROME_MULTIPLE_DLL_BROWSER
-}
-
 void LoadV8SnapshotFile() {
+#if defined(USE_V8_CONTEXT_SNAPSHOT)
+  static constexpr gin::V8Initializer::V8SnapshotFileType kSnapshotType =
+      gin::V8Initializer::V8SnapshotFileType::kWithAdditionalContext;
+  static const char* snapshot_data_descriptor =
+      kV8ContextSnapshotDataDescriptor;
+#else
+  static constexpr gin::V8Initializer::V8SnapshotFileType kSnapshotType =
+      gin::V8Initializer::V8SnapshotFileType::kDefault;
+  static const char* snapshot_data_descriptor = kV8SnapshotDataDescriptor;
+#endif  // USE_V8_CONTEXT_SNAPSHOT
+  ALLOW_UNUSED_LOCAL(kSnapshotType);
+  ALLOW_UNUSED_LOCAL(snapshot_data_descriptor);
+
 #if defined(OS_POSIX) && !defined(OS_MACOSX)
   base::FileDescriptorStore& file_descriptor_store =
       base::FileDescriptorStore::GetInstance();
   base::MemoryMappedFile::Region region;
   base::ScopedFD fd =
-      file_descriptor_store.MaybeTakeFD(kV8SnapshotDataDescriptor, &region);
+      file_descriptor_store.MaybeTakeFD(snapshot_data_descriptor, &region);
   if (fd.is_valid()) {
     gin::V8Initializer::LoadV8SnapshotFromFD(fd.get(), region.offset,
-                                             region.size);
+                                             region.size, kSnapshotType);
     return;
   }
 #endif  // OS_POSIX && !OS_MACOSX
+
 #if !defined(CHROME_MULTIPLE_DLL_BROWSER)
-  gin::V8Initializer::LoadV8Snapshot();
+  gin::V8Initializer::LoadV8Snapshot(kSnapshotType);
 #endif  // !CHROME_MULTIPLE_DLL_BROWSER
 }
 
@@ -233,9 +268,172 @@ void InitializeV8IfNeeded(const base::CommandLine& command_line,
 #if defined(V8_USE_EXTERNAL_STARTUP_DATA)
   LoadV8SnapshotFile();
   LoadV8NativesFile();
-  LoadV8ContextSnapshotFile();
 #endif  // V8_USE_EXTERNAL_STARTUP_DATA
 }
+
+#if BUILDFLAG(USE_ZYGOTE_HANDLE)
+pid_t LaunchZygoteHelper(base::CommandLine* cmd_line,
+                         base::ScopedFD* control_fd) {
+  // Append any switches from the browser process that need to be forwarded on
+  // to the zygote/renderers.
+  static const char* const kForwardSwitches[] = {
+      switches::kAndroidFontsPath, switches::kClearKeyCdmPathForTesting,
+      switches::kEnableHeapProfiling,
+      switches::kEnableLogging,  // Support, e.g., --enable-logging=stderr.
+      // Need to tell the zygote that it is headless so that we don't try to use
+      // the wrong type of main delegate.
+      switches::kHeadless,
+      // Zygote process needs to know what resources to have loaded when it
+      // becomes a renderer process.
+      switches::kForceDeviceScaleFactor, switches::kLoggingLevel,
+      switches::kPpapiInProcess, switches::kRegisterPepperPlugins, switches::kV,
+      switches::kVModule,
+  };
+  cmd_line->CopySwitchesFrom(*base::CommandLine::ForCurrentProcess(),
+                             kForwardSwitches, arraysize(kForwardSwitches));
+
+  GetContentClient()->browser()->AppendExtraCommandLineSwitches(cmd_line, -1);
+
+  // Start up the sandbox host process and get the file descriptor for the
+  // sandboxed processes to talk to it.
+  base::FileHandleMappingVector additional_remapped_fds;
+  additional_remapped_fds.emplace_back(
+      SandboxHostLinux::GetInstance()->GetChildSocket(), GetSandboxFD());
+
+  return ZygoteHostImpl::GetInstance()->LaunchZygote(
+      cmd_line, control_fd, std::move(additional_remapped_fds));
+}
+
+// Initializes the Zygote sandbox host. No thread should be created before this
+// call, as InitializeZygoteSandboxForBrowserProcess() will end-up using fork().
+void InitializeZygoteSandboxForBrowserProcess(
+    const base::CommandLine& parsed_command_line) {
+  TRACE_EVENT0("startup", "SetupSandbox");
+  // SandboxHostLinux needs to be initialized even if the sandbox and
+  // zygote are both disabled. It initializes the sandboxed process socket.
+  SandboxHostLinux::GetInstance()->Init();
+
+  if (parsed_command_line.HasSwitch(switches::kNoZygote) &&
+      !parsed_command_line.HasSwitch(switches::kNoSandbox)) {
+    LOG(ERROR) << "--no-sandbox should be used together with --no--zygote";
+    exit(EXIT_FAILURE);
+  }
+
+  // Tickle the zygote host so it forks now.
+  ZygoteHostImpl::GetInstance()->Init(parsed_command_line);
+  ZygoteHandle generic_zygote =
+      CreateGenericZygote(base::BindOnce(LaunchZygoteHelper));
+
+  // TODO(kerrnel): Investigate doing this without the ZygoteHostImpl as a
+  // proxy. It is currently done this way due to concerns about race
+  // conditions.
+  ZygoteHostImpl::GetInstance()->SetRendererSandboxStatus(
+      generic_zygote->GetSandboxStatus());
+}
+#endif  // BUILDFLAG(USE_ZYGOTE_HANDLE)
+
+#if defined(OS_LINUX)
+
+#if BUILDFLAG(ENABLE_PLUGINS)
+// Loads the (native) libraries but does not initialize them (i.e., does not
+// call PPP_InitializeModule). This is needed by the zygote on Linux to get
+// access to the plugins before entering the sandbox.
+void PreloadPepperPlugins() {
+  std::vector<PepperPluginInfo> plugins;
+  ComputePepperPluginList(&plugins);
+  for (const auto& plugin : plugins) {
+    if (!plugin.is_internal) {
+      base::NativeLibraryLoadError error;
+      base::NativeLibrary library =
+          base::LoadNativeLibrary(plugin.path, &error);
+      VLOG_IF(1, !library) << "Unable to load plugin " << plugin.path.value()
+                           << " " << error.ToString();
+
+      ignore_result(library);  // Prevent release-mode warning.
+    }
+  }
+}
+#endif
+
+#if BUILDFLAG(ENABLE_LIBRARY_CDMS)
+// Loads registered library CDMs but does not initialize them. This is needed by
+// the zygote on Linux to get access to the CDMs before entering the sandbox.
+void PreloadLibraryCdms() {
+  std::vector<CdmInfo> cdms;
+  GetContentClient()->AddContentDecryptionModules(&cdms, nullptr);
+  for (const auto& cdm : cdms) {
+    base::NativeLibraryLoadError error;
+    base::NativeLibrary library = base::LoadNativeLibrary(cdm.path, &error);
+    VLOG_IF(1, !library) << "Unable to load CDM " << cdm.path.value()
+                         << " (error: " << error.ToString() << ")";
+    ignore_result(library);  // Prevent release-mode warning.
+  }
+}
+#endif  // BUILDFLAG(ENABLE_LIBRARY_CDMS)
+
+#if BUILDFLAG(USE_ZYGOTE_HANDLE)
+void PreSandboxInit() {
+#if defined(ARCH_CPU_ARM_FAMILY)
+  // On ARM, BoringSSL requires access to /proc/cpuinfo to determine processor
+  // features. Query this before entering the sandbox.
+  CRYPTO_library_init();
+#endif
+
+  // Pass BoringSSL a copy of the /dev/urandom file descriptor so RAND_bytes
+  // will work inside the sandbox.
+  RAND_set_urandom_fd(base::GetUrandomFD());
+
+#if BUILDFLAG(ENABLE_PLUGINS)
+  // Ensure access to the Pepper plugins before the sandbox is turned on.
+  PreloadPepperPlugins();
+#endif
+#if BUILDFLAG(ENABLE_LIBRARY_CDMS)
+  // Ensure access to the library CDMs before the sandbox is turned on.
+  PreloadLibraryCdms();
+#endif
+#if BUILDFLAG(ENABLE_WEBRTC)
+  InitializeWebRtcModule();
+#endif
+
+  SkFontConfigInterface::SetGlobal(new FontConfigIPC(GetSandboxFD()))->unref();
+
+  // Set the android SkFontMgr for blink. We need to ensure this is done
+  // before the sandbox is initialized to allow the font manager to access
+  // font configuration files on disk.
+  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
+          switches::kAndroidFontsPath)) {
+    std::string android_fonts_dir =
+        base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
+            switches::kAndroidFontsPath);
+
+    if (android_fonts_dir.size() > 0 && android_fonts_dir.back() != '/')
+      android_fonts_dir += '/';
+
+    SkFontMgr_Android_CustomFonts custom;
+    custom.fSystemFontUse =
+        SkFontMgr_Android_CustomFonts::SystemFontUse::kOnlyCustom;
+    custom.fBasePath = android_fonts_dir.c_str();
+
+    std::string font_config;
+    std::string fallback_font_config;
+    if (android_fonts_dir.find("kitkat") != std::string::npos) {
+      font_config = android_fonts_dir + "system_fonts.xml";
+      fallback_font_config = android_fonts_dir + "fallback_fonts.xml";
+      custom.fFallbackFontsXml = fallback_font_config.c_str();
+    } else {
+      font_config = android_fonts_dir + "fonts.xml";
+      custom.fFallbackFontsXml = nullptr;
+    }
+    custom.fFontsXml = font_config.c_str();
+    custom.fIsolated = true;
+
+    blink::WebFontRenderStyle::SetSkiaFontManager(
+        SkFontMgr_New_Android(&custom));
+  }
+}
+#endif  // BUILDFLAG(USE_ZYGOTE_HANDLE)
+
+#endif  // OS_LINUX
 
 }  // namespace
 
@@ -305,19 +503,18 @@ struct MainFunction {
   int (*function)(const MainFunctionParams&);
 };
 
-#if defined(OS_LINUX)
+#if BUILDFLAG(USE_ZYGOTE_HANDLE)
 // On platforms that use the zygote, we have a special subset of
 // subprocesses that are launched via the zygote.  This function
 // fills in some process-launching bits around ZygoteMain().
 // Returns the exit code of the subprocess.
-int RunZygote(const MainFunctionParams& main_function_params,
-              ContentMainDelegate* delegate) {
+int RunZygote(ContentMainDelegate* delegate) {
   static const MainFunction kMainFunctions[] = {
-    { switches::kRendererProcess,    RendererMain },
+    {switches::kRendererProcess, RendererMain},
+    {switches::kUtilityProcess, UtilityMain},
 #if BUILDFLAG(ENABLE_PLUGINS)
-    { switches::kPpapiPluginProcess, PpapiPluginMain },
+    {switches::kPpapiPluginProcess, PpapiPluginMain},
 #endif
-    { switches::kUtilityProcess,     UtilityMain },
   };
 
   std::vector<std::unique_ptr<ZygoteForkDelegate>> zygote_fork_delegates;
@@ -326,11 +523,16 @@ int RunZygote(const MainFunctionParams& main_function_params,
     media::InitializeMediaLibrary();
   }
 
+#if defined(OS_LINUX)
+  PreSandboxInit();
+#endif
+
   // This function call can return multiple times, once per fork().
-  if (!ZygoteMain(main_function_params, std::move(zygote_fork_delegates)))
+  if (!ZygoteMain(std::move(zygote_fork_delegates)))
     return 1;
 
-  if (delegate) delegate->ZygoteForked();
+  if (delegate)
+    delegate->ZygoteForked();
 
   // Zygote::HandleForkRequest may have reallocated the command
   // line so update it here with the new version.
@@ -339,6 +541,10 @@ int RunZygote(const MainFunctionParams& main_function_params,
   std::string process_type =
       command_line.GetSwitchValueASCII(switches::kProcessType);
   ContentClientInitializer::Set(process_type, delegate);
+
+#if !defined(OS_ANDROID)
+  tracing::EnableStartupTracingIfNeeded();
+#endif  // !OS_ANDROID
 
   MainFunctionParams main_params(command_line);
   main_params.zygote_child = true;
@@ -349,7 +555,7 @@ int RunZygote(const MainFunctionParams& main_function_params,
   service_manager::SandboxType sandbox_type =
       service_manager::SandboxTypeFromCommandLine(command_line);
   if (sandbox_type == service_manager::SANDBOX_TYPE_PROFILING)
-    content::DisableLocaltimeOverride();
+    sandbox::SetUseLocaltimeOverride(false);
 
   for (size_t i = 0; i < arraysize(kMainFunctions); ++i) {
     if (process_type == kMainFunctions[i].name)
@@ -362,11 +568,11 @@ int RunZygote(const MainFunctionParams& main_function_params,
   NOTREACHED() << "Unknown zygote process type: " << process_type;
   return 1;
 }
-#endif  // defined(OS_LINUX)
+#endif  // BUILDFLAG(USE_ZYGOTE_HANDLE)
 
 static void RegisterMainThreadFactories() {
 #if !defined(CHROME_MULTIPLE_DLL_BROWSER) && !defined(CHROME_MULTIPLE_DLL_CHILD)
-  UtilityProcessHostImpl::RegisterUtilityMainThreadFactory(
+  UtilityProcessHost::RegisterUtilityMainThreadFactory(
       CreateInProcessUtilityThread);
   RenderProcessHostImpl::RegisterRendererMainThreadFactory(
       CreateInProcessRendererThread);
@@ -428,13 +634,12 @@ int RunNamedProcessTypeMain(
     }
   }
 
-#if defined(OS_POSIX) && !defined(OS_MACOSX) && !defined(OS_ANDROID) && \
-    !defined(OS_FUCHSIA)
+#if BUILDFLAG(USE_ZYGOTE_HANDLE)
   // Zygote startup is special -- see RunZygote comments above
   // for why we don't use ZygoteMain directly.
   if (process_type == switches::kZygoteProcess)
-    return RunZygote(main_function_params, delegate);
-#endif
+    return RunZygote(delegate);
+#endif  // BUILDFLAG(USE_ZYGOTE_HANDLE)
 
   // If it's a process we don't know about, the embedder should know.
   if (delegate)
@@ -446,12 +651,7 @@ int RunNamedProcessTypeMain(
 
 class ContentMainRunnerImpl : public ContentMainRunner {
  public:
-  ContentMainRunnerImpl()
-      : is_initialized_(false),
-        is_shutdown_(false),
-        completed_basic_startup_(false),
-        delegate_(nullptr),
-        ui_task_(nullptr) {
+  ContentMainRunnerImpl() {
 #if defined(OS_WIN)
     memset(&sandbox_info_, 0, sizeof(sandbox_info_));
 #endif
@@ -462,14 +662,17 @@ class ContentMainRunnerImpl : public ContentMainRunner {
       Shutdown();
   }
 
+  int TerminateForFatalInitializationError() {
+    if (delegate_)
+      return delegate_->TerminateForFatalInitializationError();
+
+    CHECK(false);
+    return 0;
+  }
+
   int Initialize(const ContentMainParams& params) override {
     ui_task_ = params.ui_task;
-
-    create_discardable_memory_ = params.create_discardable_memory;
-
-#if defined(USE_AURA)
-    env_mode_ = params.env_mode;
-#endif
+    created_main_parts_closure_ = params.created_main_parts_closure;
 
 #if defined(OS_WIN)
     sandbox_info_ = *params.sandbox_info;
@@ -551,12 +754,11 @@ class ContentMainRunnerImpl : public ContentMainRunner {
     // Enable startup tracing asap to avoid early TRACE_EVENT calls being
     // ignored. For Android, startup tracing is enabled in an even earlier place
     // content/app/android/library_loader_hooks.cc.
-    // Zygote process does not have file thread and renderer process on Win10
-    // cannot access the file system.
-    // TODO(ssid): Check if other processes can enable startup tracing here.
-    bool can_access_file_system = (process_type != switches::kZygoteProcess &&
-                                   process_type != switches::kRendererProcess);
-    tracing::EnableStartupTracingIfNeeded(can_access_file_system);
+    //
+    // Startup tracing flags are not (and should not) passed to Zygote
+    // processes. We will enable tracing when forked, if needed.
+    if (process_type != switches::kZygoteProcess)
+      tracing::EnableStartupTracingIfNeeded();
 #endif  // !OS_ANDROID
 
 #if defined(OS_WIN)
@@ -620,16 +822,17 @@ class ContentMainRunnerImpl : public ContentMainRunner {
     int icudata_fd = g_fds->MaybeGet(kAndroidICUDataDescriptor);
     if (icudata_fd != -1) {
       auto icudata_region = g_fds->GetRegion(kAndroidICUDataDescriptor);
-      CHECK(base::i18n::InitializeICUWithFileDescriptor(icudata_fd,
-                                                        icudata_region));
+      if (!base::i18n::InitializeICUWithFileDescriptor(icudata_fd,
+                                                       icudata_region))
+        return TerminateForFatalInitializationError();
     } else {
-      CHECK(base::i18n::InitializeICU());
+      if (!base::i18n::InitializeICU())
+        return TerminateForFatalInitializationError();
     }
 #else
-    CHECK(base::i18n::InitializeICU());
+    if (!base::i18n::InitializeICU())
+      return TerminateForFatalInitializationError();
 #endif  // OS_ANDROID && (ICU_UTIL_DATA_IMPL == ICU_UTIL_DATA_FILE)
-
-    base::StatisticsRecorder::Initialize();
 
     InitializeV8IfNeeded(command_line, process_type);
 
@@ -655,22 +858,39 @@ class ContentMainRunnerImpl : public ContentMainRunner {
       delegate_->PreSandboxStartup();
 
 #if defined(OS_WIN)
-    CHECK(InitializeSandbox(
-        service_manager::SandboxTypeFromCommandLine(command_line),
-        params.sandbox_info));
+    if (!InitializeSandbox(
+            service_manager::SandboxTypeFromCommandLine(command_line),
+            params.sandbox_info))
+      return TerminateForFatalInitializationError();
 #elif defined(OS_MACOSX)
+    // Do not initialize the sandbox at this point if the V2
+    // sandbox is enabled for the process type.
+    bool v2_enabled = base::CommandLine::ForCurrentProcess()->HasSwitch(
+        switches::kEnableV2Sandbox);
+
     if (process_type == switches::kRendererProcess ||
-        process_type == switches::kPpapiPluginProcess ||
+        process_type == switches::kPpapiPluginProcess || v2_enabled ||
         (delegate_ && delegate_->DelaySandboxInitialization(process_type))) {
       // On OS X the renderer sandbox needs to be initialized later in the
       // startup sequence in RendererMainPlatformDelegate::EnableSandbox().
     } else {
-      CHECK(InitializeSandbox());
+      if (!InitializeSandbox())
+        return TerminateForFatalInitializationError();
     }
 #endif
 
     if (delegate_)
       delegate_->SandboxInitialized(process_type);
+
+#if BUILDFLAG(USE_ZYGOTE_HANDLE)
+    if (process_type.empty()) {
+      // The sandbox host needs to be initialized before forking a thread to
+      // start the ServiceManager, and after setting up the sandbox and invoking
+      // SandboxInitialized().
+      InitializeZygoteSandboxForBrowserProcess(
+          *base::CommandLine::ForCurrentProcess());
+    }
+#endif  // BUILDFLAG(USE_ZYGOTE_HANDLE)
 
     // Return -1 to indicate no early termination.
     return -1;
@@ -692,15 +912,12 @@ class ContentMainRunnerImpl : public ContentMainRunner {
 
     MainFunctionParams main_params(command_line);
     main_params.ui_task = ui_task_;
+    main_params.created_main_parts_closure = created_main_parts_closure_;
 #if defined(OS_WIN)
     main_params.sandbox_info = &sandbox_info_;
 #elif defined(OS_MACOSX)
     main_params.autorelease_pool = autorelease_pool_;
 #endif
-#if defined(USE_AURA)
-    main_params.env_mode = env_mode_;
-#endif
-    main_params.create_discardable_memory = create_discardable_memory_;
 
     return RunNamedProcessTypeMain(process_type, main_params, delegate_);
   }
@@ -732,19 +949,19 @@ class ContentMainRunnerImpl : public ContentMainRunner {
 
  private:
   // True if the runner has been initialized.
-  bool is_initialized_;
+  bool is_initialized_ = false;
 
   // True if the runner has been shut down.
-  bool is_shutdown_;
+  bool is_shutdown_ = false;
 
   // True if basic startup was completed.
-  bool completed_basic_startup_;
+  bool completed_basic_startup_ = false;
 
   // Used if the embedder doesn't set one.
   ContentClient empty_content_client_;
 
   // The delegate will outlive this object.
-  ContentMainDelegate* delegate_;
+  ContentMainDelegate* delegate_ = nullptr;
 
   std::unique_ptr<base::AtExitManager> exit_manager_;
 #if defined(OS_WIN)
@@ -753,13 +970,9 @@ class ContentMainRunnerImpl : public ContentMainRunner {
   base::mac::ScopedNSAutoreleasePool* autorelease_pool_ = nullptr;
 #endif
 
-  base::Closure* ui_task_;
+  base::Closure* ui_task_ = nullptr;
 
-#if defined(USE_AURA)
-  aura::Env::Mode env_mode_ = aura::Env::Mode::LOCAL;
-#endif
-
-  bool create_discardable_memory_ = true;
+  CreatedMainPartsClosure* created_main_parts_closure_ = nullptr;
 
   DISALLOW_COPY_AND_ASSIGN(ContentMainRunnerImpl);
 };

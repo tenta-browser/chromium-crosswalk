@@ -26,10 +26,14 @@ namespace net {
 // needed here.
 class CookieStoreIOSPersistent : public CookieStoreIOS {
  public:
-  // Creates a CookieStoreIOS with a default value of
-  // the SystemCookieStore as the system's cookie store.
+  // Constructs a CookieStoreIOS with a default SystemCookieStore.
   explicit CookieStoreIOSPersistent(
       net::CookieMonster::PersistentCookieStore* persistent_store);
+
+  // Constructs a CookieStoreIOS backed by |system_store|.
+  CookieStoreIOSPersistent(
+      net::CookieMonster::PersistentCookieStore* persistent_store,
+      std::unique_ptr<SystemCookieStore> system_store);
 
   ~CookieStoreIOSPersistent() override;
 
@@ -42,9 +46,6 @@ class CookieStoreIOSPersistent : public CookieStoreIOS {
                                bool secure_source,
                                bool modify_http_only,
                                SetCookiesCallback callback) override;
-  void GetCookiesWithOptionsAsync(const GURL& url,
-                                  const net::CookieOptions& options,
-                                  GetCookiesCallback callback) override;
   void GetCookieListWithOptionsAsync(const GURL& url,
                                      const net::CookieOptions& options,
                                      GetCookieListCallback callback) override;

@@ -22,14 +22,19 @@ class ASH_EXPORT ShelfContextMenuModel : public ui::SimpleMenuModel,
                                          public ui::SimpleMenuModel::Delegate {
  public:
   // The command ids for locally-handled shelf and wallpaper context menu items.
+  // These are used in histograms, do not remove/renumber entries. Only add at
+  // the end just before MENU_LOCAL_END. If you're adding to this enum with the
+  // intention that it will be logged, add checks to ensure stability of the
+  // enum and update the ChromeOSUICommands enum listing in
+  // tools/metrics/histograms/enums.xml.
   enum CommandId {
     MENU_LOCAL_START = 500,  // Offset to avoid conflicts with other menus.
     MENU_AUTO_HIDE = MENU_LOCAL_START,
-    MENU_ALIGNMENT_MENU,
-    MENU_ALIGNMENT_LEFT,
-    MENU_ALIGNMENT_RIGHT,
-    MENU_ALIGNMENT_BOTTOM,
-    MENU_CHANGE_WALLPAPER,
+    MENU_ALIGNMENT_MENU = 501,
+    MENU_ALIGNMENT_LEFT = 502,
+    MENU_ALIGNMENT_RIGHT = 503,
+    MENU_ALIGNMENT_BOTTOM = 504,
+    MENU_CHANGE_WALLPAPER = 505,
     MENU_LOCAL_END
   };
 
@@ -39,13 +44,6 @@ class ASH_EXPORT ShelfContextMenuModel : public ui::SimpleMenuModel,
                         ShelfItemDelegate* delegate,
                         int64_t display_id);
   ~ShelfContextMenuModel() override;
-
-  // Add the given |items| to |model|, populating |submenus| as needed.
-  // This is defined as static to support use by the submodel helper class.
-  static void AddItems(ui::SimpleMenuModel* model,
-                       ui::SimpleMenuModel::Delegate* delegate,
-                       const std::vector<mojom::MenuItemPtr>& items,
-                       std::vector<std::unique_ptr<ui::MenuModel>>* submenus);
 
   // ui::SimpleMenuModel::Delegate overrides:
   bool IsCommandIdChecked(int command_id) const override;

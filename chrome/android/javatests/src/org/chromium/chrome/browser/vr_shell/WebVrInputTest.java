@@ -11,9 +11,9 @@ import static org.chromium.chrome.browser.vr_shell.VrTestFramework.POLL_TIMEOUT_
 import static org.chromium.chrome.test.util.ChromeRestriction.RESTRICTION_TYPE_VIEWER_DAYDREAM;
 import static org.chromium.chrome.test.util.ChromeRestriction.RESTRICTION_TYPE_VIEWER_NON_DAYDREAM;
 
+import android.app.Activity;
 import android.os.Build;
 import android.os.SystemClock;
-import android.support.test.InstrumentationRegistry;
 import android.support.test.filters.MediumTest;
 import android.view.MotionEvent;
 import android.view.View;
@@ -25,6 +25,7 @@ import org.junit.Test;
 import org.junit.rules.RuleChain;
 import org.junit.runner.RunWith;
 
+import org.chromium.base.ApplicationStatus;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.params.ParameterAnnotations.ClassParameter;
 import org.chromium.base.test.params.ParameterAnnotations.UseRunnerDelegate;
@@ -32,35 +33,42 @@ import org.chromium.base.test.params.ParameterSet;
 import org.chromium.base.test.params.ParameterizedRunner;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.DisableIf;
+import org.chromium.base.test.util.DisabledTest;
 import org.chromium.base.test.util.MinAndroidSdkLevel;
 import org.chromium.base.test.util.Restriction;
 import org.chromium.base.test.util.RetryOnFailure;
-import org.chromium.chrome.browser.ChromeFeatureList;
 import org.chromium.chrome.browser.ChromeSwitches;
+import org.chromium.chrome.browser.customtabs.CustomTabActivity;
+import org.chromium.chrome.browser.vr_shell.mock.MockVrDaydreamApi;
+import org.chromium.chrome.browser.vr_shell.mock.MockVrIntentHandler;
 import org.chromium.chrome.browser.vr_shell.rules.VrActivityRestriction;
+import org.chromium.chrome.browser.vr_shell.util.TransitionUtils;
 import org.chromium.chrome.browser.vr_shell.util.VrShellDelegateUtils;
 import org.chromium.chrome.browser.vr_shell.util.VrTestRuleUtils;
 import org.chromium.chrome.browser.vr_shell.util.VrTransitionUtils;
 import org.chromium.chrome.test.ChromeActivityTestRule;
 import org.chromium.chrome.test.ChromeJUnit4RunnerDelegate;
-import org.chromium.content.browser.test.util.ClickUtils;
 import org.chromium.content.browser.test.util.Criteria;
 import org.chromium.content.browser.test.util.CriteriaHelper;
+import org.chromium.content.browser.test.util.TouchCommon;
+import org.chromium.content_public.browser.WebContents;
 
+import java.lang.ref.WeakReference;
 import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
- * End-to-end tests for sending input while using WebVR.
+ * End-to-end tests for sending input while using WebVR and WebXR.
  */
 @RunWith(ParameterizedRunner.class)
 @UseRunnerDelegate(ChromeJUnit4RunnerDelegate.class)
-@CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE,
-        ChromeActivityTestRule.DISABLE_NETWORK_PREDICTION_FLAG, "enable-webvr",
-        "enable-gamepad-extensions"})
-@MinAndroidSdkLevel(Build.VERSION_CODES.KITKAT) // WebVR is only supported on K+
+@CommandLineFlags.
+Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE, "enable-webvr", "enable-gamepad-extensions"})
+@MinAndroidSdkLevel(Build.VERSION_CODES.KITKAT) // WebVR and WebXR are only supported on K+
 public class WebVrInputTest {
     @ClassParameter
     private static List<ParameterSet> sClassParams =
@@ -68,17 +76,27 @@ public class WebVrInputTest {
     @Rule
     public RuleChain mRuleChain;
 
-    private ChromeActivityTestRule mVrTestRule;
+    private ChromeActivityTestRule mTestRule;
     private VrTestFramework mVrTestFramework;
+    private XrTestFramework mXrTestFramework;
 
     public WebVrInputTest(Callable<ChromeActivityTestRule> callable) throws Exception {
-        mVrTestRule = callable.call();
-        mRuleChain = VrTestRuleUtils.wrapRuleInVrActivityRestrictionRule(mVrTestRule);
+        mTestRule = callable.call();
+        mRuleChain = VrTestRuleUtils.wrapRuleInVrActivityRestrictionRule(mTestRule);
     }
 
     @Before
     public void setUp() throws Exception {
-        mVrTestFramework = new VrTestFramework(mVrTestRule);
+        mVrTestFramework = new VrTestFramework(mTestRule);
+        mXrTestFramework = new XrTestFramework(mTestRule);
+    }
+
+    private void assertAppButtonEffect(boolean shouldHaveExited, TestFramework framework) {
+        String boolExpression = (framework instanceof VrTestFramework) ? "!vrDisplay.isPresenting" :
+                                                                         "exclusiveSession == null";
+        Assert.assertEquals("App button exited presentation", shouldHaveExited,
+                TestFramework.pollJavaScriptBoolean(boolExpression, POLL_TIMEOUT_SHORT_MS,
+                        framework.getFirstTabWebContents()));
     }
 
     /**
@@ -90,13 +108,33 @@ public class WebVrInputTest {
             sdk_is_less_than = Build.VERSION_CODES.M)
     @VrActivityRestriction({VrActivityRestriction.SupportedActivity.ALL})
     public void testScreenTapsNotRegistered() throws InterruptedException {
-        mVrTestFramework.loadUrlAndAwaitInitialization(
+        screenTapsNotRegisteredImpl(
                 VrTestFramework.getHtmlTestFile("test_screen_taps_not_registered"),
-                PAGE_LOAD_TIMEOUT_S);
-        VrTestFramework.executeStepAndWait(
-                "stepVerifyNoInitialTaps()", mVrTestFramework.getFirstTabWebContents());
-        VrTransitionUtils.enterPresentationAndWait(
-                mVrTestFramework.getFirstTabCvc(), mVrTestFramework.getFirstTabWebContents());
+                mVrTestFramework);
+    }
+
+    /**
+     * Tests that screen touches are not registered when in an exclusive session.
+     */
+    @Test
+    @MediumTest
+    @DisableIf.Build(message = "Flaky on K/L crbug.com/762126",
+            sdk_is_less_than = Build.VERSION_CODES.M)
+    @CommandLineFlags.Remove({"enable-webvr"})
+    @CommandLineFlags.Add({"enable-features=WebXR"})
+    @VrActivityRestriction({VrActivityRestriction.SupportedActivity.ALL})
+    public void testScreenTapsNotRegistered_WebXr() throws InterruptedException {
+        screenTapsNotRegisteredImpl(
+                XrTestFramework.getHtmlTestFile("webxr_test_screen_taps_not_registered"),
+                mXrTestFramework);
+    }
+
+    private void screenTapsNotRegisteredImpl(String url, final TestFramework framework)
+            throws InterruptedException {
+        framework.loadUrlAndAwaitInitialization(url, PAGE_LOAD_TIMEOUT_S);
+        TestFramework.executeStepAndWait(
+                "stepVerifyNoInitialTaps()", framework.getFirstTabWebContents());
+        TransitionUtils.enterPresentationOrFail(framework);
         // Wait on VrShellImpl to say that its parent consumed the touch event
         // Set to 2 because there's an ACTION_DOWN followed by ACTION_UP
         final CountDownLatch touchRegisteredLatch = new CountDownLatch(2);
@@ -108,13 +146,12 @@ public class WebVrInputTest {
                         touchRegisteredLatch.countDown();
                     }
                 });
-        ClickUtils.mouseSingleClickView(InstrumentationRegistry.getInstrumentation(),
-                mVrTestRule.getActivity().getWindow().getDecorView().getRootView());
+        TouchCommon.singleClickView(mTestRule.getActivity().getWindow().getDecorView());
         Assert.assertTrue("VrShellImpl dispatched touches",
                 touchRegisteredLatch.await(POLL_TIMEOUT_SHORT_MS, TimeUnit.MILLISECONDS));
-        VrTestFramework.executeStepAndWait(
-                "stepVerifyNoAdditionalTaps()", mVrTestFramework.getFirstTabWebContents());
-        VrTestFramework.endTest(mVrTestFramework.getFirstTabWebContents());
+        TestFramework.executeStepAndWait(
+                "stepVerifyNoAdditionalTaps()", framework.getFirstTabWebContents());
+        TestFramework.endTest(framework.getFirstTabWebContents());
     }
 
     /**
@@ -125,7 +162,7 @@ public class WebVrInputTest {
     @Restriction(RESTRICTION_TYPE_VIEWER_DAYDREAM)
     @VrActivityRestriction({VrActivityRestriction.SupportedActivity.ALL})
     public void testControllerClicksRegisteredOnDaydream() throws InterruptedException {
-        EmulatedVrController controller = new EmulatedVrController(mVrTestRule.getActivity());
+        EmulatedVrController controller = new EmulatedVrController(mTestRule.getActivity());
         mVrTestFramework.loadUrlAndAwaitInitialization(
                 VrTestFramework.getHtmlTestFile("test_gamepad_button"), PAGE_LOAD_TIMEOUT_S);
         // Wait to enter VR
@@ -163,14 +200,64 @@ public class WebVrInputTest {
     }
 
     /**
+     * Tests that Daydream controller clicks are registered as XR input in an exclusive session.
+     */
+    @Test
+    @MediumTest
+    @Restriction(RESTRICTION_TYPE_VIEWER_DAYDREAM)
+    @CommandLineFlags.Remove({"enable-webvr"})
+    @CommandLineFlags.Add({"enable-features=WebXR"})
+    @VrActivityRestriction({VrActivityRestriction.SupportedActivity.ALL})
+    @DisabledTest(message = "crbug.com/824194")
+    public void testControllerClicksRegisteredOnDaydream_WebXr() throws InterruptedException {
+        EmulatedVrController controller = new EmulatedVrController(mTestRule.getActivity());
+        mXrTestFramework.loadUrlAndAwaitInitialization(
+                XrTestFramework.getHtmlTestFile("test_webxr_input"), PAGE_LOAD_TIMEOUT_S);
+        TransitionUtils.enterPresentationOrFail(mXrTestFramework);
+        int numIterations = 10;
+        XrTestFramework.runJavaScriptOrFail(
+                "stepSetupListeners(" + String.valueOf(numIterations) + ")", POLL_TIMEOUT_SHORT_MS,
+                mXrTestFramework.getFirstTabWebContents());
+
+        // Click the touchpad a bunch of times and make sure they're all registered.
+        for (int i = 0; i < numIterations; i++) {
+            controller.sendClickButtonToggleEvent();
+            controller.sendClickButtonToggleEvent();
+        }
+
+        XrTestFramework.waitOnJavaScriptStep(mXrTestFramework.getFirstTabWebContents());
+        XrTestFramework.endTest(mXrTestFramework.getFirstTabWebContents());
+    }
+
+    private long sendScreenTouchDown(final View view, final int x, final int y) {
+        long downTime = SystemClock.uptimeMillis();
+        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
+            @Override
+            public void run() {
+                view.dispatchTouchEvent(
+                        MotionEvent.obtain(downTime, downTime, MotionEvent.ACTION_DOWN, x, y, 0));
+            }
+        });
+        return downTime;
+    }
+
+    private void sendScreenTouchUp(final View view, final int x, final int y, final long downTime) {
+        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
+            @Override
+            public void run() {
+                long now = SystemClock.uptimeMillis();
+                view.dispatchTouchEvent(
+                        MotionEvent.obtain(downTime, now, MotionEvent.ACTION_UP, x, y, 0));
+            }
+        });
+    }
+
+    /**
      * Tests that screen touches are still registered when the viewer is Cardboard.
      */
     @Test
     @MediumTest
     @Restriction(RESTRICTION_TYPE_VIEWER_NON_DAYDREAM)
-    @DisableIf.Build(message = "Flaky on L crbug.com/713781",
-            sdk_is_greater_than = Build.VERSION_CODES.KITKAT,
-            sdk_is_less_than = Build.VERSION_CODES.M)
     @VrActivityRestriction({VrActivityRestriction.SupportedActivity.ALL})
     public void testScreenTapsRegisteredOnCardboard() throws InterruptedException {
         mVrTestFramework.loadUrlAndAwaitInitialization(
@@ -182,33 +269,59 @@ public class WebVrInputTest {
         // Wait to enter VR
         VrTransitionUtils.enterPresentationAndWait(
                 mVrTestFramework.getFirstTabCvc(), mVrTestFramework.getFirstTabWebContents());
-        int x = mVrTestFramework.getFirstTabCvc().getViewportHeightPix() / 2;
-        int y = mVrTestFramework.getFirstTabCvc().getViewportWidthPix() / 2;
-
-        // TODO(mthiesse, crbug.com/758374): Injecting touch events into the root GvrLayout
+        int x = mVrTestFramework.getFirstTabContentView().getWidth() / 2;
+        int y = mVrTestFramework.getFirstTabContentView().getHeight() / 2;
+        // TODO(mthiesse, https://crbug.com/758374): Injecting touch events into the root GvrLayout
         // (VrShellImpl) is flaky. Sometimes the events just don't get routed to the presentation
         // view for no apparent reason. We should figure out why this is and see if it's fixable.
         final View presentationView = ((VrShellImpl) TestVrShellDelegate.getVrShellForTesting())
                                               .getPresentationViewForTesting();
-        long downTime = SystemClock.uptimeMillis();
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-            @Override
-            public void run() {
-                presentationView.dispatchTouchEvent(
-                        MotionEvent.obtain(downTime, downTime, MotionEvent.ACTION_DOWN, x, y, 0));
-            }
-        });
+        long downTime = sendScreenTouchDown(presentationView, x, y);
         VrTestFramework.waitOnJavaScriptStep(mVrTestFramework.getFirstTabWebContents());
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-            @Override
-            public void run() {
-                long now = SystemClock.uptimeMillis();
-                presentationView.dispatchTouchEvent(
-                        MotionEvent.obtain(downTime, now, MotionEvent.ACTION_UP, x, y, 0));
-            }
-        });
+        sendScreenTouchUp(presentationView, x, y, downTime);
         VrTestFramework.waitOnJavaScriptStep(mVrTestFramework.getFirstTabWebContents());
         VrTestFramework.endTest(mVrTestFramework.getFirstTabWebContents());
+    }
+
+    /**
+     * Tests that screen touches are registered as XR input when the viewer is Cardboard.
+     */
+    @Test
+    @MediumTest
+    @Restriction(RESTRICTION_TYPE_VIEWER_NON_DAYDREAM)
+    @CommandLineFlags.Remove({"enable-webvr"})
+    @CommandLineFlags.Add({"enable-features=WebXR"})
+    @VrActivityRestriction({VrActivityRestriction.SupportedActivity.ALL})
+    public void testScreenTapsRegisteredOnCardboard_WebXr() throws InterruptedException {
+        EmulatedVrController controller = new EmulatedVrController(mTestRule.getActivity());
+        mXrTestFramework.loadUrlAndAwaitInitialization(
+                XrTestFramework.getHtmlTestFile("test_webxr_input"), PAGE_LOAD_TIMEOUT_S);
+        TransitionUtils.enterPresentationOrFail(mXrTestFramework);
+        int numIterations = 10;
+        XrTestFramework.runJavaScriptOrFail(
+                "stepSetupListeners(" + String.valueOf(numIterations) + ")", POLL_TIMEOUT_SHORT_MS,
+                mXrTestFramework.getFirstTabWebContents());
+
+        int x = mXrTestFramework.getFirstTabContentView().getWidth() / 2;
+        int y = mXrTestFramework.getFirstTabContentView().getHeight() / 2;
+        // TODO(mthiesse, https://crbug.com/758374): Injecting touch events into the root GvrLayout
+        // (VrShellImpl) is flaky. Sometimes the events just don't get routed to the presentation
+        // view for no apparent reason. We should figure out why this is and see if it's fixable.
+        final View presentationView = ((VrShellImpl) TestVrShellDelegate.getVrShellForTesting())
+                                              .getPresentationViewForTesting();
+
+        // Tap the screen a bunch of times and make sure that they're all registered.
+        // Android doesn't seem to like sending touch events too quickly, so have a short delay
+        // between events.
+        for (int i = 0; i < numIterations; i++) {
+            long downTime = sendScreenTouchDown(presentationView, x, y);
+            SystemClock.sleep(100);
+            sendScreenTouchUp(presentationView, x, y, downTime);
+            SystemClock.sleep(100);
+        }
+
+        XrTestFramework.waitOnJavaScriptStep(mXrTestFramework.getFirstTabWebContents());
+        XrTestFramework.endTest(mXrTestFramework.getFirstTabWebContents());
     }
 
     /**
@@ -218,12 +331,32 @@ public class WebVrInputTest {
     @MediumTest
     @VrActivityRestriction({VrActivityRestriction.SupportedActivity.ALL})
     public void testPresentationLocksFocus() throws InterruptedException {
-        mVrTestFramework.loadUrlAndAwaitInitialization(
-                VrTestFramework.getHtmlTestFile("test_presentation_locks_focus"),
-                PAGE_LOAD_TIMEOUT_S);
-        VrTransitionUtils.enterPresentationAndWait(
-                mVrTestFramework.getFirstTabCvc(), mVrTestFramework.getFirstTabWebContents());
-        VrTestFramework.endTest(mVrTestFramework.getFirstTabWebContents());
+        presentationLocksFocusImpl(
+                VrTestFramework.getHtmlTestFile("test_presentation_locks_focus"), mVrTestFramework);
+    }
+
+    /**
+     * Tests that focus is locked to the device with an exclusive session for the purposes of
+     * VR input.
+     */
+    @Test
+    @MediumTest
+    @CommandLineFlags.Remove({"enable-webvr"})
+    @CommandLineFlags.Add({"enable-features=WebXR"})
+    @VrActivityRestriction({VrActivityRestriction.SupportedActivity.ALL})
+    public void testPresentationLocksFocus_WebXr() throws InterruptedException {
+        presentationLocksFocusImpl(
+                XrTestFramework.getHtmlTestFile("webxr_test_presentation_locks_focus"),
+                mXrTestFramework);
+    }
+
+    private void presentationLocksFocusImpl(String url, TestFramework framework)
+            throws InterruptedException {
+        framework.loadUrlAndAwaitInitialization(url, PAGE_LOAD_TIMEOUT_S);
+        TransitionUtils.enterPresentationOrFail(framework);
+        TestFramework.executeStepAndWait(
+                "stepSetupFocusLoss()", framework.getFirstTabWebContents());
+        TestFramework.endTest(framework.getFirstTabWebContents());
     }
 
     /**
@@ -235,14 +368,32 @@ public class WebVrInputTest {
     @Restriction(RESTRICTION_TYPE_VIEWER_DAYDREAM)
     @RetryOnFailure(message = "Very rarely, button press not registered (race condition?)")
     public void testAppButtonExitsPresentation() throws InterruptedException {
-        mVrTestFramework.loadUrlAndAwaitInitialization(
-                VrTestFramework.getHtmlTestFile("generic_webvr_page"), PAGE_LOAD_TIMEOUT_S);
-        VrTransitionUtils.enterPresentationOrFail(mVrTestFramework.getFirstTabCvc());
-        EmulatedVrController controller = new EmulatedVrController(mVrTestRule.getActivity());
+        appButtonExitsPresentationImpl(
+                VrTestFramework.getHtmlTestFile("generic_webvr_page"), mVrTestFramework);
+    }
+
+    /**
+     * Tests that pressing the Daydream controller's 'app' button causes the user to exit a
+     * WebXR exclusive session.
+     */
+    @Test
+    @MediumTest
+    @Restriction(RESTRICTION_TYPE_VIEWER_DAYDREAM)
+    @CommandLineFlags.Remove({"enable-webvr"})
+    @CommandLineFlags.Add({"enable-features=WebXR"})
+    @RetryOnFailure(message = "Very rarely, button press not registered (race condition?)")
+    public void testAppButtonExitsPresentation_WebXr() throws InterruptedException {
+        appButtonExitsPresentationImpl(
+                XrTestFramework.getHtmlTestFile("generic_webxr_page"), mXrTestFramework);
+    }
+
+    private void appButtonExitsPresentationImpl(String url, TestFramework framework)
+            throws InterruptedException {
+        framework.loadUrlAndAwaitInitialization(url, PAGE_LOAD_TIMEOUT_S);
+        TransitionUtils.enterPresentationOrFail(framework);
+        EmulatedVrController controller = new EmulatedVrController(mTestRule.getActivity());
         controller.pressReleaseAppButton();
-        Assert.assertTrue("App button exited WebVR presentation",
-                VrTestFramework.pollJavaScriptBoolean("!vrDisplay.isPresenting",
-                        POLL_TIMEOUT_SHORT_MS, mVrTestFramework.getFirstTabWebContents()));
+        assertAppButtonEffect(true /* shouldHaveExited */, framework);
     }
 
     /**
@@ -253,16 +404,154 @@ public class WebVrInputTest {
     @MediumTest
     @Restriction(RESTRICTION_TYPE_VIEWER_DAYDREAM)
     @VrActivityRestriction({VrActivityRestriction.SupportedActivity.ALL})
-    @CommandLineFlags.Add({"disable-features=" + ChromeFeatureList.VR_BROWSING})
-    public void testAppButtonNoopsWhenBrowsingDisabled() throws InterruptedException {
-        mVrTestFramework.loadUrlAndAwaitInitialization(
-                VrTestFramework.getHtmlTestFile("generic_webvr_page"), PAGE_LOAD_TIMEOUT_S);
-        VrTransitionUtils.enterPresentationOrFail(mVrTestFramework.getFirstTabCvc());
-        EmulatedVrController controller = new EmulatedVrController(mVrTestRule.getActivity());
+    public void testAppButtonNoopsWhenBrowsingDisabled()
+            throws InterruptedException, ExecutionException {
+        appButtonNoopsTestImpl(
+                VrTestFramework.getHtmlTestFile("generic_webvr_page"), mVrTestFramework);
+    }
+
+    /**
+     * Verifies that pressing the Daydream controller's 'app' button does not cause the user to exit
+     * WebVR presentation when VR browsing isn't supported by the Activity.
+     */
+    @Test
+    @MediumTest
+    @Restriction(RESTRICTION_TYPE_VIEWER_DAYDREAM)
+    @VrActivityRestriction({VrActivityRestriction.SupportedActivity.WAA,
+            VrActivityRestriction.SupportedActivity.CCT})
+    public void
+    testAppButtonNoopsWhenBrowsingNotSupported() throws InterruptedException, ExecutionException {
+        appButtonNoopsTestImpl(
+                VrTestFramework.getHtmlTestFile("generic_webvr_page"), mVrTestFramework);
+    }
+
+    /**
+     * Verifies that pressing the Daydream controller's 'app' button does not cause the user to exit
+     * a WebXR exclusive session when VR browsing is disabled.
+     */
+    @Test
+    @MediumTest
+    @Restriction(RESTRICTION_TYPE_VIEWER_DAYDREAM)
+    @VrActivityRestriction({VrActivityRestriction.SupportedActivity.ALL})
+    @CommandLineFlags.Remove({"enable-webvr"})
+    @CommandLineFlags.Add({"enable-features=WebXR"})
+    public void testAppButtonNoopsWhenBrowsingDisabled_WebXr()
+            throws InterruptedException, ExecutionException {
+        appButtonNoopsTestImpl(
+                XrTestFramework.getHtmlTestFile("generic_webxr_page"), mXrTestFramework);
+    }
+
+    /**
+     * Verifies that pressing the Daydream controller's 'app' button does not cause the user to exit
+     * a WebXR exclusive session when VR browsing isn't supported by the Activity.
+     */
+    @Test
+    @MediumTest
+    @Restriction(RESTRICTION_TYPE_VIEWER_DAYDREAM)
+    @VrActivityRestriction({VrActivityRestriction.SupportedActivity.WAA,
+            VrActivityRestriction.SupportedActivity.CCT})
+    @CommandLineFlags.Remove({"enable-webvr"})
+    @CommandLineFlags.Add({"enable-features=WebXR"})
+    public void testAppButtonNoopsWhenBrowsingNotSupported_WebXr()
+            throws InterruptedException, ExecutionException {
+        appButtonNoopsTestImpl(
+                XrTestFramework.getHtmlTestFile("generic_webxr_page"), mXrTestFramework);
+    }
+
+    private void appButtonNoopsTestImpl(String url, TestFramework framework)
+            throws InterruptedException, ExecutionException {
+        VrShellDelegateUtils.getDelegateInstance().setVrBrowsingDisabled(true);
+        framework.loadUrlAndAwaitInitialization(url, PAGE_LOAD_TIMEOUT_S);
+        TransitionUtils.enterPresentationOrFail(framework);
+
+        MockVrDaydreamApi mockApi = new MockVrDaydreamApi();
+        VrShellDelegateUtils.getDelegateInstance().overrideDaydreamApiForTesting(mockApi);
+
+        EmulatedVrController controller = new EmulatedVrController(mTestRule.getActivity());
         controller.pressReleaseAppButton();
+        Assert.assertFalse("App button left Chrome",
+                ThreadUtils.runOnUiThreadBlocking(new Callable<Boolean>() {
+                    @Override
+                    public Boolean call() throws Exception {
+                        return mockApi.getExitFromVrCalled()
+                                || mockApi.getLaunchVrHomescreenCalled();
+                    }
+                }));
+        assertAppButtonEffect(false /* shouldHaveExited */, framework);
+        VrShellDelegateUtils.getDelegateInstance().overrideDaydreamApiForTesting(null);
+    }
+
+    /**
+     * Verifies that pressing the Daydream controller's 'app' button does not cause the user to exit
+     * WebVR presentation if they entered it via a Deep Link intent.
+     */
+    @Test
+    @MediumTest
+    @CommandLineFlags.Add("enable-features=WebVrAutopresentFromIntent")
+    @Restriction(RESTRICTION_TYPE_VIEWER_DAYDREAM)
+    public void testAppButtonNoopsWhenDeepLinked() throws InterruptedException, ExecutionException {
+        VrIntentUtils.setHandlerInstanceForTesting(new MockVrIntentHandler(
+                true /* useMockImplementation */, true /* treatIntentsAsTrusted */));
+
+        // Send an autopresent intent, which will open the link in a CCT
+        VrTransitionUtils.sendVrLaunchIntent(
+                VrTestFramework.getHtmlTestFile("test_webvr_autopresent"), mTestRule.getActivity(),
+                true /* autopresent */, true /* avoidRelaunch */);
+
+        // Wait until a CCT is opened due to the intent
+        final AtomicReference<CustomTabActivity> cct = new AtomicReference<CustomTabActivity>();
+        CriteriaHelper.pollUiThread(new Criteria() {
+            @Override
+            public boolean isSatisfied() {
+                List<WeakReference<Activity>> list = ApplicationStatus.getRunningActivities();
+                for (WeakReference<Activity> ref : list) {
+                    Activity activity = ref.get();
+                    if (activity == null) continue;
+                    if (activity instanceof CustomTabActivity) {
+                        cct.set((CustomTabActivity) activity);
+                        return true;
+                    }
+                }
+                return false;
+            }
+        }, POLL_TIMEOUT_LONG_MS, POLL_CHECK_INTERVAL_SHORT_MS);
+
+        // Wait until the tab is ready
+        CriteriaHelper.pollUiThread(new Criteria() {
+            @Override
+            public boolean isSatisfied() {
+                if (cct.get().getActivityTab() == null) return false;
+                return !cct.get().getActivityTab().isLoading();
+            }
+        }, POLL_TIMEOUT_LONG_MS, POLL_CHECK_INTERVAL_SHORT_MS);
+
+        // Wait for autopresent to kick in
+        WebContents wc = cct.get().getActivityTab().getWebContents();
+        VrTestFramework.waitOnJavaScriptStep(wc);
+        Assert.assertTrue("CCT entered presentation",
+                VrTestFramework.pollJavaScriptBoolean(
+                        "vrDisplay.isPresenting", POLL_TIMEOUT_LONG_MS, wc));
+
+        // Verify that pressing the app button does nothing
+        MockVrDaydreamApi mockApi = new MockVrDaydreamApi();
+        VrShellDelegateUtils.getDelegateInstance().overrideDaydreamApiForTesting(mockApi);
+
+        EmulatedVrController controller = new EmulatedVrController(cct.get());
+        controller.pressReleaseAppButton();
+        Assert.assertFalse("App button left Chrome",
+                ThreadUtils.runOnUiThreadBlocking(new Callable<Boolean>() {
+                    @Override
+                    public Boolean call() throws Exception {
+                        return mockApi.getExitFromVrCalled()
+                                || mockApi.getLaunchVrHomescreenCalled();
+                    }
+                }));
         Assert.assertFalse("App button exited WebVR presentation",
-                VrTestFramework.pollJavaScriptBoolean("!vrDisplay.isPresenting",
-                        POLL_TIMEOUT_SHORT_MS, mVrTestFramework.getFirstTabWebContents()));
+                VrTestFramework.pollJavaScriptBoolean(
+                        "!vrDisplay.isPresenting", POLL_TIMEOUT_SHORT_MS, wc));
+
+        VrTestFramework.endTest(wc);
+        VrShellDelegateUtils.getDelegateInstance().overrideDaydreamApiForTesting(null);
     }
 
     /**
@@ -286,9 +575,10 @@ public class WebVrInputTest {
         ThreadUtils.runOnUiThreadBlocking(new Runnable() {
             @Override
             public void run() {
-                mVrTestRule.getActivity().getCurrentContentViewCore().onPause();
-                Assert.assertTrue(
-                        VrShellDelegateUtils.getDelegateInstance().isClearActivatePending());
+                mTestRule.getActivity().getCurrentContentViewCore().onPause();
+
+                Assert.assertFalse(
+                        VrShellDelegateUtils.getDelegateInstance().isListeningForWebVrActivate());
             }
         });
     }
@@ -302,15 +592,33 @@ public class WebVrInputTest {
     @Restriction(RESTRICTION_TYPE_VIEWER_DAYDREAM)
     @RetryOnFailure(message = "Very rarely, button press not registered (race condition?)")
     public void testAppButtonAfterPageStopsSubmitting() throws InterruptedException {
-        mVrTestFramework.loadUrlAndAwaitInitialization(
-                VrTestFramework.getHtmlTestFile("webvr_page_submits_once"), PAGE_LOAD_TIMEOUT_S);
-        VrTransitionUtils.enterPresentationOrFail(mVrTestFramework.getFirstTabCvc());
+        appButtonAfterPageStopsSubmittingImpl(
+                VrTestFramework.getHtmlTestFile("webvr_page_submits_once"), mVrTestFramework);
+    }
+
+    /**
+     * Verifies that pressing the Daydream controller's 'app' button causes the user to exit
+     * a WebXR presentation even when the page is not submitting frames.
+     */
+    @Test
+    @MediumTest
+    @Restriction(RESTRICTION_TYPE_VIEWER_DAYDREAM)
+    @CommandLineFlags.Remove({"enable-webvr"})
+    @CommandLineFlags.Add({"enable-features=WebXR"})
+    @RetryOnFailure(message = "Very rarely, button press not registered (race condition?)")
+    public void testAppButtonAfterPageStopsSubmitting_WebXr() throws InterruptedException {
+        appButtonAfterPageStopsSubmittingImpl(
+                XrTestFramework.getHtmlTestFile("webxr_page_submits_once"), mXrTestFramework);
+    }
+
+    private void appButtonAfterPageStopsSubmittingImpl(String url, TestFramework framework)
+            throws InterruptedException {
+        framework.loadUrlAndAwaitInitialization(url, PAGE_LOAD_TIMEOUT_S);
+        TransitionUtils.enterPresentationOrFail(framework);
         // Wait for page to stop submitting frames.
-        VrTestFramework.waitOnJavaScriptStep(mVrTestFramework.getFirstTabWebContents());
-        EmulatedVrController controller = new EmulatedVrController(mVrTestRule.getActivity());
+        TestFramework.waitOnJavaScriptStep(framework.getFirstTabWebContents());
+        EmulatedVrController controller = new EmulatedVrController(mTestRule.getActivity());
         controller.pressReleaseAppButton();
-        Assert.assertTrue("App button exited WebVR presentation",
-                VrTestFramework.pollJavaScriptBoolean("!vrDisplay.isPresenting",
-                        POLL_TIMEOUT_SHORT_MS, mVrTestFramework.getFirstTabWebContents()));
+        assertAppButtonEffect(true /* shouldHaveExited */, framework);
     }
 }

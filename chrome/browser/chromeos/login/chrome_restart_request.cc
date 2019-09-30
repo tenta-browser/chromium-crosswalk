@@ -43,7 +43,7 @@
 #include "gpu/ipc/host/gpu_switches.h"
 #include "gpu/ipc/service/switches.h"
 #include "media/base/media_switches.h"
-#include "media/media_features.h"
+#include "media/media_buildflags.h"
 #include "services/service_manager/sandbox/switches.h"
 #include "third_party/cros_system_api/switches/chrome_switches.h"
 #include "ui/app_list/app_list_switches.h"
@@ -86,9 +86,9 @@ void DeriveCommandLine(const GURL& start_url,
     ::switches::kDisableAcceleratedJpegDecoding,
     ::switches::kDisableAcceleratedMjpegDecode,
     ::switches::kDisableAcceleratedVideoDecode,
+    ::switches::kDisableAcceleratedVideoEncode,
     ::switches::kDisableBlinkFeatures,
     ::switches::kDisableCastStreamingHWEncoding,
-    ::switches::kDisableDistanceFieldText,
     ::switches::kDisableGpu,
     ::switches::kDisableGpuMemoryBufferVideoFrames,
     ::switches::kDisableGpuShaderDiskCache,
@@ -105,11 +105,7 @@ void DeriveCommandLine(const GURL& start_url,
     ::switches::kDisableTouchDragDrop,
     ::switches::kDisableZeroCopy,
     ::switches::kEnableBlinkFeatures,
-    ::switches::kDisableDisplayList2dCanvas,
-    ::switches::kEnableDisplayList2dCanvas,
-    ::switches::kForceDisplayList2dCanvas,
     ::switches::kDisableGpuSandbox,
-    ::switches::kEnableDistanceFieldText,
     ::switches::kEnableGpuMemoryBufferVideoFrames,
     ::switches::kEnableGpuRasterization,
     ::switches::kEnableLogging,
@@ -120,6 +116,7 @@ void DeriveCommandLine(const GURL& start_url,
     ::switches::kEnablePartialRaster,
     ::switches::kEnablePinch,
     ::switches::kEnablePreferCompositingToLCDText,
+    ::switches::kEnableRasterDecoder,
     ::switches::kEnableRGBA4444Textures,
     ::switches::kEnableSlimmingPaintV175,
     ::switches::kEnableSlimmingPaintV2,
@@ -148,7 +145,6 @@ void DeriveCommandLine(const GURL& start_url,
     ::switches::kPpapiInProcess,
     ::switches::kRemoteDebuggingPort,
     ::switches::kRendererStartupDialog,
-    ::switches::kRootLayerScrolls,
     ::switches::kTouchCalibration,
     ::switches::kTouchDevices,
     ::switches::kTouchEventFeatureDetection,
@@ -170,16 +166,18 @@ void DeriveCommandLine(const GURL& start_url,
     ::switches::kDisableWebRtcHWDecoding,
     ::switches::kDisableWebRtcHWEncoding,
 #endif
-    ::switches::kDisableVaapiAcceleratedVideoEncode,
     ::switches::kOzonePlatform,
     ash::switches::kAshEnableTabletMode,
+    ash::switches::kAshEnableWaylandServer,
     ash::switches::kAshForceEnableStylusTools,
     ash::switches::kAshEnablePaletteOnAllDisplays,
     ash::switches::kAshTouchHud,
     ash::switches::kAuraLegacyPowerButton,
     ash::switches::kForceClamshellPowerButton,
+    ash::switches::kShowTaps,
     ash::switches::kShowViewsLogin,
     ash::switches::kShowWebUiLock,
+    ash::switches::kShowWebUiLogin,
     chromeos::switches::kDefaultWallpaperLarge,
     chromeos::switches::kDefaultWallpaperSmall,
     chromeos::switches::kGuestWallpaperLarge,
@@ -187,6 +185,8 @@ void DeriveCommandLine(const GURL& start_url,
     // Please keep these in alphabetical order. Non-UI Compositor switches
     // here should also be added to
     // content/browser/renderer_host/render_process_host_impl.cc.
+    cc::switches::kAlwaysRequestPresentationTime,
+    cc::switches::kCheckDamageEarly,
     cc::switches::kDisableCompositedAntialiasing,
     cc::switches::kDisableMainFrameBeforeActivation,
     cc::switches::kDisableThreadedAnimation,
@@ -215,7 +215,6 @@ void DeriveCommandLine(const GURL& start_url,
     chromeos::switches::kHasChromeOSKeyboard,
     chromeos::switches::kLoginProfile,
     chromeos::switches::kNaturalScrollDefault,
-    chromeos::switches::kShowNonMdLogin,
     chromeos::switches::kSystemInDevMode,
     policy::switches::kDeviceManagementUrl,
     wm::switches::kWindowAnimationsDisabled,
@@ -360,6 +359,17 @@ void RestartChrome(const base::CommandLine& command_line) {
   restart_requested = true;
 
   if (!base::SysInfo::IsRunningOnChromeOS()) {
+    // Do nothing when running as test on bots or a dev box.
+    const base::CommandLine* current_command_line =
+        base::CommandLine::ForCurrentProcess();
+    const bool is_running_test =
+        current_command_line->HasSwitch(::switches::kTestName) ||
+        current_command_line->HasSwitch(::switches::kTestType);
+    if (is_running_test) {
+      DLOG(WARNING) << "Ignoring chrome restart for test.";
+      return;
+    }
+
     // Relaunch chrome without session manager on dev box.
     ReLaunch(command_line);
     return;

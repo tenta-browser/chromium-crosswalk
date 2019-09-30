@@ -32,7 +32,6 @@
 #include "base/threading/thread.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
-#include "crypto/nss_util.h"
 #include "net/base/elements_upload_data_stream.h"
 #include "net/base/network_change_notifier.h"
 #include "net/base/upload_bytes_element_reader.h"
@@ -50,10 +49,6 @@
 #include "net/url_request/url_request_throttler_manager.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
-
-#if defined(USE_NSS_CERTS)
-#include "net/cert_net/nss_ocsp.h"
-#endif
 
 namespace net {
 
@@ -182,8 +177,9 @@ class FetcherTestURLRequestContext : public TestURLRequestContext {
  public:
   // All requests for |hanging_domain| will hang on host resolution until the
   // mock_resolver()->ResolveAllPending() is called.
-  FetcherTestURLRequestContext(const std::string& hanging_domain,
-                               std::unique_ptr<ProxyService> proxy_service)
+  FetcherTestURLRequestContext(
+      const std::string& hanging_domain,
+      std::unique_ptr<ProxyResolutionService> proxy_resolution_service)
       : TestURLRequestContext(true), mock_resolver_(new MockHostResolver()) {
     mock_resolver_->set_ondemand_mode(true);
     mock_resolver_->rules()->AddRule(hanging_domain, "127.0.0.1");
@@ -192,7 +188,8 @@ class FetcherTestURLRequestContext : public TestURLRequestContext {
         std::unique_ptr<HostResolver>(mock_resolver_));
     context_storage_.set_throttler_manager(
         std::make_unique<URLRequestThrottlerManager>());
-    context_storage_.set_proxy_service(std::move(proxy_service));
+    context_storage_.set_proxy_resolution_service(
+        std::move(proxy_resolution_service));
     Init();
   }
 
@@ -230,7 +227,7 @@ class FetcherTestURLRequestContextGetter : public URLRequestContextGetter {
 
     if (!context_) {
       context_.reset(new FetcherTestURLRequestContext(
-          hanging_domain_, std::move(proxy_service_)));
+          hanging_domain_, std::move(proxy_resolution_service_)));
     }
 
     return context_.get();
@@ -302,9 +299,10 @@ class FetcherTestURLRequestContextGetter : public URLRequestContextGetter {
     return context_.get();
   }
 
-  void set_proxy_service(std::unique_ptr<ProxyService> proxy_service) {
-    DCHECK(proxy_service);
-    proxy_service_ = std::move(proxy_service);
+  void set_proxy_resolution_service(
+      std::unique_ptr<ProxyResolutionService> proxy_resolution_service) {
+    DCHECK(proxy_resolution_service);
+    proxy_resolution_service_ = std::move(proxy_resolution_service);
   }
 
  protected:
@@ -321,7 +319,7 @@ class FetcherTestURLRequestContextGetter : public URLRequestContextGetter {
   const std::string hanging_domain_;
 
   // May be null.
-  std::unique_ptr<ProxyService> proxy_service_;
+  std::unique_ptr<ProxyResolutionService> proxy_resolution_service_;
 
   std::unique_ptr<FetcherTestURLRequestContext> context_;
   bool shutting_down_;
@@ -453,17 +451,6 @@ class URLFetcherTest : public testing::Test {
         "http://example.com:%d%s", test_server_->host_port_pair().port(),
         kDefaultResponsePath));
     ASSERT_TRUE(hanging_url_.is_valid());
-
-#if defined(USE_NSS_CERTS)
-    crypto::EnsureNSSInit();
-    EnsureNSSHttpIOInit();
-#endif
-  }
-
-  void TearDown() override {
-#if defined(USE_NSS_CERTS)
-    ShutdownNSSHttpIO();
-#endif
   }
 
   // Initializes |test_server_| without starting it.  Allows subclasses to use
@@ -510,9 +497,11 @@ TEST_F(URLFetcherTest, FetchedUsingProxy) {
   const net::ProxyServer proxy_server(ProxyServer::SCHEME_HTTP,
                                       test_server_->host_port_pair());
 
-  std::unique_ptr<ProxyService> proxy_service =
-      ProxyService::CreateFixedFromPacResult(proxy_server.ToPacString());
-  context_getter->set_proxy_service(std::move(proxy_service));
+  std::unique_ptr<ProxyResolutionService> proxy_resolution_service =
+      ProxyResolutionService::CreateFixedFromPacResult(
+          proxy_server.ToPacString(), TRAFFIC_ANNOTATION_FOR_TESTS);
+  context_getter->set_proxy_resolution_service(
+      std::move(proxy_resolution_service));
 
   delegate.CreateFetcher(test_server_->GetURL(kDefaultResponsePath),
                          URLFetcher::GET, context_getter);

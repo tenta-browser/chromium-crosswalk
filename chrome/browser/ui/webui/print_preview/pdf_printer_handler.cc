@@ -111,7 +111,7 @@ std::unique_ptr<base::DictionaryValue> GetPdfCapabilities(
 }
 
 // Callback that stores a PDF file on disk.
-void PrintToPdfCallback(const scoped_refptr<base::RefCountedBytes>& data,
+void PrintToPdfCallback(const scoped_refptr<base::RefCountedMemory>& data,
                         const base::FilePath& path,
                         const base::Closure& pdf_file_saved_closure) {
   base::File file(path,
@@ -134,9 +134,13 @@ base::FilePath GetUniquePath(const base::FilePath& path) {
   return unique_path;
 }
 
-void CreateDirectoryIfNeeded(const base::FilePath& path) {
-  if (!base::DirectoryExists(path))
-    base::CreateDirectory(path);
+base::FilePath SelectSaveDirectory(const base::FilePath& path,
+                                   const base::FilePath& default_path) {
+  if (base::DirectoryExists(path))
+    return path;
+  if (!base::DirectoryExists(default_path))
+    base::CreateDirectory(default_path);
+  return default_path;
 }
 
 }  // namespace
@@ -166,7 +170,7 @@ void PdfPrinterHandler::StartGetPrinters(
 
 void PdfPrinterHandler::StartGetCapability(const std::string& destination_id,
                                            GetCapabilityCallback callback) {
-  auto printer_info = base::MakeUnique<base::DictionaryValue>();
+  auto printer_info = std::make_unique<base::DictionaryValue>();
   printer_info->SetString(printing::kSettingDeviceName, destination_id);
   printer_info->Set(
       printing::kSettingCapabilities,
@@ -180,7 +184,7 @@ void PdfPrinterHandler::StartPrint(
     const base::string16& job_title,
     const std::string& ticket_json,
     const gfx::Size& page_size,
-    const scoped_refptr<base::RefCountedBytes>& print_data,
+    const scoped_refptr<base::RefCountedMemory>& print_data,
     PrintCallback callback) {
   print_data_ = print_data;
   if (!print_to_pdf_path_.empty()) {
@@ -330,19 +334,21 @@ void PdfPrinterHandler::SelectFile(const base::FilePath& default_filename,
     return;
   }
 
-  // If the directory is empty there is no reason to create it.
+  // If the directory is empty there is no reason to create it or use the
+  // default location.
   if (path.empty()) {
-    OnDirectoryCreated(default_filename);
+    OnDirectorySelected(default_filename, path);
     return;
   }
 
-  // Create the directory to save in if it does not exist.
-  base::PostTaskWithTraitsAndReply(
+  // Get default download directory. This will be used as a fallback if the
+  // save directory does not exist.
+  base::FilePath default_path = download_prefs->DownloadPath();
+  base::PostTaskWithTraitsAndReplyWithResult(
       FROM_HERE, {base::MayBlock(), base::TaskPriority::BACKGROUND},
-      base::Bind(&CreateDirectoryIfNeeded, path),
-      base::Bind(&PdfPrinterHandler::OnDirectoryCreated,
-                 weak_ptr_factory_.GetWeakPtr(),
-                 path.Append(default_filename)));
+      base::BindOnce(&SelectSaveDirectory, path, default_path),
+      base::BindOnce(&PdfPrinterHandler::OnDirectorySelected,
+                     weak_ptr_factory_.GetWeakPtr(), default_filename));
 }
 
 void PdfPrinterHandler::PostPrintToPdfTask() {
@@ -358,7 +364,10 @@ void PdfPrinterHandler::OnGotUniqueFileName(const base::FilePath& path) {
   FileSelected(path, 0, nullptr);
 }
 
-void PdfPrinterHandler::OnDirectoryCreated(const base::FilePath& path) {
+void PdfPrinterHandler::OnDirectorySelected(const base::FilePath& filename,
+                                            const base::FilePath& directory) {
+  base::FilePath path = directory.Append(filename);
+
   // Prompts the user to select the file.
   ui::SelectFileDialog::FileTypeInfo file_type_info;
   file_type_info.extensions.resize(1);

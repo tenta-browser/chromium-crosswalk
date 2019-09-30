@@ -1,43 +1,15 @@
-var refBufPremul = new Uint8Array([
-    255,0,0,255,    204,0,0,204,    84,0,0,84,      18,0,0,18,
-    192,62,0,255,   149,48,0,198,   61,20,0,82,     13,4,0,18,
-    62,192,0,255,   48,149,0,198,   20,61,0,82,     4,13,0,18,
-    0,255,0,255,    0,204,0,204,    0,84,0,84,      0,18,0,18]);
-
-var refBufUnpremul = new Uint8Array([
-    255,0,0,255,    255,0,0,204,    255,0,0,84,     255,0,0,18,
-    192,62,0,255,   192,62,0,198,   190,62,0,82,    184,57,0,18,
-    62,192,0,255,   62,192,0,198,   62,190,0,82,    57,184,0,18,
-    0,255,0,255,    0,255,0,204,    0,255,0,84,     0,255,0,18]);
-
-var refBufFlipY = new Uint8Array([
-    0,255,0,255,    0,204,0,204,    0,84,0,84,      0,18,0,18,
-    62,192,0,255,   48,149,0,198,   20,61,0,82,     4,13,0,18,
-    192,62,0,255,   149,48,0,198,   61,20,0,82,     13,4,0,18,
-    255,0,0,255,    204,0,0,204,    84,0,0,84,      18,0,0,18]);
-
-var refBufUnpremulFlipY = new Uint8Array([
-    0,255,0,255,    0,255,0,204,    0,255,0,84,     0,255,0,18,
-    62,192,0,255,   62,192,0,198,   62,190,0,82,    57,184,0,18,
-    192,62,0,255,   192,62,0,198,   190,62,0,82,    184,57,0,18,
-    255,0,0,255,    255,0,0,204,    255,0,0,84,     255,0,0,18]);
-
-function checkCanvas(buf, refBuf, tolerance, retVal)
-{
-    if (buf.length != refBuf.length) {
-        retVal.testPassed = false;
-        return;
-    }
-    for (var p = 0; p < buf.length; p++) {
-        if (Math.abs(buf[p] - refBuf[p]) > tolerance) {
-            retVal.testPassed = false;
-            return;
-        }
-    }
-}
+var wtu = WebGLTestUtils;
+var tiu = TexImageUtils;
+var gl = null;
+var internalFormat = "RGBA";
+var pixelFormat = "RGBA";
+var pixelType = "UNSIGNED_BYTE";
+var pixelsBuffer = [];
+var resizeQualities = ["pixelated", "low", "medium", "high"];
 
 function runOneIteration(useTexSubImage2D, bindingTarget, program, bitmap,
-                         flipY, premultiplyAlpha, retVal, colorSpace = 'empty')
+                         flipY, premultiplyAlpha, retVal, colorSpace,
+                         testOptions)
 {
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
     // Enable writes to the RGBA channels
@@ -80,7 +52,6 @@ function runOneIteration(useTexSubImage2D, bindingTarget, program, bitmap,
         loc = gl.getUniformLocation(program, "face");
     }
 
-    var tolerance = (retVal.alpha == 0) ? 0 : 10;
     for (var tt = 0; tt < targets.length; ++tt) {
         if (bindingTarget == gl.TEXTURE_CUBE_MAP) {
             gl.uniform1i(loc, targets[tt]);
@@ -89,22 +60,15 @@ function runOneIteration(useTexSubImage2D, bindingTarget, program, bitmap,
         gl.clearColor(0, 0, 0, 1);
         gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
         gl.drawArrays(gl.TRIANGLES, 0, 6);
-        // Select the proper reference buffer
-        var refBuf = refBufPremul;
-        if (flipY && !premultiplyAlpha)
-            refBuf = refBufUnpremulFlipY;
-        else if (!premultiplyAlpha)
-            refBuf = refBufUnpremul;
-        else if (flipY)
-            refBuf = refBufFlipY;
-        // Check the pixels
         var buf = new Uint8Array(width * height * 4);
         gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, buf);
-        checkCanvas(buf, refBuf, tolerance, retVal);
+        pixelsBuffer.unshift({quality: testOptions.resizeQuality, flip: flipY,
+            premul: premultiplyAlpha, buffer: buf});
     }
 }
 
-function runTestOnBindingTarget(bindingTarget, program, bitmaps, retVal) {
+function runTestOnBindingTarget(bindingTarget, program, bitmaps, retVal,
+                                testOptions) {
     var cases = [
         { sub: false, bitmap: bitmaps.defaultOption, flipY: false,
             premultiply: true, colorSpace: 'empty' },
@@ -154,19 +118,146 @@ function runTestOnBindingTarget(bindingTarget, program, bitmaps, retVal) {
             colorSpace: retVal.colorSpaceEffect ? 'default' : 'empty' },
     ];
 
-    for (var i in cases) {
+    for (var i = 0; i < cases.length; i++) {
         runOneIteration(cases[i].sub, bindingTarget, program, cases[i].bitmap,
-            cases[i].flipY, cases[i].premultiply, retVal, cases[i].colorSpace);
+            cases[i].flipY, cases[i].premultiply, retVal, cases[i].colorSpace,
+            testOptions);
     }
 }
 
-function runTest(bitmaps, alphaVal, colorSpaceEffective)
+// createImageBitmap resize code has two separate code paths for premul and
+// unpremul image sources when the resize quality is set to high.
+function runTest(bitmaps, alphaVal, colorSpaceEffective, testOptions)
 {
     var retVal = {testPassed: true, alpha: alphaVal,
         colorSpaceEffect: colorSpaceEffective};
     var program = tiu.setupTexturedQuad(gl, internalFormat);
-    runTestOnBindingTarget(gl.TEXTURE_2D, program, bitmaps, retVal);
+    runTestOnBindingTarget(gl.TEXTURE_2D, program, bitmaps, retVal,
+                           testOptions);
     program = tiu.setupTexturedQuadWithCubeMap(gl, internalFormat);
-    runTestOnBindingTarget(gl.TEXTURE_CUBE_MAP, program, bitmaps, retVal);
+    runTestOnBindingTarget(gl.TEXTURE_CUBE_MAP, program, bitmaps, retVal,
+                           testOptions);
     return retVal.testPassed;
+}
+
+function prepareResizedImageBitmapsAndRuntTest(testOptions) {
+    var bitmaps = [];
+    var imageSource= testOptions.imageSource;
+    var options = {resizeWidth: testOptions.resizeWidth,
+                   resizeHeight: testOptions.resizeHeight,
+                   resizeQuality: testOptions.resizeQuality};
+    var p1 = createImageBitmap(imageSource, options).then(
+        function(imageBitmap) { bitmaps.defaultOption = imageBitmap });
+
+    options.imageOrientation = "none";
+    options.premultiplyAlpha = "premultiply";
+    var p2 = createImageBitmap(imageSource, options).then(
+        function(imageBitmap) { bitmaps.noFlipYPremul = imageBitmap });
+
+    options.premultiplyAlpha = "default";
+    var p3 = createImageBitmap(imageSource, options).then(
+        function(imageBitmap) { bitmaps.noFlipYDefault = imageBitmap });
+
+    options.premultiplyAlpha = "none";
+    var p4 = createImageBitmap(imageSource, options).then(
+        function(imageBitmap) { bitmaps.noFlipYUnpremul = imageBitmap });
+
+    options.imageOrientation = "flipY";
+    options.premultiplyAlpha = "premultiply";
+    var p5 = createImageBitmap(imageSource, options).then(
+        function(imageBitmap) { bitmaps.flipYPremul = imageBitmap });
+
+    options.premultiplyAlpha = "default";
+    var p6 = createImageBitmap(imageSource, options).then(
+        function(imageBitmap) { bitmaps.flipYDefault = imageBitmap });
+
+    options.premultiplyAlpha = "none";
+    var p7 = createImageBitmap(imageSource, options).then(
+        function(imageBitmap) { bitmaps.flipYUnpremul = imageBitmap });
+
+    options = {resizeWidth: testOptions.resizeWidth,
+               resizeHeight: testOptions.resizeHeight,
+               resizeQuality: testOptions.resizeQuality};
+    var p8 = createImageBitmap(imageSource, options).then(
+        function(imageBitmap) { bitmaps.colorSpaceDef = imageBitmap });
+
+    options.colorSpaceConversion = "none";
+    var p9 = createImageBitmap(imageSource, options).then(
+        function(imageBitmap) { bitmaps.colorSpaceNone = imageBitmap });
+
+    options.colorSpaceConversion = "default";
+    var p10 = createImageBitmap(imageSource, options).then(
+        function(imageBitmap) { bitmaps.colorSpaceDefault = imageBitmap });
+
+    return Promise.all([p1, p2, p3, p4, p5, p6, p7, p8, p9, p10]).then(
+        function() {
+            var alphaVal = 0.5;
+            runTest(bitmaps, alphaVal, false, testOptions);
+        });
+}
+
+function prepareResizedImageBitmapsAndRuntTests(testOptions) {
+    testOptions.resizeQuality = resizeQualities[0];
+    var p1 = prepareResizedImageBitmapsAndRuntTest(testOptions);
+    testOptions.resizeQuality = resizeQualities[1];
+    var p2 = prepareResizedImageBitmapsAndRuntTest(testOptions);
+    testOptions.resizeQuality = resizeQualities[2];
+    var p3 = prepareResizedImageBitmapsAndRuntTest(testOptions);
+    testOptions.resizeQuality = resizeQualities[3];
+    var p4 = prepareResizedImageBitmapsAndRuntTest(testOptions);
+
+    return Promise.all([p1, p2, p3, p4]).then(function() {
+            DrawResultsOnCanvas(testOptions);
+    });
+}
+
+function prepareWebGLContext(testOptions) {
+    var glcanvas = document.createElement('canvas');
+    glcanvas.width = testOptions.resizeWidth;
+    glcanvas.height = testOptions.resizeHeight;
+    glcanvas.style.display="none";
+    document.body.appendChild(glcanvas);
+    gl = glcanvas.getContext("webgl");
+    gl.clearColor(0,0,0,1);
+    gl.clearDepth(1);
+}
+
+function PrintTileInfoForDebug(x, y, quality, premul, flip) {
+    var tileLog = "x: " + x + ", y: " + y + ", quality: " + quality +
+        ", premul: " + premul + ", flip: " + flip;
+    console.log(tileLog);
+}
+
+function DrawResultsOnCanvas(testOptions) {
+    var resultsCanvas = testOptions.resultsCanvas;
+    var numTiles = Math.ceil(Math.sqrt(pixelsBuffer.length));
+    var width = numTiles * testOptions.resizeWidth;
+    var hieght = numTiles * testOptions.resizeWidth;
+    var resultsCtx = resultsCanvas.getContext("2d");
+
+    // Sweep for resize qualities one by one.
+    var tileCounter = 0;
+    for (var i = 0; i < resizeQualities.length; i++) {
+        // Loop in reverse order and use splice to remove the buffer after
+        // drawing to the canvas
+        for (var j = pixelsBuffer.length - 1; j >= 0; j--) {
+            if (pixelsBuffer[j].quality == resizeQualities[i]) {
+                var buffer = pixelsBuffer[j].buffer;
+                // Find the proper location for buffer
+                var x = (tileCounter * testOptions.resizeWidth) % width;
+                var y = Math.floor(tileCounter / numTiles) *
+                    testOptions.resizeHeight;
+                    PrintTileInfoForDebug(x, y, pixelsBuffer[j].quality,
+                        pixelsBuffer[j].premultiply, pixelsBuffer[j].flip);
+                tileCounter++;
+                var imageData = new ImageData(Uint8ClampedArray.from(buffer),
+                    testOptions.resizeWidth, testOptions.resizeHeight);
+                resultsCtx.putImageData(imageData, x, y);
+                if (i != resizeQualities.length - 1)
+                    pixelsBuffer.splice(j, 1);
+            }
+        }
+    }
+    if (window.testRunner)
+        testRunner.notifyDone();
 }

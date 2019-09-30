@@ -9,7 +9,6 @@
 
 #include "base/feature_list.h"
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/string_util.h"
 #include "chrome/browser/page_load_metrics/page_load_metrics_util.h"
 #include "chrome/common/chrome_features.h"
@@ -78,18 +77,20 @@ void RecordParentExistsForSubFrame(
 
 AdsPageLoadMetricsObserver::AdFrameData::AdFrameData(
     FrameTreeNodeId frame_tree_node_id,
-    AdTypes ad_types)
+    AdTypes ad_types,
+    bool cross_origin)
     : frame_bytes(0u),
       frame_bytes_uncached(0u),
       frame_tree_node_id(frame_tree_node_id),
-      ad_types(ad_types) {}
+      ad_types(ad_types),
+      cross_origin(cross_origin) {}
 
 // static
 std::unique_ptr<AdsPageLoadMetricsObserver>
 AdsPageLoadMetricsObserver::CreateIfNeeded() {
   if (!base::FeatureList::IsEnabled(features::kAdsFeature))
     return nullptr;
-  return base::MakeUnique<AdsPageLoadMetricsObserver>();
+  return std::make_unique<AdsPageLoadMetricsObserver>();
 }
 
 AdsPageLoadMetricsObserver::AdsPageLoadMetricsObserver()
@@ -173,7 +174,15 @@ void AdsPageLoadMetricsObserver::OnDidFinishSubFrameNavigation(
 
   if (!ad_data && ad_types.any()) {
     // This frame is not nested within an ad frame but is itself an ad.
-    ad_frames_data_storage_.emplace_back(frame_tree_node_id, ad_types);
+    // TODO(csharrison): Replace/remove url::Origin::Create, provide direct
+    //   access through the navigation_handle.
+    bool cross_origin = !navigation_handle->GetWebContents()
+                             ->GetMainFrame()
+                             ->GetLastCommittedOrigin()
+                             .IsSameOriginWith(url::Origin::Create(
+                                 navigation_handle->GetURL()));
+    ad_frames_data_storage_.emplace_back(frame_tree_node_id, ad_types,
+                                         cross_origin);
     ad_data = &ad_frames_data_storage_.back();
   }
 
@@ -259,7 +268,7 @@ void AdsPageLoadMetricsObserver::ProcessLoadedResource(
               extra_request_info.original_network_content_length, nullptr,
               extra_request_info.resource_type, extra_request_info.net_error,
               extra_request_info.load_timing_info
-                  ? base::MakeUnique<net::LoadTimingInfo>(
+                  ? std::make_unique<net::LoadTimingInfo>(
                         *extra_request_info.load_timing_info)
                   : nullptr));
     } else {
@@ -328,8 +337,12 @@ void AdsPageLoadMetricsObserver::RecordHistogramsForType(int ad_type) {
         "Bytes.AdFrames.PerFrame.PercentNetwork", UMA_HISTOGRAM_PERCENTAGE,
         ad_type,
         ad_frame_data.frame_bytes_uncached * 100 / ad_frame_data.frame_bytes);
+    ADS_HISTOGRAM("FrameCounts.AdFrames.PerFrame.CrossOrigin",
+                  UMA_HISTOGRAM_BOOLEAN, ad_type, ad_frame_data.cross_origin);
   }
 
+  // TODO(ericrobinson): Consider renaming this to match
+  //   'FrameCounts.AdFrames.PerFrame.CrossOrigin'.
   ADS_HISTOGRAM("FrameCounts.AnyParentFrame.AdFrames",
                 UMA_HISTOGRAM_COUNTS_1000, ad_type, non_zero_ad_frames);
 

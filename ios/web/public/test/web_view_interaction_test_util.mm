@@ -119,11 +119,14 @@ CGRect GetBoundingRectOfElementWithId(web::WebState* web_state,
   return CGRectMake(left * scale, top * scale, width * scale, height * scale);
 }
 
-// Returns whether the Javascript action specified by |action| ran on
-// |element_id| in the passed |web_state|.
-bool RunActionOnWebViewElementWithId(web::WebState* web_state,
-                                     const std::string& element_id,
-                                     ElementAction action) {
+// Returns whether the Javascript action specified by |action| ran on the
+// element retrieved by the Javascript snippet |element_script| in the passed
+// |web_state|. |error| can be nil, and will return any error from executing
+// JavaScript.
+bool RunActionOnWebViewElementWithScript(web::WebState* web_state,
+                                         const std::string& element_script,
+                                         ElementAction action,
+                                         NSError* __autoreleasing* error) {
   CRWWebController* web_controller =
       static_cast<WebStateImpl*>(web_state)->GetWebController();
   const char* js_action = nullptr;
@@ -138,51 +141,85 @@ bool RunActionOnWebViewElementWithId(web::WebState* web_state,
       js_action = ".submit();";
       break;
   }
-  NSString* script = [NSString
-      stringWithFormat:@"(function() {"
-                        "  var element = document.getElementById('%s');"
-                        "  if (element) {"
-                        "    element%s;"
-                        "    return true;"
-                        "  }"
-                        "  return false;"
-                        "})();",
-                       element_id.c_str(), js_action];
+  NSString* script = [NSString stringWithFormat:
+                                   @"(function() {"
+                                    "  var element = %s;"
+                                    "  if (element) {"
+                                    "    element%s;"
+                                    "    return true;"
+                                    "  }"
+                                    "  return false;"
+                                    "})();",
+                                   element_script.c_str(), js_action];
   __block bool did_complete = false;
   __block bool element_found = false;
+  __block NSError* block_error = nil;
 
   // |executeUserJavaScript:completionHandler:| is no-op for app-specific URLs,
   // so simulate a user gesture by calling TouchTracking method.
   [web_controller touched:YES];
   [web_controller executeJavaScript:script
-                  completionHandler:^(id result, NSError*) {
+                  completionHandler:^(id result, NSError* error) {
                     did_complete = true;
                     element_found = [result boolValue];
+                    block_error = [error copy];
                   }];
 
   bool js_finished = WaitUntilConditionOrTimeout(kWaitForJSCompletionTimeout, ^{
     return did_complete;
   });
 
+  if (error) {
+    *error = block_error;
+  }
+
   return js_finished && element_found;
+}
+
+// Returns whether the Javascript action specified by |action| ran on
+// |element_id| in the passed |web_state|. |error| can be nil, and will return
+// any error from executing JavaScript.
+bool RunActionOnWebViewElementWithId(web::WebState* web_state,
+                                     const std::string& element_id,
+                                     ElementAction action,
+                                     NSError* __autoreleasing* error) {
+  std::string element_script =
+      base::StringPrintf("document.getElementById('%s')", element_id.c_str());
+  return RunActionOnWebViewElementWithScript(web_state, element_script, action,
+                                             error);
 }
 
 bool TapWebViewElementWithId(web::WebState* web_state,
                              const std::string& element_id) {
   return RunActionOnWebViewElementWithId(web_state, element_id,
-                                         ELEMENT_ACTION_CLICK);
+                                         ELEMENT_ACTION_CLICK, nil);
+}
+
+bool TapWebViewElementWithId(web::WebState* web_state,
+                             const std::string& element_id,
+                             NSError* __autoreleasing* error) {
+  return RunActionOnWebViewElementWithId(web_state, element_id,
+                                         ELEMENT_ACTION_CLICK, error);
+}
+
+bool TapWebViewElementWithIdInIframe(web::WebState* web_state,
+                                     const std::string& element_id) {
+  std::string element_script = base::StringPrintf(
+      "window.frames[0].document.getElementById('%s')", element_id.c_str());
+  return RunActionOnWebViewElementWithScript(web_state, element_script,
+                                             ELEMENT_ACTION_CLICK, nil);
 }
 
 bool FocusWebViewElementWithId(web::WebState* web_state,
                                const std::string& element_id) {
   return RunActionOnWebViewElementWithId(web_state, element_id,
-                                         ELEMENT_ACTION_FOCUS);
+                                         ELEMENT_ACTION_FOCUS, nil);
 }
 
 bool SubmitWebViewFormWithId(web::WebState* web_state,
                              const std::string& form_id) {
   return RunActionOnWebViewElementWithId(web_state, form_id,
-                                         ELEMENT_ACTION_SUBMIT);
+                                         ELEMENT_ACTION_SUBMIT, nil);
 }
 
 }  // namespace test

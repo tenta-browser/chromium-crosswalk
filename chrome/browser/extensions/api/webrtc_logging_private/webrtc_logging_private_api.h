@@ -9,11 +9,10 @@
 
 #include "chrome/browser/extensions/chrome_extension_function.h"
 #include "chrome/common/extensions/api/webrtc_logging_private.h"
-#include "media/media_features.h"
+#include "media/media_buildflags.h"
 
 #if BUILDFLAG(ENABLE_WEBRTC)
-#include "chrome/browser/media/audio_debug_recordings_handler.h"
-#include "chrome/browser/media/webrtc/webrtc_event_log_handler.h"
+#include "chrome/browser/media/webrtc/audio_debug_recordings_handler.h"
 #include "chrome/browser/media/webrtc/webrtc_logging_handler_host.h"
 #endif
 
@@ -257,32 +256,22 @@ class WebrtcLoggingPrivateStopAudioDebugRecordingsFunction
   bool RunAsync() override;
 };
 
-class WebrtcLoggingPrivateStartWebRtcEventLoggingFunction
-    : public WebrtcLoggingPrivateFunctionWithRecordingDoneCallback {
+class WebrtcLoggingPrivateStartEventLoggingFunction
+    : public WebrtcLoggingPrivateFunctionWithGenericCallback {
  public:
-  DECLARE_EXTENSION_FUNCTION("webrtcLoggingPrivate.startWebRtcEventLogging",
-                             WEBRTCLOGGINGPRIVATE_STARTRTCEVENTLOGGING)
-  WebrtcLoggingPrivateStartWebRtcEventLoggingFunction() {}
+  DECLARE_EXTENSION_FUNCTION("webrtcLoggingPrivate.startEventLogging",
+                             WEBRTCLOGGINGPRIVATE_STARTEVENTLOGGING)
+  WebrtcLoggingPrivateStartEventLoggingFunction() {}
 
  private:
-  ~WebrtcLoggingPrivateStartWebRtcEventLoggingFunction() override {}
+  ~WebrtcLoggingPrivateStartEventLoggingFunction() override {}
 
   // ExtensionFunction overrides.
   bool RunAsync() override;
-};
 
-class WebrtcLoggingPrivateStopWebRtcEventLoggingFunction
-    : public WebrtcLoggingPrivateFunctionWithRecordingDoneCallback {
- public:
-  DECLARE_EXTENSION_FUNCTION("webrtcLoggingPrivate.stopWebRtcEventLogging",
-                             WEBRTCLOGGINGPRIVATE_STOPRTCEVENTLOGGING)
-  WebrtcLoggingPrivateStopWebRtcEventLoggingFunction() {}
-
- private:
-  ~WebrtcLoggingPrivateStopWebRtcEventLoggingFunction() override {}
-
-  // ExtensionFunction overrides.
-  bool RunAsync() override;
+  // |success| if and only if |error_message| is non-empty.
+  // The function must be called on the UI thread.
+  void FireCallback(bool success, const std::string& error_message);
 };
 
 class WebrtcLoggingPrivateGetLogsDirectoryFunction

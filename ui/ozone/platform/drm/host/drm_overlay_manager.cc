@@ -9,7 +9,6 @@
 #include <algorithm>
 
 #include "base/command_line.h"
-#include "base/memory/ptr_util.h"
 #include "base/trace_event/trace_event.h"
 #include "ui/gfx/geometry/rect_conversions.h"
 #include "ui/ozone/platform/drm/common/drm_util.h"
@@ -61,11 +60,6 @@ void DrmOverlayManager::CheckOverlaySupport(
       continue;
     }
 
-    // Compositor doesn't have information about the total size of primary
-    // candidate. We get this information from display rect.
-    if (candidate.plane_z_order == 0)
-      candidate.buffer_size = gfx::ToNearestRect(candidate.display_rect).size();
-
     result_candidates.push_back(OverlaySurfaceCandidate(candidate));
     // Start out hoping that we can have an overlay.
     result_candidates.back().overlay_handled = true;
@@ -77,6 +71,7 @@ void DrmOverlayManager::CheckOverlaySupport(
   }
 
   size_t size = candidates->size();
+  base::AutoLock lock(cache_lock_);
   auto iter = cache_.Get(result_candidates);
   if (iter == cache_.end()) {
     // We can skip GPU side validation in case all candidates are invalid.
@@ -114,6 +109,7 @@ void DrmOverlayManager::CheckOverlaySupport(
 }
 
 void DrmOverlayManager::ResetCache() {
+  base::AutoLock lock(cache_lock_);
   cache_.Clear();
 }
 
@@ -142,6 +138,7 @@ void DrmOverlayManager::GpuSentOverlayResult(
   TRACE_EVENT_ASYNC_END0(
       "hwoverlays", "DrmOverlayManager::SendOverlayValidationRequest response",
       this);
+  base::AutoLock lock(cache_lock_);
   auto iter = cache_.Peek(candidates);
   if (iter != cache_.end()) {
     iter->second.status = returns;

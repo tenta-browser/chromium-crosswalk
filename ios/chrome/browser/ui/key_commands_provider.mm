@@ -7,9 +7,9 @@
 #include "base/logging.h"
 #include "components/strings/grit/components_strings.h"
 #import "ios/chrome/browser/ui/commands/open_new_tab_command.h"
-#include "ios/chrome/browser/ui/commands/start_voice_search_command.h"
 #import "ios/chrome/browser/ui/keyboard/UIKeyCommand+Chrome.h"
 #include "ios/chrome/browser/ui/rtl_geometry.h"
+#import "ios/chrome/browser/ui/util/named_guide.h"
 #include "ios/chrome/grit/ios_strings.h"
 #include "ui/base/l10n/l10n_util_mac.h"
 
@@ -19,14 +19,17 @@
 
 @implementation KeyCommandsProvider
 
-- (NSArray*)keyCommandsForConsumer:(id<KeyCommandsPlumbing>)consumer
-                baseViewController:(UIViewController*)baseViewController
-                        dispatcher:
-                            (id<ApplicationCommands, BrowserCommands>)dispatcher
-                       editingText:(BOOL)editingText {
+- (NSArray*)
+keyCommandsForConsumer:(id<KeyCommandsPlumbing>)consumer
+    baseViewController:(UIViewController*)baseViewController
+            dispatcher:
+                (id<ApplicationCommands, BrowserCommands, OmniboxFocuser>)
+                    dispatcher
+           editingText:(BOOL)editingText {
   __weak id<KeyCommandsPlumbing> weakConsumer = consumer;
   __weak UIViewController* weakBaseViewController = baseViewController;
-  __weak id<ApplicationCommands, BrowserCommands> weakDispatcher = dispatcher;
+  __weak id<ApplicationCommands, BrowserCommands, OmniboxFocuser>
+      weakDispatcher = dispatcher;
 
   // Block to have the tab model open the tab at |index|, if there is one.
   void (^focusTab)(NSUInteger) = ^(NSUInteger index) {
@@ -117,7 +120,7 @@
                                      title:l10n_util::GetNSStringWithFixup(
                                                IDS_IOS_KEYBOARD_OPEN_LOCATION)
                                     action:^{
-                                      [weakConsumer focusOmnibox];
+                                      [weakDispatcher focusOmnibox];
                                     }],
       [UIKeyCommand cr_keyCommandWithInput:@"w"
                              modifierFlags:UIKeyModifierCommand
@@ -195,10 +198,11 @@
                    modifierFlags:UIKeyModifierCommand | UIKeyModifierShift
                            title:voiceSearchTitle
                           action:^{
-                            StartVoiceSearchCommand* command =
-                                [[StartVoiceSearchCommand alloc]
-                                    initWithOriginView:nil];
-                            [weakDispatcher startVoiceSearch:command];
+                            UIView* baseView = baseViewController.view;
+                            [[NamedGuide guideWithName:kVoiceSearchButtonGuide
+                                                  view:baseView]
+                                resetConstraints];
+                            [weakDispatcher startVoiceSearch];
                           }],
     ]];
   }

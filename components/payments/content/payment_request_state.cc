@@ -18,7 +18,6 @@
 #include "components/payments/content/content_payment_request_delegate.h"
 #include "components/payments/content/payment_manifest_web_data_service.h"
 #include "components/payments/content/payment_response_helper.h"
-#include "components/payments/content/service_worker_payment_app_factory.h"
 #include "components/payments/content/service_worker_payment_instrument.h"
 #include "components/payments/core/autofill_payment_instrument.h"
 #include "components/payments/core/journey_logger.h"
@@ -60,10 +59,11 @@ PaymentRequestState::PaymentRequestState(
         web_contents,
         payment_request_delegate_->GetPaymentManifestWebDataService(),
         spec_->method_data(),
+        /*may_crawl_for_installable_payment_apps=*/
+        !spec_->supports_basic_card(),
         base::BindOnce(&PaymentRequestState::GetAllPaymentAppsCallback,
-                       weak_ptr_factory_.GetWeakPtr(),
-                       web_contents->GetBrowserContext(), top_level_origin,
-                       frame_origin),
+                       weak_ptr_factory_.GetWeakPtr(), web_contents,
+                       top_level_origin, frame_origin),
         base::BindOnce([]() {
           /* Nothing needs to be done after writing cache. This callback is used
            * only in tests. */
@@ -78,11 +78,13 @@ PaymentRequestState::PaymentRequestState(
 PaymentRequestState::~PaymentRequestState() {}
 
 void PaymentRequestState::GetAllPaymentAppsCallback(
-    content::BrowserContext* context,
+    content::WebContents* web_contents,
     const GURL& top_level_origin,
     const GURL& frame_origin,
-    content::PaymentAppProvider::PaymentApps apps) {
-  number_of_pending_sw_payment_instruments_ = apps.size();
+    content::PaymentAppProvider::PaymentApps apps,
+    ServiceWorkerPaymentAppFactory::InstallablePaymentApps installable_apps) {
+  number_of_pending_sw_payment_instruments_ =
+      apps.size() + installable_apps.size();
   if (number_of_pending_sw_payment_instruments_ == 0U) {
     FinishedGetAllSWPaymentInstruments();
     return;
@@ -91,8 +93,20 @@ void PaymentRequestState::GetAllPaymentAppsCallback(
   for (auto& app : apps) {
     std::unique_ptr<ServiceWorkerPaymentInstrument> instrument =
         std::make_unique<ServiceWorkerPaymentInstrument>(
-            context, top_level_origin, frame_origin, spec_,
-            std::move(app.second));
+            web_contents->GetBrowserContext(), top_level_origin, frame_origin,
+            spec_, std::move(app.second), payment_request_delegate_);
+    instrument->ValidateCanMakePayment(
+        base::BindOnce(&PaymentRequestState::OnSWPaymentInstrumentValidated,
+                       weak_ptr_factory_.GetWeakPtr()));
+    available_instruments_.push_back(std::move(instrument));
+  }
+
+  for (auto& installable_app : installable_apps) {
+    std::unique_ptr<ServiceWorkerPaymentInstrument> instrument =
+        std::make_unique<ServiceWorkerPaymentInstrument>(
+            web_contents, top_level_origin, frame_origin, spec_,
+            std::move(installable_app.second), installable_app.first.spec(),
+            payment_request_delegate_);
     instrument->ValidateCanMakePayment(
         base::BindOnce(&PaymentRequestState::OnSWPaymentInstrumentValidated,
                        weak_ptr_factory_.GetWeakPtr()));
@@ -400,7 +414,8 @@ void PaymentRequestState::PopulateProfileCache() {
   // Create the list of available instruments. A copy of each card will be made
   // by their respective AutofillPaymentInstrument.
   const std::vector<autofill::CreditCard*>& cards =
-      personal_data_manager_->GetCreditCardsToSuggest();
+      personal_data_manager_->GetCreditCardsToSuggest(
+          /*include_server_cards=*/true);
   for (autofill::CreditCard* card : cards)
     AddAutofillPaymentInstrument(/*selected=*/false, *card);
 }
@@ -486,8 +501,8 @@ void PaymentRequestState::OnAddressNormalized(
     bool success,
     const autofill::AutofillProfile& normalized_profile) {
   delegate_->OnShippingAddressSelected(
-      PaymentResponseHelper::GetMojomPaymentAddressFromAutofillProfile(
-          normalized_profile, app_locale_));
+      data_util::GetPaymentAddressFromAutofillProfile(normalized_profile,
+                                                      app_locale_));
 }
 
 }  // namespace payments

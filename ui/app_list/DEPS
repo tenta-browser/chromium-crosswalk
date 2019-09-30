@@ -1,7 +1,7 @@
 include_rules = [
+  "+chromeos/chromeos_switches.h",
   "+components/keyed_service/core",
   "+components/sync",
-  "+components/wallpaper",
   "+mojo/public/cpp",
   "+services/ui/public",
   "+skia",
@@ -11,6 +11,7 @@ include_rules = [
   "+ui/aura",
   "+ui/base",
   "+ui/display",
+  "+ui/chromeos/search_box",
   "+ui/compositor",
   "+ui/events",
   "+ui/gfx",
@@ -22,4 +23,6 @@ include_rules = [
 
   # TODO(hejq): Remove this once app_list is migrated. http://crbug.com/733662
   "+ash/app_list",
+  "+ash/public/cpp",
+  "+ash/public/interfaces",
 ]

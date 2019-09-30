@@ -10,7 +10,6 @@
 #include <utility>
 
 #include "base/logging.h"
-#include "mojo/edk/embedder/embedder_internal.h"
 #include "mojo/edk/embedder/platform_channel_utils_posix.h"
 #include "mojo/edk/embedder/platform_handle_utils.h"
 #include "mojo/edk/embedder/platform_shared_buffer.h"
@@ -80,14 +79,14 @@ Broker::Broker(ScopedPlatformHandle platform_handle)
   std::vector<ScopedPlatformHandle> incoming_platform_handles;
   if (WaitForBrokerMessage(sync_channel_, BrokerMessageType::INIT, 1, 0,
                            &incoming_platform_handles)) {
-    parent_channel_ = std::move(incoming_platform_handles[0]);
+    inviter_channel_ = std::move(incoming_platform_handles[0]);
   }
 }
 
 Broker::~Broker() = default;
 
-ScopedPlatformHandle Broker::GetParentPlatformHandle() {
-  return std::move(parent_channel_);
+ScopedPlatformHandle Broker::GetInviterPlatformHandle() {
+  return std::move(inviter_channel_);
 }
 
 scoped_refptr<PlatformSharedBuffer> Broker::GetSharedBuffer(size_t num_bytes) {

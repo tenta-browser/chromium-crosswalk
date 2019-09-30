@@ -137,11 +137,11 @@ void InputMethodEngine::UpdateComposition(
     bool is_visible) {
   composition_ = composition_text;
 
-  // Use a black thin underline by default.
+  // Use a thin underline with text color by default.
   if (composition_.ime_text_spans.empty()) {
     composition_.ime_text_spans.push_back(ui::ImeTextSpan(
         ui::ImeTextSpan::Type::kComposition, 0, composition_.text.length(),
-        SK_ColorBLACK, false /* thick */, SK_ColorTRANSPARENT));
+        ui::ImeTextSpan::Thickness::kThin, SK_ColorTRANSPARENT));
   }
 
   ui::IMEInputContextHandlerInterface* input_context =
@@ -223,6 +223,12 @@ bool InputMethodEngine::SendKeyEvent(ui::KeyEvent* event,
   return true;
 }
 
+void InputMethodEngine::ProcessKeyEvent(const ui::KeyEvent& key_event,
+                                        KeyEventDoneCallback callback) {
+  // This override is neeeded to prevent a link failure on Windows build.
+  InputMethodEngineBase::ProcessKeyEvent(key_event, std::move(callback));
+}
+
 bool InputMethodEngine::IsSpecialPage(ui::InputMethod* input_method) {
   Browser* browser = chrome::FindLastActive();
   DCHECK(browser);
@@ -255,7 +261,8 @@ bool InputMethodEngine::IsSpecialPage(ui::InputMethod* input_method) {
   // Checks if the last committed url is whitelisted url.
   url::Origin origin = url::Origin::Create(url);
   std::vector<GURL> whitelist_urls{GURL(url::kAboutBlankURL),
-                                   GURL(chrome::kChromeUINewTabURL)};
+                                   GURL(chrome::kChromeUINewTabURL),
+                                   GURL(chrome::kChromeSearchLocalNtpUrl)};
   for (const GURL& whitelist_url : whitelist_urls) {
     if (url::Origin::Create(whitelist_url).IsSameOriginWith(origin))
       return false;

@@ -15,9 +15,9 @@ class ChromeBrowserState;
 
 @protocol ApplicationCommands;
 @class DeviceSharingManager;
-@class GenericChromeCommand;
 @class MainController;
 @class NewTabPageController;
+@class UIViewController;
 
 namespace chrome_test_util {
 
@@ -46,6 +46,11 @@ NSUInteger GetRegisteredKeyCommandsCount();
 // Returns the dispatcher for the main BVC.
 // TODO(crbug.com/738881): Use DispatcherForActiveViewController() instead.
 id<BrowserCommands> BrowserCommandDispatcherForMainBVC();
+
+// Returns the active view controller.
+// NOTE: It is preferred to not directly access the active view controller if
+// possible.
+UIViewController* GetActiveViewController();
 
 // Returns the dispatcher for the active view controller.
 id<ApplicationCommands, BrowserCommands> DispatcherForActiveViewController();
@@ -91,6 +96,12 @@ void WaitForBreakpadQueue();
 
 // Simulates launching Chrome from another application.
 void OpenChromeFromExternalApp(const GURL& url);
+
+// Purges cached web view page, so the next time back navigation will not use
+// cached page. Browsers don't have to use fresh version for back forward
+// navigation for HTTP pages and may serve version from the cache even if
+// Cache-Control response header says otherwise.
+bool PurgeCachedWebViewPages() WARN_UNUSED_RESULT;
 
 }  // namespace chrome_test_util
 

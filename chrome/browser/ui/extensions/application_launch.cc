@@ -4,6 +4,7 @@
 
 #include "chrome/browser/ui/extensions/application_launch.h"
 
+#include <memory>
 #include <string>
 
 #include "apps/launcher.h"
@@ -15,6 +16,7 @@
 #include "chrome/browser/banners/app_banner_settings_helper.h"
 #include "chrome/browser/engagement/site_engagement_service.h"
 #include "chrome/browser/extensions/extension_service.h"
+#include "chrome/browser/extensions/extension_util.h"
 #include "chrome/browser/extensions/launch_util.h"
 #include "chrome/browser/extensions/tab_helper.h"
 #include "chrome/browser/profiles/profile.h"
@@ -28,13 +30,12 @@
 #include "chrome/browser/ui/extensions/app_launch_params.h"
 #include "chrome/browser/ui/extensions/extension_enable_flow.h"
 #include "chrome/browser/ui/extensions/extension_enable_flow_delegate.h"
+#include "chrome/browser/ui/extensions/hosted_app_browser_controller.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/web_applications/web_app.h"
 #include "chrome/common/extensions/manifest_handlers/app_launch_info.h"
 #include "chrome/common/url_constants.h"
-#include "content/public/browser/render_view_host.h"
 #include "content/public/browser/web_contents.h"
-#include "content/public/common/renderer_preferences.h"
 #include "extensions/browser/extension_prefs.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extension_system.h"
@@ -57,16 +58,7 @@ using extensions::ExtensionRegistry;
 
 namespace {
 
-// Shows the app list and returns the app list's window.
-gfx::NativeWindow ShowAppListAndGetNativeWindow() {
-  AppListService* app_list_service = AppListService::Get();
-  app_list_service->Show();
-  return app_list_service->GetAppListWindow();
-}
-
-// Attempts to launch an app, prompting the user to enable it if necessary. If
-// a prompt is required it will be shown inside the window returned by
-// |parent_window_getter|.
+// Attempts to launch an app, prompting the user to enable it if necessary.
 // This class manages its own lifetime.
 class EnableViaDialogFlow : public ExtensionEnableFlowDelegate {
  public:
@@ -74,12 +66,10 @@ class EnableViaDialogFlow : public ExtensionEnableFlowDelegate {
       ExtensionService* service,
       Profile* profile,
       const std::string& extension_id,
-      const base::Callback<gfx::NativeWindow(void)>& parent_window_getter,
       const base::Closure& callback)
       : service_(service),
         profile_(profile),
         extension_id_(extension_id),
-        parent_window_getter_(parent_window_getter),
         callback_(callback) {
   }
 
@@ -88,7 +78,7 @@ class EnableViaDialogFlow : public ExtensionEnableFlowDelegate {
   void Run() {
     DCHECK(!service_->IsExtensionEnabled(extension_id_));
     flow_.reset(new ExtensionEnableFlow(profile_, extension_id_, this));
-    flow_->StartForCurrentlyNonexistentWindow(parent_window_getter_);
+    flow_->Start();
   }
 
  private:
@@ -107,7 +97,6 @@ class EnableViaDialogFlow : public ExtensionEnableFlowDelegate {
   ExtensionService* service_;
   Profile* profile_;
   std::string extension_id_;
-  base::Callback<gfx::NativeWindow(void)> parent_window_getter_;
   base::Closure callback_;
   std::unique_ptr<ExtensionEnableFlow> flow_;
 
@@ -191,52 +180,6 @@ ui::WindowShowState DetermineWindowShowState(
   return ui::SHOW_STATE_DEFAULT;
 }
 
-WebContents* OpenApplicationWindow(const AppLaunchParams& params,
-                                   const GURL& url) {
-  Profile* const profile = params.profile;
-  const Extension* const extension = GetExtension(params);
-
-  std::string app_name = extension ?
-      web_app::GenerateApplicationNameFromExtensionId(extension->id()) :
-      web_app::GenerateApplicationNameFromURL(url);
-
-  gfx::Rect initial_bounds;
-  if (!params.override_bounds.IsEmpty()) {
-    initial_bounds = params.override_bounds;
-  } else if (extension) {
-    initial_bounds.set_width(
-        extensions::AppLaunchInfo::GetLaunchWidth(extension));
-    initial_bounds.set_height(
-        extensions::AppLaunchInfo::GetLaunchHeight(extension));
-  }
-
-  // TODO(erg): AppLaunchParams should pass through the user_gesture from the
-  // extension system here.
-  Browser::CreateParams browser_params(Browser::CreateParams::CreateForApp(
-      app_name, true /* trusted_source */, initial_bounds, profile, true));
-
-  browser_params.initial_show_state = DetermineWindowShowState(profile,
-                                                               params.container,
-                                                               extension);
-
-  Browser* browser = new Browser(browser_params);
-  ui::PageTransition transition =
-      (extension ? ui::PAGE_TRANSITION_AUTO_BOOKMARK
-                 : ui::PAGE_TRANSITION_AUTO_TOPLEVEL);
-
-  WebContents* web_contents =
-      chrome::AddSelectedTabWithURL(browser, url, transition);
-  web_contents->GetMutableRendererPrefs()->can_accept_load_drops = false;
-  web_contents->GetRenderViewHost()->SyncRendererPrefs();
-
-  browser->window()->Show();
-
-  // TODO(jcampan): http://crbug.com/8123 we should not need to set the initial
-  //                focus explicitly.
-  web_contents->SetInitialFocus();
-  return web_contents;
-}
-
 WebContents* OpenApplicationTab(const AppLaunchParams& launch_params,
                            const GURL& url) {
   const Extension* extension = GetExtension(launch_params);
@@ -272,7 +215,7 @@ WebContents* OpenApplicationTab(const AppLaunchParams& launch_params,
     add_type |= TabStripModel::ADD_PINNED;
 
   ui::PageTransition transition = ui::PAGE_TRANSITION_AUTO_BOOKMARK;
-  chrome::NavigateParams params(browser, url, transition);
+  NavigateParams params(browser, url, transition);
   params.tabstrip_add_types = add_type;
   params.disposition = disposition;
 
@@ -300,7 +243,7 @@ WebContents* OpenApplicationTab(const AppLaunchParams& launch_params,
 
     contents = existing_tab;
   } else {
-    chrome::Navigate(&params);
+    Navigate(&params);
     contents = params.target_contents;
   }
 
@@ -376,7 +319,7 @@ WebContents* OpenEnabledApplication(const AppLaunchParams& params) {
     // Record the launch time in the site engagement service. A recent bookmark
     // app launch will provide an engagement boost to the origin.
     SiteEngagementService* service = SiteEngagementService::Get(params.profile);
-    service->SetLastShortcutLaunchTime(url);
+    service->SetLastShortcutLaunchTime(tab, url);
 
     // Refresh the app banner added to homescreen event. The user may have
     // cleared their browsing data since installing the app, which removes the
@@ -395,6 +338,56 @@ WebContents* OpenApplication(const AppLaunchParams& params) {
   return OpenEnabledApplication(params);
 }
 
+WebContents* OpenApplicationWindow(const AppLaunchParams& params,
+                                   const GURL& url) {
+  Profile* const profile = params.profile;
+  const Extension* const extension = GetExtension(params);
+
+  std::string app_name =
+      extension
+          ? web_app::GenerateApplicationNameFromExtensionId(extension->id())
+          : web_app::GenerateApplicationNameFromURL(url);
+
+  gfx::Rect initial_bounds;
+  if (!params.override_bounds.IsEmpty()) {
+    initial_bounds = params.override_bounds;
+  } else if (extension) {
+    initial_bounds.set_width(
+        extensions::AppLaunchInfo::GetLaunchWidth(extension));
+    initial_bounds.set_height(
+        extensions::AppLaunchInfo::GetLaunchHeight(extension));
+  }
+
+  // TODO(erg): AppLaunchParams should pass through the user_gesture from the
+  // extension system here.
+  Browser::CreateParams browser_params(Browser::CreateParams::CreateForApp(
+      app_name, true /* trusted_source */, initial_bounds, profile, true));
+
+  browser_params.initial_show_state =
+      DetermineWindowShowState(profile, params.container, extension);
+
+  Browser* browser = new Browser(browser_params);
+  ui::PageTransition transition =
+      (extension ? ui::PAGE_TRANSITION_AUTO_BOOKMARK
+                 : ui::PAGE_TRANSITION_AUTO_TOPLEVEL);
+
+  NavigateParams nav_params(browser, url, transition);
+  nav_params.disposition = WindowOpenDisposition::NEW_FOREGROUND_TAB;
+  nav_params.opener = params.opener;
+  Navigate(&nav_params);
+
+  WebContents* web_contents = nav_params.target_contents;
+  extensions::HostedAppBrowserController::SetAppPrefsForWebContents(
+      browser->hosted_app_controller(), web_contents);
+
+  browser->window()->Show();
+
+  // TODO(jcampan): http://crbug.com/8123 we should not need to set the initial
+  //                focus explicitly.
+  web_contents->SetInitialFocus();
+  return web_contents;
+}
+
 void OpenApplicationWithReenablePrompt(const AppLaunchParams& params) {
   const Extension* extension = GetExtension(params);
   if (!extension)
@@ -409,11 +402,11 @@ void OpenApplicationWithReenablePrompt(const AppLaunchParams& params) {
   base::Callback<gfx::NativeWindow(void)> dialog_parent_window_getter;
   // TODO(pkotwicz): Figure out which window should be used as the parent for
   // the "enable application" dialog in Athena.
-  dialog_parent_window_getter = base::Bind(&ShowAppListAndGetNativeWindow);
-    (new EnableViaDialogFlow(
-        service, profile, extension->id(), dialog_parent_window_getter,
-        base::Bind(base::IgnoreResult(OpenEnabledApplication), params)))->Run();
-    return;
+  (new EnableViaDialogFlow(
+       service, profile, extension->id(),
+       base::Bind(base::IgnoreResult(OpenEnabledApplication), params)))
+      ->Run();
+  return;
   }
 
   OpenEnabledApplication(params);
@@ -440,4 +433,38 @@ bool CanLaunchViaEvent(const extensions::Extension* extension) {
   const extensions::Feature* feature =
       extensions::FeatureProvider::GetAPIFeature("app.runtime");
   return feature && feature->IsAvailableToExtension(extension).is_available();
+}
+
+Browser* ReparentWebContentsIntoAppBrowser(
+    content::WebContents* contents,
+    const extensions::Extension* extension) {
+  Browser* source_browser = chrome::FindBrowserWithWebContents(contents);
+  Profile* profile = Profile::FromBrowserContext(contents->GetBrowserContext());
+  // Incognito tabs reparent correctly, but remain incognito without any
+  // indication to the user, so disallow it.
+  DCHECK(!profile->IsOffTheRecord());
+
+  Browser::CreateParams browser_params(Browser::CreateParams::CreateForApp(
+      web_app::GenerateApplicationNameFromExtensionId(extension->id()),
+      true /* trusted_source */, gfx::Rect(), profile,
+      true /* user_gesture */));
+  Browser* target_browser = new Browser(browser_params);
+
+  TabStripModel* source_tabstrip = source_browser->tab_strip_model();
+  target_browser->tab_strip_model()->AppendWebContents(
+      source_tabstrip->DetachWebContentsAt(
+          source_tabstrip->GetIndexOfWebContents(contents)),
+      true);
+  target_browser->window()->Show();
+
+  return target_browser;
+}
+
+Browser* ReparentSecureActiveTabIntoPwaWindow(Browser* browser) {
+  const extensions::Extension* extension =
+      extensions::util::GetPwaForSecureActiveTab(browser);
+  if (!extension)
+    return nullptr;
+  return ReparentWebContentsIntoAppBrowser(
+      browser->tab_strip_model()->GetActiveWebContents(), extension);
 }

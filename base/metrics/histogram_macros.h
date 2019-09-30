@@ -5,6 +5,7 @@
 #ifndef BASE_METRICS_HISTOGRAM_MACROS_H_
 #define BASE_METRICS_HISTOGRAM_MACROS_H_
 
+#include "base/macros.h"
 #include "base/metrics/histogram.h"
 #include "base/metrics/histogram_macros_internal.h"
 #include "base/metrics/histogram_macros_local.h"
@@ -35,6 +36,28 @@
 // an element of the Enum.
 // All of these macros must be called with |name| as a runtime constant.
 
+// The first variant of UMA_HISTOGRAM_ENUMERATION accepts two arguments: the
+// histogram name and the enum sample. It deduces the correct boundary value to
+// use by looking for an enumerator with the name kMaxValue. kMaxValue should
+// share the value of the highest enumerator: this avoids switch statements
+// having to handle a sentinel no-op value.
+//
+// Sample usage:
+//   // These values are persisted to logs. Entries should not be renumbered and
+//   // numeric values should never be reused.
+//   enum class MyEnum {
+//     kFirstValue = 0,
+//     kSecondValue = 1,
+//     ...
+//     kFinalValue = N,
+//     kMaxValue = kFinalValue,
+//   };
+//   UMA_HISTOGRAM_ENUMERATION("My.Enumeration", MyEnum::kSomeValue);
+//
+// The second variant requires three arguments: the first two are the same as
+// before, and the third argument is the enum boundary: this must be strictly
+// greater than any other enumerator that will be sampled.
+//
 // Sample usage:
 //   // These values are persisted to logs. Entries should not be renumbered and
 //   // numeric values should never be reused.
@@ -48,11 +71,16 @@
 //   UMA_HISTOGRAM_ENUMERATION("My.Enumeration",
 //                             MyEnum::SOME_VALUE, MyEnum::COUNT);
 //
-// Note: The value in |sample| must be strictly less than |enum_size|.
-
-#define UMA_HISTOGRAM_ENUMERATION(name, sample, enum_size) \
-  INTERNAL_HISTOGRAM_ENUMERATION_WITH_FLAG(                \
-      name, sample, enum_size, base::HistogramBase::kUmaTargetedHistogramFlag)
+// Note: If the enum is used in a switch, it is often desirable to avoid writing
+// a case statement to handle an unused sentinel value (i.e. COUNT in the above
+// example). For scoped enums, this is awkward since it requires casting the
+// enum to an arithmetic type and adding one. Instead, prefer the two argument
+// version of the macro which automatically deduces the boundary from kMaxValue.
+#define UMA_HISTOGRAM_ENUMERATION(name, ...)                            \
+  CR_EXPAND_ARG(INTERNAL_UMA_HISTOGRAM_ENUMERATION_GET_MACRO(           \
+      __VA_ARGS__, INTERNAL_UMA_HISTOGRAM_ENUMERATION_SPECIFY_BOUNDARY, \
+      INTERNAL_UMA_HISTOGRAM_ENUMERATION_DEDUCE_BOUNDARY)(              \
+      name, __VA_ARGS__, base::HistogramBase::kUmaTargetedHistogramFlag))
 
 // Histogram for boolean values.
 
@@ -247,32 +275,6 @@
     INTERNAL_HISTOGRAM_ENUMERATION_WITH_FLAG(                                  \
         name, sample, enum_max,                                                \
         base::HistogramBase::kUmaStabilityHistogramFlag)
-
-//------------------------------------------------------------------------------
-// Sparse histograms.
-
-// Sparse histograms are well suited for recording counts of exact sample values
-// that are sparsely distributed over a large range.
-//
-// UMA_HISTOGRAM_SPARSE_SLOWLY is good for sparsely distributed and/or
-// infrequently recorded values since the implementation is slower
-// and takes more memory. For sparse data, sparse histograms have the advantage
-// of using less memory client-side, because they allocate buckets on demand
-// rather than preallocating. However, server-side, we still need to load all
-// buckets, across all users, at once.
-
-// Thus, please avoid exploding such histograms, i.e. uploading many many
-// distinct values to the server (across all users). Concretely, keep the number
-// of distinct values <= 100 at best, definitely <= 1000. If you have no
-// guarantees on the range of your data, use capping, e.g.:
-//   UMA_HISTOGRAM_SPARSE_SLOWLY("MyHistogram",
-//                               std::max(0, std::min(200, value)));
-//
-// For instance, Sqlite.Version.* are sparse because for any given database,
-// there's going to be exactly one version logged.
-// The |sample| can be a negative or non-negative number.
-#define UMA_HISTOGRAM_SPARSE_SLOWLY(name, sample)                              \
-    INTERNAL_HISTOGRAM_SPARSE_SLOWLY(name, sample)
 
 //------------------------------------------------------------------------------
 // Histogram instantiation helpers.

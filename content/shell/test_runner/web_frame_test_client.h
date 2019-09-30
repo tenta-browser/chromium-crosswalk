@@ -9,7 +9,7 @@
 #include <string>
 
 #include "base/macros.h"
-#include "third_party/WebKit/public/web/WebFrameClient.h"
+#include "third_party/blink/public/web/web_frame_client.h"
 
 namespace test_runner {
 
@@ -33,20 +33,16 @@ class WebFrameTestClient : public blink::WebFrameClient {
   ~WebFrameTestClient() override;
 
   // WebFrameClient overrides needed by WebFrameTestProxy.
-  blink::WebColorChooser* CreateColorChooser(
-      blink::WebColorChooserClient* client,
-      const blink::WebColor& initial_color,
-      const blink::WebVector<blink::WebColorSuggestion>& suggestions) override;
   void RunModalAlertDialog(const blink::WebString& message) override;
   bool RunModalConfirmDialog(const blink::WebString& message) override;
   bool RunModalPromptDialog(const blink::WebString& message,
                             const blink::WebString& default_value,
                             blink::WebString* actual_value) override;
   bool RunModalBeforeUnloadDialog(bool is_reload) override;
-  blink::WebScreenOrientationClient* GetWebScreenOrientationClient() override;
   void PostAccessibilityEvent(const blink::WebAXObject& object,
                               blink::WebAXEvent event) override;
   void DidChangeSelection(bool is_selection_empty) override;
+  void DidChangeContents() override;
   blink::WebPlugin* CreatePlugin(const blink::WebPluginParams& params) override;
   void ShowContextMenu(
       const blink::WebContextMenuData& context_menu_data) override;
@@ -54,17 +50,19 @@ class WebFrameTestClient : public blink::WebFrameClient {
                               const blink::WebString& source_name,
                               unsigned source_line,
                               const blink::WebString& stack_trace) override;
-  void DownloadURL(const blink::WebURLRequest& request,
-                   const blink::WebString& suggested_name) override;
+  void DownloadURL(const blink::WebURLRequest& request) override;
   void LoadErrorPage(int reason) override;
   void DidStartProvisionalLoad(blink::WebDocumentLoader* loader,
                                blink::WebURLRequest& request) override;
   void DidReceiveServerRedirectForProvisionalLoad() override;
   void DidFailProvisionalLoad(const blink::WebURLError& error,
                               blink::WebHistoryCommitType commit_type) override;
-  void DidCommitProvisionalLoad(
-      const blink::WebHistoryItem& history_item,
-      blink::WebHistoryCommitType history_type) override;
+  void DidCommitProvisionalLoad(const blink::WebHistoryItem& history_item,
+                                blink::WebHistoryCommitType history_type,
+                                blink::WebGlobalObjectReusePolicy) override;
+  void DidNavigateWithinPage(const blink::WebHistoryItem& history_item,
+                             blink::WebHistoryCommitType history_type,
+                             bool content_initiated) override;
   void DidReceiveTitle(const blink::WebString& title,
                        blink::WebTextDirection direction) override;
   void DidChangeIcon(blink::WebIconURL::Type icon_type) override;
@@ -85,6 +83,7 @@ class WebFrameTestClient : public blink::WebFrameClient {
       const blink::WebString& sink_id,
       const blink::WebSecurityOrigin& security_origin,
       blink::WebSetSinkIdCallbacks* web_callbacks) override;
+  blink::WebSpeechRecognizer* SpeechRecognizer() override;
   void DidClearWindowObject() override;
   bool RunFileChooser(const blink::WebFileChooserParams& params,
                       blink::WebFileChooserCompletion* completion) override;

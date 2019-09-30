@@ -8,7 +8,8 @@
 
 #import "cwv_export.h"
 
-@class CWVAutofillController;
+NS_ASSUME_NONNULL_BEGIN
+
 @class CWVScrollView;
 @class CWVTranslationController;
 @class CWVWebViewConfiguration;
@@ -29,16 +30,14 @@ CWV_EXPORT
 @property(nonatomic, readonly) CWVWebViewConfiguration* configuration;
 
 // This web view's navigation delegate.
-@property(nonatomic, weak) id<CWVNavigationDelegate> navigationDelegate;
+@property(nonatomic, weak, nullable) id<CWVNavigationDelegate>
+    navigationDelegate;
 
 // This web view's translation controller.
 @property(nonatomic, readonly) CWVTranslationController* translationController;
 
-// This web view's autofill controller.
-@property(nonatomic, readonly) CWVAutofillController* autofillController;
-
 // This web view's UI delegate
-@property(nonatomic, weak) id<CWVUIDelegate> UIDelegate;
+@property(nonatomic, weak, nullable) id<CWVUIDelegate> UIDelegate;
 
 // Whether or not this web view can go backwards or forwards. KVO Compliant.
 @property(nonatomic, readonly) BOOL canGoBack;
@@ -110,7 +109,6 @@ CWV_EXPORT
                clientID:(NSString*)clientID
            clientSecret:(NSString*)clientSecret;
 
-// |configuration| must not be null
 - (instancetype)initWithFrame:(CGRect)frame
                 configuration:(CWVWebViewConfiguration*)configuration
     NS_DESIGNATED_INITIALIZER;
@@ -139,5 +137,7 @@ CWV_EXPORT
          completionHandler:(void (^)(id, NSError*))completionHandler;
 
 @end
+
+NS_ASSUME_NONNULL_END
 
 #endif  // IOS_WEB_VIEW_PUBLIC_CWV_WEB_VIEW_H_

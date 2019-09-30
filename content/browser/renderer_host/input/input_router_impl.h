@@ -19,8 +19,8 @@
 #include "content/browser/renderer_host/input/input_router.h"
 #include "content/browser/renderer_host/input/input_router_client.h"
 #include "content/browser/renderer_host/input/mouse_wheel_event_queue.h"
+#include "content/browser/renderer_host/input/passthrough_touch_event_queue.h"
 #include "content/browser/renderer_host/input/touch_action_filter.h"
-#include "content/browser/renderer_host/input/touch_event_queue.h"
 #include "content/browser/renderer_host/input/touchpad_tap_suppression_controller.h"
 #include "content/common/input/input_event_stream_validator.h"
 #include "content/common/input/input_handler.mojom.h"
@@ -38,6 +38,8 @@ namespace content {
 
 class InputDispositionHandler;
 
+class MockRenderWidgetHost;
+
 class CONTENT_EXPORT InputRouterImplClient : public InputRouterClient {
  public:
   virtual mojom::WidgetInputHandler* GetWidgetInputHandler() = 0;
@@ -51,8 +53,9 @@ class CONTENT_EXPORT InputRouterImplClient : public InputRouterClient {
 class CONTENT_EXPORT InputRouterImpl
     : public InputRouter,
       public GestureEventQueueClient,
+      public FlingControllerClient,
       public MouseWheelEventQueueClient,
-      public TouchEventQueueClient,
+      public PassthroughTouchEventQueueClient,
       public TouchpadTapSuppressionControllerClient,
       public mojom::WidgetInputHandlerHost {
  public:
@@ -78,6 +81,10 @@ class CONTENT_EXPORT InputRouterImpl
   cc::TouchAction AllowedTouchAction() override;
   void BindHost(mojom::WidgetInputHandlerHostRequest request,
                 bool frame_handler) override;
+  void ProgressFling(base::TimeTicks current_time) override;
+  void StopFling() override;
+  bool FlingCancellationIsDeferred() override;
+  void DidStopFlingingOnBrowser() override;
 
   // InputHandlerHost impl
   void CancelTouchTimeout() override;
@@ -87,6 +94,7 @@ class CONTENT_EXPORT InputRouterImpl
   void DidOverscroll(const ui::DidOverscrollParams& params) override;
   void DidStopFlinging() override;
   void ImeCancelComposition() override;
+  void DidStartScrollingViewport() override;
   void ImeCompositionRangeChanged(
       const gfx::Range& range,
       const std::vector<gfx::Rect>& bounds) override;
@@ -96,6 +104,7 @@ class CONTENT_EXPORT InputRouterImpl
 
  private:
   friend class InputRouterImplTest;
+  friend class MockRenderWidgetHost;
 
   // Keeps track of last position of touch points and sets MovementXY for them.
   void SetMovementXYForTouchPoints(blink::WebTouchEvent* event);
@@ -104,13 +113,14 @@ class CONTENT_EXPORT InputRouterImpl
   void SendMouseEventImmediately(
       const MouseEventWithLatencyInfo& mouse_event) override;
 
-  // TouchEventQueueClient
+  // PassthroughTouchEventQueueClient
   void SendTouchEventImmediately(
       const TouchEventWithLatencyInfo& touch_event) override;
   void OnTouchEventAck(const TouchEventWithLatencyInfo& event,
                        InputEventAckSource ack_source,
                        InputEventAckState ack_result) override;
   void OnFilteringTouchEvent(const blink::WebTouchEvent& touch_event) override;
+  bool TouchscreenFlingInProgress() override;
 
   // GestureEventFilterClient
   void SendGestureEventImmediately(
@@ -118,6 +128,13 @@ class CONTENT_EXPORT InputRouterImpl
   void OnGestureEventAck(const GestureEventWithLatencyInfo& event,
                          InputEventAckSource ack_source,
                          InputEventAckState ack_result) override;
+
+  // FlingControllerClient
+  void SendGeneratedWheelEvent(
+      const MouseWheelEventWithLatencyInfo& wheel_event) override;
+  void SendGeneratedGestureScrollEvents(
+      const GestureEventWithLatencyInfo& gesture_event) override;
+  void SetNeedsBeginFrameForFlingProgress() override;
 
   // MouseWheelEventQueueClient
   void SendMouseWheelEventImmediately(
@@ -196,13 +213,15 @@ class CONTENT_EXPORT InputRouterImpl
 
   bool wheel_scroll_latching_enabled_;
   MouseWheelEventQueue wheel_event_queue_;
-  std::unique_ptr<TouchEventQueue> touch_event_queue_;
+  PassthroughTouchEventQueue touch_event_queue_;
   GestureEventQueue gesture_event_queue_;
   TouchActionFilter touch_action_filter_;
   InputEventStreamValidator input_stream_validator_;
   InputEventStreamValidator output_stream_validator_;
 
   float device_scale_factor_;
+
+  gfx::Vector2dF current_fling_velocity_;
 
   // Last touch position relative to screen. Used to compute movementX/Y.
   base::flat_map<int, gfx::Point> global_touch_position_;

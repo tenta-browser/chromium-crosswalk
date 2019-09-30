@@ -7,6 +7,9 @@
 
 namespace switches {
 
+// Delays execution of base::TaskPriority::BACKGROUND tasks until shutdown.
+const char kDisableBackgroundTasks[] = "disable-background-tasks";
+
 // Disables the crash reporting.
 const char kDisableBreakpad[]               = "disable-breakpad";
 
@@ -112,6 +115,14 @@ const char kProfilingFile[] = "profiling-file";
 const char kDisableUsbKeyboardDetect[]      = "disable-usb-keyboard-detect";
 #endif
 
+#if defined(OS_LINUX) && !defined(OS_CHROMEOS)
+// The /dev/shm partition is too small in certain VM environments, causing
+// Chrome to fail or crash (see http://crbug.com/715363). Use this flag to
+// work-around this issue (a temporary directory will always be used to create
+// anonymous shared memory files).
+const char kDisableDevShmUsage[] = "disable-dev-shm-usage";
+#endif
+
 #if defined(OS_POSIX)
 // Used for turning on Breakpad crash reporting in a debug environment where
 // crash reporting is typically compiled but disabled.
@@ -120,9 +131,16 @@ const char kEnableCrashReporterForTesting[] =
 #endif
 
 #if defined(OS_ANDROID)
-// Calls madvise(MADV_RANDOM) on executable code right after the library is
-// loaded, from all processes.
-const char kMadviseRandomExecutableCode[] = "madvise-random-executable-code";
+// Optimizes memory layout of the native library using the orderfile symbols
+// given in base/android/library_loader/anchor_functions.h, via madvise and
+// changing the library prefetch behavior.
+const char kOrderfileMemoryOptimization[] = "orderfile-memory-optimization";
+// Force prefetching of the native library even if otherwise disabled, eg by
+// --orderfile-memory-optimization.
+const char kForceNativePrefetch[] = "force-native-prefetch";
+// If prefetching is enabled, only prefetch the ordered part of the native
+// library. Has no effect if prefetching is disabled.
+const char kNativePrefetchOrderedOnly[] = "native-prefetch-ordered-only";
 #endif
 
 }  // namespace switches

@@ -36,6 +36,7 @@
 <translation id="1237866625126425153">rdgrp</translation>
 <translation id="1251750620252348585">ಮುಂದಿನ ಹಂತದ 6 ಶಿರೋನಾಮೆ</translation>
 <translation id="1275718070701477396">ಆಯ್ಕೆ ಮಾಡಿದ</translation>
+<translation id="1286609444451033486">ಟಾಗಲ್ ಮಾಡಲು ಹುಡುಕಾಟ+ಸ್ಪೇಸ್ ಕೀಲಿಯನ್ನು ಒತ್ತಿರಿ.</translation>
 <translation id="1319608975892113573">ಹಿಂದಿನ ಬ್ಲಾಕ್‌ಕೋಟ್ ಇಲ್ಲ.</translation>
 <translation id="1321576897702511272">ChromeVox ಸಹಾಯವನ್ನು ಮರೆಮಾಡಿ</translation>
 <translation id="1331702245475014624"><ph name="TOTAL" /> / <ph name="INDEX" /></translation>
@@ -369,8 +370,10 @@
 <translation id="4176463684765177261">ನಿಷ್ಕ್ರಿಯಗೊಳಿಸಲಾಗಿದೆ</translation>
 <translation id="4188530942454211480">ಹಿಂದಿನ ವಾಕ್ಯ</translation>
 <translation id="4191918948604314587">ಒಂದು ಬಟನ್</translation>
+<translation id="419265409837491189">ಹಿಂದಿನ ಕಾಲಮ್‌ಗೆ ಹೋಗಿ</translation>
 <translation id="4202186506458631436">ಬಲಕ್ಕೆ ಸೇರಿಸಿ</translation>
 <translation id="4206289001967551965">ಕೋಷ್ಟಕದ ಒಳಗೆ</translation>
+<translation id="4209770650650780359">ಸ್ವಯಂ-ಪೂರ್ಣಗೊಳಿಸುವಿಕೆಯ ಆಯ್ಕೆಗಳನ್ನು ನೋಡಲು ಮೇಲಿನ ಬಾಣದ ಗುರುತು ಅಥವಾ ಕೆಳಗಿನ ಬಾಣದ ಗುರುತನ್ನು ಒತ್ತಿರಿ.</translation>
 <translation id="4215733775853809057">ಮುಂದಿನ ಸ್ಲೈಡರ್</translation>
 <translation id="4218529045364428769">{COUNT,plural, =1{ಡ್ಯಾಶ್}one{# ಡ್ಯಾಶ್‌ಗಳು}other{# ಡ್ಯಾಶ್‌ಗಳು}}</translation>
 <translation id="421884353938374759">ಬಣ್ಣದ ಆಯ್ಕೆಮಾಡುವಿಕೆ</translation>
@@ -404,6 +407,7 @@
 <translation id="4532633738839459153">{COUNT,plural, =1{ಸ್ಲ್ಯಾಷ್‌}one{# ಸ್ಲ್ಯಾಷ್‌ಗಳು}other{# ಸ್ಲ್ಯಾಷ್‌ಗಳು}}</translation>
 <translation id="4547556996012970016">ಮುಂದಿನ ಹಂತ 5 ಶಿರೋನಾಮೆ</translation>
 <translation id="4562381607973973258">ಶಿರೋಲೇಖ</translation>
+<translation id="4569941707103739422">ನ್ಯಾವಿಗೇಟ್ ಮಾಡಲು ಮೇಲಿನ ಬಾಣದ ಗುರುತು ಅಥವಾ ಕೆಳಗಿನ ಬಾಣದ ಗುರುತನ್ನು ಒತ್ತಿರಿ; ಸಕ್ರಿಯಗೊಳಿಸಲು ಎಂಟರ್ ಒತ್ತಿ.</translation>
 <translation id="4570424871453628777">ತಪ್ಪುಕಾಗುಣಿತ ಮುಕ್ತಾಯ</translation>
 <translation id="4591507479202817876">, ಆಯ್ಕೆ ಮಾಡಲಾಗಿದೆ</translation>
 <translation id="4597532268155981612">ಫಾರ್ಮ್</translation>
@@ -417,6 +421,7 @@
 <translation id="4660783501463101648">ಕ್ಲಾಸಿಕ್ ಅನ್ನು ತೆಗೆದುಹಾಕಲಾಗಿದೆ. ChromeVox ಕ್ಲಾಸಿಕ್‌ಗೆ ಹಿಂತಿರುಗಲು ಕೀಬೋರ್ಡ್ ಟಾಗಲ್ ಅನ್ನು ತೆಗೆದುಹಾಕಲಾಗಿದೆ.</translation>
 <translation id="4661075872484491155">ಮರ</translation>
 <translation id="4668929960204016307">,</translation>
+<translation id="4677535310137735442">ಮುಂದಿನ ಕಾಲಮ್‌ಗೆ ಹೋಗಿ</translation>
 <translation id="4688873778442829762">grd</translation>
 <translation id="4693675773662933727">ಹಿಂದಿನ ಹೆಗ್ಗುರುತು</translation>
 <translation id="4696413482802371445">ಮುಂದಿನ ಹಂತದ 5 ಶಿರೋನಾಮೆಯಿಲ್ಲ.</translation>
@@ -432,6 +437,7 @@
 <translation id="4826415162591436065">ಮುಂದಕ್ಕೆ ನ್ಯಾವಿಗೇಟ್ ಮಾಡಿ</translation>
 <translation id="4826604887384865800">ಮುಂದೆ ಹೋಗು</translation>
 <translation id="4827410568042294688">ಆಯ್ಕೆ ಮಾಡಲಾಗಿಲ್ಲ</translation>
+<translation id="4839925464551908214">ಹಿಂದಿನ ಸಾಲಿಗೆ ಹೋಗಿ</translation>
 <translation id="4842108708071771135">ಯಾವುದೇ ಮುಂದಿನ ಬ್ಲಾಕ್‌ಕೋಟ್ ಇಲ್ಲ.</translation>
 <translation id="4844625982113518938">ಈ ಹೆಸರನ್ನು ತಿಳಿಯಲು ಯಾವುದೇ ಕೀಯನ್ನು ಒತ್ತಿರಿ. Ctrl+W ಕಲಿಕೆ ಮೋಡ್‌ ಮುಚ್ಚುತ್ತದೆ.</translation>
 <translation id="4846428657345567687">ChromeVox ಗೆ ಸುಸ್ವಾಗತ!</translation>
@@ -497,6 +503,7 @@
 <translation id="536031132345979795">ನಿರಂತರ ಓದುವಿಕೆ ಸಮಯದಲ್ಲಿ ಹಿಂದಿನದನ್ನು ಬಿಟ್ಟುಬಿಡಿ</translation>
 <translation id="5368000168321181111">Earcons ಆಫ್ ಆಗಿದೆ</translation>
 <translation id="5374320867641260420">ಮುಂದೆ ಬಟನ್‌ ಇಲ್ಲ.</translation>
+<translation id="5376407118396657359">ಸೆಲ್ ಪ್ರಕಾರ ನ್ಯಾವಿಗೇಟ್ ಮಾಡಲು, ಹುಡುಕಾಟ+Ctrl+Alt ಅನ್ನು ಬಾಣಗಳ ಜೊತೆ ಒತ್ತಿರಿ.</translation>
 <translation id="5382299583965267720">ಮುಂದಿನ ಹಂತದ 1 ಶಿರೋನಾಮೆಯಿಲ್ಲ.</translation>
 <translation id="5402367795255837559">ಬ್ರೈಲಿ</translation>
 <translation id="5402791055281059602">ಒಂದು ಮಾದರಿ ಎಚ್ಚರಿಕೆ</translation>
@@ -505,6 +512,7 @@
 <translation id="5417034931411865818">ರೂಟಿಂಗ್ ಕೀ $1 ಅಡಿಯಲ್ಲಿ ಐಟಂ ಕ್ಲಿಕ್ ಮಾಡಿ</translation>
 <translation id="5436105723448703439">{COUNT,plural, =1{ಕಡಿಮೆ ಸೂಚಕ}one{# ಕಡಿಮೆ ಸೂಚಕ ಚಿಹ್ನೆಗಳು}other{# ಕಡಿಮೆ ಸೂಚಕ ಚಿಹ್ನೆಗಳು}}</translation>
 <translation id="5444587279251314700">(ಸಕ್ರಿಯವಾಗಿದೆ)</translation>
+<translation id="5446809554778706307">ಫೋಕಸ್ ಇಲ್ಲ. ಹೊಸ ಟ್ಯಾಬ್ ತೆರೆಯಲು Ctrl+T ಒತ್ತಿರಿ.</translation>
 <translation id="5451268436205074266">ಚುಕ್ಕೆಗಳು <ph name="DOT" /></translation>
 <translation id="5455441614648621694">ಪೂರಕವಾಗಿ</translation>
 <translation id="5485036206801896268">ಹಿಂದಿನ ಗ್ರಾಫಿಕ್‌ಯಿಲ್ಲ.</translation>
@@ -584,6 +592,7 @@ Chrome ಬ್ರೌಸರ್ ಮೆನು ತೆರೆಯಲು, Alt+F ಒತ್
 <translation id="6006050241733874051">ಫಾರ್ಮ್</translation>
 <translation id="6006064078185310784">{COUNT,plural, =1{ಬ್ಯಾಕ್‌ಸ್ಲ್ಯಾಶ್‌}one{# ಬ್ಯಾಕ್‌ಸ್ಲ್ಯಾಶ್‌ಗಳು}other{# ಬ್ಯಾಕ್‌ಸ್ಲ್ಯಾಶ್‌ಗಳು}}</translation>
 <translation id="6037602951055904232">ಮುಂದಕ್ಕೆ ಪ್ಯಾನ್ ಮಾಡಿ</translation>
+<translation id="6042826534790431634">ಸಕ್ರಿಯಗೊಳಿಸಲು, ಹುಡುಕಾಟ+ಸ್ಪೇಸ್ ಕೀಲಿ ಒತ್ತಿರಿ.</translation>
 <translation id="6044160928851315051">ಡಾರ್ಕನ್ ಸ್ಕ್ರೀನ್</translation>
 <translation id="605761629541007221">ದಪ್ಪಕ್ಷರದ ಮುಕ್ತಾಯ</translation>
 <translation id="6065293622157674001">ವ್ಯಾಕರಣ ದೋಷಗಳ ಆರಂಭ</translation>
@@ -783,6 +792,7 @@ Chrome ಬ್ರೌಸರ್ ಮೆನು ತೆರೆಯಲು, Alt+F ಒತ್
 <translation id="8186185314313222077">ಪೂರ್ಣ ಪರದೆಯನ್ನು ಟಾಗಲ್ ಮಾಡಿ</translation>
 <translation id="8199231515320852133">ಪ್ರಸ್ತುತ ಸೆಲ್‌ನ ಶಿರೋನಾಮೆಗಳನ್ನು ಪ್ರಕಟಿಸಿ</translation>
 <translation id="820417203470636242">ಕೋಶವನ್ನು ಖಾಲಿಗೊಳಿಸಿ.</translation>
+<translation id="820469951249669083">ಮುಂದಿನ ಸಾಲಿಗೆ ಹೋಗಿ</translation>
 <translation id="8215202828671303819">ಬಹು ಆಯ್ಕೆ</translation>
 <translation id="826991282343985864">r$1c$2</translation>
 <translation id="8276439074553447000">ಹಿಂದೆ ಗಮನಹರಿಸಿದಂತಹ ಐಟಂಗೆ ಹೋಗಿ</translation>
@@ -860,6 +870,7 @@ Chrome ಬ್ರೌಸರ್ ಮೆನು ತೆರೆಯಲು, Alt+F ಒತ್
 <translation id="9065283790526219006">+ಪಾಪ್‌ಅಪ್‌</translation>
 <translation id="9077213568694924680">ಆಯ್ಕೆಯಿಂದ ತೆಗೆದುಹಾಕಲಾಗಿದೆ</translation>
 <translation id="9082874451376019682">ಹಿಂದಿನ ಸ್ಲೈಡರ್ ಇಲ್ಲ.</translation>
+<translation id="9087707351856729768">ಸ್ವಯಂ ಪೂರ್ಣಗೊಳಿಸುವಿಕೆ ಆಯ್ಕೆಗಳನ್ನು ಪಡೆಯಲು ಟೈಪ್ ಮಾಡಿ.</translation>
 <translation id="9089864840575085222">ಸೈಕಲ್ ಟೈಪಿಂಗ್ ಇಕೋ</translation>
 <translation id="9105227991373418255">$1 ಕತ್ತರಿಸಿ.</translation>
 <translation id="9107530006868467849">ಯಾವುದೇ ಹಿಂದಿನ ಮಾಧ್ಯಮ ವಿಜೆಟ್ ಇಲ್ಲ.</translation>

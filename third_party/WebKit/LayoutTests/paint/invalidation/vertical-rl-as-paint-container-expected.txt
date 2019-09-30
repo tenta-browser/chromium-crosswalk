@@ -3,6 +3,17 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
+      "backgroundColor": "#FFFFFF"
+    },
+    {
+      "name": "Scrolling Layer",
+      "bounds": [800, 600],
+      "drawsContent": false
+    },
+    {
+      "name": "Scrolling Contents Layer",
+      "bounds": [800, 600],
       "contentsOpaque": true,
       "backgroundColor": "#FFFFFF"
     },
@@ -13,7 +24,22 @@
       "backfaceVisibility": "hidden",
       "paintInvalidations": [
         {
-          "object": "LayoutText #text",
+          "object": "InlineTextBox 'Lorem ipsum dolor'",
+          "rect": [520, 0, 80, 340],
+          "reason": "style change"
+        },
+        {
+          "object": "InlineTextBox 'adipiscing elit.'",
+          "rect": [520, 0, 80, 340],
+          "reason": "style change"
+        },
+        {
+          "object": "InlineTextBox 'consectetur'",
+          "rect": [520, 0, 80, 340],
+          "reason": "style change"
+        },
+        {
+          "object": "InlineTextBox 'sit amet,'",
           "rect": [520, 0, 80, 340],
           "reason": "style change"
         }

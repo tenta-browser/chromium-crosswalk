@@ -7,6 +7,7 @@
 #include <map>
 
 #include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/message_loop/message_loop.h"
@@ -64,7 +65,7 @@ class ShillServiceClientImpl : public ShillServiceClient {
       ShillClientHelper* helper = iter->second;
       bus_->RemoveObjectProxy(shill::kFlimflamServiceName,
                               helper->object_proxy()->object_path(),
-                              base::Bind(&base::DoNothing));
+                              base::DoNothing());
       delete helper;
     }
   }
@@ -230,7 +231,6 @@ class ShillServiceClientImpl : public ShillServiceClient {
       return it->second;
 
     // There is no helper for the profile, create it.
-    NET_LOG_DEBUG("AddShillClientHelper", service_path.value());
     dbus::ObjectProxy* object_proxy =
         bus_->GetObjectProxy(shill::kFlimflamServiceName, service_path);
     ShillClientHelper* helper = new ShillClientHelper(object_proxy);
@@ -257,9 +257,8 @@ class ShillServiceClientImpl : public ShillServiceClient {
                     shill::kFlimflamServicePath);
       return;
     }
-    NET_LOG_DEBUG("RemoveShillClientHelper", object_path.value());
-    bus_->RemoveObjectProxy(shill::kFlimflamServiceName,
-                            object_path, base::Bind(&base::DoNothing));
+    bus_->RemoveObjectProxy(shill::kFlimflamServiceName, object_path,
+                            base::DoNothing());
     helpers_.erase(object_path.value());
     delete helper;
   }

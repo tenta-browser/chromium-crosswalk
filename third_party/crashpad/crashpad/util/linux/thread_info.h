@@ -176,7 +176,7 @@ union FloatContext {
     } fpregs;
 
     // Reflects user_vfp in sys/user.h.
-    struct vfp {
+    struct vfp_t {
       uint64_t fpregs[32];
       uint32_t fpscr;
     } vfp;
@@ -232,7 +232,9 @@ union FloatContext {
                 "Size mismatch");
 #elif defined(ARCH_CPU_ARMEL)
   static_assert(sizeof(f32_t::fpregs) == sizeof(user_fpregs), "Size mismatch");
+#if !defined(__GLIBC__)
   static_assert(sizeof(f32_t::vfp) == sizeof(user_vfp), "Size mismatch");
+#endif
 #elif defined(ARCH_CPU_ARM64)
   static_assert(sizeof(f64) == sizeof(user_fpsimd_struct), "Size mismatch");
 #else

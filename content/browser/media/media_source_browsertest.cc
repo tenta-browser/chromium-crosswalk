@@ -8,7 +8,7 @@
 #include "content/browser/media/media_browsertest.h"
 #include "media/base/media_switches.h"
 #include "media/base/test_data_util.h"
-#include "media/media_features.h"
+#include "media/media_buildflags.h"
 
 #if defined(OS_ANDROID)
 #include "base/android/build_info.h"
@@ -48,7 +48,9 @@ class MediaSourceTest : public content::MediaBrowserTest {
   }
 
   void SetUpCommandLine(base::CommandLine* command_line) override {
-    command_line->AppendSwitch(switches::kIgnoreAutoplayRestrictionsForTests);
+    command_line->AppendSwitchASCII(
+        switches::kAutoplayPolicy,
+        switches::autoplay::kNoUserGestureRequiredPolicy);
     scoped_feature_list_.InitAndDisableFeature(media::kMseFlacInIsobmff);
   }
 
@@ -138,7 +140,9 @@ IN_PROC_BROWSER_TEST_F(MediaSourceTest, Playback_AudioVideo_Mp2t) {
 class MediaSourceFlacInIsobmffTest : public content::MediaSourceTest {
  public:
   void SetUpCommandLine(base::CommandLine* command_line) override {
-    command_line->AppendSwitch(switches::kIgnoreAutoplayRestrictionsForTests);
+    command_line->AppendSwitchASCII(
+        switches::kAutoplayPolicy,
+        switches::autoplay::kNoUserGestureRequiredPolicy);
 
     // Enable MSE FLAC-in-MP4 feature.
     scoped_feature_list_.InitAndEnableFeature(media::kMseFlacInIsobmff);

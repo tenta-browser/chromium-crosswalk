@@ -11,6 +11,20 @@ namespace device {
 
 namespace {
 
+enum SwitchProButtons {
+  SWITCH_PRO_BUTTON_CAPTURE = BUTTON_INDEX_COUNT,
+  SWITCH_PRO_BUTTON_COUNT
+};
+
+// The Switch Pro controller reports a larger logical range than the analog
+// axes are capable of, and as a result the received axis values only use about
+// 70% of the total range. We renormalize the axis values to cover the full
+// range. The axis extents were determined experimentally.
+const static float kSwitchProAxisXMin = -0.7f;
+const static float kSwitchProAxisXMax = 0.7f;
+const static float kSwitchProAxisYMin = -0.65f;
+const static float kSwitchProAxisYMax = 0.75f;
+
 void MapperXInputStyleGamepad(const Gamepad& input, Gamepad* mapped) {
   *mapped = input;
   mapped->buttons[BUTTON_INDEX_LEFT_TRIGGER] = AxisToButton(input.axes[2]);
@@ -440,6 +454,60 @@ void MapperSteelSeries(const Gamepad& input, Gamepad* mapped) {
   mapped->axes_length = AXIS_INDEX_COUNT;
 }
 
+void MapperSwitchProUsb(const Gamepad& input, Gamepad* mapped) {
+  *mapped = input;
+  mapped->axes[AXIS_INDEX_LEFT_STICK_X] = RenormalizeAndClampAxis(
+      input.axes[0], kSwitchProAxisXMin, kSwitchProAxisXMax);
+  mapped->axes[AXIS_INDEX_LEFT_STICK_Y] = RenormalizeAndClampAxis(
+      input.axes[1], kSwitchProAxisYMin, kSwitchProAxisYMax);
+  mapped->axes[AXIS_INDEX_RIGHT_STICK_X] = RenormalizeAndClampAxis(
+      input.axes[2], kSwitchProAxisXMin, kSwitchProAxisXMax);
+  mapped->axes[AXIS_INDEX_RIGHT_STICK_Y] = RenormalizeAndClampAxis(
+      input.axes[3], kSwitchProAxisYMin, kSwitchProAxisYMax);
+
+  mapped->buttons_length = SWITCH_PRO_BUTTON_COUNT;
+  mapped->axes_length = AXIS_INDEX_COUNT;
+}
+
+void MapperSwitchProBluetooth(const Gamepad& input, Gamepad* mapped) {
+  *mapped = input;
+  mapped->buttons[BUTTON_INDEX_META] = input.buttons[12];
+  mapped->buttons[SWITCH_PRO_BUTTON_CAPTURE] = input.buttons[13];
+  mapped->buttons[BUTTON_INDEX_DPAD_UP] = AxisNegativeAsButton(input.axes[5]);
+  mapped->buttons[BUTTON_INDEX_DPAD_DOWN] = AxisPositiveAsButton(input.axes[5]);
+  mapped->buttons[BUTTON_INDEX_DPAD_LEFT] = AxisNegativeAsButton(input.axes[4]);
+  mapped->buttons[BUTTON_INDEX_DPAD_RIGHT] =
+      AxisPositiveAsButton(input.axes[4]);
+  mapped->axes[AXIS_INDEX_LEFT_STICK_X] = RenormalizeAndClampAxis(
+      input.axes[0], kSwitchProAxisXMin, kSwitchProAxisXMax);
+  mapped->axes[AXIS_INDEX_LEFT_STICK_Y] = RenormalizeAndClampAxis(
+      input.axes[1], kSwitchProAxisYMin, kSwitchProAxisYMax);
+  mapped->axes[AXIS_INDEX_RIGHT_STICK_X] = RenormalizeAndClampAxis(
+      input.axes[2], kSwitchProAxisXMin, kSwitchProAxisXMax);
+  mapped->axes[AXIS_INDEX_RIGHT_STICK_Y] = RenormalizeAndClampAxis(
+      input.axes[3], kSwitchProAxisYMin, kSwitchProAxisYMax);
+
+  mapped->buttons_length = SWITCH_PRO_BUTTON_COUNT;
+  mapped->axes_length = AXIS_INDEX_COUNT;
+}
+
+void MapperLogitechDInput(const Gamepad& input, Gamepad* mapped) {
+  *mapped = input;
+  mapped->buttons[BUTTON_INDEX_PRIMARY] = input.buttons[1];
+  mapped->buttons[BUTTON_INDEX_SECONDARY] = input.buttons[2];
+  mapped->buttons[BUTTON_INDEX_TERTIARY] = input.buttons[0];
+  mapped->buttons[BUTTON_INDEX_DPAD_UP] = AxisNegativeAsButton(input.axes[5]);
+  mapped->buttons[BUTTON_INDEX_DPAD_DOWN] = AxisPositiveAsButton(input.axes[5]);
+  mapped->buttons[BUTTON_INDEX_DPAD_LEFT] = AxisNegativeAsButton(input.axes[4]);
+  mapped->buttons[BUTTON_INDEX_DPAD_RIGHT] =
+      AxisPositiveAsButton(input.axes[4]);
+
+  // The Logitech button (BUTTON_INDEX_META) is not accessible through the
+  // device's D-mode.
+  mapped->buttons_length = BUTTON_INDEX_COUNT - 1;
+  mapped->axes_length = AXIS_INDEX_COUNT;
+}
+
 struct MappingData {
   const char* const vendor_id;
   const char* const product_id;
@@ -458,14 +526,18 @@ struct MappingData {
     {"045e", "02ea", MapperXInputStyleGamepad},  // Xbox One S (USB)
     {"045e", "02fd", MapperXboxOneS},            // Xbox One S (Bluetooth)
     {"045e", "0719", MapperXInputStyleGamepad},  // Xbox 360 Wireless
-    {"046d", "c21d", MapperXInputStyleGamepad},  // Logitech F310
-    {"046d", "c21e", MapperXInputStyleGamepad},  // Logitech F510
-    {"046d", "c21f", MapperXInputStyleGamepad},  // Logitech F710
+    {"046d", "c216", MapperLogitechDInput},      // Logitech F310 D-mode
+    {"046d", "c218", MapperLogitechDInput},      // Logitech F510 D-mode
+    {"046d", "c219", MapperLogitechDInput},      // Logitech F710 D-mode
+    {"046d", "c21d", MapperXInputStyleGamepad},  // Logitech F310 X-mode
+    {"046d", "c21e", MapperXInputStyleGamepad},  // Logitech F510 X-mode
+    {"046d", "c21f", MapperXInputStyleGamepad},  // Logitech F710 X-mode
     {"04e8", "a000", MapperSamsung_EI_GP20},     // Samsung Gamepad EI-GP20
     {"054c", "0268", MapperDualshock3SixAxis},   // Dualshock 3 / SIXAXIS
     {"054c", "05c4", MapperDualshock4},          // Playstation Dualshock 4
     {"054c", "09cc", MapperDualshock4},          // Dualshock 4 (PS4 Slim)
     {"054c", "0ba0", MapperDualshock4},          // Dualshock 4 USB receiver
+    {"057e", "2009", MapperSwitchProUsb},        // Switch Pro Controller
     {"0583", "2060", MapperIBuffalo},            // iBuffalo Classic
     {"0925", "0005", MapperLakeviewResearch},    // SmartJoy PLUS Adapter
     {"0925", "8866", MapperLakeviewResearch},    // WiseGroup MP-8866
@@ -487,7 +559,8 @@ struct MappingData {
 GamepadStandardMappingFunction GetGamepadStandardMappingFunction(
     const base::StringPiece& vendor_id,
     const base::StringPiece& product_id,
-    const base::StringPiece& version_number) {
+    const base::StringPiece& version_number,
+    GamepadBusType bus_type) {
   GamepadStandardMappingFunction mapper = nullptr;
   for (size_t i = 0; i < arraysize(AvailableMappings); ++i) {
     MappingData& item = AvailableMappings[i];
@@ -505,6 +578,13 @@ GamepadStandardMappingFunction GetGamepadStandardMappingFunction(
   } else if (mapper == MapperDualshock3SixAxis && version_number == "8111") {
     mapper = MapperDualshock3SixAxisNew;
   }
+
+  // The Nintendo Switch Pro controller exposes the same product ID when
+  // connected over USB or Bluetooth but communicates using different protocols.
+  // In Bluetooth mode it uses standard HID, but in USB mode it uses a
+  // vendor-specific protocol. Select a mapper depending on the connection type.
+  if (mapper == MapperSwitchProUsb && bus_type == GAMEPAD_BUS_BLUETOOTH)
+    mapper = MapperSwitchProBluetooth;
 
   return mapper;
 }

@@ -2,6 +2,7 @@
 <head>
     <script src="media-file.js"></script>
     <script src="video-paint-test.js"></script>
+    <script src="media-controls.js"></script>
     <style>
     .override {
         letter-spacing: 30px;
@@ -15,11 +16,17 @@
     }
     </style>
 </head>
-<body onload="setSrcByTagName('video', findMediaFile('video', 'content/test')); init()">
+<body onload="setSrcByTagName('video', 'content/test.ogv'); init()">
 <p>The look of the controls should not change.</p>
 <div class="override">
     <video controls></video>
 </div>
 <video controls></video>
 </body>
+<script>
+  const videos = document.getElementsByTagName('video');
+  for (var i = 0; i < videos.length; ++i) {
+    enableTestMode(videos[i]);
+  }
+</script>
 </html>

@@ -12,6 +12,8 @@ static_library("content") {
     "payment_request_converter.cc",
     "payment_request_converter.h",
     "payment_request_dialog.h",
+    "payment_request_display_manager.cc",
+    "payment_request_display_manager.h",
     "payment_request_spec.cc",
     "payment_request_spec.h",
     "payment_request_state.cc",
@@ -31,11 +33,12 @@ static_library("content") {
     "//components/keyed_service/content",
     "//components/payments/content/utility",
     "//components/payments/core",
+    "//components/payments/mojom",
     "//components/prefs",
     "//components/strings:components_strings_grit",
     "//components/url_formatter",
     "//content/public/browser",
-    "//third_party/WebKit/public:blink_headers",
+    "//third_party/blink/public:blink_headers",
     "//url",
   ]
 }
@@ -43,13 +46,19 @@ static_library("content") {
 # Files used by content and utility.
 static_library("content_common") {
   sources = [
-    "web_app_manifest_section.cc",
-    "web_app_manifest_section.h",
+    "web_app_manifest.cc",
+    "web_app_manifest.h",
+  ]
+
+  deps = [
+    "//skia",
   ]
 }
 
 static_library("utils") {
   sources = [
+    "installable_payment_app_crawler.cc",
+    "installable_payment_app_crawler.h",
     "manifest_verifier.cc",
     "manifest_verifier.h",
     "origin_security_checker.cc",
@@ -74,7 +83,7 @@ static_library("utils") {
     "//content/public/browser",
     "//net",
     "//sql",
-    "//third_party/WebKit/public:blink_headers",
+    "//third_party/blink/public:blink_headers",
     "//ui/base",
   ]
 
@@ -112,7 +121,7 @@ source_set("unit_tests") {
     "//content/test:test_support",
     "//sql",
     "//testing/gtest",
-    "//third_party/WebKit/public:blink_headers",
+    "//third_party/blink/public:blink_headers",
     "//third_party/icu",
     "//third_party/libaddressinput:test_support",
   ]

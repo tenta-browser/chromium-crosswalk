@@ -15,6 +15,7 @@
 #import "ui/base/cocoa/nsview_additions.h"
 #include "ui/base/material_design/material_design_controller.h"
 #include "ui/base/theme_provider.h"
+#include "ui/gfx/color_palette.h"
 #include "ui/gfx/image/image_skia_util_mac.h"
 #include "ui/gfx/paint_vector_icon.h"
 
@@ -199,6 +200,10 @@ const NSSize kMDButtonIconSize = NSMakeSize(16, 16);
   return handleMiddleClick_ && [theEvent buttonNumber] == 2;
 }
 
+- (BOOL)shouldMirrorInRTL {
+  return YES;
+}
+
 - (void)drawFocusRingMask {
   // Match the hover image's bezel.
   [[NSBezierPath bezierPathWithRoundedRect:NSInsetRect([self bounds], 2, 2)
@@ -228,7 +233,7 @@ const NSSize kMDButtonIconSize = NSMakeSize(16, 16);
   return themeIsDark ? SK_ColorWHITE
                      : (provider && provider->ShouldIncreaseContrast()
                             ? SK_ColorBLACK
-                            : SkColorSetRGB(0x5A, 0x5A, 0x5A));
+                            : gfx::kChromeIconGrey);
 }
 
 - (NSImage*)browserToolsIconForFillColor:(SkColor)fillColor {
@@ -315,12 +320,13 @@ const NSSize kMDButtonIconSize = NSMakeSize(16, 16);
       normalIcon = [self browserToolsIconForFillColor:normalColor];
       disabledIcon = [self browserToolsIconForFillColor:disabledColor];
     } else {
-      BOOL isRTL = cocoa_l10n_util::ShouldDoExperimentalRTLLayout();
+      BOOL shouldMirror = cocoa_l10n_util::ShouldDoExperimentalRTLLayout() &&
+                          self.shouldMirrorInRTL;
       normalIcon = NSImageFromImageSkia(
           gfx::CreateVectorIcon(*icon,
                                 kMDButtonIconSize.width,
                                 normalColor));
-      if (isRTL)
+      if (shouldMirror)
         normalIcon = cocoa_l10n_util::FlippedImage(normalIcon);
       // The home button has no icon for its disabled state.
       if (icon != &vector_icons::kReloadIcon) {
@@ -328,7 +334,7 @@ const NSSize kMDButtonIconSize = NSMakeSize(16, 16);
             gfx::CreateVectorIcon(*icon,
                                   kMDButtonIconSize.width,
                                   disabledColor));
-        if (isRTL)
+        if (shouldMirror)
           disabledIcon = cocoa_l10n_util::FlippedImage(disabledIcon);
       }
     }

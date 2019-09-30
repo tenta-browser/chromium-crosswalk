@@ -49,6 +49,7 @@
 #import "chrome/browser/ui/cocoa/toolbar/toolbar_controller.h"
 #import "chrome/browser/ui/cocoa/view_id_util.h"
 #import "chrome/browser/ui/cocoa/view_resizer.h"
+#include "chrome/browser/ui/layout_constants.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/common/extensions/extension_constants.h"
 #include "chrome/common/extensions/extension_metrics.h"
@@ -187,8 +188,10 @@ void RecordAppLaunch(Profile* profile, GURL url) {
                                   extension->GetType());
 }
 
-const CGFloat kBookmarkButtonHeightMinusPadding =
-    bookmarks::kBookmarkButtonHeight - bookmarks::kBookmarkVerticalPadding * 2;
+CGFloat GetBookmarkButtonHeightMinusPadding() {
+  return GetLayoutConstant(BOOKMARK_BAR_HEIGHT) -
+         bookmarks::kBookmarkVerticalPadding * 2;
+}
 
 }  // namespace
 
@@ -568,7 +571,7 @@ bool operator!=(const BookmarkBarLayout& lhs, const BookmarkBarLayout& rhs) {
   // The state of our morph (if any); 1 is total bubble, 0 is the regular bar.
   CGFloat morph = [self detachedMorphProgress];
   CGFloat padding = 0;
-  padding = bookmarks::kNTPBookmarkBarPadding;
+  padding = GetLayoutConstant(BOOKMARK_BAR_NTP_PADDING);
   buttonViewFrame =
       NSInsetRect(buttonViewFrame, morph * padding, morph * padding);
   [buttonView_ setFrame:buttonViewFrame];
@@ -949,9 +952,10 @@ bool operator!=(const BookmarkBarLayout& lhs, const BookmarkBarLayout& rhs) {
     [view setHidden:NO];
     // Height takes into account the extra height we have since the toolbar
     // only compresses when we're done.
-    [view animateToNewHeight:(chrome::kMinimumBookmarkBarHeight -
-                              bookmarks::kBookmarkBarOverlap)
-                    duration:kBookmarkBarAnimationDuration];
+    [view
+        animateToNewHeight:(GetLayoutConstant(BOOKMARK_BAR_HEIGHT_NO_OVERLAP) -
+                            bookmarks::kBookmarkBarOverlap)
+                  duration:kBookmarkBarAnimationDuration];
   } else if ([self isAnimatingFromState:BookmarkBar::SHOW
                                 toState:BookmarkBar::HIDDEN]) {
     [view setShowsDivider:YES];
@@ -962,7 +966,7 @@ bool operator!=(const BookmarkBarLayout& lhs, const BookmarkBarLayout& rhs) {
                                 toState:BookmarkBar::DETACHED]) {
     [view setShowsDivider:YES];
     [view setHidden:NO];
-    [view animateToNewHeight:chrome::kNTPBookmarkBarHeight
+    [view animateToNewHeight:GetLayoutConstant(BOOKMARK_BAR_NTP_HEIGHT)
                     duration:kBookmarkBarAnimationDuration];
   } else if ([self isAnimatingFromState:BookmarkBar::DETACHED
                                 toState:BookmarkBar::SHOW]) {
@@ -970,9 +974,10 @@ bool operator!=(const BookmarkBarLayout& lhs, const BookmarkBarLayout& rhs) {
     [view setHidden:NO];
     // Height takes into account the extra height we have since the toolbar
     // only compresses when we're done.
-    [view animateToNewHeight:(chrome::kMinimumBookmarkBarHeight -
-                              bookmarks::kBookmarkBarOverlap)
-                    duration:kBookmarkBarAnimationDuration];
+    [view
+        animateToNewHeight:(GetLayoutConstant(BOOKMARK_BAR_HEIGHT_NO_OVERLAP) -
+                            bookmarks::kBookmarkBarOverlap)
+                  duration:kBookmarkBarAnimationDuration];
   } else {
     // Oops! An animation we don't know how to handle.
     return NO;
@@ -998,9 +1003,9 @@ bool operator!=(const BookmarkBarLayout& lhs, const BookmarkBarLayout& rhs) {
 
   switch (currentState_) {
     case BookmarkBar::SHOW:
-      return chrome::kMinimumBookmarkBarHeight;
+      return GetLayoutConstant(BOOKMARK_BAR_HEIGHT_NO_OVERLAP);
     case BookmarkBar::DETACHED:
-      return chrome::kNTPBookmarkBarHeight;
+      return GetLayoutConstant(BOOKMARK_BAR_NTP_HEIGHT);
     case BookmarkBar::HIDDEN:
       return 0;
   }
@@ -1008,7 +1013,9 @@ bool operator!=(const BookmarkBarLayout& lhs, const BookmarkBarLayout& rhs) {
 
 // Return an appropriate width for the given bookmark button cell.
 - (CGFloat)widthForBookmarkButtonCell:(NSCell*)cell {
-  return std::min([cell cellSize].width, bookmarks::kDefaultBookmarkWidth);
+  CGFloat width =
+      [cell cellSize].width + [BookmarkButtonCell insetInView:buttonView_] * 2;
+  return std::min(width, bookmarks::kDefaultBookmarkWidth);
 }
 
 - (BookmarkButton*)buttonForNode:(const BookmarkNode*)node {
@@ -1028,7 +1035,7 @@ bool operator!=(const BookmarkBarLayout& lhs, const BookmarkBarLayout& rhs) {
   } else {
     BookmarkButtonCell* cell = [self cellForBookmarkNode:node];
     NSRect frame = NSMakeRect(0, bookmarks::kBookmarkVerticalPadding, 0,
-                              kBookmarkButtonHeightMinusPadding);
+                              GetBookmarkButtonHeightMinusPadding());
     button = [[[BookmarkButton alloc] initWithFrame:frame] autorelease];
     [button setCell:cell];
     [buttonView_ addSubview:button];
@@ -1089,7 +1096,7 @@ bool operator!=(const BookmarkBarLayout& lhs, const BookmarkBarLayout& rhs) {
 
   // Folders show a tooltip iff the title is truncated.
   if (node->is_folder() && [buttonTitle length] > 0 &&
-      [[button cell] cellSize].width < buttonWidth) {
+      [self widthForBookmarkButtonCell:[button cell]] < buttonWidth) {
     tooltip = buttonTitle;
   } else if (node->is_url()) {
     tooltip = [BookmarkMenuCocoaController tooltipForNode:node];
@@ -1133,7 +1140,7 @@ bool operator!=(const BookmarkBarLayout& lhs, const BookmarkBarLayout& rhs) {
   view_id_util::SetID(managedBookmarksButton_.get(), VIEW_ID_MANAGED_BOOKMARKS);
   NSRect frame = NSMakeRect(0, bookmarks::kBookmarkVerticalPadding,
                             [self widthForBookmarkButtonCell:cell],
-                            kBookmarkButtonHeightMinusPadding);
+                            GetBookmarkButtonHeightMinusPadding());
   [managedBookmarksButton_ setFrame:frame];
   [buttonView_ addSubview:managedBookmarksButton_.get()];
 
@@ -1152,7 +1159,7 @@ bool operator!=(const BookmarkBarLayout& lhs, const BookmarkBarLayout& rhs) {
   [otherBookmarksButton_ setAction:@selector(openBookmarkFolderFromButton:)];
   NSRect frame = NSMakeRect(0, bookmarks::kBookmarkVerticalPadding,
                             [self widthForBookmarkButtonCell:cell],
-                            kBookmarkButtonHeightMinusPadding);
+                            GetBookmarkButtonHeightMinusPadding());
   [otherBookmarksButton_ setFrame:frame];
   view_id_util::SetID(otherBookmarksButton_.get(), VIEW_ID_OTHER_BOOKMARKS);
   [buttonView_ addSubview:otherBookmarksButton_.get()];
@@ -1173,7 +1180,7 @@ bool operator!=(const BookmarkBarLayout& lhs, const BookmarkBarLayout& rhs) {
   NSRect frame;
   frame.origin.y = bookmarks::kBookmarkVerticalPadding;
   frame.size = NSMakeSize([self widthForBookmarkButtonCell:cell],
-                          kBookmarkButtonHeightMinusPadding);
+                          GetBookmarkButtonHeightMinusPadding());
   appsPageShortcutButton_.reset([self createCustomBookmarkButtonForCell:cell]);
   [appsPageShortcutButton_ setFrame:frame];
   [[appsPageShortcutButton_ draggableButton] setActsOnMouseDown:NO];
@@ -1977,7 +1984,8 @@ static BOOL ValueInRangeInclusive(CGFloat low, CGFloat value, CGFloat high) {
 - (CGFloat)widthOfButtonForNode:(const BookmarkNode*)node {
   // TODO(lgrey): Can we get this information without an actual image?
   NSImage* image = [self faviconForNode:node forADarkTheme:NO];
-  CGFloat width = [BookmarkButtonCell cellWidthForNode:node image:image];
+  CGFloat width = [BookmarkButtonCell cellWidthForNode:node image:image] +
+                  [BookmarkButtonCell insetInView:buttonView_] * 2;
   return std::min(width, bookmarks::kDefaultBookmarkWidth);
 }
 

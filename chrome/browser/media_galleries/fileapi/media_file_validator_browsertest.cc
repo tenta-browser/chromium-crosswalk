@@ -12,7 +12,6 @@
 #include "base/files/scoped_temp_dir.h"
 #include "base/location.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/path_service.h"
 #include "base/task_scheduler/post_task.h"
 #include "base/task_scheduler/task_traits.h"
@@ -119,10 +118,10 @@ class MediaFileValidatorTest : public InProcessBrowserTest {
     file_system_runner_ =
         base::CreateSequencedTaskRunnerWithTraits({base::MayBlock()});
     additional_providers.push_back(
-        base::MakeUnique<content::TestFileSystemBackend>(
+        std::make_unique<content::TestFileSystemBackend>(
             file_system_runner_.get(), src_path));
     additional_providers.push_back(
-        base::MakeUnique<MediaFileSystemBackend>(base));
+        std::make_unique<MediaFileSystemBackend>(base));
     file_system_context_ =
         content::CreateFileSystemContextWithAdditionalProvidersForTesting(
             content::BrowserThread::GetTaskRunnerForThread(

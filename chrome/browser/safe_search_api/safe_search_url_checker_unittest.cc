@@ -13,7 +13,6 @@
 #include "base/callback.h"
 #include "base/json/json_writer.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/values.h"
@@ -52,7 +51,7 @@ std::string BuildResponse(bool is_porn) {
       new base::DictionaryValue);
   if (is_porn)
     classification_dict->SetBoolean("pornography", is_porn);
-  auto classifications_list = base::MakeUnique<base::ListValue>();
+  auto classifications_list = std::make_unique<base::ListValue>();
   classifications_list->Append(std::move(classification_dict));
   dict.SetWithoutPathExpansion("classifications",
                                std::move(classifications_list));

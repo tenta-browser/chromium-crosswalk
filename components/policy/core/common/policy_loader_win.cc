@@ -66,12 +66,19 @@ const char kBlockedExtensionPrefix[] = "[BLOCKED]";
 
 // List of policies that are considered only if the user is part of a AD domain.
 // Please document any new additions in policy_templates.json!
-const char* kInsecurePolicies[] = {
-    key::kMetricsReportingEnabled, key::kDefaultSearchProviderEnabled,
-    key::kHomepageIsNewTabPage,    key::kHomepageLocation,
-    key::kNewTabPageLocation,      key::kRestoreOnStartup,
-    key::kRestoreOnStartupURLs,    key::kSafeBrowsingForTrustedSourcesEnabled,
-    key::kCloudPolicyOverridesMachinePolicy};
+const char* kInsecurePolicies[] = {key::kMetricsReportingEnabled,
+                                   key::kDefaultSearchProviderEnabled,
+                                   key::kHomepageIsNewTabPage,
+                                   key::kHomepageLocation,
+                                   key::kNewTabPageLocation,
+                                   key::kRestoreOnStartup,
+                                   key::kRestoreOnStartupURLs,
+                                   key::kSafeBrowsingForTrustedSourcesEnabled,
+                                   key::kCloudPolicyOverridesMachinePolicy,
+                                   key::kSafeBrowsingEnabled,
+                                   key::kSafeBrowsingWhitelistDomains,
+                                   key::kPasswordProtectionLoginURLs,
+                                   key::kPasswordProtectionChangePasswordURL};
 
 // The list of possible errors that can occur while collecting information about
 // the current enterprise environment.
@@ -130,8 +137,7 @@ void FilterUntrustedPolicy(PolicyMap* policy) {
 
       const PolicyDetails* details =
           GetChromePolicyDetails(key::kExtensionInstallForcelist);
-      UMA_HISTOGRAM_SPARSE_SLOWLY("EnterpriseCheck.InvalidPolicies",
-                                  details->id);
+      base::UmaHistogramSparse("EnterpriseCheck.InvalidPolicies", details->id);
     }
   }
 
@@ -142,8 +148,7 @@ void FilterUntrustedPolicy(PolicyMap* policy) {
       invalid_policies++;
       const PolicyDetails* details =
           GetChromePolicyDetails(kInsecurePolicies[i]);
-      UMA_HISTOGRAM_SPARSE_SLOWLY("EnterpriseCheck.InvalidPolicies",
-                                  details->id);
+      base::UmaHistogramSparse("EnterpriseCheck.InvalidPolicies", details->id);
     }
   }
 

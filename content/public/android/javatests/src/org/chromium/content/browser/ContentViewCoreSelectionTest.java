@@ -26,11 +26,14 @@ import org.chromium.base.test.util.Feature;
 import org.chromium.base.test.util.UrlUtils;
 import org.chromium.content.browser.input.ChromiumBaseInputConnection;
 import org.chromium.content.browser.input.ImeTestUtils;
+import org.chromium.content.browser.selection.SelectionPopupControllerImpl;
 import org.chromium.content.browser.test.ContentJUnit4ClassRunner;
 import org.chromium.content.browser.test.util.Criteria;
 import org.chromium.content.browser.test.util.CriteriaHelper;
 import org.chromium.content.browser.test.util.DOMUtils;
+import org.chromium.content_public.browser.ImeAdapter;
 import org.chromium.content_public.browser.SelectionClient;
+import org.chromium.content_public.browser.WebContents;
 import org.chromium.content_shell_apk.ContentShellActivityTestRule;
 
 import java.util.concurrent.Callable;
@@ -57,8 +60,8 @@ public class ContentViewCoreSelectionTest {
             + "<input id=\"disabled_text\" type=\"text\" disabled value=\"Sample Text\" />"
             + "<div id=\"rich_div\" contentEditable=\"true\" >Rich Editor</div>"
             + "</form></body></html>");
-    private ContentViewCore mContentViewCore;
-    private SelectionPopupController mSelectionPopupController;
+    private ContentViewCoreImpl mContentViewCore;
+    private SelectionPopupControllerImpl mSelectionPopupController;
 
     private static class TestSelectionClient implements SelectionClient {
         private SelectionClient.Result mResult;
@@ -69,9 +72,6 @@ public class ContentViewCoreSelectionTest {
 
         @Override
         public void onSelectionEvent(int eventType, float posXPix, float poxYPix) {}
-
-        @Override
-        public void showUnhandledTapUIIfNeeded(int x, int y) {}
 
         @Override
         public void selectWordAroundCaretAck(boolean didSelect, int startAdjust, int endAdjust) {}
@@ -107,7 +107,8 @@ public class ContentViewCoreSelectionTest {
         mActivityTestRule.waitForActiveShellToBeDoneLoading();
 
         mContentViewCore = mActivityTestRule.getContentViewCore();
-        mSelectionPopupController = mContentViewCore.getSelectionPopupControllerForTesting();
+        mSelectionPopupController =
+                SelectionPopupControllerImpl.fromWebContents(mActivityTestRule.getWebContents());
         waitForSelectActionBarVisible(false);
         waitForPastePopupStatus(false);
     }
@@ -140,7 +141,7 @@ public class ContentViewCoreSelectionTest {
         waitForSelectActionBarVisible(true);
         Assert.assertTrue(mSelectionPopupController.hasSelection());
 
-        mContentViewCore.preserveSelectionOnNextLossOfFocus();
+        mSelectionPopupController.setPreserveSelectionOnNextLossOfFocus(true);
         requestFocusOnUiThread(false);
         waitForSelectActionBarVisible(false);
         Assert.assertTrue(mSelectionPopupController.hasSelection());
@@ -415,7 +416,7 @@ public class ContentViewCoreSelectionTest {
         waitForSelectActionBarVisible(true);
         Assert.assertTrue(mSelectionPopupController.hasSelection());
         Assert.assertTrue(mSelectionPopupController.isActionModeValid());
-        Assert.assertTrue(mSelectionPopupController.isSelectionEditable());
+        Assert.assertTrue(mSelectionPopupController.isFocusedNodeEditable());
         Assert.assertFalse(mSelectionPopupController.isSelectionPassword());
     }
 
@@ -427,7 +428,7 @@ public class ContentViewCoreSelectionTest {
         waitForSelectActionBarVisible(true);
         Assert.assertTrue(mSelectionPopupController.hasSelection());
         Assert.assertTrue(mSelectionPopupController.isActionModeValid());
-        Assert.assertTrue(mSelectionPopupController.isSelectionEditable());
+        Assert.assertTrue(mSelectionPopupController.isFocusedNodeEditable());
         Assert.assertTrue(mSelectionPopupController.isSelectionPassword());
     }
 
@@ -439,7 +440,7 @@ public class ContentViewCoreSelectionTest {
         waitForSelectActionBarVisible(true);
         Assert.assertTrue(mSelectionPopupController.hasSelection());
         Assert.assertTrue(mSelectionPopupController.isActionModeValid());
-        Assert.assertFalse(mSelectionPopupController.isSelectionEditable());
+        Assert.assertFalse(mSelectionPopupController.isFocusedNodeEditable());
         Assert.assertFalse(mSelectionPopupController.isSelectionPassword());
     }
 
@@ -451,7 +452,7 @@ public class ContentViewCoreSelectionTest {
         waitForSelectActionBarVisible(true);
         Assert.assertTrue(mSelectionPopupController.hasSelection());
         Assert.assertTrue(mSelectionPopupController.isActionModeValid());
-        Assert.assertTrue(mSelectionPopupController.isSelectionEditable());
+        Assert.assertTrue(mSelectionPopupController.isFocusedNodeEditable());
         Assert.assertFalse(mSelectionPopupController.isSelectionPassword());
     }
 
@@ -634,7 +635,9 @@ public class ContentViewCoreSelectionTest {
 
     private CharSequence getTextBeforeCursor(final int length, final int flags) {
         final ChromiumBaseInputConnection connection =
-                mContentViewCore.getImeAdapterForTest().getInputConnectionForTest();
+                (ChromiumBaseInputConnection) ImeAdapter
+                        .fromWebContents(mActivityTestRule.getWebContents())
+                        .getInputConnectionForTest();
         return ImeTestUtils.runBlockingOnHandlerNoException(
                 connection.getHandler(), new Callable<CharSequence>() {
                     @Override
@@ -830,7 +833,7 @@ public class ContentViewCoreSelectionTest {
         ThreadUtils.runOnUiThreadBlocking(new Runnable() {
             @Override
             public void run() {
-                mContentViewCore.destroySelectActionMode();
+                mSelectionPopupController.destroySelectActionMode();
             }
         });
     }
@@ -852,27 +855,27 @@ public class ContentViewCoreSelectionTest {
         CriteriaHelper.pollUiThread(Criteria.equals(visible, new Callable<Boolean>() {
             @Override
             public Boolean call() {
-                return mContentViewCore.isSelectActionBarShowing();
+                return mSelectionPopupController.isSelectActionBarShowing();
             }
         }));
     }
 
     private void setVisibileOnUiThread(final boolean show) {
-        final ContentViewCore contentViewCore = mContentViewCore;
+        final WebContents webContents = mActivityTestRule.getWebContents();
         ThreadUtils.runOnUiThreadBlocking(new Runnable() {
             @Override
             public void run() {
                 if (show) {
-                    contentViewCore.onShow();
+                    webContents.onShow();
                 } else {
-                    contentViewCore.onHide();
+                    webContents.onHide();
                 }
             }
         });
     }
 
     private void setAttachedOnUiThread(final boolean attached) {
-        final ContentViewCore contentViewCore = mContentViewCore;
+        final ContentViewCoreImpl contentViewCore = mContentViewCore;
         ThreadUtils.runOnUiThreadBlocking(new Runnable() {
             @Override
             public void run() {
@@ -886,11 +889,11 @@ public class ContentViewCoreSelectionTest {
     }
 
     private void requestFocusOnUiThread(final boolean gainFocus) {
-        final ContentViewCore contentViewCore = mContentViewCore;
+        final ContentViewCoreImpl contentViewCore = mContentViewCore;
         ThreadUtils.runOnUiThreadBlocking(new Runnable() {
             @Override
             public void run() {
-                contentViewCore.onFocusChanged(gainFocus, true);
+                contentViewCore.onViewFocusChanged(gainFocus);
             }
         });
     }

@@ -11,9 +11,9 @@
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "content/common/content_export.h"
-#include "content/public/common/url_loader.mojom.h"
-#include "ipc/ipc_message.h"
+#include "mojo/public/cpp/bindings/binding.h"
 #include "mojo/public/cpp/system/data_pipe.h"
+#include "services/network/public/mojom/url_loader.mojom.h"
 
 namespace base {
 class SingleThreadTaskRunner;
@@ -24,15 +24,16 @@ struct RedirectInfo;
 }  // namespace net
 
 namespace network {
+struct ResourceResponseHead;
 struct URLLoaderCompletionStatus;
 }  // namespace network
 
 namespace content {
 class ResourceDispatcher;
 class URLResponseBodyConsumer;
-struct ResourceResponseHead;
 
-class CONTENT_EXPORT URLLoaderClientImpl final : public mojom::URLLoaderClient {
+class CONTENT_EXPORT URLLoaderClientImpl final
+    : public network::mojom::URLLoaderClient {
  public:
   URLLoaderClientImpl(int request_id,
                       ResourceDispatcher* resource_dispatcher,
@@ -46,15 +47,33 @@ class CONTENT_EXPORT URLLoaderClientImpl final : public mojom::URLLoaderClient {
   // Unsets |is_deferred_|.
   void UnsetDefersLoading();
 
-  // Disaptches the messages received after SetDefersLoading is called.
+  // Dispatches the messages received after SetDefersLoading is called.
   void FlushDeferredMessages();
 
-  // mojom::URLLoaderClient implementation
-  void OnReceiveResponse(const ResourceResponseHead& response_head,
-                         const base::Optional<net::SSLInfo>& ssl_info,
-                         mojom::DownloadedTempFilePtr downloaded_file) override;
-  void OnReceiveRedirect(const net::RedirectInfo& redirect_info,
-                         const ResourceResponseHead& response_head) override;
+  // If set to true, this causes the raw datapipe containing the response body
+  // to be passed on to the ResourceDispatcher. Otherwise a
+  // URLResponseBodyConsumer is created that passes individual chunks of data
+  // from teh body to the dispatcher.
+  void SetPassResponsePipeToDispatcher(bool pass_pipe) {
+    pass_response_pipe_to_dispatcher_ = true;
+  }
+
+  // Binds this instance to the given URLLoaderClient endpoints so that it can
+  // start getting the mojo calls from the given loader. This is used only for
+  // the main resource loading when NavigationMojoResponse and/or NetworkService
+  // is enabled. Otherwise (in regular subresource loading cases) |this| is not
+  // bound to a client request, but used via ThrottlingURLLoader to get client
+  // upcalls from the loader.
+  void Bind(
+      network::mojom::URLLoaderClientEndpointsPtr url_loader_client_endpoints);
+
+  // network::mojom::URLLoaderClient implementation
+  void OnReceiveResponse(
+      const network::ResourceResponseHead& response_head,
+      network::mojom::DownloadedTempFilePtr downloaded_file) override;
+  void OnReceiveRedirect(
+      const net::RedirectInfo& redirect_info,
+      const network::ResourceResponseHead& response_head) override;
   void OnDataDownloaded(int64_t data_len, int64_t encoded_data_len) override;
   void OnUploadProgress(int64_t current_position,
                         int64_t total_size,
@@ -65,19 +84,38 @@ class CONTENT_EXPORT URLLoaderClientImpl final : public mojom::URLLoaderClient {
       mojo::ScopedDataPipeConsumerHandle body) override;
   void OnComplete(const network::URLLoaderCompletionStatus& status) override;
 
+  // Takes |downloaded_file_|.
+  network::mojom::DownloadedTempFilePtr TakeDownloadedTempFile();
+
  private:
+  class DeferredMessage;
+  class DeferredOnReceiveResponse;
+  class DeferredOnReceiveRedirect;
+  class DeferredOnDataDownloaded;
+  class DeferredOnUploadProgress;
+  class DeferredOnReceiveCachedMetadata;
+  class DeferredOnComplete;
+
   bool NeedsStoringMessage() const;
-  void StoreAndDispatch(const IPC::Message& message);
+  void StoreAndDispatch(std::unique_ptr<DeferredMessage> message);
+  void OnConnectionClosed();
 
   scoped_refptr<URLResponseBodyConsumer> body_consumer_;
-  mojom::DownloadedTempFilePtr downloaded_file_;
-  std::vector<IPC::Message> deferred_messages_;
+  network::mojom::DownloadedTempFilePtr downloaded_file_;
+  std::vector<std::unique_ptr<DeferredMessage>> deferred_messages_;
   const int request_id_;
   bool has_received_response_ = false;
+  bool has_received_complete_ = false;
   bool is_deferred_ = false;
+  bool pass_response_pipe_to_dispatcher_ = false;
   int32_t accumulated_transfer_size_diff_during_deferred_ = 0;
   ResourceDispatcher* const resource_dispatcher_;
   scoped_refptr<base::SingleThreadTaskRunner> task_runner_;
+
+  // Used in NavigationMojoResponse and NetworkService.
+  network::mojom::URLLoaderPtr url_loader_;
+  mojo::Binding<network::mojom::URLLoaderClient> url_loader_client_binding_;
+
   base::WeakPtrFactory<URLLoaderClientImpl> weak_factory_;
 };
 

@@ -8,7 +8,6 @@
 #include <string>
 
 #include "base/feature_list.h"
-#include "base/memory/ptr_util.h"
 #include "base/values.h"
 #include "chrome/browser/content_settings/host_content_settings_map_factory.h"
 #include "chrome/browser/permissions/chooser_context_base.h"
@@ -70,11 +69,14 @@ const ContentSettingsTypeNameEntry kContentSettingsTypeGroupNames[] = {
     {CONTENT_SETTINGS_TYPE_PPAPI_BROKER, "ppapi-broker"},
     {CONTENT_SETTINGS_TYPE_AUTOMATIC_DOWNLOADS, "multiple-automatic-downloads"},
     {CONTENT_SETTINGS_TYPE_MIDI_SYSEX, "midi-sysex"},
-    {CONTENT_SETTINGS_TYPE_PROTECTED_MEDIA_IDENTIFIER, "protectedContent"},
+    {CONTENT_SETTINGS_TYPE_PROTECTED_MEDIA_IDENTIFIER, "protected-content"},
     {CONTENT_SETTINGS_TYPE_BACKGROUND_SYNC, "background-sync"},
     {CONTENT_SETTINGS_TYPE_ADS, "ads"},
     {CONTENT_SETTINGS_TYPE_SOUND, "sound"},
     {CONTENT_SETTINGS_TYPE_CLIPBOARD_READ, "clipboard"},
+    {CONTENT_SETTINGS_TYPE_SENSORS, "sensors"},
+    {CONTENT_SETTINGS_TYPE_PAYMENT_HANDLER, "payment-handler"},
+    {CONTENT_SETTINGS_TYPE_USB_GUARD, "usb-devices"},
 
     // Add new content settings here if a corresponding Javascript string
     // representation for it is not required. Note some exceptions, such as
@@ -90,7 +92,6 @@ const ContentSettingsTypeNameEntry kContentSettingsTypeGroupNames[] = {
     {CONTENT_SETTINGS_TYPE_USB_CHOOSER_DATA, nullptr},
     {CONTENT_SETTINGS_TYPE_BLUETOOTH_GUARD, nullptr},
     {CONTENT_SETTINGS_TYPE_AUTOPLAY, nullptr},
-    {CONTENT_SETTINGS_TYPE_PROMPT_NO_DECISION_COUNT, nullptr},
     {CONTENT_SETTINGS_TYPE_IMPORTANT_SITE_INFO, nullptr},
     {CONTENT_SETTINGS_TYPE_PERMISSION_AUTOBLOCKER_DATA, nullptr},
     {CONTENT_SETTINGS_TYPE_ADS_DATA, nullptr},
@@ -98,9 +99,9 @@ const ContentSettingsTypeNameEntry kContentSettingsTypeGroupNames[] = {
     {CONTENT_SETTINGS_TYPE_PASSWORD_PROTECTION, nullptr},
     {CONTENT_SETTINGS_TYPE_MEDIA_ENGAGEMENT, nullptr},
     {CONTENT_SETTINGS_TYPE_CLIENT_HINTS, nullptr},
-    {CONTENT_SETTINGS_TYPE_SENSORS, nullptr},
     {CONTENT_SETTINGS_TYPE_ACCESSIBILITY_EVENTS, nullptr},
     {CONTENT_SETTINGS_TYPE_CLIPBOARD_WRITE, nullptr},
+    {CONTENT_SETTINGS_TYPE_PLUGINS_DATA, nullptr},
 };
 static_assert(arraysize(kContentSettingsTypeGroupNames) ==
                   // ContentSettingsType starts at -1, so add 1 here.
@@ -114,7 +115,6 @@ struct SiteSettingSourceStringMapping {
 };
 
 const SiteSettingSourceStringMapping kSiteSettingSourceStringMapping[] = {
-    {SiteSettingSource::kAdsBlocked, "ads-blocked"},
     {SiteSettingSource::kAdsFilterBlacklist, "ads-filter-blacklist"},
     {SiteSettingSource::kDefault, "default"},
     {SiteSettingSource::kDrmDisabled, "drm-disabled"},
@@ -138,12 +138,11 @@ static_assert(arraysize(kSiteSettingSourceStringMapping) ==
 //    4. Extensions.
 //    5. Activated for ads filtering (for Ads ContentSettingsType only).
 //    6. DRM disabled (for CrOS's Protected Content ContentSettingsType only).
-//    7. User-set ads blocked (for Ads ContentSettingsType only).
-//    8. User-set per-origin setting.
-//    9. Embargo.
-//   10. User-set patterns.
-//   11. User-set global default for a ContentSettingsType.
-//   12. Chrome's built-in default.
+//    7. User-set per-origin setting.
+//    8. Embargo.
+//    9. User-set patterns.
+//   10. User-set global default for a ContentSettingsType.
+//   11. Chrome's built-in default.
 SiteSettingSource CalculateSiteSettingSource(
     Profile* profile,
     const ContentSettingsType content_type,
@@ -182,25 +181,19 @@ SiteSettingSource CalculateSiteSettingSource(
     return SiteSettingSource::kDrmDisabled;  // Source #6.
   }
 
-  if (content_type == CONTENT_SETTINGS_TYPE_ADS &&
-      result.content_setting == CONTENT_SETTING_BLOCK) {
-    return SiteSettingSource::kAdsBlocked;  // Source #7.
-  }
-
   DCHECK_NE(content_settings::SETTING_SOURCE_NONE, info.source);
   if (info.source == content_settings::SETTING_SOURCE_USER) {
-    if (result.source == PermissionStatusSource::SAFE_BROWSING_BLACKLIST ||
-        result.source == PermissionStatusSource::MULTIPLE_DISMISSALS ||
+    if (result.source == PermissionStatusSource::MULTIPLE_DISMISSALS ||
         result.source == PermissionStatusSource::MULTIPLE_IGNORES) {
-      return SiteSettingSource::kEmbargo;  // Source #9.
+      return SiteSettingSource::kEmbargo;  // Source #8.
     }
     if (info.primary_pattern == ContentSettingsPattern::Wildcard() &&
         info.secondary_pattern == ContentSettingsPattern::Wildcard()) {
-      return SiteSettingSource::kDefault;  // Source #11, #12.
+      return SiteSettingSource::kDefault;  // Source #10, #11.
     }
 
-    // Source #8, #10. When #8 is the source, |result.source| won't
-    // be set to any of the source #8 enum values, as PermissionManager is
+    // Source #7, #9. When #7 is the source, |result.source| won't
+    // be set to any of the source #7 enum values, as PermissionManager is
     // aware of the difference between these two sources internally. The
     // subtlety here should go away when PermissionManager can handle all
     // content settings and all possible sources.
@@ -282,7 +275,7 @@ std::unique_ptr<base::DictionaryValue> GetExceptionForPage(
     const ContentSetting& setting,
     const std::string& provider_name,
     bool incognito) {
-  auto exception = base::MakeUnique<base::DictionaryValue>();
+  auto exception = std::make_unique<base::DictionaryValue>();
   exception->SetString(kOrigin, pattern.ToString());
   exception->SetString(kDisplayName, display_name);
   exception->SetString(kEmbeddingOrigin,

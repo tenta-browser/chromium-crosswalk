@@ -43,7 +43,8 @@ using base::DictionaryValue;
 
 namespace {
 
-SupervisedUserRegistrationUtility* g_instance_for_tests = NULL;
+SupervisedUserRegistrationUtility*
+    g_supervised_user_registration_utility_instance_for_tests = NULL;
 
 // Actual implementation of SupervisedUserRegistrationUtility.
 class SupervisedUserRegistrationUtilityImpl
@@ -68,7 +69,7 @@ class SupervisedUserRegistrationUtilityImpl
   // OS the profile of the supervised user does not yet exist.
   void Register(const std::string& supervised_user_id,
                 const SupervisedUserRegistrationInfo& info,
-                const RegistrationCallback& callback) override;
+                RegistrationCallback callback) override;
 
   // SupervisedUserSyncServiceObserver:
   void OnSupervisedUserAcknowledged(
@@ -155,9 +156,10 @@ std::unique_ptr<SupervisedUserRegistrationUtility>
 SupervisedUserRegistrationUtility::Create(Profile* profile) {
   DCHECK(base::FeatureList::IsEnabled(features::kSupervisedUserCreation));
 
-  if (g_instance_for_tests) {
-    SupervisedUserRegistrationUtility* result = g_instance_for_tests;
-    g_instance_for_tests = NULL;
+  if (g_supervised_user_registration_utility_instance_for_tests) {
+    SupervisedUserRegistrationUtility* result =
+        g_supervised_user_registration_utility_instance_for_tests;
+    g_supervised_user_registration_utility_instance_for_tests = NULL;
     return base::WrapUnique(result);
   }
 
@@ -192,9 +194,9 @@ std::string SupervisedUserRegistrationUtility::GenerateNewSupervisedUserId() {
 // static
 void SupervisedUserRegistrationUtility::SetUtilityForTests(
     SupervisedUserRegistrationUtility* utility) {
-  if (g_instance_for_tests)
-    delete g_instance_for_tests;
-  g_instance_for_tests = utility;
+  if (g_supervised_user_registration_utility_instance_for_tests)
+    delete g_supervised_user_registration_utility_instance_for_tests;
+  g_supervised_user_registration_utility_instance_for_tests = utility;
 }
 
 // static
@@ -235,9 +237,9 @@ SupervisedUserRegistrationUtilityImpl::
 void SupervisedUserRegistrationUtilityImpl::Register(
     const std::string& supervised_user_id,
     const SupervisedUserRegistrationInfo& info,
-    const RegistrationCallback& callback) {
+    RegistrationCallback callback) {
   DCHECK(pending_supervised_user_id_.empty());
-  callback_ = callback;
+  callback_ = std::move(callback);
   pending_supervised_user_id_ = supervised_user_id;
 
   bool need_password_update = !info.password_data.empty();
@@ -413,7 +415,7 @@ void SupervisedUserRegistrationUtilityImpl::CompleteRegistration(
   }
 
   if (run_callback)
-    callback_.Run(error, pending_supervised_user_token_);
+    std::move(callback_).Run(error, pending_supervised_user_token_);
   callback_.Reset();
 }
 

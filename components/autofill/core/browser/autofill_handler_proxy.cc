@@ -16,9 +16,12 @@ AutofillHandlerProxy::AutofillHandlerProxy(AutofillDriver* driver,
 
 AutofillHandlerProxy::~AutofillHandlerProxy() {}
 
-bool AutofillHandlerProxy::OnWillSubmitFormImpl(const FormData& form,
-                                                const TimeTicks timestamp) {
-  return provider_->OnWillSubmitForm(this, form, timestamp);
+bool AutofillHandlerProxy::OnFormSubmittedImpl(const FormData& form,
+                                               bool known_success,
+                                               SubmissionSource source,
+                                               base::TimeTicks timestamp) {
+  return provider_->OnFormSubmitted(this, form, known_success, source,
+                                    timestamp);
 }
 
 void AutofillHandlerProxy::OnTextFieldDidChangeImpl(
@@ -52,6 +55,13 @@ void AutofillHandlerProxy::OnFocusOnFormFieldImpl(
   provider_->OnFocusOnFormField(this, form, field, bounding_box);
 }
 
+void AutofillHandlerProxy::OnSelectControlDidChangeImpl(
+    const FormData& form,
+    const FormFieldData& field,
+    const gfx::RectF& bounding_box) {
+  provider_->OnSelectControlDidChange(this, form, field, bounding_box);
+}
+
 void AutofillHandlerProxy::OnFocusNoLongerOnForm() {
   provider_->OnFocusNoLongerOnForm(this);
 }
@@ -65,10 +75,8 @@ void AutofillHandlerProxy::OnDidFillAutofillFormData(
 void AutofillHandlerProxy::OnDidPreviewAutofillFormData() {}
 
 void AutofillHandlerProxy::OnFormsSeen(const std::vector<FormData>& forms,
-                                       const base::TimeTicks timestamp) {}
-
-bool AutofillHandlerProxy::OnFormSubmitted(const FormData& form) {
-  return false;
+                                       const base::TimeTicks timestamp) {
+  provider_->OnFormsSeen(this, forms, timestamp);
 }
 
 void AutofillHandlerProxy::OnDidEndTextFieldEditing() {}
@@ -78,6 +86,8 @@ void AutofillHandlerProxy::OnHidePopup() {}
 void AutofillHandlerProxy::OnSetDataList(
     const std::vector<base::string16>& values,
     const std::vector<base::string16>& labels) {}
+
+void AutofillHandlerProxy::SelectFieldOptionsDidChange(const FormData& form) {}
 
 void AutofillHandlerProxy::Reset() {
   provider_->Reset(this);

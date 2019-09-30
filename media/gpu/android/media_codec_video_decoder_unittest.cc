@@ -12,10 +12,11 @@
 #include "gpu/command_buffer/service/gpu_preferences.h"
 #include "media/base/android/media_codec_util.h"
 #include "media/base/android/mock_android_overlay.h"
-#include "media/base/android/mock_media_drm_bridge_cdm_context.h"
+#include "media/base/android/mock_media_crypto_context.h"
 #include "media/base/decoder_buffer.h"
 #include "media/base/gmock_callback_support.h"
 #include "media/base/test_helpers.h"
+#include "media/base/video_frame.h"
 #include "media/gpu/android/android_video_surface_chooser_impl.h"
 #include "media/gpu/android/fake_codec_allocator.h"
 #include "media/gpu/android/mock_android_video_surface_chooser.h"
@@ -34,13 +35,12 @@ using testing::_;
 namespace media {
 namespace {
 
-void OutputCb(const scoped_refptr<VideoFrame>&) {}
-
-void OutputWithReleaseMailboxCb(VideoFrameFactory::ReleaseMailboxCB,
-                                const scoped_refptr<VideoFrame>&) {}
+void OutputCb(scoped_refptr<VideoFrame>* output,
+              const scoped_refptr<VideoFrame>& frame) {
+  *output = frame;
+}
 
 std::unique_ptr<AndroidOverlay> CreateAndroidOverlayCb(
-    std::unique_ptr<service_manager::ServiceContextRef>,
     const base::UnguessableToken&,
     AndroidOverlayConfig) {
   return nullptr;
@@ -50,13 +50,6 @@ std::unique_ptr<AndroidOverlay> CreateAndroidOverlayCb(
 struct DestructionObservableMCVD : public DestructionObservable,
                                    public MediaCodecVideoDecoder {
   using MediaCodecVideoDecoder::MediaCodecVideoDecoder;
-};
-
-class MockServiceContextRef : public service_manager::ServiceContextRef {
- public:
-  std::unique_ptr<ServiceContextRef> Clone() override {
-    return base::MakeUnique<MockServiceContextRef>();
-  }
 };
 
 }  // namespace
@@ -72,7 +65,7 @@ class MockVideoFrameFactory : public VideoFrameFactory {
            base::TimeDelta timestamp,
            gfx::Size natural_size,
            PromotionHintAggregator::NotifyPromotionHintCB promotion_hint_cb,
-           OutputWithReleaseMailboxCB output_cb));
+           VideoDecoder::OutputCB output_cb));
   MOCK_METHOD1(MockRunAfterPendingVideoFrames,
                void(base::OnceClosure* closure));
   MOCK_METHOD0(CancelPendingCallbacks, void());
@@ -93,10 +86,11 @@ class MockVideoFrameFactory : public VideoFrameFactory {
       base::TimeDelta timestamp,
       gfx::Size natural_size,
       PromotionHintAggregator::NotifyPromotionHintCB promotion_hint_cb,
-      OutputWithReleaseMailboxCB output_cb) override {
+      VideoDecoder::OutputCB output_cb) override {
     MockCreateVideoFrame(output_buffer.get(), surface_texture_, timestamp,
                          natural_size, promotion_hint_cb, output_cb);
     last_output_buffer_ = std::move(output_buffer);
+    output_cb.Run(VideoFrame::CreateBlackFrame(gfx::Size(10, 10)));
   }
 
   void RunAfterPendingVideoFrames(base::OnceClosure closure) override {
@@ -116,9 +110,9 @@ class MediaCodecVideoDecoderTest : public testing::Test {
   void SetUp() override {
     uint8_t data = 0;
     fake_decoder_buffer_ = DecoderBuffer::CopyFrom(&data, 1);
-    codec_allocator_ = base::MakeUnique<FakeCodecAllocator>(
+    codec_allocator_ = std::make_unique<FakeCodecAllocator>(
         base::ThreadTaskRunnerHandle::Get());
-    device_info_ = base::MakeUnique<NiceMock<MockDeviceInfo>>();
+    device_info_ = std::make_unique<NiceMock<MockDeviceInfo>>();
   }
 
   void TearDown() override {
@@ -129,7 +123,7 @@ class MediaCodecVideoDecoderTest : public testing::Test {
 
   void CreateMcvd() {
     auto surface_chooser =
-        base::MakeUnique<NiceMock<MockAndroidVideoSurfaceChooser>>();
+        std::make_unique<NiceMock<MockAndroidVideoSurfaceChooser>>();
     surface_chooser_ = surface_chooser.get();
 
     auto surface_texture =
@@ -138,7 +132,7 @@ class MediaCodecVideoDecoderTest : public testing::Test {
     surface_texture_ = surface_texture.get();
 
     auto video_frame_factory =
-        base::MakeUnique<NiceMock<MockVideoFrameFactory>>();
+        std::make_unique<NiceMock<MockVideoFrameFactory>>();
     video_frame_factory_ = video_frame_factory.get();
     // Set up VFF to pass |surface_texture_| via its InitCb.
     const bool want_promotion_hint =
@@ -147,13 +141,12 @@ class MediaCodecVideoDecoderTest : public testing::Test {
         .WillByDefault(RunCallback<1>(surface_texture));
 
     auto* observable_mcvd = new DestructionObservableMCVD(
-        gpu_preferences_, base::Bind(&OutputWithReleaseMailboxCb),
-        device_info_.get(), codec_allocator_.get(), std::move(surface_chooser),
-        base::Bind(&CreateAndroidOverlayCb),
+        gpu_preferences_, device_info_.get(), codec_allocator_.get(),
+        std::move(surface_chooser),
+        base::BindRepeating(&CreateAndroidOverlayCb),
         base::Bind(&MediaCodecVideoDecoderTest::RequestOverlayInfoCb,
                    base::Unretained(this)),
-        std::move(video_frame_factory),
-        base::MakeUnique<MockServiceContextRef>());
+        std::move(video_frame_factory));
     mcvd_.reset(observable_mcvd);
     mcvd_raw_ = observable_mcvd;
     destruction_observer_ = observable_mcvd->CreateDestructionObserver();
@@ -162,7 +155,7 @@ class MediaCodecVideoDecoderTest : public testing::Test {
   }
 
   void CreateCdm(bool require_secure_video_decoder) {
-    cdm_ = base::MakeUnique<MockMediaDrmBridgeCdmContext>(cdm_id_);
+    cdm_ = std::make_unique<MockMediaCryptoContext>();
     require_secure_video_decoder_ = require_secure_video_decoder;
 
     // We need to send an object as the media crypto, but MCVD shouldn't
@@ -181,7 +174,8 @@ class MediaCodecVideoDecoderTest : public testing::Test {
     bool result = false;
     auto init_cb = [](bool* result_out, bool result) { *result_out = result; };
     mcvd_->Initialize(config, false, cdm_.get(), base::Bind(init_cb, &result),
-                      base::Bind(&OutputCb));
+                      base::BindRepeating(&OutputCb, &most_recent_frame_),
+                      VideoDecoder::WaitingForDecryptionKeyCB());
     base::RunLoop().RunUntilIdle();
 
     if (config.is_encrypted() && cdm_) {
@@ -189,7 +183,7 @@ class MediaCodecVideoDecoderTest : public testing::Test {
       // for the media crypto object.
       // TODO(liberato): why does CreateJavaObjectPtr() not link?
       cdm_->media_crypto_ready_cb.Run(
-          base::MakeUnique<base::android::ScopedJavaGlobalRef<jobject>>(
+          std::make_unique<base::android::ScopedJavaGlobalRef<jobject>>(
               media_crypto_),
           require_secure_video_decoder_);
       base::RunLoop().RunUntilIdle();
@@ -207,7 +201,7 @@ class MediaCodecVideoDecoderTest : public testing::Test {
     OverlayInfo info;
     info.routing_token = base::UnguessableToken::Deserialize(1, 2);
     provide_overlay_info_cb_.Run(info);
-    auto overlay_ptr = base::MakeUnique<MockAndroidOverlay>();
+    auto overlay_ptr = std::make_unique<MockAndroidOverlay>();
     auto* overlay = overlay_ptr.get();
     surface_chooser_->ProvideOverlay(std::move(overlay_ptr));
     return overlay;
@@ -256,8 +250,8 @@ class MediaCodecVideoDecoderTest : public testing::Test {
   ProvideOverlayInfoCB provide_overlay_info_cb_;
   bool restart_for_transitions_;
   gpu::GpuPreferences gpu_preferences_;
+  scoped_refptr<VideoFrame> most_recent_frame_;
 
-  const int cdm_id_ = 123;
   // This is not an actual media crypto object.
   base::android::ScopedJavaGlobalRef<jobject> media_crypto_;
   bool require_secure_video_decoder_ = false;
@@ -267,7 +261,7 @@ class MediaCodecVideoDecoderTest : public testing::Test {
   MediaCodecVideoDecoder* mcvd_raw_;
   std::unique_ptr<MediaCodecVideoDecoder> mcvd_;
   // This must outlive |mcvd_| .
-  std::unique_ptr<MockMediaDrmBridgeCdmContext> cdm_;
+  std::unique_ptr<MockMediaCryptoContext> cdm_;
 };
 
 TEST_F(MediaCodecVideoDecoderTest, UnknownCodecIsRejected) {
@@ -447,7 +441,7 @@ TEST_F(MediaCodecVideoDecoderTest,
 TEST_F(MediaCodecVideoDecoderTest, SurfaceChangedWhileCodecCreationPending) {
   auto* overlay = InitializeWithOverlay_OneDecodePending();
   overlay->OnSurfaceDestroyed();
-  auto codec = base::MakeUnique<NiceMock<MockMediaCodecBridge>>();
+  auto codec = std::make_unique<NiceMock<MockMediaCodecBridge>>();
 
   // SetSurface() is called as soon as the codec is created to switch away from
   // the destroyed surface.
@@ -513,7 +507,7 @@ TEST_F(MediaCodecVideoDecoderTest, SurfaceTransitionsCanBeCanceled) {
   // Set a pending transition to an overlay, and then back to a surface texture.
   // They should cancel each other out and leave the codec as-is.
   EXPECT_CALL(*codec, SetSurface(_)).Times(0);
-  auto overlay = base::MakeUnique<MockAndroidOverlay>();
+  auto overlay = std::make_unique<MockAndroidOverlay>();
   auto observer = overlay->CreateDestructionObserver();
   surface_chooser_->ProvideOverlay(std::move(overlay));
 
@@ -545,7 +539,7 @@ TEST_F(MediaCodecVideoDecoderTest,
 TEST_F(MediaCodecVideoDecoderTest, ResetAbortsPendingDecodes) {
   InitializeWithSurfaceTexture_OneDecodePending();
   EXPECT_CALL(decode_cb_, Run(DecodeStatus::ABORTED));
-  mcvd_->Reset(base::Bind(&base::DoNothing));
+  mcvd_->Reset(base::DoNothing());
 }
 
 TEST_F(MediaCodecVideoDecoderTest, ResetAbortsPendingEosDecode) {
@@ -561,7 +555,7 @@ TEST_F(MediaCodecVideoDecoderTest, ResetAbortsPendingEosDecode) {
   PumpCodec();
 
   EXPECT_CALL(eos_decode_cb, Run(DecodeStatus::ABORTED));
-  mcvd_->Reset(base::Bind(&base::DoNothing));
+  mcvd_->Reset(base::DoNothing());
 }
 
 TEST_F(MediaCodecVideoDecoderTest, ResetDoesNotFlushAnAlreadyFlushedCodec) {
@@ -747,8 +741,7 @@ TEST_F(MediaCodecVideoDecoderTest, CdmInitializationWorksForL3) {
   ASSERT_TRUE(codec_allocator_->most_recent_config->media_crypto->obj());
 
   // When |mcvd_| is destroyed, expect that it will unregister itself.
-  EXPECT_CALL(*cdm_,
-              UnregisterPlayer(MockMediaDrmBridgeCdmContext::kRegistrationId));
+  EXPECT_CALL(*cdm_, UnregisterPlayer(MockMediaCryptoContext::kRegistrationId));
 }
 
 TEST_F(MediaCodecVideoDecoderTest, CdmInitializationWorksForL1) {
@@ -766,16 +759,14 @@ TEST_F(MediaCodecVideoDecoderTest, CdmInitializationWorksForL1) {
   ASSERT_TRUE(codec_allocator_->most_recent_config->media_crypto->obj());
 
   // When |mcvd_| is destroyed, expect that it will unregister itself.
-  EXPECT_CALL(*cdm_,
-              UnregisterPlayer(MockMediaDrmBridgeCdmContext::kRegistrationId));
+  EXPECT_CALL(*cdm_, UnregisterPlayer(MockMediaCryptoContext::kRegistrationId));
 }
 
 TEST_F(MediaCodecVideoDecoderTest, CdmIsIgnoredIfNotEncrypted) {
   CreateCdm(true);
   // It should not register or unregister.
   EXPECT_CALL(*cdm_, RegisterPlayer(_, _)).Times(0);
-  EXPECT_CALL(*cdm_,
-              UnregisterPlayer(MockMediaDrmBridgeCdmContext::kRegistrationId))
+  EXPECT_CALL(*cdm_, UnregisterPlayer(MockMediaCryptoContext::kRegistrationId))
       .Times(0);
   ASSERT_TRUE(Initialize(TestVideoConfig::NormalH264()));
   ASSERT_TRUE(!cdm_->new_key_cb);
@@ -791,13 +782,30 @@ TEST_F(MediaCodecVideoDecoderTest, MissingMediaCryptoFailsInit) {
   media_crypto_ = nullptr;
   EXPECT_CALL(*cdm_, RegisterPlayer(_, _));
   ASSERT_FALSE(Initialize(TestVideoConfig::NormalEncrypted(kCodecH264)));
-  EXPECT_CALL(*cdm_,
-              UnregisterPlayer(MockMediaDrmBridgeCdmContext::kRegistrationId));
+  EXPECT_CALL(*cdm_, UnregisterPlayer(MockMediaCryptoContext::kRegistrationId));
 }
 
 TEST_F(MediaCodecVideoDecoderTest, MissingCdmFailsInit) {
   // MCVD should fail init if we don't provide a cdm with an encrypted config.
   ASSERT_FALSE(Initialize(TestVideoConfig::NormalEncrypted(kCodecH264)));
+}
+
+TEST_F(MediaCodecVideoDecoderTest, VideoFramesArePowerEfficient) {
+  // MCVD should mark video frames as POWER_EFFICIENT.
+  auto* codec = InitializeFully_OneDecodePending();
+
+  // Produce one output.
+  codec->AcceptOneInput();
+  codec->ProduceOneOutput();
+  EXPECT_CALL(*video_frame_factory_, MockCreateVideoFrame(_, _, _, _, _, _));
+  PumpCodec();
+  base::RunLoop().RunUntilIdle();
+
+  EXPECT_TRUE(!!most_recent_frame_);
+  bool power_efficient = false;
+  EXPECT_TRUE(most_recent_frame_->metadata()->GetBoolean(
+      VideoFrameMetadata::POWER_EFFICIENT, &power_efficient));
+  EXPECT_TRUE(power_efficient);
 }
 
 }  // namespace media

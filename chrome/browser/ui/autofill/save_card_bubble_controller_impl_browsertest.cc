@@ -37,7 +37,7 @@ class SaveCardBubbleControllerImplTest : public DialogBrowserTest {
   }
 
   // DialogBrowserTest:
-  void ShowDialog(const std::string& name) override {
+  void ShowUi(const std::string& name) override {
     content::WebContents* web_contents =
         browser()->tab_strip_model()->GetActiveWebContents();
 
@@ -51,12 +51,12 @@ class SaveCardBubbleControllerImplTest : public DialogBrowserTest {
     // do).
     if (name == "Local") {
       controller_->ShowBubbleForLocalSave(test::GetCreditCard(),
-                                          base::Bind(&base::DoNothing));
+                                          base::DoNothing());
     } else {
       bool should_cvc_be_requested = name == "Server_WithCvcStep";
       controller_->ShowBubbleForUpload(
           test::GetMaskedServerCard(), GetTestLegalMessage(),
-          should_cvc_be_requested, base::Bind(&base::DoNothing));
+          should_cvc_be_requested, base::DoNothing());
     }
   }
 
@@ -69,28 +69,26 @@ class SaveCardBubbleControllerImplTest : public DialogBrowserTest {
 };
 
 // Invokes a bubble asking the user if they want to save a credit card locally.
-// See test_browser_dialog.h for instructions on how to run.
-IN_PROC_BROWSER_TEST_F(SaveCardBubbleControllerImplTest, InvokeDialog_Local) {
-  RunDialog();
+IN_PROC_BROWSER_TEST_F(SaveCardBubbleControllerImplTest, InvokeUi_Local) {
+  ShowAndVerifyUi();
 }
 
 // Invokes a bubble asking the user if they want to save a credit card to the
-// server. See test_browser_dialog.h for instructions on how to run.
-IN_PROC_BROWSER_TEST_F(SaveCardBubbleControllerImplTest, InvokeDialog_Server) {
-  RunDialog();
+// server.
+IN_PROC_BROWSER_TEST_F(SaveCardBubbleControllerImplTest, InvokeUi_Server) {
+  ShowAndVerifyUi();
 }
 
 // Invokes a bubble asking the user if they want to save a credit card to the
-// server, with an added CVC step. See test_browser_dialog.h for instructions on
-// how to run.
+// server, with an added CVC step.
 IN_PROC_BROWSER_TEST_F(SaveCardBubbleControllerImplTest,
-                       InvokeDialog_Server_WithCvcStep) {
-  RunDialog();
+                       InvokeUi_Server_WithCvcStep) {
+  ShowAndVerifyUi();
 }
 
 // Tests that opening a new tab will hide the save card bubble.
 IN_PROC_BROWSER_TEST_F(SaveCardBubbleControllerImplTest, NewTabHidesDialog) {
-  ShowDialog("Local");
+  ShowUi("Local");
   EXPECT_NE(nullptr, controller()->save_card_bubble_view());
   // Open a new tab page in the foreground.
   ui_test_utils::NavigateToURLWithDisposition(

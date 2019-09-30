@@ -7,7 +7,6 @@
 #include <string>
 
 #include "base/bind.h"
-#include "base/memory/ptr_util.h"
 #include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/google/google_url_tracker_factory.h"
@@ -23,7 +22,7 @@
 #include "components/search_engines/default_search_manager.h"
 #include "components/search_engines/search_engines_pref_names.h"
 #include "components/search_engines/template_url_service.h"
-#include "rlz/features/features.h"
+#include "rlz/buildflags/buildflags.h"
 
 #if BUILDFLAG(ENABLE_RLZ)
 #include "components/rlz/rlz_tracker.h"
@@ -50,7 +49,7 @@ std::unique_ptr<KeyedService> TemplateURLServiceFactory::BuildInstanceFor(
       rlz::RLZTracker::ChromeOmnibox(), rlz_lib::SET_TO_GOOGLE);
 #endif
   Profile* profile = static_cast<Profile*>(context);
-  return base::MakeUnique<TemplateURLService>(
+  return std::make_unique<TemplateURLService>(
       profile->GetPrefs(),
       std::unique_ptr<SearchTermsData>(new UIThreadSearchTermsData(profile)),
       WebDataServiceFactory::GetKeywordWebDataForProfile(

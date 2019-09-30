@@ -9,11 +9,11 @@
 #include "base/strings/sys_string_conversions.h"
 #include "base/time/time.h"
 #include "components/strings/grit/components_strings.h"
-#import "ios/chrome/browser/ui/collection_view/cells/collection_view_item+collection_view_controller.h"
 #import "ios/chrome/browser/ui/collection_view/cells/collection_view_text_item.h"
 #import "ios/chrome/browser/ui/collection_view/collection_view_controller.h"
 #import "ios/chrome/browser/ui/collection_view/collection_view_model.h"
 #import "ios/chrome/browser/ui/commands/snackbar_commands.h"
+#import "ios/chrome/browser/ui/content_suggestions/cells/content_suggestions_articles_header_item.h"
 #import "ios/chrome/browser/ui/content_suggestions/cells/content_suggestions_footer_item.h"
 #import "ios/chrome/browser/ui/content_suggestions/cells/content_suggestions_header_item.h"
 #import "ios/chrome/browser/ui/content_suggestions/cells/content_suggestions_text_item.h"
@@ -26,6 +26,8 @@
 #import "ios/chrome/browser/ui/content_suggestions/content_suggestions_view_controller_audience.h"
 #import "ios/chrome/browser/ui/content_suggestions/identifier/content_suggestion_identifier.h"
 #import "ios/chrome/browser/ui/content_suggestions/identifier/content_suggestions_section_information.h"
+#import "ios/chrome/browser/ui/list_model/list_item+Controller.h"
+#import "ios/chrome/browser/ui/uikit_ui_util.h"
 #import "ios/third_party/material_components_ios/src/components/Palettes/src/MaterialPalettes.h"
 #import "ios/third_party/material_components_ios/src/components/Snackbar/src/MaterialSnackbar.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -503,7 +505,8 @@ addSuggestionsToModel:(NSArray<CSCollectionViewItem*>*)suggestions
     } else {
       [self addHeaderIfNeeded:sectionInfo];
     }
-    [self addFooterIfNeeded:sectionInfo];
+    if (sectionInfo.expanded)
+      [self addFooterIfNeeded:sectionInfo];
   }
 
   NSMutableIndexSet* indexSet = [NSMutableIndexSet indexSet];
@@ -636,12 +639,13 @@ addSuggestionsToModel:(NSArray<CSCollectionViewItem*>*)suggestions
     BOOL addHeader = YES;
 
     if (IsFromContentSuggestionsService(sectionIdentifier)) {
-      addHeader = NO;
+      addHeader = IsUIRefreshPhase1Enabled();
 
       if ([self.sectionIdentifiersFromContentSuggestions
               containsObject:@(sectionIdentifier)]) {
         return;
       }
+
       if ([self.sectionIdentifiersFromContentSuggestions count] == 1) {
         NSNumber* existingSectionIdentifier =
             [self.sectionIdentifiersFromContentSuggestions anyObject];
@@ -668,6 +672,19 @@ addSuggestionsToModel:(NSArray<CSCollectionViewItem*>*)suggestions
 // Returns the header for this |sectionInfo|.
 - (CollectionViewItem*)headerForSectionInfo:
     (ContentSuggestionsSectionInformation*)sectionInfo {
+  if (IsUIRefreshPhase1Enabled()) {
+    DCHECK(SectionIdentifierForInfo(sectionInfo) == SectionIdentifierArticles);
+    __weak ContentSuggestionsCollectionUpdater* weakSelf = self;
+    ContentSuggestionsArticlesHeaderItem* header =
+        [[ContentSuggestionsArticlesHeaderItem alloc]
+            initWithType:ItemTypeHeader
+                   title:sectionInfo.title
+                callback:^() {
+                  [weakSelf.dataSource toggleArticlesVisibility];
+                }];
+    header.expanded = sectionInfo.expanded;
+    return header;
+  }
   CollectionViewTextItem* header =
       [[CollectionViewTextItem alloc] initWithType:ItemTypeHeader];
   header.text = sectionInfo.title;
@@ -790,6 +807,7 @@ addSuggestionsToModel:(NSArray<CSCollectionViewItem*>*)suggestions
     message.accessibilityLabel = text;
     message.category = kContentSuggestionsCollectionUpdaterSnackbarCategory;
     [self.dispatcher showSnackbarMessage:message];
+    TriggerHapticFeedbackForNotification(UINotificationFeedbackTypeError);
   }
 }
 
@@ -798,7 +816,7 @@ addSuggestionsToModel:(NSArray<CSCollectionViewItem*>*)suggestions
 // Returns nil if there is no empty item for this section info.
 - (CSCollectionViewItem*)emptyItemForSectionInfo:
     (ContentSuggestionsSectionInformation*)sectionInfo {
-  if (!sectionInfo.emptyText)
+  if (!sectionInfo.emptyText || !sectionInfo.expanded)
     return nil;
   ContentSuggestionsTextItem* item =
       [[ContentSuggestionsTextItem alloc] initWithType:ItemTypeEmpty];

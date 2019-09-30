@@ -11,6 +11,7 @@
 #include "base/callback.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
+#include "base/test/bind_test_util.h"
 
 namespace base {
 
@@ -73,6 +74,11 @@ void VoidPolymorphic1(T t) {
 void TakesMoveOnly(std::unique_ptr<int>) {
 }
 
+struct NonEmptyFunctor {
+  int x;
+  void operator()() const {}
+};
+
 // TODO(hans): Remove .* and update the static_assert expectations once we roll
 // past Clang r313315. https://crbug.com/765692.
 
@@ -89,7 +95,8 @@ void WontCompile() {
   method_to_const_cb.Run();
 }
 
-#elif defined(NCTEST_METHOD_BIND_NEEDS_REFCOUNTED_OBJECT)  // [r"fatal error: no member named 'AddRef' in 'base::NoRef'"]
+#elif defined(NCTEST_METHOD_BIND_NEEDS_REFCOUNTED_OBJECT)  // [r"fatal error: static_assert failed \"Receivers may not be raw pointers\."]
+
 
 // Method bound to non-refcounted object.
 //
@@ -101,7 +108,7 @@ void WontCompile() {
   no_ref_cb.Run();
 }
 
-#elif defined(NCTEST_CONST_METHOD_NEEDS_REFCOUNTED_OBJECT)  // [r"fatal error: no member named 'AddRef' in 'base::NoRef'"]
+#elif defined(NCTEST_CONST_METHOD_NEEDS_REFCOUNTED_OBJECT)  // [r"fatal error: static_assert failed \"Receivers may not be raw pointers\."]
 
 // Const Method bound to non-refcounted object.
 //
@@ -304,6 +311,11 @@ void WontCompile() {
   Bind(&TakesMoveOnly, std::move(x));
 }
 
+#elif defined(NCTEST_BIND_NON_EMPTY_FUNCTOR)  // [r"fatal error: implicit instantiation of undefined template 'base::internal::FunctorTraits<base::NonEmptyFunctor, void>'"]
+
+void WontCompile() {
+  Bind(NonEmptyFunctor());
+}
 
 #endif
 

@@ -7,9 +7,9 @@
 #include <algorithm>
 
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "chrome/browser/ui/views/harmony/chrome_typography.h"
 #include "chrome/browser/ui/views/harmony/harmony_layout_provider.h"
+#include "chrome/browser/ui/views/harmony/material_refresh_layout_provider.h"
 #include "ui/base/material_design/material_design_controller.h"
 
 namespace {
@@ -38,9 +38,12 @@ ChromeLayoutProvider* ChromeLayoutProvider::Get() {
 // static
 std::unique_ptr<views::LayoutProvider>
 ChromeLayoutProvider::CreateLayoutProvider() {
+  if (ui::MaterialDesignController::GetMode() ==
+      ui::MaterialDesignController::MATERIAL_REFRESH)
+    return std::make_unique<MaterialRefreshLayoutProvider>();
   return ui::MaterialDesignController::IsSecondaryUiMaterial()
-             ? base::MakeUnique<HarmonyLayoutProvider>()
-             : base::MakeUnique<ChromeLayoutProvider>();
+             ? std::make_unique<HarmonyLayoutProvider>()
+             : std::make_unique<ChromeLayoutProvider>();
 }
 
 gfx::Insets ChromeLayoutProvider::GetInsetsMetric(int metric) const {
@@ -82,8 +85,10 @@ int ChromeLayoutProvider::GetDistanceMetric(int metric) const {
       return 8;
     case DISTANCE_TOAST_LABEL_VERTICAL:
       return 12;
-    case DISTANCE_MODAL_DIALOG_WIDTH_CONTAINING_MULTILINE_TEXT:
+    case DISTANCE_MODAL_DIALOG_PREFERRED_WIDTH:
       return 400;
+    case DISTANCE_BUBBLE_PREFERRED_WIDTH:
+      return 320;
     default:
       return views::LayoutProvider::GetDistanceMetric(metric);
   }
@@ -112,4 +117,19 @@ bool ChromeLayoutProvider::ShouldShowWindowIcon() const {
 
 bool ChromeLayoutProvider::IsHarmonyMode() const {
   return false;
+}
+
+int ChromeLayoutProvider::GetCornerRadiusMetric(
+    ChromeEmphasisMetric emphasis_metric,
+    const gfx::Rect& bounds) const {
+  // Use the current fixed value for non-EMPHASIS_HIGH.
+  return emphasis_metric == EMPHASIS_HIGH
+             ? std::min(bounds.width(), bounds.height()) / 2
+             : 4;
+}
+
+int ChromeLayoutProvider::GetShadowElevationMetric(
+    ChromeEmphasisMetric emphasis_metric) const {
+  // Just return a value for now.
+  return 2;
 }

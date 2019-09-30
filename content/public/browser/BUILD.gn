@@ -2,6 +2,7 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
+import("//build/config/jumbo.gni")
 import("//build/config/ui.gni")
 import("//media/media_options.gni")
 
@@ -18,10 +19,9 @@ group("browser") {
   }
 }
 
-source_set("browser_sources") {
+jumbo_source_set("browser_sources") {
   # External code should depend on via ":browser" above.
   visibility = [ "//content/*" ]
-
   sources = [
     "android/android_overlay_provider.h",
     "android/browser_media_player_manager_register.cc",
@@ -56,7 +56,6 @@ source_set("browser_sources") {
     "browser_accessibility_state.h",
     "browser_associated_interface.h",
     "browser_child_process_host.h",
-    "browser_child_process_host_delegate.cc",
     "browser_child_process_host_delegate.h",
     "browser_child_process_host_iterator.cc",
     "browser_child_process_host_iterator.h",
@@ -85,6 +84,7 @@ source_set("browser_sources") {
     "cdm_registry.h",
     "certificate_request_result_type.h",
     "child_process_data.h",
+    "child_process_launcher_utils.h",
     "child_process_security_policy.h",
     "client_certificate_delegate.h",
     "color_chooser.h",
@@ -107,20 +107,12 @@ source_set("browser_sources") {
     "devtools_socket_factory.h",
     "discardable_shared_memory_manager.h",
     "dom_storage_context.h",
-    "download_danger_type.h",
-    "download_interrupt_reason_values.h",
-    "download_interrupt_reasons.h",
-    "download_item.h",
+    "download_item_utils.h",
     "download_manager.cc",
     "download_manager.h",
     "download_manager_delegate.cc",
     "download_manager_delegate.h",
     "download_request_utils.h",
-    "download_save_info.cc",
-    "download_save_info.h",
-    "download_source.h",
-    "download_url_parameters.cc",
-    "download_url_parameters.h",
     "favicon_status.cc",
     "favicon_status.h",
     "file_url_loader.h",
@@ -151,9 +143,11 @@ source_set("browser_sources") {
     "keyboard_event_processing_result.h",
     "load_notification_details.h",
     "local_storage_usage_info.h",
+    "login_delegate.h",
     "manifest_icon_downloader.h",
     "manifest_icon_selector.h",
     "media_capture_devices.h",
+    "media_controller.h",
     "media_device_id.cc",
     "media_device_id.h",
     "media_request_state.h",
@@ -178,7 +172,6 @@ source_set("browser_sources") {
     "navigation_type.h",
     "navigation_ui_data.h",
     "network_quality_observer_factory.h",
-    "network_service_instance.cc",
     "network_service_instance.h",
     "notification_database_data.cc",
     "notification_database_data.h",
@@ -190,6 +183,7 @@ source_set("browser_sources") {
     "notification_service.h",
     "notification_source.h",
     "notification_types.h",
+    "overlay_window.h",
     "overscroll_configuration.h",
     "page_navigator.cc",
     "page_navigator.h",
@@ -198,6 +192,7 @@ source_set("browser_sources") {
     "pepper_vpn_provider_resource_host_proxy.h",
     "permission_manager.h",
     "permission_type.h",
+    "picture_in_picture_window_controller.h",
     "platform_notification_context.h",
     "platform_notification_service.h",
     "plugin_data_remover.h",
@@ -213,9 +208,9 @@ source_set("browser_sources") {
     "push_messaging_service.cc",
     "push_messaging_service.h",
     "quota_permission_context.h",
-    "readback_types.h",
     "reload_type.h",
     "render_frame_host.h",
+    "render_frame_metadata_provider.h",
     "render_process_host.h",
     "render_process_host_factory.h",
     "render_process_host_observer.h",
@@ -224,14 +219,12 @@ source_set("browser_sources") {
     "render_widget_host_iterator.h",
     "render_widget_host_view.h",
     "render_widget_host_view_mac_delegate.h",
+    "replaced_navigation_entry_data.h",
     "resource_context.h",
     "resource_dispatcher_host.h",
     "resource_dispatcher_host_delegate.cc",
     "resource_dispatcher_host_delegate.h",
-    "resource_dispatcher_host_login_delegate.h",
     "resource_hints.h",
-    "resource_request_details.cc",
-    "resource_request_details.h",
     "resource_request_info.h",
     "resource_throttle.cc",
     "resource_throttle.h",
@@ -250,6 +243,8 @@ source_set("browser_sources") {
     "session_storage_usage_info.h",
     "shared_worker_service.h",
     "site_instance.h",
+    "site_isolation_policy.cc",
+    "site_isolation_policy.h",
     "speech_recognition_event_listener.h",
     "speech_recognition_manager.h",
     "speech_recognition_manager_delegate.h",
@@ -276,9 +271,8 @@ source_set("browser_sources") {
     "tracing_delegate.h",
     "url_data_source.cc",
     "url_data_source.h",
-    "utility_process_host.h",
-    "utility_process_host_client.h",
-    "utility_process_mojo_client.h",
+    "video_capture_device_launcher.h",
+    "visibility.h",
     "vpn_service_proxy.h",
     "web_contents.cc",
     "web_contents.h",
@@ -290,22 +284,23 @@ source_set("browser_sources") {
     "web_contents_media_capture_id.h",
     "web_contents_observer.cc",
     "web_contents_observer.h",
-    "web_contents_unresponsive_state.cc",
-    "web_contents_unresponsive_state.h",
     "web_contents_user_data.h",
     "web_contents_view_delegate.cc",
     "web_contents_view_delegate.h",
     "web_drag_dest_delegate.h",
+    "web_package_context.h",
     "web_ui.h",
     "web_ui_controller.cc",
     "web_ui_controller.h",
     "web_ui_controller_factory.h",
     "web_ui_data_source.h",
     "web_ui_message_handler.h",
+    "web_ui_url_loader_factory.h",
+    "webrtc_event_logger.cc",
+    "webrtc_event_logger.h",
     "websocket_handshake_request_info.h",
     "webvr_service_provider.cc",
     "webvr_service_provider.h",
-    "zygote_handle_linux.h",
     "zygote_host_linux.h",
   ]
   configs += [
@@ -315,29 +310,34 @@ source_set("browser_sources") {
   ]
 
   public_deps = [
+    "//components/download/public/common:public",
     "//content/public/common:common_sources",
+    "//device/usb/public/mojom",
     "//ipc",
     "//mojo/public/cpp/bindings",
     "//mojo/public/cpp/system",
+    "//services/network/public/mojom",
     "//services/resource_coordinator/public/cpp:resource_coordinator_cpp",
     "//services/service_manager/public/cpp",
+    "//services/tracing/public/cpp",
 
     # We expose skia headers in the public API.
     "//skia",
 
-    # We expose storage headers for quota in the public API.
+    # We expose storage headers for quota and blob storage context in the public API.
     "//storage/browser",
-    "//third_party/WebKit/public:mojo_bindings",
+    "//third_party/blink/public:mojo_bindings",
   ]
   deps = [
     "//cc",
     "//content/browser",  # Must not be public_deps!
     "//device/geolocation",
     "//gpu",
+    "//gpu/command_buffer/service:gles2",
     "//media",
+    "//media/capture",
     "//net",
     "//ppapi/c",
-    "//services/device/public/interfaces",
     "//ui/accessibility",
     "//ui/base",
     "//ui/events",
@@ -352,7 +352,7 @@ source_set("browser_sources") {
     "//content/browser",
   ]
 
-  if (is_posix) {
+  if (is_posix || is_fuchsia) {
     sources += [ "posix_file_descriptor_info.h" ]
   }
 
@@ -373,10 +373,6 @@ source_set("browser_sources") {
     ]
   }
 
-  if (is_chromeos) {
-    sources += [ "arc_tracing_agent.h" ]
-  }
-
   if (enable_webrtc) {
     sources += [
       "desktop_capture.cc",
@@ -384,6 +380,6 @@ source_set("browser_sources") {
       "webrtc_log.cc",
       "webrtc_log.h",
     ]
-    deps += [ "//third_party/webrtc/modules/desktop_capture" ]
+    public_deps += [ "//third_party/webrtc/modules/desktop_capture" ]
   }
 }
