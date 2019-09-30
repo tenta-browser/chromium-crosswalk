@@ -5,16 +5,17 @@
 #include "content/browser/compositor/reflector_impl.h"
 
 #include "base/callback.h"
+#include "base/feature_list.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "build/build_config.h"
+#include "components/viz/common/features.h"
 #include "components/viz/common/frame_sinks/begin_frame_source.h"
 #include "components/viz/common/frame_sinks/delay_based_time_source.h"
 #include "components/viz/service/display/output_surface_frame.h"
 #include "components/viz/service/display_embedder/compositor_overlay_candidate_validator.h"
 #include "components/viz/test/test_context_provider.h"
-#include "components/viz/test/test_web_graphics_context_3d.h"
 #include "content/browser/compositor/browser_compositor_output_surface.h"
 #include "content/browser/compositor/reflector_texture.h"
 #include "content/browser/compositor/test/test_image_transport_factory.h"
@@ -24,7 +25,7 @@
 #include "ui/compositor/test/context_factories_for_test.h"
 
 #if defined(USE_OZONE)
-#include "cc/output/overlay_candidate.h"
+#include "components/viz/service/display/overlay_candidate.h"
 #include "components/viz/service/display_embedder/compositor_overlay_candidate_validator_ozone.h"
 #include "ui/ozone/public/overlay_candidates_ozone.h"
 #endif  // defined(USE_OZONE)
@@ -102,7 +103,6 @@ class TestOutputSurface : public BrowserCompositorOutputSurface {
   gfx::BufferFormat GetOverlayBufferFormat() const override {
     return gfx::BufferFormat::RGBX_8888;
   }
-  bool SurfaceIsSuspendForRecycle() const override { return false; }
 
   void OnReflectorChanged() override {
     if (!reflector_) {
@@ -113,13 +113,10 @@ class TestOutputSurface : public BrowserCompositorOutputSurface {
     }
   }
 
-#if defined(OS_MACOSX)
-  void SetSurfaceSuspendedForRecycle(bool suspended) override {}
-#endif
-
 #if BUILDFLAG(ENABLE_VULKAN)
   gpu::VulkanSurface* GetVulkanSurface() override { return nullptr; }
 #endif
+  unsigned UpdateGpuFence() override { return 0; }
 
  private:
   std::unique_ptr<ReflectorTexture> reflector_texture_;
@@ -207,6 +204,10 @@ class ReflectorImplTest : public testing::Test {
 
 namespace {
 TEST_F(ReflectorImplTest, CheckNormalOutputSurface) {
+  // TODO(jonross): Re-enable once Reflector is re-written to work with
+  // VizDisplayCompositor. https://crbug.com/601869
+  if (base::FeatureList::IsEnabled(features::kVizDisplayCompositor))
+    return;
   output_surface_->SetFlip(false);
   SetUpReflector();
   UpdateTexture();
@@ -217,6 +218,10 @@ TEST_F(ReflectorImplTest, CheckNormalOutputSurface) {
 }
 
 TEST_F(ReflectorImplTest, CheckInvertedOutputSurface) {
+  // TODO(jonross): Re-enable once Reflector is re-written to work with
+  // VizDisplayCompositor. https://crbug.com/601869
+  if (base::FeatureList::IsEnabled(features::kVizDisplayCompositor))
+    return;
   output_surface_->SetFlip(true);
   SetUpReflector();
   UpdateTexture();
@@ -226,8 +231,12 @@ TEST_F(ReflectorImplTest, CheckInvertedOutputSurface) {
 
 #if defined(USE_OZONE)
 TEST_F(ReflectorImplTest, CheckOverlayNoReflector) {
-  cc::OverlayCandidateList list;
-  cc::OverlayCandidate plane_1, plane_2;
+  // TODO(jonross): Re-enable once Reflector is re-written to work with
+  // VizDisplayCompositor. https://crbug.com/601869
+  if (base::FeatureList::IsEnabled(features::kVizDisplayCompositor))
+    return;
+  viz::OverlayCandidateList list;
+  viz::OverlayCandidate plane_1, plane_2;
   plane_1.plane_z_order = 0;
   plane_2.plane_z_order = 1;
   list.push_back(plane_1);
@@ -237,9 +246,13 @@ TEST_F(ReflectorImplTest, CheckOverlayNoReflector) {
 }
 
 TEST_F(ReflectorImplTest, CheckOverlaySWMirroring) {
+  // TODO(jonross): Re-enable once Reflector is re-written to work with
+  // VizDisplayCompositor. https://crbug.com/601869
+  if (base::FeatureList::IsEnabled(features::kVizDisplayCompositor))
+    return;
   SetUpReflector();
-  cc::OverlayCandidateList list;
-  cc::OverlayCandidate plane_1, plane_2;
+  viz::OverlayCandidateList list;
+  viz::OverlayCandidate plane_1, plane_2;
   plane_1.plane_z_order = 0;
   plane_2.plane_z_order = 1;
   list.push_back(plane_1);

@@ -18,7 +18,7 @@
       "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
         {
-          "object": "NGPaintFragment",
+          "object": "NGPhysicalBoxFragment LayoutNGBlockFlow DIV id='content'",
           "rect": [8, 8, 2000, 1500],
           "reason": "style change"
         }
@@ -36,12 +36,6 @@
         [-900, -700, 0, 1]
       ],
       "flattenInheritedTransform": false
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "NGPaintFragment",
-      "reason": "style change"
     }
   ]
 }

@@ -6,6 +6,8 @@ import("//chromecast/chromecast.gni")
 
 cast_source_set("le") {
   sources = [
+    "ble_notification_logger.cc",
+    "ble_notification_logger.h",
     "gatt_client_manager.h",
     "gatt_client_manager_impl.cc",
     "gatt_client_manager_impl.h",
@@ -41,6 +43,7 @@ cast_source_set("le") {
     "//chromecast/device/bluetooth:util",
     "//chromecast/device/bluetooth/shlib",
     "//chromecast/public",
+    "//third_party/re2",
   ]
 }
 
@@ -63,6 +66,7 @@ cast_source_set("test_support") {
   ]
   deps = [
     ":le",
+    "//base",
     "//chromecast/public",
     "//testing/gmock",
   ]
@@ -83,7 +87,6 @@ cast_source_set("unittests") {
     ":test_support",
     "//base",
     "//base/test:test_support",
-    "//chromecast/device/bluetooth:test_support",
     "//chromecast/device/bluetooth:util",
     "//chromecast/device/bluetooth/shlib:mock_shlib",
     "//chromecast/public",

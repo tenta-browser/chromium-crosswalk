@@ -16,11 +16,12 @@ import org.chromium.content_public.browser.JavaScriptCallback;
 import org.chromium.content_public.browser.MessagePort;
 import org.chromium.content_public.browser.NavigationController;
 import org.chromium.content_public.browser.RenderFrameHost;
+import org.chromium.content_public.browser.ViewEventSink;
 import org.chromium.content_public.browser.WebContents;
-import org.chromium.content_public.browser.WebContents.UserDataFactory;
 import org.chromium.content_public.browser.WebContentsObserver;
 import org.chromium.ui.OverscrollRefreshHandler;
 import org.chromium.ui.base.EventForwarder;
+import org.chromium.ui.base.ViewAndroidDelegate;
 import org.chromium.ui.base.WindowAndroid;
 
 /**
@@ -31,6 +32,11 @@ public class MockWebContents implements WebContents {
     public RenderFrameHost renderFrameHost;
 
     @Override
+    public void initialize(String productVersion, ViewAndroidDelegate viewDelegate,
+            ViewEventSink.InternalAccessDelegate accessDelegate, WindowAndroid windowAndroid,
+            WebContents.InternalsHolder internalsHolder) {}
+
+    @Override
     public int describeContents() {
         return 0;
     }
@@ -39,12 +45,17 @@ public class MockWebContents implements WebContents {
     public void writeToParcel(Parcel dest, int flags) {}
 
     @Override
-    public void setInternalsHolder(InternalsHolder holder) {}
-
-    @Override
     public WindowAndroid getTopLevelNativeWindow() {
         return null;
     }
+
+    @Override
+    public ViewAndroidDelegate getViewAndroidDelegate() {
+        return null;
+    }
+
+    @Override
+    public void setTopLevelNativeWindow(WindowAndroid windowAndroid) {}
 
     @Override
     public void destroy() {}
@@ -52,11 +63,6 @@ public class MockWebContents implements WebContents {
     @Override
     public boolean isDestroyed() {
         return false;
-    }
-
-    @Override
-    public <T> T getOrSetUserData(Class key, UserDataFactory<T> userDataFactory) {
-        return null;
     }
 
     @Override
@@ -116,9 +122,6 @@ public class MockWebContents implements WebContents {
     public int getBackgroundColor() {
         return 0;
     }
-
-    @Override
-    public void showInterstitialPage(String url, long interstitialPageDelegateAndroid) {}
 
     @Override
     public boolean isShowingInterstitialPage() {
@@ -213,7 +216,7 @@ public class MockWebContents implements WebContents {
     public void setOverscrollRefreshHandler(OverscrollRefreshHandler handler) {}
 
     @Override
-    public void getContentBitmapAsync(
+    public void writeContentBitmapToDiskAsync(
             int width, int height, String path, Callback<String> callback) {}
 
     @Override
@@ -258,4 +261,7 @@ public class MockWebContents implements WebContents {
     public int getHeight() {
         return 0;
     }
+
+    @Override
+    public void setDisplayCutoutSafeArea(Rect insets) {}
 }

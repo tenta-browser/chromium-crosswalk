@@ -55,7 +55,7 @@ void PendingAnimations::Add(Animation* animation) {
 }
 
 bool PendingAnimations::Update(
-    const Optional<CompositorElementIdSet>& composited_element_ids,
+    const base::Optional<CompositorElementIdSet>& composited_element_ids,
     bool start_on_compositor) {
   HeapVector<Member<Animation>> waiting_for_start_time;
   bool started_synchronized_on_compositor = false;
@@ -162,7 +162,7 @@ void PendingAnimations::NotifyCompositorAnimationStarted(
     }
     animation->NotifyCompositorStartTime(
         monotonic_animation_start_time -
-        animation->TimelineInternal()->ZeroTime());
+        TimeTicksInSeconds(animation->TimelineInternal()->ZeroTime()));
   }
 }
 

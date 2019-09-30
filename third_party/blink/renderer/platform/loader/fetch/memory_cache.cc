@@ -22,13 +22,13 @@
 
 #include "third_party/blink/renderer/platform/loader/fetch/memory_cache.h"
 
+#include "base/auto_reset.h"
 #include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/renderer/platform/instrumentation/tracing/trace_event.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_loading_log.h"
 #include "third_party/blink/renderer/platform/weborigin/security_origin.h"
 #include "third_party/blink/renderer/platform/weborigin/security_origin_hash.h"
 #include "third_party/blink/renderer/platform/wtf/assertions.h"
-#include "third_party/blink/renderer/platform/wtf/auto_reset.h"
 #include "third_party/blink/renderer/platform/wtf/math_extras.h"
 #include "third_party/blink/renderer/platform/wtf/text/cstring.h"
 #include "third_party/blink/renderer/platform/wtf/time.h"
@@ -332,11 +332,10 @@ MemoryCache::Statistics MemoryCache::GetStatistics() const {
   return stats;
 }
 
-void MemoryCache::EvictResources(EvictResourcePolicy policy) {
+void MemoryCache::EvictResources() {
   for (auto resource_map_iter = resource_maps_.begin();
        resource_map_iter != resource_maps_.end();) {
     ResourceMap* resources = resource_map_iter->value.Get();
-    HeapVector<Member<MemoryCacheEntry>> unused_preloads;
     for (auto resource_iter = resources->begin();
          resource_iter != resources->end();
          resource_iter = resources->begin()) {
@@ -345,25 +344,10 @@ void MemoryCache::EvictResources(EvictResourcePolicy policy) {
       DCHECK(resource_iter->value->GetResource());
       Resource* resource = resource_iter->value->GetResource();
       DCHECK(resource);
-      if (policy != kEvictAllResources && resource->IsUnusedPreload()) {
-        // Store unused preloads aside, so they could be added back later.
-        // That is in order to avoid the performance impact of iterating over
-        // the same resource multiple times.
-        unused_preloads.push_back(resource_iter->value.Get());
-      }
       RemoveInternal(resources, resource_iter);
     }
-    for (const auto& unused_preload : unused_preloads) {
-      AddInternal(resources, unused_preload);
-    }
-    // We may iterate multiple times over resourceMaps with unused preloads.
-    // That's extremely unlikely to have any real-life performance impact.
-    if (!resources->size()) {
-      resource_maps_.erase(resource_map_iter);
-      resource_map_iter = resource_maps_.begin();
-    } else {
-      ++resource_map_iter;
-    }
+    resource_maps_.erase(resource_map_iter);
+    resource_map_iter = resource_maps_.begin();
   }
 }
 
@@ -416,7 +400,7 @@ void MemoryCache::PruneNow(double current_time, PruneStrategy strategy) {
     Platform::Current()->CurrentThread()->RemoveTaskObserver(this);
   }
 
-  AutoReset<bool> reentrancy_protector(&in_prune_resources_, true);
+  base::AutoReset<bool> reentrancy_protector(&in_prune_resources_, true);
 
   PruneResources(strategy);
   prune_frame_time_stamp_ = last_frame_paint_time_stamp_;

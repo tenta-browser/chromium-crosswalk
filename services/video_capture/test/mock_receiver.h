@@ -18,23 +18,24 @@ class MockReceiver : public mojom::Receiver {
   ~MockReceiver() override;
 
   // Use forwarding method to work around gmock not supporting move-only types.
-  void OnNewBufferHandle(int32_t buffer_id,
-                         mojo::ScopedSharedBufferHandle buffer_handle) override;
+  void OnNewBuffer(int32_t buffer_id,
+                   media::mojom::VideoBufferHandlePtr buffer_handle) override;
   void OnFrameReadyInBuffer(
       int32_t buffer_id,
       int32_t frame_feedback_id,
       mojom::ScopedAccessPermissionPtr access_permission,
       media::mojom::VideoFrameInfoPtr frame_info) override;
 
-  MOCK_METHOD2(DoOnNewBufferHandle,
-               void(int32_t, mojo::ScopedSharedBufferHandle*));
+  MOCK_METHOD2(DoOnNewBuffer,
+               void(int32_t, media::mojom::VideoBufferHandlePtr*));
   MOCK_METHOD4(DoOnFrameReadyInBuffer,
                void(int32_t buffer_id,
                     int32_t frame_feedback_id,
                     mojom::ScopedAccessPermissionPtr*,
                     media::mojom::VideoFrameInfoPtr*));
   MOCK_METHOD1(OnBufferRetired, void(int32_t));
-  MOCK_METHOD0(OnError, void());
+  MOCK_METHOD1(OnError, void(media::VideoCaptureError));
+  MOCK_METHOD1(OnFrameDropped, void(media::VideoCaptureFrameDropReason));
   MOCK_METHOD1(OnLog, void(const std::string&));
   MOCK_METHOD0(OnStarted, void());
   MOCK_METHOD0(OnStartedUsingGpuDecode, void());

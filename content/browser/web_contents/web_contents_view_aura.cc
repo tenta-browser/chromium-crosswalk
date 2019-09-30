@@ -11,7 +11,7 @@
 #include "base/command_line.h"
 #include "base/files/file_util.h"
 #include "base/macros.h"
-#include "base/message_loop/message_loop.h"
+#include "base/message_loop/message_loop_current.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
 #include "components/viz/common/features.h"
@@ -350,6 +350,26 @@ GlobalRoutingID GetRenderViewHostID(RenderViewHost* rvh) {
   return GlobalRoutingID(rvh->GetProcess()->GetID(), rvh->GetRoutingID());
 }
 
+// Returns the host window for |window|, or nullpr if it has no host window.
+aura::Window* GetHostWindow(aura::Window* window) {
+  aura::Window* host_window = window->GetProperty(aura::client::kHostWindowKey);
+  if (host_window)
+    return host_window;
+  return window->parent();
+}
+
+// Returns true iff the aura::client::kMirroringEnabledKey property is set for
+// |window| or its parent. That indicates that |window| is being displayed in
+// Alt-Tab view on ChromeOS.
+bool WindowIsMirrored(aura::Window* window) {
+  if (window->GetProperty(aura::client::kMirroringEnabledKey))
+    return true;
+
+  aura::Window* const host_window = GetHostWindow(window);
+  return host_window &&
+         host_window->GetProperty(aura::client::kMirroringEnabledKey);
+}
+
 }  // namespace
 
 class WebContentsViewAura::WindowObserver
@@ -373,10 +393,7 @@ class WebContentsViewAura::WindowObserver
     if (window != view_->window_.get())
       return;
 
-    aura::Window* host_window =
-        window->GetProperty(aura::client::kHostWindowKey);
-    if (!host_window)
-      host_window = parent;
+    aura::Window* const host_window = GetHostWindow(window);
 
     if (host_window_)
       host_window_->RemoveObserver(this);
@@ -422,12 +439,8 @@ class WebContentsViewAura::WindowObserver
   void OnWindowPropertyChanged(aura::Window* window,
                                const void* key,
                                intptr_t old) override {
-    if (key != aura::client::kMirroringEnabledKey)
-      return;
-    if (window->GetProperty(aura::client::kMirroringEnabledKey))
-      view_->web_contents_->IncrementCapturerCount(gfx::Size());
-    else
-      view_->web_contents_->DecrementCapturerCount();
+    if (key == aura::client::kMirroringEnabledKey)
+      view_->UpdateWebContentsVisibility();
   }
 
   // Overridden WindowTreeHostObserver:
@@ -465,9 +478,9 @@ void WebContentsViewAura::InstallCreateHookForTests(
 
 WebContentsViewAura::WebContentsViewAura(WebContentsImpl* web_contents,
                                          WebContentsViewDelegate* delegate)
-    : is_mus_browser_plugin_guest_(
-          web_contents->GetBrowserPluginGuest() != nullptr &&
-          base::FeatureList::IsEnabled(features::kMash)),
+    : is_mus_browser_plugin_guest_(web_contents->GetBrowserPluginGuest() !=
+                                       nullptr &&
+                                   features::IsUsingWindowService()),
       web_contents_(web_contents),
       delegate_(delegate),
       current_drag_op_(blink::kWebDragOperationNone),
@@ -729,7 +742,7 @@ gfx::Rect WebContentsViewAura::GetViewBounds() const {
 }
 
 void WebContentsViewAura::CreateAuraWindow(aura::Window* context) {
-  DCHECK(aura::Env::GetInstanceDontCreate());
+  DCHECK(aura::Env::HasInstance());
   DCHECK(!window_);
   window_ = std::make_unique<aura::Window>(this);
   window_->set_owned_by_parent(false);
@@ -759,6 +772,23 @@ void WebContentsViewAura::CreateAuraWindow(aura::Window* context) {
   // 2) guests' window bounds are supposed to come from its embedder.
   if (!BrowserPluginGuest::IsGuest(web_contents_))
     window_observer_.reset(new WindowObserver(this));
+}
+
+void WebContentsViewAura::UpdateWebContentsVisibility() {
+  web_contents_->UpdateWebContentsVisibility(GetVisibility());
+}
+
+Visibility WebContentsViewAura::GetVisibility() const {
+  if (window_->occlusion_state() == aura::Window::OcclusionState::VISIBLE ||
+      WindowIsMirrored(window_.get())) {
+    return Visibility::VISIBLE;
+  }
+
+  if (window_->occlusion_state() == aura::Window::OcclusionState::OCCLUDED)
+    return Visibility::OCCLUDED;
+
+  DCHECK_EQ(window_->occlusion_state(), aura::Window::OcclusionState::HIDDEN);
+  return Visibility::HIDDEN;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -843,8 +873,10 @@ void WebContentsViewAura::SetPageTitle(const base::string16& title) {
 void WebContentsViewAura::RenderViewCreated(RenderViewHost* host) {
 }
 
-void WebContentsViewAura::RenderViewSwappedIn(RenderViewHost* host) {
-}
+void WebContentsViewAura::RenderViewReady() {}
+
+void WebContentsViewAura::RenderViewHostChanged(RenderViewHost* old_host,
+                                                RenderViewHost* new_host) {}
 
 void WebContentsViewAura::SetOverscrollControllerEnabled(bool enabled) {
   RenderWidgetHostViewAura* view =
@@ -932,8 +964,7 @@ void WebContentsViewAura::StartDragging(
   int result_op = 0;
   {
     gfx::NativeView content_native_view = GetContentNativeView();
-    base::MessageLoop::ScopedNestableTaskAllower allow(
-        base::MessageLoop::current());
+    base::MessageLoopCurrent::ScopedNestableTaskAllower allow;
     result_op = aura::client::GetDragDropClient(root_window)
         ->StartDragAndDrop(data,
                            root_window,
@@ -1099,12 +1130,7 @@ void WebContentsViewAura::OnWindowTargetVisibilityChanged(bool visible) {
 
 void WebContentsViewAura::OnWindowOcclusionChanged(
     aura::Window::OcclusionState occlusion_state) {
-  web_contents_->UpdateWebContentsVisibility(
-      occlusion_state == aura::Window::OcclusionState::VISIBLE
-          ? content::Visibility::VISIBLE
-          : (occlusion_state == aura::Window::OcclusionState::OCCLUDED
-                 ? content::Visibility::OCCLUDED
-                 : content::Visibility::HIDDEN));
+  UpdateWebContentsVisibility();
 }
 
 bool WebContentsViewAura::HasHitTestMask() const {

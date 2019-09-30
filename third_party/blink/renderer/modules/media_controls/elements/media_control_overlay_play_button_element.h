@@ -19,6 +19,7 @@ namespace blink {
 
 class Event;
 class MediaControlsImpl;
+class MouseEvent;
 
 class MODULES_EXPORT MediaControlOverlayPlayButtonElement final
     : public MediaControlInputElement {
@@ -28,7 +29,7 @@ class MODULES_EXPORT MediaControlOverlayPlayButtonElement final
   // MediaControlInputElement overrides.
   void UpdateDisplayType() override;
 
-  void OnMediaKeyboardEvent(Event* event) { DefaultEventHandler(event); }
+  void OnMediaKeyboardEvent(Event* event) { DefaultEventHandler(*event); }
 
   WebSize GetSizeOrDefault() const final;
 
@@ -62,7 +63,7 @@ class MODULES_EXPORT MediaControlOverlayPlayButtonElement final
     // iteration.
     void Show();
 
-    void Trace(Visitor*);
+    void Trace(Visitor*) override;
 
    private:
     void HideInternal();
@@ -78,15 +79,16 @@ class MODULES_EXPORT MediaControlOverlayPlayButtonElement final
 
   void TapTimerFired(TimerBase*);
 
-  void DefaultEventHandler(Event*) override;
-  bool KeepEventInNode(Event*) override;
+  void DefaultEventHandler(Event&) override;
+  bool KeepEventInNode(const Event&) const override;
 
-  bool ShouldCausePlayPause(Event*) const;
+  bool ShouldCausePlayPause(const Event&) const;
+  bool IsMouseEventOnInternalButton(const MouseEvent&) const;
   void MaybePlayPause();
   void MaybeJump(int);
 
   TaskRunnerTimer<MediaControlOverlayPlayButtonElement> tap_timer_;
-  WTF::Optional<bool> tap_was_touch_event_;
+  base::Optional<bool> tap_was_touch_event_;
 
   Member<HTMLDivElement> internal_button_;
   Member<AnimatedArrow> left_jump_arrow_;

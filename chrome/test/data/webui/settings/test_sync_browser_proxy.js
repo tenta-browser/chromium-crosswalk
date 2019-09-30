@@ -15,9 +15,10 @@ class TestSyncBrowserProxy extends TestBrowserProxy {
       'setSyncDatatypes',
       'setSyncEncryption',
       'signOut',
+      'pauseSync',
       'startSignIn',
       'startSyncingWithEmail',
-      'setSyncEverything',
+      'unifiedConsentToggleChanged',
     ]);
 
     /** @private {number} */
@@ -30,10 +31,7 @@ class TestSyncBrowserProxy extends TestBrowserProxy {
   /** @override */
   getSyncStatus() {
     this.methodCalled('getSyncStatus');
-    return Promise.resolve({
-      signedIn: true,
-      signedInUsername: 'fakeUsername'
-    });
+    return Promise.resolve({signedIn: true, signedInUsername: 'fakeUsername'});
   }
 
   /** @override */
@@ -45,6 +43,11 @@ class TestSyncBrowserProxy extends TestBrowserProxy {
   /** @override */
   signOut(deleteProfile) {
     this.methodCalled('signOut', deleteProfile);
+  }
+
+  /** @override */
+  pauseSync() {
+    this.methodCalled('pauseSync');
   }
 
   /** @override */
@@ -95,8 +98,7 @@ class TestSyncBrowserProxy extends TestBrowserProxy {
   }
 
   /** @override */
-  setSyncEverything(syncEverything) {
-    this.methodCalled('setSyncEverything', syncEverything);
-    return Promise.resolve(settings.PageStatus.CONFIGURE);
+  unifiedConsentToggleChanged(toggleChecked) {
+    this.methodCalled('unifiedConsentToggleChanged', toggleChecked);
   }
 }

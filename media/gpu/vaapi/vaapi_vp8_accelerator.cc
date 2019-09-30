@@ -4,8 +4,9 @@
 
 #include "media/gpu/vaapi/vaapi_vp8_accelerator.h"
 
+#include "base/numerics/ranges.h"
+#include "media/gpu/decode_surface_handler.h"
 #include "media/gpu/vaapi/vaapi_common.h"
-#include "media/gpu/vaapi/vaapi_video_decode_accelerator.h"
 #include "media/gpu/vaapi/vaapi_wrapper.h"
 #include "media/gpu/vp8_picture.h"
 
@@ -19,7 +20,7 @@
 namespace media {
 
 VaapiVP8Accelerator::VaapiVP8Accelerator(
-    VaapiVideoDecodeAccelerator* vaapi_dec,
+    DecodeSurfaceHandler<VASurface>* vaapi_dec,
     scoped_refptr<VaapiWrapper> vaapi_wrapper)
     : vaapi_wrapper_(vaapi_wrapper), vaapi_dec_(vaapi_dec) {
   DCHECK(vaapi_wrapper_);
@@ -34,7 +35,7 @@ VaapiVP8Accelerator::~VaapiVP8Accelerator() {
 
 scoped_refptr<VP8Picture> VaapiVP8Accelerator::CreateVP8Picture() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  const auto va_surface = vaapi_dec_->CreateVASurface();
+  const auto va_surface = vaapi_dec_->CreateSurface();
   if (!va_surface)
     return nullptr;
 
@@ -42,17 +43,14 @@ scoped_refptr<VP8Picture> VaapiVP8Accelerator::CreateVP8Picture() {
 }
 
 bool VaapiVP8Accelerator::SubmitDecode(
-    const scoped_refptr<VP8Picture>& pic,
-    const Vp8FrameHeader* frame_hdr,
-    const scoped_refptr<VP8Picture>& last_frame,
-    const scoped_refptr<VP8Picture>& golden_frame,
-    const scoped_refptr<VP8Picture>& alt_frame) {
+    scoped_refptr<VP8Picture> pic,
+    const Vp8ReferenceFrameVector& reference_frames) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  VAIQMatrixBufferVP8 iq_matrix_buf;
-  memset(&iq_matrix_buf, 0, sizeof(VAIQMatrixBufferVP8));
 
+  const auto& frame_hdr = pic->frame_hdr;
   const Vp8SegmentationHeader& sgmnt_hdr = frame_hdr->segmentation_hdr;
   const Vp8QuantizationHeader& quant_hdr = frame_hdr->quantization_hdr;
+  VAIQMatrixBufferVP8 iq_matrix_buf{};
   static_assert(arraysize(iq_matrix_buf.quantization_index) == kMaxMBSegments,
                 "incorrect quantization matrix size");
   for (size_t i = 0; i < kMaxMBSegments; ++i) {
@@ -66,7 +64,7 @@ bool VaapiVP8Accelerator::SubmitDecode(
         q += sgmnt_hdr.quantizer_update_value[i];
     }
 
-#define CLAMP_Q(q) std::min(std::max(q, 0), 127)
+#define CLAMP_Q(q) base::ClampToRange(q, 0, 127)
     static_assert(arraysize(iq_matrix_buf.quantization_index[i]) == 6,
                   "incorrect quantization matrix size");
     iq_matrix_buf.quantization_index[i][0] = CLAMP_Q(q);
@@ -78,26 +76,24 @@ bool VaapiVP8Accelerator::SubmitDecode(
 #undef CLAMP_Q
   }
 
-  if (!vaapi_wrapper_->SubmitBuffer(
-          VAIQMatrixBufferType, sizeof(VAIQMatrixBufferVP8), &iq_matrix_buf))
+  if (!vaapi_wrapper_->SubmitBuffer(VAIQMatrixBufferType, &iq_matrix_buf)) {
     return false;
-
-  VAProbabilityDataBufferVP8 prob_buf;
-  memset(&prob_buf, 0, sizeof(VAProbabilityDataBufferVP8));
+  }
 
   const Vp8EntropyHeader& entr_hdr = frame_hdr->entropy_hdr;
+  VAProbabilityDataBufferVP8 prob_buf{};
   ARRAY_MEMCPY_CHECKED(prob_buf.dct_coeff_probs, entr_hdr.coeff_probs);
 
   if (!vaapi_wrapper_->SubmitBuffer(VAProbabilityBufferType,
-                                    sizeof(VAProbabilityDataBufferVP8),
-                                    &prob_buf))
+                                    &prob_buf)) {
     return false;
+  }
 
-  VAPictureParameterBufferVP8 pic_param;
-  memset(&pic_param, 0, sizeof(VAPictureParameterBufferVP8));
+  VAPictureParameterBufferVP8 pic_param{};
   pic_param.frame_width = frame_hdr->width;
   pic_param.frame_height = frame_hdr->height;
 
+  const auto last_frame = reference_frames.GetFrame(Vp8RefType::VP8_FRAME_LAST);
   if (last_frame) {
     pic_param.last_ref_frame =
         last_frame->AsVaapiVP8Picture()->GetVASurfaceID();
@@ -105,6 +101,8 @@ bool VaapiVP8Accelerator::SubmitDecode(
     pic_param.last_ref_frame = VA_INVALID_SURFACE;
   }
 
+  const auto golden_frame =
+      reference_frames.GetFrame(Vp8RefType::VP8_FRAME_GOLDEN);
   if (golden_frame) {
     pic_param.golden_ref_frame =
         golden_frame->AsVaapiVP8Picture()->GetVASurfaceID();
@@ -112,6 +110,8 @@ bool VaapiVP8Accelerator::SubmitDecode(
     pic_param.golden_ref_frame = VA_INVALID_SURFACE;
   }
 
+  const auto alt_frame =
+      reference_frames.GetFrame(Vp8RefType::VP8_FRAME_ALTREF);
   if (alt_frame) {
     pic_param.alt_ref_frame = alt_frame->AsVaapiVP8Picture()->GetVASurfaceID();
   } else {
@@ -187,12 +187,11 @@ bool VaapiVP8Accelerator::SubmitDecode(
   pic_param.bool_coder_ctx.value = frame_hdr->bool_dec_value;
   pic_param.bool_coder_ctx.count = frame_hdr->bool_dec_count;
 
-  if (!vaapi_wrapper_->SubmitBuffer(VAPictureParameterBufferType,
-                                    sizeof(pic_param), &pic_param))
+  if (!vaapi_wrapper_->SubmitBuffer(VAPictureParameterBufferType, &pic_param)) {
     return false;
+  }
 
-  VASliceParameterBufferVP8 slice_param;
-  memset(&slice_param, 0, sizeof(slice_param));
+  VASliceParameterBufferVP8 slice_param{};
   slice_param.slice_data_size = frame_hdr->frame_size;
   slice_param.slice_data_offset = frame_hdr->first_part_offset;
   slice_param.slice_data_flag = VA_SLICE_DATA_FLAG_ALL;
@@ -209,24 +208,26 @@ bool VaapiVP8Accelerator::SubmitDecode(
     slice_param.partition_size[i + 1] = frame_hdr->dct_partition_sizes[i];
 
   if (!vaapi_wrapper_->SubmitBuffer(VASliceParameterBufferType,
-                                    sizeof(VASliceParameterBufferVP8),
-                                    &slice_param))
+                                    &slice_param)) {
     return false;
+  }
 
-  void* non_const_ptr = const_cast<uint8_t*>(frame_hdr->data);
   if (!vaapi_wrapper_->SubmitBuffer(VASliceDataBufferType,
-                                    frame_hdr->frame_size, non_const_ptr))
+                                    frame_hdr->frame_size, frame_hdr->data)) {
     return false;
+  }
 
-  return vaapi_dec_->DecodeVASurface(pic->AsVaapiVP8Picture()->va_surface());
+  return vaapi_wrapper_->ExecuteAndDestroyPendingBuffers(
+      pic->AsVaapiVP8Picture()->va_surface()->id());
 }
 
 bool VaapiVP8Accelerator::OutputPicture(const scoped_refptr<VP8Picture>& pic) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   const VaapiVP8Picture* vaapi_pic = pic->AsVaapiVP8Picture();
-  vaapi_dec_->VASurfaceReady(vaapi_pic->va_surface(), vaapi_pic->bitstream_id(),
-                             vaapi_pic->visible_rect());
+  vaapi_dec_->SurfaceReady(vaapi_pic->va_surface(), vaapi_pic->bitstream_id(),
+                           vaapi_pic->visible_rect(),
+                           vaapi_pic->get_colorspace());
   return true;
 }
 

@@ -40,7 +40,6 @@
 #include "third_party/blink/renderer/platform/text/quoted_printable.h"
 #include "third_party/blink/renderer/platform/weborigin/scheme_registry.h"
 #include "third_party/blink/renderer/platform/wtf/assertions.h"
-#include "third_party/blink/renderer/platform/wtf/cryptographically_random_number.h"
 #include "third_party/blink/renderer/platform/wtf/date_math.h"
 #include "third_party/blink/renderer/platform/wtf/text/base64.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_builder.h"
@@ -195,7 +194,9 @@ MHTMLArchive* MHTMLArchive::Create(const KURL& url,
     else
       archive->AddSubresource(resources[i].Get());
   }
-  return archive;
+  if (archive->MainResource())
+    return archive;
+  return nullptr;
 }
 
 bool MHTMLArchive::CanLoadArchive(const KURL& url) {
@@ -222,14 +223,7 @@ void MHTMLArchive::GenerateMHTMLHeader(const String& boundary,
   DCHECK(!boundary.IsEmpty());
   DCHECK(!mime_type.IsEmpty());
 
-  // TODO(lukasza): Passing individual date/time components seems fragile.
-  base::Time::Exploded date_components;
-  date.UTCExplode(&date_components);
-  String date_string = MakeRFC2822DateString(
-      date_components.day_of_week, date_components.day_of_month,
-      // |month| is 1-based in Exploded, but 0-based in MakeRFC2822DateString.
-      date_components.month - 1, date_components.year, date_components.hour,
-      date_components.minute, date_components.second, 0);
+  String date_string = MakeRFC2822DateString(date, 0);
 
   StringBuilder string_builder;
   string_builder.Append("From: <Saved by Blink>\r\n");
@@ -310,12 +304,8 @@ void MHTMLArchive::GenerateMHTMLPart(const String& boundary,
   output_buffer.Append(ascii_string.data(), ascii_string.length());
 
   if (!strcmp(content_encoding, kBinary)) {
-    const char* data;
-    size_t position = 0;
-    while (size_t length = resource.data->GetSomeData(data, position)) {
-      output_buffer.Append(data, length);
-      position += length;
-    }
+    for (const auto& span : *resource.data)
+      output_buffer.Append(span.data(), span.size());
   } else {
     // FIXME: ideally we would encode the content as a stream without having to
     // fetch it all.

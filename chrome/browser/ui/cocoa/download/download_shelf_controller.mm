@@ -156,9 +156,9 @@ const CGFloat kMDCloseButtonSize = 24;
 
 - (void)loadView {
   if (base::FeatureList::IsEnabled(features::kMacMaterialDesignDownloadShelf)) {
-    base::scoped_nsobject<NSView> scopedView([[DownloadShelfView alloc]
+    base::scoped_nsobject<NSView> scopedView([[DownloadShelfViewCocoa alloc]
         initWithFrame:NSMakeRect(0, 0, kMDShelfInitialWidth,
-                                 [DownloadShelfView shelfHeight])]);
+                                 [DownloadShelfViewCocoa shelfHeight])]);
     NSView* view = scopedView.get();
     view.autoresizingMask = [NSView
         cr_localizedAutoresizingMask:NSViewWidthSizable | NSViewMaxYMargin];
@@ -173,7 +173,7 @@ const CGFloat kMDCloseButtonSize = 24;
     MDDownloadShelfCloseButton* closeButton = scopedCloseButton;
     closeButton.autoresizingMask =
         [NSView cr_localizedAutoresizingMask:NSViewMinXMargin];
-    closeButton.icon = &vector_icons::kClose16Icon;
+    closeButton.icon = &vector_icons::kCloseRoundedIcon;
     [closeButton
         cr_setAccessibilityLabel:l10n_util::GetNSString(IDS_HIDE_DOWNLOADS)];
     closeButton.target = self;
@@ -334,17 +334,6 @@ const CGFloat kMDCloseButtonSize = 24;
   if ([self isVisible] == show)
     return;
 
-  if (!show) {
-    int numInProgress = 0;
-    for (NSUInteger i = 0; i < [downloadItemControllers_ count]; ++i) {
-      DownloadItem* item = [[downloadItemControllers_ objectAtIndex:i]download];
-      if (item->GetState() == DownloadItem::IN_PROGRESS)
-        ++numInProgress;
-    }
-    RecordDownloadShelfClose(
-        [downloadItemControllers_ count], numInProgress, !isUserAction);
-  }
-
   // Animate the shelf out, but not in.
   // TODO(rohitrao): We do not animate on the way in because Cocoa is already
   // doing a lot of work to set up the download arrow animation.  I've chosen to
@@ -381,7 +370,7 @@ const CGFloat kMDCloseButtonSize = 24;
 
 - (float)height {
   if (base::FeatureList::IsEnabled(features::kMacMaterialDesignDownloadShelf)) {
-    return [DownloadShelfView shelfHeight] + [self.view cr_lineWidth];
+    return [DownloadShelfViewCocoa shelfHeight] + [self.view cr_lineWidth];
   } else {
     return maxShelfHeight_;
   }
@@ -652,8 +641,8 @@ const CGFloat kMDCloseButtonSize = 24;
   }
 
   // Set the tracking off to create a new tracking area for the control.
-  // When changing the bounds/frame on a HoverButton, the tracking isn't updated
-  // correctly, it needs to be turned off and back on.
+  // When changing the bounds/frame on a HoverButtonCocoa, the tracking isn't
+  // updated correctly, it needs to be turned off and back on.
   [hoverCloseButton_ setTrackingEnabled:NO];
   [hoverCloseButton_ setFrame:bounds];
   [hoverCloseButton_ setTrackingEnabled:YES];

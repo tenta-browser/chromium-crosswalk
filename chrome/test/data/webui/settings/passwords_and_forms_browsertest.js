@@ -12,8 +12,9 @@ GEN_INCLUDE(
     [ROOT_PATH + 'chrome/test/data/webui/polymer_browser_test_base.js']);
 
 // Fake data generator.
-GEN_INCLUDE([ROOT_PATH +
-    'chrome/test/data/webui/settings/passwords_and_autofill_fake_data.js']);
+GEN_INCLUDE(
+    [ROOT_PATH +
+     'chrome/test/data/webui/settings/passwords_and_autofill_fake_data.js']);
 
 /**
  * @constructor
@@ -50,6 +51,7 @@ PasswordsAndFormsBrowserTest.prototype = {
 TEST_F('PasswordsAndFormsBrowserTest', 'uiTests', function() {
   let passwordManager;
   let autofillManager;
+  let paymentsManager;
 
   /**
    * Creates a new passwords and forms element.
@@ -59,8 +61,12 @@ TEST_F('PasswordsAndFormsBrowserTest', 'uiTests', function() {
     const element = document.createElement('settings-passwords-and-forms-page');
     element.prefs = prefsElement.prefs;
     document.body.appendChild(element);
-    element.$$('template[route-path="/passwords"]').if = true;
-    element.$$('template[route-path="/autofill"]').if = true;
+
+    // TODO(dpapad): Update this once migration to Polymer 2 is done.
+    const domIfTag = Polymer.DomIf ? 'dom-if' : 'template';
+    element.$$(`${domIfTag}[route-path="/passwords"]`).if = true;
+    element.$$(`${domIfTag}[route-path="/autofill"]`).if = true;
+    element.$$(`${domIfTag}[route-path="/payments"]`).if = true;
     Polymer.dom.flush();
     return element;
   }
@@ -79,6 +85,11 @@ TEST_F('PasswordsAndFormsBrowserTest', 'uiTests', function() {
           key: 'autofill.enabled',
           type: chrome.settingsPrivate.PrefType.BOOLEAN,
           value: autofill,
+        },
+        {
+          key: 'autofill.profile_enabled',
+          type: chrome.settingsPrivate.PrefType.BOOLEAN,
+          value: true,
         },
         {
           key: 'autofill.credit_card_enabled',
@@ -134,10 +145,20 @@ TEST_F('PasswordsAndFormsBrowserTest', 'uiTests', function() {
    */
   function baseAutofillExpectations() {
     const expected = new AutofillManagerExpectations();
-    expected.requested.addresses = 1;
-    expected.requested.creditCards = 1;
-    expected.listening.addresses = 1;
-    expected.listening.creditCards = 1;
+    expected.requestedAddresses = 1;
+    expected.listeningAddresses = 1;
+    return expected;
+  }
+
+  /**
+   * Creates PaymentsManagerExpectations with the values expected after first
+   * creating the element.
+   * @return {!PaymentsManagerExpectations}
+   */
+  function basePaymentsExpectations() {
+    const expected = new PaymentsManagerExpectations();
+    expected.requestedCreditCards = 1;
+    expected.listeningCreditCards = 1;
     return expected;
   }
 
@@ -151,6 +172,10 @@ TEST_F('PasswordsAndFormsBrowserTest', 'uiTests', function() {
     // Override the AutofillManagerImpl for testing.
     autofillManager = new TestAutofillManager();
     AutofillManagerImpl.instance_ = autofillManager;
+
+    // Override the PaymentsManagerImpl for testing.
+    paymentsManager = new TestPaymentsManager();
+    PaymentsManagerImpl.instance_ = paymentsManager;
   });
 
   suite('PasswordsAndForms', function() {
@@ -164,6 +189,9 @@ TEST_F('PasswordsAndFormsBrowserTest', 'uiTests', function() {
         const autofillExpectations = baseAutofillExpectations();
         autofillManager.assertExpectations(autofillExpectations);
 
+        const paymentsExpectations = basePaymentsExpectations();
+        paymentsManager.assertExpectations(paymentsExpectations);
+
         element.remove();
         Polymer.dom.flush();
 
@@ -171,9 +199,11 @@ TEST_F('PasswordsAndFormsBrowserTest', 'uiTests', function() {
         passwordsExpectations.listening.exceptions = 0;
         passwordManager.assertExpectations(passwordsExpectations);
 
-        autofillExpectations.listening.addresses = 0;
-        autofillExpectations.listening.creditCards = 0;
+        autofillExpectations.listeningAddresses = 0;
         autofillManager.assertExpectations(autofillExpectations);
+
+        paymentsExpectations.listeningCreditCards = 0;
+        paymentsManager.assertExpectations(paymentsExpectations);
 
         destroyPrefs(prefs);
       });
@@ -183,10 +213,8 @@ TEST_F('PasswordsAndFormsBrowserTest', 'uiTests', function() {
       return createPrefs(true, true).then(function(prefs) {
         const element = createPasswordsAndFormsElement(prefs);
 
-        const list = [
-          FakeDataMaker.passwordEntry(),
-          FakeDataMaker.passwordEntry()
-        ];
+        const list =
+            [FakeDataMaker.passwordEntry(), FakeDataMaker.passwordEntry()];
 
         passwordManager.lastCallback.addSavedPasswordListChangedListener(list);
         Polymer.dom.flush();
@@ -200,6 +228,7 @@ TEST_F('PasswordsAndFormsBrowserTest', 'uiTests', function() {
         // have additional calls to the manager after the base expectations.
         passwordManager.assertExpectations(basePasswordExpectations());
         autofillManager.assertExpectations(baseAutofillExpectations());
+        paymentsManager.assertExpectations(basePaymentsExpectations());
 
         destroyPrefs(prefs);
       });
@@ -209,8 +238,8 @@ TEST_F('PasswordsAndFormsBrowserTest', 'uiTests', function() {
       return createPrefs(true, true).then(function(prefs) {
         const element = createPasswordsAndFormsElement(prefs);
 
-        const list = [FakeDataMaker.exceptionEntry(),
-        FakeDataMaker.exceptionEntry()];
+        const list =
+            [FakeDataMaker.exceptionEntry(), FakeDataMaker.exceptionEntry()];
         passwordManager.lastCallback.addExceptionListChangedListener(list);
         Polymer.dom.flush();
 
@@ -220,6 +249,7 @@ TEST_F('PasswordsAndFormsBrowserTest', 'uiTests', function() {
         // have additional calls to the manager after the base expectations.
         passwordManager.assertExpectations(basePasswordExpectations());
         autofillManager.assertExpectations(baseAutofillExpectations());
+        paymentsManager.assertExpectations(basePaymentsExpectations());
 
         destroyPrefs(prefs);
       });
@@ -229,8 +259,8 @@ TEST_F('PasswordsAndFormsBrowserTest', 'uiTests', function() {
       return createPrefs(true, true).then(function(prefs) {
         const element = createPasswordsAndFormsElement(prefs);
 
-        const list = [
-            FakeDataMaker.addressEntry(), FakeDataMaker.addressEntry()];
+        const list =
+            [FakeDataMaker.addressEntry(), FakeDataMaker.addressEntry()];
         autofillManager.lastCallback.addAddressListChangedListener(list);
         Polymer.dom.flush();
 
@@ -240,6 +270,7 @@ TEST_F('PasswordsAndFormsBrowserTest', 'uiTests', function() {
         // have additional calls to the manager after the base expectations.
         passwordManager.assertExpectations(basePasswordExpectations());
         autofillManager.assertExpectations(baseAutofillExpectations());
+        paymentsManager.assertExpectations(basePaymentsExpectations());
 
         destroyPrefs(prefs);
       });
@@ -249,17 +280,18 @@ TEST_F('PasswordsAndFormsBrowserTest', 'uiTests', function() {
       return createPrefs(true, true).then(function(prefs) {
         const element = createPasswordsAndFormsElement(prefs);
 
-        const list = [FakeDataMaker.creditCardEntry(),
-        FakeDataMaker.creditCardEntry()];
-        autofillManager.lastCallback.addCreditCardListChangedListener(list);
+        const list =
+            [FakeDataMaker.creditCardEntry(), FakeDataMaker.creditCardEntry()];
+        paymentsManager.lastCallback.addCreditCardListChangedListener(list);
         Polymer.dom.flush();
 
-        assertEquals(list, element.$$('#autofillSection').creditCards);
+        assertEquals(list, element.$$('#paymentSection').creditCards);
 
         // The callback is coming from the manager, so the element shouldn't
         // have additional calls to the manager after the base expectations.
         passwordManager.assertExpectations(basePasswordExpectations());
         autofillManager.assertExpectations(baseAutofillExpectations());
+        paymentsManager.assertExpectations(basePaymentsExpectations());
 
         destroyPrefs(prefs);
       });

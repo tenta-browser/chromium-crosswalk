@@ -12,13 +12,6 @@
 
 namespace video_capture {
 
-ServiceManagerListenerImpl::ServiceManagerListenerImpl(
-    service_manager::mojom::ServiceManagerListenerRequest request,
-    base::RunLoop* loop)
-    : binding_(this, std::move(request)), loop_(loop) {}
-
-ServiceManagerListenerImpl::~ServiceManagerListenerImpl() = default;
-
 DeviceFactoryProviderTest::DeviceFactoryProviderTest()
     : service_manager::test::ServiceTest("video_capture_unittests") {}
 
@@ -26,22 +19,17 @@ DeviceFactoryProviderTest::~DeviceFactoryProviderTest() = default;
 
 void DeviceFactoryProviderTest::SetUp() {
   base::CommandLine::ForCurrentProcess()->AppendSwitch(
-      switches::kUseFakeDeviceForMediaStream);
+      switches::kUseFakeJpegDecodeAccelerator);
+  base::CommandLine::ForCurrentProcess()->AppendSwitchASCII(
+      switches::kUseFakeDeviceForMediaStream, "device-count=3");
 
   service_manager::test::ServiceTest::SetUp();
 
-  service_manager::mojom::ServiceManagerPtr service_manager;
-  connector()->BindInterface(service_manager::mojom::kServiceName,
-                             &service_manager);
-  service_manager::mojom::ServiceManagerListenerPtr listener;
-  base::RunLoop loop;
-  service_state_observer_ = std::make_unique<ServiceManagerListenerImpl>(
-      mojo::MakeRequest(&listener), &loop);
-  service_manager->AddListener(std::move(listener));
-  loop.Run();
-
   connector()->BindInterface(mojom::kServiceName, &factory_provider_);
-  factory_provider_->SetShutdownDelayInSeconds(0.0f);
+  // Note, that we explicitly do *not* call
+  // |factory_provider_->InjectGpuDependencies()| here. Test case
+  // |FakeMjpegVideoCaptureDeviceTest.
+  //  CanDecodeMjpegWithoutInjectedGpuDependencies| depends on this assumption.
   factory_provider_->ConnectToDeviceFactory(mojo::MakeRequest(&factory_));
 }
 

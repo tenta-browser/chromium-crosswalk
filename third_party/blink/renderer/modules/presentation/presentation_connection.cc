@@ -9,7 +9,6 @@
 #include "third_party/blink/renderer/bindings/core/v8/script_promise_resolver.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/events/event.h"
-#include "third_party/blink/renderer/core/dom/exception_code.h"
 #include "third_party/blink/renderer/core/events/message_event.h"
 #include "third_party/blink/renderer/core/fileapi/file_reader_loader.h"
 #include "third_party/blink/renderer/core/fileapi/file_reader_loader_client.h"
@@ -92,7 +91,7 @@ const AtomicString& ConnectionCloseReasonToString(
 }
 
 void ThrowPresentationDisconnectedError(ExceptionState& exception_state) {
-  exception_state.ThrowDOMException(kInvalidStateError,
+  exception_state.ThrowDOMException(DOMExceptionCode::kInvalidStateError,
                                     "Presentation connection is disconnected.");
 }
 
@@ -279,7 +278,9 @@ void ControllerPresentationConnection::Trace(blink::Visitor* visitor) {
   PresentationConnection::Trace(visitor);
 }
 
-void ControllerPresentationConnection::Init() {
+void ControllerPresentationConnection::Init(
+    mojom::blink::PresentationConnectionPtr connection_ptr,
+    mojom::blink::PresentationConnectionRequest connection_request) {
   // Note that it is possible for the binding to be already bound here, because
   // the ControllerPresentationConnection object could be reused when
   // reconnecting in the same frame. In this case the existing connections are
@@ -289,16 +290,9 @@ void ControllerPresentationConnection::Init() {
     target_connection_.reset();
   }
 
-  mojom::blink::PresentationConnectionPtr controller_connection_ptr;
-  connection_binding_.Bind(mojo::MakeRequest(&controller_connection_ptr));
-
-  auto& service = controller_->GetPresentationService();
-  if (service) {
-    service->SetPresentationConnection(
-        mojom::blink::PresentationInfo::New(url_, id_),
-        std::move(controller_connection_ptr),
-        mojo::MakeRequest(&target_connection_));
-  }
+  DidChangeState(mojom::blink::PresentationConnectionState::CONNECTING);
+  target_connection_ = std::move(connection_ptr);
+  connection_binding_.Bind(std::move(connection_request));
 }
 
 void ControllerPresentationConnection::DoClose() {
@@ -360,22 +354,21 @@ void ReceiverPresentationConnection::DidChangeState(
     receiver_->RemoveConnection(this);
 }
 
-void ReceiverPresentationConnection::OnReceiverTerminated() {
-  // We don't invoke PresentationConnection::DidChangeState here because we do
-  // not want to dispatch an event, as the page might be closing.
-  state_ = mojom::blink::PresentationConnectionState::TERMINATED;
-  if (target_connection_)
-    target_connection_->DidChangeState(state_);
-}
-
 void ReceiverPresentationConnection::DoClose() {
   // No-op
 }
 
 void ReceiverPresentationConnection::DoTerminate() {
-  // This will close the receiver window. At some point later
-  // OnReceiverTerminated() will be invoked.
+  // This will close the receiver window. Change the state to TERMINATED now
+  // since ReceiverPresentationConnection won't get a state change notification.
+  if (state_ == mojom::blink::PresentationConnectionState::TERMINATED)
+    return;
+
   receiver_->Terminate();
+
+  state_ = mojom::blink::PresentationConnectionState::TERMINATED;
+  if (target_connection_)
+    target_connection_->DidChangeState(state_);
 }
 
 void ReceiverPresentationConnection::Trace(blink::Visitor* visitor) {
@@ -415,6 +408,7 @@ void PresentationConnection::AddedEventListener(
 }
 
 void PresentationConnection::ContextDestroyed(ExecutionContext*) {
+  target_connection_.reset();
   connection_binding_.Close();
 }
 
@@ -536,7 +530,7 @@ void PresentationConnection::DidReceiveTextMessage(const WebString& message) {
   if (state_ != mojom::blink::PresentationConnectionState::CONNECTED)
     return;
 
-  DispatchEvent(MessageEvent::Create(message));
+  DispatchEvent(*MessageEvent::Create(message));
 }
 
 void PresentationConnection::DidReceiveBinaryMessage(const uint8_t* data,
@@ -550,12 +544,12 @@ void PresentationConnection::DidReceiveBinaryMessage(const uint8_t* data,
       blob_data->AppendBytes(data, length);
       Blob* blob =
           Blob::Create(BlobDataHandle::Create(std::move(blob_data), length));
-      DispatchEvent(MessageEvent::Create(blob));
+      DispatchEvent(*MessageEvent::Create(blob));
       return;
     }
     case kBinaryTypeArrayBuffer:
       DOMArrayBuffer* buffer = DOMArrayBuffer::Create(data, length);
-      DispatchEvent(MessageEvent::Create(buffer));
+      DispatchEvent(*MessageEvent::Create(buffer));
       return;
   }
   NOTREACHED();
@@ -646,7 +640,7 @@ void PresentationConnection::DispatchEventAsync(EventTarget* target,
                                                 Event* event) {
   DCHECK(target);
   DCHECK(event);
-  target->DispatchEvent(event);
+  target->DispatchEvent(*event);
 }
 
 void PresentationConnection::TearDown() {

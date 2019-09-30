@@ -35,19 +35,24 @@
 
 #include "third_party/blink/public/common/feature_policy/feature_policy.h"
 #include "third_party/blink/public/platform/web_content_security_policy_struct.h"
+#include "third_party/blink/public/platform/web_content_settings_client.h"
 #include "third_party/blink/public/platform/web_effective_connection_type.h"
 #include "third_party/blink/public/platform/web_insecure_request_policy.h"
 #include "third_party/blink/public/platform/web_loading_behavior_flag.h"
 #include "third_party/blink/public/platform/web_scoped_virtual_time_pauser.h"
 #include "third_party/blink/public/platform/web_sudden_termination_disabler_type.h"
 #include "third_party/blink/public/platform/web_url_request.h"
+#include "third_party/blink/public/platform/web_worker_fetch_context.h"
 #include "third_party/blink/public/web/web_global_object_reuse_policy.h"
+#include "third_party/blink/public/web/web_history_commit_type.h"
+#include "third_party/blink/public/web/web_navigation_params.h"
 #include "third_party/blink/public/web/web_triggering_event_info.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/icon_url.h"
 #include "third_party/blink/renderer/core/frame/frame_client.h"
 #include "third_party/blink/renderer/core/frame/frame_types.h"
+#include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/html/link_resource.h"
 #include "third_party/blink/renderer/core/loader/frame_load_request.h"
 #include "third_party/blink/renderer/core/loader/frame_loader_types.h"
@@ -79,7 +84,6 @@ class HTMLMediaElement;
 class HTMLPlugInElement;
 class HistoryItem;
 class KURL;
-class LocalFrame;
 class WebPluginContainerImpl;
 class ResourceError;
 class ResourceRequest;
@@ -103,6 +107,10 @@ class WebSpellCheckPanelHostClient;
 struct WebScrollIntoViewParams;
 class WebTextCheckClient;
 
+// Whether to follow cross origin redirects when downloading, or treating
+// the download as a navigation instead.
+enum class DownloadCrossOriginRedirects { kFollow, kNavigate };
+
 class CORE_EXPORT LocalFrameClient : public FrameClient {
  public:
   ~LocalFrameClient() override = default;
@@ -119,21 +127,21 @@ class CORE_EXPORT LocalFrameClient : public FrameClient {
       const ResourceResponse&) = 0;
 
   virtual void DispatchDidHandleOnloadEvents() = 0;
-  virtual void DispatchDidReceiveServerRedirectForProvisionalLoad() = 0;
-  virtual void DispatchDidNavigateWithinPage(HistoryItem*,
-                                             HistoryCommitType,
-                                             bool content_initiated) {}
+  virtual void DidFinishSameDocumentNavigation(HistoryItem*,
+                                               WebHistoryCommitType,
+                                               bool content_initiated) {}
   virtual void DispatchWillCommitProvisionalLoad() = 0;
   virtual void DispatchDidStartProvisionalLoad(DocumentLoader*,
                                                ResourceRequest&) = 0;
   virtual void DispatchDidReceiveTitle(const String&) = 0;
   virtual void DispatchDidChangeIcons(IconType) = 0;
   virtual void DispatchDidCommitLoad(HistoryItem*,
-                                     HistoryCommitType,
+                                     WebHistoryCommitType,
                                      WebGlobalObjectReusePolicy) = 0;
   virtual void DispatchDidFailProvisionalLoad(const ResourceError&,
-                                              HistoryCommitType) = 0;
-  virtual void DispatchDidFailLoad(const ResourceError&, HistoryCommitType) = 0;
+                                              WebHistoryCommitType) = 0;
+  virtual void DispatchDidFailLoad(const ResourceError&,
+                                   WebHistoryCommitType) = 0;
   virtual void DispatchDidFinishDocumentLoad() = 0;
   virtual void DispatchDidFinishLoad() = 0;
   virtual void DispatchDidChangeThemeColor() = 0;
@@ -142,7 +150,7 @@ class CORE_EXPORT LocalFrameClient : public FrameClient {
       const ResourceRequest&,
       Document* origin_document,
       DocumentLoader*,
-      NavigationType,
+      WebNavigationType,
       NavigationPolicy,
       bool should_replace_current_entry,
       bool is_client_redirect,
@@ -150,7 +158,8 @@ class CORE_EXPORT LocalFrameClient : public FrameClient {
       HTMLFormElement*,
       ContentSecurityPolicyDisposition
           should_check_main_world_content_security_policy,
-      mojom::blink::BlobURLTokenPtr) = 0;
+      mojom::blink::BlobURLTokenPtr,
+      base::TimeTicks input_start_time) = 0;
 
   virtual void DispatchWillSendSubmitEvent(HTMLFormElement*) = 0;
   virtual void DispatchWillSubmitForm(HTMLFormElement*) = 0;
@@ -161,7 +170,8 @@ class CORE_EXPORT LocalFrameClient : public FrameClient {
 
   virtual void ForwardResourceTimingToParent(const WebResourceTimingInfo&) = 0;
 
-  virtual void DownloadURL(const ResourceRequest&) = 0;
+  virtual void DownloadURL(const ResourceRequest&,
+                           DownloadCrossOriginRedirects) = 0;
   virtual void LoadErrorPage(int reason) = 0;
 
   virtual bool NavigateBackForward(int offset) const = 0;
@@ -227,7 +237,9 @@ class CORE_EXPORT LocalFrameClient : public FrameClient {
       const ResourceRequest&,
       const SubstituteData&,
       ClientRedirectPolicy,
-      const base::UnguessableToken& devtools_navigation_token) = 0;
+      const base::UnguessableToken& devtools_navigation_token,
+      std::unique_ptr<WebNavigationParams> navigation_params,
+      std::unique_ptr<WebDocumentLoader::ExtraData> extra_data) = 0;
 
   virtual String UserAgent() = 0;
 
@@ -244,15 +256,12 @@ class CORE_EXPORT LocalFrameClient : public FrameClient {
     kFailOnDetachedPlugin,
     kAllowDetachedPlugin,
   };
-  virtual bool CanCreatePluginWithoutRenderer(
-      const String& mime_type) const = 0;
   virtual WebPluginContainerImpl* CreatePlugin(HTMLPlugInElement&,
                                                const KURL&,
                                                const Vector<String>&,
                                                const Vector<String>&,
                                                const String&,
-                                               bool load_manually,
-                                               DetachedPluginPolicy) = 0;
+                                               bool load_manually) = 0;
 
   virtual std::unique_ptr<WebMediaPlayer> CreateWebMediaPlayer(
       HTMLMediaElement&,
@@ -312,10 +321,6 @@ class CORE_EXPORT LocalFrameClient : public FrameClient {
 
   virtual bool ShouldBlockWebGL() { return false; }
 
-  // If an HTML document is being loaded, informs the embedder that the document
-  // will have its <body> attached soon.
-  virtual void DispatchWillInsertBody() {}
-
   virtual std::unique_ptr<WebServiceWorkerProvider>
   CreateServiceWorkerProvider() = 0;
 
@@ -330,7 +335,7 @@ class CORE_EXPORT LocalFrameClient : public FrameClient {
 
   virtual void DispatchDidChangeManifest() {}
 
-  virtual unsigned BackForwardLength() { return 0; }
+  unsigned BackForwardLength() override { return 0; }
 
   virtual bool IsLocalFrameClientImpl() const { return false; }
 
@@ -366,7 +371,14 @@ class CORE_EXPORT LocalFrameClient : public FrameClient {
     return nullptr;
   }
 
-  virtual void SetHasReceivedUserGesture() {}
+  // Notify the embedder that the associated frame has user activation so that
+  // the replicated states in the browser and other renderers can be updated.
+  virtual void NotifyUserActivation() {}
+
+  // Tell the embedder that the associated frame has consumed user activation so
+  // that the replicated states in the browser and other renderers can be
+  // updated.
+  virtual void ConsumeUserActivation() {}
 
   virtual void SetHasReceivedUserGestureBeforeNavigation(bool value) {}
 
@@ -388,6 +400,10 @@ class CORE_EXPORT LocalFrameClient : public FrameClient {
       const WebRect&,
       const WebScrollIntoViewParams&) {}
 
+  virtual void BubbleLogicalScrollInParentFrame(
+      ScrollDirection direction,
+      ScrollGranularity granularity) = 0;
+
   virtual void SetVirtualTimePauser(
       WebScopedVirtualTimePauser virtual_time_pauser) {}
 
@@ -402,6 +418,31 @@ class CORE_EXPORT LocalFrameClient : public FrameClient {
   virtual Frame* FindFrame(const AtomicString& name) const = 0;
 
   virtual void FrameRectsChanged(const IntRect&) {}
+
+  // Returns true when the contents of plugin are handled externally. This means
+  // the plugin element will own a content frame but the frame is than used
+  // externally to load the required handelrs.
+  virtual bool IsPluginHandledExternally(HTMLPlugInElement&,
+                                         const KURL&,
+                                         const String&) {
+    return false;
+  };
+
+  // Returns a new WebWorkerFetchContext for a dedicated worker or worklet.
+  virtual std::unique_ptr<WebWorkerFetchContext> CreateWorkerFetchContext() {
+    return nullptr;
+  }
+
+  virtual std::unique_ptr<WebContentSettingsClient>
+  CreateWorkerContentSettingsClient() {
+    return nullptr;
+  }
+
+  virtual void SetMouseCapture(bool) {}
+
+  // Returns whether we are associated with a print context who suggests to use
+  // printing layout.
+  virtual bool UsePrintingLayout() const { return false; }
 };
 
 }  // namespace blink

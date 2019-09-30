@@ -18,9 +18,9 @@
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/sync/profile_signin_confirmation_helper.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
+#include "chrome/browser/ui/views/chrome_layout_provider.h"
+#include "chrome/browser/ui/views/chrome_typography.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
-#include "chrome/browser/ui/views/harmony/chrome_layout_provider.h"
-#include "chrome/browser/ui/views/harmony/chrome_typography.h"
 #include "chrome/grit/chromium_strings.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/constrained_window/constrained_window_views.h"
@@ -213,22 +213,25 @@ void ForcedReauthenticationDialogView::AddedToWidget() {
 
   // Use a column set with no padding.
   dialog_layout->AddColumnSet(0)->AddColumn(views::GridLayout::FILL,
-                                            views::GridLayout::FILL, 100,
+                                            views::GridLayout::FILL, 1.0,
                                             views::GridLayout::USE_PREF, 0, 0);
-  dialog_layout->StartRow(0, 0);
+  dialog_layout->StartRow(views::GridLayout::kFixedSize, 0);
   dialog_layout->AddView(prompt_label, 1, 1, views::GridLayout::FILL,
                          views::GridLayout::FILL, 0, 0);
 
   // Use a new column set for the explanation label so we can add padding.
-  dialog_layout->AddPaddingRow(0.0, dialog_insets.top());
+  dialog_layout->AddPaddingRow(views::GridLayout::kFixedSize,
+                               dialog_insets.top());
   views::ColumnSet* explanation_columns = dialog_layout->AddColumnSet(1);
 
-  explanation_columns->AddPaddingColumn(0.0, dialog_insets.left());
+  explanation_columns->AddPaddingColumn(views::GridLayout::kFixedSize,
+                                        dialog_insets.left());
   explanation_columns->AddColumn(views::GridLayout::FILL,
-                                 views::GridLayout::FILL, 100,
+                                 views::GridLayout::FILL, 1.0,
                                  views::GridLayout::USE_PREF, 0, 0);
-  explanation_columns->AddPaddingColumn(0.0, dialog_insets.right());
-  dialog_layout->StartRow(0, 1);
+  explanation_columns->AddPaddingColumn(views::GridLayout::kFixedSize,
+                                        dialog_insets.right());
+  dialog_layout->StartRow(views::GridLayout::kFixedSize, 1);
   const int kPreferredWidth = 440;
   dialog_layout->AddView(explanation_label, 1, 1, views::GridLayout::FILL,
                          views::GridLayout::FILL, kPreferredWidth,

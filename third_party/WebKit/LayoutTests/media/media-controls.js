@@ -18,23 +18,39 @@ function isControlVisible(control) {
 
 function mediaControls(videoElement) {
   var controlID = '-webkit-media-controls';
-  var element = mediaControlsElement(window.internals.shadowRoot(videoElement).firstChild, controlID);
+  var element = mediaControlsElement(internals.shadowRoot(videoElement).firstChild, controlID);
   if (!element)
     throw 'Failed to find media controls';
   return element;
 }
 
+function buttonPanelElement(videoElement) {
+  var controlID = '-internal-media-controls-button-panel';
+  var element = mediaControlsElement(internals.shadowRoot(videoElement).firstChild, controlID);
+  if (!element)
+    throw 'Failed to find media controls button panel';
+  return element;
+}
+
 function castButton(videoElement) {
     var controlID = '-internal-media-controls-cast-button';
-    var button = mediaControlsElement(window.internals.shadowRoot(videoElement).firstChild, controlID);
+    var button = mediaControlsElement(internals.shadowRoot(videoElement).firstChild, controlID);
     if (!button)
         throw 'Failed to find cast button';
     return button;
 }
 
+function currentTimeElement(videoElement) {
+  var controlID = '-webkit-media-controls-current-time-display';
+  var element = mediaControlsElement(internals.shadowRoot(videoElement).firstChild, controlID);
+  if (!element)
+    throw 'Failed to find current time element';
+  return element;
+}
+
 function downloadButton(videoElement) {
     var controlID = '-internal-media-controls-download-button';
-    var button = mediaControlsElement(window.internals.shadowRoot(videoElement).firstChild, controlID);
+    var button = mediaControlsElement(internals.shadowRoot(videoElement).firstChild, controlID);
     if (!button)
         throw 'Failed to find download button';
     return button;
@@ -42,7 +58,7 @@ function downloadButton(videoElement) {
 
 function fullscreenButton(videoElement) {
     var controlID = '-webkit-media-controls-fullscreen-button';
-    var button = mediaControlsElement(window.internals.shadowRoot(videoElement).firstChild, controlID);
+    var button = mediaControlsElement(internals.shadowRoot(videoElement).firstChild, controlID);
     if (!button)
         throw 'Failed to find fullscreen button';
     return button;
@@ -51,16 +67,24 @@ function fullscreenButton(videoElement) {
 function overlayCastButton(videoElement)
 {
     var controlID = '-internal-media-controls-overlay-cast-button';
-    var button = mediaControlsElement(window.internals.shadowRoot(videoElement).firstChild, controlID);
+    var button = mediaControlsElement(internals.shadowRoot(videoElement).firstChild, controlID);
     if (!button)
         throw 'Failed to find cast button';
     return button;
 }
 
+function overlayEnclosureElement(videoElement) {
+    var controlID = '-webkit-media-controls-overlay-enclosure';
+    var element = mediaControlsElement(internals.shadowRoot(videoElement).firstChild, controlID);
+    if (!element)
+        throw 'Failed to find overlay enclosure';
+    return element;
+}
+
 function overflowButton(videoElement)
 {
     var controlID = '-internal-media-controls-overflow-button';
-    var button = mediaControlsElement(window.internals.shadowRoot(videoElement).firstChild, controlID);
+    var button = mediaControlsElement(internals.shadowRoot(videoElement).firstChild, controlID);
     if (!button)
         throw 'Failed to find overflow button';
     return button;
@@ -69,7 +93,7 @@ function overflowButton(videoElement)
 function textTrackMenu(video)
 {
   var controlID = '-internal-media-controls-text-track-list';
-  var element = mediaControlsElement(window.internals.shadowRoot(video).firstChild, controlID);
+  var element = mediaControlsElement(internals.shadowRoot(video).firstChild, controlID);
   if (!element)
     throw 'Failed to find the overflow menu';
   return element;
@@ -78,7 +102,7 @@ function textTrackMenu(video)
 function overflowMenu(video)
 {
   var controlID = '-internal-media-controls-overflow-menu-list';
-  var element = mediaControlsElement(window.internals.shadowRoot(video).firstChild, controlID);
+  var element = mediaControlsElement(internals.shadowRoot(video).firstChild, controlID);
   if (!element)
     throw 'Failed to find the overflow menu';
   return element;
@@ -256,7 +280,7 @@ function timelineElement(videoElement) {
 
 function timelineThumb(videoElement) {
     const timeline = timelineElement(videoElement);
-    const thumb = window.internals.shadowRoot(timeline).getElementById('thumb');
+    const thumb = internals.shadowRoot(timeline).getElementById('thumb');
     if (!thumb)
         throw 'Failed to find timeline thumb';
     return thumb;
@@ -264,7 +288,7 @@ function timelineThumb(videoElement) {
 
 function scrubbingMessageElement(videoElement) {
     var controlID = '-internal-media-controls-scrubbing-message';
-    var button = mediaControlsElement(window.internals.shadowRoot(videoElement).firstChild, controlID);
+    var button = mediaControlsElement(internals.shadowRoot(videoElement).firstChild, controlID);
     if (!button)
         throw 'Failed to find scrubbing message element';
     return button;
@@ -376,7 +400,29 @@ function checkButtonNotHasClass(button, className) {
 }
 
 function checkControlsClassName(videoElement, className) {
-  assert_equals(window.internals.shadowRoot(videoElement).firstChild.className, className);
+  assert_equals(internals.shadowRoot(videoElement).firstChild.className, className);
+}
+
+function checkControlsHasClass(videoElement, className) {
+  assert_true(mediaControls(videoElement).classList.contains(className),
+      'Controls should have class: ' + className);
+}
+
+function checkControlsDoesNotHaveClass(videoElement, className) {
+  assert_false(mediaControls(videoElement).classList.contains(className),
+      'Controls should not have class: ' + className);
+}
+
+function checkControlsHasClasses(videoElement, classes) {
+  classes.forEach(className => {
+    checkControlsHasClass(videoElement, className);
+  });
+}
+
+function checkControlsDoesNotHaveClasses(videoElement, classes) {
+  classes.forEach(className => {
+    checkControlsDoesNotHaveClass(videoElement, className);
+  });
 }
 
 function mediaControlsOverlayPlayButton(videoElement) {
@@ -386,7 +432,7 @@ function mediaControlsOverlayPlayButton(videoElement) {
 function mediaControlsOverlayPlayButtonInternal(videoElement) {
   var controlID = '-internal-media-controls-overlay-play-button-internal';
   var element = mediaControlsElement(
-      window.internals.shadowRoot(
+      internals.shadowRoot(
           mediaControlsOverlayPlayButton(videoElement)).firstChild, controlID);
   if (!element)
     throw 'Failed to find the internal overlay play button';
@@ -394,16 +440,16 @@ function mediaControlsOverlayPlayButtonInternal(videoElement) {
 }
 
 function pictureInPictureInterstitial(videoElement) {
-  var controlID = '-internal-picture-in-picture-icon';
+  var controlID = '-internal-picture-in-picture-interstitial-message';
 
-  var interstitial = getElementByPseudoId(window.internals.shadowRoot(videoElement).firstChild, controlID);
+  var interstitial = getElementByPseudoId(internals.shadowRoot(videoElement).firstChild, controlID);
   if (!interstitial)
       throw 'Failed to find picture in picture interstitial';
   return interstitial;
 }
 
 function checkPictureInPictureInterstitialDoesNotExist(videoElement) {
-  var controlID = '-internal-picture-in-picture-icon';
+  var controlID = '-internal-picture-in-picture-interstitial-message';
 
   var interstitial = getElementByPseudoId(internals.shadowRoot(videoElement), controlID);
   if (interstitial)
@@ -475,6 +521,11 @@ function doubleTouchAtCoordinates(x, y, timeout, callback) {
   ], callback);
 }
 
+function singleTouchOnControl(control, callback) {
+  const coordinates = elementCoordinates(control);
+  singleTouchAtCoordinates(coordinates[0], coordinates[1], callback);
+}
+
 function traverseNextNode(node, stayWithin) {
     var nextNode = node.firstChild;
     if (nextNode)
@@ -510,7 +561,18 @@ function getElementByPseudoId(root, pseudoId) {
 
 function enableTestMode(video) {
   if (window.internals)
-    window.internals.setMediaControlsTestMode(video, true);
+    internals.setMediaControlsTestMode(video, true);
+}
+
+function enableImmersiveMode(t) {
+  if (!window.internals)
+    return;
+
+  const oldImmersive = internals.settings.immersiveModeEnabled;
+  internals.settings.setImmersiveModeEnabled(true);
+  t.add_cleanup(() => {
+    internals.settings.setImmersiveModeEnabled(oldImmersive);
+  });
 }
 
 function enableImmersiveMode(t) {

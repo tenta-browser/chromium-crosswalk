@@ -148,14 +148,6 @@ void RasterImplementation::UnpremultiplyAndDitherCopyCHROMIUM(GLuint source_id,
   CheckGLError();
 }
 
-void RasterImplementation::EndRasterCHROMIUM() {
-  GPU_CLIENT_SINGLE_THREAD_CHECK();
-  GPU_CLIENT_LOG("[" << GetLogPrefix() << "] glEndRasterCHROMIUM("
-                     << ")");
-  helper_->EndRasterCHROMIUM();
-  CheckGLError();
-}
-
 GLuint RasterImplementation::CreateTexture(bool use_buffer,
                                            gfx::BufferUsage buffer_usage,
                                            viz::ResourceFormat format) {
@@ -202,17 +194,11 @@ void RasterImplementation::ReleaseTexImage2DCHROMIUM(GLuint texture_id,
 }
 
 void RasterImplementation::TexStorage2D(GLuint texture_id,
-                                        GLsizei levels,
                                         GLsizei width,
                                         GLsizei height) {
   GPU_CLIENT_SINGLE_THREAD_CHECK();
   GPU_CLIENT_LOG("[" << GetLogPrefix() << "] glTexStorage2D(" << texture_id
-                     << ", " << levels << ", " << width << ", " << height
-                     << ")");
-  if (levels < 0) {
-    SetGLError(GL_INVALID_VALUE, "glTexStorage2D", "levels < 0");
-    return;
-  }
+                     << ", " << width << ", " << height << ")");
   if (width < 0) {
     SetGLError(GL_INVALID_VALUE, "glTexStorage2D", "width < 0");
     return;
@@ -221,7 +207,7 @@ void RasterImplementation::TexStorage2D(GLuint texture_id,
     SetGLError(GL_INVALID_VALUE, "glTexStorage2D", "height < 0");
     return;
   }
-  helper_->TexStorage2D(texture_id, levels, width, height);
+  helper_->TexStorage2D(texture_id, width, height);
   CheckGLError();
 }
 

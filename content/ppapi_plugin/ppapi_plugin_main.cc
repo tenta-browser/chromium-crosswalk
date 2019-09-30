@@ -106,7 +106,7 @@ int PpapiPluginMain(const MainFunctionParams& parameters) {
   // Specifies $HOME explicitly because some plugins rely on $HOME but
   // no other part of Chrome OS uses that.  See crbug.com/335290.
   base::FilePath homedir;
-  PathService::Get(base::DIR_HOME, &homedir);
+  base::PathService::Get(base::DIR_HOME, &homedir);
   setenv("HOME", homedir.value().c_str(), 1);
 #endif
 
@@ -136,12 +136,6 @@ int PpapiPluginMain(const MainFunctionParams& parameters) {
   if (!base::win::IsUser32AndGdi32Available())
     gfx::win::MaybeInitializeDirectWrite();
   InitializeDWriteFontProxy(ChildThread::Get()->GetConnector());
-
-  double device_scale_factor = 1.0;
-  base::StringToDouble(
-      command_line.GetSwitchValueASCII(switches::kDeviceScaleFactor),
-      &device_scale_factor);
-  blink::WebFontRendering::SetDeviceScaleFactor(device_scale_factor);
 
   int antialiasing_enabled = 1;
   base::StringToInt(

@@ -67,7 +67,7 @@ var unexpectedErrorMessage; // set by onerror when expectingError is not true
         if (self._lazyTestResults) {
             self._lazyTestResults.push(msg);
         } else {
-            var span = document.createElement("span");
+            var span = document.createElement("div");
             // insert it first so XHTML knows the namespace;
             getOrCreateTestElement("console", "div").appendChild(span);
             span.innerHTML = msg + '<br />';
@@ -748,11 +748,11 @@ function shouldHaveHadError(message)
 // that something is dead need to use this asynchronous collectGarbage
 // function.
 function asyncGC(callback) {
-    var documentsBefore = window.internals.numberOfLiveDocuments();
+    var documentsBefore = internals.numberOfLiveDocuments();
     GCController.collectAll();
     // FIXME: we need a better way of waiting for chromium events to happen
     setTimeout(function () {
-        var documentsAfter = window.internals.numberOfLiveDocuments();
+        var documentsAfter = internals.numberOfLiveDocuments();
         if (documentsAfter < documentsBefore)
             asyncGC(callback);
         else

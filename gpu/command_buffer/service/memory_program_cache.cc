@@ -22,8 +22,8 @@
 #include "gpu/command_buffer/service/disk_cache_proto.pb.h"
 #include "gpu/command_buffer/service/gl_utils.h"
 #include "gpu/command_buffer/service/gles2_cmd_decoder.h"
-#include "gpu/command_buffer/service/gpu_preferences.h"
 #include "gpu/command_buffer/service/shader_manager.h"
+#include "gpu/config/gpu_preferences.h"
 #include "third_party/zlib/zlib.h"
 #include "ui/gl/gl_bindings.h"
 
@@ -414,7 +414,7 @@ void MemoryProgramCache::SaveLinkedProgram(
     return;
   }
   std::vector<uint8_t> binary(length);
-  glGetProgramBinary(program, length, NULL, &format,
+  glGetProgramBinary(program, length, nullptr, &format,
                      reinterpret_cast<char*>(binary.data()));
 
   if (compress_program_binaries_) {

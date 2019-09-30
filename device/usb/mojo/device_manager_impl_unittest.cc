@@ -22,7 +22,6 @@
 #include "device/usb/mock_usb_device_handle.h"
 #include "device/usb/mock_usb_service.h"
 #include "device/usb/mojo/device_impl.h"
-#include "device/usb/mojo/mock_permission_provider.h"
 #include "mojo/public/cpp/bindings/binding.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -56,22 +55,20 @@ class USBDeviceManagerImplTest : public testing::Test {
  protected:
   UsbDeviceManagerPtr ConnectToDeviceManager() {
     UsbDeviceManagerPtr device_manager;
-    DeviceManagerImpl::Create(permission_provider_.GetWeakPtr(),
-                              mojo::MakeRequest(&device_manager));
+    DeviceManagerImpl::Create(mojo::MakeRequest(&device_manager));
     return device_manager;
   }
 
   MockDeviceClient device_client_;
 
  private:
-  MockPermissionProvider permission_provider_;
   std::unique_ptr<base::MessageLoop> message_loop_;
 };
 
 class MockDeviceManagerClient : public mojom::UsbDeviceManagerClient {
  public:
   MockDeviceManagerClient() : binding_(this) {}
-  ~MockDeviceManagerClient() = default;
+  ~MockDeviceManagerClient() override = default;
 
   UsbDeviceManagerClientPtr CreateInterfacePtrAndBind() {
     UsbDeviceManagerClientPtr client;
@@ -80,12 +77,12 @@ class MockDeviceManagerClient : public mojom::UsbDeviceManagerClient {
   }
 
   MOCK_METHOD1(DoOnDeviceAdded, void(mojom::UsbDeviceInfo*));
-  void OnDeviceAdded(UsbDeviceInfoPtr device_info) {
+  void OnDeviceAdded(UsbDeviceInfoPtr device_info) override {
     DoOnDeviceAdded(device_info.get());
   }
 
   MOCK_METHOD1(DoOnDeviceRemoved, void(mojom::UsbDeviceInfo*));
-  void OnDeviceRemoved(UsbDeviceInfoPtr device_info) {
+  void OnDeviceRemoved(UsbDeviceInfoPtr device_info) override {
     DoOnDeviceRemoved(device_info.get());
   }
 
@@ -152,7 +149,8 @@ TEST_F(USBDeviceManagerImplTest, GetDevice) {
   {
     base::RunLoop loop;
     UsbDevicePtr device;
-    device_manager->GetDevice(mock_device->guid(), mojo::MakeRequest(&device));
+    device_manager->GetDevice(mock_device->guid(), mojo::MakeRequest(&device),
+                              /*device_client=*/nullptr);
     // Close is a no-op if the device hasn't been opened but ensures that the
     // pipe was successfully connected.
     device->Close(loop.QuitClosure());
@@ -160,7 +158,8 @@ TEST_F(USBDeviceManagerImplTest, GetDevice) {
   }
 
   UsbDevicePtr bad_device;
-  device_manager->GetDevice("not a real guid", mojo::MakeRequest(&bad_device));
+  device_manager->GetDevice("not a real guid", mojo::MakeRequest(&bad_device),
+                            /*device_client=*/nullptr);
 
   {
     base::RunLoop loop;

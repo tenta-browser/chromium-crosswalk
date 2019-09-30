@@ -13,16 +13,6 @@
         }
       ]
     }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutView #document",
-      "reason": "incremental"
-    },
-    {
-      "object": "LayoutBlockFlow (positioned) DIV",
-      "reason": "incremental"
-    }
   ]
 }
 {
@@ -45,16 +35,6 @@
         }
       ]
     }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutView #document",
-      "reason": "background"
-    },
-    {
-      "object": "LayoutBlockFlow (positioned) DIV",
-      "reason": "incremental"
-    }
   ]
 }
 {
@@ -76,21 +56,11 @@
           "reason": "incremental"
         },
         {
-          "object": "LayoutBlockFlow (positioned) DIV",
+          "object": "LayoutBlockFlow HTML",
           "rect": [0, 125, 200, 175],
           "reason": "incremental"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutView #document",
-      "reason": "incremental"
-    },
-    {
-      "object": "LayoutBlockFlow (positioned) DIV",
-      "reason": "incremental"
     }
   ]
 }
@@ -113,21 +83,11 @@
           "reason": "incremental"
         },
         {
-          "object": "LayoutBlockFlow (positioned) DIV",
+          "object": "LayoutBlockFlow HTML",
           "rect": [200, 0, 200, 300],
           "reason": "incremental"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutView #document",
-      "reason": "background"
-    },
-    {
-      "object": "LayoutBlockFlow (positioned) DIV",
-      "reason": "incremental"
     }
   ]
 }

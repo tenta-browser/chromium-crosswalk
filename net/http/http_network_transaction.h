@@ -15,6 +15,8 @@
 #include "base/memory/ref_counted.h"
 #include "base/time/time.h"
 #include "crypto/ec_private_key.h"
+#include "net/base/completion_once_callback.h"
+#include "net/base/completion_repeating_callback.h"
 #include "net/base/net_error_details.h"
 #include "net/base/net_export.h"
 #include "net/base/request_priority.h"
@@ -57,19 +59,19 @@ class NET_EXPORT_PRIVATE HttpNetworkTransaction
 
   // HttpTransaction methods:
   int Start(const HttpRequestInfo* request_info,
-            const CompletionCallback& callback,
+            CompletionOnceCallback callback,
             const NetLogWithSource& net_log) override;
-  int RestartIgnoringLastError(const CompletionCallback& callback) override;
+  int RestartIgnoringLastError(CompletionOnceCallback callback) override;
   int RestartWithCertificate(scoped_refptr<X509Certificate> client_cert,
                              scoped_refptr<SSLPrivateKey> client_private_key,
-                             const CompletionCallback& callback) override;
+                             CompletionOnceCallback callback) override;
   int RestartWithAuth(const AuthCredentials& credentials,
-                      const CompletionCallback& callback) override;
+                      CompletionOnceCallback callback) override;
   bool IsReadyToRestartForAuth() override;
 
   int Read(IOBuffer* buf,
            int buf_len,
-           const CompletionCallback& callback) override;
+           CompletionOnceCallback callback) override;
   void StopCaching() override;
   bool GetFullRequestHeaders(HttpRequestHeaders* headers) const override;
   int64_t GetTotalReceivedBytes() const override;
@@ -129,6 +131,7 @@ class NET_EXPORT_PRIVATE HttpNetworkTransaction
   FRIEND_TEST_ALL_PREFIXES(HttpNetworkTransactionTest, ResetStateForRestart);
   FRIEND_TEST_ALL_PREFIXES(HttpNetworkTransactionTest,
                            CreateWebSocketHandshakeStream);
+  FRIEND_TEST_ALL_PREFIXES(HttpNetworkTransactionSSLTest, ChannelID);
   FRIEND_TEST_ALL_PREFIXES(SpdyNetworkTransactionTest, WindowUpdateReceived);
   FRIEND_TEST_ALL_PREFIXES(SpdyNetworkTransactionTest, WindowUpdateSent);
   FRIEND_TEST_ALL_PREFIXES(SpdyNetworkTransactionTest, WindowUpdateOverflow);
@@ -307,8 +310,8 @@ class NET_EXPORT_PRIVATE HttpNetworkTransaction
   // cleared by RestartWithAuth().
   HttpAuth::Target pending_auth_target_;
 
-  CompletionCallback io_callback_;
-  CompletionCallback callback_;
+  CompletionRepeatingCallback io_callback_;
+  CompletionOnceCallback callback_;
 
   HttpNetworkSession* session_;
 

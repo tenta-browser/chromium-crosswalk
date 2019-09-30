@@ -10,10 +10,10 @@ policies and contribution forms [3].
 [3] http://www.w3.org/2004/10/27-testcases
 */
 
-/* Documentation: http://web-platform-tests.org/writing-tests/testharness-api.html
+/* Documentation: https://web-platform-tests.org/writing-tests/testharness-api.html
  * (../docs/_writing-tests/testharness-api.md) */
 
-(function ()
+(function (global_scope)
 {
     var debug = false;
     // default timeout is 10 seconds, test can override if needed
@@ -48,9 +48,6 @@ policies and contribution forms [3].
      *
      *   // Should return the test harness timeout duration in milliseconds.
      *   float test_timeout();
-     *
-     *   // Should return the global scope object.
-     *   object global_scope();
      * };
      */
 
@@ -216,12 +213,9 @@ policies and contribution forms [3].
     }
 
     WindowTestEnvironment.prototype.next_default_test_name = function() {
-        //Don't use document.title to work around an Opera bug in XHTML documents
-        var title = document.getElementsByTagName("title")[0];
-        var prefix = (title && title.firstChild && title.firstChild.data) || "Untitled";
         var suffix = this.name_counter > 0 ? " " + this.name_counter : "";
         this.name_counter++;
-        return prefix + suffix;
+        return get_title() + suffix;
     };
 
     WindowTestEnvironment.prototype.on_new_harness_properties = function(properties) {
@@ -246,10 +240,6 @@ policies and contribution forms [3].
             }
         }
         return settings.harness_timeout.normal;
-    };
-
-    WindowTestEnvironment.prototype.global_scope = function() {
-        return window;
     };
 
     /*
@@ -295,7 +285,7 @@ policies and contribution forms [3].
     WorkerTestEnvironment.prototype.next_default_test_name = function() {
         var suffix = this.name_counter > 0 ? " " + this.name_counter : "";
         this.name_counter++;
-        return "Untitled" + suffix;
+        return get_title() + suffix;
     };
 
     WorkerTestEnvironment.prototype.on_new_harness_properties = function() {};
@@ -342,10 +332,6 @@ policies and contribution forms [3].
         // Tests running in a worker don't have a default timeout. I.e. all
         // worker tests behave as if settings.explicit_timeout is true.
         return null;
-    };
-
-    WorkerTestEnvironment.prototype.global_scope = function() {
-        return self;
     };
 
     /*
@@ -462,25 +448,73 @@ policies and contribution forms [3].
         }
     };
 
+    /*
+     * JavaScript shells.
+     *
+     * This class is used as the test_environment when testharness is running
+     * inside a JavaScript shell.
+     */
+    function ShellTestEnvironment() {
+        this.name_counter = 0;
+        this.all_loaded = false;
+        this.on_loaded_callback = null;
+        Promise.resolve().then(function() {
+            this.all_loaded = true
+            if (this.on_loaded_callback) {
+                this.on_loaded_callback();
+            }
+        }.bind(this));
+        this.message_list = [];
+        this.message_ports = [];
+    }
+
+    ShellTestEnvironment.prototype.next_default_test_name = function() {
+        var suffix = this.name_counter > 0 ? " " + this.name_counter : "";
+        this.name_counter++;
+        return "Untitled" + suffix;
+    };
+
+    ShellTestEnvironment.prototype.on_new_harness_properties = function() {};
+
+    ShellTestEnvironment.prototype.on_tests_ready = function() {};
+
+    ShellTestEnvironment.prototype.add_on_loaded_callback = function(callback) {
+        if (this.all_loaded) {
+            callback();
+        } else {
+            this.on_loaded_callback = callback;
+        }
+    };
+
+    ShellTestEnvironment.prototype.test_timeout = function() {
+        // Tests running in a shell don't have a default timeout, so behave as
+        // if settings.explicit_timeout is true.
+        return null;
+    };
+
     function create_test_environment() {
-        if ('document' in self) {
+        if ('document' in global_scope) {
             return new WindowTestEnvironment();
         }
-        if ('DedicatedWorkerGlobalScope' in self &&
-            self instanceof DedicatedWorkerGlobalScope) {
+        if ('DedicatedWorkerGlobalScope' in global_scope &&
+            global_scope instanceof DedicatedWorkerGlobalScope) {
             return new DedicatedWorkerTestEnvironment();
         }
-        if ('SharedWorkerGlobalScope' in self &&
-            self instanceof SharedWorkerGlobalScope) {
+        if ('SharedWorkerGlobalScope' in global_scope &&
+            global_scope instanceof SharedWorkerGlobalScope) {
             return new SharedWorkerTestEnvironment();
         }
-        if ('ServiceWorkerGlobalScope' in self &&
-            self instanceof ServiceWorkerGlobalScope) {
+        if ('ServiceWorkerGlobalScope' in global_scope &&
+            global_scope instanceof ServiceWorkerGlobalScope) {
             return new ServiceWorkerTestEnvironment();
         }
-        if ('WorkerGlobalScope' in self &&
-            self instanceof WorkerGlobalScope) {
+        if ('WorkerGlobalScope' in global_scope &&
+            global_scope instanceof WorkerGlobalScope) {
             return new DedicatedWorkerTestEnvironment();
+        }
+
+        if (!('self' in global_scope)) {
+            return new ShellTestEnvironment();
         }
 
         throw new Error("Unsupported test environment");
@@ -489,13 +523,13 @@ policies and contribution forms [3].
     var test_environment = create_test_environment();
 
     function is_shared_worker(worker) {
-        return 'SharedWorker' in self && worker instanceof SharedWorker;
+        return 'SharedWorker' in global_scope && worker instanceof SharedWorker;
     }
 
     function is_service_worker(worker) {
         // The worker object may be from another execution context,
         // so do not use instanceof here.
-        return 'ServiceWorker' in self &&
+        return 'ServiceWorker' in global_scope &&
             Object.prototype.toString.call(worker) == '[object ServiceWorker]';
     }
 
@@ -963,6 +997,9 @@ policies and contribution forms [3].
 
     function assert_object_equals(actual, expected, description)
     {
+         assert(typeof actual === "object" && actual !== null, "assert_object_equals", description,
+                                                               "value is ${actual}, expected object",
+                                                               {actual: actual});
          //This needs to be improved a great deal
          function check_equal(actual, expected, stack)
          {
@@ -1247,6 +1284,13 @@ policies and contribution forms [3].
     }
     expose(assert_readonly, "assert_readonly");
 
+    /**
+     * Assert an Exception with the expected code is thrown.
+     *
+     * @param {object|number|string} code The expected exception code.
+     * @param {Function} func Function which should throw.
+     * @param {string} description Error description for the case that the error is not thrown.
+     */
     function assert_throws(code, func, description)
     {
         try {
@@ -1614,7 +1658,9 @@ policies and contribution forms [3].
 
         this.phase = this.phases.COMPLETE;
 
-        clearTimeout(this.timeout_id);
+        if (global_scope.clearTimeout) {
+            clearTimeout(this.timeout_id);
+        }
         tests.result(this);
         this.cleanup();
     };
@@ -1734,6 +1780,12 @@ policies and contribution forms [3].
             }
         };
 
+        if (self.Promise) {
+            this.done = new Promise(function(resolve) {
+                this_obj.doneResolve = resolve;
+            });
+        }
+
         this.message_target.addEventListener("message", this.message_handler);
     }
 
@@ -1781,8 +1833,21 @@ policies and contribution forms [3].
         }
         this.message_target.removeEventListener("message", this.message_handler);
         this.running = false;
+
+        // If remote context is cross origin assigning to onerror is not
+        // possible, so silently catch those errors.
+        try {
+          this.remote.onerror = null;
+        } catch (e) {
+          // Ignore.
+        }
+
         this.remote = null;
         this.message_target = null;
+        if (this.doneResolve) {
+            this.doneResolve();
+        }
+
         if (tests.all_done()) {
             tests.complete();
         }
@@ -1929,12 +1994,14 @@ policies and contribution forms [3].
     };
 
     Tests.prototype.set_timeout = function() {
-        var this_obj = this;
-        clearTimeout(this.timeout_id);
-        if (this.timeout_length !== null) {
-            this.timeout_id = setTimeout(function() {
-                                             this_obj.timeout();
-                                         }, this.timeout_length);
+        if (global_scope.clearTimeout) {
+            var this_obj = this;
+            clearTimeout(this.timeout_id);
+            if (this.timeout_length !== null) {
+                this.timeout_id = setTimeout(function() {
+                                                 this_obj.timeout();
+                                             }, this.timeout_length);
+            }
         }
     };
 
@@ -2139,11 +2206,13 @@ policies and contribution forms [3].
             return;
         }
 
-        this.pending_remotes.push(this.create_remote_worker(worker));
+        var remoteContext = this.create_remote_worker(worker);
+        this.pending_remotes.push(remoteContext);
+        return remoteContext.done;
     };
 
     function fetch_tests_from_worker(port) {
-        tests.fetch_tests_from_worker(port);
+        return tests.fetch_tests_from_worker(port);
     }
     expose(fetch_tests_from_worker, 'fetch_tests_from_worker');
 
@@ -2270,10 +2339,14 @@ policies and contribution forms [3].
             if (output_document.body) {
                 output_document.body.appendChild(node);
             } else {
+                var is_html = false;
                 var is_svg = false;
                 var output_window = output_document.defaultView;
                 if (output_window && "SVGSVGElement" in output_window) {
                     is_svg = output_document.documentElement instanceof output_window.SVGSVGElement;
+                } else if (output_window) {
+                    is_html = (output_document.namespaceURI == "http://www.w3.org/1999/xhtml" &&
+                               output_document.localName == "html");
                 }
                 if (is_svg) {
                     var foreignObject = output_document.createElementNS("http://www.w3.org/2000/svg", "foreignObject");
@@ -2281,6 +2354,10 @@ policies and contribution forms [3].
                     foreignObject.setAttribute("height", "100%");
                     output_document.documentElement.appendChild(foreignObject);
                     foreignObject.appendChild(node);
+                } else if (is_html) {
+                    var body = output_document.createElementNS("http://www.w3.org/1999/xhtml", "body");
+                    output_document.documentElement.appendChild(body);
+                    body.appendChild(node);
                 } else {
                     output_document.documentElement.appendChild(node);
                 }
@@ -2335,15 +2412,11 @@ policies and contribution forms [3].
             log.removeChild(log.lastChild);
         }
 
-        var harness_url = get_harness_url();
-        if (harness_url !== undefined) {
-            var stylesheet = output_document.createElementNS(xhtml_ns, "link");
-            stylesheet.setAttribute("rel", "stylesheet");
-            stylesheet.setAttribute("href", harness_url + "testharness.css");
-            var heads = output_document.getElementsByTagName("head");
-            if (heads.length) {
-                heads[0].appendChild(stylesheet);
-            }
+        var stylesheet = output_document.createElementNS(xhtml_ns, "style");
+        stylesheet.textContent = stylesheetContent;
+        var heads = output_document.getElementsByTagName("head");
+        if (heads.length) {
+            heads[0].appendChild(stylesheet);
         }
 
         var status_text_harness = {};
@@ -2809,7 +2882,7 @@ policies and contribution forms [3].
     function expose(object, name)
     {
         var components = name.split(".");
-        var target = test_environment.global_scope();
+        var target = global_scope;
         for (var i = 0; i < components.length - 1; i++) {
             if (!(components[i] in target)) {
                 target[components[i]] = {};
@@ -2831,7 +2904,7 @@ policies and contribution forms [3].
     /** Returns the 'src' URL of the first <script> tag in the page to include the file 'testharness.js'. */
     function get_script_url()
     {
-        if (!('document' in self)) {
+        if (!('document' in global_scope)) {
             return undefined;
         }
 
@@ -2853,14 +2926,23 @@ policies and contribution forms [3].
         return undefined;
     }
 
-    /** Returns the URL path at which the files for testharness.js are assumed to reside (e.g., '/resources/').
-        The path is derived from inspecting the 'src' of the <script> tag that included 'testharness.js'. */
-    function get_harness_url()
+    /** Returns the <title> or filename or "Untitled" */
+    function get_title()
     {
-        var script_url = get_script_url();
-
-        // Exclude the 'testharness.js' file from the returned path, but '+ 1' to include the trailing slash.
-        return script_url ? script_url.slice(0, script_url.lastIndexOf('/') + 1) : undefined;
+        if ('document' in global_scope) {
+            //Don't use document.title to work around an Opera bug in XHTML documents
+            var title = document.getElementsByTagName("title")[0];
+            if (title && title.firstChild && title.firstChild.data) {
+                return title.firstChild.data;
+            }
+        }
+        if ('META_TITLE' in global_scope && META_TITLE) {
+            return META_TITLE;
+        }
+        if ('location' in global_scope) {
+            return location.pathname.substring(location.pathname.lastIndexOf('/') + 1, location.pathname.indexOf('.'));
+        }
+        return "Untitled";
     }
 
     function supports_post_message(w)
@@ -2906,38 +2988,148 @@ policies and contribution forms [3].
 
     var tests = new Tests();
 
-    var error_handler = function(e) {
-        if (tests.tests.length === 0 && !tests.allow_uncaught_exception) {
-            tests.set_file_is_test();
-        }
-
-        var stack;
-        if (e.error && e.error.stack) {
-            stack = e.error.stack;
-        } else {
-            stack = e.filename + ":" + e.lineno + ":" + e.colno;
-        }
-
-        if (tests.file_is_test) {
-            var test = tests.tests[0];
-            if (test.phase >= test.phases.HAS_RESULT) {
-                return;
+    if (global_scope.addEventListener) {
+        var error_handler = function(e) {
+            if (tests.tests.length === 0 && !tests.allow_uncaught_exception) {
+                tests.set_file_is_test();
             }
-            test.set_status(test.FAIL, e.message, stack);
-            test.phase = test.phases.HAS_RESULT;
-            test.done();
-        } else if (!tests.allow_uncaught_exception) {
-            tests.status.status = tests.status.ERROR;
-            tests.status.message = e.message;
-            tests.status.stack = stack;
-        }
-        done();
-    };
 
-    addEventListener("error", error_handler, false);
-    addEventListener("unhandledrejection", function(e){ error_handler(e.reason); }, false);
+            var stack;
+            if (e.error && e.error.stack) {
+                stack = e.error.stack;
+            } else {
+                stack = e.filename + ":" + e.lineno + ":" + e.colno;
+            }
+
+            if (tests.file_is_test) {
+                var test = tests.tests[0];
+                if (test.phase >= test.phases.HAS_RESULT) {
+                    return;
+                }
+                test.set_status(test.FAIL, e.message, stack);
+                test.phase = test.phases.HAS_RESULT;
+                test.done();
+            } else if (!tests.allow_uncaught_exception) {
+                tests.status.status = tests.status.ERROR;
+                tests.status.message = e.message;
+                tests.status.stack = stack;
+            }
+            done();
+        };
+
+        addEventListener("error", error_handler, false);
+        addEventListener("unhandledrejection", function(e){ error_handler(e.reason); }, false);
+    }
 
     test_environment.on_tests_ready();
 
-})();
+    /**
+     * Stylesheet
+     */
+     var stylesheetContent = "\
+html {\
+    font-family:DejaVu Sans, Bitstream Vera Sans, Arial, Sans;\
+}\
+\
+#log .warning,\
+#log .warning a {\
+  color: black;\
+  background: yellow;\
+}\
+\
+#log .error,\
+#log .error a {\
+  color: white;\
+  background: red;\
+}\
+\
+section#summary {\
+    margin-bottom:1em;\
+}\
+\
+table#results {\
+    border-collapse:collapse;\
+    table-layout:fixed;\
+    width:100%;\
+}\
+\
+table#results th:first-child,\
+table#results td:first-child {\
+    width:4em;\
+}\
+\
+table#results th:last-child,\
+table#results td:last-child {\
+    width:50%;\
+}\
+\
+table#results.assertions th:last-child,\
+table#results.assertions td:last-child {\
+    width:35%;\
+}\
+\
+table#results th {\
+    padding:0;\
+    padding-bottom:0.5em;\
+    border-bottom:medium solid black;\
+}\
+\
+table#results td {\
+    padding:1em;\
+    padding-bottom:0.5em;\
+    border-bottom:thin solid black;\
+}\
+\
+tr.pass > td:first-child {\
+    color:green;\
+}\
+\
+tr.fail > td:first-child {\
+    color:red;\
+}\
+\
+tr.timeout > td:first-child {\
+    color:red;\
+}\
+\
+tr.notrun > td:first-child {\
+    color:blue;\
+}\
+\
+.pass > td:first-child, .fail > td:first-child, .timeout > td:first-child, .notrun > td:first-child {\
+    font-variant:small-caps;\
+}\
+\
+table#results span {\
+    display:block;\
+}\
+\
+table#results span.expected {\
+    font-family:DejaVu Sans Mono, Bitstream Vera Sans Mono, Monospace;\
+    white-space:pre;\
+}\
+\
+table#results span.actual {\
+    font-family:DejaVu Sans Mono, Bitstream Vera Sans Mono, Monospace;\
+    white-space:pre;\
+}\
+\
+span.ok {\
+    color:green;\
+}\
+\
+tr.error {\
+    color:red;\
+}\
+\
+span.timeout {\
+    color:red;\
+}\
+\
+span.ok, span.timeout, span.error {\
+    font-variant:small-caps;\
+}\
+";
+
+})(this);
 // vim: set expandtab shiftwidth=4 tabstop=4:

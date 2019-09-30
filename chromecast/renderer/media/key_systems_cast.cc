@@ -56,7 +56,7 @@ class PlayReadyKeySystemProperties : public ::media::KeySystemProperties {
   }
 
 #if defined(OS_ANDROID)
-  SupportedCodecs GetSupportedSecureCodecs() const override {
+  SupportedCodecs GetSupportedHwSecureCodecs() const override {
     return supported_secure_codecs_;
   }
 #endif  // defined(OS_ANDROID)
@@ -94,6 +94,11 @@ class PlayReadyKeySystemProperties : public ::media::KeySystemProperties {
     return EmeFeatureSupport::ALWAYS_ENABLED;
   }
 
+  bool IsEncryptionSchemeSupported(
+      ::media::EncryptionMode encryption_mode) const override {
+    return encryption_mode == ::media::EncryptionMode::kCenc;
+  }
+
  private:
   const SupportedCodecs supported_non_secure_codecs_;
 #if defined(OS_ANDROID)
@@ -107,8 +112,9 @@ class PlayReadyKeySystemProperties : public ::media::KeySystemProperties {
 SupportedCodecs GetCastEmeSupportedCodecs() {
   SupportedCodecs codecs =
       ::media::EME_CODEC_MP4_AAC | ::media::EME_CODEC_MP4_AVC1 |
-      ::media::EME_CODEC_COMMON_VP9 | ::media::EME_CODEC_WEBM_VP8 |
-      ::media::EME_CODEC_WEBM_VP9;
+      ::media::EME_CODEC_MP4_FLAC | ::media::EME_CODEC_COMMON_VP9 |
+      ::media::EME_CODEC_WEBM_OPUS | ::media::EME_CODEC_WEBM_VORBIS |
+      ::media::EME_CODEC_WEBM_VP8 | ::media::EME_CODEC_WEBM_VP9;
 
 #if BUILDFLAG(ENABLE_HEVC_DEMUXING)
   codecs |= ::media::EME_CODEC_MP4_HEVC;
@@ -124,6 +130,10 @@ SupportedCodecs GetCastEmeSupportedCodecs() {
 #if BUILDFLAG(ENABLE_AC3_EAC3_AUDIO_DEMUXING)
   codecs |= ::media::EME_CODEC_MP4_AC3 | ::media::EME_CODEC_MP4_EAC3;
 #endif  // BUILDFLAG(ENABLE_AC3_EAC3_AUDIO_DEMUXING)
+
+#if BUILDFLAG(ENABLE_MPEG_H_AUDIO_DEMUXING)
+  codecs |= ::media::EME_CODEC_MP4_MPEG_H_AUDIO;
+#endif  // BUILDFLAG(ENABLE_MPEG_H_AUDIO_DEMUXING)
 
   return codecs;
 }
@@ -145,11 +155,17 @@ void AddCmaKeySystems(
 #if defined(WIDEVINE_CDM_AVAILABLE)
   using Robustness = cdm::WidevineKeySystemProperties::Robustness;
 
+  base::flat_set<::media::EncryptionMode> encryption_schemes = {
+      ::media::EncryptionMode::kCenc, ::media::EncryptionMode::kCbcs};
+
   key_systems_properties->emplace_back(new cdm::WidevineKeySystemProperties(
-      codecs,                                // Regular codecs.
-      Robustness::HW_SECURE_ALL,             // Max audio robustness.
-      Robustness::HW_SECURE_ALL,             // Max video robustness.
-      EmeSessionTypeSupport::SUPPORTED,      // persistent-license.
+      codecs,                            // Regular codecs.
+      encryption_schemes,                // Encryption schemes.
+      codecs,                            // Hardware secure codecs.
+      encryption_schemes,                // Hardware secure encryption schemes.
+      Robustness::HW_SECURE_ALL,         // Max audio robustness.
+      Robustness::HW_SECURE_ALL,         // Max video robustness.
+      EmeSessionTypeSupport::SUPPORTED,  // persistent-license.
       EmeSessionTypeSupport::NOT_SUPPORTED,  // persistent-release-message.
       // Note: On Chromecast, all CDMs may have persistent state.
       EmeFeatureSupport::ALWAYS_ENABLED,    // Persistent state.

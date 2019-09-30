@@ -12,11 +12,9 @@
 #include "base/bind.h"
 #include "base/callback.h"
 #include "base/threading/thread_task_runner_handle.h"
-#include "cc/blink/web_layer_impl.h"
 #include "cc/layers/video_frame_provider_client_impl.h"
 #include "cc/layers/video_layer.h"
 #include "content/child/child_process.h"
-#include "content/public/common/content_features.h"
 #include "content/public/renderer/media_stream_audio_renderer.h"
 #include "content/public/renderer/media_stream_renderer_factory.h"
 #include "content/public/renderer/media_stream_video_renderer.h"
@@ -35,19 +33,27 @@
 #include "media/base/video_types.h"
 #include "media/blink/webmediaplayer_util.h"
 #include "media/video/gpu_memory_buffer_video_frame_pool.h"
-#include "services/ui/public/cpp/gpu/context_provider_command_buffer.h"
+#include "services/ws/public/cpp/gpu/context_provider_command_buffer.h"
 #include "third_party/blink/public/platform/web_media_player_client.h"
 #include "third_party/blink/public/platform/web_media_player_source.h"
 #include "third_party/blink/public/platform/web_rect.h"
 #include "third_party/blink/public/platform/web_size.h"
+#include "third_party/blink/public/platform/web_surface_layer_bridge.h"
 #include "third_party/blink/public/web/web_local_frame.h"
 
 namespace {
+
 enum class RendererReloadAction {
   KEEP_RENDERER,
   REMOVE_RENDERER,
   NEW_RENDERER
 };
+
+bool IsPlayableTrack(const blink::WebMediaStreamTrack& track) {
+  return !track.IsNull() && !track.Source().IsNull() &&
+         track.Source().GetReadyState() !=
+             blink::WebMediaStreamSource::kReadyStateEnded;
+}
 
 }  // namespace
 
@@ -86,10 +92,8 @@ class WebMediaPlayerMS::FrameDeliverer {
         weak_factory_(this) {
     io_thread_checker_.DetachFromThread();
 
-    if (gpu_factories &&
-        gpu_factories->ShouldUseGpuMemoryBuffersForVideoFrames() &&
-        base::FeatureList::IsEnabled(
-            features::kWebRtcUseGpuMemoryBufferVideoFrames)) {
+    if (gpu_factories && gpu_factories->ShouldUseGpuMemoryBuffersForVideoFrames(
+                             true /* for_media_stream */)) {
       gpu_memory_buffer_pool_.reset(new media::GpuMemoryBufferVideoFramePool(
           media_task_runner, worker_task_runner, gpu_factories));
     }
@@ -260,7 +264,8 @@ WebMediaPlayerMS::WebMediaPlayerMS(
     scoped_refptr<base::TaskRunner> worker_task_runner,
     media::GpuVideoAcceleratorFactories* gpu_factories,
     const blink::WebString& sink_id,
-    const blink::WebSecurityOrigin& security_origin)
+    CreateSurfaceLayerBridgeCB create_bridge_callback,
+    bool surface_layer_for_video_enabled)
     : frame_(frame),
       network_state_(WebMediaPlayer::kNetworkStateEmpty),
       ready_state_(WebMediaPlayer::kReadyStateHaveNothing),
@@ -278,12 +283,11 @@ WebMediaPlayerMS::WebMediaPlayerMS(
       worker_task_runner_(worker_task_runner),
       gpu_factories_(gpu_factories),
       initial_audio_output_device_id_(sink_id.Utf8()),
-      initial_security_origin_(security_origin.IsNull()
-                                   ? url::Origin()
-                                   : url::Origin(security_origin)),
       volume_(1.0),
       volume_multiplier_(1.0),
-      should_play_upon_shown_(false) {
+      should_play_upon_shown_(false),
+      create_bridge_callback_(std::move(create_bridge_callback)),
+      surface_layer_for_video_enabled_(surface_layer_for_video_enabled) {
   DVLOG(1) << __func__;
   DCHECK(client);
   DCHECK(delegate_);
@@ -301,9 +305,11 @@ WebMediaPlayerMS::~WebMediaPlayerMS() {
     web_stream_.RemoveObserver(this);
 
   // Destruct compositor resources in the proper order.
-  get_client()->SetWebLayer(nullptr);
-  if (video_weblayer_)
-    static_cast<cc::VideoLayer*>(video_weblayer_->layer())->StopUsingProvider();
+  get_client()->SetCcLayer(nullptr);
+  if (video_layer_) {
+    DCHECK(!surface_layer_for_video_enabled_);
+    video_layer_->StopUsingProvider();
+  }
 
   if (frame_deliverer_)
     io_task_runner_->DeleteSoon(FROM_HERE, frame_deliverer_.release());
@@ -324,9 +330,10 @@ WebMediaPlayerMS::~WebMediaPlayerMS() {
   delegate_->RemoveObserver(delegate_id_);
 }
 
-void WebMediaPlayerMS::Load(LoadType load_type,
-                            const blink::WebMediaPlayerSource& source,
-                            CORSMode /*cors_mode*/) {
+blink::WebMediaPlayer::LoadTiming WebMediaPlayerMS::Load(
+    LoadType load_type,
+    const blink::WebMediaPlayerSource& source,
+    CORSMode /*cors_mode*/) {
   DVLOG(1) << __func__;
   DCHECK(thread_checker_.CalledOnValidThread());
 
@@ -370,15 +377,14 @@ void WebMediaPlayerMS::Load(LoadType load_type,
   }
 
   audio_renderer_ = renderer_factory_->GetAudioRenderer(
-      web_stream_, routing_id, initial_audio_output_device_id_,
-      initial_security_origin_);
+      web_stream_, routing_id, initial_audio_output_device_id_);
 
   if (!audio_renderer_)
     WebRtcLogMessage("Warning: Failed to instantiate audio renderer.");
 
   if (!video_frame_provider_ && !audio_renderer_) {
     SetNetworkState(WebMediaPlayer::kNetworkStateNetworkError);
-    return;
+    return blink::WebMediaPlayer::LoadTiming::kImmediate;
   }
 
   if (audio_renderer_) {
@@ -386,9 +392,9 @@ void WebMediaPlayerMS::Load(LoadType load_type,
     audio_renderer_->Start();
 
     // Store the ID of audio track being played in |current_video_track_id_|
-    blink::WebVector<blink::WebMediaStreamTrack> audio_tracks;
     if (!web_stream_.IsNull()) {
-      web_stream_.AudioTracks(audio_tracks);
+      blink::WebVector<blink::WebMediaStreamTrack> audio_tracks =
+          web_stream_.AudioTracks();
       DCHECK_GT(audio_tracks.size(), 0U);
       current_audio_track_id_ = audio_tracks[0].Id();
     }
@@ -399,8 +405,8 @@ void WebMediaPlayerMS::Load(LoadType load_type,
 
     // Store the ID of video track being played in |current_video_track_id_|
     if (!web_stream_.IsNull()) {
-      blink::WebVector<blink::WebMediaStreamTrack> video_tracks;
-      web_stream_.VideoTracks(video_tracks);
+      blink::WebVector<blink::WebMediaStreamTrack> video_tracks =
+          web_stream_.VideoTracks();
       DCHECK_GT(video_tracks.size(), 0U);
       current_video_track_id_ = video_tracks[0].Id();
     }
@@ -415,6 +421,29 @@ void WebMediaPlayerMS::Load(LoadType load_type,
     SetReadyState(WebMediaPlayer::kReadyStateHaveMetadata);
     SetReadyState(WebMediaPlayer::kReadyStateHaveEnoughData);
   }
+
+  return blink::WebMediaPlayer::LoadTiming::kImmediate;
+}
+
+void WebMediaPlayerMS::OnWebLayerUpdated() {}
+
+void WebMediaPlayerMS::RegisterContentsLayer(cc::Layer* layer) {
+  DCHECK(thread_checker_.CalledOnValidThread());
+  DCHECK(bridge_);
+
+  bridge_->SetContentsOpaque(opaque_);
+  client_->SetCcLayer(layer);
+}
+
+void WebMediaPlayerMS::UnregisterContentsLayer(cc::Layer* layer) {
+  DCHECK(thread_checker_.CalledOnValidThread());
+  // |client_| will unregister its cc::Layer if given a nullptr.
+  client_->SetCcLayer(nullptr);
+}
+
+void WebMediaPlayerMS::OnSurfaceIdUpdated(viz::SurfaceId surface_id) {
+  // TODO(apacible): Add implementation. See http://crbug/746182.
+  NOTIMPLEMENTED();
 }
 
 void WebMediaPlayerMS::TrackAdded(const blink::WebMediaStreamTrack& track) {
@@ -423,6 +452,26 @@ void WebMediaPlayerMS::TrackAdded(const blink::WebMediaStreamTrack& track) {
 
 void WebMediaPlayerMS::TrackRemoved(const blink::WebMediaStreamTrack& track) {
   Reload();
+}
+
+void WebMediaPlayerMS::ActiveStateChanged(bool is_active) {
+  DCHECK(thread_checker_.CalledOnValidThread());
+  // The case when the stream becomes active is handled by TrackAdded().
+  if (is_active)
+    return;
+
+  // This makes the media element elegible to be garbage collected. Otherwise,
+  // the element will be considered active and will never be garbage
+  // collected.
+  SetNetworkState(kNetworkStateIdle);
+
+  // Stop the audio renderer to free up resources that are not required for an
+  // inactive stream. This is useful if the media element is not garbage
+  // collected.
+  // Note that the video renderer should not be stopped because the ended video
+  // track is expected to produce a black frame after becoming inactive.
+  if (audio_renderer_)
+    audio_renderer_->Stop();
 }
 
 void WebMediaPlayerMS::Reload() {
@@ -437,16 +486,16 @@ void WebMediaPlayerMS::Reload() {
 void WebMediaPlayerMS::ReloadVideo() {
   DCHECK(thread_checker_.CalledOnValidThread());
   DCHECK(!web_stream_.IsNull());
-  blink::WebVector<blink::WebMediaStreamTrack> video_tracks;
-  // VideoTracks() is a getter.
-  web_stream_.VideoTracks(video_tracks);
+  blink::WebVector<blink::WebMediaStreamTrack> video_tracks =
+      web_stream_.VideoTracks();
 
   RendererReloadAction renderer_action = RendererReloadAction::KEEP_RENDERER;
   if (video_tracks.IsEmpty()) {
     if (video_frame_provider_)
       renderer_action = RendererReloadAction::REMOVE_RENDERER;
     current_video_track_id_ = blink::WebString();
-  } else if (video_tracks[0].Id() != current_video_track_id_) {
+  } else if (video_tracks[0].Id() != current_video_track_id_ &&
+             IsPlayableTrack(video_tracks[0])) {
     renderer_action = RendererReloadAction::NEW_RENDERER;
     current_video_track_id_ = video_tracks[0].Id();
   }
@@ -456,6 +505,7 @@ void WebMediaPlayerMS::ReloadVideo() {
       if (video_frame_provider_)
         video_frame_provider_->Stop();
 
+      SetNetworkState(kNetworkStateLoading);
       video_frame_provider_ = renderer_factory_->GetVideoRenderer(
           web_stream_,
           media::BindToCurrentLoop(
@@ -486,16 +536,16 @@ void WebMediaPlayerMS::ReloadAudio() {
   if (!frame)
     return;
 
-  blink::WebVector<blink::WebMediaStreamTrack> audio_tracks;
-  // AudioTracks() is a getter.
-  web_stream_.AudioTracks(audio_tracks);
+  blink::WebVector<blink::WebMediaStreamTrack> audio_tracks =
+      web_stream_.AudioTracks();
 
   RendererReloadAction renderer_action = RendererReloadAction::KEEP_RENDERER;
   if (audio_tracks.IsEmpty()) {
     if (audio_renderer_)
       renderer_action = RendererReloadAction::REMOVE_RENDERER;
     current_audio_track_id_ = blink::WebString();
-  } else if (audio_tracks[0].Id() != current_video_track_id_) {
+  } else if (audio_tracks[0].Id() != current_audio_track_id_ &&
+             IsPlayableTrack(audio_tracks[0])) {
     renderer_action = RendererReloadAction::NEW_RENDERER;
     current_audio_track_id_ = audio_tracks[0].Id();
   }
@@ -505,9 +555,14 @@ void WebMediaPlayerMS::ReloadAudio() {
       if (audio_renderer_)
         audio_renderer_->Stop();
 
+      SetNetworkState(WebMediaPlayer::kNetworkStateLoading);
       audio_renderer_ = renderer_factory_->GetAudioRenderer(
-          web_stream_, frame->GetRoutingID(), initial_audio_output_device_id_,
-          initial_security_origin_);
+          web_stream_, frame->GetRoutingID(), initial_audio_output_device_id_);
+
+      // |audio_renderer_| can be null in tests.
+      if (!audio_renderer_)
+        break;
+
       audio_renderer_->SetVolume(volume_);
       audio_renderer_->Start();
       audio_renderer_->Play();
@@ -598,13 +653,35 @@ void WebMediaPlayerMS::SetVolume(double volume) {
   delegate_->DidPlayerMutedStatusChange(delegate_id_, volume == 0.0);
 }
 
-void WebMediaPlayerMS::EnterPictureInPicture() {
+void WebMediaPlayerMS::EnterPictureInPicture(
+    blink::WebMediaPlayer::PipWindowOpenedCallback callback) {
+  // TODO(crbug.com/806249): Use Picture-in-Picture window size.
+  std::move(callback).Run(this->NaturalSize());
+
   NOTIMPLEMENTED();
   // TODO(apacible): Implement after video in surfaces is supported for
   // WebMediaPlayerMS. See http://crbug/746182.
 }
 
-void WebMediaPlayerMS::ExitPictureInPicture() {
+void WebMediaPlayerMS::ExitPictureInPicture(
+    blink::WebMediaPlayer::PipWindowClosedCallback callback) {
+  // TODO(crbug.com/806249): Run callback when Picture-in-Picture window closes.
+  std::move(callback).Run();
+
+  NOTIMPLEMENTED();
+  // TODO(apacible): Implement after video in surfaces is supported for
+  // WebMediaPlayerMS. See http://crbug/746182.
+}
+
+void WebMediaPlayerMS::SetPictureInPictureCustomControls(
+    const std::vector<blink::PictureInPictureControlInfo>& controls) {
+  NOTIMPLEMENTED();
+  // TODO(apacible): Implement after video in surfaces is supported for
+  // WebMediaPlayerMS. See http://crbug/746182.
+}
+
+void WebMediaPlayerMS::RegisterPictureInPictureWindowResizeCallback(
+    blink::WebMediaPlayer::PipWindowResizedCallback) {
   NOTIMPLEMENTED();
   // TODO(apacible): Implement after video in surfaces is supported for
   // WebMediaPlayerMS. See http://crbug/746182.
@@ -612,15 +689,13 @@ void WebMediaPlayerMS::ExitPictureInPicture() {
 
 void WebMediaPlayerMS::SetSinkId(
     const blink::WebString& sink_id,
-    const blink::WebSecurityOrigin& security_origin,
     blink::WebSetSinkIdCallbacks* web_callback) {
   DVLOG(1) << __func__;
   DCHECK(thread_checker_.CalledOnValidThread());
   const media::OutputDeviceStatusCB callback =
       media::ConvertToOutputDeviceStatusCB(web_callback);
   if (audio_renderer_) {
-    audio_renderer_->SwitchOutputDevice(sink_id.Utf8(), security_origin,
-                                        callback);
+    audio_renderer_->SwitchOutputDevice(sink_id.Utf8(), callback);
   } else {
     callback.Run(media::OUTPUT_DEVICE_STATUS_ERROR_INTERNAL);
   }
@@ -724,7 +799,7 @@ bool WebMediaPlayerMS::DidLoadingProgress() {
   return true;
 }
 
-void WebMediaPlayerMS::Paint(blink::WebCanvas* canvas,
+void WebMediaPlayerMS::Paint(cc::PaintCanvas* canvas,
                              const blink::WebRect& rect,
                              cc::PaintFlags& flags,
                              int already_uploaded_id,
@@ -779,13 +854,13 @@ unsigned WebMediaPlayerMS::DroppedFrameCount() const {
   return compositor_->dropped_frame_count();
 }
 
-size_t WebMediaPlayerMS::AudioDecodedByteCount() const {
+uint64_t WebMediaPlayerMS::AudioDecodedByteCount() const {
   DCHECK(thread_checker_.CalledOnValidThread());
   NOTIMPLEMENTED();
   return 0;
 }
 
-size_t WebMediaPlayerMS::VideoDecodedByteCount() const {
+uint64_t WebMediaPlayerMS::VideoDecodedByteCount() const {
   DCHECK(thread_checker_.CalledOnValidThread());
   NOTIMPLEMENTED();
   return 0;
@@ -878,6 +953,15 @@ void WebMediaPlayerMS::OnBecamePersistentVideo(bool value) {
   get_client()->OnBecamePersistentVideo(value);
 }
 
+void WebMediaPlayerMS::OnPictureInPictureModeEnded() {
+  NOTIMPLEMENTED();
+}
+
+void WebMediaPlayerMS::OnPictureInPictureControlClicked(
+    const std::string& control_id) {
+  NOTIMPLEMENTED();
+}
+
 bool WebMediaPlayerMS::CopyVideoTextureToPlatformTexture(
     gpu::gles2::GLES2Interface* gl,
     unsigned target,
@@ -907,7 +991,45 @@ bool WebMediaPlayerMS::CopyVideoTextureToPlatformTexture(
     return false;
   context_3d = media::Context3D(provider->ContextGL(), provider->GrContext());
   DCHECK(context_3d.gl);
+
   return video_renderer_.CopyVideoFrameTexturesToGLTexture(
+      context_3d, gl, video_frame.get(), target, texture, internal_format,
+      format, type, level, premultiply_alpha, flip_y);
+}
+
+bool WebMediaPlayerMS::CopyVideoYUVDataToPlatformTexture(
+    gpu::gles2::GLES2Interface* gl,
+    unsigned target,
+    unsigned int texture,
+    unsigned internal_format,
+    unsigned format,
+    unsigned type,
+    int level,
+    bool premultiply_alpha,
+    bool flip_y,
+    int already_uploaded_id,
+    VideoFrameUploadMetadata* out_metadata) {
+  TRACE_EVENT0("media", "copyVideoYUVDataToPlatformTexture");
+  DCHECK(thread_checker_.CalledOnValidThread());
+
+  scoped_refptr<media::VideoFrame> video_frame =
+      compositor_->GetCurrentFrameWithoutUpdatingStatistics();
+
+  if (!video_frame)
+    return false;
+  if (video_frame->HasTextures())
+    return false;
+
+  media::Context3D context_3d;
+  auto* provider =
+      RenderThreadImpl::current()->SharedMainThreadContextProvider().get();
+  // GPU Process crashed.
+  if (!provider)
+    return false;
+  context_3d = media::Context3D(provider->ContextGL(), provider->GrContext());
+  DCHECK(context_3d.gl);
+
+  return video_renderer_.CopyVideoFrameYUVDataToGLTexture(
       context_3d, gl, video_frame.get(), target, texture, internal_format,
       format, type, level, premultiply_alpha, flip_y);
 }
@@ -957,6 +1079,15 @@ void WebMediaPlayerMS::OnFirstFrameReceived(media::VideoRotation video_rotation,
                                             bool is_opaque) {
   DVLOG(1) << __func__;
   DCHECK(thread_checker_.CalledOnValidThread());
+
+  if (surface_layer_for_video_enabled_) {
+    DCHECK(!bridge_);
+
+    bridge_ = std::move(create_bridge_callback_)
+                  .Run(this, compositor_->GetUpdateSubmissionStateCallback());
+    bridge_->CreateSurfaceLayer();
+  }
+
   SetReadyState(WebMediaPlayer::kReadyStateHaveMetadata);
   SetReadyState(WebMediaPlayer::kReadyStateHaveEnoughData);
 
@@ -967,9 +1098,17 @@ void WebMediaPlayerMS::OnOpacityChanged(bool is_opaque) {
   DVLOG(1) << __func__;
   DCHECK(thread_checker_.CalledOnValidThread());
 
-  // Opacity can be changed during the session without resetting
-  // |video_weblayer_|.
-  video_weblayer_->layer()->SetContentsOpaque(is_opaque);
+  opaque_ = is_opaque;
+
+  if (!bridge_) {
+    // Opacity can be changed during the session without resetting
+    // |video_layer_|.
+    video_layer_->SetContentsOpaque(opaque_);
+  } else {
+    DCHECK(bridge_);
+
+    bridge_->SetContentsOpaque(opaque_);
+  }
 }
 
 void WebMediaPlayerMS::OnRotationChanged(media::VideoRotation video_rotation,
@@ -977,14 +1116,22 @@ void WebMediaPlayerMS::OnRotationChanged(media::VideoRotation video_rotation,
   DVLOG(1) << __func__;
   DCHECK(thread_checker_.CalledOnValidThread());
   video_rotation_ = video_rotation;
+  opaque_ = is_opaque;
 
-  std::unique_ptr<cc_blink::WebLayerImpl> rotated_weblayer =
-      base::WrapUnique(new cc_blink::WebLayerImpl(
-          cc::VideoLayer::Create(compositor_.get(), video_rotation)));
-  rotated_weblayer->layer()->SetContentsOpaque(is_opaque);
-  rotated_weblayer->SetContentsOpaqueIsFixed(true);
-  get_client()->SetWebLayer(rotated_weblayer.get());
-  video_weblayer_ = std::move(rotated_weblayer);
+  if (!bridge_) {
+    // Keep the old |video_layer_| alive until SetCcLayer() is called with a new
+    // pointer, as it may use the pointer from the last call.
+    auto new_video_layer =
+        cc::VideoLayer::Create(compositor_.get(), video_rotation);
+    new_video_layer->SetContentsOpaque(is_opaque);
+
+    get_client()->SetCcLayer(new_video_layer.get());
+
+    video_layer_ = std::move(new_video_layer);
+  } else if (bridge_->GetCcLayer()) {
+    // TODO(lethalantidote): Handle rotation.
+    bridge_->SetContentsOpaque(opaque_);
+  }
 }
 
 void WebMediaPlayerMS::RepaintInternal() {

@@ -31,9 +31,17 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_PLATFORM_LOADER_FETCH_FETCH_CONTEXT_H_
 #define THIRD_PARTY_BLINK_RENDERER_PLATFORM_LOADER_FETCH_FETCH_CONTEXT_H_
 
+#include <memory>
+
+#include "base/optional.h"
+#include "base/single_thread_task_runner.h"
 #include "services/network/public/mojom/request_context_frame_type.mojom-shared.h"
+#include "third_party/blink/public/mojom/service_worker/service_worker_object.mojom-blink.h"
+#include "third_party/blink/public/platform/code_cache_loader.h"
 #include "third_party/blink/public/platform/modules/fetch/fetch_api_request.mojom-shared.h"
 #include "third_party/blink/public/platform/platform.h"
+#include "third_party/blink/public/platform/resource_request_blocked_reason.h"
+#include "third_party/blink/public/platform/scheduler/web_resource_loading_task_runner_handle.h"
 #include "third_party/blink/public/platform/web_application_cache_host.h"
 #include "third_party/blink/public/platform/web_url_loader.h"
 #include "third_party/blink/public/platform/web_url_request.h"
@@ -78,13 +86,14 @@ class PLATFORM_EXPORT FetchContext
   // This enum corresponds to blink::MessageSource. We have this not to
   // introduce any dependency to core/.
   //
-  // Currently only kJSMessageSource is used, but not to impress readers that
-  // AddConsoleMessage() call from FetchContext() should always use it, which is
-  // not true, we ask users of the Add.*ConsoleMessage() methods to explicitly
-  // specify the MessageSource to use.
+  // Currently only kJSMessageSource, kSecurityMessageSource and
+  // kOtherMessageSource are used, but not to impress readers that
+  // AddConsoleMessage() call from FetchContext() should always use them,
+  // which is not true, we ask users of the Add.*ConsoleMessage() methods
+  // to explicitly specify the MessageSource to use.
   //
   // Extend this when needed.
-  enum LogSource { kJSSource };
+  enum LogSource { kJSSource, kSecuritySource, kOtherSource };
 
   static FetchContext& NullInstance();
 
@@ -115,7 +124,7 @@ class PLATFORM_EXPORT FetchContext
                                                  ResourceLoadPriority,
                                                  int intra_priority_value);
 
-  // This internally dispatches WebFrameClient::willSendRequest and hooks
+  // This internally dispatches WebLocalFrameClient::willSendRequest and hooks
   // request interceptors like ServiceWorker and ApplicationCache.
   // This may modify the request.
   enum class RedirectType { kForRedirect, kNotForRedirect };
@@ -145,16 +154,13 @@ class PLATFORM_EXPORT FetchContext
                                       int data_length);
   virtual void DispatchDidReceiveEncodedData(unsigned long identifier,
                                              int encoded_data_length);
-  virtual void DispatchDidDownloadData(unsigned long identifier,
-                                       int data_length,
-                                       int encoded_data_length);
   virtual void DispatchDidDownloadToBlob(unsigned long identifier,
                                          BlobDataHandle*);
   virtual void DispatchDidFinishLoading(unsigned long identifier,
-                                        double finish_time,
+                                        TimeTicks finish_time,
                                         int64_t encoded_data_length,
                                         int64_t decoded_body_length,
-                                        bool blocked_cross_site_document);
+                                        bool should_report_corb_blocking);
   virtual void DispatchDidFail(const KURL&,
                                unsigned long identifier,
                                const ResourceError&,
@@ -173,17 +179,16 @@ class PLATFORM_EXPORT FetchContext
 
   virtual void AddResourceTiming(const ResourceTimingInfo&);
   virtual bool AllowImage(bool, const KURL&) const { return false; }
-  virtual ResourceRequestBlockedReason CanRequest(
+  virtual base::Optional<ResourceRequestBlockedReason> CanRequest(
       Resource::Type,
       const ResourceRequest&,
       const KURL&,
       const ResourceLoaderOptions&,
       SecurityViolationReportingPolicy,
-      FetchParameters::OriginRestriction,
       ResourceRequest::RedirectStatus) const {
     return ResourceRequestBlockedReason::kOther;
   }
-  virtual ResourceRequestBlockedReason CheckCSPForRequest(
+  virtual base::Optional<ResourceRequestBlockedReason> CheckCSPForRequest(
       WebURLRequest::RequestContext,
       const KURL&,
       const ResourceLoaderOptions&,
@@ -191,13 +196,11 @@ class PLATFORM_EXPORT FetchContext
       ResourceRequest::RedirectStatus) const {
     return ResourceRequestBlockedReason::kOther;
   }
-  virtual ResourceRequestBlockedReason CheckResponseNosniff(
-      WebURLRequest::RequestContext,
-      const ResourceResponse&) const {
-    return ResourceRequestBlockedReason::kOther;
-  }
 
-  virtual bool IsControlledByServiceWorker() const { return false; }
+  virtual blink::mojom::ControllerServiceWorkerMode
+  IsControlledByServiceWorker() const {
+    return blink::mojom::ControllerServiceWorkerMode::kNoController;
+  }
   virtual int64_t ServiceWorkerID() const { return -1; }
   virtual int ApplicationCacheHostID() const {
     return WebApplicationCacheHost::kAppCacheNoHostId;
@@ -210,6 +213,7 @@ class PLATFORM_EXPORT FetchContext
     return false;
   }
 
+  virtual void AddInfoConsoleMessage(const String&, LogSource) const;
   virtual void AddWarningConsoleMessage(const String&, LogSource) const;
   virtual void AddErrorConsoleMessage(const String&, LogSource) const;
 
@@ -231,10 +235,14 @@ class PLATFORM_EXPORT FetchContext
 
   virtual std::unique_ptr<WebURLLoader> CreateURLLoader(
       const ResourceRequest&,
-      scoped_refptr<base::SingleThreadTaskRunner>,
       const ResourceLoaderOptions&) {
     NOTREACHED();
     return nullptr;
+  }
+
+  // Create a default code cache loader to fetch data from code caches.
+  virtual std::unique_ptr<CodeCacheLoader> CreateCodeCacheLoader() {
+    return Platform::Current()->CreateCodeCacheLoader();
   }
 
   // Returns the initial throttling policy used by the associated
@@ -259,6 +267,16 @@ class PLATFORM_EXPORT FetchContext
     return Platform::Current()->CurrentThread()->GetTaskRunner();
   }
 
+  // TODO(altimin): This is used when creating a URLLoader, and
+  // FetchContext::GetLoadingTaskRunner is used whenever asynchronous tasks
+  // around resource loading are posted. Modify the code so that all
+  // the tasks related to loading a resource use the resource loader handle's
+  // task runner.
+  virtual std::unique_ptr<blink::scheduler::WebResourceLoadingTaskRunnerHandle>
+  CreateResourceLoadingTaskRunnerHandle() {
+    return nullptr;
+  }
+
   // Called when the underlying context is detached. Note that some
   // FetchContexts continue working after detached (e.g., for fetch() operations
   // with "keepalive" specified).
@@ -279,6 +297,9 @@ class PLATFORM_EXPORT FetchContext
       WebURLRequest::RequestContext request_context) const {
     return false;
   }
+
+  // Called when IdlenessDetector emits its network idle signal.
+  virtual void DispatchNetworkQuiet() {}
 
  protected:
   FetchContext();

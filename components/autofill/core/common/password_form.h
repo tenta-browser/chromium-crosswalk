@@ -98,8 +98,8 @@ struct PasswordForm {
     MANUAL_SAVE,
     DOM_MUTATION_AFTER_XHR,
     PROVISIONALLY_SAVED_FORM_ON_START_PROVISIONAL_LOAD,
-    FILLED_FORM_ON_START_PROVISIONAL_LOAD,
-    FILLED_INPUT_ELEMENTS_ON_START_PROVISIONAL_LOAD,
+    DEPRECATED_FILLED_FORM_ON_START_PROVISIONAL_LOAD,            // unused
+    DEPRECATED_FILLED_INPUT_ELEMENTS_ON_START_PROVISIONAL_LOAD,  // unused
     SUBMISSION_INDICATOR_EVENT_COUNT
   };
 
@@ -161,10 +161,26 @@ struct PasswordForm {
   // When parsing an HTML form, this must always be set.
   base::string16 submit_element;
 
+  // True if renderer ids for username and password fields are present. Only set
+  // on form parsing, and not persisted.
+  // TODO(https://crbug.com/831123): Remove this field when old parsing is
+  // removed and filling by renderer ids is by default.
+  bool has_renderer_ids = false;
+
   // The name of the username input element. Optional (improves scoring).
   //
   // When parsing an HTML form, this must always be set.
   base::string16 username_element;
+
+  // The renderer id of the username input element. It is set during the new
+  // form parsing and not persisted.
+  uint32_t username_element_renderer_id =
+      FormFieldData::kNotSetFormControlRendererId;
+
+  // True if the server-side classification believes that the field may be
+  // pre-filled with a placeholder in the value attribute. It is set during
+  // form parsing and not persisted.
+  bool username_may_use_prefilled_placeholder = false;
 
   // Whether the |username_element| has an autocomplete=username attribute. This
   // is only used in parsed HTML forms.
@@ -199,15 +215,16 @@ struct PasswordForm {
   // In these two cases the |new_password_element| will always be set.
   base::string16 password_element;
 
+  // The renderer id of the password input element. It is set during the new
+  // form parsing and not persisted.
+  uint32_t password_element_renderer_id =
+      FormFieldData::kNotSetFormControlRendererId;
+
   // The current password. Must be non-empty for PasswordForm instances that are
   // meant to be persisted to the password store.
   //
   // When parsing an HTML form, this is typically empty.
   base::string16 password_value;
-
-  // Whether the password value is the same as specified in the "value"
-  // attribute of the input element. Only used in the renderer.
-  bool password_value_is_default;
 
   // If the form was a sign-up or a change password form, the name of the input
   // element corresponding to the new password. Optional, and not persisted.
@@ -219,10 +236,6 @@ struct PasswordForm {
 
   // The new password. Optional, and not persisted.
   base::string16 new_password_value;
-
-  // Whether the password value is the same as specified in the "value"
-  // attribute of the input element. Only used in the renderer.
-  bool new_password_value_is_default;
 
   // Whether the |new_password_element| has an autocomplete=new-password
   // attribute. This is only used in parsed HTML forms.
@@ -317,9 +330,6 @@ struct PasswordForm {
   // found using affiliation-based match.
   bool is_affiliation_based_match;
 
-  // If true, this form looks like SignUp form according to local heuristics.
-  bool does_look_like_signup_form;
-
   // The type of the event that was taken as an indication that this form is
   // being or has already been submitted. This field is not persisted and filled
   // out only for submitted forms.
@@ -328,6 +338,9 @@ struct PasswordForm {
   // True iff heuristics declined this form for saving (e.g. only credit card
   // fields were found). But this form can be saved only with the fallback.
   bool only_for_fallback_saving;
+
+  // True iff this is Gaia form which should be skipped on saving.
+  bool is_gaia_with_skip_save_password_form;
 
   // Return true if we consider this form to be a change password form.
   // We use only client heuristics, so it could include signup forms.

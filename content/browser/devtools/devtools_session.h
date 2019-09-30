@@ -28,8 +28,10 @@ class DevToolsSession : public protocol::FrontendChannel,
                   DevToolsAgentHostClient* client,
                   bool restricted);
   ~DevToolsSession() override;
+  void Dispose();
 
   bool restricted() { return restricted_; }
+  DevToolsAgentHost* agent_host() { return agent_host_; };
   DevToolsAgentHostClient* client() { return client_; };
 
   // Browser-only sessions do not talk to mojom::DevToolsAgent, but instead
@@ -41,7 +43,9 @@ class DevToolsSession : public protocol::FrontendChannel,
   void SetRenderer(int process_host_id, RenderFrameHostImpl* frame_host);
 
   void AttachToAgent(const blink::mojom::DevToolsAgentAssociatedPtr& agent);
-  void DispatchProtocolMessage(const std::string& message);
+  void DispatchProtocolMessage(
+      const std::string& message,
+      std::unique_ptr<base::DictionaryValue> parsed_message);
   void SuspendSendingMessagesToAgent();
   void ResumeSendingMessagesToAgent();
 
@@ -66,6 +70,8 @@ class DevToolsSession : public protocol::FrontendChannel,
   void DispatchProtocolMessageToAgent(int call_id,
                                       const std::string& method,
                                       const std::string& message);
+  void HandleCommand(std::unique_ptr<base::DictionaryValue> parsed_message,
+                     const std::string& message);
 
   // protocol::FrontendChannel implementation.
   void sendProtocolResponse(
@@ -74,13 +80,21 @@ class DevToolsSession : public protocol::FrontendChannel,
   void sendProtocolNotification(
       std::unique_ptr<protocol::Serializable> message) override;
   void flushProtocolNotifications() override;
+  void fallThrough(int call_id,
+                   const std::string& method,
+                   const std::string& message) override;
 
   // blink::mojom::DevToolsSessionHost implementation.
   void DispatchProtocolResponse(
       const std::string& message,
       int call_id,
-      const base::Optional<std::string>& state) override;
-  void DispatchProtocolNotification(const std::string& message) override;
+      blink::mojom::DevToolsSessionStatePtr updates) override;
+  void DispatchProtocolNotification(
+      const std::string& message,
+      blink::mojom::DevToolsSessionStatePtr updates) override;
+
+  // Merges the |updates| received from the renderer into session_state_cookie_.
+  void ApplySessionStateUpdates(blink::mojom::DevToolsSessionStatePtr updates);
 
   mojo::AssociatedBinding<blink::mojom::DevToolsSessionHost> binding_;
   blink::mojom::DevToolsSessionAssociatedPtr session_ptr_;
@@ -112,10 +126,10 @@ class DevToolsSession : public protocol::FrontendChannel,
   };
   std::map<int, WaitingMessage> waiting_for_response_messages_;
 
-  // |state_cookie_| always corresponds to a state before
+  // |session_state_cookie_| always corresponds to a state before
   // any of the waiting for response messages have been handled.
-  // Note that |state_cookie_| is not present only before first attach.
-  base::Optional<std::string> state_cookie_;
+  // |session_state_cookie_| is nullptr before first attach.
+  blink::mojom::DevToolsSessionStatePtr session_state_cookie_;
 
   base::WeakPtrFactory<DevToolsSession> weak_factory_;
 };

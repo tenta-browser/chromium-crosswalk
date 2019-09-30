@@ -76,7 +76,8 @@ ArcTracingBridge::ArcTracingBridge(content::BrowserContext* context,
           content::ServiceManagerConnection::GetForProcess()->GetConnector(),
           kChromeTraceEventLabel,
           tracing::mojom::TraceDataType::ARRAY,
-          false /* supports_explicit_clock_sync */),
+          false /* supports_explicit_clock_sync */,
+          base::kNullProcessId),
       arc_bridge_service_(bridge_service),
       weak_ptr_factory_(this) {
   arc_bridge_service_->tracing()->AddObserver(this);
@@ -112,10 +113,9 @@ void ArcTracingBridge::OnCategoriesReady(
   }
 }
 
-void ArcTracingBridge::StartTracing(
-    const std::string& config,
-    base::TimeTicks coordinator_time,
-    const Agent::StartTracingCallback& callback) {
+void ArcTracingBridge::StartTracing(const std::string& config,
+                                    base::TimeTicks coordinator_time,
+                                    Agent::StartTracingCallback callback) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
 
   base::trace_event::TraceConfig trace_config(config);
@@ -128,7 +128,7 @@ void ArcTracingBridge::StartTracing(
     // Use PostTask as the convention of TracingAgent. The caller expects
     // callback to be called after this function returns.
     base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE, base::BindOnce(callback, false /* success */));
+        FROM_HERE, base::BindOnce(std::move(callback), false /* success */));
     return;
   }
 
@@ -138,7 +138,7 @@ void ArcTracingBridge::StartTracing(
     // Use PostTask as the convention of TracingAgent. The caller expects
     // callback to be called after this function returns.
     base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE, base::BindOnce(callback, false));
+        FROM_HERE, base::BindOnce(std::move(callback), false));
     return;
   }
 
@@ -150,7 +150,7 @@ void ArcTracingBridge::StartTracing(
 
   tracing_instance->StartTracing(selected_categories,
                                  mojo::WrapPlatformFile(write_fd.release()),
-                                 callback);
+                                 std::move(callback));
 
   content::BrowserThread::PostTask(
       content::BrowserThread::IO, FROM_HERE,

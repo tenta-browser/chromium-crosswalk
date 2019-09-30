@@ -18,64 +18,16 @@
       "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
         {
-          "object": "NGPaintFragment",
-          "rect": [8, 151, 768, 51],
-          "reason": "appeared"
-        },
-        {
-          "object": "NGPaintFragment",
-          "rect": [8, 151, 768, 34],
-          "reason": "disappeared"
-        },
-        {
-          "object": "LayoutIFrame IFRAME id='iframe'",
-          "rect": [8, 8, 304, 154],
-          "reason": "subtree"
-        },
-        {
           "object": "LayoutNGBlockFlow HTML",
-          "rect": [18, 22, 22, 11],
-          "reason": "disappeared"
+          "rect": [18, 18, 22, 19],
+          "reason": "chunk disappeared"
+        },
+        {
+          "object": "NGPhysicalTextFragment 'abc'",
+          "rect": [8, 187, 22, 19],
+          "reason": "appeared"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "NGPaintFragment",
-      "reason": "subtree"
-    },
-    {
-      "object": "LayoutIFrame IFRAME id='iframe'",
-      "reason": "subtree"
-    },
-    {
-      "object": "NGPaintFragment",
-      "reason": "subtree"
-    },
-    {
-      "object": "NGPaintFragment",
-      "reason": "subtree"
-    },
-    {
-      "object": "NGPaintFragment",
-      "reason": "appeared"
-    },
-    {
-      "object": "NGPaintFragment",
-      "reason": "appeared"
-    },
-    {
-      "object": "LayoutView #document",
-      "reason": "subtree"
-    },
-    {
-      "object": "LayoutNGBlockFlow HTML",
-      "reason": "subtree"
-    },
-    {
-      "object": "LayoutNGBlockFlow BODY",
-      "reason": "subtree"
     }
   ]
 }

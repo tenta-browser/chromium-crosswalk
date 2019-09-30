@@ -19,8 +19,8 @@
 #include "components/autofill/content/renderer/form_cache.h"
 #include "components/autofill/content/renderer/form_tracker.h"
 #include "content/public/renderer/render_frame_observer.h"
-#include "mojo/public/cpp/bindings/binding.h"
-#include "services/service_manager/public/cpp/binder_registry.h"
+#include "mojo/public/cpp/bindings/associated_binding.h"
+#include "third_party/blink/public/common/associated_interfaces/associated_interface_registry.h"
 #include "third_party/blink/public/web/web_autofill_client.h"
 #include "third_party/blink/public/web/web_form_control_element.h"
 #include "third_party/blink/public/web/web_form_element.h"
@@ -29,6 +29,10 @@
 namespace blink {
 class WebNode;
 class WebView;
+class WebString;
+class WebFormControlElement;
+template <typename T>
+class WebVector;
 }
 
 namespace autofill {
@@ -57,21 +61,21 @@ class AutofillAgent : public content::RenderFrameObserver,
   AutofillAgent(content::RenderFrame* render_frame,
                 PasswordAutofillAgent* password_autofill_manager,
                 PasswordGenerationAgent* password_generation_agent,
-                service_manager::BinderRegistry* registry);
+                blink::AssociatedInterfaceRegistry* registry);
   ~AutofillAgent() override;
 
-  void BindRequest(mojom::AutofillAgentRequest request);
+  void BindRequest(mojom::AutofillAgentAssociatedRequest request);
 
-  const mojom::AutofillDriverPtr& GetAutofillDriver();
+  const mojom::AutofillDriverAssociatedPtr& GetAutofillDriver();
 
-  const mojom::PasswordManagerDriverPtr& GetPasswordManagerDriver();
+  const mojom::PasswordManagerDriverAssociatedPtr& GetPasswordManagerDriver();
 
   // mojom::AutofillAgent:
   void FillForm(int32_t id, const FormData& form) override;
   void PreviewForm(int32_t id, const FormData& form) override;
   void FieldTypePredictionsAvailable(
       const std::vector<FormDataPredictions>& forms) override;
-  void ClearForm() override;
+  void ClearSection() override;
   void ClearPreviewedForm() override;
   void FillFieldWithValue(const base::string16& value) override;
   void PreviewFieldWithValue(const base::string16& value) override;
@@ -87,8 +91,6 @@ class AutofillAgent : public content::RenderFrameObserver,
   void SetSecureContextRequired(bool required) override;
   void SetFocusRequiresScroll(bool require) override;
   void SetQueryPasswordSuggestion(bool required) override;
-
-  void ShowNotSecureWarning(const blink::WebInputElement& element);
 
   void FormControlElementClicked(const blink::WebFormControlElement& element,
                                  bool was_focused);
@@ -151,6 +153,10 @@ class AutofillAgent : public content::RenderFrameObserver,
     // Specifies that only show a suggestions box if |element| is part of a
     // password form, otherwise show no suggestions.
     bool show_password_suggestions_only;
+
+    // Specifies that the first suggestion must be auto-selected when the
+    // dropdown is shown. Enabled when the user presses ARROW_DOWN on a field.
+    bool autoselect_first_suggestion;
   };
 
   // content::RenderFrameObserver:
@@ -212,7 +218,8 @@ class AutofillAgent : public content::RenderFrameObserver,
 
   // Queries the browser for Autocomplete and Autofill suggestions for the given
   // |element|.
-  void QueryAutofillSuggestions(const blink::WebFormControlElement& element);
+  void QueryAutofillSuggestions(const blink::WebFormControlElement& element,
+                                bool autoselect_first_suggestion);
 
   // Sets the element value to reflect the selected |suggested_value|.
   void DoAcceptDataListSuggestion(const base::string16& suggested_value);
@@ -265,10 +272,24 @@ class AutofillAgent : public content::RenderFrameObserver,
   // cleared in this method.
   void OnFormNoLongerSubmittable();
 
+  // For no name forms, and unowned elements, try to see if there is a unique
+  // element in the updated form that corresponds to the old |element_|.
+  // Returns false if more than one element matches the |element_|.
+  bool FindTheUniqueNewVersionOfOldElement(
+      blink::WebVector<blink::WebFormControlElement>& elements,
+      bool& element_found,
+      const blink::WebString& original_element_section,
+      const blink::WebFormControlElement& original_element);
+
   // Check whether |element_| was removed or replaced dynamically on the page.
   // If so, looks for the same element in the updated |form| and replaces the
   // |element_| with it if it's found.
   void ReplaceElementIfNowInvalid(const FormData& form);
+
+  // Trigger a refill if needed for dynamic forms. A refill is needed if some
+  // properties of the form (name, number of fields), or fields (name, id,
+  // label, visibility, control type) have changed after an autofill.
+  void TriggerRefillIfNeeded(const FormData& form);
 
   // Formerly cached forms for all frames, now only caches forms for the current
   // frame.
@@ -306,8 +327,8 @@ class AutofillAgent : public content::RenderFrameObserver,
   // We use a simplified comparison function.
   std::set<FormData, FormDataCompare> submitted_forms_;
 
-  // Was the query node autofilled prior to previewing the form?
-  bool was_query_node_autofilled_;
+  // The query node autofill state prior to previewing the form.
+  blink::WebAutofillState query_node_autofill_state_;
 
   // Whether or not to ignore text changes.  Useful for when we're committing
   // a composition when we are defocusing the WebView and we don't want to
@@ -348,9 +369,9 @@ class AutofillAgent : public content::RenderFrameObserver,
   // Whether or not we delay focus handling until scrolling occurs.
   bool focus_requires_scroll_ = true;
 
-  mojo::Binding<mojom::AutofillAgent> binding_;
+  mojo::AssociatedBinding<mojom::AutofillAgent> binding_;
 
-  mojom::AutofillDriverPtr autofill_driver_;
+  mojom::AutofillDriverAssociatedPtr autofill_driver_;
 
   bool was_last_action_fill_ = false;
 

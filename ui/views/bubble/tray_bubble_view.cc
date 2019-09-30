@@ -221,8 +221,6 @@ TrayBubbleView::TrayBubbleView(const InitParams& init_params)
   DCHECK(params_.parent_window);
   DCHECK(anchor_widget());  // Computed by BubbleDialogDelegateView().
   bubble_border_->set_use_theme_background_color(!init_params.bg_color);
-  bubble_border_->set_alignment(BubbleBorder::ALIGN_EDGE_TO_ANCHOR_EDGE);
-  bubble_border_->set_paint_arrow(BubbleBorder::PAINT_NONE);
   if (init_params.corner_radius)
     bubble_border_->SetCornerRadius(init_params.corner_radius.value());
   set_parent_window(params_.parent_window);
@@ -274,7 +272,6 @@ void TrayBubbleView::InitializeAndShowBubble() {
 void TrayBubbleView::UpdateBubble() {
   if (GetWidget()) {
     SizeToContents();
-    bubble_content_mask_->layer()->SetBounds(GetBubbleBounds());
     GetWidget()->GetRootView()->SchedulePaint();
 
     // When extra keyboard accessibility is enabled, focus the default item if
@@ -313,6 +310,10 @@ void TrayBubbleView::ResetDelegate() {
   delegate_ = nullptr;
 }
 
+void TrayBubbleView::ChangeAnchorView(views::View* anchor_view) {
+  BubbleDialogDelegateView::SetAnchorView(anchor_view);
+}
+
 int TrayBubbleView::GetDialogButtons() const {
   return ui::DIALOG_BUTTON_NONE;
 }
@@ -326,7 +327,7 @@ ax::mojom::Role TrayBubbleView::GetAccessibleWindowRole() const {
 
 void TrayBubbleView::SizeToContents() {
   BubbleDialogDelegateView::SizeToContents();
-  bubble_content_mask_->layer()->SetBounds(GetBubbleBounds());
+  bubble_content_mask_->layer()->SetBounds(layer()->parent()->bounds());
 }
 
 void TrayBubbleView::OnBeforeBubbleWidgetInit(Widget::InitParams* params,
@@ -381,13 +382,8 @@ base::string16 TrayBubbleView::GetAccessibleWindowTitle() const {
 }
 
 gfx::Size TrayBubbleView::CalculatePreferredSize() const {
+  DCHECK_LE(preferred_width_, params_.max_width);
   return gfx::Size(preferred_width_, GetHeightForWidth(preferred_width_));
-}
-
-gfx::Size TrayBubbleView::GetMaximumSize() const {
-  gfx::Size size = GetPreferredSize();
-  size.set_width(params_.max_width);
-  return size;
 }
 
 int TrayBubbleView::GetHeightForWidth(int width) const {
@@ -423,7 +419,7 @@ void TrayBubbleView::OnMouseEntered(const ui::MouseEvent& event) {
     // cannot see a lag.
     mouse_watcher_->set_notify_on_exit_time(
         base::TimeDelta::FromMilliseconds(kFrameTimeInMS));
-    mouse_watcher_->Start();
+    mouse_watcher_->Start(GetWidget()->GetNativeWindow());
   }
 }
 

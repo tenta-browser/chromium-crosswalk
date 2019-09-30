@@ -12,11 +12,12 @@ namespace blink {
 
 typedef ScriptData::PairedBracketType PairedBracketType;
 
-const int ScriptData::kMaxScriptCount = 20;
+constexpr int ScriptRunIterator::kMaxScriptCount;
+constexpr int ScriptData::kMaxScriptCount;
 
 ScriptData::~ScriptData() = default;
 
-void ICUScriptData::GetScripts(UChar32 ch, Vector<UScriptCode>& dst) const {
+void ICUScriptData::GetScripts(UChar32 ch, UScriptCodeList& dst) const {
   ICUError status;
   // Leave room to insert primary script. It's not strictly necessary but
   // it ensures that the result won't ever be greater than kMaxScriptCount,
@@ -57,7 +58,7 @@ void ICUScriptData::GetScripts(UChar32 ch, Vector<UScriptCode>& dst) const {
     // Not common or primary, with extensions that are not in order. We know
     // the primary, so we insert it at the front and swap the previous front
     // to somewhere else in the list.
-    auto it = std::find(dst.begin() + 1, dst.end(), primary_script);
+    auto* it = std::find(dst.begin() + 1, dst.end(), primary_script);
     if (it == dst.end()) {
       dst.push_back(primary_script);
     }
@@ -119,6 +120,8 @@ ScriptRunIterator::ScriptRunIterator(const UChar* text,
     : text_(text),
       length_(length),
       brackets_fixup_depth_(0),
+      next_set_(std::make_unique<UScriptCodeList>()),
+      ahead_set_(std::make_unique<UScriptCodeList>()),
       // The initial value of m_aheadCharacter is not used.
       ahead_character_(0),
       ahead_pos_(0),
@@ -134,7 +137,7 @@ ScriptRunIterator::ScriptRunIterator(const UChar* text,
     // chosing the script of the first consumed character.
     current_set_.push_back(USCRIPT_COMMON);
     U16_NEXT(text_, ahead_pos_, length_, ahead_character_);
-    script_data_->GetScripts(ahead_character_, ahead_set_);
+    script_data_->GetScripts(ahead_character_, *ahead_set_);
   }
 }
 
@@ -164,7 +167,7 @@ bool ScriptRunIterator::Consume(unsigned& limit, UScriptCode& script) {
       limit = pos;
       script = ResolveCurrentScript();
       FixupStack(script);
-      current_set_ = next_set_;
+      current_set_ = *next_set_;
       return true;
     }
   }
@@ -193,8 +196,8 @@ void ScriptRunIterator::CloseBracket(UChar32 ch) {
       if (it->ch == target) {
         // Have a match, use open paren's resolved script.
         UScriptCode script = it->script;
-        next_set_.clear();
-        next_set_.push_back(script);
+        next_set_->clear();
+        next_set_->push_back(script);
 
         // And pop stack to this point.
         int num_popped = std::distance(brackets_.rbegin(), it);
@@ -221,36 +224,36 @@ void ScriptRunIterator::CloseBracket(UChar32 ch) {
 // common, and there is no common preferred script and next has a preferred
 // script, set the common preferred script to that of next.
 bool ScriptRunIterator::MergeSets() {
-  if (next_set_.IsEmpty() || current_set_.IsEmpty()) {
+  if (next_set_->IsEmpty() || current_set_.IsEmpty()) {
     return false;
   }
 
-  auto current_set_it = current_set_.begin();
-  auto current_end = current_set_.end();
+  auto* current_set_it = current_set_.begin();
+  auto* current_end = current_set_.end();
   // Most of the time, this is the only one.
   // Advance the current iterator, we won't need to check it again later.
   UScriptCode priority_script = *current_set_it++;
 
   // If next is common or inherited, the only thing that might change
   // is the common preferred script.
-  if (next_set_.at(0) <= USCRIPT_INHERITED) {
-    if (next_set_.size() == 2 && priority_script <= USCRIPT_INHERITED &&
+  if (next_set_->at(0) <= USCRIPT_INHERITED) {
+    if (next_set_->size() == 2 && priority_script <= USCRIPT_INHERITED &&
         common_preferred_ == USCRIPT_COMMON) {
-      common_preferred_ = next_set_.at(1);
+      common_preferred_ = next_set_->at(1);
     }
     return true;
   }
 
   // If current is common or inherited, use the next script set.
   if (priority_script <= USCRIPT_INHERITED) {
-    current_set_ = next_set_;
+    current_set_ = *next_set_;
     return true;
   }
 
   // Neither is common or inherited. If current is a singleton,
   // just see if it exists in the next set. This is the common case.
-  auto next_it = next_set_.begin();
-  auto next_end = next_set_.end();
+  auto* next_it = next_set_->begin();
+  auto* next_end = next_set_->end();
   if (current_set_it == current_end) {
     return std::find(next_it, next_end, priority_script) != next_end;
   }
@@ -270,7 +273,7 @@ bool ScriptRunIterator::MergeSets() {
 
   // Note that we can never write more scripts into the current vector than
   // it already contains, so currentWriteIt won't ever exceed the size/capacity.
-  auto current_write_it = current_set_.begin();
+  auto* current_write_it = current_set_.begin();
   if (have_priority) {
     // keep the priority script.
     *current_write_it++ = priority_script;
@@ -326,7 +329,7 @@ bool ScriptRunIterator::Fetch(size_t* pos, UChar32* ch) {
   *pos = ahead_pos_ - (ahead_character_ >= 0x10000 ? 2 : 1);
   *ch = ahead_character_;
 
-  next_set_.swap(ahead_set_);
+  std::swap(next_set_, ahead_set_);
   if (ahead_pos_ == length_) {
     // No more data to fetch, but last character still needs to be
     // processed. Advance m_aheadPos so that next time we will know
@@ -336,22 +339,22 @@ bool ScriptRunIterator::Fetch(size_t* pos, UChar32* ch) {
   }
 
   U16_NEXT(text_, ahead_pos_, length_, ahead_character_);
-  script_data_->GetScripts(ahead_character_, ahead_set_);
-  if (ahead_set_.IsEmpty()) {
+  script_data_->GetScripts(ahead_character_, *ahead_set_);
+  if (ahead_set_->IsEmpty()) {
     // No scripts for this character. This has already been logged, so
     // we just terminate processing this text.
     return false;
   }
-  if (ahead_set_[0] == USCRIPT_INHERITED && ahead_set_.size() > 1) {
-    if (next_set_[0] == USCRIPT_COMMON) {
+  if ((*ahead_set_)[0] == USCRIPT_INHERITED && ahead_set_->size() > 1) {
+    if ((*next_set_)[0] == USCRIPT_COMMON) {
       // Overwrite the next set with the non-inherited portion of the set.
-      next_set_ = ahead_set_;
-      next_set_.EraseAt(0);
+      *next_set_ = *ahead_set_;
+      next_set_->EraseAt(0);
       // Discard the remaining values, we'll inherit.
-      ahead_set_.resize(1);
+      ahead_set_->resize(1);
     } else {
       // Else, this applies to anything.
-      ahead_set_.resize(1);
+      ahead_set_->resize(1);
     }
   }
   return true;

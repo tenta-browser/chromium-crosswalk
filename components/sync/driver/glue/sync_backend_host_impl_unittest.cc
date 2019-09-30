@@ -15,8 +15,8 @@
 #include "base/run_loop.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/test/test_timeouts.h"
+#include "base/threading/sequenced_task_runner_handle.h"
 #include "base/threading/thread.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "components/invalidation/impl/invalidator_storage.h"
 #include "components/invalidation/impl/profile_invalidation_provider.h"
@@ -42,8 +42,7 @@
 #include "components/sync_preferences/testing_pref_service_syncable.h"
 #include "google/cacheinvalidation/include/types.h"
 #include "google_apis/gaia/gaia_constants.h"
-#include "net/url_request/test_url_fetcher_factory.h"
-#include "net/url_request/url_request_context_getter.h"
+#include "services/network/public/cpp/shared_url_loader_factory.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
@@ -72,16 +71,21 @@ class TestSyncEngineHost : public SyncEngineHostStub {
                            bool success) override {
     EXPECT_EQ(expect_success_, success);
     set_engine_types_.Run(initial_types);
-    base::RunLoop::QuitCurrentWhenIdleDeprecated();
+    std::move(quit_closure_).Run();
   }
 
   void SetExpectSuccess(bool expect_success) {
     expect_success_ = expect_success;
   }
 
+  void set_quit_closure(base::OnceClosure quit_closure) {
+    quit_closure_ = std::move(quit_closure);
+  }
+
  private:
   base::Callback<void(ModelTypeSet)> set_engine_types_;
   bool expect_success_ = false;
+  base::OnceClosure quit_closure_;
 };
 
 class FakeSyncManagerFactory : public SyncManagerFactory {
@@ -137,6 +141,7 @@ class NullEncryptionObserver : public SyncEncryptionHandler::Observer {
  public:
   void OnPassphraseRequired(
       PassphraseRequiredReason reason,
+      const KeyDerivationParams& key_derivation_params,
       const sync_pb::EncryptedData& pending_keys) override {}
   void OnPassphraseAccepted() override {}
   void OnBootstrapTokenUpdated(const std::string& bootstrap_token,
@@ -273,7 +278,7 @@ class SyncEngineTest : public testing::Test {
  protected:
   void DownloadReady(ModelTypeSet succeeded_types, ModelTypeSet failed_types) {
     engine_types_.PutAll(succeeded_types);
-    base::RunLoop::QuitCurrentWhenIdleDeprecated();
+    std::move(quit_loop_).Run();
   }
 
   void OnDownloadRetry() { NOTIMPLEMENTED(); }
@@ -285,7 +290,9 @@ class SyncEngineTest : public testing::Test {
 
   void PumpSyncThread() {
     base::RunLoop run_loop;
-    base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
+    quit_loop_ = run_loop.QuitClosure();
+    host_.set_quit_closure(run_loop.QuitClosure());
+    base::SequencedTaskRunnerHandle::Get()->PostDelayedTask(
         FROM_HERE, run_loop.QuitClosure(), TestTimeouts::action_timeout());
     run_loop.Run();
   }
@@ -306,6 +313,7 @@ class SyncEngineTest : public testing::Test {
   ModelTypeSet enabled_types_;
   std::unique_ptr<NetworkResources> network_resources_;
   std::unique_ptr<SyncEncryptionHandler::NigoriState> saved_nigori_state_;
+  base::OnceClosure quit_loop_;
 };
 
 // Test basic initialization with no initial types (first time initialization).

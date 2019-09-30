@@ -41,11 +41,15 @@ struct NotificationAction {
 
 // Structure representing the information associated with a Web Notification.
 struct NotificationData {
+  // The maximum size of developer-provided data to be stored in the |data|
+  // property of this structure, in bytes.
+  const uint64 kMaximumDeveloperDataSize = 1048576; // 1024 * 1024 (= 1 MB)
+
   // Title to be displayed with the Web Notification.
   mojo_base.mojom.String16 title;
 
   // Hint to determine the directionality of the displayed notification.
-  NotificationDirection direction;
+  NotificationDirection direction = LEFT_TO_RIGHT;
 
   // BCP 47 language tag describing the notification's contents. Optional.
   string? lang;
@@ -78,25 +82,24 @@ struct NotificationData {
   // The time at which the event the notification represents took place,
   // in milliseconds since the Unix epoch.
   // TODO(https://crbug.com/797306): Use base::TimeTicks instead of a double.
-  double timestamp;
+  double timestamp = 0;
 
   // Whether default notification indicators (sound, vibration, light) should
   // be played again if the notification is replacing an older notification.
-  bool renotify;
+  bool renotify = false;
 
   // Whether default notification indicators (sound, vibration, light) should
   // be suppressed.
-  bool silent;
+  bool silent = false;
 
   // Whether the notification should remain onscreen indefinitely, rather than
   // being auto-minimized to the notification center (if allowed by platform).
-  bool require_interaction;
+  bool require_interaction = false;
 
   // Developer-provided data associated with the notification, in the form of
   // a serialized string. Must not exceed the number of bytes specified by
-  // |kMaximumDeveloperDataBytes| in PlatformNotificationData.
-  // TODO(https://crbug.com/798742): Move |kMaximumDeveloperDataBytes| here.
-  array<int8>? data;
+  // |kMaximumDeveloperDataSize|.
+  array<uint8>? data;
 
   // Actions that should be shown as buttons on the notification.
   array<NotificationAction>? actions;

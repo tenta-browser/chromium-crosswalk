@@ -29,7 +29,6 @@
 #include "chrome/browser/ui/browser_window.h"
 #import "chrome/browser/ui/cocoa/app_menu/app_menu_controller.h"
 #import "chrome/browser/ui/cocoa/background_gradient_view.h"
-#include "chrome/browser/ui/cocoa/browser_dialogs_views_mac.h"
 #include "chrome/browser/ui/cocoa/drag_util.h"
 #import "chrome/browser/ui/cocoa/extensions/browser_action_button.h"
 #import "chrome/browser/ui/cocoa/extensions/browser_actions_container_view.h"
@@ -266,9 +265,9 @@ class NotificationBridge : public AppMenuIconController::Delegate {
             : NSViewMinXMargin | NSViewMinYMargin;
 
   // Make Material Design layout adjustments to the NIB items.
-  ToolbarView* toolbarView = [self toolbarView];
+  ToolbarViewCocoa* toolbarView = [self toolbarView];
   NSRect toolbarBounds = [toolbarView bounds];
-  NSSize toolbarButtonSize = [ToolbarButton toolbarButtonSize];
+  NSSize toolbarButtonSize = [ToolbarButtonCocoa toolbarButtonSize];
 
   // Set the toolbar height.
   NSRect frame = [toolbarView frame];
@@ -568,8 +567,8 @@ class NotificationBridge : public AppMenuIconController::Delegate {
   [self mouseMoved:event];
 }
 
-- (ToolbarView*)toolbarView {
-  return base::mac::ObjCCastStrict<ToolbarView>([self view]);
+- (ToolbarViewCocoa*)toolbarView {
+  return base::mac::ObjCCastStrict<ToolbarViewCocoa>([self view]);
 }
 
 - (LocationBarViewMac*)locationBarBridge {
@@ -983,16 +982,7 @@ class NotificationBridge : public AppMenuIconController::Delegate {
 
 - (NSPoint)appMenuBubblePoint {
   NSRect frame = appMenuButton_.frame;
-  NSPoint point;
-  if (chrome::ShowAllDialogsWithViewsToolkit()) {
-    // Use the bottom right for MD-style anchoring (no arrow).
-    point = NSMakePoint(NSMaxX(frame), NSMinY(frame));
-  } else {
-    // Grab bottom middle of hotdogs.
-    point = NSMakePoint(NSMidX(frame), NSMinY(frame));
-    // Inset to account for the whitespace around the hotdogs.
-    point.y += app_menu_controller::kAppMenuBubblePointOffsetY;
-  }
+  NSPoint point = NSMakePoint(NSMaxX(frame), NSMinY(frame));
   return [self.view convertPoint:point toView:nil];
 }
 
@@ -1011,7 +1001,7 @@ class NotificationBridge : public AppMenuIconController::Delegate {
 }
 
 - (void)setDividerOpacity:(CGFloat)opacity {
-  ToolbarView* toolbarView = [self toolbarView];
+  ToolbarViewCocoa* toolbarView = [self toolbarView];
   [toolbarView setShowsDivider:(opacity > 0 ? YES : NO)];
   [toolbarView setDividerOpacity:opacity];
   [toolbarView setNeedsDisplay:YES];
@@ -1037,8 +1027,8 @@ class NotificationBridge : public AppMenuIconController::Delegate {
 // (URLDropTargetController protocol)
 - (void)dropURLs:(NSArray*)urls inView:(NSView*)view at:(NSPoint)point {
   // TODO(viettrungluu): This code is more or less copied from the code in
-  // |TabStripController|. I'll refactor this soon to make it common and expand
-  // its capabilities (e.g., allow text DnD).
+  // |TabStripControllerCocoa|. I'll refactor this soon to make it common and
+  // expand its capabilities (e.g., allow text DnD).
   if ([urls count] < 1) {
     NOTREACHED();
     return;
@@ -1073,8 +1063,8 @@ class NotificationBridge : public AppMenuIconController::Delegate {
 // (URLDropTargetController protocol)
 - (void)dropText:(NSString*)text inView:(NSView*)view at:(NSPoint)point {
   // TODO(viettrungluu): This code is more or less copied from the code in
-  // |TabStripController|. I'll refactor this soon to make it common and expand
-  // its capabilities (e.g., allow text DnD).
+  // |TabStripControllerCocoa|. I'll refactor this soon to make it common and
+  // expand its capabilities (e.g., allow text DnD).
 
   // If the input is plain text, classify the input and make the URL.
   AutocompleteMatch match;

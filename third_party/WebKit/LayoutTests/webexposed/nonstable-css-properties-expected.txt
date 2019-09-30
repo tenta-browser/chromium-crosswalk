@@ -63,6 +63,46 @@ el.style.setProperty('text-justify', 'distribute')
 el.style.getPropertyValue('text-justify') is distribute
 getComputedStyle(el).getPropertyValue('text-justify') is distribute
 
+el.style.setProperty('text-underline-position', 'left')
+el.style.getPropertyValue('text-underline-position') is left
+getComputedStyle(el).getPropertyValue('text-underline-position') is left
+
+el.style.setProperty('text-underline-position', 'right')
+el.style.getPropertyValue('text-underline-position') is right
+getComputedStyle(el).getPropertyValue('text-underline-position') is right
+
+el.style.setProperty('text-underline-position', 'under left')
+el.style.getPropertyValue('text-underline-position') is under left
+getComputedStyle(el).getPropertyValue('text-underline-position') is under left
+
+el.style.setProperty('text-underline-position', 'right under')
+el.style.getPropertyValue('text-underline-position') is under right
+getComputedStyle(el).getPropertyValue('text-underline-position') is under right
+
+el.style.setProperty('clear', 'inline-start')
+el.style.getPropertyValue('clear') is inline-start
+getComputedStyle(el).getPropertyValue('clear') is left
+
+el.style.setProperty('clear', 'inline-end')
+el.style.getPropertyValue('clear') is inline-end
+getComputedStyle(el).getPropertyValue('clear') is right
+
+el.style.setProperty('float', 'inline-start')
+el.style.getPropertyValue('float') is inline-start
+getComputedStyle(el).getPropertyValue('float') is left
+
+el.style.setProperty('float', 'inline-end')
+el.style.getPropertyValue('float') is inline-end
+getComputedStyle(el).getPropertyValue('float') is right
+
+el.style.setProperty('resize', 'block')
+el.style.getPropertyValue('resize') is block
+getComputedStyle(el).getPropertyValue('resize') is vertical
+
+el.style.setProperty('resize', 'inline')
+el.style.getPropertyValue('resize') is inline
+getComputedStyle(el).getPropertyValue('resize') is horizontal
+
 PASS successfullyParsed is true
 
 TEST COMPLETE

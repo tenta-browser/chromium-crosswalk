@@ -7,11 +7,12 @@
 #include <algorithm>
 
 #include "base/containers/queue.h"
+#include "content/browser/find_in_page_client.h"
 #include "content/browser/frame_host/render_frame_host_impl.h"
 #include "content/browser/web_contents/web_contents_impl.h"
 #include "content/common/frame_messages.h"
-#include "content/common/input_messages.h"
 #include "content/public/browser/guest_mode.h"
+#include "third_party/blink/public/mojom/frame/find_in_page.mojom.h"
 
 namespace content {
 
@@ -218,10 +219,8 @@ class FindRequestManager::FrameObserver : public WebContentsObserver {
 FindRequestManager::ActivateNearestFindResultState::
 ActivateNearestFindResultState() = default;
 FindRequestManager::ActivateNearestFindResultState::
-ActivateNearestFindResultState(float x, float y)
-    : current_request_id(GetNextID()),
-      x(x),
-      y(y) {}
+    ActivateNearestFindResultState(float x, float y)
+    : current_request_id(GetNextID()), point(x, y) {}
 FindRequestManager::ActivateNearestFindResultState::
 ~ActivateNearestFindResultState() {}
 
@@ -271,8 +270,13 @@ void FindRequestManager::Find(int request_id,
 
 void FindRequestManager::StopFinding(StopFindAction action) {
   for (WebContentsImpl* contents : contents_->GetWebContentsAndAllInner()) {
-    contents->SendToAllFrames(
-        new FrameMsg_StopFinding(MSG_ROUTING_NONE, action));
+    for (FrameTreeNode* node : contents->GetFrameTree()->Nodes()) {
+      RenderFrameHostImpl* rfh = node->current_frame_host();
+      if (!CheckFrame(rfh) || !rfh->IsRenderFrameLive())
+        continue;
+      rfh->GetFindInPage()->StopFinding(
+          static_cast<blink::mojom::StopFindAction>(action));
+    }
   }
 
   current_session_id_ = kInvalidId;
@@ -284,87 +288,23 @@ void FindRequestManager::StopFinding(StopFindAction action) {
 #endif
 }
 
-void FindRequestManager::OnFindReply(RenderFrameHost* rfh,
-                                     int request_id,
-                                     int number_of_matches,
-                                     const gfx::Rect& selection_rect,
-                                     int active_match_ordinal,
-                                     bool final_update) {
+bool FindRequestManager::ShouldIgnoreReply(RenderFrameHostImpl* rfh,
+                                           int request_id) {
   // Ignore stale replies from abandoned find sessions or dead frames.
-  if (current_session_id_ == kInvalidId ||
-      request_id < current_session_id_ ||
-      !CheckFrame(rfh)) {
-    return;
-  }
+  return current_session_id_ == kInvalidId ||
+         request_id < current_session_id_ || !CheckFrame(rfh);
+}
 
-  // Update the stored find results.
-
-  DCHECK_GE(number_of_matches, -1);
-  DCHECK_GE(active_match_ordinal, -1);
-
-  // Check for an update to the number of matches.
-  if (number_of_matches != -1) {
-    DCHECK_GE(number_of_matches, 0);
-    auto matches_per_frame_it = matches_per_frame_.find(rfh);
-    if (int matches_delta = number_of_matches - matches_per_frame_it->second) {
-      // Increment the global number of matches by the number of additional
-      // matches found for this frame.
-      number_of_matches_ += matches_delta;
-      matches_per_frame_it->second = number_of_matches;
-
-      // All matches may have been removed since the last find reply.
-      if (rfh == active_frame_ && !number_of_matches)
-        relative_active_match_ordinal_ = 0;
-
-      // The active match ordinal may need updating since the number of matches
-      // before the active match may have changed.
-      if (rfh != active_frame_ || !number_of_matches)
-        UpdateActiveMatchOrdinal();
-    }
-  }
-
-  // Check for an update to the selection rect.
-  if (!selection_rect.IsEmpty())
-    selection_rect_ = selection_rect;
-
-  // Check for an update to the active match ordinal.
-  if (active_match_ordinal > 0) {
-    if (rfh == active_frame_) {
-      active_match_ordinal_ +=
-          active_match_ordinal - relative_active_match_ordinal_;
-      relative_active_match_ordinal_ = active_match_ordinal;
-    } else {
-      if (active_frame_) {
-        // The new active match is in a different frame than the previous, so
-        // the previous active frame needs to be informed (to clear its active
-        // match highlighting).
-        active_frame_->Send(new FrameMsg_ClearActiveFindMatch(
-            active_frame_->GetRoutingID()));
-      }
-      active_frame_ = rfh;
-      relative_active_match_ordinal_ = active_match_ordinal;
-      UpdateActiveMatchOrdinal();
-    }
-    if (pending_active_match_ordinal_ && request_id == current_request_.id)
-      pending_active_match_ordinal_ = false;
-    AdvanceQueue(request_id);
-  }
-
-  if (!final_update) {
-    NotifyFindReply(request_id, false /* final_update */);
-    return;
-  }
-
+void FindRequestManager::HandleFinalUpdateForFrame(RenderFrameHostImpl* rfh,
+                                                   int request_id) {
   // This is the final update for this frame for the current find operation.
-
   pending_initial_replies_.erase(rfh);
   if (request_id == current_session_id_ && !pending_initial_replies_.empty()) {
     NotifyFindReply(request_id, false /* final_update */);
     return;
   }
 
-  // This is the final update for the current find operation.
-
+  // This is the final update for all frames for the current find operation.
   if (request_id == current_request_.id && request_id != current_session_id_) {
     DCHECK(current_request_.options.find_next);
     DCHECK_EQ(pending_find_next_reply_, rfh);
@@ -374,16 +314,73 @@ void FindRequestManager::OnFindReply(RenderFrameHost* rfh,
   FinalUpdateReceived(request_id, rfh);
 }
 
+void FindRequestManager::UpdatedFrameNumberOfMatches(RenderFrameHostImpl* rfh,
+                                                     unsigned int old_count,
+                                                     unsigned int new_count) {
+  if (old_count == new_count)
+    return;
+
+  // Change the number of matches for this frame in the global count.
+  number_of_matches_ -= old_count;
+  number_of_matches_ += new_count;
+
+  // All matches may have been removed since the last find reply.
+  if (rfh == active_frame_ && !new_count)
+    relative_active_match_ordinal_ = 0;
+
+  // The active match ordinal may need updating since the number of matches
+  // before the active match may have changed.
+  UpdateActiveMatchOrdinal();
+}
+
+void FindRequestManager::SetActiveMatchRect(
+    const gfx::Rect& active_match_rect) {
+  selection_rect_ = active_match_rect;
+}
+
+void FindRequestManager::SetActiveMatchOrdinal(RenderFrameHostImpl* rfh,
+                                               int request_id,
+                                               int active_match_ordinal) {
+  if (active_match_ordinal > 0) {
+    // Call SetFocusedFrame on the WebContents associated with |rfh| (which
+    // might not be the same as |contents_|, as a WebContents might have
+    // inner WebContents). We need to focus on the frame where the active
+    // match is in, which should be in the |rfh|'s associated WebContents.
+    WebContentsImpl* web_contents =
+        static_cast<WebContentsImpl*>(WebContents::FromRenderFrameHost(rfh));
+    web_contents->SetFocusedFrame(rfh->frame_tree_node(),
+                                  rfh->GetSiteInstance());
+  }
+  if (rfh == active_frame_) {
+    active_match_ordinal_ +=
+        active_match_ordinal - relative_active_match_ordinal_;
+    relative_active_match_ordinal_ = active_match_ordinal;
+  } else {
+    if (active_frame_) {
+      // The new active match is in a different frame than the previous, so
+      // the previous active frame needs to be informed (to clear its active
+      // match highlighting).
+      ClearActiveFindMatch();
+    }
+    active_frame_ = rfh;
+    relative_active_match_ordinal_ = active_match_ordinal;
+    UpdateActiveMatchOrdinal();
+  }
+  if (pending_active_match_ordinal_ && request_id == current_request_.id)
+    pending_active_match_ordinal_ = false;
+  AdvanceQueue(request_id);
+}
+
 void FindRequestManager::RemoveFrame(RenderFrameHost* rfh) {
   if (current_session_id_ == kInvalidId || !CheckFrame(rfh))
     return;
 
   // If matches are counted for the frame that is being removed, decrement the
   // match total before erasing that entry.
-  auto it = matches_per_frame_.find(rfh);
-  if (it != matches_per_frame_.end()) {
-    number_of_matches_ -= it->second;
-    matches_per_frame_.erase(it);
+  auto it = find_in_page_clients_.find(rfh);
+  if (it != find_in_page_clients_.end()) {
+    number_of_matches_ -= it->second->number_of_matches();
+    find_in_page_clients_.erase(it);
   }
 
   // Update the active match ordinal, since it may have changed.
@@ -436,6 +433,10 @@ void FindRequestManager::RemoveFrame(RenderFrameHost* rfh) {
   }
 }
 
+void FindRequestManager::ClearActiveFindMatch() {
+  active_frame_->GetFindInPage()->ClearActiveFindMatch();
+}
+
 #if defined(OS_ANDROID)
 void FindRequestManager::ActivateNearestFindResult(float x, float y) {
   if (current_session_id_ == kInvalidId)
@@ -447,20 +448,24 @@ void FindRequestManager::ActivateNearestFindResult(float x, float y) {
   // frame) from the point (x, y), defined in find-in-page coordinates.
   for (WebContentsImpl* contents : contents_->GetWebContentsAndAllInner()) {
     for (FrameTreeNode* node : contents->GetFrameTree()->Nodes()) {
-      RenderFrameHost* rfh = node->current_frame_host();
+      RenderFrameHostImpl* rfh = node->current_frame_host();
 
       if (!CheckFrame(rfh) || !rfh->IsRenderFrameLive())
         continue;
 
       activate_.pending_replies.insert(rfh);
-      rfh->Send(new FrameMsg_GetNearestFindResult(rfh->GetRoutingID(),
-                                                  activate_.current_request_id,
-                                                  activate_.x, activate_.y));
+      // Lifetime of FindRequestManager > RenderFrameHost > Mojo connection,
+      // so it's safe to bind |this| and |rfh|.
+      rfh->GetFindInPage()->GetNearestFindResult(
+          activate_.point,
+          base::BindOnce(&FindRequestManager::OnGetNearestFindResultReply,
+                         base::Unretained(this), rfh,
+                         activate_.current_request_id));
     }
   }
 }
 
-void FindRequestManager::OnGetNearestFindResultReply(RenderFrameHost* rfh,
+void FindRequestManager::OnGetNearestFindResultReply(RenderFrameHostImpl* rfh,
                                                      int request_id,
                                                      float distance) {
   if (request_id != activate_.current_request_id ||
@@ -484,7 +489,7 @@ void FindRequestManager::RequestFindMatchRects(int current_version) {
   // Request the latest find match rects from each frame.
   for (WebContentsImpl* contents : contents_->GetWebContentsAndAllInner()) {
     for (FrameTreeNode* node : contents->GetFrameTree()->Nodes()) {
-      RenderFrameHost* rfh = node->current_frame_host();
+      RenderFrameHostImpl* rfh = node->current_frame_host();
 
       if (!CheckFrame(rfh) || !rfh->IsRenderFrameLive())
         continue;
@@ -493,7 +498,9 @@ void FindRequestManager::RequestFindMatchRects(int current_version) {
       auto it = match_rects_.frame_rects.find(rfh);
       int version = (it != match_rects_.frame_rects.end()) ? it->second.version
                                                            : kInvalidId;
-      rfh->Send(new FrameMsg_FindMatchRects(rfh->GetRoutingID(), version));
+      rfh->GetFindInPage()->FindMatchRects(
+          version, base::BindOnce(&FindRequestManager::OnFindMatchRectsReply,
+                                  base::Unretained(this), rfh));
     }
   }
 }
@@ -521,7 +528,7 @@ void FindRequestManager::Reset(const FindRequest& initial_request) {
   pending_initial_replies_.clear();
   pending_find_next_reply_ = nullptr;
   pending_active_match_ordinal_ = true;
-  matches_per_frame_.clear();
+  find_in_page_clients_.clear();
   number_of_matches_ = 0;
   active_frame_ = nullptr;
   relative_active_match_ordinal_ = 0;
@@ -554,7 +561,7 @@ void FindRequestManager::FindInternal(const FindRequest& request) {
     if (!target_rfh || !CheckFrame(target_rfh))
       target_rfh = GetInitialFrame(request.options.forward);
 
-    SendFindIPC(request, target_rfh);
+    SendFindRequest(request, target_rfh);
     current_request_ = request;
     pending_active_match_ordinal_ = true;
     return;
@@ -581,8 +588,8 @@ void FindRequestManager::AdvanceQueue(int request_id) {
     FindInternal(find_request_queue_.front());
 }
 
-void FindRequestManager::SendFindIPC(const FindRequest& request,
-                                     RenderFrameHost* rfh) {
+void FindRequestManager::SendFindRequest(const FindRequest& request,
+                                         RenderFrameHost* rfh) {
   DCHECK(CheckFrame(rfh));
   DCHECK(rfh->IsRenderFrameLive());
 
@@ -591,8 +598,15 @@ void FindRequestManager::SendFindIPC(const FindRequest& request,
   else
     pending_initial_replies_.insert(rfh);
 
-  rfh->Send(new FrameMsg_Find(rfh->GetRoutingID(), request.id,
-                              request.search_text, request.options));
+  blink::mojom::FindOptionsPtr options(blink::mojom::FindOptions::New());
+  options->forward = request.options.forward;
+  options->match_case = request.options.match_case;
+  options->find_next = request.options.find_next;
+  options->force = request.options.force;
+  options->run_synchronously_for_testing =
+      request.options.run_synchronously_for_testing;
+  static_cast<RenderFrameHostImpl*>(rfh)->GetFindInPage()->Find(
+      request.id, base::UTF16ToUTF8(request.search_text), std::move(options));
 }
 
 void FindRequestManager::NotifyFindReply(int request_id, bool final_update) {
@@ -633,7 +647,8 @@ RenderFrameHost* FindRequestManager::Traverse(RenderFrameHost* from_rfh,
     if (!CheckFrame(node->current_frame_host()))
       continue;
     RenderFrameHost* current_rfh = node->current_frame_host();
-    if (!matches_only || matches_per_frame_.find(current_rfh)->second ||
+    if (!matches_only ||
+        find_in_page_clients_.find(current_rfh)->second->number_of_matches() ||
         pending_initial_replies_.count(current_rfh)) {
       // Note that if there is still a pending reply expected for this frame,
       // then it may have unaccounted matches and will not be skipped via
@@ -654,17 +669,18 @@ void FindRequestManager::AddFrame(RenderFrameHost* rfh, bool force) {
   // A frame that is already being searched should not normally be added again.
   DCHECK(force || !CheckFrame(rfh));
 
-  matches_per_frame_[rfh] = 0;
+  find_in_page_clients_[rfh] = std::make_unique<FindInPageClient>(
+      this, static_cast<RenderFrameHostImpl*>(rfh));
 
   FindRequest request = current_request_;
   request.id = current_session_id_;
   request.options.find_next = false;
   request.options.force = force;
-  SendFindIPC(request, rfh);
+  SendFindRequest(request, rfh);
 }
 
 bool FindRequestManager::CheckFrame(RenderFrameHost* rfh) const {
-  return rfh && matches_per_frame_.count(rfh);
+  return rfh && find_in_page_clients_.count(rfh);
 }
 
 void FindRequestManager::UpdateActiveMatchOrdinal() {
@@ -683,7 +699,7 @@ void FindRequestManager::UpdateActiveMatchOrdinal() {
                            false /* forward */,
                            true /* matches_only */,
                            false /* wrap */)) != nullptr) {
-    active_match_ordinal_ += matches_per_frame_[frame];
+    active_match_ordinal_ += find_in_page_clients_[frame]->number_of_matches();
   }
   active_match_ordinal_ += relative_active_match_ordinal_;
 }
@@ -725,7 +741,8 @@ void FindRequestManager::FinalUpdateReceived(int request_id,
   } else {
     // Otherwise, the first frame with matches will have the active match.
     target_rfh = GetInitialFrame(current_request_.options.forward);
-    if (!CheckFrame(target_rfh) || !matches_per_frame_[target_rfh]) {
+    if (!CheckFrame(target_rfh) ||
+        !find_in_page_clients_[target_rfh]->number_of_matches()) {
       target_rfh = Traverse(target_rfh,
                             current_request_.options.forward,
                             true /* matches_only */,
@@ -739,7 +756,7 @@ void FindRequestManager::FinalUpdateReceived(int request_id,
   NotifyFindReply(request_id, false /* final_update */);
 
   current_request_.options.find_next = true;
-  SendFindIPC(current_request_, target_rfh);
+  SendFindRequest(current_request_, target_rfh);
 }
 
 #if defined(OS_ANDROID)
@@ -752,9 +769,10 @@ void FindRequestManager::RemoveNearestFindResultPendingReply(
   activate_.pending_replies.erase(it);
   if (activate_.pending_replies.empty() &&
       CheckFrame(activate_.nearest_frame)) {
-    activate_.nearest_frame->Send(new FrameMsg_ActivateNearestFindResult(
-        activate_.nearest_frame->GetRoutingID(),
-        current_session_id_, activate_.x, activate_.y));
+    const auto client_it = find_in_page_clients_.find(activate_.nearest_frame);
+    if (client_it != find_in_page_clients_.end())
+      client_it->second->ActivateNearestFindResult(current_session_id_,
+                                                   activate_.point);
   }
 }
 

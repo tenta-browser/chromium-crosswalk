@@ -4,13 +4,13 @@
 
 #include <SensorsApi.h>
 #include <objbase.h>
-#include <propvarutil.h>
 #include <sensors.h>
 
 #include "base/bind.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/win/iunknown_impl.h"
+#include "base/win/propvarutil.h"
 #include "base/win/scoped_propvariant.h"
 #include "services/device/generic_sensor/fake_platform_sensor_and_provider.h"
 #include "services/device/generic_sensor/generic_sensor_consts.h"
@@ -241,6 +241,14 @@ class PlatformSensorAndProviderTestWin : public ::testing::Test {
   }
 
   void QuitInnerLoop() { run_loop_->Quit(); }
+
+  void SetUnsupportedSensor(REFSENSOR_TYPE_ID sensor) {
+    EXPECT_CALL(*sensor_manager_, GetSensorsByType(sensor, _))
+        .WillOnce(Invoke(
+            [this](REFSENSOR_TYPE_ID type, ISensorCollection** collection) {
+              return HRESULT_FROM_WIN32(ERROR_NOT_FOUND);
+            }));
+  }
 
   // Sets sensor with REFSENSOR_TYPE_ID |sensor| to be supported by mocked
   // ISensorMager and it will be present in ISensorCollection.
@@ -734,6 +742,33 @@ TEST_F(PlatformSensorAndProviderTestWin,
   EXPECT_THAT(buffer->reading.orientation_quat.z, z);
   EXPECT_THAT(buffer->reading.orientation_quat.w, w);
   EXPECT_TRUE(sensor->StopListening(client.get(), configuration));
+}
+
+// Tests that when only the quaternion version of the absolute orientation
+// sensor is available the provider falls back to using a fusion algorithm
+// to provide the euler angles version.
+TEST_F(PlatformSensorAndProviderTestWin,
+       CheckDeviceOrientationEulerAnglesFallback) {
+  SetUnsupportedSensor(SENSOR_TYPE_INCLINOMETER_3D);
+  SetSupportedSensor(SENSOR_TYPE_AGGREGATED_DEVICE_ORIENTATION);
+
+  auto sensor = CreateSensor(SensorType::ABSOLUTE_ORIENTATION_EULER_ANGLES);
+  EXPECT_TRUE(sensor);
+}
+
+// Tests that with neither absolute orientation sensor type available
+// the fallback logic does not generate an infinite loop.
+TEST_F(PlatformSensorAndProviderTestWin,
+       CheckDeviceOrientationFallbackFailure) {
+  SetUnsupportedSensor(SENSOR_TYPE_INCLINOMETER_3D);
+  SetUnsupportedSensor(SENSOR_TYPE_AGGREGATED_DEVICE_ORIENTATION);
+
+  auto euler_angles_sensor =
+      CreateSensor(SensorType::ABSOLUTE_ORIENTATION_EULER_ANGLES);
+  EXPECT_FALSE(euler_angles_sensor);
+  auto quaternion_sensor =
+      CreateSensor(SensorType::ABSOLUTE_ORIENTATION_QUATERNION);
+  EXPECT_FALSE(quaternion_sensor);
 }
 
 }  // namespace device

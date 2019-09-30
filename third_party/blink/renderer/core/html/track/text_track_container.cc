@@ -29,6 +29,7 @@
 
 #include "third_party/blink/renderer/core/html/track/text_track_container.h"
 
+#include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/html/media/html_video_element.h"
 #include "third_party/blink/renderer/core/html/track/cue_timeline.h"
 #include "third_party/blink/renderer/core/html/track/text_track.h"
@@ -54,7 +55,7 @@ class VideoElementResizeDelegate final : public ResizeObserver::Delegate {
         entries[0]->target()->GetLayoutObject());
   }
 
-  virtual void Trace(blink::Visitor* visitor) {
+  void Trace(blink::Visitor* visitor) override {
     visitor->Trace(text_track_container_);
     ResizeObserver::Delegate::Trace(visitor);
   }
@@ -85,6 +86,11 @@ TextTrackContainer* TextTrackContainer::Create(
 }
 
 LayoutObject* TextTrackContainer::CreateLayoutObject(const ComputedStyle&) {
+  // TODO(mstensho): Should use LayoutObjectFactory to create the right type of
+  // object here, to enable LayoutNG, but currently we can't, because this will
+  // typically be a child of LayoutVideo (a legacy type), and we'll typically
+  // also insert a LayoutVTTCue (a LayoutBlockFlow type) child, which also isn't
+  // implemented in NG.
   return new LayoutBlockFlow(this);
 }
 
@@ -107,6 +113,8 @@ void TextTrackContainer::UpdateDefaultFontSize(
   LayoutUnit smallest_dimension =
       std::min(video_size.Height(), video_size.Width());
   float font_size = smallest_dimension * 0.05f;
+  if (media_layout_object->GetFrame())
+    font_size /= media_layout_object->GetFrame()->PageZoomFactor();
 
   // Avoid excessive FP precision issue.
   // C11 5.2.4.2.2:9 requires assignment and cast to remove extra precision, but

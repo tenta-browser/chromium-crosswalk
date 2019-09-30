@@ -23,6 +23,7 @@
 #include "third_party/blink/renderer/core/dom/node.h"
 #include "third_party/blink/renderer/core/dom/node_computed_style.h"
 #include "third_party/blink/renderer/core/dom/text.h"
+#include "third_party/blink/renderer/core/editing/editing_behavior.h"
 #include "third_party/blink/renderer/core/editing/editing_utilities.h"
 #include "third_party/blink/renderer/core/editing/editor.h"
 #include "third_party/blink/renderer/core/editing/frame_selection.h"
@@ -44,7 +45,7 @@ namespace blink {
 namespace TouchAdjustment {
 
 const float kZeroTolerance = 1e-6f;
-constexpr float kMaxAdjustmentRadiusDips = 16.f;
+constexpr float kMaxAdjustmentSizeDips = 32.f;
 
 // Class for remembering absolute quads of a target node and what node they
 // represent.
@@ -208,31 +209,12 @@ static inline void AppendContextSubtargetsForNode(
       return AppendBasicSubtargetsForNode(node, subtargets);
     const FrameSelection& frame_selection =
         text_layout_object->GetFrame()->Selection();
+    const LayoutTextSelectionStatus& selection_status =
+        frame_selection.ComputeLayoutSelectionStatus(*text_layout_object);
     // If selected, make subtargets out of only the selected part of the text.
-    int start_pos, end_pos;
-    switch (text_layout_object->GetSelectionState()) {
-      case SelectionState::kInside:
-        start_pos = 0;
-        end_pos = text_layout_object->TextLength();
-        break;
-      case SelectionState::kStart:
-        start_pos = frame_selection.LayoutSelectionStart().value();
-        end_pos = text_layout_object->TextLength();
-        break;
-      case SelectionState::kEnd:
-        start_pos = 0;
-        end_pos = frame_selection.LayoutSelectionEnd().value();
-        break;
-      case SelectionState::kStartAndEnd:
-        start_pos = frame_selection.LayoutSelectionStart().value();
-        end_pos = frame_selection.LayoutSelectionEnd().value();
-        break;
-      default:
-        NOTREACHED();
-        return;
-    }
     Vector<FloatQuad> quads;
-    text_layout_object->AbsoluteQuadsForRange(quads, start_pos, end_pos);
+    text_layout_object->AbsoluteQuadsForRange(quads, selection_status.start,
+                                              selection_status.end);
     AppendQuadsToSubtargetList(quads, text_node, subtargets);
   }
 }
@@ -337,7 +319,7 @@ void CompileSubtargetList(const HeapVector<Member<Node>>& intersected_nodes,
 float ZoomableIntersectionQuotient(const IntPoint& touch_hotspot,
                                    const IntRect& touch_area,
                                    const SubtargetGeometry& subtarget) {
-  IntRect rect = subtarget.GetNode()->GetDocument().View()->ContentsToRootFrame(
+  IntRect rect = subtarget.GetNode()->GetDocument().View()->ConvertToRootFrame(
       subtarget.BoundingBox());
 
   // Check the rectangle is meaningful zoom target. It should at least contain
@@ -361,7 +343,7 @@ float ZoomableIntersectionQuotient(const IntPoint& touch_hotspot,
 float HybridDistanceFunction(const IntPoint& touch_hotspot,
                              const IntRect& touch_rect,
                              const SubtargetGeometry& subtarget) {
-  IntRect rect = subtarget.GetNode()->GetDocument().View()->ContentsToRootFrame(
+  IntRect rect = subtarget.GetNode()->GetDocument().View()->ConvertToRootFrame(
       subtarget.BoundingBox());
 
   float radius_squared = 0.25f * (touch_rect.Size().DiagonalLengthSquared());
@@ -380,16 +362,16 @@ float HybridDistanceFunction(const IntPoint& touch_hotspot,
   return hybrid_score;
 }
 
-FloatPoint ContentsToRootFrame(LocalFrameView* view, FloatPoint pt) {
+FloatPoint ConvertToRootFrame(LocalFrameView* view, FloatPoint pt) {
   int x = static_cast<int>(pt.X() + 0.5f);
   int y = static_cast<int>(pt.Y() + 0.5f);
-  IntPoint adjusted = view->ContentsToRootFrame(IntPoint(x, y));
+  IntPoint adjusted = view->ConvertToRootFrame(IntPoint(x, y));
   return FloatPoint(adjusted.X(), adjusted.Y());
 }
 
 // Adjusts 'point' to the nearest point inside rect, and leaves it unchanged if
 // already inside.
-void AdjustPointToRect(FloatPoint& point, const FloatRect& rect) {
+void AdjustPointToRect(FloatPoint& point, const IntRect& rect) {
   if (point.X() < rect.X())
     point.SetX(rect.X());
   else if (point.X() > rect.MaxX())
@@ -409,7 +391,7 @@ bool SnapTo(const SubtargetGeometry& geom,
   FloatQuad quad = geom.Quad();
 
   if (quad.IsRectilinear()) {
-    IntRect bounds = view->ContentsToRootFrame(geom.BoundingBox());
+    IntRect bounds = view->ConvertToRootFrame(geom.BoundingBox());
     if (bounds.Contains(touch_point)) {
       adjusted_point = touch_point;
       return true;
@@ -429,13 +411,13 @@ bool SnapTo(const SubtargetGeometry& geom,
   // the quad. Corner-cases exist where the quad will intersect but this will
   // fail to adjust the point to somewhere in the intersection.
 
-  FloatPoint p1 = ContentsToRootFrame(view, quad.P1());
-  FloatPoint p2 = ContentsToRootFrame(view, quad.P2());
-  FloatPoint p3 = ContentsToRootFrame(view, quad.P3());
-  FloatPoint p4 = ContentsToRootFrame(view, quad.P4());
+  FloatPoint p1 = ConvertToRootFrame(view, quad.P1());
+  FloatPoint p2 = ConvertToRootFrame(view, quad.P2());
+  FloatPoint p3 = ConvertToRootFrame(view, quad.P3());
+  FloatPoint p4 = ConvertToRootFrame(view, quad.P4());
   quad = FloatQuad(p1, p2, p3, p4);
 
-  if (quad.ContainsPoint(touch_point)) {
+  if (quad.ContainsPoint(FloatPoint(touch_point))) {
     adjusted_point = touch_point;
     return true;
   }
@@ -446,7 +428,7 @@ bool SnapTo(const SubtargetGeometry& geom,
   AdjustPointToRect(center, touch_area);
   adjusted_point = RoundedIntPoint(center);
 
-  return quad.ContainsPoint(adjusted_point);
+  return quad.ContainsPoint(FloatPoint(adjusted_point));
 }
 
 // A generic function for finding the target node with the lowest distance
@@ -492,9 +474,10 @@ bool FindNodeWithLowestDistanceMetric(Node*& target_node,
   if (target_node && target_node->IsPseudoElement())
     target_node = target_node->ParentOrShadowHostNode();
 
-  if (target_node)
+  if (target_node) {
     target_area =
-        target_node->GetDocument().View()->ContentsToRootFrame(target_area);
+        target_node->GetDocument().View()->ConvertToRootFrame(target_area);
+  }
 
   return (target_node);
 }
@@ -531,10 +514,10 @@ bool FindBestContextMenuCandidate(Node*& target_node,
       subtargets, TouchAdjustment::HybridDistanceFunction);
 }
 
-LayoutSize GetHitTestRectForAdjustment(const IntSize& touch_area) {
-  const LayoutSize max_size(TouchAdjustment::kMaxAdjustmentRadiusDips,
-                            TouchAdjustment::kMaxAdjustmentRadiusDips);
-  return LayoutSize(touch_area).ShrunkTo(max_size);
+LayoutSize GetHitTestRectForAdjustment(const LayoutSize& touch_area) {
+  const LayoutSize max_size(TouchAdjustment::kMaxAdjustmentSizeDips,
+                            TouchAdjustment::kMaxAdjustmentSizeDips);
+  return touch_area.ShrunkTo(max_size);
 }
 
 }  // namespace blink

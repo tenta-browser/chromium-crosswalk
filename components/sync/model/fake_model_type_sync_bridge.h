@@ -54,6 +54,7 @@ class FakeModelTypeSyncBridge : public ModelTypeSyncBridge {
     void PutMetadata(const std::string& key,
                      const sync_pb::EntityMetadata& metadata);
     void RemoveData(const std::string& key);
+    void ClearAllData();
     void RemoveMetadata(const std::string& key);
     bool HasData(const std::string& key) const;
     bool HasMetadata(const std::string& key) const;
@@ -113,7 +114,7 @@ class FakeModelTypeSyncBridge : public ModelTypeSyncBridge {
       std::unique_ptr<MetadataChangeList> metadata_change_list,
       EntityChangeList entity_changes) override;
   void GetData(StorageKeyList storage_keys, DataCallback callback) override;
-  void GetAllData(DataCallback callback) override;
+  void GetAllDataForDebugging(DataCallback callback) override;
   std::string GetClientTag(const EntityData& entity_data) override;
   std::string GetStorageKey(const EntityData& entity_data) override;
   bool SupportsGetStorageKey() const override;

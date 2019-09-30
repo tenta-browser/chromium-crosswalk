@@ -75,7 +75,7 @@ class CORE_EXPORT StyleResolver final
       const ComputedStyle* layout_parent_style = nullptr,
       RuleMatchingBehavior = kMatchAllRules);
 
-  static scoped_refptr<AnimatableValue> CreateAnimatableValueSnapshot(
+  static AnimatableValue* CreateAnimatableValueSnapshot(
       Element&,
       const ComputedStyle& base_style,
       const ComputedStyle* parent_style,
@@ -133,8 +133,6 @@ class CORE_EXPORT StyleResolver final
     return style_not_yet_available_;
   }
 
-  PseudoElement* CreatePseudoElementIfNeeded(Element& parent, PseudoId);
-
   void SetRuleUsageTracker(StyleRuleUsageTracker*);
   void UpdateMediaType();
 
@@ -165,6 +163,8 @@ class CORE_EXPORT StyleResolver final
   void MatchRuleSet(ElementRuleCollector&, RuleSet*);
   void MatchUARules(ElementRuleCollector&);
   void MatchUserRules(ElementRuleCollector&);
+  // This matches `::part` selectors. It looks in ancestor scopes as far as
+  // part mapping requires.
   void MatchPseudoPartRules(const Element&, ElementRuleCollector&);
   void MatchScopedRulesV0(const Element&,
                           ElementRuleCollector&,
@@ -179,6 +179,8 @@ class CORE_EXPORT StyleResolver final
 
   struct CacheSuccess {
     STACK_ALLOCATED();
+
+   public:
     bool is_inherited_cache_hit;
     bool is_non_inherited_cache_hit;
     unsigned cache_hash;
@@ -278,15 +280,10 @@ class CORE_EXPORT StyleResolver final
 
   bool PseudoStyleForElementInternal(Element&,
                                      const PseudoStyleRequest&,
-                                     const ComputedStyle* parent_style,
                                      StyleResolverState&);
 
   bool HasAuthorBorder(const StyleResolverState&);
-
-  PseudoElement* CreatePseudoElement(Element* parent, PseudoId);
-
   Document& GetDocument() const { return *document_; }
-
   bool WasViewportResized() const { return was_viewport_resized_; }
 
   static ComputedStyle* style_not_yet_available_;

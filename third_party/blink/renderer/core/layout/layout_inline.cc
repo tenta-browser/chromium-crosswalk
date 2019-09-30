@@ -29,21 +29,22 @@
 #include "third_party/blink/renderer/core/layout/api/line_layout_box_model.h"
 #include "third_party/blink/renderer/core/layout/hit_test_result.h"
 #include "third_party/blink/renderer/core/layout/layout_block.h"
-#include "third_party/blink/renderer/core/layout/layout_full_screen.h"
 #include "third_party/blink/renderer/core/layout/layout_geometry_map.h"
 #include "third_party/blink/renderer/core/layout/layout_theme.h"
 #include "third_party/blink/renderer/core/layout/layout_view.h"
 #include "third_party/blink/renderer/core/layout/line/inline_text_box.h"
 #include "third_party/blink/renderer/core/layout/ng/inline/ng_inline_fragment_traversal.h"
 #include "third_party/blink/renderer/core/layout/ng/layout_ng_block_flow.h"
+#include "third_party/blink/renderer/core/layout/ng/ng_physical_box_fragment.h"
 #include "third_party/blink/renderer/core/paint/box_painter.h"
 #include "third_party/blink/renderer/core/paint/inline_painter.h"
+#include "third_party/blink/renderer/core/paint/ng/ng_box_fragment_painter.h"
 #include "third_party/blink/renderer/core/paint/ng/ng_paint_fragment.h"
 #include "third_party/blink/renderer/core/paint/object_painter.h"
 #include "third_party/blink/renderer/core/paint/paint_layer.h"
 #include "third_party/blink/renderer/platform/geometry/float_quad.h"
 #include "third_party/blink/renderer/platform/geometry/region.h"
-#include "third_party/blink/renderer/platform/geometry/transform_state.h"
+#include "third_party/blink/renderer/platform/transforms/transform_state.h"
 
 namespace blink {
 
@@ -69,14 +70,30 @@ struct SameSizeAsLayoutInline : public LayoutBoxModelObject {
 static_assert(sizeof(LayoutInline) == sizeof(SameSizeAsLayoutInline),
               "LayoutInline should stay small");
 
-LayoutInline::LayoutInline(Element* element) : LayoutBoxModelObject(element) {
+LayoutInline::LayoutInline(Element* element)
+    : LayoutBoxModelObject(element), line_boxes_() {
   SetChildrenInline(true);
+}
+
+LayoutInline::~LayoutInline() {
+#if DCHECK_IS_ON()
+  if (IsInLayoutNGInlineFormattingContext())
+    DCHECK(!first_paint_fragment_);
+  else
+    line_boxes_.AssertIsEmpty();
+#endif
 }
 
 LayoutInline* LayoutInline::CreateAnonymous(Document* document) {
   LayoutInline* layout_inline = new LayoutInline(nullptr);
   layout_inline->SetDocumentForAnonymous(document);
   return layout_inline;
+}
+
+bool LayoutInline::IsFirstLineAnonymous() const {
+  // TODO(kojii): We can add a flag, but this seems enough for now.
+  return IsAnonymous() && Parent() && Parent()->IsLayoutBlockFlow() &&
+         !PreviousSibling() && !NextSibling();
 }
 
 void LayoutInline::WillBeDestroyed() {
@@ -98,13 +115,6 @@ void LayoutInline::WillBeDestroyed() {
 
   if (!DocumentBeingDestroyed()) {
     if (FirstLineBox()) {
-      // We can't wait for LayoutBoxModelObject::destroy to clear the selection,
-      // because by then we will have nuked the line boxes.
-      // FIXME: The FrameSelection should be responsible for this when it
-      // is notified of DOM mutations.
-      if (IsSelectionBorder())
-        View()->ClearSelection();
-
       // If line boxes are contained inside a root, that means we're an inline.
       // In that case, we need to remove all the line boxes so that the parent
       // lines aren't pointing to deleted children. If the first line box does
@@ -119,9 +129,30 @@ void LayoutInline::WillBeDestroyed() {
     }
   }
 
-  line_boxes_.DeleteLineBoxes();
+  DeleteLineBoxes();
 
   LayoutBoxModelObject::WillBeDestroyed();
+}
+
+void LayoutInline::DeleteLineBoxes() {
+  if (IsInLayoutNGInlineFormattingContext())
+    SetFirstInlineFragment(nullptr);
+  else
+    MutableLineBoxes()->DeleteLineBoxes();
+}
+
+void LayoutInline::SetFirstInlineFragment(NGPaintFragment* fragment) {
+  CHECK(IsInLayoutNGInlineFormattingContext());
+  NGPaintFragment::ResetInlineFragmentsFor(this);
+  first_paint_fragment_ = fragment;
+}
+
+void LayoutInline::InLayoutNGInlineFormattingContextWillChange(bool new_value) {
+  DeleteLineBoxes();
+
+  // Because |first_paint_fragment_| and |line_boxes_| are union, when one is
+  // deleted, the other should be initialized to nullptr.
+  DCHECK(new_value ? !first_paint_fragment_ : !line_boxes_.First());
 }
 
 LayoutInline* LayoutInline::InlineElementContinuation() const {
@@ -242,6 +273,9 @@ void LayoutInline::StyleDidChange(StyleDifference diff,
   }
 
   PropagateStyleToAnonymousChildren();
+
+  // Only filtered inlines can contain fixed position elements.
+  SetCanContainFixedPositionObjects(new_style.HasFilter());
 }
 
 void LayoutInline::UpdateAlwaysCreateLineBoxes(bool full_layout) {
@@ -259,8 +293,8 @@ void LayoutInline::UpdateAlwaysCreateLineBoxes(bool full_layout) {
       (parent_layout_inline && parent_layout_inline->AlwaysCreateLineBoxes()) ||
       (parent_layout_inline &&
        parent_style.VerticalAlign() != EVerticalAlign::kBaseline) ||
-      Style()->VerticalAlign() != EVerticalAlign::kBaseline ||
-      Style()->GetTextEmphasisMark() != TextEmphasisMark::kNone ||
+      StyleRef().VerticalAlign() != EVerticalAlign::kBaseline ||
+      StyleRef().GetTextEmphasisMark() != TextEmphasisMark::kNone ||
       (check_fonts &&
        (!StyleRef().HasIdenticalAscentDescentAndLineGap(parent_style) ||
         parent_style.LineHeight() != StyleRef().LineHeight()));
@@ -390,10 +424,10 @@ void LayoutInline::AddChildIgnoringContinuation(LayoutObject* new_child,
     // collect the x/y offsets from inline parents later.
     if (LayoutObject* positioned_ancestor =
             InFlowPositionedInlineAncestor(this))
-      new_style->SetPosition(positioned_ancestor->Style()->GetPosition());
+      new_style->SetPosition(positioned_ancestor->StyleRef().GetPosition());
 
-    LayoutBlockFlow* new_box = LayoutBlockFlow::CreateAnonymous(&GetDocument());
-    new_box->SetStyle(std::move(new_style));
+    LayoutBlockFlow* new_box =
+        LayoutBlockFlow::CreateAnonymous(&GetDocument(), std::move(new_style));
     LayoutBoxModelObject* old_continuation = Continuation();
     SetContinuation(new_box);
 
@@ -436,18 +470,6 @@ void LayoutInline::SplitInlines(LayoutBlockFlow* from_block,
                                 LayoutBoxModelObject* old_cont) {
   DCHECK(IsDescendantOf(from_block));
   DCHECK(!IsAnonymous());
-
-  // If we're splitting the inline containing the fullscreened element,
-  // |beforeChild| may be the layoutObject for the fullscreened element.
-  // However, that layoutObject is wrapped in a LayoutFullScreen, so |this| is
-  // not its parent. Since the splitting logic expects |this| to be the parent,
-  // set |beforeChild| to be the LayoutFullScreen.
-  if (Fullscreen* fullscreen = Fullscreen::FromIfExists(GetDocument())) {
-    const Element* fullscreen_element = fullscreen->FullscreenElement();
-    if (fullscreen_element && before_child &&
-        before_child->GetNode() == fullscreen_element)
-      before_child = fullscreen->FullScreenLayoutObject();
-  }
 
   // FIXME: Because splitting is O(n^2) as tags nest pathologically, we cap the
   // depth at which we're willing to clone.
@@ -639,20 +661,8 @@ void LayoutInline::AddChildToContinuation(LayoutObject* new_child,
                                                            before_child);
 }
 
-void LayoutInline::Paint(const PaintInfo& paint_info,
-                         const LayoutPoint& paint_offset) const {
-  if (RuntimeEnabledFeatures::LayoutNGEnabled()) {
-    // Inline box with self painting layer is painted in this code path.
-    if (LayoutBlockFlow* block_flow = EnclosingNGBlockFlow()) {
-      if (NGPaintFragment* block_flow_fragment = block_flow->PaintFragment()) {
-        block_flow_fragment->PaintInlineBoxForDescendants(paint_info,
-                                                          paint_offset, this);
-        return;
-      }
-    }
-  }
-
-  InlinePainter(*this).Paint(paint_info, paint_offset);
+void LayoutInline::Paint(const PaintInfo& paint_info) const {
+  InlinePainter(*this).Paint(paint_info);
 }
 
 template <typename GeneratorContext>
@@ -703,7 +713,7 @@ void LayoutInline::GenerateCulledLineBoxRects(
   if (!CulledInlineFirstLineBox())
     return;
 
-  bool is_horizontal = Style()->IsHorizontalWritingMode();
+  bool is_horizontal = StyleRef().IsHorizontalWritingMode();
 
   LayoutUnit logical_top, logical_height;
   for (LayoutObject* curr = FirstChild(); curr; curr = curr->NextSibling()) {
@@ -883,28 +893,48 @@ static LayoutUnit ComputeMargin(const LayoutInline* layout_object,
 }
 
 LayoutUnit LayoutInline::MarginLeft() const {
-  return ComputeMargin(this, Style()->MarginLeft());
+  return ComputeMargin(this, StyleRef().MarginLeft());
 }
 
 LayoutUnit LayoutInline::MarginRight() const {
-  return ComputeMargin(this, Style()->MarginRight());
+  return ComputeMargin(this, StyleRef().MarginRight());
 }
 
 LayoutUnit LayoutInline::MarginTop() const {
-  return ComputeMargin(this, Style()->MarginTop());
+  return ComputeMargin(this, StyleRef().MarginTop());
 }
 
 LayoutUnit LayoutInline::MarginBottom() const {
-  return ComputeMargin(this, Style()->MarginBottom());
+  return ComputeMargin(this, StyleRef().MarginBottom());
 }
 
 bool LayoutInline::NodeAtPoint(HitTestResult& result,
                                const HitTestLocation& location_in_container,
                                const LayoutPoint& accumulated_offset,
                                HitTestAction hit_test_action) {
-  return line_boxes_.HitTest(LineLayoutBoxModel(this), result,
-                             location_in_container, accumulated_offset,
-                             hit_test_action);
+  if (EnclosingNGBlockFlow()) {
+    // In LayoutNG, we reach here only when called from
+    // PaintLayer::HitTestContents() without going through any ancestor, in
+    // which case the element must have self painting layer.
+    DCHECK(HasSelfPaintingLayer());
+    for (const NGPaintFragment* fragment :
+         NGPaintFragment::InlineFragmentsFor(this)) {
+      // NGBoxFragmentPainter::NodeAtPoint() takes an offset that is accumulated
+      // up to the fragment itself. Compute this offset.
+      LayoutPoint adjusted_location =
+          accumulated_offset +
+          fragment->InlineOffsetToContainerBox().ToLayoutPoint();
+      if (NGBoxFragmentPainter(*fragment).NodeAtPoint(
+              result, location_in_container, adjusted_location,
+              hit_test_action))
+        return true;
+    }
+    return false;
+  }
+
+  return LineBoxes()->HitTest(LineLayoutBoxModel(this), result,
+                              location_in_container, accumulated_offset,
+                              hit_test_action);
 }
 
 namespace {
@@ -939,8 +969,9 @@ class HitTestCulledInlinesGeneratorContext {
 bool LayoutInline::HitTestCulledInline(
     HitTestResult& result,
     const HitTestLocation& location_in_container,
-    const LayoutPoint& accumulated_offset) {
-  DCHECK(!AlwaysCreateLineBoxes());
+    const LayoutPoint& accumulated_offset,
+    const NGPaintFragment* container_fragment) {
+  DCHECK(container_fragment || !AlwaysCreateLineBoxes());
   if (!VisibleToHitTestRequest(result.GetHitTestRequest()))
     return false;
 
@@ -950,7 +981,26 @@ bool LayoutInline::HitTestCulledInline(
   Region region_result;
   HitTestCulledInlinesGeneratorContext context(region_result,
                                                adjusted_location);
-  GenerateCulledLineBoxRects(context, this);
+  if (container_fragment) {
+    DCHECK(EnclosingNGBlockFlow());
+    DCHECK(container_fragment->IsDescendantOfNotSelf(
+        *EnclosingNGBlockFlow()->PaintFragment()));
+    const NGPhysicalContainerFragment& traversal_root =
+        ToNGPhysicalContainerFragment(container_fragment->PhysicalFragment());
+    DCHECK(traversal_root.IsInline() || traversal_root.IsLineBox());
+    const LayoutPoint root_offset =
+        container_fragment->InlineOffsetToContainerBox().ToLayoutPoint();
+    const auto& descendants =
+        NGInlineFragmentTraversal::SelfFragmentsOf(traversal_root, this);
+    for (const auto& descendant : descendants) {
+      LayoutRect rect = descendant.RectInContainerBox().ToLayoutRect();
+      rect.MoveBy(root_offset);
+      context(rect);
+    }
+  } else {
+    DCHECK(!EnclosingNGBlockFlow());
+    GenerateCulledLineBoxRects(context, this);
+  }
 
   if (context.Intersected()) {
     UpdateHitTestResult(result, adjusted_location.Point());
@@ -963,21 +1013,23 @@ bool LayoutInline::HitTestCulledInline(
 
 PositionWithAffinity LayoutInline::PositionForPoint(
     const LayoutPoint& point) const {
-  if (const LayoutBlockFlow* ng_block_flow = EnclosingNGBlockFlow())
-    return ng_block_flow->PositionForPoint(point);
-
-  DCHECK(CanUseInlineBox(*this));
-
   // FIXME: Does not deal with relative positioned inlines (should it?)
 
   // If there are continuations, test them first because our containing block
   // will not check them.
+  // TODO(layout-dev): Handle continuation with NG structures when NG has its
+  // own tree building.
   LayoutBoxModelObject* continuation = Continuation();
   while (continuation) {
     if (continuation->IsInline() || continuation->SlowFirstChild())
       return continuation->PositionForPoint(point);
     continuation = ToLayoutBlockFlow(continuation)->InlineElementContinuation();
   }
+
+  if (const LayoutBlockFlow* ng_block_flow = EnclosingNGBlockFlow())
+    return ng_block_flow->PositionForPoint(point);
+
+  DCHECK(CanUseInlineBox(*this));
 
   if (FirstLineBoxIncludingCulling()) {
     // This inline actually has a line box.  We must have clicked in the
@@ -1006,12 +1058,12 @@ class LinesBoundingBoxGeneratorContext {
 LayoutRect LayoutInline::LinesBoundingBox() const {
   if (const NGPhysicalBoxFragment* box_fragment =
           EnclosingBlockFlowFragmentOf(*this)) {
-    LayoutRect result;
+    NGPhysicalOffsetRect bounding_box;
     auto children =
         NGInlineFragmentTraversal::SelfFragmentsOf(*box_fragment, this);
     for (const auto& child : children)
-      result.Unite(child.RectInContainerBox().ToLayoutRect());
-    return result;
+      bounding_box.UniteIfNonZero(child.RectInContainerBox());
+    return bounding_box.ToLayoutRect();
   }
 
   if (!AlwaysCreateLineBoxes()) {
@@ -1043,7 +1095,7 @@ LayoutRect LayoutInline::LinesBoundingBox() const {
         logical_right_side = curr->LogicalRight();
     }
 
-    bool is_horizontal = Style()->IsHorizontalWritingMode();
+    bool is_horizontal = StyleRef().IsHorizontalWritingMode();
 
     LayoutUnit x = is_horizontal ? logical_left_side : FirstLineBox()->X();
     LayoutUnit y = is_horizontal ? FirstLineBox()->Y() : logical_left_side;
@@ -1110,7 +1162,7 @@ LayoutRect LayoutInline::CulledInlineVisualOverflowBoundingBox() const {
   LinesBoundingBoxGeneratorContext context(float_result);
   GenerateCulledLineBoxRects(context, this);
   LayoutRect result(EnclosingLayoutRect(float_result));
-  bool is_horizontal = Style()->IsHorizontalWritingMode();
+  bool is_horizontal = StyleRef().IsHorizontalWritingMode();
   for (LayoutObject* curr = FirstChild(); curr; curr = curr->NextSibling()) {
     if (curr->IsFloatingOrOutOfFlowPositioned())
       continue;
@@ -1152,12 +1204,14 @@ LayoutRect LayoutInline::LinesVisualOverflowBoundingBox() const {
     auto children =
         NGInlineFragmentTraversal::SelfFragmentsOf(*box_fragment, this);
     for (const auto& child : children) {
-      NGPhysicalOffsetRect child_rect =
-          child.fragment->VisualRectWithContents();
+      NGPhysicalOffsetRect child_rect = child.fragment->InkOverflow();
       child_rect.offset += child.offset_to_container_box;
       result.Unite(child_rect);
     }
-    return result.ToLayoutRect();
+    LayoutRect rect = result.ToLayoutRect();
+    if (HasFlippedBlocksWritingMode())
+      ContainingBlock()->FlipForWritingMode(rect);
+    return rect;
   }
 
   if (!AlwaysCreateLineBoxes())
@@ -1188,7 +1242,7 @@ LayoutRect LayoutInline::LinesVisualOverflowBoundingBox() const {
 
   LayoutRect rect(logical_left_side, logical_top, logical_width,
                   logical_height);
-  if (!Style()->IsHorizontalWritingMode())
+  if (!StyleRef().IsHorizontalWritingMode())
     rect = rect.TransposedRect();
   return rect;
 }
@@ -1247,7 +1301,7 @@ LayoutRect LayoutInline::LocalVisualRectIgnoringVisibility() const {
 
 LayoutRect LayoutInline::VisualOverflowRect() const {
   LayoutRect overflow_rect = LinesVisualOverflowBoundingBox();
-  LayoutUnit outline_outset(Style()->OutlineOutsetExtent());
+  LayoutUnit outline_outset(StyleRef().OutlineOutsetExtent());
   if (outline_outset) {
     Vector<LayoutRect> rects;
     if (GetDocument().InNoQuirksMode()) {
@@ -1285,13 +1339,13 @@ bool LayoutInline::MapToVisualRectInAncestorSpaceInternal(
   if (!container)
     return true;
 
-  bool preserve3d = container->Style()->Preserves3D();
+  bool preserve3d = container->StyleRef().Preserves3D();
 
   TransformState::TransformAccumulation accumulation =
       preserve3d ? TransformState::kAccumulateTransform
                  : TransformState::kFlattenTransform;
 
-  if (Style()->HasInFlowPosition() && Layer()) {
+  if (StyleRef().HasInFlowPosition() && Layer()) {
     // Apply the in-flow position offset when invalidating a rectangle. The
     // layer is translated, but the layout box isn't, so we need to do this to
     // get the right dirty rect. Since this is called from LayoutObject::
@@ -1318,8 +1372,9 @@ bool LayoutInline::MapToVisualRectInAncestorSpaceInternal(
       ancestor, transform_state, visual_rect_flags);
 }
 
-LayoutSize LayoutInline::OffsetFromContainer(
-    const LayoutObject* container) const {
+LayoutSize LayoutInline::OffsetFromContainerInternal(
+    const LayoutObject* container,
+    bool ignore_scroll_offset) const {
   DCHECK_EQ(container, Container());
 
   LayoutSize offset;
@@ -1327,15 +1382,15 @@ LayoutSize LayoutInline::OffsetFromContainer(
     offset += OffsetForInFlowPosition();
 
   if (container->HasOverflowClip())
-    offset -= ToLayoutBox(container)->ScrolledContentOffset();
+    offset += OffsetFromScrollableContainer(container, ignore_scroll_offset);
 
   return offset;
 }
 
 PaintLayerType LayoutInline::LayerTypeRequired() const {
   return IsInFlowPositioned() || CreatesGroup() ||
-                 Style()->ShouldCompositeForCurrentAnimations() ||
-                 Style()->ContainsPaint()
+                 StyleRef().ShouldCompositeForCurrentAnimations() ||
+                 ShouldApplyPaintContainment()
              ? kNormalPaintLayer
              : kNoPaintLayer;
 }
@@ -1352,7 +1407,7 @@ void LayoutInline::ChildBecameNonInline(LayoutObject* child) {
 }
 
 void LayoutInline::UpdateHitTestResult(HitTestResult& result,
-                                       const LayoutPoint& point) {
+                                       const LayoutPoint& point) const {
   if (result.InnerNode())
     return;
 
@@ -1376,7 +1431,7 @@ void LayoutInline::UpdateHitTestResult(HitTestResult& result,
 
 void LayoutInline::DirtyLineBoxes(bool full_layout) {
   if (full_layout) {
-    line_boxes_.DeleteLineBoxes();
+    DeleteLineBoxes();
     return;
   }
 
@@ -1403,7 +1458,7 @@ void LayoutInline::DirtyLineBoxes(bool full_layout) {
       }
     }
   } else {
-    line_boxes_.DirtyLineBoxes();
+    MutableLineBoxes()->DirtyLineBoxes();
   }
 }
 
@@ -1414,20 +1469,18 @@ InlineFlowBox* LayoutInline::CreateInlineFlowBox() {
 InlineFlowBox* LayoutInline::CreateAndAppendInlineFlowBox() {
   SetAlwaysCreateLineBoxes();
   InlineFlowBox* flow_box = CreateInlineFlowBox();
-  line_boxes_.AppendLineBox(flow_box);
+  MutableLineBoxes()->AppendLineBox(flow_box);
   return flow_box;
 }
 
 void LayoutInline::DirtyLinesFromChangedChild(
     LayoutObject* child,
     MarkingBehavior marking_behavior) {
-  // During layout tree construction, we can't detect whether this node is
-  // in LayoutNG or not.
-  if (Parent() && EnclosingNGBlockFlow()) {
+  if (IsInLayoutNGInlineFormattingContext()) {
     SetAncestorLineBoxDirty();
     return;
   }
-  line_boxes_.DirtyLinesFromChangedChild(
+  MutableLineBoxes()->DirtyLinesFromChangedChild(
       LineLayoutItem(this), LineLayoutItem(child),
       marking_behavior == kMarkContainerChain);
 }
@@ -1442,7 +1495,7 @@ LayoutUnit LayoutInline::LineHeight(
       return LayoutUnit(s->ComputedLineHeight());
   }
 
-  return LayoutUnit(Style()->ComputedLineHeight());
+  return LayoutUnit(StyleRef().ComputedLineHeight());
 }
 
 LayoutUnit LayoutInline::BaselinePosition(
@@ -1467,8 +1520,8 @@ LayoutSize LayoutInline::OffsetForInFlowPositionedInline(
     const LayoutBox& child) const {
   // FIXME: This function isn't right with mixed writing modes.
 
-  DCHECK(IsInFlowPositioned());
-  if (!IsInFlowPositioned())
+  DCHECK(IsInFlowPositioned() || StyleRef().HasFilter());
+  if (!IsInFlowPositioned() && !StyleRef().HasFilter())
     return LayoutSize();
 
   // When we have an enclosing relpositioned inline, we need to add in the
@@ -1488,23 +1541,17 @@ LayoutSize LayoutInline::OffsetForInFlowPositionedInline(
 
   // Per http://www.w3.org/TR/CSS2/visudet.html#abs-non-replaced-width an
   // absolute positioned box with a static position should locate itself as
-  // though it is a normal flow box in relation to its containing block. If this
-  // relative-positioned inline has a negative offset we need to compensate for
-  // it so that we align the positioned object with the edge of its containing
-  // block.
-  if (child.Style()->HasStaticInlinePosition(
-          Style()->IsHorizontalWritingMode()))
-    logical_offset.SetWidth(
-        std::max(LayoutUnit(), -OffsetForInFlowPosition().Width()));
-  else
+  // though it is a normal flow box in relation to its containing block.
+  if (!child.StyleRef().HasStaticInlinePosition(
+          StyleRef().IsHorizontalWritingMode()))
     logical_offset.SetWidth(inline_position);
 
-  if (!child.Style()->HasStaticBlockPosition(
-          Style()->IsHorizontalWritingMode()))
+  if (!child.StyleRef().HasStaticBlockPosition(
+          StyleRef().IsHorizontalWritingMode()))
     logical_offset.SetHeight(block_position);
 
-  return Style()->IsHorizontalWritingMode() ? logical_offset
-                                            : logical_offset.TransposedSize();
+  return StyleRef().IsHorizontalWritingMode() ? logical_offset
+                                              : logical_offset.TransposedSize();
 }
 
 void LayoutInline::ImageChanged(WrappedImagePtr,
@@ -1564,18 +1611,24 @@ void LayoutInline::AddOutlineRectsForContinuations(
     const LayoutPoint& additional_offset,
     IncludeBlockVisualOverflowOrNot include_block_overflows) const {
   if (LayoutBoxModelObject* continuation = Continuation()) {
+    if (continuation->NeedsLayout()) {
+      // TODO(mstensho): Prevent this from happening. Before we can get the
+      // outlines of an object, we obviously need to have laid it out. We may
+      // currently end up in a situation where the continuation's layout isn't
+      // up-to-date here. This happens when calculating the overflow rectangle
+      // while laying out one of the earlier anonymous blocks that form the
+      // continuation chain. The outlines from the continuations should probably
+      // not be part of the overflow rectangle of that anonymous block at
+      // all. Yet, here we are. Bail.
+      return;
+    }
+    LayoutPoint offset = additional_offset;
     if (continuation->IsInline())
-      continuation->AddOutlineRects(
-          rects,
-          additional_offset + (continuation->ContainingBlock()->Location() -
-                               ContainingBlock()->Location()),
-          include_block_overflows);
+      offset += continuation->ContainingBlock()->Location();
     else
-      continuation->AddOutlineRects(
-          rects,
-          additional_offset + (ToLayoutBox(continuation)->Location() -
-                               ContainingBlock()->Location()),
-          include_block_overflows);
+      offset += ToLayoutBox(continuation)->Location();
+    offset -= ContainingBlock()->Location();
+    continuation->AddOutlineRects(rects, offset, include_block_overflows);
   }
 }
 
@@ -1594,15 +1647,15 @@ void LayoutInline::ComputeSelfHitTestRects(
 
 void LayoutInline::AddAnnotatedRegions(Vector<AnnotatedRegionValue>& regions) {
   // Convert the style regions to absolute coordinates.
-  if (Style()->Visibility() != EVisibility::kVisible)
+  if (StyleRef().Visibility() != EVisibility::kVisible)
     return;
 
-  if (Style()->DraggableRegionMode() == EDraggableRegionMode::kNone)
+  if (StyleRef().DraggableRegionMode() == EDraggableRegionMode::kNone)
     return;
 
   AnnotatedRegionValue region;
   region.draggable =
-      Style()->DraggableRegionMode() == EDraggableRegionMode::kDrag;
+      StyleRef().DraggableRegionMode() == EDraggableRegionMode::kDrag;
   region.bounds = LayoutRect(LinesBoundingBox());
 
   LayoutObject* container = ContainingBlock();
@@ -1618,14 +1671,15 @@ void LayoutInline::AddAnnotatedRegions(Vector<AnnotatedRegionValue>& regions) {
 
 void LayoutInline::InvalidateDisplayItemClients(
     PaintInvalidationReason invalidation_reason) const {
-  // TODO(yoichio): Cover other PaintInvalidateionReasons.
-  DCHECK(invalidation_reason != PaintInvalidationReason::kSelection ||
-         !EnclosingNGBlockFlow());
   ObjectPaintInvalidator paint_invalidator(*this);
 
   if (RuntimeEnabledFeatures::LayoutNGEnabled()) {
     auto fragments = NGPaintFragment::InlineFragmentsFor(this);
     if (fragments.IsInLayoutNGInlineFormattingContext()) {
+      if (Container()->IsLayoutNGMixin() && StyleRef().HasOutline()) {
+        Container()->InvalidateDisplayItemClients(
+            PaintInvalidationReason::kOutline);
+      }
       for (NGPaintFragment* fragment : fragments) {
         paint_invalidator.InvalidateDisplayItemClient(*fragment,
                                                       invalidation_reason);

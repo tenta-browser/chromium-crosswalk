@@ -72,28 +72,5 @@ Response TargetHandler::CloseTarget(const std::string& target_id,
   }
   return Response::OK();
 }
-
-Response TargetHandler::CreateBrowserContext(std::string* out_context_id) {
-  HeadlessBrowserContext* browser_context =
-      browser()->CreateBrowserContextBuilder().Build();
-
-  *out_context_id = browser_context->Id();
-  return Response::OK();
-}
-
-Response TargetHandler::DisposeBrowserContext(const std::string& context_id,
-                                              bool* out_success) {
-  HeadlessBrowserContext* context =
-      browser()->GetBrowserContextForId(context_id);
-
-  *out_success = false;
-  if (context && context != browser()->GetDefaultBrowserContext() &&
-      context->GetAllWebContents().empty()) {
-    *out_success = true;
-    context->Close();
-  }
-  return Response::OK();
-}
-
 }  // namespace protocol
 }  // namespace headless

@@ -8,6 +8,7 @@
 #include "third_party/blink/public/platform/task_type.h"
 #include "third_party/blink/public/platform/web_size.h"
 #include "third_party/blink/renderer/core/dom/events/event.h"
+#include "third_party/blink/renderer/core/dom/node_computed_style.h"
 #include "third_party/blink/renderer/core/dom/shadow_root.h"
 #include "third_party/blink/renderer/core/events/mouse_event.h"
 #include "third_party/blink/renderer/core/geometry/dom_rect.h"
@@ -15,6 +16,7 @@
 #include "third_party/blink/renderer/core/html/media/html_media_element.h"
 #include "third_party/blink/renderer/core/html/media/html_media_source.h"
 #include "third_party/blink/renderer/core/input_type_names.h"
+#include "third_party/blink/renderer/core/layout/layout_view.h"
 #include "third_party/blink/renderer/modules/media_controls/elements/media_control_elements_helper.h"
 #include "third_party/blink/renderer/modules/media_controls/media_controls_impl.h"
 #include "third_party/blink/renderer/modules/media_controls/media_controls_resource_loader.h"
@@ -214,16 +216,16 @@ void MediaControlOverlayPlayButtonElement::MaybeJump(int seconds) {
     left_jump_arrow_->Show();
 }
 
-void MediaControlOverlayPlayButtonElement::DefaultEventHandler(Event* event) {
+void MediaControlOverlayPlayButtonElement::DefaultEventHandler(Event& event) {
   if (ShouldCausePlayPause(event)) {
-    event->SetDefaultHandled();
+    event.SetDefaultHandled();
     MaybePlayPause();
-  } else if (event->type() == EventTypeNames::click) {
-    event->SetDefaultHandled();
+  } else if (event.type() == EventTypeNames::click) {
+    event.SetDefaultHandled();
 
-    DCHECK(event->IsMouseEvent());
-    MouseEvent* mouse_event = ToMouseEvent(event);
-    DCHECK(mouse_event->HasPosition());
+    DCHECK(event.IsMouseEvent());
+    auto& mouse_event = ToMouseEvent(event);
+    DCHECK(mouse_event.HasPosition());
 
     if (!tap_timer_.IsActive()) {
       // If there was not a previous touch and this was outside of the button
@@ -231,7 +233,7 @@ void MediaControlOverlayPlayButtonElement::DefaultEventHandler(Event* event) {
       // case their is a second tap.
       if (tap_timer_.IsActive())
         return;
-      tap_was_touch_event_ = MediaControlsImpl::IsTouchEvent(event);
+      tap_was_touch_event_ = MediaControlsImpl::IsTouchEvent(&event);
       tap_timer_.StartOneShot(kDoubleTapDelay, FROM_HERE);
     } else {
       // Cancel the play pause event.
@@ -239,12 +241,12 @@ void MediaControlOverlayPlayButtonElement::DefaultEventHandler(Event* event) {
 
       // If both taps were touch events, then jump.
       if (tap_was_touch_event_.value() &&
-          MediaControlsImpl::IsTouchEvent(event)) {
+          MediaControlsImpl::IsTouchEvent(&event)) {
         // Jump forwards or backwards based on the position of the tap.
         WebSize element_size =
             MediaControlElementsHelper::GetSizeOrDefault(*this, WebSize(0, 0));
 
-        if (mouse_event->clientX() >= element_size.width / 2) {
+        if (mouse_event.clientX() >= element_size.width / 2) {
           MaybeJump(kNumberOfSecondsToJump);
         } else {
           MaybeJump(kNumberOfSecondsToJump * -1);
@@ -265,32 +267,58 @@ void MediaControlOverlayPlayButtonElement::DefaultEventHandler(Event* event) {
   MediaControlInputElement::DefaultEventHandler(event);
 }
 
-bool MediaControlOverlayPlayButtonElement::KeepEventInNode(Event* event) {
-  return ShouldCausePlayPause(event);
+bool MediaControlOverlayPlayButtonElement::KeepEventInNode(
+    const Event& event) const {
+  // We only care about user interaction events.
+  if (!MediaControlElementsHelper::IsUserInteractionEvent(event))
+    return false;
+
+  // For mouse events, only keep in node if they're on the internal button.
+  if (event.IsMouseEvent() && MediaControlsImpl::IsModern())
+    return IsMouseEventOnInternalButton(ToMouseEvent(event));
+
+  return true;
 }
 
 bool MediaControlOverlayPlayButtonElement::ShouldCausePlayPause(
-    Event* event) const {
+    const Event& event) const {
   // Only click events cause a play/pause.
-  if (event->type() != EventTypeNames::click)
+  if (event.type() != EventTypeNames::click)
     return false;
 
   // Double tap to navigate should only be available on modern controls.
-  if (!MediaControlsImpl::IsModern() || !event->IsMouseEvent())
+  if (!MediaControlsImpl::IsModern() || !event.IsMouseEvent())
     return true;
 
-  // If the event doesn't have position data we should just default to
-  // play/pause.
   // TODO(beccahughes): Move to PointerEvent.
-  MouseEvent* mouse_event = ToMouseEvent(event);
-  if (!mouse_event->HasPosition())
+  return IsMouseEventOnInternalButton(ToMouseEvent(event));
+}
+
+bool MediaControlOverlayPlayButtonElement::IsMouseEventOnInternalButton(
+    const MouseEvent& mouse_event) const {
+  // If we don't have the necessary pieces to calculate whether the event is
+  // within the bounds of the button, default to yes.
+  if (!mouse_event.HasPosition() || !isConnected() ||
+      !GetDocument().GetLayoutView() || !MediaElement().ShouldShowControls()) {
+    return true;
+  }
+
+  // If there is no layout view, default to yes.
+  if (!GetDocument().GetLayoutView())
     return true;
 
-  // If the click happened on the internal button or a margin around it then
-  // we should play/pause.
-  return IsPointInRect(*internal_button_->getBoundingClientRect(),
-                       kInnerButtonTouchPaddingSize, mouse_event->clientX(),
-                       mouse_event->clientY());
+  // Find the zoom-adjusted internal button bounding box.
+  DOMRect* box = internal_button_->getBoundingClientRect();
+  float zoom = ComputedStyleRef().EffectiveZoom() /
+               GetDocument().GetLayoutView()->ZoomFactor();
+  box->setX(box->x() * zoom);
+  box->setY(box->y() * zoom);
+  box->setWidth(box->width() * zoom);
+  box->setHeight(box->height() * zoom);
+
+  // Check the button and a margin around it.
+  return IsPointInRect(*box, kInnerButtonTouchPaddingSize,
+                       mouse_event.clientX(), mouse_event.clientY());
 }
 
 WebSize MediaControlOverlayPlayButtonElement::GetSizeOrDefault() const {

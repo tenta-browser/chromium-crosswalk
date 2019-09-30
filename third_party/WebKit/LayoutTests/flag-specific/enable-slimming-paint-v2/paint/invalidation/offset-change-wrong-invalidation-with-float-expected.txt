@@ -12,7 +12,7 @@
           "reason": "disappeared"
         },
         {
-          "object": "LayoutBlockFlow (positioned) UL id='submenu'",
+          "object": "LayoutListMarker (anonymous)",
           "rect": [70, 94, 7, 19],
           "reason": "disappeared"
         },
@@ -22,28 +22,6 @@
           "reason": "geometry"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutListMarker (anonymous)",
-      "reason": "geometry"
-    },
-    {
-      "object": "LayoutBlockFlow (positioned) UL id='submenu'",
-      "reason": "geometry"
-    },
-    {
-      "object": "LayoutListItem LI",
-      "reason": "geometry"
-    },
-    {
-      "object": "RootInlineBox",
-      "reason": "geometry"
-    },
-    {
-      "object": "LayoutListMarker (anonymous)",
-      "reason": "geometry"
     }
   ]
 }

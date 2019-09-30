@@ -34,17 +34,7 @@ std::string GetProductNameAndVersion() {
 Options::Options(int argc, const char** argv)
     : argc(argc),
       argv(argv),
-#if defined(USE_OZONE)
-      // TODO(skyostil): Implement SwiftShader backend for headless ozone.
-      gl_implementation("osmesa"),
-#elif defined(OS_WIN)
-      // TODO(skyostil): Enable SwiftShader on Windows (crbug.com/729961).
-      gl_implementation("osmesa"),
-#elif !defined(OS_MACOSX)
       gl_implementation("swiftshader-webgl"),
-#else
-      gl_implementation("any"),
-#endif
       product_name_and_version(GetProductNameAndVersion()),
       user_agent(content::BuildUserAgentFromProduct(product_name_and_version)),
       window_size(kDefaultWindowSize),
@@ -134,11 +124,6 @@ Builder& Builder::SetGLImplementation(const std::string& gl_implementation) {
   return *this;
 }
 
-Builder& Builder::AddMojoServiceName(const std::string& mojo_service_name) {
-  options_.mojo_service_names.insert(mojo_service_name);
-  return *this;
-}
-
 Builder& Builder::SetAppendCommandLineFlagsCallback(
     const Options::AppendCommandLineFlagsCallback& callback) {
   options_.append_command_line_flags_callback = callback;
@@ -182,11 +167,6 @@ Builder& Builder::SetBlockNewWebContents(bool block_new_web_contents) {
   return *this;
 }
 
-Builder& Builder::SetInitialVirtualTime(base::Time initial_virtual_time) {
-  options_.initial_virtual_time = initial_virtual_time;
-  return *this;
-}
-
 Builder& Builder::SetOverrideWebPreferencesCallback(
     base::RepeatingCallback<void(WebPreferences*)> callback) {
   options_.override_web_preferences_callback = std::move(callback);
@@ -195,11 +175,6 @@ Builder& Builder::SetOverrideWebPreferencesCallback(
 
 Builder& Builder::SetCrashReporterEnabled(bool enabled) {
   options_.enable_crash_reporter = enabled;
-  return *this;
-}
-
-Builder& Builder::SetCaptureResourceMetadata(bool capture_resource_metadata) {
-  options_.capture_resource_metadata = capture_resource_metadata;
   return *this;
 }
 

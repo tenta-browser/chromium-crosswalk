@@ -12,6 +12,7 @@
 #include "build/build_config.h"
 #include "chrome/browser/autocomplete/autocomplete_classifier_factory.h"
 #include "chrome/browser/autocomplete/contextual_suggestions_service_factory.h"
+#include "chrome/browser/autocomplete/document_suggestions_service_factory.h"
 #include "chrome/browser/autocomplete/in_memory_url_index_factory.h"
 #include "chrome/browser/autocomplete/shortcuts_backend_factory.h"
 #include "chrome/browser/bitmap_fetcher/bitmap_fetcher_service.h"
@@ -28,6 +29,7 @@
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
+#include "chrome/browser/unified_consent/unified_consent_service_factory.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/common/url_constants.h"
 #include "components/browser_sync/profile_sync_service.h"
@@ -36,8 +38,8 @@
 #include "components/omnibox/browser/autocomplete_match.h"
 #include "components/prefs/pref_service.h"
 #include "components/signin/core/browser/signin_manager.h"
-#include "components/sync/base/model_type.h"
-#include "components/sync/driver/sync_service_utils.h"
+#include "components/unified_consent/unified_consent_service.h"
+#include "components/unified_consent/url_keyed_data_collection_consent_helper.h"
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/service_worker_context.h"
@@ -56,18 +58,28 @@ namespace {
 // This list should be kept in sync with chrome/common/webui_url_constants.h.
 // Only include useful sub-pages, confirmation alerts are not useful.
 const char* const kChromeSettingsSubPages[] = {
-    chrome::kAutofillSubPage,        chrome::kClearBrowserDataSubPage,
-    chrome::kContentSettingsSubPage, chrome::kLanguageOptionsSubPage,
-    chrome::kPasswordManagerSubPage, chrome::kResetProfileSettingsSubPage,
-    chrome::kSearchEnginesSubPage,   chrome::kSyncSetupSubPage,
+    chrome::kAutofillSubPage,
+    chrome::kClearBrowserDataSubPage,
+    chrome::kContentSettingsSubPage,
+    chrome::kLanguageOptionsSubPage,
+    chrome::kPasswordManagerSubPage,
+    chrome::kPaymentsSubPage,
+    chrome::kResetProfileSettingsSubPage,
+    chrome::kSearchEnginesSubPage,
+    chrome::kSyncSetupSubPage,
 #if defined(OS_CHROMEOS)
-    chrome::kAccessibilitySubPage,   chrome::kBluetoothSubPage,
-    chrome::kDateTimeSubPage,        chrome::kDisplaySubPage,
-    chrome::kInternetSubPage,        chrome::kPowerSubPage,
+    chrome::kAccessibilitySubPage,
+    chrome::kBluetoothSubPage,
+    chrome::kDateTimeSubPage,
+    chrome::kDisplaySubPage,
+    chrome::kInternetSubPage,
+    chrome::kPowerSubPage,
     chrome::kStylusSubPage,
 #else
-    chrome::kCreateProfileSubPage,   chrome::kImportDataSubPage,
+    chrome::kCreateProfileSubPage,
+    chrome::kImportDataSubPage,
     chrome::kManageProfileSubPage,
+    chrome::kPeopleSubPage,
 #endif
 };
 #endif  // !defined(OS_ANDROID)
@@ -78,15 +90,20 @@ ChromeAutocompleteProviderClient::ChromeAutocompleteProviderClient(
     Profile* profile)
     : profile_(profile),
       scheme_classifier_(profile),
-      search_terms_data_(profile_),
+      url_consent_helper_(
+          unified_consent::UrlKeyedDataCollectionConsentHelper::
+              NewPersonalizedDataCollectionConsentHelper(
+                  ProfileSyncServiceFactory::GetSyncServiceForBrowserContext(
+                      profile_))),
       storage_partition_(nullptr) {}
 
 ChromeAutocompleteProviderClient::~ChromeAutocompleteProviderClient() {
 }
 
-net::URLRequestContextGetter*
-ChromeAutocompleteProviderClient::GetRequestContext() {
-  return profile_->GetRequestContext();
+scoped_refptr<network::SharedURLLoaderFactory>
+ChromeAutocompleteProviderClient::GetURLLoaderFactory() {
+  return content::BrowserContext::GetDefaultStoragePartition(profile_)
+      ->GetURLLoaderFactoryForBrowserProcess();
 }
 
 PrefService* ChromeAutocompleteProviderClient::GetPrefs() {
@@ -145,9 +162,11 @@ ChromeAutocompleteProviderClient::GetContextualSuggestionsService(
       profile_, create_if_necessary);
 }
 
-const
-SearchTermsData& ChromeAutocompleteProviderClient::GetSearchTermsData() const {
-  return search_terms_data_;
+DocumentSuggestionsService*
+ChromeAutocompleteProviderClient::GetDocumentSuggestionsService(
+    bool create_if_necessary) const {
+  return DocumentSuggestionsServiceFactory::GetForProfile(profile_,
+                                                          create_if_necessary);
 }
 
 scoped_refptr<ShortcutsBackend>
@@ -171,17 +190,13 @@ ChromeAutocompleteProviderClient::GetKeywordExtensionsDelegate(
 #endif
 }
 
-physical_web::PhysicalWebDataSource*
-ChromeAutocompleteProviderClient::GetPhysicalWebDataSource() {
-  return g_browser_process->GetPhysicalWebDataSource();
-}
-
 std::string ChromeAutocompleteProviderClient::GetAcceptLanguages() const {
   return profile_->GetPrefs()->GetString(prefs::kAcceptLanguages);
 }
 
 std::string
-ChromeAutocompleteProviderClient::GetEmbedderRepresentationOfAboutScheme() {
+ChromeAutocompleteProviderClient::GetEmbedderRepresentationOfAboutScheme()
+    const {
   return content::kChromeUIScheme;
 }
 
@@ -255,16 +270,28 @@ bool ChromeAutocompleteProviderClient::SearchSuggestEnabled() const {
   return profile_->GetPrefs()->GetBoolean(prefs::kSearchSuggestEnabled);
 }
 
-bool ChromeAutocompleteProviderClient::IsTabUploadToGoogleActive() const {
-  return syncer::GetUploadToGoogleState(
-             ProfileSyncServiceFactory::GetInstance()->GetForProfile(profile_),
-             syncer::ModelType::PROXY_TABS) == syncer::UploadState::ACTIVE;
+bool ChromeAutocompleteProviderClient::IsPersonalizedUrlDataCollectionActive()
+    const {
+  return url_consent_helper_->IsEnabled();
 }
 
 bool ChromeAutocompleteProviderClient::IsAuthenticated() const {
   SigninManagerBase* signin_manager =
       SigninManagerFactory::GetForProfile(profile_);
   return signin_manager != nullptr && signin_manager->IsAuthenticated();
+}
+
+bool ChromeAutocompleteProviderClient::IsUnifiedConsentGiven() const {
+  unified_consent::UnifiedConsentService* consent_service =
+      UnifiedConsentServiceFactory::GetForProfile(profile_);
+  return consent_service && consent_service->IsUnifiedConsentGiven();
+}
+
+bool ChromeAutocompleteProviderClient::IsSyncActive() const {
+  syncer::SyncService* sync =
+      ProfileSyncServiceFactory::GetInstance()->GetSyncServiceForBrowserContext(
+          profile_);
+  return sync && sync->IsSyncActive();
 }
 
 void ChromeAutocompleteProviderClient::Classify(
@@ -398,9 +425,8 @@ bool ChromeAutocompleteProviderClient::StrippedURLsAreEqual(
   if (!input)
     input = &empty_input;
   const TemplateURLService* template_url_service = GetTemplateURLService();
-  return AutocompleteMatch::GURLToStrippedGURL(url1, AutocompleteInput(),
-                                               template_url_service,
-                                               base::string16()) ==
+  return AutocompleteMatch::GURLToStrippedGURL(
+             url1, *input, template_url_service, base::string16()) ==
          AutocompleteMatch::GURLToStrippedGURL(
              url2, *input, template_url_service, base::string16());
 }

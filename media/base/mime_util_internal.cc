@@ -15,7 +15,7 @@
 #include "media/base/video_codecs.h"
 #include "media/base/video_color_space.h"
 #include "media/media_buildflags.h"
-#include "third_party/libaom/av1_features.h"
+#include "third_party/libaom/av1_buildflags.h"
 
 #if defined(OS_ANDROID)
 #include "base/android/build_info.h"
@@ -74,11 +74,6 @@ const base::flat_map<std::string, MimeUtil::Codec>& GetStringToCodecMap() {
         {"vorbis", MimeUtil::VORBIS}, {"opus", MimeUtil::OPUS},
         {"flac", MimeUtil::FLAC}, {"vp8", MimeUtil::VP8},
         {"vp8.0", MimeUtil::VP8}, {"theora", MimeUtil::THEORA},
-// TODO(dalecurtis): This is not the correct final string. Fix before enabling
-// by default. http://crbug.com/784607
-#if BUILDFLAG(ENABLE_AV1_DECODER)
-        {"av1", MimeUtil::AV1},
-#endif
       },
       base::KEEP_FIRST_OF_DUPES);
 
@@ -147,6 +142,8 @@ AudioCodec MimeUtilToAudioCodec(MimeUtil::Codec codec) {
     case MimeUtil::MPEG2_AAC:
     case MimeUtil::MPEG4_AAC:
       return kCodecAAC;
+    case MimeUtil::MPEG_H_AUDIO:
+      return kCodecMpegHAudio;
     case MimeUtil::VORBIS:
       return kCodecVorbis;
     case MimeUtil::OPUS:
@@ -281,9 +278,7 @@ void MimeUtil::AddSupportedMediaFormats() {
 
   const CodecSet mp3_codecs{MP3};
 
-  CodecSet mp4_audio_codecs;
-  mp4_audio_codecs.emplace(MP3);
-  mp4_audio_codecs.emplace(FLAC);
+  CodecSet mp4_audio_codecs{FLAC, MP3, OPUS};
 
   // Only VP9 with valid codec string vp09.xx.xx.xx.xx.xx.xx.xx is supported.
   // See ParseVp9CodecID for details.
@@ -301,6 +296,10 @@ void MimeUtil::AddSupportedMediaFormats() {
   mp4_audio_codecs.emplace(AC3);
   mp4_audio_codecs.emplace(EAC3);
 #endif  // BUILDFLAG(ENABLE_AC3_EAC3_AUDIO_DEMUXING)
+
+#if BUILDFLAG(ENABLE_MPEG_H_AUDIO_DEMUXING)
+  mp4_audio_codecs.emplace(MPEG_H_AUDIO);
+#endif  // BUILDFLAG(ENABLE_MPEG_H_AUDIO_DEMUXING)
 
   mp4_video_codecs.emplace(H264);
 #if BUILDFLAG(ENABLE_HEVC_DEMUXING)
@@ -348,9 +347,8 @@ void MimeUtil::AddSupportedMediaFormats() {
   AddContainerWithCodecs("video/x-m4v", avc_and_aac, true);
 
 #if BUILDFLAG(ENABLE_MSE_MPEG2TS_STREAM_PARSER)
-  // TODO(ddorwin): Exactly which codecs should be supported?
-  DCHECK(!mp4_video_codecs.empty());
-  AddContainerWithCodecs("video/mp2t", mp4_codecs, true);
+  CodecSet mp2t_codecs{H264, MPEG2_AAC, MPEG4_AAC, MP3};
+  AddContainerWithCodecs("video/mp2t", mp2t_codecs, true);
 #endif  // BUILDFLAG(ENABLE_MSE_MPEG2TS_STREAM_PARSER)
 #if defined(OS_ANDROID)
   // HTTP Live Streaming (HLS).
@@ -568,6 +566,9 @@ bool MimeUtil::IsCodecSupportedOnAndroid(
       DCHECK(!is_encrypted || platform_info.has_platform_decoders);
       return true;
 
+    case MPEG_H_AUDIO:
+      return false;
+
     case OPUS:
       // If clear, the unified pipeline can always decode Opus in software.
       if (!is_encrypted)
@@ -771,16 +772,6 @@ bool MimeUtil::ParseCodecHelper(const std::string& mime_type_lower_case,
         case Codec::THEORA:
           out_result->video_profile = THEORAPROFILE_ANY;
           break;
-        case Codec::AV1: {
-#if BUILDFLAG(ENABLE_AV1_DECODER)
-          if (base::FeatureList::IsEnabled(kAv1Decoder)) {
-            out_result->video_profile = AV1PROFILE_PROFILE0;
-            break;
-          }
-#endif
-          return false;
-        }
-
         default:
           NOTREACHED();
       }
@@ -822,6 +813,14 @@ bool MimeUtil::ParseCodecHelper(const std::string& mime_type_lower_case,
     return true;
   }
 
+#if BUILDFLAG(ENABLE_AV1_DECODER)
+  if (base::FeatureList::IsEnabled(kAv1Decoder) &&
+      ParseAv1CodecId(codec_id, out_profile, out_level, out_color_space)) {
+    out_result->codec = MimeUtil::AV1;
+    return true;
+  }
+#endif
+
   if (ParseAVCCodecId(codec_id, out_profile, out_level)) {
     out_result->codec = MimeUtil::H264;
     // Allowed string ambiguity since 2014. DO NOT ADD NEW CASES FOR AMBIGUITY.
@@ -839,6 +838,13 @@ bool MimeUtil::ParseCodecHelper(const std::string& mime_type_lower_case,
 #if BUILDFLAG(ENABLE_DOLBY_VISION_DEMUXING)
   if (ParseDolbyVisionCodecId(codec_id, out_profile, out_level)) {
     out_result->codec = MimeUtil::DOLBY_VISION;
+    return true;
+  }
+#endif
+
+#if BUILDFLAG(ENABLE_MPEG_H_AUDIO_DEMUXING)
+  if (base::StartsWith(codec_id, "mhm1.", base::CompareCase::SENSITIVE)) {
+    out_result->codec = MimeUtil::MPEG_H_AUDIO;
     return true;
   }
 #endif
@@ -953,6 +959,7 @@ bool MimeUtil::IsCodecProprietary(Codec codec) const {
     case INVALID_CODEC:
     case AC3:
     case EAC3:
+    case MPEG_H_AUDIO:
     case MPEG2_AAC:
     case MPEG4_AAC:
     case H264:

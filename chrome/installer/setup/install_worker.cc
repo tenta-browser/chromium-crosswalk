@@ -31,6 +31,8 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/version.h"
 #include "base/win/registry.h"
+#include "base/win/win_util.h"
+#include "base/win/windows_version.h"
 #include "chrome/install_static/install_details.h"
 #include "chrome/install_static/install_modes.h"
 #include "chrome/install_static/install_util.h"
@@ -204,58 +206,6 @@ bool ProbeNotificationActivatorCallback(const CLSID& toast_activator_clsid,
   return true;
 }
 
-// Adds work items to |list| to register a COM server with the OS, which is used
-// to handle the toast notification activation.
-void AddNativeNotificationWorkItems(const InstallerState& installer_state,
-                                    const base::FilePath& target_path,
-                                    const base::Version& new_version,
-                                    WorkItemList* list) {
-  base::string16 toast_activator_reg_path =
-      InstallUtil::GetToastActivatorRegistryPath();
-
-  if (toast_activator_reg_path.empty()) {
-    LOG(DFATAL) << "Cannot retrieve the toast activator registry path";
-    return;
-  }
-
-  HKEY root = installer_state.root_key();
-
-  // Delete the old registration before adding in the new key to ensure that the
-  // COM probe/flush below does its job. Delete both 64-bit and 32-bit keys to
-  // handle 32-bit -> 64-bit or 64-bit -> 32-bit migration.
-  list->AddDeleteRegKeyWorkItem(root, toast_activator_reg_path,
-                                KEY_WOW64_32KEY);
-
-  list->AddDeleteRegKeyWorkItem(root, toast_activator_reg_path,
-                                KEY_WOW64_64KEY);
-
-  // Force COM to flush its cache containing the path to the old handler.
-  list->AddCallbackWorkItem(
-      base::Bind(&ProbeNotificationActivatorCallback,
-                 install_static::GetToastActivatorClsid()));
-
-  // The path to the exe (in the version directory).
-  base::FilePath notification_helper =
-      target_path.AppendASCII(new_version.GetString())
-          .Append(kNotificationHelperExe);
-
-  // Command-line featuring the quoted path to the exe.
-  base::string16 command(1, L'"');
-  command.append(notification_helper.value()).append(1, L'"');
-
-  toast_activator_reg_path.append(L"\\LocalServer32");
-
-  list->AddCreateRegKeyWorkItem(root, toast_activator_reg_path,
-                                WorkItem::kWow64Default);
-
-  list->AddSetRegValueWorkItem(root, toast_activator_reg_path,
-                               WorkItem::kWow64Default, L"", command, true);
-
-  list->AddSetRegValueWorkItem(root, toast_activator_reg_path,
-                               WorkItem::kWow64Default, L"ServerExecutable",
-                               notification_helper.value(), true);
-}
-
 // This is called when an MSI installation is run. It may be that a user is
 // attempting to install the MSI on top of a non-MSI managed installation. If
 // so, try and remove any existing "Add/Remove Programs" entry, as we want the
@@ -324,6 +274,8 @@ void AddChromeWorkItems(const InstallationState& original_state,
   // Install kVisualElementsManifest if it is present in |src_path|. No need to
   // make this a conditional work item as if the file is not there now, it will
   // never be.
+  // TODO(grt): Touch the Start Menu shortcut after putting the manifest in
+  // place to force the Start Menu to refresh Chrome's tile.
   if (base::PathExists(
           src_path.Append(installer::kVisualElementsManifest))) {
     install_list->AddMoveTreeWorkItem(
@@ -690,6 +642,52 @@ void AddVersionKeyWorkItems(HKEY root,
                                true);  // overwrite version
 }
 
+void AddUpdateBrandCodeWorkItem(const InstallerState& installer_state,
+                                WorkItemList* install_list) {
+  // Only update specific brand codes needed for enterprise.
+  base::string16 brand;
+  if (!GoogleUpdateSettings::GetBrand(&brand))
+    return;
+
+  base::string16 new_brand = GetUpdatedBrandCode(brand);
+  if (new_brand.empty())
+    return;
+
+  // Only update if this machine is:
+  // - domain joined, or
+  // - registered with MDM and is not windows home edition
+  bool is_enterprise_version =
+      base::win::OSInfo::GetInstance()->version_type() != base::win::SUITE_HOME;
+  if (!(base::win::IsEnrolledToDomain() ||
+      (base::win::IsDeviceRegisteredWithManagement() &&
+       is_enterprise_version))) {
+    return;
+  }
+
+  BrowserDistribution* browser_dist = installer_state.product().distribution();
+  DCHECK(browser_dist);
+  install_list->AddSetRegValueWorkItem(
+      installer_state.root_key(), browser_dist->GetStateKey(), KEY_WOW64_32KEY,
+      google_update::kRegRLZBrandField, new_brand, true);
+}
+
+base::string16 GetUpdatedBrandCode(const base::string16& brand_code) {
+  // Brand codes to be remapped on enterprise installs.
+  static constexpr struct EnterpriseBrandRemapping {
+    const wchar_t* old_brand;
+    const wchar_t* new_brand;
+  } kEnterpriseBrandRemapping[] = {
+      {L"GGLS", L"GCEU"},
+      {L"GGRV", L"GCEV"},
+  };
+
+  for (auto mapping : kEnterpriseBrandRemapping) {
+    if (brand_code == mapping.old_brand)
+      return mapping.new_brand;
+  }
+  return base::string16();
+}
+
 bool AppendPostInstallTasks(const InstallerState& installer_state,
                             const base::FilePath& setup_path,
                             const base::Version* current_version,
@@ -898,15 +896,17 @@ void AddInstallWorkItems(const InstallationState& original_state,
 
   // We don't have a version check for Win10+ here so that Windows upgrades
   // work.
-  AddNativeNotificationWorkItems(installer_state, target_path, new_version,
-                                 install_list);
+  AddNativeNotificationWorkItems(
+      installer_state.root_key(),
+      GetNotificationHelperPath(target_path, new_version), install_list);
 
-  InstallUtil::AddUpdateDowngradeVersionItem(installer_state.system_install(),
-                                             current_version, new_version, dist,
-                                             install_list);
+  InstallUtil::AddUpdateDowngradeVersionItem(
+      installer_state.root_key(), current_version, new_version, install_list);
 
   // Migrate usagestats back to Chrome.
   AddMigrateUsageStatsWorkItems(installer_state, install_list);
+
+  AddUpdateBrandCodeWorkItem(installer_state, install_list);
 
   // Append the tasks that run after the installation.
   AppendPostInstallTasks(installer_state,
@@ -914,6 +914,55 @@ void AddInstallWorkItems(const InstallationState& original_state,
                          current_version,
                          new_version,
                          install_list);
+}
+
+void AddNativeNotificationWorkItems(
+    HKEY root,
+    const base::FilePath& notification_helper_path,
+    WorkItemList* list) {
+  if (notification_helper_path.empty()) {
+    LOG(DFATAL) << "The path to notification_helper.exe is invalid.";
+    return;
+  }
+
+  base::string16 toast_activator_reg_path =
+      InstallUtil::GetToastActivatorRegistryPath();
+
+  if (toast_activator_reg_path.empty()) {
+    LOG(DFATAL) << "Cannot retrieve the toast activator registry path";
+    return;
+  }
+
+  // Delete the old registration before adding in the new key to ensure that the
+  // COM probe/flush below does its job. Delete both 64-bit and 32-bit keys to
+  // handle 32-bit -> 64-bit or 64-bit -> 32-bit migration.
+  list->AddDeleteRegKeyWorkItem(root, toast_activator_reg_path,
+                                KEY_WOW64_32KEY);
+
+  list->AddDeleteRegKeyWorkItem(root, toast_activator_reg_path,
+                                KEY_WOW64_64KEY);
+
+  // Force COM to flush its cache containing the path to the old handler.
+  list->AddCallbackWorkItem(
+      base::BindRepeating(&ProbeNotificationActivatorCallback,
+                          install_static::GetToastActivatorClsid()));
+
+  base::string16 toast_activator_server_path =
+      toast_activator_reg_path + L"\\LocalServer32";
+
+  // Command-line featuring the quoted path to the exe.
+  base::string16 command(1, L'"');
+  command.append(notification_helper_path.value()).append(1, L'"');
+
+  list->AddCreateRegKeyWorkItem(root, toast_activator_server_path,
+                                WorkItem::kWow64Default);
+
+  list->AddSetRegValueWorkItem(root, toast_activator_server_path,
+                               WorkItem::kWow64Default, L"", command, true);
+
+  list->AddSetRegValueWorkItem(root, toast_activator_server_path,
+                               WorkItem::kWow64Default, L"ServerExecutable",
+                               notification_helper_path.value(), true);
 }
 
 void AddSetMsiMarkerWorkItem(const InstallerState& installer_state,

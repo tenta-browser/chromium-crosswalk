@@ -28,11 +28,11 @@ namespace safe_browsing {
 // Mock ThreatDetails class that makes FinishCollection a no-op.
 class MockThreatDetails : public ThreatDetails {
  public:
-  MockThreatDetails() : ThreatDetails() {}
+  MockThreatDetails() {}
+  ~MockThreatDetails() override {}
   MOCK_METHOD2(FinishCollection, void(bool did_proceed, int num_visits));
 
  private:
-  ~MockThreatDetails() override {}
   DISALLOW_COPY_AND_ASSIGN(MockThreatDetails);
 };
 
@@ -40,27 +40,28 @@ class MockThreatDetailsFactory : public ThreatDetailsFactory {
  public:
   ~MockThreatDetailsFactory() override {}
 
-  ThreatDetails* CreateThreatDetails(
+  std::unique_ptr<ThreatDetails> CreateThreatDetails(
       BaseUIManager* ui_manager,
       content::WebContents* web_contents,
       const security_interstitials::UnsafeResource& unsafe_resource,
       scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
       history::HistoryService* history_service,
+      ReferrerChainProvider* referrer_chain_provider,
       bool trim_to_ad_tags,
       ThreatDetailsDoneCallback done_callback) override {
-    MockThreatDetails* threat_details = new MockThreatDetails();
-    return threat_details;
+    return std::make_unique<MockThreatDetails>();
   }
 };
 
 class MockTriggerThrottler : public TriggerThrottler {
  public:
+  MockTriggerThrottler() : TriggerThrottler(nullptr) {}
   MOCK_CONST_METHOD1(TriggerCanFire, bool(TriggerType trigger_type));
 };
 
 class TriggerManagerTest : public ::testing::Test {
  public:
-  TriggerManagerTest() : trigger_manager_(/*ui_manager=*/nullptr) {}
+  TriggerManagerTest() : trigger_manager_(nullptr, nullptr, nullptr) {}
   ~TriggerManagerTest() override {}
 
   void SetUp() override {
@@ -134,22 +135,17 @@ class TriggerManagerTest : public ::testing::Test {
         trigger_type, web_contents, base::TimeDelta(), false, 0, options);
 
     // Invoke the callback if the report was to be sent.
-    if (expect_report_sent)
+    if (expect_report_sent) {
+      // Allow the ThreatDetails to complete, then remove it.
+      base::RunLoop().RunUntilIdle();
       trigger_manager_.ThreatDetailsDone(web_contents);
+    }
 
     return result;
   }
 
   const DataCollectorsMap& data_collectors_map() {
     return trigger_manager_.data_collectors_map_;
-  }
-
-  void SetCollectDontSendFeature(bool enabled) {
-    feature_list_.reset(new base::test::ScopedFeatureList);
-    if (enabled)
-      feature_list_->InitAndEnableFeature(kAdSamplerCollectButDontSendFeature);
-    else
-      feature_list_->InitAndDisableFeature(kAdSamplerCollectButDontSendFeature);
   }
 
  private:
@@ -377,13 +373,7 @@ TEST_F(TriggerManagerTest, AdSamplerTrigger) {
   SetPref(prefs::kSafeBrowsingExtendedReportingOptInAllowed, false);
   EXPECT_FALSE(
       StartCollectingThreatDetails(TriggerType::AD_SAMPLE, web_contents));
-  // It can be forced on via a finch feature.
-  SetCollectDontSendFeature(true);
-  EXPECT_TRUE(
-      StartCollectingThreatDetails(TriggerType::AD_SAMPLE, web_contents));
-  EXPECT_TRUE(FinishCollectingThreatDetails(TriggerType::AD_SAMPLE,
-                                            web_contents, true));
-  SetCollectDontSendFeature(false);
+
   // Confirm it can fire when we re-enable SBEROptInAllowed
   SetPref(prefs::kSafeBrowsingExtendedReportingOptInAllowed, true);
   EXPECT_TRUE(
@@ -391,21 +381,13 @@ TEST_F(TriggerManagerTest, AdSamplerTrigger) {
   EXPECT_TRUE(FinishCollectingThreatDetails(TriggerType::AD_SAMPLE,
                                             web_contents, true));
 
-  // Disabling Scout disables this trigger even if the legacy SBER is enabled.
+  // Disabling Scout disables this trigger.
   SetPref(prefs::kSafeBrowsingScoutReportingEnabled, false);
-  SetPref(prefs::kSafeBrowsingExtendedReportingEnabled, true);
   EXPECT_FALSE(
       StartCollectingThreatDetails(TriggerType::AD_SAMPLE, web_contents));
-  // It can be forced on via a finch feature.
-  SetCollectDontSendFeature(true);
-  EXPECT_TRUE(
-      StartCollectingThreatDetails(TriggerType::AD_SAMPLE, web_contents));
-  EXPECT_TRUE(FinishCollectingThreatDetails(TriggerType::AD_SAMPLE,
-                                            web_contents, true));
-  SetCollectDontSendFeature(false);
+
   // Confirm it can fire when we re-enable Scout and disable legacy SBER.
   SetPref(prefs::kSafeBrowsingScoutReportingEnabled, true);
-  SetPref(prefs::kSafeBrowsingExtendedReportingEnabled, false);
   EXPECT_TRUE(
       StartCollectingThreatDetails(TriggerType::AD_SAMPLE, web_contents));
   EXPECT_TRUE(FinishCollectingThreatDetails(TriggerType::AD_SAMPLE,
@@ -415,13 +397,7 @@ TEST_F(TriggerManagerTest, AdSamplerTrigger) {
   SetTriggerHasQuota(TriggerType::AD_SAMPLE, false);
   EXPECT_FALSE(
       StartCollectingThreatDetails(TriggerType::AD_SAMPLE, web_contents));
-  // It can be forced on via a finch feature.
-  SetCollectDontSendFeature(true);
-  EXPECT_TRUE(
-      StartCollectingThreatDetails(TriggerType::AD_SAMPLE, web_contents));
-  EXPECT_TRUE(FinishCollectingThreatDetails(TriggerType::AD_SAMPLE,
-                                            web_contents, true));
-  SetCollectDontSendFeature(false);
+
   // Confirm it can fire again when quota is available.
   SetTriggerHasQuota(TriggerType::AD_SAMPLE, true);
   EXPECT_TRUE(
@@ -440,13 +416,5 @@ TEST_F(TriggerManagerTest, AdSamplerTrigger_Incognito) {
   // all triggers have quota), but the incognito window prevents it from firing.
   EXPECT_FALSE(
       StartCollectingThreatDetails(TriggerType::AD_SAMPLE, web_contents));
-
-  // The Finch feature makes the trigger fire even in incognito (which is safe
-  // because data is discarded and not sent to Google downstream).
-  SetCollectDontSendFeature(true);
-  EXPECT_TRUE(
-      StartCollectingThreatDetails(TriggerType::AD_SAMPLE, web_contents));
-  EXPECT_TRUE(FinishCollectingThreatDetails(TriggerType::AD_SAMPLE,
-                                            web_contents, true));
 }
 }  // namespace safe_browsing

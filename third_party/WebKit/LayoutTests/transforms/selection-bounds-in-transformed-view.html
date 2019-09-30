@@ -22,29 +22,29 @@
 <script>
     function resetScroll() {
         window.scrollTo(1000, 1000);
-        window.internals.setVisualViewportOffset(400, 300);
+        internals.setVisualViewportOffset(400, 300);
     }
 
     if (window.internals) {
-        window.internals.setPageScaleFactor(2);
+        internals.setPageScaleFactor(2);
 
         test(() => {
             resetScroll();
-            window.internals.settings.setPreferCompositingToLCDTextEnabled(
+            internals.settings.setPreferCompositingToLCDTextEnabled(
                 true);
             document.execCommand("FindString", false, "target");
-            assert_equals(internals.visualViewportScrollX(), 167);
-            assert_equals(internals.visualViewportScrollY(), 2867);
+            assert_equals(window.visualViewport.pageLeft, 167);
+            assert_equals(window.visualViewport.pageTop, 2867);
         }, "Test scrolled into view with prefer compositing enabled");
 
 
         test(() => {
             resetScroll();
-            window.internals.settings.setPreferCompositingToLCDTextEnabled(
+            internals.settings.setPreferCompositingToLCDTextEnabled(
                 false);
             document.execCommand("FindString", false, "target");
-            assert_equals(internals.visualViewportScrollX(), 167);
-            assert_equals(internals.visualViewportScrollY(), 2867);
+            assert_equals(window.visualViewport.pageLeft, 167);
+            assert_equals(window.visualViewport.pageTop, 2867);
         }, "Test scrolled into view with prefer compositing disabled");
     }
 </script>

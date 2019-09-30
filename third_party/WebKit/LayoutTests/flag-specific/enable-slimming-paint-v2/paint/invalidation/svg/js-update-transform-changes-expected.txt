@@ -9,15 +9,9 @@
         {
           "object": "LayoutSVGRoot svg",
           "rect": [253, 208, 184, 129],
-          "reason": "appeared"
+          "reason": "chunk appeared"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutSVGPath polygon id='polygon'",
-      "reason": "full"
     }
   ]
 }

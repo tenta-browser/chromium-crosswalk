@@ -1,5 +1,6 @@
 This is a testharness.js-based test.
-Found 578 tests; 525 PASS, 53 FAIL, 0 TIMEOUT, 0 NOTRUN.
+Found 562 tests; 525 PASS, 37 FAIL, 0 TIMEOUT, 0 NOTRUN.
+PASS Setup
 PASS align-content (type: discrete) has testAddition function
 PASS align-content: "flex-end" onto "flex-start"
 PASS align-content: "flex-start" onto "flex-end"
@@ -184,12 +185,9 @@ PASS column-width: length of rem
 PASS column-width (type: discrete) has testAddition function
 PASS column-width: "1px" onto "auto"
 PASS column-width: "auto" onto "1px"
-PASS contain (type: discrete) has testAddition function
-PASS contain: "none" onto "strict"
-PASS contain: "strict" onto "none"
 PASS content (type: discrete) has testAddition function
-FAIL content: ""b"" onto ""a"" assert_equals: expected (string) "::before" but got (undefined) undefined
-FAIL content: ""a"" onto ""b"" assert_equals: expected (string) "::before" but got (undefined) undefined
+PASS content: ""b"" onto ""a""
+PASS content: ""a"" onto ""b""
 PASS counter-increment (type: discrete) has testAddition function
 PASS counter-increment: "ident-2 2" onto "ident-1 1"
 PASS counter-increment: "ident-1 1" onto "ident-2 2"
@@ -199,9 +197,6 @@ PASS counter-reset: "ident-1 1" onto "ident-2 2"
 PASS cursor (type: discrete) has testAddition function
 PASS cursor: "wait" onto "pointer"
 PASS cursor: "pointer" onto "wait"
-PASS direction (type: discrete) has testAddition function
-PASS direction: "rtl" onto "ltr"
-PASS direction: "ltr" onto "rtl"
 PASS dominant-baseline (type: discrete) has testAddition function
 PASS dominant-baseline: "alphabetic" onto "ideographic"
 PASS dominant-baseline: "ideographic" onto "alphabetic"
@@ -252,8 +247,8 @@ PASS flood-color supports animating as color of hsla()
 PASS flood-opacity (type: opacity) has testAddition function
 PASS flood-opacity: [0, 1] number
 PASS flood-opacity: [0, 1] number (clamped)
-PASS font-stretch (type: fontStretch) has testAddition function
-FAIL font-stretch uses font-stretch behavior for composite type add assert_equals: The value should be normal at 0ms expected "normal" but got "125%"
+PASS font-stretch (type: percentage) has testAddition function
+FAIL font-stretch: percentage assert_equals: The value should be 130% at 0ms expected "130%" but got "70%"
 PASS font-style (type: discrete) has testAddition function
 FAIL font-style: "oblique" onto "italic" assert_equals: The value should be oblique at 0ms expected "oblique" but got "italic"
 PASS font-style: "italic" onto "oblique"
@@ -319,11 +314,11 @@ PASS grid-template-rows (type: discrete) has testAddition function
 PASS grid-template-rows: "5px" onto "1px"
 PASS grid-template-rows: "1px" onto "5px"
 PASS hyphens (type: discrete) has testAddition function
-FAIL hyphens: "auto" onto "manual" assert_equals: The value should be auto at 0ms expected "auto" but got "manual"
-PASS hyphens: "manual" onto "auto"
+PASS hyphens: "none" onto "manual"
+PASS hyphens: "manual" onto "none"
 PASS image-orientation (type: discrete) has testAddition function
-FAIL image-orientation: "90deg" onto "0deg" assert_equals: The value should be 90deg at 0ms expected "90deg" but got "0deg"
-PASS image-orientation: "0deg" onto "90deg"
+PASS image-orientation: "from-image" onto "none"
+FAIL image-orientation: "none" onto "from-image" assert_equals: The value should be none at 0ms expected "none" but got "from-image"
 PASS isolation (type: discrete) has testAddition function
 PASS isolation: "isolate" onto "auto"
 PASS isolation: "auto" onto "isolate"
@@ -356,17 +351,17 @@ PASS list-style-type (type: discrete) has testAddition function
 PASS list-style-type: "square" onto "circle"
 PASS list-style-type: "circle" onto "square"
 PASS marker-end (type: discrete) has testAddition function
-FAIL marker-end: "url("http://localhost/test-2")" onto "url("http://localhost/test-1")" assert_equals: The value should be url("http://localhost/test-2") at 0ms expected "url(\"http://localhost/test-2\")" but got "none"
-FAIL marker-end: "url("http://localhost/test-1")" onto "url("http://localhost/test-2")" assert_equals: The value should be url("http://localhost/test-1") at 0ms expected "url(\"http://localhost/test-1\")" but got "none"
+PASS marker-end: "url("http://localhost/test-2")" onto "url("http://localhost/test-1")"
+PASS marker-end: "url("http://localhost/test-1")" onto "url("http://localhost/test-2")"
 PASS marker-mid (type: discrete) has testAddition function
-FAIL marker-mid: "url("http://localhost/test-2")" onto "url("http://localhost/test-1")" assert_equals: The value should be url("http://localhost/test-2") at 0ms expected "url(\"http://localhost/test-2\")" but got "none"
-FAIL marker-mid: "url("http://localhost/test-1")" onto "url("http://localhost/test-2")" assert_equals: The value should be url("http://localhost/test-1") at 0ms expected "url(\"http://localhost/test-1\")" but got "none"
+PASS marker-mid: "url("http://localhost/test-2")" onto "url("http://localhost/test-1")"
+PASS marker-mid: "url("http://localhost/test-1")" onto "url("http://localhost/test-2")"
 PASS marker-start (type: discrete) has testAddition function
-FAIL marker-start: "url("http://localhost/test-2")" onto "url("http://localhost/test-1")" assert_equals: The value should be url("http://localhost/test-2") at 0ms expected "url(\"http://localhost/test-2\")" but got "none"
-FAIL marker-start: "url("http://localhost/test-1")" onto "url("http://localhost/test-2")" assert_equals: The value should be url("http://localhost/test-1") at 0ms expected "url(\"http://localhost/test-1\")" but got "none"
+PASS marker-start: "url("http://localhost/test-2")" onto "url("http://localhost/test-1")"
+PASS marker-start: "url("http://localhost/test-1")" onto "url("http://localhost/test-2")"
 PASS mask (type: discrete) has testAddition function
-FAIL mask: "url("http://localhost/test-2")" onto "url("http://localhost/test-1")" assert_equals: The value should be url("http://localhost/test-2") at 0ms expected "url(\"http://localhost/test-2\")" but got "none"
-FAIL mask: "url("http://localhost/test-1")" onto "url("http://localhost/test-2")" assert_equals: The value should be url("http://localhost/test-1") at 0ms expected "url(\"http://localhost/test-1\")" but got "none"
+PASS mask: "url("http://localhost/test-2")" onto "url("http://localhost/test-1")"
+PASS mask: "url("http://localhost/test-1")" onto "url("http://localhost/test-2")"
 PASS mask-type (type: discrete) has testAddition function
 PASS mask-type: "luminance" onto "alpha"
 PASS mask-type: "alpha" onto "luminance"
@@ -441,8 +436,8 @@ PASS shape-outside (type: discrete) has testAddition function
 PASS shape-outside: "url("http://localhost/test-2")" onto "url("http://localhost/test-1")"
 PASS shape-outside: "url("http://localhost/test-1")" onto "url("http://localhost/test-2")"
 PASS shape-rendering (type: discrete) has testAddition function
-FAIL shape-rendering: "crispEdges" onto "optimizeSpeed" assert_equals: The value should be crispedges at 0ms expected "crispedges" but got "crispEdges"
-FAIL shape-rendering: "optimizeSpeed" onto "crispEdges" assert_equals: The value should be optimizespeed at 0ms expected "optimizespeed" but got "optimizeSpeed"
+PASS shape-rendering: "crispEdges" onto "optimizeSpeed"
+PASS shape-rendering: "optimizeSpeed" onto "crispEdges"
 PASS stop-color (type: color) has testAddition function
 PASS stop-color supports animating as color of rgb() with overflowed  from and to values
 PASS stop-color supports animating as color of #RGB
@@ -497,15 +492,12 @@ PASS text-decoration-line: "underline" onto "overline"
 PASS text-decoration-style (type: discrete) has testAddition function
 PASS text-decoration-style: "dotted" onto "solid"
 PASS text-decoration-style: "solid" onto "dotted"
-PASS text-orientation (type: discrete) has testAddition function
-PASS text-orientation: "sideways" onto "upright"
-PASS text-orientation: "upright" onto "sideways"
 PASS text-overflow (type: discrete) has testAddition function
 PASS text-overflow: "ellipsis" onto "clip"
 PASS text-overflow: "clip" onto "ellipsis"
 PASS text-rendering (type: discrete) has testAddition function
-FAIL text-rendering: "optimizeLegibility" onto "optimizeSpeed" assert_equals: The value should be optimizelegibility at 0ms expected "optimizelegibility" but got "optimizeLegibility"
-FAIL text-rendering: "optimizeSpeed" onto "optimizeLegibility" assert_equals: The value should be optimizespeed at 0ms expected "optimizespeed" but got "optimizeSpeed"
+PASS text-rendering: "optimizeLegibility" onto "optimizeSpeed"
+PASS text-rendering: "optimizeSpeed" onto "optimizeLegibility"
 PASS text-shadow (type: textShadowList) has testAddition function
 FAIL text-shadow: shadow assert_equals: The value should be rgb(0, 0, 0) 0px 0px 0px, rgb(120, 120, 120) 10px 10px 10px at 0ms expected "rgb(0, 0, 0) 0px 0px 0px, rgb(120, 120, 120) 10px 10px 10px" but got "rgb(120, 120, 120) 10px 10px 10px"
 PASS text-transform (type: discrete) has testAddition function
@@ -521,6 +513,7 @@ PASS transform: scale
 PASS transform: skew
 PASS transform: rotate on translate
 PASS transform: translate on rotate
+PASS transform: rotate on rotate and translate
 PASS transform: matrix
 PASS transform: rotate3d
 PASS transform: matrix3d
@@ -528,7 +521,7 @@ PASS transform: non-invertible matrices
 PASS transform: non-invertible matrices in matched transform lists
 PASS transform: non-invertible matrices in mismatched transform lists
 PASS transform-box (type: discrete) has testAddition function
-FAIL transform-box: "border-box" onto "fill-box" assert_equals: The value should be border-box at 0ms expected "border-box" but got "view-box"
+FAIL transform-box: "border-box" onto "fill-box" assert_equals: The value should be border-box at 0ms expected "border-box" but got "fill-box"
 PASS transform-box: "fill-box" onto "border-box"
 PASS transform-style (type: discrete) has testAddition function
 PASS transform-style: "preserve-3d" onto "flat"
@@ -545,9 +538,6 @@ PASS scale (type: scaleList) has testAddition function
 FAIL scale with two unspecified values assert_equals: The value should be -6 at 0ms expected "-6" but got "-6 2"
 PASS scale with one unspecified value
 PASS scale
-PASS unicode-bidi (type: discrete) has testAddition function
-PASS unicode-bidi: "bidi-override" onto "embed"
-PASS unicode-bidi: "embed" onto "bidi-override"
 PASS vector-effect (type: discrete) has testAddition function
 PASS vector-effect: "non-scaling-stroke" onto "none"
 PASS vector-effect: "none" onto "non-scaling-stroke"
@@ -572,11 +562,5 @@ PASS word-spacing: units "rem" onto "em"
 PASS word-spacing: units "em" onto "rem"
 FAIL word-spacing: units "calc" onto "px" assert_equals: The value should be calc(30px + 20%) at 0ms expected "calc(30px + 20%)" but got "10px"
 FAIL word-spacing: calc assert_equals: The value should be calc(30px + 30%) at 0ms expected "calc(30px + 30%)" but got "0px"
-PASS will-change (type: discrete) has testAddition function
-PASS will-change: "contents" onto "scroll-position"
-PASS will-change: "scroll-position" onto "contents"
-PASS writing-mode (type: discrete) has testAddition function
-FAIL writing-mode: "sideways-rl" onto "vertical-rl" assert_equals: The value should be sideways-rl at 0ms expected "sideways-rl" but got "vertical-rl"
-PASS writing-mode: "vertical-rl" onto "sideways-rl"
 Harness: the test ran to completion.
 

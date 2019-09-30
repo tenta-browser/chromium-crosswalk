@@ -5,9 +5,11 @@
 #ifndef COMPONENTS_NTP_SNIPPETS_CONTEXTUAL_CONTEXTUAL_SUGGESTION_H_
 #define COMPONENTS_NTP_SNIPPETS_CONTEXTUAL_CONTEXTUAL_SUGGESTION_H_
 
+#include <string>
+
 #include "url/gurl.h"
 
-namespace ntp_snippets {
+namespace contextual_suggestions {
 
 // Struct containing the data for a single contextual content suggestion.
 struct ContextualSuggestion {
@@ -15,6 +17,8 @@ struct ContextualSuggestion {
   ContextualSuggestion(const ContextualSuggestion&);
   ContextualSuggestion(ContextualSuggestion&&) noexcept;
   ~ContextualSuggestion();
+
+  ContextualSuggestion& operator=(const ContextualSuggestion&);
 
   // The ID identifying the suggestion.
   std::string id;
@@ -48,7 +52,7 @@ struct ContextualSuggestion {
 // order has to be guessed at.
 class SuggestionBuilder {
  public:
-  SuggestionBuilder(const GURL& url);
+  explicit SuggestionBuilder(const GURL& url);
 
   SuggestionBuilder& Title(const std::string& title);
   SuggestionBuilder& PublisherName(const std::string& publisher_name);
@@ -62,6 +66,6 @@ class SuggestionBuilder {
   ContextualSuggestion suggestion_;
 };
 
-}  // namespace ntp_snippets
+}  // namespace contextual_suggestions
 
 #endif  // COMPONENTS_NTP_SNIPPETS_CONTEXTUAL_CONTEXTUAL_SUGGESTION_H_

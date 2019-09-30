@@ -3,7 +3,7 @@
 // found in the LICENSE file.
 
 #include "third_party/blink/renderer/platform/graphics/paint/geometry_mapper.h"
-
+#include "build/build_config.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/renderer/platform/geometry/geometry_test_helpers.h"
 #include "third_party/blink/renderer/platform/geometry/layout_rect.h"
@@ -37,7 +37,7 @@ class GeometryMapperTest : public testing::Test,
       bool& success) {
     GeometryMapper::LocalToAncestorVisualRectInternal(
         local_state, ancestor_state, mapping_rect,
-        kIgnorePlatformOverlayScrollbarSize, success);
+        kIgnorePlatformOverlayScrollbarSize, kNonInclusiveIntersect, success);
   }
 
   // Variables required by CHECK_MAPPINGS(). The tests should set these
@@ -51,9 +51,7 @@ class GeometryMapperTest : public testing::Test,
   FloatRect expected_transformed_rect;
 };
 
-INSTANTIATE_TEST_CASE_P(All,
-                        GeometryMapperTest,
-                        testing::ValuesIn(kSlimmingPaintVersions));
+INSTANTIATE_PAINT_TEST_CASE_P(GeometryMapperTest);
 
 #define EXPECT_FLOAT_RECT_NEAR(expected, actual)                            \
   do {                                                                      \
@@ -159,9 +157,7 @@ TEST_P(GeometryMapperTest, Root) {
 }
 
 TEST_P(GeometryMapperTest, IdentityTransform) {
-  auto transform = TransformPaintPropertyNode::Create(
-      TransformPaintPropertyNode::Root(), TransformationMatrix(),
-      FloatPoint3D());
+  auto transform = CreateTransform(t0(), TransformationMatrix());
   local_state.SetTransform(transform.get());
 
   input_rect = FloatRect(0, 0, 100, 100);
@@ -172,8 +168,7 @@ TEST_P(GeometryMapperTest, IdentityTransform) {
 
 TEST_P(GeometryMapperTest, TranslationTransform) {
   expected_transform = TransformationMatrix().Translate(20, 10);
-  auto transform = TransformPaintPropertyNode::Create(
-      TransformPaintPropertyNode::Root(), expected_transform, FloatPoint3D());
+  auto transform = CreateTransform(t0(), expected_transform);
   local_state.SetTransform(transform.get());
 
   input_rect = FloatRect(0, 0, 100, 100);
@@ -182,16 +177,13 @@ TEST_P(GeometryMapperTest, TranslationTransform) {
   CHECK_MAPPINGS();
 
   FloatRect rect = expected_transformed_rect;
-  GeometryMapper::SourceToDestinationRect(TransformPaintPropertyNode::Root(),
-                                          local_state.Transform(), rect);
+  GeometryMapper::SourceToDestinationRect(&t0(), local_state.Transform(), rect);
   EXPECT_FLOAT_RECT_NEAR(input_rect, rect);
 }
 
 TEST_P(GeometryMapperTest, RotationAndScaleTransform) {
   expected_transform = TransformationMatrix().Rotate(45).Scale(2);
-  auto transform = TransformPaintPropertyNode::Create(
-      TransformPaintPropertyNode::Root(), expected_transform,
-      FloatPoint3D(0, 0, 0));
+  auto transform = CreateTransform(t0(), expected_transform);
   local_state.SetTransform(transform.get());
 
   input_rect = FloatRect(0, 0, 100, 100);
@@ -203,9 +195,8 @@ TEST_P(GeometryMapperTest, RotationAndScaleTransform) {
 
 TEST_P(GeometryMapperTest, RotationAndScaleTransformWithTransformOrigin) {
   expected_transform = TransformationMatrix().Rotate(45).Scale(2);
-  auto transform = TransformPaintPropertyNode::Create(
-      TransformPaintPropertyNode::Root(), expected_transform,
-      FloatPoint3D(50, 50, 0));
+  auto transform =
+      CreateTransform(t0(), expected_transform, FloatPoint3D(50, 50, 0));
   local_state.SetTransform(transform.get());
 
   input_rect = FloatRect(0, 0, 100, 100);
@@ -218,12 +209,10 @@ TEST_P(GeometryMapperTest, RotationAndScaleTransformWithTransformOrigin) {
 
 TEST_P(GeometryMapperTest, NestedTransforms) {
   auto rotate_transform = TransformationMatrix().Rotate(45);
-  auto transform1 = TransformPaintPropertyNode::Create(
-      TransformPaintPropertyNode::Root(), rotate_transform, FloatPoint3D());
+  auto transform1 = CreateTransform(t0(), rotate_transform);
 
   auto scale_transform = TransformationMatrix().Scale(2);
-  auto transform2 = TransformPaintPropertyNode::Create(
-      transform1, scale_transform, FloatPoint3D());
+  auto transform2 = CreateTransform(*transform1, scale_transform);
   local_state.SetTransform(transform2.get());
 
   input_rect = FloatRect(0, 0, 100, 100);
@@ -235,19 +224,22 @@ TEST_P(GeometryMapperTest, NestedTransforms) {
 }
 
 TEST_P(GeometryMapperTest, NestedTransformsFlattening) {
-  auto rotate_transform = TransformationMatrix().Rotate3d(45, 0, 0);
-  auto transform1 = TransformPaintPropertyNode::Create(
-      TransformPaintPropertyNode::Root(), rotate_transform, FloatPoint3D());
+  TransformPaintPropertyNode::State rotate_transform;
+  rotate_transform.matrix.Rotate3d(45, 0, 0);
+  auto transform1 =
+      TransformPaintPropertyNode::Create(t0(), std::move(rotate_transform));
 
-  auto inverse_rotate_transform = TransformationMatrix().Rotate3d(-45, 0, 0);
+  TransformPaintPropertyNode::State inverse_rotate_transform;
+  inverse_rotate_transform.matrix.Rotate3d(-45, 0, 0);
+  inverse_rotate_transform.flattens_inherited_transform = true;
   auto transform2 = TransformPaintPropertyNode::Create(
-      transform1, inverse_rotate_transform, FloatPoint3D(),
-      true);  // Flattens
+      *transform1, std::move(inverse_rotate_transform));
   local_state.SetTransform(transform2.get());
 
   input_rect = FloatRect(0, 0, 100, 100);
-  rotate_transform.FlattenTo2d();
-  expected_transform = rotate_transform * inverse_rotate_transform;
+  rotate_transform.matrix.FlattenTo2d();
+  expected_transform =
+      rotate_transform.matrix * inverse_rotate_transform.matrix;
   expected_transform.FlattenTo2d();
   expected_transformed_rect = expected_transform.MapRect(input_rect);
   expected_visual_rect = FloatClipRect(expected_transformed_rect);
@@ -257,12 +249,10 @@ TEST_P(GeometryMapperTest, NestedTransformsFlattening) {
 
 TEST_P(GeometryMapperTest, NestedTransformsScaleAndTranslation) {
   auto scale_transform = TransformationMatrix().Scale(2);
-  auto transform1 = TransformPaintPropertyNode::Create(
-      TransformPaintPropertyNode::Root(), scale_transform, FloatPoint3D());
+  auto transform1 = CreateTransform(t0(), scale_transform);
 
   auto translate_transform = TransformationMatrix().Translate(100, 0);
-  auto transform2 = TransformPaintPropertyNode::Create(
-      transform1, translate_transform, FloatPoint3D());
+  auto transform2 = CreateTransform(*transform1, translate_transform);
   local_state.SetTransform(transform2.get());
 
   input_rect = FloatRect(0, 0, 100, 100);
@@ -276,13 +266,11 @@ TEST_P(GeometryMapperTest, NestedTransformsScaleAndTranslation) {
 }
 
 TEST_P(GeometryMapperTest, NestedTransformsIntermediateDestination) {
-  auto rotate_transform = TransformationMatrix().Rotate(45);
-  auto transform1 = TransformPaintPropertyNode::Create(
-      TransformPaintPropertyNode::Root(), rotate_transform, FloatPoint3D());
+  auto translate_transform = TransformationMatrix().Translate(10, 20);
+  auto transform1 = CreateTransform(t0(), translate_transform);
 
-  auto scale_transform = TransformationMatrix().Translate(10, 20);
-  auto transform2 = TransformPaintPropertyNode::Create(
-      transform1, scale_transform, FloatPoint3D());
+  auto scale_transform = TransformationMatrix().Scale(3);
+  auto transform2 = CreateTransform(*transform1, scale_transform);
 
   local_state.SetTransform(transform2.get());
   ancestor_state.SetTransform(transform1.get());
@@ -291,13 +279,12 @@ TEST_P(GeometryMapperTest, NestedTransformsIntermediateDestination) {
   input_rect = FloatRect(0, 0, 100, 100);
   expected_transformed_rect = expected_transform.MapRect(input_rect);
   expected_visual_rect = FloatClipRect(expected_transformed_rect);
+  expected_visual_rect.ClearIsTight();
   CHECK_MAPPINGS();
 }
 
 TEST_P(GeometryMapperTest, SimpleClip) {
-  auto clip = ClipPaintPropertyNode::Create(ClipPaintPropertyNode::Root(),
-                                            TransformPaintPropertyNode::Root(),
-                                            FloatRoundedRect(10, 10, 50, 50));
+  auto clip = CreateClip(c0(), &t0(), FloatRoundedRect(10, 10, 50, 50));
   local_state.SetClip(clip.get());
 
   input_rect = FloatRect(0, 0, 100, 100);
@@ -308,10 +295,12 @@ TEST_P(GeometryMapperTest, SimpleClip) {
 }
 
 TEST_P(GeometryMapperTest, SimpleClipOverlayScrollbars) {
-  FloatRoundedRect rect_without_overlay_scrollbars(10, 10, 45, 43);
-  auto clip = ClipPaintPropertyNode::Create(
-      ClipPaintPropertyNode::Root(), TransformPaintPropertyNode::Root(),
-      FloatRoundedRect(10, 10, 50, 50), &rect_without_overlay_scrollbars);
+  ClipPaintPropertyNode::State clip_state;
+  clip_state.local_transform_space = &t0();
+  clip_state.clip_rect = FloatRoundedRect(10, 10, 50, 50);
+  clip_state.clip_rect_excluding_overlay_scrollbars =
+      FloatRoundedRect(10, 10, 45, 43);
+  auto clip = ClipPaintPropertyNode::Create(c0(), std::move(clip_state));
   local_state.SetClip(clip.get());
 
   input_rect = FloatRect(0, 0, 100, 100);
@@ -345,12 +334,31 @@ TEST_P(GeometryMapperTest, SimpleClipOverlayScrollbars) {
                       actual_clip_rect);
 }
 
+TEST_P(GeometryMapperTest, SimpleClipInclusiveIntersect) {
+  auto clip = CreateClip(c0(), &t0(), FloatRoundedRect(10, 10, 50, 50));
+  local_state.SetClip(clip.get());
+
+  FloatClipRect actual_clip_rect(FloatRect(60, 10, 10, 10));
+  GeometryMapper::LocalToAncestorVisualRect(
+      local_state, ancestor_state, actual_clip_rect,
+      kIgnorePlatformOverlayScrollbarSize, kInclusiveIntersect);
+  EXPECT_CLIP_RECT_EQ(FloatClipRect(FloatRect(60, 10, 0, 10)),
+                      actual_clip_rect);
+
+  // Check that not passing kExcludeOverlayScrollbarSizeForHitTesting gives
+  // a different result.
+  actual_clip_rect.SetRect(FloatRect(60, 10, 10, 10));
+  GeometryMapper::LocalToAncestorVisualRect(
+      local_state, ancestor_state, actual_clip_rect,
+      kIgnorePlatformOverlayScrollbarSize, kNonInclusiveIntersect);
+  EXPECT_CLIP_RECT_EQ(FloatClipRect(FloatRect()), actual_clip_rect);
+}
+
 TEST_P(GeometryMapperTest, RoundedClip) {
   FloatRoundedRect rect(FloatRect(10, 10, 50, 50),
                         FloatRoundedRect::Radii(FloatSize(1, 1), FloatSize(),
                                                 FloatSize(), FloatSize()));
-  auto clip = ClipPaintPropertyNode::Create(
-      ClipPaintPropertyNode::Root(), TransformPaintPropertyNode::Root(), rect);
+  auto clip = CreateClip(c0(), &t0(), rect);
   local_state.SetClip(clip.get());
 
   input_rect = FloatRect(0, 0, 100, 100);
@@ -365,9 +373,7 @@ TEST_P(GeometryMapperTest, ClipPath) {
   FloatRoundedRect rect(FloatRect(10, 10, 50, 50),
                         FloatRoundedRect::Radii(FloatSize(1, 1), FloatSize(),
                                                 FloatSize(), FloatSize()));
-  auto clip = CreateClipPathClip(ClipPaintPropertyNode::Root(),
-                                 TransformPaintPropertyNode::Root(),
-                                 FloatRoundedRect(10, 10, 50, 50));
+  auto clip = CreateClipPathClip(c0(), &t0(), FloatRoundedRect(10, 10, 50, 50));
   local_state.SetClip(clip.get());
 
   input_rect = FloatRect(0, 0, 100, 100);
@@ -384,13 +390,8 @@ TEST_P(GeometryMapperTest, TwoClips) {
       FloatRoundedRect::Radii(FloatSize(1, 1), FloatSize(), FloatSize(),
                               FloatSize()));
 
-  auto clip1 = ClipPaintPropertyNode::Create(ClipPaintPropertyNode::Root(),
-                                             TransformPaintPropertyNode::Root(),
-                                             clip_rect1);
-
-  auto clip2 =
-      ClipPaintPropertyNode::Create(clip1, TransformPaintPropertyNode::Root(),
-                                    FloatRoundedRect(10, 10, 50, 50));
+  auto clip1 = CreateClip(c0(), &t0(), clip_rect1);
+  auto clip2 = CreateClip(*clip1, &t0(), FloatRoundedRect(10, 10, 50, 50));
   local_state.SetClip(clip2.get());
 
   input_rect = FloatRect(0, 0, 100, 100);
@@ -407,20 +408,16 @@ TEST_P(GeometryMapperTest, TwoClips) {
 }
 
 TEST_P(GeometryMapperTest, TwoClipsTransformAbove) {
-  auto transform = TransformPaintPropertyNode::Create(
-      TransformPaintPropertyNode::Root(), TransformationMatrix(),
-      FloatPoint3D());
+  auto transform = CreateTransform(t0(), TransformationMatrix());
 
   FloatRoundedRect clip_rect1(
       FloatRect(10, 10, 50, 50),
       FloatRoundedRect::Radii(FloatSize(1, 1), FloatSize(), FloatSize(),
                               FloatSize()));
 
-  auto clip1 = ClipPaintPropertyNode::Create(ClipPaintPropertyNode::Root(),
-                                             transform.get(), clip_rect1);
-
-  auto clip2 = ClipPaintPropertyNode::Create(clip1, transform.get(),
-                                             FloatRoundedRect(10, 10, 30, 40));
+  auto clip1 = CreateClip(c0(), transform.get(), clip_rect1);
+  auto clip2 =
+      CreateClip(*clip1, transform.get(), FloatRoundedRect(10, 10, 30, 40));
   local_state.SetClip(clip2.get());
 
   input_rect = FloatRect(0, 0, 100, 100);
@@ -439,11 +436,9 @@ TEST_P(GeometryMapperTest, TwoClipsTransformAbove) {
 
 TEST_P(GeometryMapperTest, ClipBeforeTransform) {
   expected_transform = TransformationMatrix().Rotate(45);
-  auto transform = TransformPaintPropertyNode::Create(
-      TransformPaintPropertyNode::Root(), expected_transform, FloatPoint3D());
-  auto clip = ClipPaintPropertyNode::Create(ClipPaintPropertyNode::Root(),
-                                            transform.get(),
-                                            FloatRoundedRect(10, 10, 50, 50));
+  auto transform = CreateTransform(t0(), expected_transform);
+  auto clip =
+      CreateClip(c0(), transform.get(), FloatRoundedRect(10, 10, 50, 50));
   local_state.SetClip(clip.get());
   local_state.SetTransform(transform.get());
 
@@ -461,11 +456,8 @@ TEST_P(GeometryMapperTest, ClipBeforeTransform) {
 
 TEST_P(GeometryMapperTest, ClipAfterTransform) {
   expected_transform = TransformationMatrix().Rotate(45);
-  auto transform = TransformPaintPropertyNode::Create(
-      TransformPaintPropertyNode::Root(), expected_transform, FloatPoint3D());
-  auto clip = ClipPaintPropertyNode::Create(ClipPaintPropertyNode::Root(),
-                                            TransformPaintPropertyNode::Root(),
-                                            FloatRoundedRect(10, 10, 200, 200));
+  auto transform = CreateTransform(t0(), expected_transform);
+  auto clip = CreateClip(c0(), &t0(), FloatRoundedRect(10, 10, 200, 200));
   local_state.SetClip(clip.get());
   local_state.SetTransform(transform.get());
 
@@ -481,16 +473,11 @@ TEST_P(GeometryMapperTest, ClipAfterTransform) {
 }
 
 TEST_P(GeometryMapperTest, TwoClipsWithTransformBetween) {
-  auto clip1 = ClipPaintPropertyNode::Create(
-      ClipPaintPropertyNode::Root(), TransformPaintPropertyNode::Root(),
-      FloatRoundedRect(10, 10, 200, 200));
-
+  auto clip1 = CreateClip(c0(), &t0(), FloatRoundedRect(10, 10, 200, 200));
   expected_transform = TransformationMatrix().Rotate(45);
-  auto transform = TransformPaintPropertyNode::Create(
-      TransformPaintPropertyNode::Root(), expected_transform, FloatPoint3D());
-
-  auto clip2 = ClipPaintPropertyNode::Create(
-      clip1, transform.get(), FloatRoundedRect(10, 10, 200, 200));
+  auto transform = CreateTransform(t0(), expected_transform);
+  auto clip2 =
+      CreateClip(*clip1, transform.get(), FloatRoundedRect(10, 10, 200, 200));
 
   input_rect = FloatRect(0, 0, 100, 100);
   expected_transformed_rect = expected_transform.MapRect(input_rect);
@@ -534,12 +521,10 @@ TEST_P(GeometryMapperTest, SiblingTransforms) {
   // These transforms are siblings. Thus mapping from one to the other requires
   // going through the root.
   auto rotate_transform1 = TransformationMatrix().Rotate(45);
-  auto transform1 = TransformPaintPropertyNode::Create(
-      TransformPaintPropertyNode::Root(), rotate_transform1, FloatPoint3D());
+  auto transform1 = CreateTransform(t0(), rotate_transform1);
 
   auto rotate_transform2 = TransformationMatrix().Rotate(-45);
-  auto transform2 = TransformPaintPropertyNode::Create(
-      TransformPaintPropertyNode::Root(), rotate_transform2, FloatPoint3D());
+  auto transform2 = CreateTransform(t0(), rotate_transform2);
 
   auto transform1_state = PropertyTreeState::Root();
   transform1_state.SetTransform(transform1.get());
@@ -578,16 +563,13 @@ TEST_P(GeometryMapperTest, SiblingTransformsWithClip) {
   // These transforms are siblings. Thus mapping from one to the other requires
   // going through the root.
   auto rotate_transform1 = TransformationMatrix().Rotate(45);
-  auto transform1 = TransformPaintPropertyNode::Create(
-      TransformPaintPropertyNode::Root(), rotate_transform1, FloatPoint3D());
+  auto transform1 = CreateTransform(t0(), rotate_transform1);
 
   auto rotate_transform2 = TransformationMatrix().Rotate(-45);
-  auto transform2 = TransformPaintPropertyNode::Create(
-      TransformPaintPropertyNode::Root(), rotate_transform2, FloatPoint3D());
+  auto transform2 = CreateTransform(t0(), rotate_transform2);
 
-  auto clip = ClipPaintPropertyNode::Create(ClipPaintPropertyNode::Root(),
-                                            transform2.get(),
-                                            FloatRoundedRect(10, 20, 30, 40));
+  auto clip =
+      CreateClip(c0(), transform2.get(), FloatRoundedRect(10, 20, 30, 40));
 
   auto transform1_state = PropertyTreeState::Root();
   transform1_state.SetTransform(transform1.get());
@@ -601,7 +583,7 @@ TEST_P(GeometryMapperTest, SiblingTransformsWithClip) {
   LocalToAncestorVisualRectInternal(transform1_state, transform2_and_clip_state,
                                     result, success);
   // Fails, because the clip of the destination state is not an ancestor of the
-  // clip of the source state. A known bug in SPv1* would make such query,
+  // clip of the source state. A known bug in SPv1 would make such query,
   // in such case, no clips are applied.
   if (RuntimeEnabledFeatures::SlimmingPaintV2Enabled()) {
     EXPECT_FALSE(success);
@@ -623,27 +605,23 @@ TEST_P(GeometryMapperTest, SiblingTransformsWithClip) {
 }
 
 TEST_P(GeometryMapperTest, FilterWithClipsAndTransforms) {
-  auto transform_above_effect = TransformPaintPropertyNode::Create(
-      TransformPaintPropertyNode::Root(),
-      TransformationMatrix().Translate(40, 50), FloatPoint3D());
-  auto transform_below_effect = TransformPaintPropertyNode::Create(
-      transform_above_effect, TransformationMatrix().Translate(20, 30),
-      FloatPoint3D());
+  auto transform_above_effect =
+      CreateTransform(t0(), TransformationMatrix().Translate(40, 50));
+  auto transform_below_effect = CreateTransform(
+      *transform_above_effect, TransformationMatrix().Translate(20, 30));
 
   // This clip is between transformAboveEffect and the effect.
-  auto clip_above_effect = ClipPaintPropertyNode::Create(
-      ClipPaintPropertyNode::Root(), transform_above_effect,
-      FloatRoundedRect(-100, -100, 200, 200));
+  auto clip_above_effect = CreateClip(c0(), transform_above_effect.get(),
+                                      FloatRoundedRect(-100, -100, 200, 200));
   // This clip is between the effect and transformBelowEffect.
   auto clip_below_effect =
-      ClipPaintPropertyNode::Create(clip_above_effect, transform_above_effect,
-                                    FloatRoundedRect(10, 10, 100, 100));
+      CreateClip(*clip_above_effect, transform_above_effect.get(),
+                 FloatRoundedRect(10, 10, 100, 100));
 
   CompositorFilterOperations filters;
   filters.AppendBlurFilter(20);
-  auto effect = EffectPaintPropertyNode::Create(
-      EffectPaintPropertyNode::Root(), transform_above_effect,
-      clip_above_effect, kColorFilterNone, filters, 1.0, SkBlendMode::kSrcOver);
+  auto effect = CreateFilterEffect(e0(), transform_above_effect.get(),
+                                   clip_above_effect.get(), filters);
 
   local_state = PropertyTreeState(transform_below_effect.get(),
                                   clip_below_effect.get(), effect.get());
@@ -678,11 +656,7 @@ TEST_P(GeometryMapperTest, ReflectionWithPaintOffset) {
   CompositorFilterOperations filters;
   filters.AppendReferenceFilter(PaintFilterBuilder::BuildBoxReflectFilter(
       BoxReflection(BoxReflection::kHorizontalReflection, 0), nullptr));
-  auto effect = EffectPaintPropertyNode::Create(
-      EffectPaintPropertyNode::Root(), TransformPaintPropertyNode::Root(),
-      ClipPaintPropertyNode::Root(), kColorFilterNone, filters, 1.0,
-      SkBlendMode::kSrcOver, CompositingReason::kNone, CompositorElementId(),
-      FloatPoint(100, 100));
+  auto effect = CreateFilterEffect(e0(), filters, FloatPoint(100, 100));
   local_state.SetEffect(effect.get());
 
   input_rect = FloatRect(100, 100, 50, 50);
@@ -695,15 +669,12 @@ TEST_P(GeometryMapperTest, ReflectionWithPaintOffset) {
 }
 
 TEST_P(GeometryMapperTest, InvertedClip) {
-  if (RuntimeEnabledFeatures::SlimmingPaintV175Enabled())
+  // This test is invalid for SPv2.
+  if (RuntimeEnabledFeatures::SlimmingPaintV2Enabled())
     return;
 
-  auto clip = ClipPaintPropertyNode::Create(ClipPaintPropertyNode::Root(),
-                                            TransformPaintPropertyNode::Root(),
-                                            FloatRoundedRect(10, 10, 50, 50));
-
-  PropertyTreeState dest(TransformPaintPropertyNode::Root(), clip.get(),
-                         EffectPaintPropertyNode::Root());
+  auto clip = CreateClip(c0(), &t0(), FloatRoundedRect(10, 10, 50, 50));
+  PropertyTreeState dest(&t0(), clip.get(), &e0());
 
   FloatClipRect visual_rect(FloatRect(0, 0, 10, 200));
   GeometryMapper::LocalToAncestorVisualRect(PropertyTreeState::Root(), dest,
@@ -717,16 +688,10 @@ TEST_P(GeometryMapperTest, InvertedClip) {
 }
 
 TEST_P(GeometryMapperTest, PointVisibleInAncestorSpaceSimpleClip) {
-  auto clip = CreateClip(ClipPaintPropertyNode::Root(),
-                         TransformPaintPropertyNode::Root(),
-                         FloatRoundedRect(10, 10, 50, 50));
+  auto clip = CreateClip(c0(), &t0(), FloatRoundedRect(10, 10, 50, 50));
 
-  PropertyTreeState local_state(TransformPaintPropertyNode::Root(), clip.get(),
-                                EffectPaintPropertyNode::Root());
-
-  PropertyTreeState ancestor_state(TransformPaintPropertyNode::Root(),
-                                   ClipPaintPropertyNode::Root(),
-                                   EffectPaintPropertyNode::Root());
+  PropertyTreeState local_state(&t0(), clip.get(), &e0());
+  PropertyTreeState ancestor_state = PropertyTreeState::Root();
 
   EXPECT_TRUE(GeometryMapper::PointVisibleInAncestorSpace(
       local_state, ancestor_state, FloatPoint(30, 30)));
@@ -743,15 +708,10 @@ TEST_P(GeometryMapperTest, PointVisibleInAncestorSpaceRoundedClip) {
   FloatRoundedRect::Radii radii;
   radii.SetTopLeft(FloatSize(8, 8));
   clip_rect.SetRadii(radii);
-  auto clip = CreateClip(ClipPaintPropertyNode::Root(),
-                         TransformPaintPropertyNode::Root(), clip_rect);
+  auto clip = CreateClip(c0(), &t0(), clip_rect);
 
-  PropertyTreeState local_state(TransformPaintPropertyNode::Root(), clip.get(),
-                                EffectPaintPropertyNode::Root());
-
-  PropertyTreeState ancestor_state(TransformPaintPropertyNode::Root(),
-                                   ClipPaintPropertyNode::Root(),
-                                   EffectPaintPropertyNode::Root());
+  PropertyTreeState local_state(&t0(), clip.get(), &e0());
+  PropertyTreeState ancestor_state = PropertyTreeState::Root();
 
   EXPECT_TRUE(GeometryMapper::PointVisibleInAncestorSpace(
       local_state, ancestor_state, FloatPoint(30, 30)));
@@ -773,18 +733,13 @@ TEST_P(GeometryMapperTest, PointVisibleInAncestorSpaceClipPath) {
   path->AddLineTo(FloatPoint(10, 10));
 
   ClipPaintPropertyNode::State state;
-  state.local_transform_space = TransformPaintPropertyNode::Root();
+  state.local_transform_space = &t0();
   state.clip_rect = FloatRoundedRect(FloatRect(0, 0, 500, 500));
   state.clip_path = base::AdoptRef(path);
-  auto clip = ClipPaintPropertyNode::Create(ClipPaintPropertyNode::Root(),
-                                            std::move(state));
+  auto clip = ClipPaintPropertyNode::Create(c0(), std::move(state));
 
-  PropertyTreeState local_state(TransformPaintPropertyNode::Root(), clip.get(),
-                                EffectPaintPropertyNode::Root());
-
-  PropertyTreeState ancestor_state(TransformPaintPropertyNode::Root(),
-                                   ClipPaintPropertyNode::Root(),
-                                   EffectPaintPropertyNode::Root());
+  PropertyTreeState local_state(&t0(), clip.get(), &e0());
+  PropertyTreeState ancestor_state = PropertyTreeState::Root();
 
   EXPECT_TRUE(GeometryMapper::PointVisibleInAncestorSpace(
       local_state, ancestor_state, FloatPoint(30, 30)));
@@ -797,21 +752,13 @@ TEST_P(GeometryMapperTest, PointVisibleInAncestorSpaceClipPath) {
 }
 
 TEST_P(GeometryMapperTest, PointVisibleInAncestorSpaceSimpleClipWithTransform) {
-  TransformPaintPropertyNode::State translate_transform;
-  translate_transform.matrix.Translate(10, 10);
-  auto transform = TransformPaintPropertyNode::Create(
-      TransformPaintPropertyNode::Root(), std::move(translate_transform));
+  auto transform =
+      CreateTransform(t0(), TransformationMatrix().Translate(10, 10));
+  auto clip =
+      CreateClip(c0(), &t0(), FloatRoundedRect(FloatRect(20, 20, 50, 50)));
 
-  auto clip = CreateClip(ClipPaintPropertyNode::Root(),
-                         TransformPaintPropertyNode::Root(),
-                         FloatRoundedRect(FloatRect(20, 20, 50, 50)));
-
-  PropertyTreeState local_state(transform.get(), clip.get(),
-                                EffectPaintPropertyNode::Root());
-
-  PropertyTreeState ancestor_state(TransformPaintPropertyNode::Root(),
-                                   ClipPaintPropertyNode::Root(),
-                                   EffectPaintPropertyNode::Root());
+  PropertyTreeState local_state(transform.get(), clip.get(), &e0());
+  PropertyTreeState ancestor_state = PropertyTreeState::Root();
 
   EXPECT_TRUE(GeometryMapper::PointVisibleInAncestorSpace(
       local_state, ancestor_state, FloatPoint(30, 30)));
@@ -824,10 +771,8 @@ TEST_P(GeometryMapperTest, PointVisibleInAncestorSpaceSimpleClipWithTransform) {
 }
 
 TEST_P(GeometryMapperTest, PointVisibleInAncestorSpaceClipPathWithTransform) {
-  TransformPaintPropertyNode::State translate_transform;
-  translate_transform.matrix.Translate(10, 10);
-  auto transform = TransformPaintPropertyNode::Create(
-      TransformPaintPropertyNode::Root(), std::move(translate_transform));
+  auto transform =
+      CreateTransform(t0(), TransformationMatrix().Translate(10, 10));
 
   RefCountedPath* path = new RefCountedPath;
   path->MoveTo(FloatPoint(20, 20));
@@ -837,18 +782,13 @@ TEST_P(GeometryMapperTest, PointVisibleInAncestorSpaceClipPathWithTransform) {
   path->AddLineTo(FloatPoint(20, 20));
 
   ClipPaintPropertyNode::State state;
-  state.local_transform_space = TransformPaintPropertyNode::Root();
+  state.local_transform_space = &t0();
   state.clip_rect = FloatRoundedRect(FloatRect(0, 0, 500, 500));
   state.clip_path = base::AdoptRef(path);
-  auto clip = ClipPaintPropertyNode::Create(ClipPaintPropertyNode::Root(),
-                                            std::move(state));
+  auto clip = ClipPaintPropertyNode::Create(c0(), std::move(state));
 
-  PropertyTreeState local_state(transform.get(), clip.get(),
-                                EffectPaintPropertyNode::Root());
-
-  PropertyTreeState ancestor_state(TransformPaintPropertyNode::Root(),
-                                   ClipPaintPropertyNode::Root(),
-                                   EffectPaintPropertyNode::Root());
+  PropertyTreeState local_state(transform.get(), clip.get(), &e0());
+  PropertyTreeState ancestor_state = PropertyTreeState::Root();
 
   EXPECT_TRUE(GeometryMapper::PointVisibleInAncestorSpace(
       local_state, ancestor_state, FloatPoint(30, 30)));

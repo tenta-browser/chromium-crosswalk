@@ -4,12 +4,15 @@
 
 #include "third_party/blink/renderer/modules/background_fetch/background_fetch_manager.h"
 
-#include "third_party/blink/public/platform/modules/serviceworker/web_service_worker_request.h"
+#include "base/memory/scoped_refptr.h"
+#include "base/metrics/histogram_macros.h"
+#include "third_party/blink/public/platform/modules/service_worker/web_service_worker_request.h"
 #include "third_party/blink/renderer/bindings/core/v8/request_or_usv_string.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise_resolver.h"
 #include "third_party/blink/renderer/bindings/modules/v8/request_or_usv_string_or_request_or_usv_string_sequence.h"
 #include "third_party/blink/renderer/core/dom/dom_exception.h"
-#include "third_party/blink/renderer/core/dom/exception_code.h"
+#include "third_party/blink/renderer/core/fetch/body.h"
+#include "third_party/blink/renderer/core/fetch/body_stream_buffer.h"
 #include "third_party/blink/renderer/core/fetch/request.h"
 #include "third_party/blink/renderer/core/frame/csp/content_security_policy.h"
 #include "third_party/blink/renderer/core/frame/deprecation.h"
@@ -20,9 +23,11 @@
 #include "third_party/blink/renderer/modules/background_fetch/background_fetch_options.h"
 #include "third_party/blink/renderer/modules/background_fetch/background_fetch_registration.h"
 #include "third_party/blink/renderer/modules/background_fetch/background_fetch_type_converters.h"
-#include "third_party/blink/renderer/modules/serviceworkers/service_worker_registration.h"
+#include "third_party/blink/renderer/modules/service_worker/service_worker_registration.h"
+#include "third_party/blink/renderer/platform/bindings/exception_code.h"
 #include "third_party/blink/renderer/platform/bindings/script_state.h"
 #include "third_party/blink/renderer/platform/bindings/v8_throw_exception.h"
+#include "third_party/blink/renderer/platform/blob/blob_data.h"
 #include "third_party/blink/renderer/platform/loader/cors/cors.h"
 #include "third_party/blink/renderer/platform/loader/fetch/fetch_utils.h"
 #include "third_party/blink/renderer/platform/network/network_utils.h"
@@ -30,7 +35,6 @@
 #include "third_party/blink/renderer/platform/weborigin/kurl.h"
 #include "third_party/blink/renderer/platform/weborigin/security_origin.h"
 #include "third_party/skia/include/core/SkBitmap.h"
-
 namespace blink {
 
 namespace {
@@ -86,22 +90,8 @@ bool ShouldBlockMixedContent(ExecutionContext* execution_context,
                              const KURL& request_url) {
   // TODO(crbug.com/757441): Using MixedContentChecker::ShouldBlockFetch would
   // log better metrics.
-  if (MixedContentChecker::IsMixedContent(
-          execution_context->GetSecurityOrigin(), request_url)) {
-    return true;
-  }
-
-  // Normally requests from e.g. http://127.0.0.1 aren't subject to Mixed
-  // Content checks even though that is a secure context. Since this is a new
-  // API only exposed on secure contexts, be strict pending the discussion in
-  // https://groups.google.com/a/chromium.org/d/topic/security-dev/29Ftfgn-w0I/discussion
-  // https://w3c.github.io/webappsec-mixed-content/#a-priori-authenticated-url
-  if (!SecurityOrigin::Create(request_url)->IsPotentiallyTrustworthy() &&
-      !request_url.ProtocolIsData()) {
-    return true;
-  }
-
-  return false;
+  return MixedContentChecker::IsMixedContent(
+      execution_context->GetSecurityOrigin(), request_url);
 }
 
 bool ShouldBlockDanglingMarkup(const KURL& request_url) {
@@ -132,7 +122,7 @@ bool ShouldBlockCORSPreflight(ExecutionContext* execution_context,
   // element require a CORS-preflight request.
   // https://fetch.spec.whatwg.org/#main-fetch
   if (!CORS::IsCORSSafelistedMethod(web_request.Method()) ||
-      !FetchUtils::ContainsOnlyCORSSafelistedHeaders(web_request.Headers())) {
+      !CORS::ContainsOnlyCORSSafelistedHeaders(web_request.Headers())) {
     return true;
   }
 
@@ -155,6 +145,31 @@ bool ShouldBlockCORSPreflight(ExecutionContext* execution_context,
   }
 
   return false;
+}
+
+scoped_refptr<BlobDataHandle> ExtractBlobHandle(
+    Request* request,
+    ExceptionState& exception_state) {
+  DCHECK(request);
+
+  if (request->IsBodyLocked(exception_state) == Body::BodyLocked::kLocked ||
+      request->IsBodyUsed(exception_state) == Body::BodyUsed::kUsed) {
+    DCHECK(!exception_state.HadException());
+    exception_state.ThrowTypeError("Request body is already used");
+    return nullptr;
+  }
+
+  BodyStreamBuffer* buffer = request->BodyBuffer();
+  if (!buffer)
+    return nullptr;
+
+  auto blob_handle = buffer->DrainAsBlobDataHandle(
+      BytesConsumer::BlobSizePolicy::kDisallowBlobWithInvalidSize,
+      exception_state);
+  if (exception_state.HadException())
+    return nullptr;
+
+  return blob_handle;
 }
 
 }  // namespace
@@ -208,6 +223,14 @@ ScriptPromise BackgroundFetchManager::fetch(
     if (!request_url.IsValid()) {
       return RejectWithTypeError(script_state, request_url,
                                  "that URL is invalid");
+    }
+
+    // https://wicg.github.io/background-fetch/#dom-backgroundfetchmanager-fetch
+    // ""If |internalRequest|’s mode is "no-cors", then return a promise
+    //   rejected with a TypeError.""
+    if (web_request.Mode() == network::mojom::FetchRequestMode::kNoCORS) {
+      return RejectWithTypeError(script_state, request_url,
+                                 "the request mode must not be no-cors");
     }
 
     // Check this before mixed content, so that if mixed content is blocked by
@@ -268,8 +291,8 @@ ScriptPromise BackgroundFetchManager::fetch(
     return promise;
   }
 
-  DidLoadIcons(id, std::move(web_requests), std::move(options_ptr),
-               WrapPersistent(resolver), SkBitmap());
+  DidLoadIcons(id, std::move(web_requests), std::move(options_ptr), resolver,
+               SkBitmap());
   return promise;
 }
 
@@ -279,15 +302,23 @@ void BackgroundFetchManager::DidLoadIcons(
     mojom::blink::BackgroundFetchOptionsPtr options,
     ScriptPromiseResolver* resolver,
     const SkBitmap& icon) {
-  bridge_->Fetch(id, std::move(web_requests), std::move(options), icon,
-                 WTF::Bind(&BackgroundFetchManager::DidFetch,
-                           WrapPersistent(this), WrapPersistent(resolver)));
+  bridge_->Fetch(
+      id, std::move(web_requests), std::move(options), icon,
+      WTF::Bind(&BackgroundFetchManager::DidFetch, WrapPersistent(this),
+                WrapPersistent(resolver), base::Time::Now()));
 }
 
 void BackgroundFetchManager::DidFetch(
     ScriptPromiseResolver* resolver,
+    base::Time time_started,
     mojom::blink::BackgroundFetchError error,
     BackgroundFetchRegistration* registration) {
+  UMA_HISTOGRAM_TIMES("BackgroundFetch.Manager.FetchDuration",
+                      base::Time::Now() - time_started);
+
+  ScriptState* script_state = resolver->GetScriptState();
+  ScriptState::Scope scope(script_state);
+
   switch (error) {
     case mojom::blink::BackgroundFetchError::NONE:
       DCHECK(registration);
@@ -295,14 +326,29 @@ void BackgroundFetchManager::DidFetch(
       return;
     case mojom::blink::BackgroundFetchError::DUPLICATED_DEVELOPER_ID:
       DCHECK(!registration);
-      resolver->Reject(DOMException::Create(
-          kInvalidStateError,
+      resolver->Reject(V8ThrowException::CreateTypeError(
+          script_state->GetIsolate(),
           "There already is a registration for the given id."));
+      return;
+    case mojom::blink::BackgroundFetchError::PERMISSION_DENIED:
+      resolver->Reject(V8ThrowException::CreateTypeError(
+          script_state->GetIsolate(),
+          "This origin does not have permission to start a fetch."));
       return;
     case mojom::blink::BackgroundFetchError::STORAGE_ERROR:
       DCHECK(!registration);
+      resolver->Reject(V8ThrowException::CreateTypeError(
+          script_state->GetIsolate(),
+          "Failed to store registration due to I/O error."));
+      return;
+    case mojom::blink::BackgroundFetchError::SERVICE_WORKER_UNAVAILABLE:
+      resolver->Reject(V8ThrowException::CreateTypeError(
+          script_state->GetIsolate(),
+          "There is no service worker available to service the fetch."));
+      return;
+    case mojom::blink::BackgroundFetchError::QUOTA_EXCEEDED:
       resolver->Reject(DOMException::Create(
-          kAbortError, "Failed to store registration due to I/O error."));
+          DOMExceptionCode::kQuotaExceededError, "Quota exceeded."));
       return;
     case mojom::blink::BackgroundFetchError::INVALID_ARGUMENT:
     case mojom::blink::BackgroundFetchError::INVALID_ID:
@@ -315,20 +361,18 @@ void BackgroundFetchManager::DidFetch(
 
 ScriptPromise BackgroundFetchManager::get(ScriptState* script_state,
                                           const String& id) {
-  if (!registration_->active()) {
-    return ScriptPromise::Reject(
-        script_state,
-        V8ThrowException::CreateTypeError(script_state->GetIsolate(),
-                                          "No active registration available on "
-                                          "the ServiceWorkerRegistration."));
-  }
+  // Creating a Background Fetch registration requires an activated worker, so
+  // if |registration_| has not been activated we can skip the Mojo roundtrip.
+  if (!registration_->active())
+    return ScriptPromise::CastUndefined(script_state);
 
   ScriptPromiseResolver* resolver = ScriptPromiseResolver::Create(script_state);
   ScriptPromise promise = resolver->Promise();
 
   bridge_->GetRegistration(
       id, WTF::Bind(&BackgroundFetchManager::DidGetRegistration,
-                    WrapPersistent(this), WrapPersistent(resolver)));
+                    WrapPersistent(this), WrapPersistent(resolver),
+                    base::Time::Now()));
 
   return promise;
 }
@@ -370,11 +414,15 @@ Vector<WebServiceWorkerRequest> BackgroundFetchManager::CreateWebRequestVector(
 
       DCHECK(request);
       request->PopulateWebServiceWorkerRequest(web_requests[i]);
+      web_requests[i].SetBlobDataHandle(
+          ExtractBlobHandle(request, exception_state));
     }
   } else if (requests.IsRequest()) {
     DCHECK(requests.GetAsRequest());
     web_requests.resize(1);
     requests.GetAsRequest()->PopulateWebServiceWorkerRequest(web_requests[0]);
+    web_requests[0].SetBlobDataHandle(
+        ExtractBlobHandle(requests.GetAsRequest(), exception_state));
   } else if (requests.IsUSVString()) {
     Request* request = Request::Create(script_state, requests.GetAsUSVString(),
                                        exception_state);
@@ -394,20 +442,39 @@ Vector<WebServiceWorkerRequest> BackgroundFetchManager::CreateWebRequestVector(
 
 void BackgroundFetchManager::DidGetRegistration(
     ScriptPromiseResolver* resolver,
+    base::Time time_started,
     mojom::blink::BackgroundFetchError error,
     BackgroundFetchRegistration* registration) {
+  UMA_HISTOGRAM_TIMES("BackgroundFetch.Manager.GetDuration",
+                      base::Time::Now() - time_started);
+
+  ScriptState* script_state = resolver->GetScriptState();
+  ScriptState::Scope scope(script_state);
+
   switch (error) {
     case mojom::blink::BackgroundFetchError::NONE:
-    case mojom::blink::BackgroundFetchError::INVALID_ID:
+      DCHECK(registration);
       resolver->Resolve(registration);
+      return;
+    case mojom::blink::BackgroundFetchError::INVALID_ID:
+      DCHECK(!registration);
+      resolver->Resolve(v8::Undefined(script_state->GetIsolate()));
       return;
     case mojom::blink::BackgroundFetchError::STORAGE_ERROR:
       DCHECK(!registration);
+      resolver->Reject(
+          DOMException::Create(DOMExceptionCode::kAbortError,
+                               "Failed to get registration due to I/O error."));
+      return;
+    case mojom::blink::BackgroundFetchError::SERVICE_WORKER_UNAVAILABLE:
       resolver->Reject(DOMException::Create(
-          kAbortError, "Failed to get registration due to I/O error."));
+          DOMExceptionCode::kInvalidStateError,
+          "There's no service worker available to service the fetch."));
       return;
     case mojom::blink::BackgroundFetchError::DUPLICATED_DEVELOPER_ID:
     case mojom::blink::BackgroundFetchError::INVALID_ARGUMENT:
+    case mojom::blink::BackgroundFetchError::PERMISSION_DENIED:
+    case mojom::blink::BackgroundFetchError::QUOTA_EXCEEDED:
       // Not applicable for this callback.
       break;
   }
@@ -416,28 +483,33 @@ void BackgroundFetchManager::DidGetRegistration(
 }
 
 ScriptPromise BackgroundFetchManager::getIds(ScriptState* script_state) {
+  // Creating a Background Fetch registration requires an activated worker, so
+  // if |registration_| has not been activated we can skip the Mojo roundtrip.
   if (!registration_->active()) {
-    return ScriptPromise::Reject(
-        script_state,
-        V8ThrowException::CreateTypeError(script_state->GetIsolate(),
-                                          "No active registration available on "
-                                          "the ServiceWorkerRegistration."));
+    return ScriptPromise::Cast(script_state,
+                               v8::Array::New(script_state->GetIsolate()));
   }
 
   ScriptPromiseResolver* resolver = ScriptPromiseResolver::Create(script_state);
   ScriptPromise promise = resolver->Promise();
 
-  bridge_->GetDeveloperIds(
-      WTF::Bind(&BackgroundFetchManager::DidGetDeveloperIds,
-                WrapPersistent(this), WrapPersistent(resolver)));
+  bridge_->GetDeveloperIds(WTF::Bind(
+      &BackgroundFetchManager::DidGetDeveloperIds, WrapPersistent(this),
+      WrapPersistent(resolver), base::Time::Now()));
 
   return promise;
 }
 
 void BackgroundFetchManager::DidGetDeveloperIds(
     ScriptPromiseResolver* resolver,
+    base::Time time_started,
     mojom::blink::BackgroundFetchError error,
     const Vector<String>& developer_ids) {
+  UMA_HISTOGRAM_TIMES("BackgroundFetch.Manager.GetIdsDuration",
+                      base::Time::Now() - time_started);
+
+  ScriptState::Scope scope(resolver->GetScriptState());
+
   switch (error) {
     case mojom::blink::BackgroundFetchError::NONE:
       resolver->Resolve(developer_ids);
@@ -445,11 +517,15 @@ void BackgroundFetchManager::DidGetDeveloperIds(
     case mojom::blink::BackgroundFetchError::STORAGE_ERROR:
       DCHECK(developer_ids.IsEmpty());
       resolver->Reject(DOMException::Create(
-          kAbortError, "Failed to get registration IDs due to I/O error."));
+          DOMExceptionCode::kAbortError,
+          "Failed to get registration IDs due to I/O error."));
       return;
     case mojom::blink::BackgroundFetchError::DUPLICATED_DEVELOPER_ID:
     case mojom::blink::BackgroundFetchError::INVALID_ARGUMENT:
     case mojom::blink::BackgroundFetchError::INVALID_ID:
+    case mojom::blink::BackgroundFetchError::PERMISSION_DENIED:
+    case mojom::blink::BackgroundFetchError::SERVICE_WORKER_UNAVAILABLE:
+    case mojom::blink::BackgroundFetchError::QUOTA_EXCEEDED:
       // Not applicable for this callback.
       break;
   }

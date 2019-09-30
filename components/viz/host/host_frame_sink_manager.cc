@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "base/sequenced_task_runner.h"
+#include "base/single_thread_task_runner.h"
 #include "base/stl_util.h"
 #include "components/viz/common/surfaces/surface_info.h"
 #include "components/viz/service/frame_sinks/compositor_frame_sink_support.h"
@@ -66,7 +67,7 @@ void HostFrameSinkManager::RegisterFrameSinkId(const FrameSinkId& frame_sink_id,
 
   FrameSinkData& data = frame_sink_data_map_[frame_sink_id];
   DCHECK(!data.IsFrameSinkRegistered());
-  DCHECK(!data.HasCompositorFrameSinkData());
+  DCHECK(!data.has_created_compositor_frame_sink);
   data.client = client;
   frame_sink_manager_->RegisterFrameSinkId(frame_sink_id);
 }
@@ -130,13 +131,12 @@ void HostFrameSinkManager::CreateRootCompositorFrameSink(
   FrameSinkId frame_sink_id = params->frame_sink_id;
   FrameSinkData& data = frame_sink_data_map_[frame_sink_id];
   DCHECK(data.IsFrameSinkRegistered());
-  DCHECK(!data.support);
 
   // If GL context is lost a new CompositorFrameSink will be created. Destroy
   // the old CompositorFrameSink first.
   if (data.has_created_compositor_frame_sink) {
     frame_sink_manager_->DestroyCompositorFrameSink(frame_sink_id,
-                                                    base::OnceClosure());
+                                                    base::DoNothing());
   }
 
   data.is_root = true;
@@ -153,13 +153,12 @@ void HostFrameSinkManager::CreateCompositorFrameSink(
     mojom::CompositorFrameSinkClientPtr client) {
   FrameSinkData& data = frame_sink_data_map_[frame_sink_id];
   DCHECK(data.IsFrameSinkRegistered());
-  DCHECK(!data.support);
 
   // If GL context is lost a new CompositorFrameSink will be created. Destroy
   // the old CompositorFrameSink first.
   if (data.has_created_compositor_frame_sink) {
     frame_sink_manager_->DestroyCompositorFrameSink(frame_sink_id,
-                                                    base::OnceClosure());
+                                                    base::DoNothing());
   }
 
   data.is_root = false;
@@ -181,9 +180,16 @@ void HostFrameSinkManager::OnFrameTokenChanged(const FrameSinkId& frame_sink_id,
     data.client->OnFrameTokenChanged(frame_token);
 }
 
-void HostFrameSinkManager::RegisterFrameSinkHierarchy(
+bool HostFrameSinkManager::RegisterFrameSinkHierarchy(
     const FrameSinkId& parent_frame_sink_id,
     const FrameSinkId& child_frame_sink_id) {
+  auto iter = frame_sink_data_map_.find(parent_frame_sink_id);
+  // |parent_frame_sink_id| isn't registered so it can't embed anything.
+  if (iter == frame_sink_data_map_.end() ||
+      !iter->second.IsFrameSinkRegistered()) {
+    return false;
+  }
+
   // Register and store the parent.
   frame_sink_manager_->RegisterFrameSinkHierarchy(parent_frame_sink_id,
                                                   child_frame_sink_id);
@@ -193,10 +199,11 @@ void HostFrameSinkManager::RegisterFrameSinkHierarchy(
   DCHECK(!base::ContainsValue(child_data.parents, parent_frame_sink_id));
   child_data.parents.push_back(parent_frame_sink_id);
 
-  FrameSinkData& parent_data = frame_sink_data_map_[parent_frame_sink_id];
-  DCHECK(parent_data.IsFrameSinkRegistered());
+  FrameSinkData& parent_data = iter->second;
   DCHECK(!base::ContainsValue(parent_data.children, child_frame_sink_id));
   parent_data.children.push_back(child_frame_sink_id);
+
+  return true;
 }
 
 void HostFrameSinkManager::UnregisterFrameSinkHierarchy(
@@ -249,6 +256,16 @@ void HostFrameSinkManager::CreateVideoCapturer(
   frame_sink_manager_->CreateVideoCapturer(std::move(request));
 }
 
+std::unique_ptr<ClientFrameSinkVideoCapturer>
+HostFrameSinkManager::CreateVideoCapturer() {
+  return std::make_unique<ClientFrameSinkVideoCapturer>(base::BindRepeating(
+      [](base::WeakPtr<HostFrameSinkManager> self,
+         mojom::FrameSinkVideoCapturerRequest request) {
+        self->CreateVideoCapturer(std::move(request));
+      },
+      weak_ptr_factory_.GetWeakPtr()));
+}
+
 void HostFrameSinkManager::EvictSurfaces(
     const std::vector<SurfaceId>& surface_ids) {
   frame_sink_manager_->EvictSurfaces(surface_ids);
@@ -258,6 +275,16 @@ void HostFrameSinkManager::RequestCopyOfOutput(
     const SurfaceId& surface_id,
     std::unique_ptr<CopyOutputRequest> request) {
   frame_sink_manager_->RequestCopyOfOutput(surface_id, std::move(request));
+}
+
+void HostFrameSinkManager::AddHitTestRegionObserver(
+    HitTestRegionObserver* observer) {
+  observers_.AddObserver(observer);
+}
+
+void HostFrameSinkManager::RemoveHitTestRegionObserver(
+    HitTestRegionObserver* observer) {
+  observers_.RemoveObserver(observer);
 }
 
 std::unique_ptr<CompositorFrameSinkSupport>
@@ -270,32 +297,18 @@ HostFrameSinkManager::CreateCompositorFrameSinkSupport(
 
   FrameSinkData& data = frame_sink_data_map_[frame_sink_id];
   DCHECK(data.IsFrameSinkRegistered());
-  DCHECK(!data.HasCompositorFrameSinkData());
+  DCHECK(!data.has_created_compositor_frame_sink);
 
   auto support = std::make_unique<CompositorFrameSinkSupport>(
       client, frame_sink_manager_impl_, frame_sink_id, is_root,
       needs_sync_points);
-  support->SetDestructionCallback(
-      base::BindOnce(&HostFrameSinkManager::CompositorFrameSinkSupportDestroyed,
-                     weak_ptr_factory_.GetWeakPtr(), frame_sink_id));
 
-  data.support = support.get();
   data.is_root = is_root;
 
   if (is_root)
     display_hit_test_query_[frame_sink_id] = std::make_unique<HitTestQuery>();
 
   return support;
-}
-
-void HostFrameSinkManager::CompositorFrameSinkSupportDestroyed(
-    const FrameSinkId& frame_sink_id) {
-  auto iter = frame_sink_data_map_.find(frame_sink_id);
-  DCHECK(iter != frame_sink_data_map_.end());
-
-  iter->second.support = nullptr;
-  if (iter->second.IsEmpty())
-    frame_sink_data_map_.erase(iter);
 }
 
 void HostFrameSinkManager::PerformAssignTemporaryReference(
@@ -405,30 +418,19 @@ void HostFrameSinkManager::OnFirstSurfaceActivation(
 
 void HostFrameSinkManager::OnAggregatedHitTestRegionListUpdated(
     const FrameSinkId& frame_sink_id,
-    mojo::ScopedSharedBufferHandle active_handle,
-    uint32_t active_handle_size,
-    mojo::ScopedSharedBufferHandle idle_handle,
-    uint32_t idle_handle_size) {
+    const std::vector<AggregatedHitTestRegion>& hit_test_data) {
   auto iter = display_hit_test_query_.find(frame_sink_id);
   // The corresponding HitTestQuery has already been deleted, so drop the
   // in-flight hit-test data.
   if (iter == display_hit_test_query_.end())
     return;
 
-  iter->second->OnAggregatedHitTestRegionListUpdated(
-      std::move(active_handle), active_handle_size, std::move(idle_handle),
-      idle_handle_size);
-}
+  iter->second->OnAggregatedHitTestRegionListUpdated(hit_test_data);
 
-void HostFrameSinkManager::SwitchActiveAggregatedHitTestRegionList(
-    const FrameSinkId& frame_sink_id,
-    uint8_t active_handle_index) {
-  auto iter = display_hit_test_query_.find(frame_sink_id);
-  // The corresponding HitTestQuery has already been deleted, so drop the
-  // in-flight hit-test data.
-  if (iter == display_hit_test_query_.end())
-    return;
-  iter->second->SwitchActiveAggregatedHitTestRegionList(active_handle_index);
+  // Ensure that HitTestQuery are updated so that observers are not working with
+  // stale data.
+  for (HitTestRegionObserver& observer : observers_)
+    observer.OnAggregatedHitTestRegionListUpdated(frame_sink_id, hit_test_data);
 }
 
 HostFrameSinkManager::FrameSinkData::FrameSinkData() = default;

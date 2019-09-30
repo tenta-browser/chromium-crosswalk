@@ -20,32 +20,14 @@
         {
           "object": "LayoutSVGText text",
           "rect": [8, 58, 400, 100],
-          "reason": "appeared"
+          "reason": "chunk appeared"
         },
         {
           "object": "LayoutSVGRoot svg",
           "rect": [8, 8, 400, 100],
-          "reason": "disappeared"
+          "reason": "chunk disappeared"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutSVGText text",
-      "reason": "style change"
-    },
-    {
-      "object": "RootInlineBox",
-      "reason": "style change"
-    },
-    {
-      "object": "LayoutSVGInlineText #text",
-      "reason": "style change"
-    },
-    {
-      "object": "InlineTextBox 'Test'",
-      "reason": "style change"
     }
   ]
 }

@@ -7,10 +7,10 @@
 
 #include "base/callback.h"
 #include "third_party/blink/renderer/bindings/core/v8/active_script_wrappable.h"
-#include "third_party/blink/renderer/bindings/core/v8/exception_state.h"
 #include "third_party/blink/renderer/core/dom/context_lifecycle_observer.h"
 #include "third_party/blink/renderer/core/intersection_observer/intersection_observation.h"
 #include "third_party/blink/renderer/core/intersection_observer/intersection_observer_entry.h"
+#include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/bindings/script_wrappable.h"
 #include "third_party/blink/renderer/platform/bindings/trace_wrapper_member.h"
 #include "third_party/blink/renderer/platform/heap/handle.h"
@@ -50,6 +50,7 @@ class CORE_EXPORT IntersectionObserver final
                                       const Vector<float>& thresholds,
                                       Document*,
                                       EventCallback,
+                                      bool track_visbility = false,
                                       ExceptionState& = ASSERT_NO_EXCEPTION);
   static void ResumeSuspendedObservers();
 
@@ -63,6 +64,7 @@ class CORE_EXPORT IntersectionObserver final
   Element* root() const { return root_.Get(); }
   String rootMargin() const;
   const Vector<float>& thresholds() const { return thresholds_; }
+  bool trackVisibility() const { return track_visibility_; }
 
   // An observer can either track intersections with an explicit root Element,
   // or with the the top-level frame's viewport (the "implicit root").  When
@@ -93,19 +95,27 @@ class CORE_EXPORT IntersectionObserver final
   // ScriptWrappable override:
   bool HasPendingActivity() const override;
 
-  void Trace(blink::Visitor*);
-  void TraceWrappers(const ScriptWrappableVisitor*) const;
+  void Trace(blink::Visitor*) override;
+
+  // Enable/disable throttling of visibility checking, so we don't have to add
+  // 100ms sleep() calls to tests.
+  static void SetV2ThrottleDelayEnabledForTesting(bool);
 
  private:
   explicit IntersectionObserver(IntersectionObserverDelegate&,
                                 Element*,
                                 const Vector<Length>& root_margin,
-                                const Vector<float>& thresholds);
+                                const Vector<float>& thresholds,
+                                bool track_visibility);
   void ClearWeakMembers(Visitor*);
 
   // Returns false if this observer has an explicit root element which has been
   // deleted; true otherwise.
   bool RootIsValid() const;
+
+  // If trackVisibility is true, don't compute observations more frequently
+  // than this many milliseconds.
+  static const DOMHighResTimeStamp s_v2_throttle_delay_;
 
   const TraceWrapperMember<IntersectionObserverDelegate> delegate_;
   WeakMember<Element> root_;
@@ -116,7 +126,9 @@ class CORE_EXPORT IntersectionObserver final
   Length right_margin_;
   Length bottom_margin_;
   Length left_margin_;
+  DOMHighResTimeStamp last_run_time_;
   unsigned root_is_implicit_ : 1;
+  unsigned track_visibility_ : 1;
 };
 
 }  // namespace blink

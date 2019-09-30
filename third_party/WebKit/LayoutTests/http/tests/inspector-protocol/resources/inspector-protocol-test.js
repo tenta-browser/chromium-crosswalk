@@ -3,12 +3,14 @@
 // found in the LICENSE file.
 
 var TestRunner = class {
-  constructor(baseURL, log, completeTest, fetch) {
+  constructor(testBaseURL, targetBaseURL, log, completeTest, fetch) {
     this._dumpInspectorProtocolMessages = false;
-    this._baseURL = baseURL;
+    this._testBaseURL = testBaseURL;
+    this._targetBaseURL = targetBaseURL;
     this._log = log;
     this._completeTest = completeTest;
     this._fetch = fetch;
+    this._browserSession = new TestRunner.Session(this, '');
   }
 
   startDumpingProtocolMessages() {
@@ -25,7 +27,7 @@ var TestRunner = class {
     this._log.call(null, item);
   }
 
-  _logObject(object, title, stabilizeNames = ['id', 'nodeId', 'objectId', 'scriptId', 'timestamp', 'backendNodeId', 'parentId', 'frameId', 'loaderId', 'baseURL', 'documentURL', 'styleSheetId']) {
+  _logObject(object, title, stabilizeNames = ['id', 'nodeId', 'objectId', 'scriptId', 'timestamp', 'backendNodeId', 'parentId', 'frameId', 'loaderId', 'baseURL', 'documentURL', 'styleSheetId', 'executionContextId', 'targetId', 'browserContextId', 'sessionId']) {
     var lines = [];
 
     function dumpValue(value, prefix, prefixWithName) {
@@ -77,9 +79,9 @@ var TestRunner = class {
   }
 
   url(relative) {
-    if (relative.startsWith('http://') || relative.startsWith('https://'))
+    if (relative.startsWith('http://') || relative.startsWith('https://') || relative.startsWith('file://'))
       return relative;
-    return this._baseURL + relative;
+    return this._targetBaseURL + relative;
   }
 
   async runTestSuite(testSuite) {
@@ -125,30 +127,47 @@ var TestRunner = class {
   }
 
   async loadScript(url) {
-    var source = await this._fetch(this.url(url));
+    var source = await this._fetch(this._testBaseURL + url);
     return eval(`${source}\n//# sourceURL=${url}`);
   };
 
-  async createPage() {
-    var targetId = (await DevToolsAPI._sendCommandOrDie('Target.createTarget', {url: 'about:blank'})).targetId;
-    await DevToolsAPI._sendCommandOrDie('Target.activateTarget', {targetId});
-    var page = new TestRunner.Page(this, targetId);
-    var dummyURL = window.location.href;
-    dummyURL = dummyURL.substring(0, dummyURL.indexOf('inspector-protocol-test.html')) + 'inspector-protocol-page.html';
-    await page._navigate(dummyURL);
+  browserP() {
+    return this._browserSession.protocol;
+  }
+
+  async createPage(options) {
+    options = options || {};
+    const browserProtocol = this._browserSession.protocol;
+    const params = {url: 'about:blank'};
+    if (options.width)
+      params.width = options.width;
+    if (options.height)
+      params.height = options.height;
+    if (options.enableBeginFrameControl)
+      params.enableBeginFrameControl = true;
+    if (options.createContext) {
+      const browserContextId = (await browserProtocol.Target.createBrowserContext()).result.browserContextId;
+      options.browserContextId = browserContextId;
+    }
+    const targetId = (await browserProtocol.Target.createTarget(params)).result.targetId;
+    const page = new TestRunner.Page(this, targetId);
+    let url = options.url || DevToolsHost.dummyPageURL;
+    if (!url) {
+      url = window.location.href;
+      url = url.substring(0, url.indexOf('inspector-protocol-test.html')) + 'inspector-protocol-page.html';
+    }
+    await page.navigate(url);
     return page;
   }
 
-  async _start(description, html, url) {
+  async _start(description, options) {
     try {
       if (!description)
         throw new Error('Please provide a description for the test!');
       this.log(description);
-      var page = await this.createPage();
-      if (url)
-        await page.navigate(url);
-      if (html)
-        await page.loadHTML(html);
+      var page = await this.createPage(options);
+      if (options.html)
+        await page.loadHTML(options.html);
       var session = await page.createSession();
       return { page: page, session: session, dp: session.protocol };
     } catch (e) {
@@ -156,16 +175,29 @@ var TestRunner = class {
     }
   };
 
-  startBlank(description) {
-    return this._start(description, null, null);
+  startBlank(description, options) {
+    return this._start(description, options || {});
   }
 
-  startHTML(html, description) {
-    return this._start(description, html, null);
+  startHTML(html, description, options) {
+    options = options || {};
+    options.html = html;
+    return this._start(description, options);
   }
 
-  startURL(url, description) {
-    return this._start(description, null, url);
+  startURL(url, description, options) {
+    options = options || {};
+    options.url = url;
+    return this._start(description, options);
+  }
+
+  startWithFrameControl(description, options) {
+    options = options || {};
+    options.width = options.width || 800;
+    options.height = options.height || 600;
+    options.createContext = true;
+    options.enableBeginFrameControl = true;
+    return this._start(description, options);
   }
 
   async logStackTrace(debuggers, stackTrace, debuggerId) {
@@ -206,10 +238,9 @@ TestRunner.Page = class {
   }
 
   async createSession() {
-    var sessionId = (await DevToolsAPI._sendCommandOrDie('Target.attachToTarget', {targetId: this._targetId})).sessionId;
-    var session = new TestRunner.Session(this._testRunner, sessionId);
-    DevToolsAPI._sessions.set(sessionId, session);
-    return session;
+    let dp = this._testRunner._browserSession.protocol;
+    const sessionId = (await dp.Target.attachToTarget({targetId: this._targetId, flatten: true})).result.sessionId;
+    return new TestRunner.Session(this._testRunner, sessionId);
   }
 
   navigate(url) {
@@ -235,52 +266,27 @@ TestRunner.Session = class {
     this._testRunner = testRunner;
     this._sessionId = sessionId;
     this._requestId = 0;
-    this._dispatchTable = new Map();
     this._eventHandlers = new Map();
     this.protocol = this._setupProtocol();
-    this._childSessions = null;
-    this._parentSession = null;
+    this._parentSessionId = null;
+    DevToolsAPI._sessions.set(sessionId, this);
   }
 
   async disconnect() {
-    await DevToolsAPI._sendCommandOrDie('Target.detachFromTarget', {sessionId: this._sessionId});
-    if (this._parentSession)
-      this._parentSession._childSessions.delete(this._sessionId);
-    else
-      DevToolsAPI._sessions.delete(this._sessionId);
+    await DevToolsAPI._sendCommandOrDie(this._parentSessionId, 'Target.detachFromTarget', {sessionId: this._sessionId});
   }
 
   createChild(sessionId) {
-    if (!this._childSessions) {
-      this._childSessions = new Map();
-      this.protocol.Target.onReceivedMessageFromTarget(event => this._dispatchMessageFromTarget(event));
-    }
-    let session = new TestRunner.Session(this._testRunner, sessionId);
-    this._childSessions.set(sessionId, session);
-    session._parentSession = this;
+    const session = new TestRunner.Session(this._testRunner, sessionId);
+    session._parentSessionId = this._sessionId;
     return session;
-  }
-
-  _dispatchMessageFromTarget(event) {
-    var session = this._childSessions.get(event.params.sessionId);
-    if (session)
-      session._dispatchMessage(JSON.parse(event.params.message));
-  }
-
-  sendRawCommand(requestId, message) {
-    if (this._parentSession)
-      this._parentSession.sendCommand('Target.sendMessageToTarget', {sessionId: this._sessionId, message: message});
-    else
-      DevToolsAPI._sendCommandOrDie('Target.sendMessageToTarget', {sessionId: this._sessionId, message: message});
-    return new Promise(f => this._dispatchTable.set(requestId, f));
   }
 
   sendCommand(method, params) {
     var requestId = ++this._requestId;
-    var messageObject = {'id': requestId, 'method': method, 'params': params};
     if (this._testRunner._dumpInspectorProtocolMessages)
-      this._testRunner.log(`frontend => backend: ${JSON.stringify(messageObject)}`);
-    return this.sendRawCommand(requestId, JSON.stringify(messageObject));
+      this._testRunner.log(`frontend => backend: ${JSON.stringify({method, params, sessionId: this._sessionId})}`);
+    return DevToolsAPI._sendCommand(this._sessionId, method, params);
   }
 
   async evaluate(code, ...args) {
@@ -325,17 +331,9 @@ TestRunner.Session = class {
   _dispatchMessage(message) {
     if (this._testRunner._dumpInspectorProtocolMessages)
       this._testRunner.log(`backend => frontend: ${JSON.stringify(message)}`);
-    if (typeof message.id === 'number') {
-      var handler = this._dispatchTable.get(message.id);
-      if (handler) {
-        this._dispatchTable.delete(message.id);
-        handler(message);
-      }
-    } else {
-      var eventName = message.method;
-      for (var handler of (this._eventHandlers.get(eventName) || []))
-        handler(message);
-    }
+    var eventName = message.method;
+    for (var handler of (this._eventHandlers.get(eventName) || []))
+      handler(message);
   }
 
   _setupProtocol() {
@@ -472,7 +470,7 @@ DevToolsAPI._log = function(text) {
 };
 
 DevToolsAPI._completeTest = function() {
-  window.testRunner.notifyDone();
+  testRunner.notifyDone();
 };
 
 DevToolsAPI._die = function(message, error) {
@@ -490,34 +488,33 @@ DevToolsAPI.dispatchMessage = function(messageOrObject) {
       if (handler) {
         DevToolsAPI._dispatchTable.delete(messageId);
         handler(messageObject);
+      } else {
+        DevToolsAPI._die(`Unexpected result id ${messageId}`);
       }
     } else {
-      var eventName = messageObject.method;
-      if (eventName === 'Target.receivedMessageFromTarget') {
-        var sessionId = messageObject.params.sessionId;
-        var message = messageObject.params.message;
-        var session = DevToolsAPI._sessions.get(sessionId);
-        if (session)
-          session._dispatchMessage(JSON.parse(message));
-      }
+      var session = DevToolsAPI._sessions.get(messageObject.sessionId);
+      if (session)
+        session._dispatchMessage(messageObject);
     }
   } catch(e) {
     DevToolsAPI._die(`Exception when dispatching message\n${JSON.stringify(messageObject)}`, e);
   }
 };
 
-DevToolsAPI._sendCommand = function(method, params) {
+DevToolsAPI._sendCommand = function(sessionId, method, params) {
   var requestId = ++DevToolsAPI._requestId;
   var messageObject = {'id': requestId, 'method': method, 'params': params};
+  if (sessionId)
+    messageObject.sessionId = sessionId;
   var embedderMessage = {'id': ++DevToolsAPI._embedderMessageId, 'method': 'dispatchProtocolMessage', 'params': [JSON.stringify(messageObject)]};
   DevToolsHost.sendMessageToEmbedder(JSON.stringify(embedderMessage));
   return new Promise(f => DevToolsAPI._dispatchTable.set(requestId, f));
 };
 
-DevToolsAPI._sendCommandOrDie = function(method, params) {
-  return DevToolsAPI._sendCommand(method, params).then(message => {
+DevToolsAPI._sendCommandOrDie = function(sessionId, method, params) {
+  return DevToolsAPI._sendCommand(sessionId, method, params).then(message => {
     if (message.error)
-      DevToolsAPI._die('Error communicating with harness', new Error(message.error));
+      DevToolsAPI._die('Error communicating with harness', new Error(JSON.stringify(message.error)));
     return message.result;
   });
 };
@@ -538,16 +535,21 @@ DevToolsAPI._fetch = function(url) {
   });
 };
 
-window.testRunner.dumpAsText();
-window.testRunner.waitUntilDone();
-window.testRunner.setCanOpenWindows(true);
+testRunner.dumpAsText();
+testRunner.waitUntilDone();
+testRunner.setCanOpenWindows(true);
 
 window.addEventListener('load', () => {
   var params = new URLSearchParams(window.location.search);
+
   var testScriptURL = params.get('test');
-  var baseURL = testScriptURL.substring(0, testScriptURL.lastIndexOf('/') + 1);
+  var testBaseURL = testScriptURL.substring(0, testScriptURL.lastIndexOf('/') + 1);
+
+  var targetPageURL = params.get('target') || params.get('test');
+  var targetBaseURL = targetPageURL.substring(0, targetPageURL.lastIndexOf('/') + 1);
+
   DevToolsAPI._fetch(testScriptURL).then(testScript => {
-    var testRunner = new TestRunner(baseURL, DevToolsAPI._log, DevToolsAPI._completeTest, DevToolsAPI._fetch);
+    var testRunner = new TestRunner(testBaseURL, targetBaseURL, DevToolsAPI._log, DevToolsAPI._completeTest, DevToolsAPI._fetch);
     var testFunction = eval(`${testScript}\n//# sourceURL=${testScriptURL}`);
     if (params.get('debug')) {
       var dispatch = DevToolsAPI.dispatchMessage;

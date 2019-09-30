@@ -31,7 +31,7 @@ UkmTimeAggregator::ScopedUkmTimer::ScopedUkmTimer(ScopedUkmTimer&& other)
 }
 
 UkmTimeAggregator::ScopedUkmTimer::~ScopedUkmTimer() {
-  if (aggregator_) {
+  if (aggregator_ && base::TimeTicks::IsHighResolution()) {
     aggregator_->RecordSample(metric_index_, start_time_, CurrentTimeTicks(),
                               histogram_counter_);
   }
@@ -76,7 +76,7 @@ void UkmTimeAggregator::RecordSample(size_t metric_index,
   // Record the UMA if we have a counter.
   TimeDelta duration = end - start;
   if (histogram_counter)
-    histogram_counter->Count(duration.InMicroseconds());
+    histogram_counter->CountMicroseconds(duration);
 
   // Append the duration to the appropriate metrics record.
   DCHECK_LT(metric_index, metric_records_.size());
@@ -98,18 +98,18 @@ void UkmTimeAggregator::Flush(TimeTicks current_time) {
   if (!has_data_)
     return;
 
-  auto builder =
-      recorder_->GetEntryBuilder(source_id_, event_name_.Utf8().data());
+  ukm::UkmEntryBuilder builder(source_id_, event_name_.Utf8().data());
   for (auto& record : metric_records_) {
     if (record.sample_count == 0)
       continue;
-    builder->AddMetric(record.worst_case_metric_name.Utf8().data(),
-                       record.worst_case_duration.InMicroseconds());
-    builder->AddMetric(record.average_metric_name.Utf8().data(),
-                       record.total_duration.InMicroseconds() /
-                           static_cast<int64_t>(record.sample_count));
+    builder.SetMetric(record.worst_case_metric_name.Utf8().data(),
+                      record.worst_case_duration.InMicroseconds());
+    builder.SetMetric(record.average_metric_name.Utf8().data(),
+                      record.total_duration.InMicroseconds() /
+                          static_cast<int64_t>(record.sample_count));
     record.reset();
   }
+  builder.Record(recorder_);
   has_data_ = false;
 }
 

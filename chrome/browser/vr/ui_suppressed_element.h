@@ -25,6 +25,8 @@ enum class UiSuppressedElement : int {
   kUsbChooser,
   kSslClientCertificate,
   kMediaRouterPresentationRequest,
+  kContextMenu,
+  kPermissionBubbleRequest,
 
   // This must be last.
   kCount,

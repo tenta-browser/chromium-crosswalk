@@ -53,8 +53,8 @@ test(function() {
                         'Default Request.method should be GET');
           assert_equals(request.mode, 'cors',
                         'Default Request.mode should be cors');
-          assert_equals(request.credentials, 'omit',
-                        'Default Request.credentials should be omit');
+          assert_equals(request.credentials, 'same-origin',
+                        'Default Request.credentials should be same-origin');
       });
 }, "Request default value test");
 
@@ -171,7 +171,7 @@ test(function() {
     assert_equals(request2.url, URL, 'Request.url should match');
     assert_equals(request2.method, 'GET', 'Request.method should match');
     assert_equals(request2.mode, 'cors', 'Request.mode should match');
-    assert_equals(request2.credentials, 'omit',
+    assert_equals(request2.credentials, 'same-origin',
                   'Request.credentials should match');
     assert_equals(request2.headers.get('X-Fetch-Foo').split(', ')[0], 'foo1',
                   'Request.headers should match');
@@ -294,10 +294,10 @@ test(function() {
         var init1 = {};
         if (credentials1 != undefined) { init1['credentials'] = credentials1; }
         request1 = new Request(URL, init1);
-        assert_equals(request1.credentials, credentials1 || 'omit',
+        assert_equals(request1.credentials, credentials1 || 'same-origin',
                       'Request.credentials should match');
         request1 = new Request(request1);
-        assert_equals(request1.credentials, credentials1 || 'omit',
+        assert_equals(request1.credentials, credentials1 || 'same-origin',
                       'Request.credentials should match');
         CREDENTIALS.forEach(function(credentials2) {
             request1 = new Request(URL, init1);
@@ -677,8 +677,9 @@ test(() => {
   }, 'Used => clone');
 
 test(() => {
-  // We implement RequestInit manually so we need to test the functionality
-  // here.
+  // We used to implement RequestInit manually so we needed to test this
+  // functionality here. We now generate RequestInit with the IDL compiler,
+  // but it's still good to keep these around.
   function undefined_notpresent(property_name) {
     assert_not_equals(property_name, 'referrer', 'property_name');
     const request = new Request('/', {referrer: '/'});
@@ -709,8 +710,9 @@ test(() => {
 }, 'An undefined member should be treated as not-present');
 
 test(() => {
-  // We implement RequestInit manually so we need to test the functionality
-  // here.
+  // We used to implement RequestInit manually so we needed to test this
+  // functionality here. We now generate RequestInit with the IDL compiler,
+  // but it's still good to keep these around.
   const e = Error();
   assert_throws(e, () => {
     new Request('/', {get method() { throw e; }})}, 'method');
@@ -741,6 +743,26 @@ test(() => {
   // assert_throws(e, () => {
   //  new Request('/', {get window() { throw e; }})}, 'window');
 }, 'Getter exceptions should not be silently ignored');
+
+
+test(() => {
+  // This is to test that a TypeError is thrown when RequestInit's signal
+  // member does not implement the AbortSignal interface. We test this because
+  // we used to use an `any` IDL type to represent RequestInit's signal member
+  // instead of `AbortSignal` due to a bug in the IDL compiler, and performed
+  // conversions manually. This test ensures that conversion were carried out
+  // properly.
+  const e = TypeError();
+  assert_throws(e, () => {
+    new Request('/', {signal: {}})},
+    'An empty object as RequestInit\'s signal member should fail type conversion');
+  assert_throws(e, () => {
+    new Request('/', {signal: new Request('/')})},
+    'A Request object as RequestInit\'s signal member should fail type conversion');
+  assert_throws(e, () => {
+    new Request('/', {signal: new Response('/')})},
+    'A Response object as RequestInit\'s signal member should fail type conversion');
+}, 'TypeError should be thrown when RequestInit\'s signal member does not implement the AbortSignal interface');
 
 promise_test(function() {
     var headers = new Headers;

@@ -24,7 +24,6 @@ import org.chromium.chrome.browser.tab.TabBrowserControlsOffsetHelper;
 import org.chromium.chrome.browser.widget.bottomsheet.BottomSheet;
 import org.chromium.chrome.browser.widget.bottomsheet.BottomSheetObserver;
 import org.chromium.chrome.browser.widget.bottomsheet.EmptyBottomSheetObserver;
-import org.chromium.content_public.browser.ContentViewCore;
 import org.chromium.content_public.browser.SelectionPopupController;
 import org.chromium.content_public.browser.WebContents;
 import org.chromium.ui.UiUtils;
@@ -245,7 +244,7 @@ public class TabModalPresenter
                 SelectionPopupController controller =
                         SelectionPopupController.fromWebContents(webContents);
                 controller.setPreserveSelectionOnNextLossOfFocus(true);
-                ContentViewCore.fromWebContents(webContents).getContainerView().clearFocus();
+                mActiveTab.getContentView().clearFocus();
                 controller.updateTextSelectionUI(false);
                 mDidClearTextControls = true;
             }
@@ -257,7 +256,7 @@ public class TabModalPresenter
             mActiveTab.onTabModalDialogStateChanged(true);
 
             if (mHasBottomControls) {
-                bottomSheet.setSheetState(BottomSheet.SHEET_STATE_PEEK, true);
+                bottomSheet.setSheetState(BottomSheet.SheetState.PEEK, true);
                 bottomSheet.addObserver(mBottomSheetObserver);
             } else {
                 mChromeActivity.getToolbarManager().setUrlBarFocus(false);
@@ -288,9 +287,11 @@ public class TabModalPresenter
      */
     private void runEnterAnimation(View dialogView) {
         mDialogContainer.animate().cancel();
-        FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(
-                MarginLayoutParams.WRAP_CONTENT, MarginLayoutParams.WRAP_CONTENT, Gravity.CENTER);
-        mViewContainer.addView(dialogView, params);
+        FrameLayout.LayoutParams params =
+                new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER);
+        dialogView.setBackgroundResource(R.drawable.popup_bg);
+        mDialogContainer.addView(dialogView, params);
         mDialogContainer.setAlpha(0f);
         mDialogContainer.setVisibility(View.VISIBLE);
         mDialogContainer.animate()

@@ -8,7 +8,7 @@
 #include <limits>
 #include <utility>
 
-#if defined(OS_POSIX)
+#if defined(OS_POSIX) || defined(OS_FUCHSIA)
 #include <dirent.h>
 #include <sys/types.h>
 #endif
@@ -28,6 +28,7 @@
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/sys_info.h"
 #include "base/threading/thread_restrictions.h"
 #include "base/trace_event/memory_dump_manager.h"
 #include "base/trace_event/memory_dump_provider.h"
@@ -396,7 +397,7 @@ ChromiumWritableFile::ChromiumWritableFile(const std::string& fname,
 
 Status ChromiumWritableFile::SyncParent() {
   TRACE_EVENT0("leveldb", "SyncParent");
-#if defined(OS_POSIX)
+#if defined(OS_POSIX) || defined(OS_FUCHSIA)
   FilePath path = FilePath::FromUTF8Unsafe(parent_dir_);
   base::File f(path, base::File::FLAG_OPEN | base::File::FLAG_READ);
   if (!f.IsValid()) {
@@ -544,7 +545,12 @@ Options::Options() {
   // https://crbug.com/460568
   reuse_logs = false;
 #else
-  reuse_logs = true;
+  // Low end devices have limited RAM. Reusing logs will prevent the database
+  // from being compacted on open and instead load the log file back into the
+  // memory buffer which won't be written until it hits the maximum size
+  // (leveldb::Options::write_buffer_size - 4MB by default). The downside here
+  // is that databases opens take longer as the open is blocked on compaction.
+  reuse_logs = !base::SysInfo::IsLowEndDevice();
 #endif
   // By default use a single shared block cache to conserve memory. The owner of
   // this object can create their own, or set to NULL to have leveldb create a
@@ -1381,8 +1387,8 @@ class DBTracker::TrackedDBImpl : public base::LinkNode<TrackedDBImpl>,
   DISALLOW_COPY_AND_ASSIGN(TrackedDBImpl);
 };
 
-// Reports live databases to memory-infra. For each live database the following
-// information is reported:
+// Reports live databases and in-memory env's to memory-infra. For each live
+// database the following information is reported:
 // 1. Instance pointer (to disambiguate databases).
 // 2. Memory taken by the database, with the shared cache being attributed
 // equally to each database sharing 3. The name of the database (when not in
@@ -1404,6 +1410,8 @@ class DBTracker::TrackedDBImpl : public base::LinkNode<TrackedDBImpl>,
 //   block_cache              0 KiB           100 KiB
 //     browser                0 KiB           40 KiB
 //     web                    0 KiB           60 KiB
+//   memenv_0x7FE80F2040A0    4 KiB           4 KiB
+//   memenv_0x7FE80F3040A0    4 KiB           4 KiB
 //
 class DBTracker::MemoryDumpProvider
     : public base::trace_event::MemoryDumpProvider {
@@ -1453,6 +1461,7 @@ void DBTracker::MemoryDumpProvider::DumpAllDatabases(ProcessMemoryDump* pmd) {
   DBTracker::GetInstance()->VisitDatabases(
       base::BindRepeating(&DBTracker::MemoryDumpProvider::DumpVisitor,
                           base::Unretained(this), base::Unretained(pmd)));
+  leveldb_chrome::DumpAllTrackedEnvs(pmd);
 }
 
 void DBTracker::MemoryDumpProvider::DumpVisitor(ProcessMemoryDump* pmd,
@@ -1515,6 +1524,14 @@ MemoryAllocatorDump* DBTracker::GetOrCreateAllocatorDump(
   // attributed to each database sharing it.
   GetInstance()->mdp_->DumpAllDatabases(pmd);
   return pmd->GetAllocatorDump(GetDumpNameForDB(tracked_db));
+}
+
+// static
+MemoryAllocatorDump* DBTracker::GetOrCreateAllocatorDump(
+    ProcessMemoryDump* pmd,
+    leveldb::Env* tracked_memenv) {
+  GetInstance()->mdp_->DumpAllDatabases(pmd);
+  return leveldb_chrome::GetEnvAllocatorDump(pmd, tracked_memenv);
 }
 
 void DBTracker::UpdateHistograms() {

@@ -17,7 +17,6 @@
 #include "base/optional.h"
 #include "base/strings/string16.h"
 #include "base/time/time.h"
-#include "chrome/installer/util/browser_distribution.h"
 #include "chrome/installer/util/lzma_util.h"
 #include "chrome/installer/util/util_constants.h"
 
@@ -117,10 +116,6 @@ void DeleteRegistryKeyPartial(
     const base::string16& path,
     const std::vector<base::string16>& keys_to_preserve);
 
-// Converts a product GUID into a SQuished gUID that is used for MSI installer
-// registry entries.
-base::string16 GuidToSquid(const base::string16& guid);
-
 // Returns true if downgrade is allowed by installer data.
 bool IsDowngradeAllowed(const MasterPreferences& prefs);
 
@@ -159,10 +154,6 @@ void DoLegacyCleanups(const InstallerState& installer_state,
 // a null time in case of error.
 base::Time GetConsoleSessionStartTime();
 
-// Returns true if the current OS vesion suppors drawing dark text on Start Menu
-// tiles.
-bool OsSupportsDarkTextTiles();
-
 // Returns a DM token decoded from the base-64 |encoded_token|, or null in case
 // of a decoding error.  The returned DM token is an opaque binary blob and
 // should not be treated as an ASCII or UTF-8 string.
@@ -172,6 +163,10 @@ base::Optional<std::string> DecodeDMTokenSwitchValue(
 // Saves a DM token to a global location on the machine accessible to all
 // install modes of the browser (i.e., stable and all three side-by-side modes).
 bool StoreDMToken(const std::string& token);
+
+// Returns the file path to notification_helper.exe (in |version| directory).
+base::FilePath GetNotificationHelperPath(const base::FilePath& target_path,
+                                         const base::Version& version);
 
 }  // namespace installer
 

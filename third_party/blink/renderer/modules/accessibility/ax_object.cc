@@ -30,9 +30,10 @@
 
 #include "SkMatrix44.h"
 #include "third_party/blink/public/platform/web_scroll_into_view_params.h"
+#include "third_party/blink/renderer/core/aom/accessible_node.h"
+#include "third_party/blink/renderer/core/aom/accessible_node_list.h"
 #include "third_party/blink/renderer/core/css/resolver/style_resolver.h"
-#include "third_party/blink/renderer/core/dom/accessible_node.h"
-#include "third_party/blink/renderer/core/dom/accessible_node_list.h"
+#include "third_party/blink/renderer/core/dom/element_traversal.h"
 #include "third_party/blink/renderer/core/dom/user_gesture_indicator.h"
 #include "third_party/blink/renderer/core/editing/editing_utilities.h"
 #include "third_party/blink/renderer/core/editing/visible_position.h"
@@ -50,13 +51,16 @@
 #include "third_party/blink/renderer/core/layout/layout_box.h"
 #include "third_party/blink/renderer/core/layout/layout_box_model_object.h"
 #include "third_party/blink/renderer/core/layout/layout_view.h"
+#include "third_party/blink/renderer/core/page/chrome_client.h"
 #include "third_party/blink/renderer/core/page/page.h"
 #include "third_party/blink/renderer/modules/accessibility/ax_object_cache_impl.h"
 #include "third_party/blink/renderer/modules/accessibility/ax_range.h"
 #include "third_party/blink/renderer/modules/accessibility/ax_sparse_attribute_setter.h"
+#include "third_party/blink/renderer/platform/language.h"
 #include "third_party/blink/renderer/platform/scroll/scroll_alignment.h"
 #include "third_party/blink/renderer/platform/text/platform_locale.h"
 #include "third_party/blink/renderer/platform/wtf/hash_set.h"
+#include "third_party/blink/renderer/platform/wtf/not_found.h"
 #include "third_party/blink/renderer/platform/wtf/std_lib_extras.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 
@@ -86,12 +90,15 @@ struct RoleEntry {
   AccessibilityRole webcore_role;
 };
 
+// Mapping of ARIA role name to internal role name.
 const RoleEntry kRoles[] = {{"alert", kAlertRole},
                             {"alertdialog", kAlertDialogRole},
                             {"application", kApplicationRole},
                             {"article", kArticleRole},
                             {"banner", kBannerRole},
+                            {"blockquote", kBlockquoteRole},
                             {"button", kButtonRole},
+                            {"caption", kCaptionRole},
                             {"cell", kCellRole},
                             {"checkbox", kCheckBoxRole},
                             {"columnheader", kColumnHeaderRole},
@@ -101,10 +108,62 @@ const RoleEntry kRoles[] = {{"alert", kAlertRole},
                             {"definition", kDefinitionRole},
                             {"dialog", kDialogRole},
                             {"directory", kDirectoryRole},
+                            // -------------------------------------------------
+                            // DPub Roles:
+                            // www.w3.org/TR/dpub-aam-1.0/#mapping_role_table
+                            {"doc-abstract", kDocAbstractRole},
+                            {"doc-acknowledgments", kDocAcknowledgmentsRole},
+                            {"doc-afterword", kDocAfterwordRole},
+                            {"doc-appendix", kDocAppendixRole},
+                            {"doc-backlink", kDocBackLinkRole},
+                            {"doc-biblioentry", kDocBiblioEntryRole},
+                            {"doc-bibliography", kDocBibliographyRole},
+                            {"doc-biblioref", kDocBiblioRefRole},
+                            {"doc-chapter", kDocChapterRole},
+                            {"doc-colophon", kDocColophonRole},
+                            {"doc-conclusion", kDocConclusionRole},
+                            {"doc-cover", kDocCoverRole},
+                            {"doc-credit", kDocCreditRole},
+                            {"doc-credits", kDocCreditsRole},
+                            {"doc-dedication", kDocDedicationRole},
+                            {"doc-endnote", kDocEndnoteRole},
+                            {"doc-endnotes", kDocEndnotesRole},
+                            {"doc-epigraph", kDocEpigraphRole},
+                            {"doc-epilogue", kDocEpilogueRole},
+                            {"doc-errata", kDocErrataRole},
+                            {"doc-example", kDocExampleRole},
+                            {"doc-footnote", kDocFootnoteRole},
+                            {"doc-foreword", kDocForewordRole},
+                            {"doc-glossary", kDocGlossaryRole},
+                            {"doc-glossref", kDocGlossRefRole},
+                            {"doc-index", kDocIndexRole},
+                            {"doc-introduction", kDocIntroductionRole},
+                            {"doc-noteref", kDocNoteRefRole},
+                            {"doc-notice", kDocNoticeRole},
+                            {"doc-pagebreak", kDocPageBreakRole},
+                            {"doc-pagelist", kDocPageListRole},
+                            {"doc-part", kDocPartRole},
+                            {"doc-preface", kDocPrefaceRole},
+                            {"doc-prologue", kDocPrologueRole},
+                            {"doc-pullquote", kDocPullquoteRole},
+                            {"doc-qna", kDocQnaRole},
+                            {"doc-subtitle", kDocSubtitleRole},
+                            {"doc-tip", kDocTipRole},
+                            {"doc-toc", kDocTocRole},
+                            // End DPub roles.
+                            // -------------------------------------------------
                             {"document", kDocumentRole},
                             {"feed", kFeedRole},
                             {"figure", kFigureRole},
                             {"form", kFormRole},
+                            // -------------------------------------------------
+                            // ARIA Graphics module roles:
+                            // https://rawgit.com/w3c/graphics-aam/master/
+                            {"graphics-document", kGraphicsDocumentRole},
+                            {"graphics-object", kGraphicsObjectRole},
+                            {"graphics-symbol", kGraphicsSymbolRole},
+                            // End ARIA Graphics module roles.
+                            // -------------------------------------------------
                             {"grid", kGridRole},
                             {"gridcell", kCellRole},
                             {"group", kGroupRole},
@@ -127,10 +186,13 @@ const RoleEntry kRoles[] = {{"alert", kAlertRole},
                             {"none", kNoneRole},
                             {"note", kNoteRole},
                             {"option", kListBoxOptionRole},
+                            {"paragraph", kParagraphRole},
                             {"presentation", kPresentationalRole},
                             {"progressbar", kProgressIndicatorRole},
                             {"radio", kRadioButtonRole},
                             {"radiogroup", kRadioGroupRole},
+                            // TODO(accessibility) region should only be mapped
+                            // if name present. See http://crbug.com/840819.
                             {"region", kRegionRole},
                             {"row", kRowRole},
                             {"rowheader", kRowHeaderRole},
@@ -184,6 +246,8 @@ const InternalRoleEntry kInternalRoles[] = {
     {kComboBoxGroupingRole, "ComboBox"},
     {kComboBoxMenuButtonRole, "ComboBox"},
     {kComplementaryRole, "Complementary"},
+    {kContentDeletionRole, "ContentDeletion"},
+    {kContentInsertionRole, "ContentInsertion"},
     {kContentInfoRole, "ContentInfo"},
     {kDateRole, "Date"},
     {kDateTimeRole, "DateTime"},
@@ -195,6 +259,50 @@ const InternalRoleEntry kInternalRoles[] = {
     {kDialogRole, "Dialog"},
     {kDirectoryRole, "Directory"},
     {kDisclosureTriangleRole, "DisclosureTriangle"},
+    // --------------------------------------------------------------
+    // DPub Roles:
+    // https://www.w3.org/TR/dpub-aam-1.0/#mapping_role_table
+    {kDocAbstractRole, "DocAbstract"},
+    {kDocAcknowledgmentsRole, "DocAcknowledgments"},
+    {kDocAfterwordRole, "DocAfterword"},
+    {kDocAppendixRole, "DocAppendix"},
+    {kDocBackLinkRole, "DocBackLink"},
+    {kDocBiblioEntryRole, "DocBiblioentry"},
+    {kDocBibliographyRole, "DocBibliography"},
+    {kDocBiblioRefRole, "DocBiblioref"},
+    {kDocChapterRole, "DocChapter"},
+    {kDocColophonRole, "DocColophon"},
+    {kDocConclusionRole, "DocConclusion"},
+    {kDocCoverRole, "DocCover"},
+    {kDocCreditRole, "DocCredit"},
+    {kDocCreditsRole, "DocCredits"},
+    {kDocDedicationRole, "DocDedication"},
+    {kDocEndnoteRole, "DocEndnote"},
+    {kDocEndnotesRole, "DocEndnotes"},
+    {kDocEpigraphRole, "DocEpigraph"},
+    {kDocEpilogueRole, "DocEpilogue"},
+    {kDocErrataRole, "DocErrata"},
+    {kDocExampleRole, "DocExample"},
+    {kDocFootnoteRole, "DocFootnote"},
+    {kDocForewordRole, "DocForeword"},
+    {kDocGlossaryRole, "DocGlossary"},
+    {kDocGlossRefRole, "DocGlossref"},
+    {kDocIndexRole, "DocIndex"},
+    {kDocIntroductionRole, "DocIntroduction"},
+    {kDocNoteRefRole, "DocNoteref"},
+    {kDocNoticeRole, "DocNotice"},
+    {kDocPageBreakRole, "DocPagebreak"},
+    {kDocPageListRole, "DocPagelist"},
+    {kDocPartRole, "DocPart"},
+    {kDocPrefaceRole, "DocPreface"},
+    {kDocPrologueRole, "DocPrologue"},
+    {kDocPullquoteRole, "DocPullquote"},
+    {kDocQnaRole, "DocQna"},
+    {kDocSubtitleRole, "DocSubtitle"},
+    {kDocTipRole, "DocTip"},
+    {kDocTocRole, "DocToc"},
+    // End DPub roles.
+    // --------------------------------------------------------------
     {kDocumentRole, "Document"},
     {kEmbeddedObjectRole, "EmbeddedObject"},
     {kFeedRole, "feed"},
@@ -203,6 +311,14 @@ const InternalRoleEntry kInternalRoles[] = {
     {kFooterRole, "Footer"},
     {kFormRole, "Form"},
     {kGenericContainerRole, "GenericContainer"},
+    // --------------------------------------------------------------
+    // ARIA Graphics module roles:
+    // https://rawgit.com/w3c/graphics-aam/master/#mapping_role_table
+    {kGraphicsDocumentRole, "GraphicsDocument"},
+    {kGraphicsObjectRole, "GraphicsObject"},
+    {kGraphicsSymbolRole, "GraphicsSymbol"},
+    // End ARIA Graphics module roles.
+    // --------------------------------------------------------------
     {kGridRole, "Grid"},
     {kGroupRole, "Group"},
     {kHeadingRole, "Heading"},
@@ -260,7 +376,6 @@ const InternalRoleEntry kInternalRoles[] = {
     {kSearchBoxRole, "SearchBox"},
     {kSliderRole, "Slider"},
     {kSliderThumbRole, "SliderThumb"},
-    {kSpinButtonPartRole, "SpinButtonPart"},
     {kSpinButtonRole, "SpinButton"},
     {kSplitterRole, "Splitter"},
     {kStaticTextRole, "StaticText"},
@@ -285,7 +400,7 @@ const InternalRoleEntry kInternalRoles[] = {
     {kVideoRole, "Video"},
     {kWebAreaRole, "WebArea"}};
 
-static_assert(WTF_ARRAY_LENGTH(kInternalRoles) == kNumRoles,
+static_assert(arraysize(kInternalRoles) == kNumRoles,
               "Not all internal roles have an entry in internalRoles array");
 
 // Roles which we need to map in the other direction
@@ -302,11 +417,11 @@ const RoleEntry kReverseRoles[] = {{"button", kToggleButtonRole},
 static ARIARoleMap* CreateARIARoleMap() {
   ARIARoleMap* role_map = new ARIARoleMap;
 
-  for (size_t i = 0; i < WTF_ARRAY_LENGTH(kRoles); ++i)
+  for (size_t i = 0; i < arraysize(kRoles); ++i)
     role_map->Set(String(kRoles[i].aria_role), kRoles[i].webcore_role);
 
   // Grids "ignore" their non-row children during computation of children.
-  role_map->Set("rowgroup", kIgnoredRole);
+  role_map->Set(String("rowgroup"), kIgnoredRole);
 
   return role_map;
 }
@@ -316,12 +431,12 @@ static Vector<AtomicString>* CreateRoleNameVector() {
   for (int i = 0; i < kNumRoles; i++)
     (*role_name_vector)[i] = g_null_atom;
 
-  for (size_t i = 0; i < WTF_ARRAY_LENGTH(kRoles); ++i) {
+  for (size_t i = 0; i < arraysize(kRoles); ++i) {
     (*role_name_vector)[kRoles[i].webcore_role] =
         AtomicString(kRoles[i].aria_role);
   }
 
-  for (size_t i = 0; i < WTF_ARRAY_LENGTH(kReverseRoles); ++i) {
+  for (size_t i = 0; i < arraysize(kReverseRoles); ++i) {
     (*role_name_vector)[kReverseRoles[i].webcore_role] =
         AtomicString(kReverseRoles[i].aria_role);
   }
@@ -332,7 +447,7 @@ static Vector<AtomicString>* CreateRoleNameVector() {
 static Vector<AtomicString>* CreateInternalRoleNameVector() {
   Vector<AtomicString>* internal_role_name_vector =
       new Vector<AtomicString>(kNumRoles);
-  for (size_t i = 0; i < WTF_ARRAY_LENGTH(kInternalRoles); i++) {
+  for (size_t i = 0; i < arraysize(kInternalRoles); i++) {
     (*internal_role_name_vector)[kInternalRoles[i].webcore_role] =
         AtomicString(kInternalRoles[i].internal_role_name);
   }
@@ -364,6 +479,8 @@ AXObject::AXObject(AXObjectCacheImpl& ax_object_cache)
       cached_has_inherited_presentational_role_(false),
       cached_is_editable_root_(false),
       cached_live_region_root_(nullptr),
+      cached_aria_column_index_(0),
+      cached_aria_row_index_(0),
       ax_object_cache_(&ax_object_cache) {
   ++number_of_live_ax_objects_;
 }
@@ -636,6 +753,23 @@ bool AXObject::IsLandmarkRelated() const {
     case kBannerRole:
     case kComplementaryRole:
     case kContentInfoRole:
+    case kDocAcknowledgmentsRole:
+    case kDocAfterwordRole:
+    case kDocAppendixRole:
+    case kDocBibliographyRole:
+    case kDocChapterRole:
+    case kDocConclusionRole:
+    case kDocCreditsRole:
+    case kDocEndnotesRole:
+    case kDocEpilogueRole:
+    case kDocErrataRole:
+    case kDocForewordRole:
+    case kDocGlossaryRole:
+    case kDocIntroductionRole:
+    case kDocPartRole:
+    case kDocPrefaceRole:
+    case kDocPrologueRole:
+    case kDocTocRole:
     case kFooterRole:
     case kFormRole:
     case kMainRole:
@@ -668,6 +802,18 @@ bool AXObject::IsPasswordFieldAndShouldHideValue() const {
     return false;
 
   return IsPasswordField();
+}
+
+bool AXObject::IsTextObject() const {
+  // Objects with |kLineBreakRole| are HTML <br> elements and are not backed by
+  // DOM text nodes. We can't mark them as text objects for that reason.
+  switch (RoleValue()) {
+    case kInlineTextBoxRole:
+    case kStaticTextRole:
+      return true;
+    default:
+      return false;
+  }
 }
 
 bool AXObject::IsClickable() const {
@@ -706,12 +852,12 @@ bool AXObject::AccessibilityIsIgnored() const {
   }
 
   if (node)
-    node->UpdateDistribution();
+    node->UpdateDistributionForFlatTreeTraversal();
 
   // TODO(aboxhall): Instead of this, propagate inert down through frames
   Document* document = GetDocument();
   while (document && document->LocalOwner()) {
-    document->LocalOwner()->UpdateDistribution();
+    document->LocalOwner()->UpdateDistributionForFlatTreeTraversal();
     document = document->LocalOwner()->ownerDocument();
   }
 
@@ -737,16 +883,26 @@ void AXObject::UpdateCachedAttributeValuesIfNeeded() const {
       !!InheritsPresentationalRoleFrom();
   cached_is_ignored_ = ComputeAccessibilityIsIgnored();
   cached_is_editable_root_ = ComputeIsEditableRoot();
+  // TODO(dmazzoni): remove this const_cast.
   cached_live_region_root_ =
       IsLiveRegion()
           ? const_cast<AXObject*>(this)
           : (ParentObjectIfExists() ? ParentObjectIfExists()->LiveRegionRoot()
                                     : nullptr);
-  // TODO(dmazzoni): remove this const_cast.
+  cached_aria_column_index_ = ComputeAriaColumnIndex();
+  cached_aria_row_index_ = ComputeAriaRowIndex();
   if (cached_is_ignored_ != LastKnownIsIgnoredValue()) {
-    const_cast<AXObject*>(this)->ChildrenChanged();
     last_known_is_ignored_value_ =
         cached_is_ignored_ ? kIgnoreObject : kIncludeObject;
+
+    AXObject* parent = ParentObjectIfExists();
+    if (parent)
+      parent->ChildrenChanged();
+  }
+
+  if (GetLayoutObject() && GetLayoutObject()->IsText()) {
+    cached_local_bounding_box_rect_for_accessibility_ =
+        GetLayoutObject()->LocalBoundingBoxRectForAccessibility();
   }
 }
 
@@ -929,7 +1085,7 @@ bool AXObject::DispatchEventToAOMEventListeners(Event& event) {
       break;
 
     event.SetCurrentTarget(event_path[i]);
-    event_path[i]->FireEventListeners(&event);
+    event_path[i]->FireEventListeners(event);
     if (event.PropagationStopped())
       return true;
   }
@@ -937,7 +1093,7 @@ bool AXObject::DispatchEventToAOMEventListeners(Event& event) {
   // Targeting phase.
   event.SetEventPhase(Event::kAtTarget);
   event.SetCurrentTarget(event_path[0]);
-  event_path[0]->FireEventListeners(&event);
+  event_path[0]->FireEventListeners(event);
   if (event.PropagationStopped())
     return true;
 
@@ -945,7 +1101,7 @@ bool AXObject::DispatchEventToAOMEventListeners(Event& event) {
   event.SetEventPhase(Event::kBubblingPhase);
   for (size_t i = 1; i < event_path.size(); i++) {
     event.SetCurrentTarget(event_path[i]);
-    event_path[i]->FireEventListeners(&event);
+    event_path[i]->FireEventListeners(event);
     if (event.PropagationStopped())
       return true;
   }
@@ -971,6 +1127,26 @@ const AXObject* AXObject::DisabledAncestor() const {
 
   if (AXObject* parent = ParentObject())
     return parent->DisabledAncestor();
+
+  return nullptr;
+}
+
+const AXObject* AXObject::DatetimeAncestor(int max_levels_to_check) const {
+  switch (RoleValue()) {
+    case kDateTimeRole:
+    case kDateRole:
+    case kInputTimeRole:
+    case kTimeRole:
+      return this;
+    default:
+      break;
+  }
+
+  if (max_levels_to_check == 0)
+    return nullptr;
+
+  if (AXObject* parent = ParentObject())
+    return parent->DatetimeAncestor(max_levels_to_check - 1);
 
   return nullptr;
 }
@@ -1123,21 +1299,50 @@ bool AXObject::AncestorExposesActiveDescendant() const {
   return parent->AncestorExposesActiveDescendant();
 }
 
-bool AXObject::CanSetSelectedAttribute() const {
-  // Sub-widget elements can be selected if not disabled (native or ARIA)
-  return IsSubWidget(RoleValue()) && Restriction() != kDisabled;
+bool AXObject::HasIndirectChildren() const {
+  return IsTableCol() || RoleValue() == kTableHeaderContainerRole;
 }
 
-// static
-bool AXObject::IsSubWidget(AccessibilityRole role) {
-  switch (role) {
+bool AXObject::CanSetSelectedAttribute() const {
+  // Sub-widget elements can be selected if not disabled (native or ARIA)
+  return IsSubWidget() && Restriction() != kDisabled;
+}
+
+bool AXObject::IsSubWidget() const {
+  switch (RoleValue()) {
     case kCellRole:
     case kColumnHeaderRole:
+    case kRowHeaderRole:
     case kColumnRole:
+    case kRowRole: {
+      // If it has an explicit ARIA role, it's a subwidget.
+      //
+      // Reasoning:
+      // Static table cells are not selectable, but ARIA grid cells
+      // and rows definitely are according to the spec. To support
+      // ARIA 1.0, it's sufficient to just check if there's any
+      // ARIA role at all, because if so then it must be a grid-related
+      // role so it must be selectable.
+      //
+      // TODO: an ARIA 1.1+ role of "cell", or a role of "row" inside
+      // an ARIA 1.1 role of "table", should not be selectable. We may
+      // need to create separate role enums for grid cells vs table cells
+      // to implement this.
+      if (AriaRoleAttribute() != kUnknownRole)
+        return true;
+
+      // Otherwise it's only a subwidget if it's in a grid or treegrid,
+      // not in a table.
+      AXObject* parent = ParentObjectUnignored();
+      while (parent && !parent->IsTableLikeRole())
+        parent = parent->ParentObjectUnignored();
+      if (parent && (parent->RoleValue() == kGridRole ||
+                     parent->RoleValue() == kTreeGridRole))
+        return true;
+      return false;
+    }
     case kListBoxOptionRole:
     case kMenuListOptionRole:
-    case kRowHeaderRole:
-    case kRowRole:
     case kTabRole:
     case kTreeItemRole:
       return true;
@@ -1533,7 +1738,7 @@ bool AXObject::SupportsARIAActiveDescendant() const {
   // According to the ARIA Spec, all ARIA composite widgets, ARIA text boxes,
   // ARIA groups and ARIA application should be able to expose an active descendant.
   // Implicitly, <input> and <textarea> elements should also have this ability.
-  switch (AriaRoleAttribute()) {
+  switch (RoleValue()) {
     case kComboBoxGroupingRole:
     case kComboBoxMenuButtonRole:
     case kGridRole:
@@ -1639,14 +1844,9 @@ int AXObject::IndexInParent() const {
   if (!ParentObjectUnignored())
     return 0;
 
-  const auto& siblings = ParentObjectUnignored()->Children();
-  int child_count = siblings.size();
-
-  for (int index = 0; index < child_count; ++index) {
-    if (siblings[index].Get() == this)
-      return index;
-  }
-  return 0;
+  const AXObjectVector& siblings = ParentObjectUnignored()->Children();
+  size_t index = siblings.Find(this);
+  return (index == kNotFound) ? 0 : static_cast<int>(index);
 }
 
 bool AXObject::IsLiveRegion() const {
@@ -1821,8 +2021,23 @@ AXObject* AXObject::ElementAccessibilityHitTest(const IntPoint& point) const {
   return const_cast<AXObject*>(this);
 }
 
+AXObject::AncestorsIterator AXObject::AncestorsBegin() {
+  AXObject* parent = ParentObjectUnignored();
+  if (parent)
+    return AXObject::AncestorsIterator(*parent);
+  return AncestorsEnd();
+}
+
+AXObject::AncestorsIterator AXObject::AncestorsEnd() {
+  return AXObject::AncestorsIterator();
+}
+
+AXObject::InOrderTraversalIterator AXObject::GetInOrderTraversalIterator() {
+  return InOrderTraversalIterator(*this);
+}
+
 int AXObject::ChildCount() const {
-  return static_cast<int>(Children().size());
+  return HasIndirectChildren() ? 0 : static_cast<int>(Children().size());
 }
 
 const AXObject::AXObjectVector& AXObject::Children() const {
@@ -1881,6 +2096,9 @@ AXObject* AXObject::NextSibling() const {
   if (!parent)
     return nullptr;
 
+  if (AccessibilityIsIgnored())
+    NOTREACHED() << "We don't support finding siblings for ignored objects.";
+
   if (IndexInParent() < parent->ChildCount() - 1)
     return *(parent->Children().begin() + IndexInParent() + 1);
 
@@ -1892,6 +2110,9 @@ AXObject* AXObject::PreviousSibling() const {
   if (!parent)
     return nullptr;
 
+  if (AccessibilityIsIgnored())
+    NOTREACHED() << "We don't support finding siblings for ignored objects.";
+
   if (IndexInParent() > 0)
     return *(parent->Children().begin() + IndexInParent() - 1);
 
@@ -1899,11 +2120,17 @@ AXObject* AXObject::PreviousSibling() const {
 }
 
 AXObject* AXObject::NextInTreeObject(bool can_wrap_to_first_element) const {
-  if (ChildCount())
-    return FirstChild();
+  // We don't support finding the next sibling for an ignored object, so we
+  // return the next sibling of the deepest unignored ancestor, which is the
+  // next best thing that doesn't violate next-in-order semantics.
+  if (!AccessibilityIsIgnored()) {
+    if (ChildCount())
+      return FirstChild();
 
-  if (NextSibling())
-    return NextSibling();
+    if (NextSibling())
+      return NextSibling();
+  }
+
   AXObject* current_object = const_cast<AXObject*>(this);
   while (current_object->ParentObjectUnignored()) {
     current_object = current_object->ParentObjectUnignored();
@@ -1916,7 +2143,10 @@ AXObject* AXObject::NextInTreeObject(bool can_wrap_to_first_element) const {
 }
 
 AXObject* AXObject::PreviousInTreeObject(bool can_wrap_to_last_element) const {
-  AXObject* sibling = PreviousSibling();
+  // We don't support finding the previous sibling for an ignored object, so we
+  // return the deepest unignored ancestor instead, which is the next best thing
+  // that doesn't violate previous-in-order semantics.
+  AXObject* sibling = AccessibilityIsIgnored() ? nullptr : PreviousSibling();
   if (!sibling) {
     if (ParentObjectUnignored())
       return ParentObjectUnignored();
@@ -2042,23 +2272,50 @@ LocalFrameView* AXObject::DocumentFrameView() const {
   return object->DocumentFrameView();
 }
 
-String AXObject::Language() const {
+AtomicString AXObject::Language() const {
+  // This method is used when the style engine is either not available on this
+  // object, e.g. for canvas fallback content, or is unable to determine the
+  // document's language. We use the following signals to detect the element's
+  // language, in decreasing priority:
+  // 1. The [language of a node] as defined in HTML, if known.
+  // 2. The list of languages the browser sends in the [Accept-Language] header.
+  // 3. The browser's default language.
+
   const AtomicString& lang = GetAttribute(langAttr);
   if (!lang.IsEmpty())
     return lang;
 
   AXObject* parent = ParentObject();
+  if (parent)
+    return parent->Language();
 
-  // As a last resort, fall back to the content language specified in the meta
-  // tag.
-  if (!parent) {
-    Document* doc = GetDocument();
-    if (doc)
-      return doc->ContentLanguage();
-    return g_null_atom;
+  const Document* document = GetDocument();
+  if (document) {
+    // Fall back to the first content language specified in the meta tag.
+    // This is not part of what the HTML5 Standard suggests but it still appears
+    // to be necessary.
+    if (document->ContentLanguage()) {
+      const String content_languages = document->ContentLanguage();
+      Vector<String> languages;
+      content_languages.Split(',', languages);
+      if (!languages.IsEmpty())
+        return AtomicString(languages[0].StripWhiteSpace());
+    }
+
+    if (document->GetPage()) {
+      // Use the first accept language preference if present.
+      const String accept_languages =
+          document->GetPage()->GetChromeClient().AcceptLanguages();
+      Vector<String> languages;
+      accept_languages.Split(',', languages);
+      if (!languages.IsEmpty())
+        return AtomicString(languages[0].StripWhiteSpace());
+    }
   }
 
-  return parent->Language();
+  // As a last resort, return the default language of the browser's UI.
+  AtomicString default_language = DefaultLanguage();
+  return default_language;
 }
 
 bool AXObject::HasAttribute(const QualifiedName& attribute) const {
@@ -2117,6 +2374,324 @@ void AXObject::SetScrollOffset(const IntPoint& offset) const {
   // TODO(bokan): This should potentially be a UserScroll.
   area->SetScrollOffset(ScrollOffset(offset.X(), offset.Y()),
                         kProgrammaticScroll);
+}
+
+bool AXObject::IsTableLikeRole() const {
+  switch (RoleValue()) {
+    case kLayoutTableRole:
+    case kTableRole:
+    case kGridRole:
+    case kTreeGridRole:
+      return true;
+    default:
+      return false;
+  }
+}
+
+bool AXObject::IsTableRowLikeRole() const {
+  return RoleValue() == kRowRole || RoleValue() == kLayoutTableRowRole;
+}
+
+bool AXObject::IsTableCellLikeRole() const {
+  switch (RoleValue()) {
+    case kLayoutTableCellRole:
+    case kCellRole:
+    case kColumnHeaderRole:
+    case kRowHeaderRole:
+      return true;
+    default:
+      return false;
+  }
+}
+
+unsigned AXObject::ColumnCount() const {
+  if (!IsTableLikeRole())
+    return 0;
+
+  unsigned max_column_count = 0;
+  for (const auto& row : TableRowChildren()) {
+    unsigned column_count = row->TableCellChildren().size();
+    max_column_count = std::max(column_count, max_column_count);
+  }
+
+  return max_column_count;
+}
+
+unsigned AXObject::RowCount() const {
+  if (!IsTableLikeRole())
+    return 0;
+
+  return TableRowChildren().size();
+}
+
+void AXObject::ColumnHeaders(AXObjectVector& headers) const {
+  if (!IsTableLikeRole())
+    return;
+
+  for (const auto& row : TableRowChildren()) {
+    for (const auto& cell : row->TableCellChildren()) {
+      if (cell->RoleValue() == kColumnHeaderRole)
+        headers.push_back(cell);
+    }
+  }
+}
+
+void AXObject::RowHeaders(AXObjectVector& headers) const {
+  if (!IsTableLikeRole())
+    return;
+
+  for (const auto& row : TableRowChildren()) {
+    for (const auto& cell : row->TableCellChildren()) {
+      if (cell->RoleValue() == kRowHeaderRole)
+        headers.push_back(cell);
+    }
+  }
+}
+
+AXObject* AXObject::CellForColumnAndRow(unsigned target_column_index,
+                                        unsigned target_row_index) const {
+  if (!IsTableLikeRole())
+    return nullptr;
+
+  // Note that this code is only triggered if this is not a LayoutTable,
+  // i.e. it's an ARIA grid/table.
+  //
+  // TODO(dmazzoni): delete this code or rename it "for testing only"
+  // since it's only needed for Blink layout tests and not for production.
+  unsigned row_index = 0;
+  for (const auto& row : TableRowChildren()) {
+    unsigned column_index = 0;
+    for (const auto& cell : row->TableCellChildren()) {
+      if (target_column_index == column_index && target_row_index == row_index)
+        return cell;
+      column_index++;
+    }
+    row_index++;
+  }
+
+  return nullptr;
+}
+
+int AXObject::AriaColumnCount() const {
+  if (!IsTableLikeRole())
+    return 0;
+
+  int32_t col_count;
+  if (!HasAOMPropertyOrARIAAttribute(AOMIntProperty::kColCount, col_count))
+    return 0;
+
+  if (col_count > static_cast<int>(ColumnCount()))
+    return col_count;
+
+  // Spec says that if all of the columns are present in the DOM, it
+  // is not necessary to set this attribute as the user agent can
+  // automatically calculate the total number of columns.
+  // It returns 0 in order not to set this attribute.
+  if (col_count == static_cast<int>(ColumnCount()) || col_count != -1)
+    return 0;
+
+  return -1;
+}
+
+int AXObject::AriaRowCount() const {
+  if (!IsTableLikeRole())
+    return 0;
+
+  int32_t row_count;
+  if (!HasAOMPropertyOrARIAAttribute(AOMIntProperty::kRowCount, row_count))
+    return 0;
+
+  if (row_count > static_cast<int>(RowCount()))
+    return row_count;
+
+  // Spec says that if all of the rows are present in the DOM, it is
+  // not necessary to set this attribute as the user agent can
+  // automatically calculate the total number of rows.
+  // It returns 0 in order not to set this attribute.
+  if (row_count == (int)RowCount() || row_count != -1)
+    return 0;
+
+  // In the spec, -1 explicitly means an unknown number of rows.
+  return -1;
+}
+
+unsigned AXObject::ColumnIndex() const {
+  if (!IsTableCellLikeRole())
+    return 0;
+
+  const AXObject* row = TableRowParent();
+  if (!row)
+    return 0;
+
+  unsigned column_index = 0;
+  for (const auto& child : row->TableCellChildren()) {
+    if (child == this)
+      break;
+    column_index++;
+  }
+  return column_index;
+}
+
+unsigned AXObject::RowIndex() const {
+  const AXObject* row = nullptr;
+  if (IsTableRowLikeRole())
+    row = this;
+  else if (IsTableCellLikeRole())
+    row = TableRowParent();
+
+  if (!row)
+    return 0;
+
+  const AXObject* table = row->TableParent();
+  if (!table)
+    return 0;
+
+  unsigned row_index = 0;
+  for (const auto& child : table->TableRowChildren()) {
+    if (child == row)
+      break;
+    if (!child->IsTableRowLikeRole())
+      continue;
+    row_index++;
+  }
+  return row_index;
+}
+
+unsigned AXObject::ColumnSpan() const {
+  return IsTableCellLikeRole() ? 1 : 0;
+}
+
+unsigned AXObject::RowSpan() const {
+  return IsTableCellLikeRole() ? 1 : 0;
+}
+
+unsigned AXObject::AriaColumnIndex() const {
+  UpdateCachedAttributeValuesIfNeeded();
+  return cached_aria_column_index_;
+}
+
+unsigned AXObject::AriaRowIndex() const {
+  UpdateCachedAttributeValuesIfNeeded();
+  return cached_aria_row_index_;
+}
+
+unsigned AXObject::ComputeAriaColumnIndex() const {
+  if (!IsTableCellLikeRole())
+    return 0;
+
+  // First see if it has an ARIA column index explicitly set.
+  uint32_t col_index;
+  if (HasAOMPropertyOrARIAAttribute(AOMUIntProperty::kColIndex, col_index) &&
+      col_index >= 1) {
+    return col_index;
+  }
+
+  // Get the previous sibling.
+  // TODO(dmazzoni): this code depends on the DOM; move this code out of Blink
+  // and make it more general.
+  AXObject* previous = nullptr;
+  if (GetNode()) {
+    Node* previousNode = ElementTraversal::PreviousSibling(*GetNode());
+    previous = AXObjectCache().GetOrCreate(previousNode);
+  }
+
+  // It has a previous sibling, so if that cell has a column index, this one's
+  // index is one greater.
+  if (previous) {
+    col_index = previous->AriaColumnIndex();
+    if (col_index)
+      return col_index + 1;
+    return 0;
+  }
+
+  // No previous cell, so check the row to see if it sets a column index.
+  const AXObject* row = TableRowParent();
+  if (!row)
+    return 0;
+  if (row->HasAOMPropertyOrARIAAttribute(AOMUIntProperty::kColIndex,
+                                         col_index)) {
+    return col_index;
+  }
+
+  // Otherwise there's no ARIA column index.
+  return 0;
+}
+
+unsigned AXObject::ComputeAriaRowIndex() const {
+  if (!IsTableCellLikeRole() && !IsTableRowLikeRole())
+    return 0;
+
+  // First check if there's an ARIA row index explicitly set.
+  uint32_t row_index;
+  if (HasAOMPropertyOrARIAAttribute(AOMUIntProperty::kRowIndex, row_index) &&
+      row_index >= 1) {
+    return row_index;
+  }
+
+  // If this is a cell, return the ARIA row index of the containing row.
+  if (IsTableCellLikeRole()) {
+    const AXObject* row = TableRowParent();
+    if (row)
+      return row->AriaRowIndex();
+    return 0;
+  }
+
+  // Otherwise, this is a row. Find the previous sibling row.
+  // TODO(dmazzoni): this code depends on the DOM; move this code out of Blink
+  // and make it more general.
+  if (!GetNode())
+    return 0;
+  Node* previousNode = ElementTraversal::PreviousSibling(*GetNode());
+  AXObject* previous = AXObjectCache().GetOrCreate(previousNode);
+  if (!previous || !previous->IsTableRowLikeRole())
+    return 0;
+
+  // If the previous row has an ARIA row index, this one is the same index
+  // plus one.
+  row_index = previous->AriaRowIndex();
+  if (row_index)
+    return row_index + 1;
+
+  // Otherwise there's no ARIA row index.
+  return 0;
+}
+
+AXObject::AXObjectVector AXObject::TableRowChildren() const {
+  AXObjectVector result;
+  for (const auto& child : Children()) {
+    if (child->IsTableRowLikeRole())
+      result.push_back(child);
+    else if (child->RoleValue() == kGenericContainerRole)
+      result.AppendVector(child->TableRowChildren());
+  }
+  return result;
+}
+
+AXObject::AXObjectVector AXObject::TableCellChildren() const {
+  AXObjectVector result;
+  for (const auto& child : Children()) {
+    if (child->IsTableCellLikeRole())
+      result.push_back(child);
+    else if (child->RoleValue() == kGenericContainerRole)
+      result.AppendVector(child->TableCellChildren());
+  }
+  return result;
+}
+
+const AXObject* AXObject::TableRowParent() const {
+  const AXObject* row = ParentObjectUnignored();
+  while (row && !row->IsTableRowLikeRole() &&
+         row->RoleValue() == kGenericContainerRole)
+    row = row->ParentObjectUnignored();
+  return row;
+}
+
+const AXObject* AXObject::TableParent() const {
+  const AXObject* table = ParentObjectUnignored();
+  while (table && !table->IsTableLikeRole() &&
+         table->RoleValue() == kGenericContainerRole)
+    table = table->ParentObjectUnignored();
+  return table;
 }
 
 void AXObject::GetRelativeBounds(AXObject** out_container,
@@ -2203,26 +2778,13 @@ void AXObject::GetRelativeBounds(AXObject** out_container,
   if (layout_object->IsBox() && layout_object->GetNode() &&
       layout_object->GetNode()->IsFrameOwnerElement()) {
     out_bounds_in_container =
-        FloatRect(ToLayoutBox(layout_object)->ContentBoxRect());
+        FloatRect(ToLayoutBox(layout_object)->PhysicalContentBoxRect());
   }
 
   // If the container has a scroll offset, subtract that out because we want our
   // bounds to be relative to the *unscrolled* position of the container object.
-  ScrollableArea* scrollable_area = container->GetScrollableAreaIfScrollable();
-
-  // Without RLS, LayoutView (i.e. "WebArea") is scrolled by the FrameView and
-  // those scrolls aren't accounted for at all in the layout tree. The
-  // scrollable_area returned above returns the FrameView in that case though
-  // so we avoid making the adjustment below. Once RLS ships, the LayoutView
-  // scroll will be accounted for by the layout tree so this condition can be
-  // removed.
-  bool is_self_scrolling = !container->IsWebArea() ||
-                           RuntimeEnabledFeatures::RootLayerScrollingEnabled();
-
-  if (scrollable_area && is_self_scrolling) {
-    ScrollOffset scroll_offset = scrollable_area->GetScrollOffset();
-    out_bounds_in_container.Move(scroll_offset);
-  }
+  if (auto* scrollable_area = container->GetScrollableAreaIfScrollable())
+    out_bounds_in_container.Move(scrollable_area->GetScrollOffset());
 
   // Compute the transform between the container's coordinate space and this
   // object.
@@ -2237,6 +2799,14 @@ void AXObject::GetRelativeBounds(AXObject** out_container,
   } else {
     out_container_transform = TransformationMatrix::ToSkMatrix44(transform);
   }
+}
+
+FloatRect AXObject::LocalBoundingBoxRectForAccessibility() {
+  if (!GetLayoutObject())
+    return FloatRect();
+  DCHECK(GetLayoutObject()->IsText());
+  UpdateCachedAttributeValuesIfNeeded();
+  return cached_local_bounding_box_rect_for_accessibility_;
 }
 
 LayoutRect AXObject::GetBoundsInFrameCoordinates() const {
@@ -2360,6 +2930,16 @@ bool AXObject::RequestShowContextMenuAction() {
     return true;
 
   return OnNativeShowContextMenuAction();
+}
+
+bool AXObject::InternalClearAccessibilityFocusAction() {
+  // TODO(mlamouri): implement
+  return false;
+}
+
+bool AXObject::InternalSetAccessibilityFocusAction() {
+  // TODO(mlamouri): implement
+  return false;
 }
 
 bool AXObject::OnNativeScrollToMakeVisibleAction() const {
@@ -2551,6 +3131,10 @@ bool AXObject::NameFromContents(bool recursive) const {
     case kCheckBoxRole:
     case kColumnHeaderRole:
     case kComboBoxMenuButtonRole:
+    case kDocBackLinkRole:
+    case kDocBiblioRefRole:
+    case kDocNoteRefRole:
+    case kDocGlossRefRole:
     case kDisclosureTriangleRole:
     case kHeadingRole:
     case kLayoutTableCellRole:
@@ -2594,20 +3178,55 @@ bool AXObject::NameFromContents(bool recursive) const {
     case kDefinitionRole:
     case kDialogRole:
     case kDirectoryRole:
+    case kDocCoverRole:
+    case kDocBiblioEntryRole:
+    case kDocEndnoteRole:
+    case kDocFootnoteRole:
+    case kDocPageBreakRole:
+    case kDocAbstractRole:
+    case kDocAcknowledgmentsRole:
+    case kDocAfterwordRole:
+    case kDocAppendixRole:
+    case kDocBibliographyRole:
+    case kDocChapterRole:
+    case kDocColophonRole:
+    case kDocConclusionRole:
+    case kDocCreditRole:
+    case kDocCreditsRole:
+    case kDocDedicationRole:
+    case kDocEndnotesRole:
+    case kDocEpigraphRole:
+    case kDocEpilogueRole:
+    case kDocErrataRole:
+    case kDocExampleRole:
+    case kDocForewordRole:
+    case kDocGlossaryRole:
+    case kDocIndexRole:
+    case kDocIntroductionRole:
+    case kDocNoticeRole:
+    case kDocPageListRole:
+    case kDocPartRole:
+    case kDocPrefaceRole:
+    case kDocPrologueRole:
+    case kDocPullquoteRole:
+    case kDocQnaRole:
+    case kDocSubtitleRole:
+    case kDocTipRole:
+    case kDocTocRole:
     case kDocumentRole:
     case kEmbeddedObjectRole:
     case kFeedRole:
     case kFigureRole:
     case kFormRole:
+    case kGraphicsDocumentRole:
+    case kGraphicsObjectRole:
+    case kGraphicsSymbolRole:
     case kGridRole:
     case kGroupRole:
     case kIframePresentationalRole:
     case kIframeRole:
     case kImageRole:
     case kInputTimeRole:
-    case kLayoutTableRole:
-    case kLayoutTableColumnRole:
-    case kLayoutTableRowRole:
     case kListBoxRole:
     case kLogRole:
     case kMainRole:
@@ -2629,7 +3248,6 @@ bool AXObject::NameFromContents(bool recursive) const {
     case kSpinButtonRole:
     case kStatusRole:
     case kSliderThumbRole:
-    case kSpinButtonPartRole:
     case kSVGRootRole:
     case kTableRole:
     case kTableHeaderContainerRole:
@@ -2655,6 +3273,8 @@ bool AXObject::NameFromContents(bool recursive) const {
     case kAnnotationRole:
     case kCanvasRole:
     case kCaptionRole:
+    case kContentDeletionRole:
+    case kContentInsertionRole:
     case kDescriptionListDetailRole:
     case kDescriptionListRole:
     case kDescriptionListTermRole:
@@ -2666,6 +3286,9 @@ bool AXObject::NameFromContents(bool recursive) const {
     case kImageMapRole:
     case kInlineTextBoxRole:
     case kLabelRole:
+    case kLayoutTableRole:
+    case kLayoutTableColumnRole:
+    case kLayoutTableRowRole:
     case kLegendRole:
     case kListRole:
     case kListItemRole:
@@ -2733,7 +3356,7 @@ AccessibilityRole AXObject::ButtonRoleType() const {
   // http://www.w3.org/TR/wai-aria/states_and_properties#aria-pressed
   if (AriaPressedIsPresent())
     return kToggleButtonRole;
-  if (AriaHasPopup())
+  if (HasPopup())
     return kPopUpButtonRole;
   // We don't contemplate RadioButtonRole, as it depends on the input
   // type.

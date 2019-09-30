@@ -64,7 +64,7 @@ class GetAPINatives : public ObjectBackedNativeHandler {
                       const v8::FunctionCallbackInfo<v8::Value>& args) {
       CHECK_EQ(1, args.Length());
       CHECK(args[0]->IsString());
-      std::string api_name = gin::V8ToString(args[0]);
+      std::string api_name = gin::V8ToString(context->isolate(), args[0]);
       v8::Local<v8::Object> api;
       if (bindings_system) {
         api = bindings_system->GetAPIObjectForTesting(context, api_name);
@@ -219,7 +219,7 @@ void ModuleSystemTestEnvironment::RegisterTestFile(
     const std::string& module_name,
     const std::string& file_name) {
   base::FilePath test_js_file_path;
-  ASSERT_TRUE(PathService::Get(DIR_TEST_DATA, &test_js_file_path));
+  ASSERT_TRUE(base::PathService::Get(DIR_TEST_DATA, &test_js_file_path));
   test_js_file_path = test_js_file_path.AppendASCII(file_name);
   std::string test_js;
   ASSERT_TRUE(base::ReadFileToString(test_js_file_path, &test_js));

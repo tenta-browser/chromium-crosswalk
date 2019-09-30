@@ -20,6 +20,7 @@
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/interactive_test_utils.h"
+#include "chrome/test/views/scoped_macviews_browser_mode.h"
 #include "ui/base/test/ui_controls.h"
 #import "ui/base/test/windowed_nsnotification_observer.h"
 #include "ui/base/ui_base_features.h"
@@ -29,11 +30,10 @@ namespace {
 
 enum class UiMode {
   VIEWS,
-  COCOA,
 };
 
 std::string UiModeToString(const ::testing::TestParamInfo<UiMode>& info) {
-  return info.param == UiMode::VIEWS ? "Views" : "Cocoa";
+  return "Views";
 }
 
 }  // namespace
@@ -57,6 +57,7 @@ class LocationBarDecorationTestApi {
 
 }  // namespace test
 
+// TODO(crbug.com/630357): Remove parameterized testing for this class.
 class PermissionBubbleInteractiveUITest
     : public InProcessBrowserTest,
       public ::testing::WithParamInterface<UiMode> {
@@ -93,15 +94,6 @@ class PermissionBubbleInteractiveUITest
         [NSApp keyWindow], keycode, control, shift, alt, command);
   }
 
-  // InProcessBrowserTest:
-  void SetUp() override {
-    if (GetParam() == UiMode::VIEWS)
-      scoped_feature_list_.InitAndEnableFeature(features::kSecondaryUiMd);
-    else
-      scoped_feature_list_.InitAndDisableFeature(features::kSecondaryUiMd);
-    InProcessBrowserTest::SetUp();
-  }
-
   void SetUpOnMainThread() override {
     // Make the browser active (ensures the app can receive key events).
     EXPECT_TRUE(ui_test_utils::BringBrowserWindowToFront(browser()));
@@ -131,6 +123,8 @@ class PermissionBubbleInteractiveUITest
   base::test::ScopedFeatureList scoped_feature_list_;
 
  private:
+  test::ScopedMacViewsBrowserMode cocoa_browser_mode_{false};
+
   DISALLOW_COPY_AND_ASSIGN(PermissionBubbleInteractiveUITest);
 };
 
@@ -153,7 +147,9 @@ IN_PROC_BROWSER_TEST_P(PermissionBubbleInteractiveUITest, CmdWClosesWindow) {
 
 // Add a tab, ensure we can switch away and back using Cmd+Alt+Left/Right and
 // curly braces.
-IN_PROC_BROWSER_TEST_P(PermissionBubbleInteractiveUITest, SwitchTabs) {
+// Disabled. See https://crbug.com/845389 - this regressed somewhere between
+// r545258 and r559030, but it may be obsolete soon.
+IN_PROC_BROWSER_TEST_P(PermissionBubbleInteractiveUITest, DISABLED_SwitchTabs) {
   NSWindow* browser_window = browser()->window()->GetNativeWindow();
 
   EXPECT_EQ(0, browser()->tab_strip_model()->active_index());
@@ -220,5 +216,5 @@ IN_PROC_BROWSER_TEST_P(PermissionBubbleInteractiveUITest, SwitchTabs) {
 
 INSTANTIATE_TEST_CASE_P(,
                         PermissionBubbleInteractiveUITest,
-                        ::testing::Values(UiMode::VIEWS, UiMode::COCOA),
+                        ::testing::Values(UiMode::VIEWS),
                         &UiModeToString);

@@ -13,27 +13,50 @@
            background-color: rgba(255, 255, 255, 0.75) for the inner dialog's
            backdrop. See context at crbug.com/827397 */
         --cr-dialog-close-image: {
+          margin-inline-end: 7px;
           background-image: url(chrome://theme/IDR_CLOSE_DIALOG);
+          margin-top: 10px;
         };
         --cr-dialog-close-image-active: {
           background-image: url(chrome://theme/IDR_CLOSE_DIALOG_P);
+        };
+        --cr-dialog-close-image-focus: {
+          background-image: url(chrome://theme/IDR_CLOSE_DIALOG_H);
         };
         --cr-dialog-close-image-hover: {
           background-image: url(chrome://theme/IDR_CLOSE_DIALOG_H);
         };
         --cr-dialog-native: {
+          border-radius: 2px;
           box-shadow: 0 4px 23px 5px rgba(0, 0, 0, 0.2),
             0 2px 6px rgba(0, 0, 0, 0.15);
         };
-        --cr-icon-ripple-size: 0;
+        --cr-icon-ripple-size: 14px;
         --cr-icon-size: 14px;
+        --cr-dialog-title: {
+          padding-inline-end: 16px;
+          padding-inline-start: 16px;
+          padding-bottom: 16px;
+          padding-top: 16px;
+        };
         --cr-dialog-body: {
+          padding-inline-end: 16px;
+          padding-inline-start: 16px;
           box-sizing: border-box;
+          padding-bottom: 12px;
           padding-top: 0;
+        };
+        --cr-dialog-button-container: {
+          padding-top: 16px;
         };
         --cr-dialog-wrapper: {
           max-height: calc(100vh - 40px);
         };
+        --cr-dialog-close-ripple: {
+          display: none;
+        };
+        --cr-primary-text-color: #333;
+        --cr-secondary-text-color: #333;
       }
 
       #searchBox {
@@ -43,6 +66,10 @@
 
       #body {
         height: 100vh;
+      }
+
+      #dialog button {
+        margin-inline-start: 10px;
       }
     </style>
   </template>

@@ -5,16 +5,15 @@
 #include "base/bind.h"
 #include "base/command_line.h"
 #include "base/mac/mac_util.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/sequenced_task_runner.h"
+#include "base/task/post_task.h"
 #include "base/threading/thread_restrictions.h"
 #include "chrome/browser/background/background_mode_manager.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/pref_names.h"
-#include "chrome/grit/generated_resources.h"
 #include "components/prefs/pref_service.h"
 #include "content/public/browser/browser_thread.h"
-#include "ui/base/l10n/l10n_util.h"
 
 using content::BrowserThread;
 
@@ -155,13 +154,9 @@ void BackgroundModeManager::DisplayClientInstalledNotification(
   // http://crbug.com/74970
 }
 
-base::string16 BackgroundModeManager::GetPreferencesMenuLabel() {
-  return l10n_util::GetStringUTF16(IDS_OPTIONS);
-}
-
 scoped_refptr<base::SequencedTaskRunner>
 BackgroundModeManager::CreateTaskRunner() {
   return base::CreateSequencedTaskRunnerWithTraits(
-      {base::MayBlock(), base::TaskPriority::BACKGROUND,
+      {base::MayBlock(), base::TaskPriority::BEST_EFFORT,
        base::TaskShutdownBehavior::BLOCK_SHUTDOWN});
 }

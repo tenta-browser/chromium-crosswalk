@@ -127,6 +127,20 @@ Status ExecuteRefresh(Session* session,
                       std::unique_ptr<base::Value>* value,
                       Timeout* timeout);
 
+// Freeze the current page.
+Status ExecuteFreeze(Session* session,
+                     WebView* web_view,
+                     const base::DictionaryValue& params,
+                     std::unique_ptr<base::Value>* value,
+                     Timeout* timeout);
+
+// Resume the current page.
+Status ExecuteResume(Session* session,
+                     WebView* web_view,
+                     const base::DictionaryValue& params,
+                     std::unique_ptr<base::Value>* value,
+                     Timeout* timeout);
+
 // Move the mouse by an offset of the element if specified .
 Status ExecuteMouseMoveTo(Session* session,
                           WebView* web_view,
@@ -281,6 +295,13 @@ Status ExecuteScreenshot(Session* session,
                          const base::DictionaryValue& params,
                          std::unique_ptr<base::Value>* value,
                          Timeout* timeout);
+
+// Retrieve a screenshot of a specific element
+Status ExecuteElementScreenshot(Session* session,
+                                WebView* web_view,
+                                const std::string& element_id,
+                                const base::DictionaryValue& params,
+                                std::unique_ptr<base::Value>* value);
 
 // Retrieve all cookies visible to the current page.
 Status ExecuteGetCookies(Session* session,

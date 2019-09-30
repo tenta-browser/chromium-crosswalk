@@ -8,13 +8,12 @@
 
 #include "base/bind.h"
 #include "base/callback.h"
-#include "base/files/file_util_proxy.h"
 #include "base/memory/weak_ptr.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/sequenced_task_runner.h"
+#include "base/task/post_task.h"
 #include "content/browser/renderer_host/pepper/pepper_file_ref_host.h"
 #include "content/browser/renderer_host/pepper/pepper_file_system_browser_host.h"
 #include "content/browser/renderer_host/pepper/pepper_security_helper.h"
-#include "content/common/fileapi/file_system_messages.h"
 #include "content/common/view_messages.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/content_browser_client.h"
@@ -49,7 +48,7 @@ PepperFileIOHost::UIThreadStuff GetUIThreadStuffForInternalFileSystems(
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   RenderProcessHost* host = RenderProcessHost::FromID(render_process_id);
   if (host) {
-    stuff.resolved_render_process_id = base::GetProcId(host->GetHandle());
+    stuff.resolved_render_process_id = host->GetProcess().Pid();
     StoragePartition* storage_partition = host->GetStoragePartition();
     if (storage_partition)
       stuff.file_system_context = storage_partition->GetFileSystemContext();
@@ -62,7 +61,7 @@ base::ProcessId GetResolvedRenderProcessId(int render_process_id) {
   RenderProcessHost* host = RenderProcessHost::FromID(render_process_id);
   if (!host)
     return base::kNullProcessId;
-  return base::GetProcId(host->GetHandle());
+  return host->GetProcess().Pid();
 }
 
 bool GetPluginAllowedToCallRequestOSFileHandle(int render_process_id,
@@ -514,7 +513,7 @@ bool PepperFileIOHost::AddFileToReplyContext(
   // A non-zero resource id signals NaClIPCAdapter to create a NaClQuotaDesc.
   PP_Resource quota_file_io = check_quota_ ? pp_resource() : 0;
   file_handle.set_file_handle(transit_file, open_flags, quota_file_io);
-  reply_context->params.AppendHandle(file_handle);
+  reply_context->params.AppendHandle(std::move(file_handle));
   return true;
 }
 

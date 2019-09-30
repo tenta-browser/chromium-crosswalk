@@ -87,6 +87,14 @@ class FindInPageTest : public InProcessBrowserTest {
     return details;
   }
 
+  FindNotificationDetails WaitForFinalFindResult() {
+    while (true) {
+      auto details = WaitForFindResult();
+      if (details.final_update())
+        return details;
+    }
+  }
+
  private:
   test::ScopedMacViewsBrowserMode views_mode_{true};
 
@@ -187,32 +195,41 @@ IN_PROC_BROWSER_TEST_F(FindInPageTest, ButtonsDoNotAlterFocus) {
 
   // Clicking the next and previous buttons should not alter the focused view.
   ClickOnView(next_button);
-  EXPECT_EQ(2, WaitForFindResult().active_match_ordinal());
+  EXPECT_EQ(2, WaitForFinalFindResult().active_match_ordinal());
   EXPECT_TRUE(IsViewFocused(browser(), VIEW_ID_FIND_IN_PAGE_TEXT_FIELD));
   ClickOnView(previous_button);
-  EXPECT_EQ(1, WaitForFindResult().active_match_ordinal());
+  EXPECT_EQ(1, WaitForFinalFindResult().active_match_ordinal());
   EXPECT_TRUE(IsViewFocused(browser(), VIEW_ID_FIND_IN_PAGE_TEXT_FIELD));
 
   // Tapping the next and previous buttons should not alter the focused view.
   TapOnView(next_button);
-  EXPECT_EQ(2, WaitForFindResult().active_match_ordinal());
+  EXPECT_EQ(2, WaitForFinalFindResult().active_match_ordinal());
   EXPECT_TRUE(IsViewFocused(browser(), VIEW_ID_FIND_IN_PAGE_TEXT_FIELD));
   TapOnView(previous_button);
-  EXPECT_EQ(1, WaitForFindResult().active_match_ordinal());
+  EXPECT_EQ(1, WaitForFinalFindResult().active_match_ordinal());
   EXPECT_TRUE(IsViewFocused(browser(), VIEW_ID_FIND_IN_PAGE_TEXT_FIELD));
 
   // The same should be true even when the previous button is focused.
   previous_button->RequestFocus();
   EXPECT_TRUE(IsViewFocused(browser(), VIEW_ID_FIND_IN_PAGE_PREVIOUS_BUTTON));
   ClickOnView(next_button);
-  EXPECT_EQ(2, WaitForFindResult().active_match_ordinal());
+  EXPECT_EQ(2, WaitForFinalFindResult().active_match_ordinal());
   EXPECT_TRUE(IsViewFocused(browser(), VIEW_ID_FIND_IN_PAGE_PREVIOUS_BUTTON));
   TapOnView(next_button);
-  EXPECT_EQ(3, WaitForFindResult().active_match_ordinal());
+  EXPECT_EQ(3, WaitForFinalFindResult().active_match_ordinal());
   EXPECT_TRUE(IsViewFocused(browser(), VIEW_ID_FIND_IN_PAGE_PREVIOUS_BUTTON));
 }
 
 IN_PROC_BROWSER_TEST_F(FindInPageTest, ButtonsDisabledWithoutText) {
+  if (browser()
+          ->GetFindBarController()
+          ->find_bar()
+          ->HasGlobalFindPasteboard()) {
+    // The presence of a global find pasteboard does not guarantee the find bar
+    // will be empty on launch.
+    return;
+  }
+
   ASSERT_TRUE(embedded_test_server()->Start());
   // Make sure Chrome is in the foreground, otherwise sending input
   // won't do anything and the test will hang.
@@ -275,7 +292,13 @@ IN_PROC_BROWSER_TEST_F(FindInPageTest, FocusRestore) {
   EXPECT_TRUE(IsViewFocused(browser(), VIEW_ID_OMNIBOX));
 }
 
-IN_PROC_BROWSER_TEST_F(FindInPageTest, SelectionRestoreOnTabSwitch) {
+// Flaky on Windows. https://crbug.com/792313
+#if defined(OS_WIN)
+#define MAYBE_SelectionRestoreOnTabSwitch DISABLED_SelectionRestoreOnTabSwitch
+#else
+#define MAYBE_SelectionRestoreOnTabSwitch SelectionRestoreOnTabSwitch
+#endif
+IN_PROC_BROWSER_TEST_F(FindInPageTest, MAYBE_SelectionRestoreOnTabSwitch) {
   // Mac intentionally changes selection on focus.
   if (views::PlatformStyle::kTextfieldScrollsToStartOnFocusChange)
     return;

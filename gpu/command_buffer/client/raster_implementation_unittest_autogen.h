@@ -111,17 +111,6 @@ TEST_F(RasterImplementationTest, LoseContextCHROMIUM) {
   EXPECT_EQ(0, memcmp(&expected, commands_, sizeof(expected)));
 }
 
-TEST_F(RasterImplementationTest, EndRasterCHROMIUM) {
-  struct Cmds {
-    cmds::EndRasterCHROMIUM cmd;
-  };
-  Cmds expected;
-  expected.cmd.Init();
-
-  gl_->EndRasterCHROMIUM();
-  EXPECT_EQ(0, memcmp(&expected, commands_, sizeof(expected)));
-}
-
 TEST_F(RasterImplementationTest, TexParameteri) {
   struct Cmds {
     cmds::TexParameteri cmd;
@@ -160,9 +149,9 @@ TEST_F(RasterImplementationTest, TexStorage2D) {
     cmds::TexStorage2D cmd;
   };
   Cmds expected;
-  expected.cmd.Init(1, 2, 3, 4);
+  expected.cmd.Init(1, 2, 3);
 
-  gl_->TexStorage2D(1, 2, 3, 4);
+  gl_->TexStorage2D(1, 2, 3);
   EXPECT_EQ(0, memcmp(&expected, commands_, sizeof(expected)));
 }
 

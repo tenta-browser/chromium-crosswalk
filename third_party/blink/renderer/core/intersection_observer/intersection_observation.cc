@@ -7,9 +7,32 @@
 #include "third_party/blink/renderer/core/dom/element_rare_data.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/intersection_observer/intersection_observer.h"
+#include "third_party/blink/renderer/core/layout/hit_test_result.h"
 #include "third_party/blink/renderer/core/layout/intersection_geometry.h"
+#include "third_party/blink/renderer/core/layout/layout_object.h"
 
 namespace blink {
+
+namespace {
+
+bool IsOccluded(const Element& element, const IntersectionGeometry& geometry) {
+  DCHECK(RuntimeEnabledFeatures::IntersectionObserverV2Enabled());
+  if (element.GetDocument()
+          .GetFrame()
+          ->LocalFrameRoot()
+          .MayBeOccludedOrObscuredByRemoteAncestor()) {
+    return true;
+  }
+  // TODO(layout-dev): This should hit-test the intersection rect, not the
+  // target rect; it's not helpful to know that the portion of the target that
+  // is clipped is also occluded. To do that, the intersection rect must be
+  // mapped down to the local space of the target element.
+  HitTestResult result(
+      element.GetLayoutObject()->HitTestForOcclusion(geometry.TargetRect()));
+  return result.InnerNode() && result.InnerNode() != &element;
+}
+
+}  // namespace
 
 IntersectionObservation::IntersectionObservation(IntersectionObserver& observer,
                                                  Element& target)
@@ -18,6 +41,7 @@ IntersectionObservation::IntersectionObservation(IntersectionObserver& observer,
       // Note that the spec says the initial value of m_lastThresholdIndex
       // should be -1, but since m_lastThresholdIndex is unsigned, we use a
       // different sentinel value.
+      last_is_visible_(false),
       last_threshold_index_(kMaxThresholdIndex - 1) {
   UpdateShouldReportRootBoundsAfterDomChange();
 }
@@ -51,6 +75,7 @@ void IntersectionObservation::ComputeIntersectionObservations(
   //       any non-zero threshold.
   unsigned new_threshold_index;
   float new_visible_ratio;
+  bool is_visible = false;
   if (geometry.DoesIntersect()) {
     if (geometry.TargetRect().IsEmpty()) {
       new_visible_ratio = 1;
@@ -64,6 +89,12 @@ void IntersectionObservation::ComputeIntersectionObservations(
     }
     new_threshold_index =
         Observer()->FirstThresholdGreaterThan(new_visible_ratio);
+    if (RuntimeEnabledFeatures::IntersectionObserverV2Enabled() &&
+        Observer()->trackVisibility()) {
+      is_visible = new_threshold_index > 0 &&
+                   !Target()->GetLayoutObject()->HasDistortingVisualEffects() &&
+                   !IsOccluded(*Target(), geometry);
+    }
   } else {
     new_visible_ratio = 0;
     new_threshold_index = 0;
@@ -72,16 +103,18 @@ void IntersectionObservation::ComputeIntersectionObservations(
   // TODO(tkent): We can't use CHECK_LT due to a compile error.
   CHECK(new_threshold_index < kMaxThresholdIndex);
 
-  if (last_threshold_index_ != new_threshold_index) {
+  if (last_threshold_index_ != new_threshold_index ||
+      last_is_visible_ != is_visible) {
     FloatRect snapped_root_bounds(geometry.RootRect());
     FloatRect* root_bounds_pointer =
         should_report_root_bounds_ ? &snapped_root_bounds : nullptr;
     IntersectionObserverEntry* new_entry = new IntersectionObserverEntry(
         timestamp, new_visible_ratio, FloatRect(geometry.TargetRect()),
         root_bounds_pointer, FloatRect(geometry.IntersectionRect()),
-        geometry.DoesIntersect(), Target());
+        new_threshold_index > 0, is_visible, Target());
     Observer()->EnqueueIntersectionObserverEntry(*new_entry);
     SetLastThresholdIndex(new_threshold_index);
+    SetWasVisible(is_visible);
   }
 }
 

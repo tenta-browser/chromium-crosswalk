@@ -12,7 +12,7 @@
 #include "base/run_loop.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/test/histogram_tester.h"
+#include "base/test/metrics/histogram_tester.h"
 #include "base/threading/thread_restrictions.h"
 #include "build/build_config.h"
 #include "chrome/browser/content_settings/host_content_settings_map_factory.h"
@@ -34,6 +34,7 @@
 #include "content/public/test/browser_test_utils.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
 #include "ppapi/shared_impl/ppapi_switches.h"
+#include "third_party/blink/public/common/message_port/string_message_codec.h"
 
 namespace {
 
@@ -208,6 +209,31 @@ IN_PROC_BROWSER_TEST_F(ChromeServiceWorkerTest,
               IsContentBlocked(CONTENT_SETTINGS_TYPE_JAVASCRIPT));
 }
 
+IN_PROC_BROWSER_TEST_F(ChromeServiceWorkerTest,
+                       StartServiceWorkerForLongRunningMessage) {
+  base::RunLoop run_loop;
+  blink::TransferableMessage msg;
+  const base::string16 message_data = base::UTF8ToUTF16("testMessage");
+
+  WriteFile(FILE_PATH_LITERAL("sw.js"), "self.onfetch = function(e) {};");
+  WriteFile(FILE_PATH_LITERAL("test.html"), kInstallAndWaitForActivatedPage);
+  InitializeServer();
+  NavigateToPageAndWaitForReadyTitle("/test.html");
+  msg.owned_encoded_message = blink::EncodeStringMessage(message_data);
+  msg.encoded_message = msg.owned_encoded_message;
+
+  content::BrowserThread::PostTask(
+      content::BrowserThread::IO, FROM_HERE,
+      base::BindOnce(&content::ServiceWorkerContext::
+                         StartServiceWorkerAndDispatchLongRunningMessage,
+                     base::Unretained(GetServiceWorkerContext()),
+                     embedded_test_server()->GetURL("/scope/"), std::move(msg),
+                     base::BindRepeating(&ExpectResultAndRun<bool>, true,
+                                         run_loop.QuitClosure())));
+
+  run_loop.Run();
+}
+
 class ChromeServiceWorkerFetchTest : public ChromeServiceWorkerTest {
  protected:
   ChromeServiceWorkerFetchTest() {}
@@ -353,7 +379,7 @@ class ChromeServiceWorkerManifestFetchTest
 
   static void ManifestCallbackAndRun(const base::Closure& continuation,
                                      const GURL&,
-                                     const content::Manifest&) {
+                                     const blink::Manifest&) {
     continuation.Run();
   }
 

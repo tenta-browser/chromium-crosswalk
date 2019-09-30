@@ -24,6 +24,7 @@
 #include "third_party/blink/renderer/core/css/parser/css_tokenizer.h"
 #include "third_party/blink/renderer/core/css/parser/css_variable_parser.h"
 #include "third_party/blink/renderer/core/css/properties/css_property.h"
+#include "third_party/blink/renderer/core/css/property_registration.h"
 #include "third_party/blink/renderer/core/style_property_shorthand.h"
 
 namespace blink {
@@ -226,6 +227,7 @@ CSSStyleValueVector UnsupportedCSSValue(CSSPropertyID property_id,
 
 CSSStyleValueVector StyleValueFactory::FromString(
     CSSPropertyID property_id,
+    const PropertyRegistration* registration,
     const String& css_text,
     const CSSParserContext* parser_context) {
   DCHECK_NE(property_id, CSSPropertyInvalid);
@@ -253,11 +255,22 @@ CSSStyleValueVector StyleValueFactory::FromString(
     return result;
   }
 
+  if (property_id == CSSPropertyVariable && registration) {
+    const bool is_animation_tainted = false;
+    const CSSValue* value = registration->Syntax().Parse(tokens, parser_context,
+                                                         is_animation_tainted);
+    if (!value)
+      return CSSStyleValueVector();
+
+    return StyleValueFactory::CssValueToStyleValueVector(property_id, *value);
+  }
+
   if ((property_id == CSSPropertyVariable && !tokens.IsEmpty()) ||
       CSSVariableParser::ContainsValidVariableReferences(range)) {
-    const auto variable_data =
-        CSSVariableData::Create(range, false /* is_animation_tainted */,
-                                false /* needs variable resolution */);
+    const auto variable_data = CSSVariableData::Create(
+        range, false /* is_animation_tainted */,
+        false /* needs variable resolution */, parser_context->BaseURL(),
+        parser_context->Charset());
     CSSStyleValueVector values;
     values.push_back(CSSUnparsedValue::FromCSSVariableData(*variable_data));
     return values;
@@ -289,7 +302,10 @@ CSSStyleValueVector StyleValueFactory::CssValueToStyleValueVector(
     return style_value_vector;
   }
 
-  if (!css_value.IsValueList() || !CSSProperty::Get(property_id).IsRepeated()) {
+  // Custom properties count as repeated whenever we have a CSSValueList.
+  if (!css_value.IsValueList() ||
+      (!CSSProperty::Get(property_id).IsRepeated() &&
+       property_id != CSSPropertyVariable)) {
     return UnsupportedCSSValue(property_id, css_value);
   }
 

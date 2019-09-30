@@ -5,8 +5,11 @@
 #ifndef SERVICES_NETWORK_CORS_CORS_URL_LOADER_H_
 #define SERVICES_NETWORK_CORS_CORS_URL_LOADER_H_
 
+#include "base/memory/weak_ptr.h"
+#include "base/optional.h"
 #include "mojo/public/cpp/bindings/binding.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
+#include "services/network/public/cpp/cors/cors_error_status.h"
 #include "services/network/public/mojom/fetch_api.mojom.h"
 #include "services/network/public/mojom/url_loader_factory.mojom.h"
 #include "url/gurl.h"
@@ -25,20 +28,34 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) CORSURLLoader
     : public mojom::URLLoader,
       public mojom::URLLoaderClient {
  public:
+  using DeleteCallback = base::OnceCallback<void(mojom::URLLoader* loader)>;
+
   // Assumes network_loader_factory outlives this loader.
+  // TODO(yhirano): Remove |request_finalizer| when the network service is
+  // fully enabled.
   CORSURLLoader(
+      mojom::URLLoaderRequest loader_request,
       int32_t routing_id,
       int32_t request_id,
       uint32_t options,
+      DeleteCallback delete_callback,
       const ResourceRequest& resource_request,
       mojom::URLLoaderClientPtr client,
       const net::MutableNetworkTrafficAnnotationTag& traffic_annotation,
-      mojom::URLLoaderFactory* network_loader_factory);
+      mojom::URLLoaderFactory* network_loader_factory,
+      const base::RepeatingCallback<void(int)>& request_finalizer);
 
   ~CORSURLLoader() override;
 
+  // Starts processing the request. This is expected to be called right after
+  // the constructor.
+  void Start();
+
   // mojom::URLLoader overrides:
-  void FollowRedirect() override;
+  void FollowRedirect(const base::Optional<std::vector<std::string>>&
+                          to_be_removed_request_headers,
+                      const base::Optional<net::HttpRequestHeaders>&
+                          modified_request_headers) override;
   void ProceedWithResponse() override;
   void SetPriority(net::RequestPriority priority,
                    int intra_priority_value) override;
@@ -46,11 +63,9 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) CORSURLLoader
   void ResumeReadingBodyFromNet() override;
 
   // mojom::URLLoaderClient overrides:
-  void OnReceiveResponse(const ResourceResponseHead& head,
-                         mojom::DownloadedTempFilePtr downloaded_file) override;
+  void OnReceiveResponse(const ResourceResponseHead& head) override;
   void OnReceiveRedirect(const net::RedirectInfo& redirect_info,
                          const ResourceResponseHead& head) override;
-  void OnDataDownloaded(int64_t data_length, int64_t encoded_length) override;
   void OnUploadProgress(int64_t current_position,
                         int64_t total_size,
                         base::OnceCallback<void()> callback) override;
@@ -61,12 +76,27 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) CORSURLLoader
   void OnComplete(const URLLoaderCompletionStatus& status) override;
 
  private:
+  void StartRequest();
+  void StartNetworkRequest(int net_error,
+                           base::Optional<CORSErrorStatus> status);
+
   // Called when there is a connection error on the upstream pipe used for the
   // actual request.
   void OnUpstreamConnectionError();
 
   // Handles OnComplete() callback.
   void HandleComplete(const URLLoaderCompletionStatus& status);
+
+  void OnConnectionError();
+
+  mojo::Binding<mojom::URLLoader> binding_;
+
+  // We need to save these for redirect.
+  const int32_t routing_id_;
+  const int32_t request_id_;
+  const uint32_t options_;
+
+  DeleteCallback delete_callback_;
 
   // This raw URLLoaderFactory pointer is shared with the CORSURLLoaderFactory
   // that created and owns this object.
@@ -75,12 +105,10 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) CORSURLLoader
   // For the actual request.
   mojom::URLLoaderPtr network_loader_;
   mojo::Binding<mojom::URLLoaderClient> network_client_binding_;
+  ResourceRequest request_;
 
   // To be a URLLoader for the client.
   mojom::URLLoaderClientPtr forwarding_client_;
-
-  // Request initiator's origin.
-  url::Origin security_origin_;
 
   // The last response URL, that is usually the requested URL, but can be
   // different if redirects happen.
@@ -91,9 +119,25 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) CORSURLLoader
   bool is_waiting_follow_redirect_call_ = false;
 
   // Corresponds to the Fetch spec, https://fetch.spec.whatwg.org/.
-  mojom::FetchRequestMode fetch_request_mode_;
-  mojom::FetchCredentialsMode fetch_credentials_mode_;
   bool fetch_cors_flag_;
+
+  net::RedirectInfo redirect_info_;
+
+  // https://fetch.spec.whatwg.org/#concept-request-tainted-origin
+  bool tainted_ = false;
+
+  // https://fetch.spec.whatwg.org/#concept-request-redirect-count
+  int redirect_count_ = 0;
+
+  // Used to finalize preflight / redirect requests.
+  // TODO(yhirano): Remove this once the network service is fully enabled.
+  base::RepeatingCallback<void(int)> request_finalizer_;
+
+  // We need to save this for redirect.
+  net::MutableNetworkTrafficAnnotationTag traffic_annotation_;
+
+  // Used to run asynchronous class instance bound callbacks safely.
+  base::WeakPtrFactory<CORSURLLoader> weak_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(CORSURLLoader);
 };

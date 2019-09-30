@@ -8,16 +8,11 @@
 
 #include "chrome/browser/ui/cocoa/browser_dialogs_views_mac.h"
 #import "chrome/browser/ui/cocoa/hung_renderer_controller.h"
-#import "chrome/browser/ui/cocoa/passwords/passwords_bubble_cocoa.h"
 #import "chrome/browser/ui/cocoa/profiles/profile_signin_confirmation_dialog_cocoa.h"
 #include "chrome/browser/ui/cocoa/tab_dialogs_views_mac.h"
 #include "chrome/browser/ui/sync/profile_signin_confirmation_helper.h"
 #include "content/public/browser/web_contents.h"
 #include "ui/base/ui_features.h"
-
-#if !BUILDFLAG(MAC_VIEWS_BROWSER)
-#import "chrome/browser/ui/cocoa/content_settings/collected_cookies_mac.h"
-#endif
 
 #if !BUILDFLAG(MAC_VIEWS_BROWSER)
 // static
@@ -49,23 +44,20 @@ gfx::NativeView TabDialogsCocoa::GetDialogParentView() const {
   //    +- WebContentsViewCocoa
   //
   // Changing it? Do not forget to modify
-  // -[TabStripController swapInTabAtIndex:] too.
+  // -[TabStripControllerCocoa swapInTabAtIndex:] too.
   return [web_contents_->GetNativeView() superview];
 }
 
 void TabDialogsCocoa::ShowCollectedCookies() {
-#if BUILDFLAG(MAC_VIEWS_BROWSER)
   NOTREACHED() << "MacViewsBrowser builds can't use Cocoa dialogs";
-#else
-  // Deletes itself on close.
-  new CollectedCookiesMac(web_contents_);
-#endif
 }
 
 void TabDialogsCocoa::ShowHungRendererDialog(
-    content::RenderWidgetHost* render_widget_host) {
+    content::RenderWidgetHost* render_widget_host,
+    base::RepeatingClosure hang_monitor_restarter) {
   [HungRendererController showForWebContents:web_contents_
-                            renderWidgetHost:render_widget_host];
+                            renderWidgetHost:render_widget_host
+                            timeoutRestarter:hang_monitor_restarter];
 }
 
 void TabDialogsCocoa::HideHungRendererDialog(
@@ -88,9 +80,13 @@ void TabDialogsCocoa::ShowProfileSigninConfirmation(
 }
 
 void TabDialogsCocoa::ShowManagePasswordsBubble(bool user_action) {
-  ManagePasswordsBubbleCocoa::Show(web_contents_, user_action);
+  // The method is implemented by TabDialogsViewsMac and only that one is to be
+  // called due to MacViews release.
+  NOTREACHED();
 }
 
 void TabDialogsCocoa::HideManagePasswordsBubble() {
-  // The bubble is closed when it loses the focus.
+  // The method is implemented by TabDialogsViewsMac and only that one is to be
+  // called due to MacViews release.
+  NOTREACHED();
 }

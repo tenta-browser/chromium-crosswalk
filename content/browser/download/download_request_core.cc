@@ -56,14 +56,14 @@ class DownloadRequestData : public base::SupportsUserData::Data {
 
   static void Attach(net::URLRequest* request,
                      download::DownloadUrlParameters* download_parameters,
-                     uint32_t download_id);
+                     bool is_new_download);
   static DownloadRequestData* Get(const net::URLRequest* request);
   static void Detach(net::URLRequest* request);
 
   std::unique_ptr<download::DownloadSaveInfo> TakeSaveInfo() {
     return std::move(save_info_);
   }
-  uint32_t download_id() const { return download_id_; }
+  bool is_new_download() const { return is_new_download_; }
   std::string guid() const { return guid_; }
   bool is_transient() const { return transient_; }
   bool fetch_error_body() const { return fetch_error_body_; }
@@ -80,7 +80,7 @@ class DownloadRequestData : public base::SupportsUserData::Data {
   static const int kKey;
 
   std::unique_ptr<download::DownloadSaveInfo> save_info_;
-  uint32_t download_id_ = download::DownloadItem::kInvalidId;
+  bool is_new_download_;
   std::string guid_;
   bool fetch_error_body_ = false;
   download::DownloadUrlParameters::RequestHeadersType request_headers_;
@@ -95,11 +95,11 @@ const int DownloadRequestData::kKey = 0;
 // static
 void DownloadRequestData::Attach(net::URLRequest* request,
                                  download::DownloadUrlParameters* parameters,
-                                 uint32_t download_id) {
+                                 bool is_new_download) {
   auto request_data = std::make_unique<DownloadRequestData>();
   request_data->save_info_.reset(
       new download::DownloadSaveInfo(parameters->GetSaveInfo()));
-  request_data->download_id_ = download_id;
+  request_data->is_new_download_ = is_new_download;
   request_data->guid_ = parameters->guid();
   request_data->fetch_error_body_ = parameters->fetch_error_body();
   request_data->request_headers_ = parameters->request_headers();
@@ -125,16 +125,15 @@ const int DownloadRequestCore::kDownloadByteStreamSize = 100 * 1024;
 
 // static
 std::unique_ptr<net::URLRequest> DownloadRequestCore::CreateRequestOnIOThread(
-    uint32_t download_id,
+    bool is_new_download,
     download::DownloadUrlParameters* params) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
-  DCHECK(download_id == download::DownloadItem::kInvalidId ||
-         !params->content_initiated())
-      << "Content initiated downloads shouldn't specify a download ID";
+  DCHECK(is_new_download || !params->content_initiated())
+      << "Content initiated downloads should be a new download";
 
   std::unique_ptr<net::URLRequest> request = CreateURLRequestOnIOThread(params);
 
-  DownloadRequestData::Attach(request.get(), params, download_id);
+  DownloadRequestData::Attach(request.get(), params, is_new_download);
   return request;
 }
 
@@ -155,7 +154,7 @@ DownloadRequestCore::DownloadRequestCore(
     download::DownloadSource download_source)
     : delegate_(delegate),
       request_(request),
-      download_id_(download::DownloadItem::kInvalidId),
+      is_new_download_(true),
       fetch_error_body_(false),
       transient_(false),
       bytes_read_(0),
@@ -193,7 +192,7 @@ DownloadRequestCore::DownloadRequestCore(
   DownloadRequestData* request_data = DownloadRequestData::Get(request_);
   if (request_data) {
     save_info_ = request_data->TakeSaveInfo();
-    download_id_ = request_data->download_id();
+    is_new_download_ = request_data->is_new_download();
     guid_ = request_data->guid();
     fetch_error_body_ = request_data->fetch_error_body();
     request_headers_ = request_data->request_headers();
@@ -203,12 +202,6 @@ DownloadRequestCore::DownloadRequestCore(
     is_partial_request_ = save_info_->offset > 0;
   } else {
     save_info_.reset(new download::DownloadSaveInfo);
-    ResourceRequestInfoImpl* request_info =
-        ResourceRequestInfoImpl::ForRequest(request_);
-    if (request_info && request_info->suggested_filename().has_value()) {
-      save_info_->suggested_name =
-          base::UTF8ToUTF16(*request_info->suggested_filename());
-    }
   }
 }
 
@@ -216,7 +209,7 @@ DownloadRequestCore::~DownloadRequestCore() {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   // Remove output stream callback if a stream exists.
   if (stream_writer_)
-    stream_writer_->RegisterCallback(base::Closure());
+    stream_writer_->RegisterCallback(base::RepeatingClosure());
 }
 
 std::unique_ptr<download::DownloadCreateInfo>
@@ -234,8 +227,9 @@ DownloadRequestCore::CreateDownloadCreateInfo(
   create_info->connection_info = request()->response_info().connection_info;
   create_info->url_chain = request()->url_chain();
   create_info->referrer_url = GURL(request()->referrer());
+  create_info->referrer_policy = request()->referrer_policy();
   create_info->result = result;
-  create_info->download_id = download_id_;
+  create_info->is_new_download = is_new_download_;
   create_info->guid = guid_;
   create_info->transient = transient_;
   create_info->response_headers = request()->response_headers();
@@ -251,7 +245,6 @@ bool DownloadRequestCore::OnResponseStarted(
     const std::string& override_mime_type) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   DVLOG(20) << __func__ << "() " << DebugString();
-  download_start_time_ = base::TimeTicks::Now();
 
   download::DownloadInterruptReason result =
       request()->response_headers() ? download::HandleSuccessfulServerResponse(
@@ -286,7 +279,7 @@ bool DownloadRequestCore::OnResponseStarted(
                    download::GetDownloadTaskRunner(), kDownloadByteStreamSize,
                    &stream_writer_, &stream_reader);
   stream_writer_->RegisterCallback(
-      base::Bind(&DownloadRequestCore::ResumeRequest, AsWeakPtr()));
+      base::BindRepeating(&DownloadRequestCore::ResumeRequest, AsWeakPtr()));
 
   if (!override_mime_type.empty())
     create_info->mime_type = override_mime_type;
@@ -367,7 +360,6 @@ bool DownloadRequestCore::OnReadCompleted(int bytes_read, bool* defer) {
   if (!stream_writer_->Write(read_buffer_, bytes_read)) {
     PauseRequest();
     *defer = was_deferred_ = true;
-    last_stream_pause_time_ = base::TimeTicks::Now();
   }
 
   read_buffer_ = nullptr;  // Drop our reference.
@@ -417,10 +409,6 @@ void DownloadRequestCore::OnResponseCompleted(
     request()->response_headers()->EnumerateHeader(nullptr, "Accept-Ranges",
                                                    &accept_ranges);
   }
-  download::RecordAcceptsRanges(accept_ranges, bytes_read_,
-                                has_strong_validators);
-  download::RecordNetworkBlockage(base::TimeTicks::Now() - download_start_time_,
-                                  total_pause_time_);
 
   // Send the info down the stream.  Conditional is in case we get
   // OnResponseCompleted without OnResponseStarted.
@@ -468,10 +456,6 @@ void DownloadRequestCore::ResumeRequest() {
     return;
 
   was_deferred_ = false;
-  if (!last_stream_pause_time_.is_null()) {
-    total_pause_time_ += (base::TimeTicks::Now() - last_stream_pause_time_);
-    last_stream_pause_time_ = base::TimeTicks();
-  }
 
   delegate_->OnReadyToRead();
 }

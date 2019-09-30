@@ -7,6 +7,7 @@
 Assumes that apk_path.mapping and apk_path.jar.info is available.
 """
 
+import logging
 import os
 import subprocess
 import zipfile
@@ -110,8 +111,17 @@ def UndoHierarchicalSizing(data):
       else:
         # Sibling or higher nodes
         break
-    assert total_child_size <= size, (
-        'Child node total size exceeded parent node total size')
+
+    # Apkanalyzer may overcount private method sizes at times. Unfortunately
+    # the fix is not in the version we have in Android SDK Tools. For now we
+    # prefer to undercount child sizes since the parent's size is more
+    # accurate. This means the sum of child nodes may exceed its immediate
+    # parent node's size.
+    total_child_size = min(size, total_child_size)
+    # TODO(wnwen): Add assert back once dexlib2 2.2.5 is released and rolled.
+    #assert total_child_size <= size, (
+    #    'Child node total size exceeded parent node total size')
+
     node_size = size - total_child_size
     nodes.append((name, node_size))
     return next_idx, size
@@ -128,8 +138,14 @@ def CreateDexSymbols(apk_path, output_directory):
   nodes = UndoHierarchicalSizing(_RunApkAnalyzer(apk_path, output_directory))
   dex_expected_size = _ExpectedDexTotalSize(apk_path)
   total_node_size = sum(map(lambda x: x[1], nodes))
-  assert dex_expected_size >= total_node_size, (
-      'Node size too large, check for node processing errors.')
+  # TODO(agrieve): Figure out why this log is triggering for
+  #     ChromeModernPublic.apk (https://crbug.com/851535).
+  # Reporting: dex_expected_size=6546088 total_node_size=6559549
+  if dex_expected_size < total_node_size:
+    logging.error(
+      'Node size too large, check for node processing errors. '
+      'dex_expected_size=%d total_node_size=%d', dex_expected_size,
+      total_node_size)
   # We have more than 100KB of ids for methods, strings
   id_metadata_overhead_size = dex_expected_size - total_node_size
   symbols = []
@@ -141,11 +157,10 @@ def CreateDexSymbols(apk_path, output_directory):
       object_path = package
     elif package == _TOTAL_NODE_NAME:
       name = '* Unattributed Dex'
-      object_path = os.path.join(apk_name, _DEX_PATH_COMPONENT)
+      object_path = ''  # Categorize in the anonymous section.
       node_size += id_metadata_overhead_size
     else:
-      object_path = os.path.join(
-          apk_name, _DEX_PATH_COMPONENT, *package.split('.'))
+      object_path = os.path.join(models.APK_PREFIX_PATH, *package.split('.'))
     if name.endswith(')'):
       section_name = models.SECTION_DEX_METHOD
     else:

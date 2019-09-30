@@ -6,8 +6,11 @@
 
 #include "third_party/blink/renderer/bindings/core/v8/v8_binding_for_core.h"
 #include "third_party/blink/renderer/core/css/resolver/style_resolver.h"
+#include "third_party/blink/renderer/core/dom/comment.h"
 #include "third_party/blink/renderer/core/dom/element.h"
 #include "third_party/blink/renderer/core/dom/flat_tree_traversal.h"
+#include "third_party/blink/renderer/core/dom/layout_tree_builder.h"
+#include "third_party/blink/renderer/core/dom/processing_instruction.h"
 #include "third_party/blink/renderer/core/dom/shadow_root.h"
 #include "third_party/blink/renderer/core/dom/shadow_root_init.h"
 #include "third_party/blink/renderer/core/editing/testing/editing_test_base.h"
@@ -31,20 +34,16 @@ class FakeMediaControls : public HTMLDivElement {
 
 class NodeTest : public EditingTestBase {
  protected:
-  ShadowRoot* AttachShadowTo(Element* element) {
-    ShadowRootInit shadow_root_init;
-    shadow_root_init.setMode("open");
-    return element->attachShadow(
-        ToScriptStateForMainWorld(GetDocument().GetFrame()), shadow_root_init,
-        ASSERT_NO_EXCEPTION);
-  }
-
   LayoutObject* ReattachLayoutTreeForNode(Node& node) {
+    node.LazyReattachIfAttached();
     GetDocument().Lifecycle().AdvanceTo(DocumentLifecycle::kInStyleRecalc);
+    GetDocument().documentElement()->RecalcStyle(kNoChange);
     PushSelectorFilterAncestors(
         GetDocument().EnsureStyleResolver().GetSelectorFilter(), node);
+    ReattachLegacyLayoutObjectList legacy_objects(GetDocument());
     Node::AttachContext context;
     node.ReattachLayoutTree(context);
+    legacy_objects.ForceLegacyLayoutIfNeeded();
     return context.previous_in_flow;
   }
 
@@ -272,13 +271,14 @@ TEST_F(NodeTest, AttachContext_PreviousInFlow_InsideDisplayContents) {
 
 TEST_F(NodeTest, AttachContext_PreviousInFlow_Slotted) {
   SetBodyContent("<div id=host><span id=inline></span></div>");
-  ShadowRoot* shadow_root =
-      AttachShadowTo(GetDocument().getElementById("host"));
-  shadow_root->SetInnerHTMLFromString(
+  ShadowRoot& shadow_root =
+      GetDocument().getElementById("host")->AttachShadowRootInternal(
+          ShadowRootType::kOpen);
+  shadow_root.SetInnerHTMLFromString(
       "<div id=root style='display:contents'><span></span><slot></slot></div>");
   GetDocument().View()->UpdateAllLifecyclePhases();
 
-  Element* root = shadow_root->getElementById("root");
+  Element* root = shadow_root.getElementById("root");
   Element* span = GetDocument().getElementById("inline");
   LayoutObject* previous_in_flow = ReattachLayoutTreeForNode(*root);
 
@@ -315,6 +315,23 @@ TEST_F(NodeTest, HasMediaControlAncestor_MediaControls) {
   FakeMediaControls* node = new FakeMediaControls(GetDocument());
   EXPECT_TRUE(node->HasMediaControlAncestor());
   EXPECT_TRUE(InitializeUserAgentShadowTree(node)->HasMediaControlAncestor());
+}
+
+TEST_F(NodeTest, appendChildProcessingInstructionNoStyleRecalc) {
+  GetDocument().View()->UpdateAllLifecyclePhases();
+  EXPECT_FALSE(GetDocument().ChildNeedsStyleRecalc());
+  ProcessingInstruction* pi =
+      ProcessingInstruction::Create(GetDocument(), "A", "B");
+  GetDocument().body()->appendChild(pi, ASSERT_NO_EXCEPTION);
+  EXPECT_FALSE(GetDocument().ChildNeedsStyleRecalc());
+}
+
+TEST_F(NodeTest, appendChildCommentNoStyleRecalc) {
+  GetDocument().View()->UpdateAllLifecyclePhases();
+  EXPECT_FALSE(GetDocument().ChildNeedsStyleRecalc());
+  Comment* comment = Comment::Create(GetDocument(), "comment");
+  GetDocument().body()->appendChild(comment, ASSERT_NO_EXCEPTION);
+  EXPECT_FALSE(GetDocument().ChildNeedsStyleRecalc());
 }
 
 }  // namespace blink

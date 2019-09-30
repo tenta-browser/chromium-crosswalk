@@ -8,7 +8,6 @@
 #include <memory>
 #include <utility>
 
-#include "ash/shell.h"
 #include "base/logging.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/string_number_conversions.h"
@@ -24,6 +23,7 @@
 #include "ui/base/ime/composition_text.h"
 #include "ui/base/ime/ime_bridge.h"
 #include "ui/base/ime/text_input_flags.h"
+#include "ui/base/ui_base_features.h"
 #include "ui/chromeos/ime/input_method_menu_item.h"
 #include "ui/chromeos/ime/input_method_menu_manager.h"
 #include "ui/events/event.h"
@@ -215,11 +215,13 @@ bool InputMethodEngine::IsActive() const {
 }
 
 void InputMethodEngine::HideInputView() {
-  keyboard::KeyboardController* keyboard_controller =
-      keyboard::KeyboardController::GetInstance();
-  if (keyboard_controller) {
-    keyboard_controller->HideKeyboard(
-        keyboard::KeyboardController::HIDE_REASON_MANUAL);
+  // TODO(crbug.com/756059): Support virtual keyboard under MASH. There is no
+  // KeyboardController in the browser process under MASH.
+  if (!features::IsUsingWindowService()) {
+    auto* keyboard_controller = keyboard::KeyboardController::Get();
+    if (keyboard_controller->enabled()) {
+      keyboard_controller->HideKeyboardByUser();
+    }
   }
 }
 
@@ -227,10 +229,13 @@ void InputMethodEngine::EnableInputView() {
   input_method::InputMethodManager::Get()
       ->GetActiveIMEState()
       ->EnableInputView();
-  keyboard::KeyboardController* keyboard_controller =
-      keyboard::KeyboardController::GetInstance();
-  if (keyboard_controller)
-    keyboard_controller->Reload();
+  // TODO(crbug.com/756059): Support virtual keyboard under MASH. There is no
+  // KeyboardController in the browser process under MASH.
+  if (!features::IsUsingWindowService()) {
+    auto* keyboard_controller = keyboard::KeyboardController::Get();
+    if (keyboard_controller->enabled())
+      keyboard_controller->Reload();
+  }
 }
 
 
@@ -325,10 +330,13 @@ bool InputMethodEngine::SendKeyEvent(ui::KeyEvent* event,
   if (event->key_code() == ui::VKEY_UNKNOWN)
     event->set_key_code(ui::DomKeycodeToKeyboardCode(code));
 
-  ui::EventSink* sink =
-      ash::Shell::GetPrimaryRootWindow()->GetHost()->event_sink();
-  ui::EventDispatchDetails details = sink->OnEventFromSource(event);
-  return !details.dispatcher_destroyed;
+  ui::IMEInputContextHandlerInterface* input_context =
+      ui::IMEBridge::Get()->GetInputContextHandler();
+  if (!input_context)
+    return false;
+
+  input_context->SendKeyEvent(event);
+  return true;
 }
 
 }  // namespace chromeos

@@ -16,6 +16,7 @@
 #include "base/metrics/field_trial_params.h"
 #include "base/stl_util.h"
 #include "base/strings/string_util.h"
+#include "base/test/scoped_feature_list.h"
 #include "build/build_config.h"
 #include "components/subresource_filter/core/browser/subresource_filter_features_test_support.h"
 #include "components/subresource_filter/core/common/common_features.h"
@@ -391,7 +392,8 @@ TEST_F(SubresourceFilterFeaturesTest, PerfMeasurementRate) {
                     {true, "1", 1},
                     {true, "1.0", 1},
                     {true, "0.333", 0.333},
-                    {true, "1e0", 1}};
+                    {true, "1e0", 1},
+                    {true, "5", 1}};
 
   for (const auto& test_case : kTestCases) {
     SCOPED_TRACE(::testing::Message("Enabled = ") << test_case.feature_enabled);
@@ -413,84 +415,6 @@ TEST_F(SubresourceFilterFeaturesTest, PerfMeasurementRate) {
     EXPECT_EQ(
         test_case.expected_perf_measurement_rate,
         actual_configuration.activation_options.performance_measurement_rate);
-  }
-}
-
-TEST_F(SubresourceFilterFeaturesTest, SuppressNotifications) {
-  const struct {
-    bool feature_enabled;
-    const char* suppress_notifications_param;
-    bool expected_suppress_notifications_value;
-  } kTestCases[] = {{false, "", false},
-                    {false, "true", false},
-                    {false, "false", false},
-                    {false, "invalid value", false},
-                    {true, "", false},
-                    {true, "false", false},
-                    {true, "invalid value", false},
-                    {true, "True", true},
-                    {true, "TRUE", true},
-                    {true, "true", true}};
-
-  for (const auto& test_case : kTestCases) {
-    SCOPED_TRACE(::testing::Message("Enabled = ") << test_case.feature_enabled);
-    SCOPED_TRACE(::testing::Message("SuppressNotificationsParam = \"")
-                 << test_case.suppress_notifications_param << "\"");
-
-    ScopedExperimentalStateToggle scoped_experimental_state(
-        test_case.feature_enabled ? base::FeatureList::OVERRIDE_USE_DEFAULT
-                                  : base::FeatureList::OVERRIDE_DISABLE_FEATURE,
-        {{kSuppressNotificationsParameterName,
-          test_case.suppress_notifications_param}});
-
-    Configuration actual_configuration;
-    if (test_case.feature_enabled) {
-      ExpectAndRetrieveExactlyOneExtraEnabledConfig(&actual_configuration);
-    } else {
-      ExpectAndRetrieveExactlyOneEnabledConfig(&actual_configuration);
-    }
-    EXPECT_EQ(
-        test_case.expected_suppress_notifications_value,
-        actual_configuration.activation_options.should_suppress_notifications);
-  }
-}
-
-TEST_F(SubresourceFilterFeaturesTest, WhitelistSiteOnReload) {
-  const struct {
-    bool feature_enabled;
-    const char* whitelist_site_on_reload_param;
-    bool expected_whitelist_site_on_reload_value;
-  } kTestCases[] = {{false, "", false},
-                    {false, "true", false},
-                    {false, "false", false},
-                    {false, "invalid value", false},
-                    {true, "", false},
-                    {true, "false", false},
-                    {true, "invalid value", false},
-                    {true, "True", true},
-                    {true, "TRUE", true},
-                    {true, "true", true}};
-
-  for (const auto& test_case : kTestCases) {
-    SCOPED_TRACE(::testing::Message("Enabled = ") << test_case.feature_enabled);
-    SCOPED_TRACE(::testing::Message("WhitelistSiteOnReloadParam = \"")
-                 << test_case.whitelist_site_on_reload_param << "\"");
-
-    ScopedExperimentalStateToggle scoped_experimental_state(
-        test_case.feature_enabled ? base::FeatureList::OVERRIDE_USE_DEFAULT
-                                  : base::FeatureList::OVERRIDE_DISABLE_FEATURE,
-        {{kWhitelistSiteOnReloadParameterName,
-          test_case.whitelist_site_on_reload_param}});
-
-    Configuration actual_configuration;
-    if (test_case.feature_enabled) {
-      ExpectAndRetrieveExactlyOneExtraEnabledConfig(&actual_configuration);
-    } else {
-      ExpectAndRetrieveExactlyOneEnabledConfig(&actual_configuration);
-    }
-    EXPECT_EQ(test_case.expected_whitelist_site_on_reload_value,
-              actual_configuration.activation_options
-                  .should_whitelist_site_on_reload);
   }
 }
 
@@ -614,12 +538,9 @@ TEST_F(SubresourceFilterFeaturesTest, PresetForLiveRunOnBetterAdsSites) {
   EXPECT_EQ(ActivationScope::ACTIVATION_LIST,
             config.activation_conditions.activation_scope);
   EXPECT_EQ(800, config.activation_conditions.priority);
-  EXPECT_FALSE(config.activation_conditions.forced_activation);
   EXPECT_EQ(ActivationLevel::ENABLED,
             config.activation_options.activation_level);
   EXPECT_EQ(0.0, config.activation_options.performance_measurement_rate);
-  EXPECT_FALSE(config.activation_options.should_suppress_notifications);
-  EXPECT_FALSE(config.activation_options.should_whitelist_site_on_reload);
 }
 
 TEST_F(SubresourceFilterFeaturesTest, ConfigurationPriorities) {
@@ -727,23 +648,6 @@ TEST_F(SubresourceFilterFeaturesTest,
           Configuration::MakePresetForPerformanceTestingDryRunOnAllSites()));
   EXPECT_EQ(kTestRulesetFlavor,
             config_list->lexicographically_greatest_ruleset_flavor());
-}
-
-TEST_F(SubresourceFilterFeaturesTest, ForcedActivation_NotConfigurable) {
-  ScopedExperimentalStateToggle scoped_experimental_state(
-      base::FeatureList::OVERRIDE_ENABLE_FEATURE,
-      {{kActivationLevelParameterName, kActivationLevelEnabled},
-       {kActivationScopeParameterName, kActivationScopeNoSites},
-       {"forced_activation", "true"}});
-
-  Configuration actual_configuration;
-  ExpectAndRetrieveExactlyOneExtraEnabledConfig(&actual_configuration);
-  EXPECT_EQ(ActivationLevel::ENABLED,
-            actual_configuration.activation_options.activation_level);
-  EXPECT_EQ(ActivationScope::NO_SITES,
-            actual_configuration.activation_conditions.activation_scope);
-
-  EXPECT_FALSE(actual_configuration.activation_conditions.forced_activation);
 }
 
 TEST_F(SubresourceFilterFeaturesTest, AdTagging_EnablesDryRun) {

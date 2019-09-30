@@ -185,6 +185,11 @@ using base::UserMetricsAction;
   return self;
 }
 
+- (void)focusFakebox {
+  DCHECK(IsUIRefreshPhase1Enabled());
+  [self.contentSuggestionsCoordinator.headerController focusFakebox];
+}
+
 - (void)dealloc {
   // This is not an ideal place to put view controller contaimnent, rather a
   // //web -wasDismissed method on CRWNativeContent would be more accurate. If
@@ -196,6 +201,25 @@ using base::UserMetricsAction;
   [self.contentSuggestionsCoordinator stop];
 
   [self.homePanel setDelegate:nil];
+}
+
+#pragma mark - Properties
+
+- (UIEdgeInsets)contentInset {
+  return self.contentSuggestionsCoordinator.viewController.collectionView
+      .contentInset;
+}
+
+- (void)setContentInset:(UIEdgeInsets)contentInset {
+  // UIKit will adjust the contentOffset sometimes when changing the
+  // contentInset.bottom.  We don't want the NTP to scroll, so store and re-set
+  // the contentOffset after setting the contentInset.
+  CGPoint contentOffset = self.contentSuggestionsCoordinator.viewController
+                              .collectionView.contentOffset;
+  self.contentSuggestionsCoordinator.viewController.collectionView
+      .contentInset = contentInset;
+  self.contentSuggestionsCoordinator.viewController.collectionView
+      .contentOffset = contentOffset;
 }
 
 #pragma mark - CRWNativeContent
@@ -226,10 +250,6 @@ using base::UserMetricsAction;
 
 - (void)wasHidden {
   [_currentController wasHidden];
-}
-
-- (BOOL)wantsKeyboardShield {
-  return NO;
 }
 
 - (BOOL)wantsLocationBarHintText {

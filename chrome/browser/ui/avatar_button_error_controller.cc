@@ -30,10 +30,9 @@ void AvatarButtonErrorController::UpdateSigninError(bool has_signin_error) {
 }
 
 void AvatarButtonErrorController::UpdateSyncError(bool has_sync_error) {
-  bool had_error = HasAvatarError();
   has_sync_error_ = has_sync_error;
-  if (had_error != HasAvatarError())
-    delegate_->OnAvatarErrorChanged();
+  // Always notify observers, so they can handle errors differently.
+  delegate_->OnAvatarErrorChanged();
 }
 
 AvatarButtonErrorController::SigninErrorObserver::SigninErrorObserver(
@@ -90,7 +89,7 @@ bool AvatarButtonErrorController::SyncErrorObserver::HasSyncError() {
   if (sync_service) {
     SyncErrorController* sync_error_controller =
         sync_service->sync_error_controller();
-    browser_sync::ProfileSyncService::Status status;
+    syncer::SyncStatus status;
     sync_service->QueryDetailedSyncStatus(&status);
     return sync_service->HasUnrecoverableError() ||
            status.sync_protocol_error.action == syncer::UPGRADE_CLIENT ||

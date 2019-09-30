@@ -20,7 +20,7 @@
         {
           "object": "LayoutBlockFlow DIV id='box' class='green drop-shadowed box'",
           "rect": [8, 8, 330, 330],
-          "reason": "disappeared"
+          "reason": "chunk disappeared"
         }
       ]
     },
@@ -33,7 +33,7 @@
         {
           "object": "LayoutBlockFlow DIV id='box' class='green box blurry'",
           "rect": [0, 0, 200, 200],
-          "reason": "full"
+          "reason": "full layer"
         }
       ],
       "transform": 1
@@ -48,12 +48,6 @@
         [0, 0, 1, 0],
         [8, 8, 0, 1]
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutBlockFlow DIV id='box' class='green box blurry'",
-      "reason": "compositing update"
     }
   ]
 }

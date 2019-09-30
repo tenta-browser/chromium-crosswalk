@@ -23,6 +23,7 @@
 #include "third_party/blink/renderer/core/loader/resource/document_resource.h"
 
 #include "services/network/public/mojom/request_context_frame_type.mojom-blink.h"
+#include "third_party/blink/renderer/core/dom/document_init.h"
 #include "third_party/blink/renderer/core/dom/xml_document.h"
 #include "third_party/blink/renderer/platform/loader/fetch/fetch_parameters.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_fetcher.h"
@@ -37,6 +38,8 @@ DocumentResource* DocumentResource::FetchSVGDocument(FetchParameters& params,
                                                      ResourceClient* client) {
   DCHECK_EQ(params.GetResourceRequest().GetFrameType(),
             network::mojom::RequestContextFrameType::kNone);
+  DCHECK_EQ(params.GetResourceRequest().GetFetchRequestMode(),
+            network::mojom::FetchRequestMode::kSameOrigin);
   params.SetRequestContext(WebURLRequest::kRequestContextImage);
   return ToDocumentResource(
       fetcher->RequestResource(params, SVGDocumentResourceFactory(), client));

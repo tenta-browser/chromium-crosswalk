@@ -7,13 +7,14 @@
 
 #import <UIKit/UIKit.h>
 
-#import "ios/chrome/browser/ui/history_popup/requirements/tab_history_ui_updater.h"
 #import "ios/chrome/browser/ui/ntp/new_tab_page_controller_delegate.h"
+#import "ios/chrome/browser/ui/popup_menu/public/popup_menu_ui_updating.h"
 #import "ios/chrome/browser/ui/toolbar/buttons/toolbar_type.h"
 #import "ios/chrome/browser/ui/toolbar/clean/toolbar_consumer.h"
 
 @protocol ApplicationCommands;
 @protocol BrowserCommands;
+@protocol PopupMenuLongPressDelegate;
 @class ToolbarButtonFactory;
 @class ToolbarToolsMenuButton;
 
@@ -25,7 +26,7 @@
 // dismissed on such events. For example, the tools menu is closed upon
 // rotation.
 @interface AdaptiveToolbarViewController
-    : UIViewController<TabHistoryUIUpdater,
+    : UIViewController<PopupMenuUIUpdating,
                        ToolbarConsumer,
                        NewTabPageControllerDelegate>
 
@@ -33,6 +34,8 @@
 @property(nonatomic, strong) ToolbarButtonFactory* buttonFactory;
 // Dispatcher for the ViewController.
 @property(nonatomic, weak) id<ApplicationCommands, BrowserCommands> dispatcher;
+// Delegate for the long press gesture recognizer triggering popup menu.
+@property(nonatomic, weak) id<PopupMenuLongPressDelegate> longPressDelegate;
 
 // Returns the tools menu button.
 - (ToolbarToolsMenuButton*)toolsMenuButton;

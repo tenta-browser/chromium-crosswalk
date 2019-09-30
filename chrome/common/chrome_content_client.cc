@@ -12,6 +12,7 @@
 #include <utility>
 
 #include "base/command_line.h"
+#include "base/containers/flat_set.h"
 #include "base/files/file_util.h"
 #include "base/json/json_reader.h"
 #include "base/lazy_instance.h"
@@ -25,6 +26,7 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/version.h"
 #include "build/build_config.h"
+#include "chrome/common/channel_info.h"
 #include "chrome/common/child_process_logging.h"
 #include "chrome/common/chrome_constants.h"
 #include "chrome/common/chrome_paths.h"
@@ -36,6 +38,7 @@
 #include "chrome/grit/common_resources.h"
 #include "components/crash/core/common/crash_key.h"
 #include "components/dom_distiller/core/url_constants.h"
+#include "components/net_log/chrome_net_log.h"
 #include "components/services/heap_profiling/public/cpp/client.h"
 #include "components/version_info/version_info.h"
 #include "content/public/common/cdm_info.h"
@@ -49,12 +52,14 @@
 #include "extensions/common/constants.h"
 #include "gpu/config/gpu_info.h"
 #include "gpu/config/gpu_util.h"
+#include "media/base/decrypt_config.h"
 #include "media/base/media_switches.h"
 #include "media/base/video_codecs.h"
 #include "media/media_buildflags.h"
 #include "net/http/http_util.h"
 #include "pdf/buildflags.h"
 #include "ppapi/buildflags/buildflags.h"
+#include "third_party/widevine/cdm/widevine_cdm_common.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/layout.h"
 #include "ui/base/resource/resource_bundle.h"
@@ -129,33 +134,39 @@ content::PepperPluginInfo::PPP_ShutdownModuleFunc g_nacl_shutdown_module;
 
 #if defined(WIDEVINE_CDM_AVAILABLE_NOT_COMPONENT)
 bool IsWidevineAvailable(base::FilePath* cdm_path,
-                         std::vector<media::VideoCodec>* codecs_supported,
-                         bool* supports_persistent_license) {
+                         content::CdmCapability* capability) {
   static enum {
     NOT_CHECKED,
     FOUND,
     NOT_FOUND,
   } widevine_cdm_file_check = NOT_CHECKED;
 
-  if (PathService::Get(chrome::FILE_WIDEVINE_CDM, cdm_path)) {
+  if (base::PathService::Get(chrome::FILE_WIDEVINE_CDM, cdm_path)) {
     if (widevine_cdm_file_check == NOT_CHECKED)
       widevine_cdm_file_check = base::PathExists(*cdm_path) ? FOUND : NOT_FOUND;
 
     if (widevine_cdm_file_check == FOUND) {
       // Add the supported codecs as if they came from the component manifest.
       // This list must match the CDM that is being bundled with Chrome.
-      codecs_supported->push_back(media::VideoCodec::kCodecVP8);
-      codecs_supported->push_back(media::VideoCodec::kCodecVP9);
+      capability->video_codecs.push_back(media::VideoCodec::kCodecVP8);
+      capability->video_codecs.push_back(media::VideoCodec::kCodecVP9);
 #if BUILDFLAG(USE_PROPRIETARY_CODECS)
-      codecs_supported->push_back(media::VideoCodec::kCodecH264);
+      capability->video_codecs.push_back(media::VideoCodec::kCodecH264);
 #endif  // BUILDFLAG(USE_PROPRIETARY_CODECS)
 
-// TODO(crbug.com/767941): Push persistent-license support info here once
-// we check in a new CDM that supports it on Linux.
+      // Add the supported encryption schemes as if they came from the
+      // component manifest. This list must match the CDM that is being
+      // bundled with Chrome.
+      capability->encryption_schemes.insert(media::EncryptionMode::kCenc);
+      capability->encryption_schemes.insert(media::EncryptionMode::kCbcs);
+
+      // Temporary session is always supported.
+      capability->session_types.insert(media::CdmSessionType::kTemporary);
 #if defined(OS_CHROMEOS)
-      *supports_persistent_license = true;
-#else
-      *supports_persistent_license = false;
+      // TODO(crbug.com/767941): Push persistent-license support info here once
+      // we check in a new CDM that supports it on Linux.
+      capability->session_types.insert(
+          media::CdmSessionType::kPersistentLicense);
 #endif  // defined(OS_CHROMEOS)
 
       return true;
@@ -178,8 +189,7 @@ void ComputeBuiltInPlugins(std::vector<content::PepperPluginInfo>* plugins) {
   pdf_info.is_out_of_process = true;
   pdf_info.name = ChromeContentClient::kPDFInternalPluginName;
   pdf_info.description = kPDFPluginDescription;
-  pdf_info.path = base::FilePath::FromUTF8Unsafe(
-      ChromeContentClient::kPDFPluginPath);
+  pdf_info.path = base::FilePath(ChromeContentClient::kPDFPluginPath);
   content::WebPluginMimeType pdf_mime_type(
       kPDFPluginOutOfProcessMimeType,
       kPDFPluginExtension,
@@ -197,27 +207,24 @@ void ComputeBuiltInPlugins(std::vector<content::PepperPluginInfo>* plugins) {
   // enabled by default for the non-portable case.  This allows apps installed
   // from the Chrome Web Store to use NaCl even if the command line switch
   // isn't set.  For other uses of NaCl we check for the command line switch.
-  base::FilePath path;
-  if (PathService::Get(chrome::FILE_NACL_PLUGIN, &path)) {
-    content::PepperPluginInfo nacl;
-    // The nacl plugin is now built into the Chromium binary.
-    nacl.is_internal = true;
-    nacl.path = path;
-    nacl.name = nacl::kNaClPluginName;
-    content::WebPluginMimeType nacl_mime_type(nacl::kNaClPluginMimeType,
-                                              nacl::kNaClPluginExtension,
-                                              nacl::kNaClPluginDescription);
-    nacl.mime_types.push_back(nacl_mime_type);
-    content::WebPluginMimeType pnacl_mime_type(nacl::kPnaclPluginMimeType,
-                                               nacl::kPnaclPluginExtension,
-                                               nacl::kPnaclPluginDescription);
-    nacl.mime_types.push_back(pnacl_mime_type);
-    nacl.internal_entry_points.get_interface = g_nacl_get_interface;
-    nacl.internal_entry_points.initialize_module = g_nacl_initialize_module;
-    nacl.internal_entry_points.shutdown_module = g_nacl_shutdown_module;
-    nacl.permissions = ppapi::PERMISSION_PRIVATE | ppapi::PERMISSION_DEV;
-    plugins->push_back(nacl);
-  }
+  content::PepperPluginInfo nacl;
+  // The nacl plugin is now built into the Chromium binary.
+  nacl.is_internal = true;
+  nacl.path = base::FilePath(ChromeContentClient::kNaClPluginFileName);
+  nacl.name = nacl::kNaClPluginName;
+  content::WebPluginMimeType nacl_mime_type(nacl::kNaClPluginMimeType,
+                                            nacl::kNaClPluginExtension,
+                                            nacl::kNaClPluginDescription);
+  nacl.mime_types.push_back(nacl_mime_type);
+  content::WebPluginMimeType pnacl_mime_type(nacl::kPnaclPluginMimeType,
+                                             nacl::kPnaclPluginExtension,
+                                             nacl::kPnaclPluginDescription);
+  nacl.mime_types.push_back(pnacl_mime_type);
+  nacl.internal_entry_points.get_interface = g_nacl_get_interface;
+  nacl.internal_entry_points.initialize_module = g_nacl_initialize_module;
+  nacl.internal_entry_points.shutdown_module = g_nacl_shutdown_module;
+  nacl.permissions = ppapi::PERMISSION_PRIVATE | ppapi::PERMISSION_DEV;
+  plugins->push_back(nacl);
 #endif  // BUILDFLAG(ENABLE_NACL)
 }
 
@@ -369,8 +376,8 @@ bool GetSystemPepperFlash(content::PepperPluginInfo* plugin) {
     return false;
 
   base::FilePath flash_filename;
-  if (!PathService::Get(chrome::FILE_PEPPER_FLASH_SYSTEM_PLUGIN,
-                        &flash_filename))
+  if (!base::PathService::Get(chrome::FILE_PEPPER_FLASH_SYSTEM_PLUGIN,
+                              &flash_filename))
     return false;
 
   return TryCreatePepperFlashInfo(flash_filename, plugin);
@@ -508,9 +515,9 @@ void ChromeContentClient::AddPepperPlugins(
     // nothing that guarantees the component update will give us the
     // FLAPPER_VERSION_STRING version of Flash, but using this version seems
     // better than any other hardcoded alternative.
-    plugins->push_back(CreatePepperFlashInfo(
-        base::FilePath::FromUTF8Unsafe(ChromeContentClient::kNotPresent),
-        FLAPPER_VERSION_STRING, false));
+    plugins->push_back(
+        CreatePepperFlashInfo(base::FilePath(ChromeContentClient::kNotPresent),
+                              FLAPPER_VERSION_STRING, false));
 #endif  // defined(GOOGLE_CHROME_BUILD) && defined(FLAPPER_AVAILABLE)
   }
 #endif  // BUILDFLAG(ENABLE_PLUGINS)
@@ -522,17 +529,15 @@ void ChromeContentClient::AddContentDecryptionModules(
   if (cdms) {
 #if defined(WIDEVINE_CDM_AVAILABLE_NOT_COMPONENT)
     base::FilePath cdm_path;
-    std::vector<media::VideoCodec> video_codecs_supported;
-    bool supports_persistent_license = false;
-    if (IsWidevineAvailable(&cdm_path, &video_codecs_supported,
-                            &supports_persistent_license)) {
+    content::CdmCapability capability;
+    if (IsWidevineAvailable(&cdm_path, &capability)) {
       const base::Version version(WIDEVINE_CDM_VERSION_STRING);
       DCHECK(version.IsValid());
 
-      cdms->push_back(content::CdmInfo(
-          kWidevineCdmDisplayName, kWidevineCdmGuid, version, cdm_path,
-          kWidevineCdmFileSystemId, video_codecs_supported,
-          supports_persistent_license, kWidevineKeySystem, false));
+      cdms->push_back(
+          content::CdmInfo(kWidevineCdmDisplayName, kWidevineCdmGuid, version,
+                           cdm_path, kWidevineCdmFileSystemId,
+                           std::move(capability), kWidevineKeySystem, false));
     }
 #endif  // defined(WIDEVINE_CDM_AVAILABLE_NOT_COMPONENT)
 
@@ -549,8 +554,14 @@ void ChromeContentClient::AddContentDecryptionModules(
       // A variant of ECK key system that has a different GUID.
       const char kExternalClearKeyDifferentGuidTestKeySystem[] =
           "org.chromium.externalclearkey.differentguid";
-      // ECK implementation supports persistent licenses.
-      constexpr bool supports_persistent_license = true;
+
+      // Supported codecs are hard-coded in ExternalClearKeyProperties.
+      content::CdmCapability capability(
+          {}, {media::EncryptionMode::kCenc, media::EncryptionMode::kCbcs},
+          {media::CdmSessionType::kTemporary,
+           media::CdmSessionType::kPersistentLicense,
+           media::CdmSessionType::kPersistentUsageRecord},
+          {});
 
       // Register kExternalClearKeyDifferentGuidTestKeySystem first separately.
       // Otherwise, it'll be treated as a sub-key-system of normal
@@ -559,15 +570,14 @@ void ChromeContentClient::AddContentDecryptionModules(
       cdms->push_back(content::CdmInfo(
           media::kClearKeyCdmDisplayName, media::kClearKeyCdmDifferentGuid,
           base::Version("0.1.0.0"), clear_key_cdm_path,
-          media::kClearKeyCdmFileSystemId, {}, supports_persistent_license,
+          media::kClearKeyCdmFileSystemId, capability,
           kExternalClearKeyDifferentGuidTestKeySystem, false));
 
-      // Supported codecs are hard-coded in ExternalClearKeyProperties.
-      cdms->push_back(content::CdmInfo(
-          media::kClearKeyCdmDisplayName, media::kClearKeyCdmGuid,
-          base::Version("0.1.0.0"), clear_key_cdm_path,
-          media::kClearKeyCdmFileSystemId, {}, supports_persistent_license,
-          kExternalClearKeyKeySystem, true));
+      cdms->push_back(
+          content::CdmInfo(media::kClearKeyCdmDisplayName,
+                           media::kClearKeyCdmGuid, base::Version("0.1.0.0"),
+                           clear_key_cdm_path, media::kClearKeyCdmFileSystemId,
+                           capability, kExternalClearKeyKeySystem, true));
     }
 #endif  // BUILDFLAG(ENABLE_LIBRARY_CDMS)
   }
@@ -669,6 +679,16 @@ gfx::Image& ChromeContentClient::GetNativeImageNamed(int resource_id) const {
       resource_id);
 }
 
+base::DictionaryValue ChromeContentClient::GetNetLogConstants() const {
+  auto platform_dict = net_log::ChromeNetLog::GetPlatformConstants(
+      base::CommandLine::ForCurrentProcess()->GetCommandLineString(),
+      chrome::GetChannelName());
+  if (platform_dict)
+    return std::move(*platform_dict);
+  else
+    return base::DictionaryValue();
+}
+
 std::string ChromeContentClient::GetProcessTypeNameInEnglish(int type) {
 #if BUILDFLAG(ENABLE_NACL)
   switch (type) {
@@ -692,7 +712,7 @@ bool ChromeContentClient::AllowScriptExtensionForServiceWorker(
 #endif
 }
 
-content::OriginTrialPolicy* ChromeContentClient::GetOriginTrialPolicy() {
+blink::OriginTrialPolicy* ChromeContentClient::GetOriginTrialPolicy() {
   // Prevent initialization race (see crbug.com/721144). There may be a
   // race when the policy is needed for worker startup (which happens on a
   // separate worker thread).

@@ -7,13 +7,11 @@
 #include <algorithm>
 
 #include "base/macros.h"
-#include "third_party/blink/renderer/bindings/core/v8/exception_state.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_intersection_observer_callback.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_intersection_observer_delegate.h"
 #include "third_party/blink/renderer/core/css/parser/css_parser_token_range.h"
 #include "third_party/blink/renderer/core/css/parser/css_tokenizer.h"
 #include "third_party/blink/renderer/core/dom/element.h"
-#include "third_party/blink/renderer/core/dom/exception_code.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
 #include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
@@ -27,6 +25,7 @@
 #include "third_party/blink/renderer/core/layout/layout_view.h"
 #include "third_party/blink/renderer/core/timing/dom_window_performance.h"
 #include "third_party/blink/renderer/core/timing/window_performance.h"
+#include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/timer.h"
 
 namespace blink {
@@ -50,7 +49,7 @@ class IntersectionObserverDelegateImpl final
 
   ExecutionContext* GetExecutionContext() const override { return context_; }
 
-  void Trace(blink::Visitor* visitor) {
+  void Trace(blink::Visitor* visitor) override {
     IntersectionObserverDelegate::Trace(visitor);
     visitor->Trace(context_);
   }
@@ -80,7 +79,8 @@ void ParseRootMargin(String root_margin_parameter,
          !exception_state.HadException()) {
     if (root_margin.size() == 4) {
       exception_state.ThrowDOMException(
-          kSyntaxError, "Extra text found at the end of rootMargin.");
+          DOMExceptionCode::kSyntaxError,
+          "Extra text found at the end of rootMargin.");
       break;
     }
     const CSSParserToken& token = token_range.ConsumeIncludingWhitespace();
@@ -99,13 +99,14 @@ void ParseRootMargin(String root_margin_parameter,
             break;
           default:
             exception_state.ThrowDOMException(
-                kSyntaxError,
+                DOMExceptionCode::kSyntaxError,
                 "rootMargin must be specified in pixels or percent.");
         }
         break;
       default:
         exception_state.ThrowDOMException(
-            kSyntaxError, "rootMargin must be specified in pixels or percent.");
+            DOMExceptionCode::kSyntaxError,
+            "rootMargin must be specified in pixels or percent.");
     }
   }
 }
@@ -114,10 +115,11 @@ void ParseThresholds(const DoubleOrDoubleSequence& threshold_parameter,
                      Vector<float>& thresholds,
                      ExceptionState& exception_state) {
   if (threshold_parameter.IsDouble()) {
-    thresholds.push_back(static_cast<float>(threshold_parameter.GetAsDouble()));
+    thresholds.push_back(
+        MakeClampedNum<float>(threshold_parameter.GetAsDouble()));
   } else {
     for (auto threshold_value : threshold_parameter.GetAsDoubleSequence())
-      thresholds.push_back(static_cast<float>(threshold_value));
+      thresholds.push_back(MakeClampedNum<float>(threshold_value));
   }
 
   for (auto threshold_value : thresholds) {
@@ -133,6 +135,15 @@ void ParseThresholds(const DoubleOrDoubleSequence& threshold_parameter,
 }
 
 }  // anonymous namespace
+
+// Minimum time, in milliseconds, between observations. See:
+//   http://szager-chromium.github.io/IntersectionObserver/#dom-intersectionobserver-trackvisibility
+const DOMHighResTimeStamp IntersectionObserver::s_v2_throttle_delay_ = 100;
+static bool v2_throttle_delay_enabled = true;
+
+void IntersectionObserver::SetV2ThrottleDelayEnabledForTesting(bool enabled) {
+  v2_throttle_delay_enabled = enabled;
+}
 
 IntersectionObserver* IntersectionObserver::Create(
     const IntersectionObserverInit& observer_init,
@@ -150,7 +161,12 @@ IntersectionObserver* IntersectionObserver::Create(
   if (exception_state.HadException())
     return nullptr;
 
-  return new IntersectionObserver(delegate, root, root_margin, thresholds);
+  bool track_visibility = false;
+  if (RuntimeEnabledFeatures::IntersectionObserverV2Enabled())
+    track_visibility = observer_init.trackVisibility();
+
+  return new IntersectionObserver(delegate, root, root_margin, thresholds,
+                                  track_visibility);
 }
 
 IntersectionObserver* IntersectionObserver::Create(
@@ -168,18 +184,20 @@ IntersectionObserver* IntersectionObserver::Create(
     const Vector<float>& thresholds,
     Document* document,
     EventCallback callback,
+    bool track_visibility,
     ExceptionState& exception_state) {
   IntersectionObserverDelegateImpl* intersection_observer_delegate =
       new IntersectionObserverDelegateImpl(document, std::move(callback));
   return new IntersectionObserver(*intersection_observer_delegate, nullptr,
-                                  root_margin, thresholds);
+                                  root_margin, thresholds, track_visibility);
 }
 
 IntersectionObserver::IntersectionObserver(
     IntersectionObserverDelegate& delegate,
     Element* root,
     const Vector<Length>& root_margin,
-    const Vector<float>& thresholds)
+    const Vector<float>& thresholds,
+    bool track_visibility)
     : ContextClient(delegate.GetExecutionContext()),
       delegate_(&delegate),
       root_(root),
@@ -188,7 +206,9 @@ IntersectionObserver::IntersectionObserver(
       right_margin_(kFixed),
       bottom_margin_(kFixed),
       left_margin_(kFixed),
-      root_is_implicit_(root ? 0 : 1) {
+      last_run_time_(-s_v2_throttle_delay_),
+      root_is_implicit_(root ? 0 : 1),
+      track_visibility_(track_visibility ? 1 : 0) {
   switch (root_margin.size()) {
     case 0:
       break;
@@ -265,7 +285,7 @@ void IntersectionObserver::observe(Element* target,
   if (LocalFrameView* frame_view = target_frame->View()) {
     // The IntersectionObsever spec requires that at least one observation
     // be recorded afer observe() is called, even if the frame is throttled.
-    frame_view->SetNeedsIntersectionObservation();
+    frame_view->SetNeedsIntersectionObservation(LocalFrameView::kRequired);
     frame_view->ScheduleAnimation();
   }
 }
@@ -302,8 +322,13 @@ void IntersectionObserver::ComputeIntersectionObservations() {
     return;
   DOMHighResTimeStamp timestamp =
       DOMWindowPerformance::performance(*delegate_dom_window)->now();
+  if (track_visibility_ && v2_throttle_delay_enabled &&
+      timestamp - last_run_time_ < s_v2_throttle_delay_) {
+    return;
+  }
+  last_run_time_ = timestamp;
   for (auto& observation : observations_)
-    observation->ComputeIntersectionObservations(timestamp);
+    observation->ComputeIntersectionObservations(last_run_time_);
 }
 
 void IntersectionObserver::disconnect(ExceptionState& exception_state) {
@@ -377,12 +402,6 @@ void IntersectionObserver::Trace(blink::Visitor* visitor) {
   visitor->Trace(entries_);
   ScriptWrappable::Trace(visitor);
   ContextClient::Trace(visitor);
-}
-
-void IntersectionObserver::TraceWrappers(
-    const ScriptWrappableVisitor* visitor) const {
-  visitor->TraceWrappers(delegate_);
-  ScriptWrappable::TraceWrappers(visitor);
 }
 
 }  // namespace blink

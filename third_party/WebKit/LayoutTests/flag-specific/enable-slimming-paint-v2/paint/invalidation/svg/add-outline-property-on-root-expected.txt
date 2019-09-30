@@ -9,23 +9,9 @@
         {
           "object": "LayoutSVGRoot svg",
           "rect": [0, 0, 118, 118],
-          "reason": "appeared"
+          "reason": "chunk appeared"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutBlockFlow BODY",
-      "reason": "geometry"
-    },
-    {
-      "object": "RootInlineBox",
-      "reason": "geometry"
-    },
-    {
-      "object": "LayoutSVGRoot svg",
-      "reason": "style change"
     }
   ]
 }

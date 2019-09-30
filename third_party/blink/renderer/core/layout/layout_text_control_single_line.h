@@ -35,11 +35,11 @@ class LayoutTextControlSingleLine : public LayoutTextControl {
  public:
   LayoutTextControlSingleLine(HTMLInputElement*);
   ~LayoutTextControlSingleLine() override;
-  // FIXME: Move createInnerEditorStyle() to TextControlInnerEditorElement.
-  scoped_refptr<ComputedStyle> CreateInnerEditorStyle(
-      const ComputedStyle& start_style) const final;
 
   void CapsLockStateMayHaveChanged();
+  bool ShouldDrawCapsLockIndicator() const {
+    return should_draw_caps_lock_indicator_;
+  }
 
  protected:
   Element* ContainerElement() const;
@@ -53,7 +53,7 @@ class LayoutTextControlSingleLine : public LayoutTextControl {
     return type == kLayoutObjectTextField || LayoutTextControl::IsOfType(type);
   }
 
-  void Paint(const PaintInfo&, const LayoutPoint&) const override;
+  void Paint(const PaintInfo&) const override;
   void UpdateLayout() override;
 
   bool NodeAtPoint(HitTestResult&,
@@ -77,12 +77,10 @@ class LayoutTextControlSingleLine : public LayoutTextControl {
   LayoutUnit ComputeControlLogicalHeight(
       LayoutUnit line_height,
       LayoutUnit non_content_height) const override;
-  void StyleDidChange(StyleDifference, const ComputedStyle* old_style) final;
   void AddOverflowFromChildren() final;
 
   bool AllowsOverflowClip() const override { return false; }
 
-  bool TextShouldBeTruncated() const;
   HTMLElement* InnerSpinButtonElement() const;
 
   bool should_draw_caps_lock_indicator_;

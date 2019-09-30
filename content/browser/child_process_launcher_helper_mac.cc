@@ -6,6 +6,7 @@
 #include "base/feature_list.h"
 #include "base/path_service.h"
 #include "base/posix/global_descriptors.h"
+#include "base/strings/stringprintf.h"
 #include "content/browser/child_process_launcher.h"
 #include "content/browser/child_process_launcher_helper.h"
 #include "content/browser/child_process_launcher_helper_posix.h"
@@ -19,8 +20,9 @@
 #include "content/public/common/content_switches.h"
 #include "content/public/common/result_codes.h"
 #include "content/public/common/sandboxed_process_launcher_delegate.h"
-#include "mojo/edk/embedder/scoped_platform_handle.h"
 #include "sandbox/mac/seatbelt_exec.h"
+#include "services/service_manager/embedder/result_codes.h"
+#include "services/service_manager/sandbox/mac/audio.sb.h"
 #include "services/service_manager/sandbox/mac/cdm.sb.h"
 #include "services/service_manager/sandbox/mac/common_v2.sb.h"
 #include "services/service_manager/sandbox/mac/gpu_v2.sb.h"
@@ -31,14 +33,15 @@
 #include "services/service_manager/sandbox/mac/utility.sb.h"
 #include "services/service_manager/sandbox/sandbox.h"
 #include "services/service_manager/sandbox/sandbox_type.h"
+#include "services/service_manager/sandbox/switches.h"
 
 namespace content {
 namespace internal {
 
-mojo::edk::ScopedPlatformHandle
-ChildProcessLauncherHelper::PrepareMojoPipeHandlesOnClientThread() {
+base::Optional<mojo::NamedPlatformChannel>
+ChildProcessLauncherHelper::CreateNamedPlatformChannelOnClientThread() {
   DCHECK_CURRENTLY_ON(client_thread_id_);
-  return mojo::edk::ScopedPlatformHandle();
+  return base::nullopt;
 }
 
 void ChildProcessLauncherHelper::BeforeLaunchOnClientThread() {
@@ -49,7 +52,7 @@ std::unique_ptr<PosixFileDescriptorInfo>
 ChildProcessLauncherHelper::GetFilesToMap() {
   DCHECK(CurrentlyOnProcessLauncherTaskRunner());
   return CreateDefaultPosixFilesToMap(
-      child_process_id(), mojo_client_handle(),
+      child_process_id(), mojo_channel_->remote_endpoint(),
       false /* include_service_required_files */, GetProcessType(),
       command_line());
 }
@@ -66,11 +69,13 @@ bool ChildProcessLauncherHelper::BeforeLaunchOnLauncherThread(
   auto sandbox_type =
       service_manager::SandboxTypeFromCommandLine(*command_line_);
 
-  bool no_sandbox = command_line_->HasSwitch(switches::kNoSandbox) ||
-                    service_manager::IsUnsandboxedSandboxType(sandbox_type);
+  bool no_sandbox =
+      command_line_->HasSwitch(service_manager::switches::kNoSandbox) ||
+      service_manager::IsUnsandboxedSandboxType(sandbox_type);
 
   // TODO(kerrnel): Delete this switch once the V2 sandbox is always enabled.
-  bool v2_process = false;
+  bool use_v2 = base::FeatureList::IsEnabled(features::kMacV2Sandbox);
+
   switch (sandbox_type) {
     case service_manager::SANDBOX_TYPE_NO_SANDBOX:
       break;
@@ -81,17 +86,21 @@ bool ChildProcessLauncherHelper::BeforeLaunchOnLauncherThread(
     case service_manager::SANDBOX_TYPE_NACL_LOADER:
     case service_manager::SANDBOX_TYPE_PDF_COMPOSITOR:
     case service_manager::SANDBOX_TYPE_PROFILING:
-      v2_process = true;
+      // If the feature experiment is enabled and this process type supports
+      // the v2 sandbox, use it.
+      use_v2 &= true;
+      break;
+    case service_manager::SANDBOX_TYPE_AUDIO:
+      // The audio service only exists with the v2 sandbox.
+      use_v2 |= true;
       break;
     default:
       // This is a 'break' because the V2 sandbox is not enabled for all
       // processes yet, and so there are sandbox types like NETWORK that
       // should not be run under the V2 sandbox.
+      use_v2 = false;
       break;
   }
-
-  bool use_v2 =
-      v2_process && base::FeatureList::IsEnabled(features::kMacV2Sandbox);
 
   if (use_v2 && !no_sandbox) {
     // Generate the profile string.
@@ -117,6 +126,9 @@ bool ChildProcessLauncherHelper::BeforeLaunchOnLauncherThread(
       case service_manager::SANDBOX_TYPE_PDF_COMPOSITOR:
         profile += service_manager::kSeatbeltPolicyString_pdf_compositor;
         break;
+      case service_manager::SANDBOX_TYPE_AUDIO:
+        profile += service_manager::kSeatbeltPolicyString_audio;
+        break;
       case service_manager::SANDBOX_TYPE_UTILITY:
       case service_manager::SANDBOX_TYPE_PROFILING:
         profile += service_manager::kSeatbeltPolicyString_utility;
@@ -140,6 +152,7 @@ bool ChildProcessLauncherHelper::BeforeLaunchOnLauncherThread(
       case service_manager::SANDBOX_TYPE_NACL_LOADER:
       case service_manager::SANDBOX_TYPE_RENDERER:
       case service_manager::SANDBOX_TYPE_PDF_COMPOSITOR:
+      case service_manager::SANDBOX_TYPE_AUDIO:
         SetupCommonSandboxParameters(seatbelt_exec_client_.get());
         break;
       case service_manager::SANDBOX_TYPE_PPAPI:
@@ -161,14 +174,15 @@ bool ChildProcessLauncherHelper::BeforeLaunchOnLauncherThread(
     }
 
     base::FilePath helper_executable;
-    CHECK(PathService::Get(content::CHILD_PROCESS_EXE, &helper_executable));
+    CHECK(
+        base::PathService::Get(content::CHILD_PROCESS_EXE, &helper_executable));
 
     options->fds_to_remap.push_back(std::make_pair(pipe, pipe));
 
     // Update the command line to enable the V2 sandbox and pass the
     // communication FD to the helper executable.
-    command_line_->AppendSwitch(switches::kEnableV2Sandbox);
-    command_line_->AppendArg("--fd_mapping=" + std::to_string(pipe));
+    command_line_->AppendArg(
+        base::StringPrintf("%s%d", sandbox::switches::kSeatbeltClient, pipe));
   }
 
   // Hold the MachBroker lock for the duration of LaunchProcess. The child will
@@ -221,13 +235,15 @@ void ChildProcessLauncherHelper::AfterLaunchOnLauncherThread(
   broker->GetLock().Release();
 }
 
-base::TerminationStatus ChildProcessLauncherHelper::GetTerminationStatus(
+ChildProcessTerminationInfo ChildProcessLauncherHelper::GetTerminationInfo(
     const ChildProcessLauncherHelper::Process& process,
-    bool known_dead,
-    int* exit_code) {
-  return known_dead
-      ? base::GetKnownDeadTerminationStatus(process.process.Handle(), exit_code)
-      : base::GetTerminationStatus(process.process.Handle(), exit_code);
+    bool known_dead) {
+  ChildProcessTerminationInfo info;
+  info.status = known_dead ? base::GetKnownDeadTerminationStatus(
+                                 process.process.Handle(), &info.exit_code)
+                           : base::GetTerminationStatus(
+                                 process.process.Handle(), &info.exit_code);
+  return info;
 }
 
 // static
@@ -244,7 +260,7 @@ void ChildProcessLauncherHelper::ForceNormalProcessTerminationSync(
   DCHECK(CurrentlyOnProcessLauncherTaskRunner());
   // Client has gone away, so just kill the process.  Using exit code 0 means
   // that UMA won't treat this as a crash.
-  process.process.Terminate(RESULT_CODE_NORMAL_EXIT, false);
+  process.process.Terminate(service_manager::RESULT_CODE_NORMAL_EXIT, false);
   base::EnsureProcessTerminated(std::move(process.process));
 }
 
@@ -253,7 +269,7 @@ void ChildProcessLauncherHelper::SetProcessPriorityOnLauncherThread(
     const ChildProcessLauncherPriority& priority) {
   if (process.CanBackgroundProcesses()) {
     process.SetProcessBackgrounded(MachBroker::GetInstance(),
-                                   priority.background);
+                                   priority.is_background());
   }
 }
 

@@ -6,27 +6,27 @@
 
 #include <utility>
 
-#include "services/ui/public/interfaces/constants.mojom.h"
-#include "services/ui/public/interfaces/ime/ime.mojom.h"
-#include "services/ui/public/interfaces/window_tree_constants.mojom.h"
+#include "services/ws/public/mojom/constants.mojom.h"
+#include "services/ws/public/mojom/ime/ime.mojom.h"
+#include "services/ws/public/mojom/window_tree_constants.mojom.h"
+#include "ui/aura/mus/input_method_mus_delegate.h"
 #include "ui/aura/mus/text_input_client_impl.h"
-#include "ui/aura/mus/window_port_mus.h"
-#include "ui/aura/window.h"
 #include "ui/base/ime/text_input_client.h"
 #include "ui/events/event.h"
 #include "ui/platform_window/mojo/ime_type_converters.h"
 #include "ui/platform_window/mojo/text_input_state.mojom.h"
 
-using ui::mojom::EventResult;
+using ws::mojom::EventResult;
 
 namespace aura {
 
 ////////////////////////////////////////////////////////////////////////////////
 // InputMethodMus, public:
 
-InputMethodMus::InputMethodMus(ui::internal::InputMethodDelegate* delegate,
-                               Window* window)
-    : window_(window) {
+InputMethodMus::InputMethodMus(
+    ui::internal::InputMethodDelegate* delegate,
+    InputMethodMusDelegate* input_method_mus_delegate)
+    : input_method_mus_delegate_(input_method_mus_delegate) {
   SetDelegate(delegate);
 }
 
@@ -39,7 +39,7 @@ InputMethodMus::~InputMethodMus() {
 
 void InputMethodMus::Init(service_manager::Connector* connector) {
   if (connector)
-    connector->BindInterface(ui::mojom::kServiceName, &ime_driver_);
+    connector->BindInterface(ws::mojom::kServiceName, &ime_driver_);
 }
 
 ui::EventDispatchDetails InputMethodMus::DispatchKeyEvent(
@@ -114,12 +114,19 @@ void InputMethodMus::CancelComposition(const ui::TextInputClient* client) {
 void InputMethodMus::OnInputLocaleChanged() {
   // TODO(moshayedi): crbug.com/637418. Not supported in ChromeOS. Investigate
   // whether we want to support this or not.
+  NOTIMPLEMENTED_LOG_ONCE();
 }
 
 bool InputMethodMus::IsCandidatePopupOpen() const {
   // TODO(moshayedi): crbug.com/637416. Implement this properly when we have a
   // mean for displaying candidate list popup.
+  NOTIMPLEMENTED_LOG_ONCE();
   return false;
+}
+
+void InputMethodMus::ShowVirtualKeyboardIfEnabled() {
+  if (input_method_)
+    input_method_->ShowVirtualKeyboardIfEnabled();
 }
 
 ui::EventDispatchDetails InputMethodMus::SendKeyEventToInputMethod(
@@ -131,6 +138,7 @@ ui::EventDispatchDetails InputMethodMus::SendKeyEventToInputMethod(
     std::unique_ptr<ui::Event> event_clone = ui::Event::Clone(event);
     return DispatchKeyEventPostIME(event_clone->AsKeyEvent());
   }
+
   // IME driver will notify us whether it handled the event or not by calling
   // ProcessKeyEventCallback(), in which we will run the |ack_callback| to tell
   // the window server if client handled the event or not.
@@ -149,21 +157,24 @@ void InputMethodMus::OnDidChangeFocusedClient(
   InputMethodBase::OnDidChangeFocusedClient(focused_before, focused);
   UpdateTextInputType();
 
-  // TODO(moshayedi): crbug.com/681563. Handle when there is no focused clients.
-  if (!focused)
-    return;
-
-  text_input_client_ =
-      std::make_unique<TextInputClientImpl>(focused, delegate());
-
   // We are about to close the pipe with pending callbacks. Closing the pipe
   // results in none of the callbacks being run. We have to run the callbacks
   // else mus won't process the next event immediately.
   AckPendingCallbacksUnhandled();
 
+  if (!focused) {
+    input_method_ = nullptr;
+    input_method_ptr_.reset();
+    text_input_client_.reset();
+    return;
+  }
+
+  text_input_client_ =
+      std::make_unique<TextInputClientImpl>(focused, delegate());
+
   if (ime_driver_) {
-    ui::mojom::StartSessionDetailsPtr details =
-        ui::mojom::StartSessionDetails::New();
+    ws::mojom::StartSessionDetailsPtr details =
+        ws::mojom::StartSessionDetails::New();
     details->client =
         text_input_client_->CreateInterfacePtrAndBind().PassInterface();
     details->input_method_request = MakeRequest(&input_method_ptr_);
@@ -181,12 +192,11 @@ void InputMethodMus::UpdateTextInputType() {
   ui::TextInputType type = GetTextInputType();
   ui::mojom::TextInputStatePtr state = ui::mojom::TextInputState::New();
   state->type = mojo::ConvertTo<ui::mojom::TextInputType>(type);
-  if (window_) {
-    WindowPortMus* window_impl_mus = WindowPortMus::Get(window_);
+  if (input_method_mus_delegate_) {
     if (type != ui::TEXT_INPUT_TYPE_NONE)
-      window_impl_mus->SetImeVisibility(true, std::move(state));
+      input_method_mus_delegate_->SetImeVisibility(true, std::move(state));
     else
-      window_impl_mus->SetTextInputState(std::move(state));
+      input_method_mus_delegate_->SetTextInputState(std::move(state));
   }
 }
 

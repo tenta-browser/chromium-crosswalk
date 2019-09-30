@@ -53,6 +53,7 @@ class AwContentBrowserClient : public content::ContentBrowserClient {
   void RenderProcessWillLaunch(
       content::RenderProcessHost* host,
       service_manager::mojom::ServiceRequest* service_request) override;
+  bool ShouldUseMobileFlingCurve() const override;
   bool IsHandledURL(const GURL& url) override;
   bool ForceSniffingFileUrlsForHtml() override;
   void AppendExtraCommandLineSwitches(base::CommandLine* command_line,
@@ -74,18 +75,17 @@ class AwContentBrowserClient : public content::ContentBrowserClient {
                       const net::CanonicalCookie& cookie,
                       content::ResourceContext* context,
                       int render_process_id,
-                      int render_frame_id,
-                      const net::CookieOptions& options) override;
+                      int render_frame_id) override;
   void AllowWorkerFileSystem(
       const GURL& url,
       content::ResourceContext* context,
-      const std::vector<std::pair<int, int>>& render_frames,
+      const std::vector<content::GlobalFrameRoutingId>& render_frames,
       base::Callback<void(bool)> callback) override;
   bool AllowWorkerIndexedDB(
       const GURL& url,
       const base::string16& name,
       content::ResourceContext* context,
-      const std::vector<std::pair<int, int>>& render_frames) override;
+      const std::vector<content::GlobalFrameRoutingId>& render_frames) override;
   content::QuotaPermissionContext* CreateQuotaPermissionContext() override;
   void GetQuotaSettings(
       content::BrowserContext* context,
@@ -148,6 +148,10 @@ class AwContentBrowserClient : public content::ContentBrowserClient {
       content::RenderFrameHost* render_frame_host,
       const std::string& interface_name,
       mojo::ScopedMessagePipeHandle interface_pipe) override;
+  bool BindAssociatedInterfaceRequestFromFrame(
+      content::RenderFrameHost* render_frame_host,
+      const std::string& interface_name,
+      mojo::ScopedInterfaceEndpointHandle* handle) override;
   void ExposeInterfacesToRenderer(
       service_manager::BinderRegistry* registry,
       blink::AssociatedInterfaceRegistry* associated_registry,
@@ -172,11 +176,12 @@ class AwContentBrowserClient : public content::ContentBrowserClient {
   scoped_refptr<content::LoginDelegate> CreateLoginDelegate(
       net::AuthChallengeInfo* auth_info,
       content::ResourceRequestInfo::WebContentsGetter web_contents_getter,
+      const content::GlobalRequestID& request_id,
       bool is_main_frame,
       const GURL& url,
+      scoped_refptr<net::HttpResponseHeaders> response_headers,
       bool first_auth_attempt,
-      const base::Callback<void(const base::Optional<net::AuthCredentials>&)>&
-          auth_required_callback) override;
+      LoginAuthRequiredCallback auth_required_callback) override;
   bool HandleExternalProtocol(
       const GURL& url,
       content::ResourceRequestInfo::WebContentsGetter web_contents_getter,
@@ -186,6 +191,7 @@ class AwContentBrowserClient : public content::ContentBrowserClient {
       ui::PageTransition page_transition,
       bool has_user_gesture) override;
   void RegisterOutOfProcessServices(OutOfProcessServiceMap* services) override;
+  bool ShouldEnableStrictSiteIsolation() override;
 
   static void DisableCreatingTaskScheduler();
 

@@ -31,7 +31,7 @@
 #include "third_party/blink/renderer/platform/loader/fetch/fetch_context.h"
 
 #include "third_party/blink/renderer/platform/PlatformProbeSink.h"
-#include "third_party/blink/renderer/platform/probe/PlatformTraceEventsAgent.h"
+#include "third_party/blink/renderer/platform/probe/platform_trace_events_agent.h"
 
 namespace blink {
 
@@ -40,8 +40,7 @@ FetchContext& FetchContext::NullInstance() {
 }
 
 FetchContext::FetchContext() : platform_probe_sink_(new PlatformProbeSink) {
-  platform_probe_sink_->addPlatformTraceEventsAgent(
-      new PlatformTraceEventsAgent);
+  platform_probe_sink_->addPlatformTraceEvents(new PlatformTraceEventsAgent);
 }
 
 void FetchContext::Trace(blink::Visitor* visitor) {
@@ -87,13 +86,11 @@ void FetchContext::DispatchDidReceiveData(unsigned long, const char*, int) {}
 
 void FetchContext::DispatchDidReceiveEncodedData(unsigned long, int) {}
 
-void FetchContext::DispatchDidDownloadData(unsigned long, int, int) {}
-
 void FetchContext::DispatchDidDownloadToBlob(unsigned long identifier,
                                              BlobDataHandle*) {}
 
 void FetchContext::DispatchDidFinishLoading(unsigned long,
-                                            double,
+                                            TimeTicks,
                                             int64_t,
                                             int64_t,
                                             bool) {}
@@ -112,6 +109,8 @@ void FetchContext::RecordLoadingActivity(
 void FetchContext::DidLoadResource(Resource*) {}
 
 void FetchContext::AddResourceTiming(const ResourceTimingInfo&) {}
+
+void FetchContext::AddInfoConsoleMessage(const String&, LogSource) const {}
 
 void FetchContext::AddWarningConsoleMessage(const String&, LogSource) const {}
 

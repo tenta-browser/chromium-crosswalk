@@ -19,6 +19,7 @@
 #include "chrome/browser/sync/test/integration/sync_app_helper.h"
 #include "chrome/browser/sync/test/integration/sync_integration_test_util.h"
 #include "chrome/browser/sync/test/integration/sync_test.h"
+#include "chrome/browser/web_applications/extensions/bookmark_app_util.h"
 #include "chrome/common/extensions/manifest_handlers/app_launch_info.h"
 #include "chrome/common/extensions/manifest_handlers/app_theme_color_info.h"
 #include "components/sync/model/string_ordinal.h"
@@ -50,7 +51,7 @@ extensions::ExtensionRegistry* GetExtensionRegistry(Profile* profile) {
   return extensions::ExtensionRegistry::Get(profile);
 }
 
-ExtensionService* GetExtensionService(Profile* profile) {
+extensions::ExtensionService* GetExtensionService(Profile* profile) {
   return extensions::ExtensionSystem::Get(profile)->extension_service();
 }
 
@@ -367,7 +368,6 @@ IN_PROC_BROWSER_TEST_F(TwoClientAppsSyncTest, UnexpectedLaunchType) {
       original_data.disable_reasons(),
       original_data.incognito_enabled(),
       original_data.remote_install(),
-      original_data.all_urls_enabled(),
       original_data.installed_by_custodian(),
       original_data.app_launch_ordinal(),
       original_data.page_ordinal(),
@@ -396,7 +396,8 @@ IN_PROC_BROWSER_TEST_F(TwoClientAppsSyncTest, BookmarkAppBasic) {
         extensions::NOTIFICATION_CRX_INSTALLER_DONE,
         content::NotificationService::AllSources());
     extensions::CreateOrUpdateBookmarkApp(GetExtensionService(GetProfile(0)),
-                                          &web_app_info);
+                                          &web_app_info,
+                                          true /* is_locally_installed */);
     windowed_observer.Wait();
     EXPECT_EQ(num_extensions,
               GetExtensionRegistry(GetProfile(0))->enabled_extensions().size());
@@ -405,7 +406,7 @@ IN_PROC_BROWSER_TEST_F(TwoClientAppsSyncTest, BookmarkAppBasic) {
     // Wait for the synced app to install.
     content::WindowedNotificationObserver windowed_observer(
         extensions::NOTIFICATION_CRX_INSTALLER_DONE,
-        base::Bind(&AllProfilesHaveSameApps));
+        base::BindRepeating(&AllProfilesHaveSameApps));
     windowed_observer.Wait();
   }
 }
@@ -426,7 +427,8 @@ IN_PROC_BROWSER_TEST_F(TwoClientAppsSyncTest, BookmarkAppMinimal) {
         extensions::NOTIFICATION_CRX_INSTALLER_DONE,
         content::NotificationService::AllSources());
     extensions::CreateOrUpdateBookmarkApp(GetExtensionService(GetProfile(0)),
-                                          &web_app_info);
+                                          &web_app_info,
+                                          true /* is_locally_installed */);
     windowed_observer.Wait();
     EXPECT_EQ(num_extensions,
               GetExtensionRegistry(GetProfile(0))->enabled_extensions().size());
@@ -435,7 +437,7 @@ IN_PROC_BROWSER_TEST_F(TwoClientAppsSyncTest, BookmarkAppMinimal) {
     // Wait for the synced app to install.
     content::WindowedNotificationObserver windowed_observer(
         extensions::NOTIFICATION_CRX_INSTALLER_DONE,
-        base::Bind(&AllProfilesHaveSameApps));
+        base::BindRepeating(&AllProfilesHaveSameApps));
     windowed_observer.Wait();
   }
 }
@@ -468,7 +470,8 @@ IN_PROC_BROWSER_TEST_F(TwoClientAppsSyncTest, BookmarkAppThemeColor) {
         extensions::NOTIFICATION_CRX_INSTALLER_DONE,
         content::NotificationService::AllSources());
     extensions::CreateOrUpdateBookmarkApp(GetExtensionService(GetProfile(0)),
-                                          &web_app_info);
+                                          &web_app_info,
+                                          true /* is_locally_installed */);
     windowed_observer.Wait();
     EXPECT_EQ(num_extensions,
               GetExtensionRegistry(GetProfile(0))->enabled_extensions().size());
@@ -477,13 +480,63 @@ IN_PROC_BROWSER_TEST_F(TwoClientAppsSyncTest, BookmarkAppThemeColor) {
     // Wait for the synced app to install.
     content::WindowedNotificationObserver windowed_observer(
         extensions::NOTIFICATION_CRX_INSTALLER_DONE,
-        base::Bind(&AllProfilesHaveSameApps));
+        base::BindRepeating(&AllProfilesHaveSameApps));
     windowed_observer.Wait();
   }
   auto* extension = GetAppByLaunchURL(web_app_info.app_url, GetProfile(1));
   base::Optional<SkColor> theme_color =
       extensions::AppThemeColorInfo::GetThemeColor(extension);
   EXPECT_EQ(SK_ColorBLUE, theme_color.value());
+}
+
+IN_PROC_BROWSER_TEST_F(TwoClientAppsSyncTest, IsLocallyInstalled) {
+  ASSERT_TRUE(SetupSync());
+  ASSERT_TRUE(AllProfilesHaveSameApps());
+
+  size_t num_extensions =
+      GetExtensionRegistry(GetProfile(0))->enabled_extensions().size();
+
+  WebApplicationInfo web_app_info;
+  web_app_info.app_url = GURL("http://www.chromium.org/");
+  web_app_info.title = base::UTF8ToUTF16("Test name");
+  web_app_info.theme_color = SK_ColorBLUE;
+  ++num_extensions;
+  {
+    content::WindowedNotificationObserver windowed_observer(
+        extensions::NOTIFICATION_CRX_INSTALLER_DONE,
+        content::NotificationService::AllSources());
+    extensions::CreateOrUpdateBookmarkApp(GetExtensionService(GetProfile(0)),
+                                          &web_app_info,
+                                          true /* is_locally_installed */);
+    windowed_observer.Wait();
+    EXPECT_EQ(num_extensions,
+              GetExtensionRegistry(GetProfile(0))->enabled_extensions().size());
+  }
+  {
+    // Wait for the synced app to install.
+    content::WindowedNotificationObserver windowed_observer(
+        extensions::NOTIFICATION_CRX_INSTALLER_DONE,
+        base::BindRepeating(&AllProfilesHaveSameApps));
+    windowed_observer.Wait();
+
+    // The is_locally_installed pref is set in a post install task which
+    // completes asynchronously after the CRX_INSTALLER_DONE notification is
+    // sent. This test needs to wait for this to complete before checking the
+    // is_locally_installed_pref, so it waits until all tasks are complete.
+    //
+    // Other tests do not need to do this, as all the fields they check are set
+    // before the CRX_INSTALLER_DONE notification is sent.
+    //
+    // Note this cannot replace the CRX_INSTALLER_DONE notification observer as
+    // it would not wait for the sync stuff to happen.
+    content::RunAllTasksUntilIdle();
+  }
+  auto* extension = GetAppByLaunchURL(web_app_info.app_url, GetProfile(1));
+#if defined(OS_CHROMEOS)
+  EXPECT_TRUE(BookmarkAppIsLocallyInstalled(GetProfile(1), extension));
+#else
+  EXPECT_FALSE(BookmarkAppIsLocallyInstalled(GetProfile(1), extension));
+#endif
 }
 // TODO(akalin): Add tests exercising:
 //   - Offline installation/uninstallation behavior

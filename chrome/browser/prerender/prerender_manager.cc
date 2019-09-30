@@ -98,12 +98,6 @@ bool AreExtraHeadersCompatibleWithPrerenderContents(
   return parsed_headers.IsEmpty();
 }
 
-// Returns true if prerendering is forced, because it is needed as a feature, as
-// opposed to a performance optimization.
-bool IsPrerenderingForced(Origin origin) {
-  return origin == ORIGIN_EXTERNAL_REQUEST_FORCED_PRERENDER;
-}
-
 }  // namespace
 
 class PrerenderManager::OnCloseWebContentsDeleter
@@ -159,9 +153,7 @@ PrerenderManagerObserver::~PrerenderManagerObserver() {}
 
 // static
 PrerenderManager::PrerenderManagerMode PrerenderManager::mode_ =
-    PRERENDER_MODE_SIMPLE_LOAD_EXPERIMENT;
-PrerenderManager::PrerenderManagerMode PrerenderManager::omnibox_mode_ =
-    PRERENDER_MODE_SIMPLE_LOAD_EXPERIMENT;
+    PRERENDER_MODE_NOSTATE_PREFETCH;
 
 struct PrerenderManager::NavigationRecord {
   NavigationRecord(const GURL& url, base::TimeTicks time, Origin origin)
@@ -170,6 +162,7 @@ struct PrerenderManager::NavigationRecord {
   GURL url;
   base::TimeTicks time;
   Origin origin;
+  FinalStatus final_status = FINAL_STATUS_MAX;
 };
 
 PrerenderManager::PrerenderManager(Profile* profile)
@@ -255,7 +248,9 @@ std::unique_ptr<PrerenderHandle> PrerenderManager::AddPrerenderFromOmnibox(
     const GURL& url,
     SessionStorageNamespace* session_storage_namespace,
     const gfx::Size& size) {
-  if (!IsOmniboxEnabled(profile_))
+  // TODO(pasko): Remove PRERENDER_MODE_ENABLED allowance. It is only used for
+  // tests.
+  if (!IsNoStatePrefetchEnabled() && GetMode() != PRERENDER_MODE_ENABLED)
     return nullptr;
   return AddPrerender(ORIGIN_OMNIBOX, url, content::Referrer(), gfx::Rect(size),
                       session_storage_namespace);
@@ -290,11 +285,27 @@ void PrerenderManager::CancelAllPrerenders() {
   }
 }
 
+PrerenderManager::Params::Params(NavigateParams* params,
+                                 content::WebContents* contents_being_navigated)
+    : uses_post(params->uses_post),
+      extra_headers(params->extra_headers),
+      should_replace_current_entry(params->should_replace_current_entry),
+      contents_being_navigated(contents_being_navigated) {}
+
+PrerenderManager::Params::Params(bool uses_post,
+                                 const std::string& extra_headers,
+                                 bool should_replace_current_entry,
+                                 content::WebContents* contents_being_navigated)
+    : uses_post(uses_post),
+      extra_headers(extra_headers),
+      should_replace_current_entry(should_replace_current_entry),
+      contents_being_navigated(contents_being_navigated) {}
+
 bool PrerenderManager::MaybeUsePrerenderedPage(const GURL& url,
-                                               NavigateParams* params) {
+                                               Params* params) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
-  WebContents* web_contents = params->target_contents;
+  WebContents* web_contents = params->contents_being_navigated;
   DCHECK(!IsWebContentsPrerendering(web_contents, nullptr));
 
   // Don't prerender if the navigation involves some special parameters that
@@ -307,7 +318,7 @@ bool PrerenderManager::MaybeUsePrerenderedPage(const GURL& url,
   }
 
   DeleteOldEntries();
-  to_delete_prerenders_.clear();
+  DeleteToDeletePrerenders();
 
   // First, try to find prerender data with the correct session storage
   // namespace.
@@ -322,21 +333,20 @@ bool PrerenderManager::MaybeUsePrerenderedPage(const GURL& url,
   if (prerender_data->contents()->prerender_mode() != FULL_PRERENDER)
     return false;
 
-  std::unique_ptr<WebContents> new_web_contents = SwapInternal(
+  WebContents* new_web_contents = SwapInternal(
       url, web_contents, prerender_data, params->should_replace_current_entry);
   if (!new_web_contents)
     return false;
 
   // Record the new target_contents for the callers.
-  params->target_contents = new_web_contents.release();
+  params->replaced_contents = new_web_contents;
   return true;
 }
 
-std::unique_ptr<WebContents> PrerenderManager::SwapInternal(
-    const GURL& url,
-    WebContents* web_contents,
-    PrerenderData* prerender_data,
-    bool should_replace_current_entry) {
+WebContents* PrerenderManager::SwapInternal(const GURL& url,
+                                            WebContents* web_contents,
+                                            PrerenderData* prerender_data,
+                                            bool should_replace_current_entry) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   DCHECK(!IsWebContentsPrerendering(web_contents, nullptr));
 
@@ -422,25 +432,25 @@ std::unique_ptr<WebContents> PrerenderManager::SwapInternal(
 
   std::unique_ptr<WebContents> new_web_contents =
       prerender_contents->ReleasePrerenderContents();
-  std::unique_ptr<WebContents> old_web_contents(web_contents);
   DCHECK(new_web_contents);
-  DCHECK(old_web_contents);
+  DCHECK(web_contents);
 
   // Merge the browsing history.
   new_web_contents->GetController().CopyStateFromAndPrune(
-      &old_web_contents->GetController(),
-      should_replace_current_entry);
-  CoreTabHelper::FromWebContents(old_web_contents.get())
-      ->delegate()
-      ->SwapTabContents(old_web_contents.get(), new_web_contents.get(), true,
-                        prerender_contents->has_finished_loading());
-  prerender_contents->CommitHistory(new_web_contents.get());
+      &web_contents->GetController(), should_replace_current_entry);
+  WebContents* raw_new_web_contents = new_web_contents.get();
+  std::unique_ptr<content::WebContents> old_web_contents =
+      CoreTabHelper::FromWebContents(web_contents)
+          ->delegate()
+          ->SwapTabContents(web_contents, std::move(new_web_contents), true,
+                            prerender_contents->has_finished_loading());
+  prerender_contents->CommitHistory(raw_new_web_contents);
 
   // Update PPLT metrics:
   // If the tab has finished loading, record a PPLT of 0.
   // If the tab is still loading, reset its start time to the current time.
   PrerenderTabHelper* prerender_tab_helper =
-      PrerenderTabHelper::FromWebContents(new_web_contents.get());
+      PrerenderTabHelper::FromWebContents(raw_new_web_contents);
   DCHECK(prerender_tab_helper);
   prerender_tab_helper->PrerenderSwappedIn();
 
@@ -461,7 +471,7 @@ std::unique_ptr<WebContents> PrerenderManager::SwapInternal(
   //                 list, instead of deleting directly here?
   AddToHistory(prerender_contents.get());
   RecordNavigation(url);
-  return new_web_contents;
+  return raw_new_web_contents;
 }
 
 void PrerenderManager::MoveEntryToPendingDelete(PrerenderContents* entry,
@@ -526,45 +536,6 @@ void PrerenderManager::RecordPrerenderFirstContentfulPaint(
   for (auto& observer : observers_) {
     observer->OnFirstContentfulPaint();
   }
-}
-
-// static
-PrerenderManager::PrerenderManagerMode PrerenderManager::GetMode(
-    Origin origin) {
-  switch (origin) {
-    case ORIGIN_OMNIBOX:
-      return omnibox_mode_;
-    default:
-      return mode_;
-  }
-}
-
-// static
-void PrerenderManager::SetMode(PrerenderManagerMode mode) {
-  mode_ = mode;
-}
-
-// static
-void PrerenderManager::SetOmniboxMode(PrerenderManagerMode mode) {
-  omnibox_mode_ = mode;
-}
-
-// static
-bool PrerenderManager::IsAnyPrerenderingPossible() {
-  return mode_ != PRERENDER_MODE_DISABLED ||
-         omnibox_mode_ != PRERENDER_MODE_DISABLED;
-}
-
-// static
-bool PrerenderManager::IsNoStatePrefetch(Origin origin) {
-  return !IsPrerenderingForced(origin) &&
-         GetMode(origin) == PRERENDER_MODE_NOSTATE_PREFETCH;
-}
-
-// static
-bool PrerenderManager::IsSimpleLoadExperiment(Origin origin) {
-  return !IsPrerenderingForced(origin) &&
-         GetMode(origin) == PRERENDER_MODE_SIMPLE_LOAD_EXPERIMENT;
 }
 
 bool PrerenderManager::IsWebContentsPrerendering(
@@ -695,7 +666,6 @@ std::unique_ptr<base::DictionaryValue> PrerenderManager::CopyAsValue() const {
   if (GetPredictionStatus() == NetworkPredictionStatus::DISABLED_DUE_TO_NETWORK)
     disabled_note = "Disabled on cellular connection by default";
   dict_value->SetString("disabled_note", disabled_note);
-  dict_value->SetBoolean("omnibox_enabled", IsOmniboxEnabled(profile_));
   // If prerender is disabled via a flag this method is not even called.
   std::string enabled_note;
   dict_value->SetString("enabled_note", enabled_note);
@@ -847,7 +817,7 @@ std::unique_ptr<PrerenderHandle> PrerenderManager::AddPrerender(
     return base::WrapUnique(new PrerenderHandle(preexisting_prerender_data));
   }
 
-  if (IsNoStatePrefetch(origin)) {
+  if (IsNoStatePrefetchEnabled()) {
     base::TimeDelta prefetch_age;
     GetPrefetchInformation(url, &prefetch_age, nullptr);
     if (!prefetch_age.is_zero() &&
@@ -892,7 +862,7 @@ std::unique_ptr<PrerenderHandle> PrerenderManager::AddPrerender(
   // enable metrics comparisons.
   prefetches_.emplace_back(url, GetCurrentTimeTicks(), origin);
 
-  if (IsSimpleLoadExperiment(origin)) {
+  if (GetMode() == PRERENDER_MODE_SIMPLE_LOAD_EXPERIMENT) {
     // Exit after adding the url to prefetches_, so that no prefetching occurs
     // but the page is still tracked as "would have been prefetched".
     return nullptr;
@@ -902,7 +872,7 @@ std::unique_ptr<PrerenderHandle> PrerenderManager::AddPrerender(
       CreatePrerenderContents(url, referrer, origin);
   DCHECK(prerender_contents);
   PrerenderContents* prerender_contents_ptr = prerender_contents.get();
-  if (IsNoStatePrefetch(origin))
+  if (IsNoStatePrefetchEnabled())
     prerender_contents_ptr->SetPrerenderMode(PREFETCH_ONLY);
   active_prerenders_.push_back(
       std::make_unique<PrerenderData>(this, std::move(prerender_contents),
@@ -976,7 +946,7 @@ void PrerenderManager::PeriodicCleanup() {
   if (active_prerenders_.empty())
     StopSchedulingPeriodicCleanups();
 
-  to_delete_prerenders_.clear();
+  DeleteToDeletePrerenders();
 
   CleanUpOldNavigations(&prefetches_, base::TimeDelta::FromMinutes(30));
 
@@ -1012,6 +982,18 @@ void PrerenderManager::DeleteOldEntries() {
     if (prerender_data->expiry_time() > GetCurrentTimeTicks())
       return;
     prerender_data->contents()->Destroy(FINAL_STATUS_TIMED_OUT);
+  }
+}
+
+void PrerenderManager::DeleteToDeletePrerenders() {
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+  // Delete the items one by one (after removing from the vector) as deleting
+  // the WebContents may trigger a call to GetPrerenderContents(), which
+  // iterates over |to_delete_prerenders_|.
+  while (!to_delete_prerenders_.empty()) {
+    std::unique_ptr<PrerenderData> prerender_data =
+        std::move(to_delete_prerenders_.back());
+    to_delete_prerenders_.pop_back();
   }
 }
 
@@ -1080,11 +1062,6 @@ bool PrerenderManager::DoesRateLimitAllowPrerender(Origin origin) const {
 }
 
 void PrerenderManager::DeleteOldWebContents() {
-  for (WebContents* web_contents : old_web_contents_list_) {
-    // TODO(dominich): should we use Instant Unload Handler here?
-    // Or should |old_web_contents_list_| contain unique_ptrs?
-    delete web_contents;
-  }
   old_web_contents_list_.clear();
 }
 
@@ -1105,6 +1082,25 @@ void PrerenderManager::GetPrefetchInformation(const GURL& url,
       break;
     }
   }
+}
+
+void PrerenderManager::SetPrefetchFinalStatusForUrl(const GURL& url,
+                                                    FinalStatus final_status) {
+  for (auto it = prefetches_.rbegin(); it != prefetches_.rend(); ++it) {
+    if (it->url == url) {
+      it->final_status = final_status;
+      break;
+    }
+  }
+}
+
+bool PrerenderManager::HasRecentlyPrefetchedUrlForTesting(const GURL& url) {
+  return std::any_of(prefetches_.cbegin(), prefetches_.cend(),
+                     [url](const NavigationRecord& r) {
+                       return r.url == url &&
+                              r.final_status ==
+                                  FINAL_STATUS_NOSTATE_PREFETCH_FINISHED;
+                     });
 }
 
 void PrerenderManager::OnPrefetchUsed(const GURL& url) {
@@ -1134,7 +1130,7 @@ void PrerenderManager::CleanUpOldNavigations(
 void PrerenderManager::ScheduleDeleteOldWebContents(
     std::unique_ptr<WebContents> tab,
     OnCloseWebContentsDeleter* deleter) {
-  old_web_contents_list_.push_back(tab.release());
+  old_web_contents_list_.push_back(std::move(tab));
   PostCleanupTask();
 
   if (!deleter)
@@ -1175,7 +1171,7 @@ void PrerenderManager::DestroyAllContents(FinalStatus final_status) {
     PrerenderContents* contents = active_prerenders_.front()->contents();
     contents->Destroy(final_status);
   }
-  to_delete_prerenders_.clear();
+  DeleteToDeletePrerenders();
 }
 
 void PrerenderManager::RecordFinalStatusWithoutCreatingPrerenderContents(
@@ -1211,7 +1207,7 @@ void PrerenderManager::OnCreatingAudioStream(int render_process_id,
 
 void PrerenderManager::RecordNetworkBytesConsumed(Origin origin,
                                                   int64_t prerender_bytes) {
-  if (!IsAnyPrerenderingPossible())
+  if (!IsNoStatePrefetchEnabled())
     return;
   int64_t recent_profile_bytes =
       profile_network_bytes_ - last_recorded_profile_network_bytes_;
@@ -1254,7 +1250,7 @@ NetworkPredictionStatus PrerenderManager::GetPredictionStatusForOrigin(
 void PrerenderManager::AddProfileNetworkBytesIfEnabled(int64_t bytes) {
   DCHECK_GE(bytes, 0);
   if (GetPredictionStatus() == NetworkPredictionStatus::ENABLED &&
-      IsAnyPrerenderingPossible())
+      IsNoStatePrefetchEnabled())
     profile_network_bytes_ += bytes;
 }
 
@@ -1285,6 +1281,10 @@ void PrerenderManager::RenderProcessHostDestroyed(
 
 base::WeakPtr<PrerenderManager> PrerenderManager::AsWeakPtr() {
   return weak_factory_.GetWeakPtr();
+}
+
+void PrerenderManager::ClearPrefetchInformationForTesting() {
+  prefetches_.clear();
 }
 
 void PrerenderManager::SetPrerenderContentsFactoryForTest(

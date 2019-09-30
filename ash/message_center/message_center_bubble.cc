@@ -5,8 +5,8 @@
 #include "ash/message_center/message_center_bubble.h"
 
 #include "ash/message_center/message_center_view.h"
+#include "ash/public/cpp/app_list/app_list_features.h"
 #include "base/macros.h"
-#include "ui/app_list/app_list_features.h"
 #include "ui/message_center/message_center.h"
 #include "ui/message_center/public/cpp/message_center_constants.h"
 #include "ui/views/bubble/tray_bubble_view.h"
@@ -106,22 +106,13 @@ void MessageCenterBubble::SetMaxHeight(int height) {
     message_center_view_->SetMaxHeight(max_height_);
 }
 
-void MessageCenterBubble::SetSettingsVisible() {
-  if (message_center_view_)
-    message_center_view_->SetSettingsVisible(true);
-  else
-    initially_settings_visible_ = true;
-}
-
 void MessageCenterBubble::InitializeContents(
     views::TrayBubbleView* new_bubble_view) {
   bubble_view_ = new_bubble_view;
   bubble_view_->GetWidget()->AddObserver(this);
-  message_center_view_ = new MessageCenterView(message_center_, max_height_,
-                                               initially_settings_visible_);
+  message_center_view_ = new MessageCenterView(message_center_, max_height_);
   bubble_view_->AddChildView(new ContentsView(this, message_center_view_));
   message_center_view_->SetMaxHeight(max_height_);
-  message_center_view_->Init();
   // Resize the content of the bubble view to the given bubble size. This is
   // necessary in case of the bubble border forcing a bigger size then the
   // |new_bubble_view| actually wants. See crbug.com/169390.

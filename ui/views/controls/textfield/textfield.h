@@ -28,6 +28,7 @@
 #include "ui/gfx/selection_model.h"
 #include "ui/gfx/text_constants.h"
 #include "ui/views/context_menu_controller.h"
+#include "ui/views/controls/focus_ring.h"
 #include "ui/views/controls/textfield/textfield_model.h"
 #include "ui/views/drag_controller.h"
 #include "ui/views/selection_controller.h"
@@ -196,7 +197,7 @@ class VIEWS_EXPORT Textfield : public View,
   void SetHorizontalAlignment(gfx::HorizontalAlignment alignment);
 
   // Displays a virtual keyboard or alternate input view if enabled.
-  void ShowImeIfNeeded();
+  void ShowVirtualKeyboardIfEnabled();
 
   // Returns whether or not an IME is composing text.
   bool IsIMEComposing() const;
@@ -343,6 +344,7 @@ class VIEWS_EXPORT Textfield : public View,
   bool GetCompositionCharacterBounds(uint32_t index,
                                      gfx::Rect* rect) const override;
   bool HasCompositionText() const override;
+  FocusReason GetFocusReason() const override;
   bool GetTextRange(gfx::Range* range) const override;
   bool GetCompositionTextRange(gfx::Range* range) const override;
   bool GetSelectionRange(gfx::Range* range) const override;
@@ -357,7 +359,8 @@ class VIEWS_EXPORT Textfield : public View,
   void EnsureCaretNotInRect(const gfx::Rect& rect) override;
   bool IsTextEditCommandEnabled(ui::TextEditCommand command) const override;
   void SetTextEditCommandForNextKeyEvent(ui::TextEditCommand command) override;
-  const std::string& GetClientSourceInfo() const override;
+  ukm::SourceId GetClientSourceForMetrics() const override;
+  bool ShouldDoLearning() override;
 
  protected:
   // Inserts or appends a character in response to an IME operation.
@@ -379,6 +382,15 @@ class VIEWS_EXPORT Textfield : public View,
   // case where the text changes on the second mousedown of a double-click.
   // This is harmless if there is not a currently double-clicked word.
   void OffsetDoubleClickWord(int offset);
+
+  // Returns true if the drop cursor is for insertion at a target text location,
+  // the standard behavior/style. Returns false when drop will do something
+  // else (like replace the text entirely).
+  virtual bool IsDropCursorForInsertion() const;
+
+  // Returns true if the placeholder text should be shown. Subclasses may
+  // override this to customize when the placeholder text is shown.
+  virtual bool ShouldShowPlaceholderText() const;
 
  private:
   friend class TextfieldTestApi;
@@ -480,6 +492,13 @@ class VIEWS_EXPORT Textfield : public View,
   // Callback for the cursor blink timer. Called every
   // Textfield::GetCaretBlinkMs().
   void OnCursorBlinkTimerFired();
+
+  // Like RequestFocus, but explicitly states that the focus is triggered by
+  // a pointer event.
+  void RequestFocusWithPointer(ui::EventPointerType pointer_type);
+
+  // Returns the color to use for the FocusRing, if one is present.
+  SkColor GetFocusRingColor() const;
 
   // The text model.
   std::unique_ptr<TextfieldModel> model_;
@@ -601,6 +620,13 @@ class VIEWS_EXPORT Textfield : public View,
   // Used to track active password input sessions.
   std::unique_ptr<ui::ScopedPasswordInputEnabler> password_input_enabler_;
 #endif  // defined(OS_MACOSX)
+
+  // How this textfield was focused.
+  ui::TextInputClient::FocusReason focus_reason_ =
+      ui::TextInputClient::FOCUS_REASON_NONE;
+
+  // The focus ring for this TextField.
+  std::unique_ptr<FocusRing> focus_ring_;
 
   // Used to bind callback functions to this object.
   base::WeakPtrFactory<Textfield> weak_ptr_factory_;

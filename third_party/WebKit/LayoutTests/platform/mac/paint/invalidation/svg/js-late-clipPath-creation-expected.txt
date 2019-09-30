@@ -20,36 +20,14 @@
         {
           "object": "LayoutSVGContainer g id='content'",
           "rect": [16, 37, 784, 178],
-          "reason": "disappeared"
+          "reason": "chunk disappeared"
         },
         {
           "object": "LayoutSVGText text",
           "rect": [16, 37, 318, 178],
-          "reason": "appeared"
+          "reason": "chunk appeared"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutSVGContainer g id='content'",
-      "reason": "geometry"
-    },
-    {
-      "object": "LayoutSVGText text",
-      "reason": "full"
-    },
-    {
-      "object": "RootInlineBox",
-      "reason": "full"
-    },
-    {
-      "object": "LayoutSVGInlineText #text",
-      "reason": "geometry"
-    },
-    {
-      "object": "InlineTextBox 'Clipped. INVISIBLE.'",
-      "reason": "geometry"
     }
   ]
 }

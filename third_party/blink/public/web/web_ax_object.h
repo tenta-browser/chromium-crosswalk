@@ -44,7 +44,6 @@ class SkMatrix44;
 namespace blink {
 
 class AXObject;
-class ScopedAXObjectCache;
 class WebAXObject;
 class WebNode;
 class WebDocument;
@@ -65,20 +64,6 @@ class BLINK_EXPORT WebAXSparseAttributeClient {
   virtual void AddObjectAttribute(WebAXObjectAttribute, const WebAXObject&) = 0;
   virtual void AddObjectVectorAttribute(WebAXObjectVectorAttribute,
                                         const WebVector<WebAXObject>&) = 0;
-};
-
-// An instance of this class, while kept alive, indicates that accessibility
-// should be temporarily enabled. If accessibility was enabled globally
-// (WebSettings::setAccessibilityEnabled), this will have no effect.
-class WebScopedAXContext {
- public:
-  BLINK_EXPORT WebScopedAXContext(WebDocument& root_document);
-  BLINK_EXPORT ~WebScopedAXContext();
-
-  BLINK_EXPORT WebAXObject Root() const;
-
- private:
-  std::unique_ptr<ScopedAXObjectCache> private_;
 };
 
 // A container for passing around a reference to AXObject.
@@ -131,6 +116,7 @@ class WebAXObject {
   BLINK_EXPORT void GetSparseAXAttributes(WebAXSparseAttributeClient&) const;
 
   BLINK_EXPORT bool IsAnchor() const;
+  BLINK_EXPORT bool IsAutofillAvailable() const;
   BLINK_EXPORT WebAXCheckedState CheckedState() const;
   BLINK_EXPORT bool IsCheckable() const;
   BLINK_EXPORT bool IsClickable() const;
@@ -163,7 +149,7 @@ class WebAXObject {
   BLINK_EXPORT WebAXObject AriaActiveDescendant() const;
   BLINK_EXPORT WebString AriaAutoComplete() const;
   BLINK_EXPORT WebAXAriaCurrentState AriaCurrentState() const;
-  BLINK_EXPORT bool AriaHasPopup() const;
+  BLINK_EXPORT WebAXHasPopup HasPopup() const;
   BLINK_EXPORT bool IsEditableRoot() const;
   BLINK_EXPORT bool IsEditable() const;
   BLINK_EXPORT bool IsMultiline() const;
@@ -190,6 +176,7 @@ class WebAXObject {
   BLINK_EXPORT WebAXRole Role() const;
   BLINK_EXPORT WebString StringValue() const;
   BLINK_EXPORT WebAXTextDirection GetTextDirection() const;
+  BLINK_EXPORT WebAXTextPosition GetTextPosition() const;
   BLINK_EXPORT WebAXTextStyle TextStyle() const;
   BLINK_EXPORT WebURL Url() const;
 
@@ -264,10 +251,12 @@ class WebAXObject {
 
   // Actions. Return true if handled.
   BLINK_EXPORT WebAXDefaultActionVerb Action() const;
+  BLINK_EXPORT bool ClearAccessibilityFocus() const;
   BLINK_EXPORT bool Click() const;
   BLINK_EXPORT bool Decrement() const;
   BLINK_EXPORT bool Increment() const;
   BLINK_EXPORT bool Focus() const;
+  BLINK_EXPORT bool SetAccessibilityFocus() const;
   BLINK_EXPORT bool SetSelected(bool) const;
   BLINK_EXPORT bool SetSelection(const WebAXObject& anchor_object,
                                  int anchor_offset,
@@ -295,9 +284,6 @@ class WebAXObject {
   BLINK_EXPORT unsigned RowCount() const;
   BLINK_EXPORT WebAXObject CellForColumnAndRow(unsigned column,
                                                unsigned row) const;
-  BLINK_EXPORT WebAXObject HeaderContainerObject() const;
-  BLINK_EXPORT WebAXObject RowAtIndex(unsigned row_index) const;
-  BLINK_EXPORT WebAXObject ColumnAtIndex(unsigned column_index) const;
   BLINK_EXPORT void RowHeaders(WebVector<WebAXObject>&) const;
   BLINK_EXPORT void ColumnHeaders(WebVector<WebAXObject>&) const;
 

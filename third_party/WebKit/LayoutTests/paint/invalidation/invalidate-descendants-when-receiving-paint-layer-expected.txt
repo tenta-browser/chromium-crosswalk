@@ -18,19 +18,14 @@
       "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
         {
-          "object": "LayoutBlockFlow (relative positioned) DIV",
+          "object": "LayoutBlockFlow DIV id='child'",
           "rect": [9, 9, 100, 100],
           "reason": "disappeared"
         },
         {
           "object": "LayoutBlockFlow DIV id='target'",
           "rect": [9, 9, 100, 100],
-          "reason": "appeared"
-        },
-        {
-          "object": "LayoutBlockFlow DIV id='target'",
-          "rect": [9, 9, 50, 50],
-          "reason": "appeared"
+          "reason": "chunk appeared"
         }
       ]
     },
@@ -39,16 +34,6 @@
       "position": [8, 8],
       "contentsOpaque": true,
       "drawsContent": false
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutBlockFlow DIV id='target'",
-      "reason": "style change"
-    },
-    {
-      "object": "LayoutBlockFlow DIV id='child'",
-      "reason": "style change"
     }
   ]
 }

@@ -28,7 +28,7 @@ BluetoothAdapter::ServiceOptions::~ServiceOptions() = default;
     !defined(OS_WIN) && !defined(OS_LINUX)
 // static
 base::WeakPtr<BluetoothAdapter> BluetoothAdapter::CreateAdapter(
-    const InitCallback& init_callback) {
+    InitCallback init_callback) {
   return base::WeakPtr<BluetoothAdapter>();
 }
 #endif  // !defined(OS_CHROMEOS) && !defined(OS_WIN) && !defined(OS_MACOSX)
@@ -56,6 +56,10 @@ void BluetoothAdapter::RemoveObserver(BluetoothAdapter::Observer* observer) {
 bool BluetoothAdapter::HasObserver(BluetoothAdapter::Observer* observer) {
   DCHECK(observer);
   return observers_.HasObserver(observer);
+}
+
+bool BluetoothAdapter::CanPower() const {
+  return IsPresent();
 }
 
 void BluetoothAdapter::SetPowered(bool powered,
@@ -193,6 +197,11 @@ BluetoothDevice::PairingDelegate* BluetoothAdapter::DefaultPairingDelegate() {
   return pairing_delegates_.front().first;
 }
 
+std::vector<BluetoothAdvertisement*>
+BluetoothAdapter::GetPendingAdvertisementsForTesting() const {
+  return {};
+}
+
 void BluetoothAdapter::NotifyAdapterPoweredChanged(bool powered) {
   for (auto& observer : observers_)
     observer.AdapterPoweredChanged(this, powered);
@@ -321,13 +330,12 @@ BluetoothAdapter::~BluetoothAdapter() {
   }
 }
 
-void BluetoothAdapter::DidChangePoweredState() {
+void BluetoothAdapter::RunPendingPowerCallbacks() {
   if (set_powered_callbacks_) {
     // Move into a local variable to clear out both callbacks at the end of the
     // scope and to allow scheduling another SetPowered() call in either of the
     // callbacks.
-    std::unique_ptr<SetPoweredCallbacks> callbacks =
-        std::move(set_powered_callbacks_);
+    auto callbacks = std::move(set_powered_callbacks_);
     callbacks->powered == IsPowered() ? std::move(callbacks->callback).Run()
                                       : callbacks->error_callback.Run();
   }

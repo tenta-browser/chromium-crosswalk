@@ -9,7 +9,7 @@
 #include "base/bind.h"
 #include "components/autofill/core/browser/personal_data_manager.h"
 #include "components/autofill/core/browser/webdata/autofill_webdata_service.h"
-#include "components/autofill/core/common/autofill_pref_names.h"
+#include "components/autofill/core/common/autofill_prefs.h"
 #include "components/prefs/pref_service.h"
 #include "components/sync/driver/sync_client.h"
 #include "components/sync/driver/sync_service.h"
@@ -37,10 +37,6 @@ AutofillWalletDataTypeController::AutofillWalletDataTypeController(
   pref_registrar_.Init(sync_client_->GetPrefService());
   pref_registrar_.Add(
       autofill::prefs::kAutofillWalletImportEnabled,
-      base::Bind(&AutofillWalletDataTypeController::OnUserPrefChanged,
-                 base::AsWeakPtr(this)));
-  pref_registrar_.Add(
-      autofill::prefs::kAutofillCreditCardEnabled,
       base::Bind(&AutofillWalletDataTypeController::OnUserPrefChanged,
                  base::AsWeakPtr(this)));
 }
@@ -121,11 +117,9 @@ void AutofillWalletDataTypeController::OnUserPrefChanged() {
 bool AutofillWalletDataTypeController::IsEnabled() {
   DCHECK(CalledOnValidThread());
 
-  // Require the user-visible pref to be enabled to sync Wallet data/metadata,
-  // and also check that Autofill for credit cards is not disabled by policy.
-  PrefService* ps = sync_client_->GetPrefService();
-  return ps->GetBoolean(autofill::prefs::kAutofillWalletImportEnabled) &&
-         ps->GetBoolean(autofill::prefs::kAutofillCreditCardEnabled);
+  // Require the user-visible pref to be enabled to sync Wallet data/metadata.
+  return autofill::prefs::IsPaymentsIntegrationEnabled(
+      sync_client_->GetPrefService());
 }
 void AutofillWalletDataTypeController::DisableForPolicy() {
   if (state() != NOT_RUNNING && state() != STOPPING) {

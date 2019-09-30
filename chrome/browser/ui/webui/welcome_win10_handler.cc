@@ -70,8 +70,8 @@ WelcomeWin10Handler::~WelcomeWin10Handler() {
   histogram_suffix += pin_instructions_shown ? "Combined" : "Default";
 
   // Closing the page. Record whether the instructions were useful.
-  (new shell_integration::DefaultBrowserWorker(
-       base::Bind(&RecordDefaultBrowserResult, histogram_suffix)))
+  base::MakeRefCounted<shell_integration::DefaultBrowserWorker>(
+      base::Bind(&RecordDefaultBrowserResult, histogram_suffix))
       ->StartCheckIsDefault();
 
   if (pin_instructions_shown) {
@@ -97,6 +97,10 @@ void WelcomeWin10Handler::RegisterMessages() {
       "getPinnedToTaskbarState",
       base::BindRepeating(&WelcomeWin10Handler::HandleGetPinnedToTaskbarState,
                           base::Unretained(this)));
+}
+
+void WelcomeWin10Handler::OnJavascriptDisallowed() {
+  pinned_state_callback_id_.clear();
 }
 
 void WelcomeWin10Handler::HandleGetPinnedToTaskbarState(
@@ -130,8 +134,8 @@ void WelcomeWin10Handler::HandleSetDefaultBrowser(const base::ListValue* args) {
   base::RecordAction(
       base::UserMetricsAction("Win10WelcomePage_SetAsDefaultBrowser"));
   // The worker owns itself.
-  (new shell_integration::DefaultBrowserWorker(
-       shell_integration::DefaultWebClientWorkerCallback()))
+  base::MakeRefCounted<shell_integration::DefaultBrowserWorker>(
+      shell_integration::DefaultWebClientWorkerCallback())
       ->StartSetAsDefault();
 }
 

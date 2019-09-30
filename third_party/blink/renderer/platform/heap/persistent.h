@@ -5,7 +5,9 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_PLATFORM_HEAP_PERSISTENT_H_
 #define THIRD_PARTY_BLINK_RENDERER_PLATFORM_HEAP_PERSISTENT_H_
 
+#include "base/bind.h"
 #include "third_party/blink/renderer/platform/heap/heap.h"
+#include "third_party/blink/renderer/platform/heap/heap_compact.h"
 #include "third_party/blink/renderer/platform/heap/member.h"
 #include "third_party/blink/renderer/platform/heap/persistent_node.h"
 #include "third_party/blink/renderer/platform/heap/visitor.h"
@@ -114,6 +116,9 @@ class PersistentBase {
     return *raw_;
   }
   explicit operator bool() const { return raw_; }
+  // TODO(https://crbug.com/653394): Consider returning a thread-safe best
+  // guess of validity.
+  bool MaybeValid() const { return true; }
   operator T*() const {
     CheckPointer();
     return raw_;
@@ -175,6 +180,22 @@ class PersistentBase {
     return this;
   }
 
+  NO_SANITIZE_ADDRESS
+  void ClearWithLockHeld() {
+    static_assert(
+        crossThreadnessConfiguration == kCrossThreadPersistentConfiguration,
+        "This Persistent does not require the cross-thread lock.");
+#if DCHECK_IS_ON()
+    ProcessHeap::CrossThreadPersistentMutex().AssertAcquired();
+#endif
+    raw_ = nullptr;
+    CrossThreadPersistentRegion& region =
+        weaknessConfiguration == kWeakPersistentConfiguration
+            ? ProcessHeap::GetCrossThreadWeakPersistentRegion()
+            : ProcessHeap::GetCrossThreadPersistentRegion();
+    region.FreePersistentNode(persistent_node_);
+  }
+
  protected:
   NO_SANITIZE_ADDRESS
   T* AtomicGet() {
@@ -186,8 +207,7 @@ class PersistentBase {
   NO_SANITIZE_ADDRESS
   void Assign(T* ptr) {
     if (crossThreadnessConfiguration == kCrossThreadPersistentConfiguration) {
-      RecursiveMutexLocker persistent_lock(
-          ProcessHeap::CrossThreadPersistentMutex());
+      MutexLocker persistent_lock(ProcessHeap::CrossThreadPersistentMutex());
       raw_ = ptr;
     } else {
       raw_ = ptr;
@@ -227,6 +247,7 @@ class PersistentBase {
           weaknessConfiguration == kWeakPersistentConfiguration
               ? ProcessHeap::GetCrossThreadWeakPersistentRegion()
               : ProcessHeap::GetCrossThreadPersistentRegion();
+      MutexLocker lock(ProcessHeap::CrossThreadPersistentMutex());
       region.AllocatePersistentNode(persistent_node_, this, trace_callback);
       return;
     }
@@ -250,6 +271,7 @@ class PersistentBase {
             weaknessConfiguration == kWeakPersistentConfiguration
                 ? ProcessHeap::GetCrossThreadWeakPersistentRegion()
                 : ProcessHeap::GetCrossThreadPersistentRegion();
+        MutexLocker lock(ProcessHeap::CrossThreadPersistentMutex());
         region.FreePersistentNode(persistent_node_);
       }
       return;
@@ -312,7 +334,29 @@ class PersistentBase {
     Base* persistent = reinterpret_cast<Base*>(persistent_pointer);
     T* object = persistent->Get();
     if (object && !ObjectAliveTrait<T>::IsHeapObjectAlive(object))
-      persistent->Clear();
+      ClearWeakPersistent(persistent);
+  }
+
+  static void ClearWeakPersistent(
+      PersistentBase<std::remove_const_t<T>,
+                     kWeakPersistentConfiguration,
+                     kCrossThreadPersistentConfiguration>* persistent) {
+#if DCHECK_IS_ON()
+    ProcessHeap::CrossThreadPersistentMutex().AssertAcquired();
+#endif
+    persistent->ClearWithLockHeld();
+  }
+
+  static void ClearWeakPersistent(
+      PersistentBase<std::remove_const_t<T>,
+                     kWeakPersistentConfiguration,
+                     kSingleThreadPersistentConfiguration>* persistent) {
+    persistent->Clear();
+  }
+
+  template <typename BadPersistent>
+  static void ClearWeakPersistent(BadPersistent* non_weak_persistent) {
+    NOTREACHED();
   }
 
   // m_raw is accessed most, so put it at the first field.
@@ -581,6 +625,13 @@ class PersistentHeapCollectionBase : public Collection {
 
   ~PersistentHeapCollectionBase() { Uninitialize(); }
 
+  // Override so we don't copy persistent_node_.
+  PersistentHeapCollectionBase& operator=(
+      const PersistentHeapCollectionBase& other) {
+    Collection::operator=(other);
+    return *this;
+  }
+
   // See PersistentBase::registerAsStaticReference() comment.
   PersistentHeapCollectionBase* RegisterAsStaticReference() {
     if (persistent_node_) {
@@ -611,6 +662,9 @@ class PersistentHeapCollectionBase : public Collection {
 
   NO_SANITIZE_ADDRESS
   void Initialize() {
+    CHECK(IsMainThread()) << "Persistent heap collections are disabled on "
+                             "non-main threads. Put the heap collection in a "
+                             "Persistent instead.";
     // FIXME: Derive affinity based on the collection.
     ThreadState* state = ThreadState::Current();
     DCHECK(state->CheckThread());
@@ -633,6 +687,11 @@ class PersistentHeapCollectionBase : public Collection {
 #if DCHECK_IS_ON()
     DCHECK_EQ(state_, state);
 #endif
+    HeapCompact* compactor = state->Heap().Compaction();
+    if (compactor->IsCompacting()) {
+      compactor->RemoveSlot(
+          reinterpret_cast<MovableReference*>(this->GetBufferSlot()));
+    }
     state->FreePersistentNode(state->GetPersistentRegion(), persistent_node_);
     persistent_node_ = nullptr;
   }
@@ -669,7 +728,7 @@ class PersistentHeapLinkedHashSet
           HeapLinkedHashSet<ValueArg, HashArg, TraitsArg>> {};
 
 template <typename ValueArg,
-          size_t inlineCapacity = 0,
+          wtf_size_t inlineCapacity = 0,
           typename HashArg = typename DefaultHash<ValueArg>::Hash>
 class PersistentHeapListHashSet
     : public PersistentHeapCollectionBase<
@@ -682,13 +741,13 @@ class PersistentHeapHashCountedSet
     : public PersistentHeapCollectionBase<
           HeapHashCountedSet<ValueArg, HashFunctions, Traits>> {};
 
-template <typename T, size_t inlineCapacity = 0>
+template <typename T, wtf_size_t inlineCapacity = 0>
 class PersistentHeapVector
     : public PersistentHeapCollectionBase<HeapVector<T, inlineCapacity>> {
  public:
   PersistentHeapVector() { InitializeUnusedSlots(); }
 
-  explicit PersistentHeapVector(size_t size)
+  explicit PersistentHeapVector(wtf_size_t size)
       : PersistentHeapCollectionBase<HeapVector<T, inlineCapacity>>(size) {
     InitializeUnusedSlots();
   }
@@ -698,7 +757,7 @@ class PersistentHeapVector
     InitializeUnusedSlots();
   }
 
-  template <size_t otherCapacity>
+  template <wtf_size_t otherCapacity>
   PersistentHeapVector(const HeapVector<T, otherCapacity>& other)
       : PersistentHeapCollectionBase<HeapVector<T, inlineCapacity>>(other) {
     InitializeUnusedSlots();
@@ -709,19 +768,19 @@ class PersistentHeapVector
     // The PersistentHeapVector is allocated off heap along with its
     // inline buffer (if any.) Maintain the invariant that unused
     // slots are cleared for the off-heap inline buffer also.
-    size_t unused_slots = this->capacity() - this->size();
+    wtf_size_t unused_slots = this->capacity() - this->size();
     if (unused_slots)
       this->ClearUnusedSlots(this->end(), this->end() + unused_slots);
   }
 };
 
-template <typename T, size_t inlineCapacity = 0>
+template <typename T, wtf_size_t inlineCapacity = 0>
 class PersistentHeapDeque
     : public PersistentHeapCollectionBase<HeapDeque<T, inlineCapacity>> {
  public:
   PersistentHeapDeque() = default;
 
-  template <size_t otherCapacity>
+  template <wtf_size_t otherCapacity>
   PersistentHeapDeque(const HeapDeque<T, otherCapacity>& other)
       : PersistentHeapCollectionBase<HeapDeque<T, inlineCapacity>>(other) {}
 };
@@ -842,8 +901,6 @@ template <typename T>
 struct BindUnwrapTraits<blink::CrossThreadWeakPersistent<T>> {
   static blink::CrossThreadPersistent<T> Unwrap(
       const blink::CrossThreadWeakPersistent<T>& wrapped) {
-    WTF::RecursiveMutexLocker persistent_lock(
-        blink::ProcessHeap::CrossThreadPersistentMutex());
     return blink::CrossThreadPersistent<T>(wrapped.Get());
   }
 };

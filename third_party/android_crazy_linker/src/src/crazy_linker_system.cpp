@@ -18,7 +18,42 @@
 
 // Note: unit-testing support files are in crazy_linker_files_mock.cpp
 
-#ifndef UNIT_TESTS
+namespace crazy {
+
+String MakeDirectoryPath(const char* parent) {
+  return MakeDirectoryPath(parent, ::strlen(parent));
+}
+
+String MakeDirectoryPath(const char* parent, size_t parent_len) {
+  if (parent_len == 0) {
+    // Special case for empty inputs.
+    return String("./");
+  }
+  String result(parent);
+  if (parent_len > 0 && parent[parent_len - 1] != '/') {
+    result += '/';
+  }
+  return result;
+}
+
+String MakeAbsolutePathFrom(const char* path) {
+  return MakeAbsolutePathFrom(path, ::strlen(path));
+}
+
+String MakeAbsolutePathFrom(const char* path, size_t path_len) {
+  if (path[0] == '/') {
+    return String(path, path_len);
+  } else {
+    String cur_dir = GetCurrentDirectory();
+    String result = MakeDirectoryPath(cur_dir.c_str(), cur_dir.size());
+    result.Append(path, path_len);
+    return result;
+  }
+}
+
+}  // namespace crazy
+
+#ifndef UNIT_TEST
 
 namespace crazy {
 
@@ -106,6 +141,8 @@ bool PathIsFile(const char* path) {
 
 }  // namespace crazy
 
+#if !defined(CRAZY_LINKER_ENABLE_FUZZING)
+
 // Custom implementation of new and malloc, this prevents dragging
 // the libc++ implementation, which drags exception-related machine
 // code that is not needed here. This helps reduce the size of the
@@ -180,4 +217,6 @@ void operator delete[](void* ptr) {
   ::free(ptr);
 }
 
-#endif  // !UNIT_TESTS
+#endif  // !CRAZY_LINKER_ENABLE_FUZZING
+
+#endif  // !UNIT_TEST

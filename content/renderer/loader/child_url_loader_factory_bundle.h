@@ -29,7 +29,8 @@ class CONTENT_EXPORT ChildURLLoaderFactoryBundleInfo
       network::mojom::URLLoaderFactoryPtrInfo default_factory_info,
       std::map<std::string, network::mojom::URLLoaderFactoryPtrInfo>
           factories_info,
-      PossiblyAssociatedURLLoaderFactoryPtrInfo direct_network_factory_info);
+      PossiblyAssociatedURLLoaderFactoryPtrInfo direct_network_factory_info,
+      bool bypass_redirect_checks);
   ~ChildURLLoaderFactoryBundleInfo() override;
 
   PossiblyAssociatedURLLoaderFactoryPtrInfo& direct_network_factory_info() {
@@ -47,8 +48,8 @@ class CONTENT_EXPORT ChildURLLoaderFactoryBundleInfo
 
 // This class extends URLLoaderFactoryBundle to support a direct network loader
 // factory, which bypasses custom overrides such as appcache or service worker.
-// Besides, it also supports using callbacks to lazily initialize the blob and
-// the direct network loader factories.
+// Besides, it also supports using callbacks to lazily initialize the direct
+// network loader factory.
 class CONTENT_EXPORT ChildURLLoaderFactoryBundle
     : public URLLoaderFactoryBundle {
  public:
@@ -66,8 +67,7 @@ class CONTENT_EXPORT ChildURLLoaderFactoryBundle
       std::unique_ptr<ChildURLLoaderFactoryBundleInfo> info);
 
   ChildURLLoaderFactoryBundle(
-      PossiblyAssociatedFactoryGetterCallback direct_network_factory_getter,
-      FactoryGetterCallback default_blob_factory_getter);
+      PossiblyAssociatedFactoryGetterCallback direct_network_factory_getter);
 
   // URLLoaderFactoryBundle overrides.
   network::mojom::URLLoaderFactory* GetFactoryForURL(const GURL& url) override;
@@ -83,6 +83,11 @@ class CONTENT_EXPORT ChildURLLoaderFactoryBundle
 
   std::unique_ptr<network::SharedURLLoaderFactoryInfo> Clone() override;
 
+  // Returns an info that omits this bundle's default factory, if any. This is
+  // useful to make a clone that bypasses AppCache, for example.
+  virtual std::unique_ptr<network::SharedURLLoaderFactoryInfo>
+  CloneWithoutDefaultFactory();
+
   std::unique_ptr<ChildURLLoaderFactoryBundleInfo> PassInterface();
 
   void Update(std::unique_ptr<ChildURLLoaderFactoryBundleInfo> info,
@@ -95,15 +100,14 @@ class CONTENT_EXPORT ChildURLLoaderFactoryBundle
   ~ChildURLLoaderFactoryBundle() override;
 
  private:
-  void InitDefaultBlobFactoryIfNecessary();
   void InitDirectNetworkFactoryIfNecessary();
+  std::unique_ptr<network::SharedURLLoaderFactoryInfo> CloneInternal(
+      bool include_default);
 
   PossiblyAssociatedFactoryGetterCallback direct_network_factory_getter_;
   PossiblyAssociatedURLLoaderFactoryPtr direct_network_factory_;
 
   std::map<GURL, mojom::TransferrableURLLoaderPtr> subresource_overrides_;
-
-  FactoryGetterCallback default_blob_factory_getter_;
 };
 
 }  // namespace content

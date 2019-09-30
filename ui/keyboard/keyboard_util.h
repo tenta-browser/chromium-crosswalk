@@ -20,6 +20,7 @@ namespace keyboard {
 struct KeyboardConfig {
   bool auto_complete = true;
   bool auto_correct = true;
+  bool auto_capitalize = true;
   bool handwriting = true;
   bool spell_check = true;
   // It denotes the preferred value, and can be true even if there is no actual
@@ -28,8 +29,10 @@ struct KeyboardConfig {
 
   bool operator==(const keyboard::KeyboardConfig& rhs) const {
     return auto_complete == rhs.auto_complete &&
-           auto_correct == rhs.auto_correct && handwriting == rhs.handwriting &&
-           spell_check == rhs.spell_check && voice_input == rhs.voice_input;
+           auto_correct == rhs.auto_correct &&
+           auto_capitalize == rhs.auto_capitalize &&
+           handwriting == rhs.handwriting && spell_check == rhs.spell_check &&
+           voice_input == rhs.voice_input;
   }
 };
 
@@ -85,6 +88,12 @@ KEYBOARD_EXPORT void SetHotrodKeyboardEnabled(bool enabled);
 // Gets the state of the hotrod onscreen keyboard.
 KEYBOARD_EXPORT bool GetHotrodKeyboardEnabled();
 
+// Sets whether the keyboard is enabled from the shelf.
+KEYBOARD_EXPORT void SetKeyboardEnabledFromShelf(bool enabled);
+
+// Gets whether the keyboard is enabled from the shelf.
+KEYBOARD_EXPORT bool GetKeyboardEnabledFromShelf();
+
 // Sets the state of the touch onscreen keyboard.
 KEYBOARD_EXPORT void SetTouchKeyboardEnabled(bool enabled);
 
@@ -132,6 +141,15 @@ KEYBOARD_EXPORT bool IsExperimentalInputViewEnabled();
 
 // Returns true if floating virtual keyboard feature is enabled.
 KEYBOARD_EXPORT bool IsFloatingVirtualKeyboardEnabled();
+
+// Returns true if fullscreen handwriting virtual keyboard feature is enabled.
+KEYBOARD_EXPORT bool IsFullscreenHandwritingVirtualKeyboardEnabled();
+
+// Returns true if stylus virtual keyboard feature is enabled.
+KEYBOARD_EXPORT bool IsStylusVirtualKeyboardEnabled();
+
+// Returns true if virtual keyboard md ui feature is enabled.
+KEYBOARD_EXPORT bool IsVirtualKeyboardMdUiEnabled();
 
 // Returns true if gesture typing option is enabled for virtual keyboard.
 KEYBOARD_EXPORT bool IsGestureTypingEnabled();

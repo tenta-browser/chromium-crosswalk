@@ -271,10 +271,11 @@ bool WebDialogView::HandleContextMenu(
 ////////////////////////////////////////////////////////////////////////////////
 // content::WebContentsDelegate implementation:
 
-void WebDialogView::MoveContents(WebContents* source, const gfx::Rect& pos) {
+void WebDialogView::SetContentsBounds(WebContents* source,
+                                      const gfx::Rect& bounds) {
   // The contained web page wishes to resize itself. We let it do this because
   // if it's a dialog we know about, we trust it not to be mean to the user.
-  GetWidget()->SetBounds(pos);
+  GetWidget()->SetBounds(bounds);
 }
 
 // A simplified version of BrowserView::HandleKeyboardEvent().
@@ -307,19 +308,16 @@ content::WebContents* WebDialogView::OpenURLFromTab(
   return WebDialogWebContentsDelegate::OpenURLFromTab(source, params);
 }
 
-void WebDialogView::AddNewContents(content::WebContents* source,
-                                   content::WebContents* new_contents,
-                                   WindowOpenDisposition disposition,
-                                   const gfx::Rect& initial_rect,
-                                   bool user_gesture,
-                                   bool* was_blocked) {
-  if (delegate_ && delegate_->HandleAddNewContents(
-          source, new_contents, disposition, initial_rect, user_gesture)) {
-    return;
-  }
-  WebDialogWebContentsDelegate::AddNewContents(
-      source, new_contents, disposition, initial_rect, user_gesture,
-      was_blocked);
+void WebDialogView::AddNewContents(
+    content::WebContents* source,
+    std::unique_ptr<content::WebContents> new_contents,
+    WindowOpenDisposition disposition,
+    const gfx::Rect& initial_rect,
+    bool user_gesture,
+    bool* was_blocked) {
+  WebDialogWebContentsDelegate::AddNewContents(source, std::move(new_contents),
+                                               disposition, initial_rect,
+                                               user_gesture, was_blocked);
 }
 
 void WebDialogView::LoadingStateChanged(content::WebContents* source,

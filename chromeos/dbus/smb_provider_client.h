@@ -40,6 +40,12 @@ class CHROMEOS_EXPORT SmbProviderClient
   using GetDeleteListCallback =
       base::OnceCallback<void(smbprovider::ErrorType error,
                               const smbprovider::DeleteListProto& delete_list)>;
+  using SetupKerberosCallback = base::OnceCallback<void(bool success)>;
+  using ParseNetBiosPacketCallback =
+      base::OnceCallback<void(const std::vector<std::string>&)>;
+  using StartCopyCallback =
+      base::OnceCallback<void(smbprovider::ErrorType error,
+                              int32_t copy_token)>;
 
   ~SmbProviderClient() override;
 
@@ -48,15 +54,22 @@ class CHROMEOS_EXPORT SmbProviderClient
   static SmbProviderClient* Create();
 
   // Calls Mount. It runs OpenDirectory() on |share_path| to check that it is a
-  // valid share. |callback| is called after getting (or failing to get) D-BUS
-  // response.
+  // valid share. |workgroup|, |username|, and |password_fd| will be used as
+  // credentials to access the mount. |callback| is called after getting (or
+  // failing to get) D-BUS response.
   virtual void Mount(const base::FilePath& share_path,
+                     const std::string& workgroup,
+                     const std::string& username,
+                     base::ScopedFD password_fd,
                      MountCallback callback) = 0;
 
   // Calls Remount. This attempts to remount the share at |share_path| with its
   // original |mount_id|.
   virtual void Remount(const base::FilePath& share_path,
                        int32_t mount_id,
+                       const std::string& workgroup,
+                       const std::string& username,
+                       base::ScopedFD password_fd,
                        StatusCallback callback) = 0;
 
   // Calls Unmount. This removes the corresponding mount of |mount_id| from
@@ -168,6 +181,36 @@ class CHROMEOS_EXPORT SmbProviderClient
   // no entries if there are no shares found.
   virtual void GetShares(const base::FilePath& server_url,
                          ReadDirectoryCallback callback) = 0;
+
+  // Calls SetupKerberos. This sets up Kerberos for the user |account_id|,
+  // fetching the user's Kerberos files from AuthPolicy. The user must be
+  // ChromAD enrolled.
+  virtual void SetupKerberos(const std::string& account_id,
+                             SetupKerberosCallback callback) = 0;
+
+  // Calls ParseNetBiosPacket. This parses the hostnames from a NetBios packet
+  // |packet| and returns any hostnames described in the packet. Malformed
+  // packets will return no hostnames.
+  virtual void ParseNetBiosPacket(const std::vector<uint8_t>& packet,
+                                  uint16_t transaction_id,
+                                  ParseNetBiosPacketCallback callback) = 0;
+
+  // Calls StartCopy. This starts the copy from |source_path| to |target_path|.
+  // In order to avoid blocking the SmbProvider daemon, this operation performs
+  // one unit of work and returns smbprovider::ERROR_COPY_PENDING along with a
+  // continuation token to |callback| if there is more work to do.
+  virtual void StartCopy(int32_t mount_id,
+                         const base::FilePath& source_path,
+                         const base::FilePath& target_path,
+                         StartCopyCallback callback) = 0;
+
+  // Calls ContinueCopy. This continues the copy corresponding to |copy_token|.
+  // In order to avoid blocking the SmbProvider daemon, this operation performs
+  // one unit of work and returns smbprovider::ERROR_COPY_PENDING if there is
+  // more work to do.
+  virtual void ContinueCopy(int32_t mount_id,
+                            int32_t copy_token,
+                            StatusCallback callback) = 0;
 
  protected:
   // Create() should be used instead.

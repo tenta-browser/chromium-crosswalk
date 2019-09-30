@@ -33,7 +33,8 @@ using GetInfoCallback = SystemInfo::Backend::GetInfoCallback;
 
 // Give the GPU process a few seconds to provide GPU info.
 // Linux Debug builds need more time -- see Issue 796437.
-#if defined(OS_LINUX) && !defined(NDEBUG)
+// Windows builds need more time -- see Issue 873112.
+#if (defined(OS_LINUX) && !defined(NDEBUG)) || defined(OS_WIN)
 const int kGPUInfoWatchdogTimeoutMs = 20000;
 #else
 const int kGPUInfoWatchdogTimeoutMs = 5000;
@@ -82,6 +83,10 @@ class AuxGPUInfoEnumerator : public gpu::GPUInfo::Enumerator {
   void BeginVideoEncodeAcceleratorSupportedProfile() override {}
 
   void EndVideoEncodeAcceleratorSupportedProfile() override {}
+
+  void BeginOverlayCapability() override {}
+
+  void EndOverlayCapability() override {}
 
   void BeginAuxAttributes() override {
     in_aux_attributes_ = true;
@@ -184,7 +189,8 @@ class SystemInfoHandlerGpuObserver : public content::GpuDataManagerObserver {
     // TODO(zmo): CHECK everywhere once https://crbug.com/796386 is fixed.
     gpu::GpuFeatureInfo gpu_feature_info =
         gpu::ComputeGpuFeatureInfoWithHardwareAccelerationDisabled();
-    GpuDataManagerImpl::GetInstance()->UpdateGpuFeatureInfo(gpu_feature_info);
+    GpuDataManagerImpl::GetInstance()->UpdateGpuFeatureInfo(gpu_feature_info,
+                                                            base::nullopt);
     UnregisterAndSendResponse();
 #else
     CHECK(false) << "Gathering system GPU info took more than 5 seconds.";

@@ -31,6 +31,7 @@
 #include "third_party/blink/renderer/platform/heap/handle.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource.h"
 #include "third_party/blink/renderer/platform/timer.h"
+#include "third_party/blink/renderer/platform/wtf/time.h"
 
 namespace blink {
 
@@ -78,7 +79,7 @@ class CORE_EXPORT ImageResource final
 
   void AllClientsAndObserversRemoved() override;
 
-  bool CanReuse(
+  MatchStatus CanReuse(
       const FetchParameters&,
       scoped_refptr<const SecurityOrigin> new_source_origin) const override;
   bool CanUseCacheValidator() const override;
@@ -88,7 +89,7 @@ class CORE_EXPORT ImageResource final
   void ResponseReceived(const ResourceResponse&,
                         std::unique_ptr<WebDataConsumerHandle>) override;
   void AppendData(const char*, size_t) override;
-  void Finish(double finish_time, base::SingleThreadTaskRunner*) override;
+  void Finish(TimeTicks finish_time, base::SingleThreadTaskRunner*) override;
   void FinishAsError(const ResourceError&,
                      base::SingleThreadTaskRunner*) override;
 
@@ -176,7 +177,7 @@ class CORE_EXPORT ImageResource final
   };
   PlaceholderOption placeholder_option_;
 
-  double last_flush_time_ = 0.;
+  TimeTicks last_flush_time_;
 
   bool is_during_finish_as_error_ = false;
 

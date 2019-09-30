@@ -58,6 +58,7 @@
 #include "third_party/blink/renderer/core/inspector/identifiers_factory.h"
 #include "third_party/blink/renderer/core/inspector/inspected_frames.h"
 #include "third_party/blink/renderer/core/inspector/v8_inspector_string.h"
+#include "third_party/blink/renderer/core/loader/document_loader.h"
 #include "third_party/blink/renderer/core/page/page.h"
 #include "third_party/blink/renderer/core/timing/memory_info.h"
 #include "third_party/blink/renderer/core/workers/main_thread_worklet_global_scope.h"
@@ -139,6 +140,12 @@ void MainThreadDebugger::ContextCreated(ScriptState* script_state,
   StringBuilder aux_data_builder;
   aux_data_builder.Append("{\"isDefault\":");
   aux_data_builder.Append(world.IsMainWorld() ? "true" : "false");
+  if (world.IsMainWorld())
+    aux_data_builder.Append(",\"type\":\"default\"");
+  else if (world.IsIsolatedWorld())
+    aux_data_builder.Append(",\"type\":\"isolated\"");
+  else if (world.IsWorkerWorld())
+    aux_data_builder.Append(",\"type\":\"worker\"");
   aux_data_builder.Append(",\"frameId\":\"");
   aux_data_builder.Append(IdentifiersFactory::FrameId(frame));
   aux_data_builder.Append("\"}");
@@ -253,18 +260,22 @@ void MainThreadDebugger::quitMessageLoopOnPause() {
 
 void MainThreadDebugger::muteMetrics(int context_group_id) {
   LocalFrame* frame = WeakIdentifierMap<LocalFrame>::Lookup(context_group_id);
-  if (frame && frame->GetPage()) {
-    frame->GetPage()->GetUseCounter().MuteForInspector();
+  if (!frame)
+    return;
+  if (frame->GetDocument() && frame->GetDocument()->Loader())
+    frame->GetDocument()->Loader()->GetUseCounter().MuteForInspector();
+  if (frame->GetPage())
     frame->GetPage()->GetDeprecation().MuteForInspector();
-  }
 }
 
 void MainThreadDebugger::unmuteMetrics(int context_group_id) {
   LocalFrame* frame = WeakIdentifierMap<LocalFrame>::Lookup(context_group_id);
-  if (frame && frame->GetPage()) {
-    frame->GetPage()->GetUseCounter().UnmuteForInspector();
+  if (!frame)
+    return;
+  if (frame->GetDocument() && frame->GetDocument()->Loader())
+    frame->GetDocument()->Loader()->GetUseCounter().UnmuteForInspector();
+  if (frame->GetPage())
     frame->GetPage()->GetDeprecation().UnmuteForInspector();
-  }
 }
 
 v8::Local<v8::Context> MainThreadDebugger::ensureDefaultContextInGroup(
@@ -331,7 +342,8 @@ v8::MaybeLocal<v8::Value> MainThreadDebugger::memoryInfo(
   ExecutionContext* execution_context = ToExecutionContext(context);
   DCHECK(execution_context);
   DCHECK(execution_context->IsDocument());
-  return ToV8(MemoryInfo::Create(), context->Global(), isolate);
+  return ToV8(MemoryInfo::Create(MemoryInfo::Precision::Bucketized),
+              context->Global(), isolate);
 }
 
 void MainThreadDebugger::installAdditionalCommandLineAPI(
@@ -340,13 +352,16 @@ void MainThreadDebugger::installAdditionalCommandLineAPI(
   ThreadDebugger::installAdditionalCommandLineAPI(context, object);
   CreateFunctionProperty(
       context, object, "$", MainThreadDebugger::QuerySelectorCallback,
-      "function $(selector, [startNode]) { [Command Line API] }");
+      "function $(selector, [startNode]) { [Command Line API] }",
+      v8::SideEffectType::kHasNoSideEffect);
   CreateFunctionProperty(
       context, object, "$$", MainThreadDebugger::QuerySelectorAllCallback,
-      "function $$(selector, [startNode]) { [Command Line API] }");
+      "function $$(selector, [startNode]) { [Command Line API] }",
+      v8::SideEffectType::kHasNoSideEffect);
   CreateFunctionProperty(
       context, object, "$x", MainThreadDebugger::XpathSelectorCallback,
-      "function $x(xpath, [startNode]) { [Command Line API] }");
+      "function $x(xpath, [startNode]) { [Command Line API] }",
+      v8::SideEffectType::kHasNoSideEffect);
 }
 
 static Node* SecondArgumentAsNode(

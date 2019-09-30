@@ -84,12 +84,12 @@ ACTION_TEMPLATE(InvokeCompletionCallback,
 
 }  // namespace
 
-class CastChannelAPITest : public ExtensionApiTest {
+class CastChannelAPITest : public extensions::ExtensionApiTest {
  public:
   CastChannelAPITest() : ip_endpoint_(CreateIPEndPointForTest()) {}
 
   void SetUpCommandLine(base::CommandLine* command_line) override {
-    ExtensionApiTest::SetUpCommandLine(command_line);
+    extensions::ExtensionApiTest::SetUpCommandLine(command_line);
     command_line->AppendSwitchASCII(
         extensions::switches::kWhitelistedExtensionID, kTestExtensionId);
   }
@@ -98,7 +98,7 @@ class CastChannelAPITest : public ExtensionApiTest {
     // Stub out DualMediaSinkService so it does not interfere with the test.
     media_router::DualMediaSinkService::SetInstanceForTest(
         new media_router::NoopDualMediaSinkService());
-    ExtensionApiTest::SetUp();
+    extensions::ExtensionApiTest::SetUp();
   }
 
   void SetUpMockCastSocket() {
@@ -126,7 +126,7 @@ class CastChannelAPITest : public ExtensionApiTest {
       EXPECT_CALL(*mock_cast_socket_, ready_state())
           .WillRepeatedly(Return(ReadyState::OPEN));
       EXPECT_CALL(*mock_cast_socket_->mock_transport(),
-                  SendMessage(A<const CastMessage&>(), _, _))
+                  SendMessage(A<const CastMessage&>(), _))
           .WillOnce(InvokeCompletionCallback<1>(net::OK));
       EXPECT_CALL(*mock_cast_socket_, ready_state())
           .WillOnce(Return(ReadyState::OPEN));
@@ -150,7 +150,7 @@ class CastChannelAPITest : public ExtensionApiTest {
               })));
       EXPECT_CALL(*mock_cast_socket_, ready_state())
           .WillRepeatedly(Return(ReadyState::CLOSED));
-      EXPECT_CALL(*mock_cast_socket_->mock_transport(), SendMessage(_, _, _))
+      EXPECT_CALL(*mock_cast_socket_->mock_transport(), SendMessage(_, _))
           .Times(0);
       EXPECT_CALL(*mock_cast_socket_, Close(_))
           .WillOnce(InvokeCompletionCallback<0>(net::OK));

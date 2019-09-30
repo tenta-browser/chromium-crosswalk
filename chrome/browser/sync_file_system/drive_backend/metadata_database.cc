@@ -20,7 +20,7 @@
 #include "base/strings/string_piece.h"
 #include "base/strings/string_util.h"
 #include "base/task_runner_util.h"
-#include "base/threading/thread_restrictions.h"
+#include "base/threading/scoped_blocking_call.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/sync_file_system/drive_backend/drive_backend_constants.h"
 #include "chrome/browser/sync_file_system/drive_backend/drive_backend_util.h"
@@ -36,6 +36,7 @@
 #include "google_apis/drive/drive_api_parser.h"
 #include "storage/common/fileapi/file_system_util.h"
 #include "third_party/leveldatabase/env_chromium.h"
+#include "third_party/leveldatabase/leveldb_chrome.h"
 #include "third_party/leveldatabase/src/include/leveldb/db.h"
 #include "third_party/leveldatabase/src/include/leveldb/status.h"
 #include "third_party/leveldatabase/src/include/leveldb/write_batch.h"
@@ -207,7 +208,7 @@ SyncStatusCode OpenDatabase(const base::FilePath& path,
                             leveldb::Env* env_override,
                             std::unique_ptr<LevelDBWrapper>* db_out,
                             bool* created) {
-  base::AssertBlockingAllowed();
+  base::ScopedBlockingCall scoped_blocking_call(base::BlockingType::MAY_BLOCK);
   DCHECK(db_out);
   DCHECK(created);
   DCHECK(path.IsAbsolute());
@@ -236,7 +237,7 @@ SyncStatusCode OpenDatabase(const base::FilePath& path,
 
 SyncStatusCode MigrateDatabaseIfNeeded(LevelDBWrapper* db) {
   // See metadata_database_index.cc for the database schema.
-  base::AssertBlockingAllowed();
+  base::ScopedBlockingCall scoped_blocking_call(base::BlockingType::MAY_BLOCK);
   DCHECK(db);
   std::string value;
   leveldb::Status status = db->Get(kDatabaseVersionKey, &value);
@@ -583,9 +584,11 @@ void MetadataDatabase::ClearDatabase(
   DCHECK(metadata_database);
   base::FilePath database_path = metadata_database->database_path_;
   DCHECK(!database_path.empty());
+  leveldb::Options options = leveldb_env::Options();
+  if (metadata_database->env_override_)
+    options.env = metadata_database->env_override_;
   metadata_database.reset();
-
-  base::DeleteFile(database_path, true /* recursive */);
+  leveldb_chrome::DeleteDB(database_path, options);
 }
 
 int64_t MetadataDatabase::GetLargestFetchedChangeID() const {

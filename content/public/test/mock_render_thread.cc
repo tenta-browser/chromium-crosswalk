@@ -72,6 +72,13 @@ class MockRenderMessageFilterImpl : public mojom::RenderMessageFilter {
     NOTREACHED();
   }
 
+  void FetchCachedCode(const GURL& url,
+                       FetchCachedCodeCallback callback) override {
+    NOTREACHED();
+  }
+
+  void ClearCodeCacheEntry(const GURL& url) override { NOTREACHED(); }
+
   void DidGenerateCacheableMetadataInCacheStorage(
       const GURL& url,
       base::Time expected_response_time,
@@ -213,10 +220,6 @@ MockRenderThread::HostAllocateSharedMemoryBuffer(size_t buffer_size) {
   return std::unique_ptr<base::SharedMemory>(shared_buf.release());
 }
 
-viz::SharedBitmapManager* MockRenderThread::GetSharedBitmapManager() {
-  return &shared_bitmap_manager_;
-}
-
 void MockRenderThread::RegisterExtension(v8::Extension* extension) {
   blink::WebScriptController::RegisterExtension(extension);
 }
@@ -251,6 +254,10 @@ int32_t MockRenderThread::GetClientId() {
 
 void MockRenderThread::SetRendererProcessType(
     blink::scheduler::RendererProcessType type) {}
+
+blink::WebString MockRenderThread::GetUserAgent() const {
+  return blink::WebString();
+}
 
 #if defined(OS_WIN)
 void MockRenderThread::PreCacheFont(const LOGFONT& log_font) {
@@ -370,10 +377,7 @@ void MockRenderThread::OnCreateWindow(
   frame_routing_id_to_initial_interface_provider_requests_.emplace(
       reply->main_frame_route_id,
       mojo::MakeRequest(&reply->main_frame_interface_provider));
-  // TODO(avi): Widget routing IDs should be distinct from the view routing IDs,
-  // once RenderWidgetHost is distilled from RenderViewHostImpl.
-  // See: https://crbug.com/545684.
-  reply->main_frame_widget_route_id = reply->route_id;
+  reply->main_frame_widget_route_id = GetNextRoutingID();
   reply->cloned_session_storage_namespace_id = "";
 }
 

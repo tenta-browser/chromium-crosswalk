@@ -25,7 +25,7 @@
         {
           "object": "InlineTextBox 'right-aligned text'",
           "rect": [89, 86, 111, 18],
-          "reason": "appeared"
+          "reason": "chunk appeared"
         },
         {
           "object": "LayoutSVGViewportContainer svg id='inner'",
@@ -35,7 +35,7 @@
         {
           "object": "InlineTextBox 'right-aligned text'",
           "rect": [0, 86, 100, 18],
-          "reason": "disappeared"
+          "reason": "chunk disappeared"
         },
         {
           "object": "LayoutSVGContainer use",
@@ -68,40 +68,6 @@
           "reason": "full"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutSVGViewportContainer svg id='inner'",
-      "reason": "full"
-    },
-    {
-      "object": "LayoutSVGRect rect",
-      "reason": "full"
-    },
-    {
-      "object": "LayoutSVGRect rect",
-      "reason": "full"
-    },
-    {
-      "object": "LayoutSVGText text",
-      "reason": "full"
-    },
-    {
-      "object": "RootInlineBox",
-      "reason": "full"
-    },
-    {
-      "object": "LayoutSVGInlineText #text",
-      "reason": "geometry"
-    },
-    {
-      "object": "InlineTextBox 'right-aligned text'",
-      "reason": "geometry"
-    },
-    {
-      "object": "LayoutSVGContainer use",
-      "reason": "full"
     }
   ]
 }

@@ -6,8 +6,6 @@
 
 #include "content/common/accessibility_messages.h"
 #include "content/common/frame_messages.h"
-#include "content/common/input/sync_compositor_messages.h"
-#include "content/common/input_messages.h"
 #include "content/common/view_messages.h"
 #include "content/public/common/content_client.h"
 
@@ -18,10 +16,6 @@ bool SwappedOutMessages::CanSendWhileSwappedOut(const IPC::Message* msg) {
   // important (e.g., ACKs) for keeping the browser and renderer state
   // consistent in case we later return to the same renderer.
   switch (msg->type()) {
-    // Handled by RenderWidgetHost.
-    case InputHostMsg_HandleInputEvent_ACK::ID:
-    case SyncCompositorHostMsg_SetNeedsBeginFrames::ID:
-    case ViewHostMsg_ResizeOrRepaint_ACK::ID:
     // Handled by RenderViewHost.
     case FrameHostMsg_RenderProcessGone::ID:
     case ViewHostMsg_ClosePage_ACK::ID:
@@ -61,9 +55,9 @@ bool SwappedOutMessages::CanHandleWhileSwappedOut(
     // We allow closing even if we are in the process of swapping out.
     case ViewHostMsg_Close::ID:
     // Sends an ACK.
-    case ViewHostMsg_RequestMove::ID:
+    case ViewHostMsg_RequestSetBounds::ID:
     // Sends an ACK.
-    case AccessibilityHostMsg_Events::ID:
+    case AccessibilityHostMsg_EventBundle::ID:
       return true;
     default:
       break;

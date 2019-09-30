@@ -77,18 +77,40 @@ std::vector<std::unique_ptr<PasswordForm>> SyncCredentialsFilter::FilterResults(
 
 bool SyncCredentialsFilter::ShouldSave(
     const autofill::PasswordForm& form) const {
-  return !sync_util::IsSyncAccountCredential(
-      form, sync_service_factory_function_.Run(),
-      signin_manager_factory_function_.Run(), client_->GetPrefs());
+  return !form.is_gaia_with_skip_save_password_form &&
+         !sync_util::IsSyncAccountCredential(
+             form, sync_service_factory_function_.Run(),
+             signin_manager_factory_function_.Run());
+}
+
+bool SyncCredentialsFilter::ShouldSaveGaiaPasswordHash(
+    const autofill::PasswordForm& form) const {
+#if defined(SYNC_PASSWORD_REUSE_DETECTION_ENABLED)
+  return sync_util::IsGaiaCredentialPage(form.signon_realm);
+#else
+  return false;
+#endif  // SYNC_PASSWORD_REUSE_DETECTION_ENABLED
+}
+
+bool SyncCredentialsFilter::ShouldSaveEnterprisePasswordHash(
+    const autofill::PasswordForm& form) const {
+  return sync_util::ShouldSaveEnterprisePasswordHash(form,
+                                                     *client_->GetPrefs());
+}
+
+bool SyncCredentialsFilter::IsSyncAccountEmail(
+    const std::string& username) const {
+  return sync_util::IsSyncAccountEmail(username,
+                                       signin_manager_factory_function_.Run());
 }
 
 void SyncCredentialsFilter::ReportFormLoginSuccess(
     const PasswordFormManager& form_manager) const {
   if (!form_manager.IsNewLogin() &&
-      sync_util::IsSyncAccountCredential(form_manager.pending_credentials(),
-                                         sync_service_factory_function_.Run(),
-                                         signin_manager_factory_function_.Run(),
-                                         client_->GetPrefs())) {
+      sync_util::IsSyncAccountCredential(
+          form_manager.GetPendingCredentials(),
+          sync_service_factory_function_.Run(),
+          signin_manager_factory_function_.Run())) {
     base::RecordAction(base::UserMetricsAction(
         "PasswordManager_SyncCredentialFilledAndLoginSuccessfull"));
   }

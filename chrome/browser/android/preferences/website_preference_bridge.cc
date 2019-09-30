@@ -28,7 +28,7 @@
 #include "chrome/browser/content_settings/tab_specific_content_settings.h"
 #include "chrome/browser/content_settings/web_site_settings_uma_util.h"
 #include "chrome/browser/engagement/important_sites_util.h"
-#include "chrome/browser/notifications/desktop_notification_profile_util.h"
+#include "chrome/browser/notifications/notification_permission_context.h"
 #include "chrome/browser/permissions/permission_decision_auto_blocker.h"
 #include "chrome/browser/permissions/permission_manager.h"
 #include "chrome/browser/permissions/permission_uma_util.h"
@@ -260,6 +260,18 @@ void JNI_WebsitePreferenceBridge_SetSettingForOrigin(
   WebSiteSettingsUmaUtil::LogPermissionChange(content_type, setting);
 }
 
+ChooserContextBase* GetChooserContext(ContentSettingsType type) {
+  Profile* profile = ProfileManager::GetActiveUserProfile();
+
+  switch (type) {
+    case CONTENT_SETTINGS_TYPE_USB_CHOOSER_DATA:
+      return UsbChooserContextFactory::GetForProfile(profile);
+    default:
+      NOTREACHED();
+      return nullptr;
+  }
+}
+
 }  // anonymous namespace
 
 static void JNI_WebsitePreferenceBridge_GetClipboardOrigins(
@@ -430,19 +442,7 @@ static void JNI_WebsitePreferenceBridge_SetNotificationSettingForOrigin(
     return;
   }
 
-  switch (setting) {
-    case CONTENT_SETTING_DEFAULT:
-      DesktopNotificationProfileUtil::ClearSetting(profile, url);
-      break;
-    case CONTENT_SETTING_ALLOW:
-      DesktopNotificationProfileUtil::GrantPermission(profile, url);
-      break;
-    case CONTENT_SETTING_BLOCK:
-      DesktopNotificationProfileUtil::DenyPermission(profile, url);
-      break;
-    default:
-      NOTREACHED();
-  }
+  NotificationPermissionContext::UpdatePermission(profile, url, setting);
   WebSiteSettingsUmaUtil::LogPermissionChange(
       CONTENT_SETTINGS_TYPE_NOTIFICATIONS, setting);
 }
@@ -533,12 +533,13 @@ static jboolean JNI_WebsitePreferenceBridge_UrlMatchesContentSettingsPattern(
   return pattern.Matches(GURL(ConvertJavaStringToUTF8(env, jurl)));
 }
 
-static void JNI_WebsitePreferenceBridge_GetUsbOrigins(
+static void JNI_WebsitePreferenceBridge_GetChosenObjects(
     JNIEnv* env,
     const JavaParamRef<jclass>& clazz,
+    jint content_settings_type,
     const JavaParamRef<jobject>& list) {
-  Profile* profile = ProfileManager::GetActiveUserProfile();
-  UsbChooserContext* context = UsbChooserContextFactory::GetForProfile(profile);
+  ChooserContextBase* context = GetChooserContext(
+      static_cast<ContentSettingsType>(content_settings_type));
   for (const auto& object : context->GetAllGrantedObjects()) {
     // Remove the trailing slash so that origins are matched correctly in
     // SingleWebsitePreferences.mergePermissionInfoForTopLevelOrigin.
@@ -554,10 +555,8 @@ static void JNI_WebsitePreferenceBridge_GetUsbOrigins(
     if (embedder != origin)
       jembedder = ConvertUTF8ToJavaString(env, embedder);
 
-    std::string name;
-    bool found = object->object.GetString("name", &name);
-    DCHECK(found);
-    ScopedJavaLocalRef<jstring> jname = ConvertUTF8ToJavaString(env, name);
+    ScopedJavaLocalRef<jstring> jname =
+        ConvertUTF8ToJavaString(env, context->GetObjectName(object->object));
 
     std::string serialized;
     bool written = base::JSONWriter::Write(object->object, &serialized);
@@ -565,19 +564,19 @@ static void JNI_WebsitePreferenceBridge_GetUsbOrigins(
     ScopedJavaLocalRef<jstring> jserialized =
         ConvertUTF8ToJavaString(env, serialized);
 
-    Java_WebsitePreferenceBridge_insertUsbInfoIntoList(
-        env, list, jorigin, jembedder, jname, jserialized);
+    Java_WebsitePreferenceBridge_insertChosenObjectInfoIntoList(
+        env, list, content_settings_type, jorigin, jembedder, jname,
+        jserialized);
   }
 }
 
-static void JNI_WebsitePreferenceBridge_RevokeUsbPermission(
+static void JNI_WebsitePreferenceBridge_RevokeObjectPermission(
     JNIEnv* env,
     const JavaParamRef<jclass>& clazz,
+    jint content_settings_type,
     const JavaParamRef<jstring>& jorigin,
     const JavaParamRef<jstring>& jembedder,
     const JavaParamRef<jstring>& jobject) {
-  Profile* profile = ProfileManager::GetActiveUserProfile();
-  UsbChooserContext* context = UsbChooserContextFactory::GetForProfile(profile);
   GURL origin(ConvertJavaStringToUTF8(env, jorigin));
   DCHECK(origin.is_valid());
   // If embedder == origin above then a null embedder was sent to Java instead
@@ -588,6 +587,8 @@ static void JNI_WebsitePreferenceBridge_RevokeUsbPermission(
   std::unique_ptr<base::DictionaryValue> object = base::DictionaryValue::From(
       base::JSONReader::Read(ConvertJavaStringToUTF8(env, jobject)));
   DCHECK(object);
+  ChooserContextBase* context = GetChooserContext(
+      static_cast<ContentSettingsType>(content_settings_type));
   context->RevokeObjectPermission(origin, embedder, *object);
 }
 
@@ -611,7 +612,7 @@ class SiteDataDeleteHelper : public CookiesTreeModel::Observer {
     storage::FileSystemContext* file_system_context =
         storage_partition->GetFileSystemContext();
     auto container = std::make_unique<LocalDataContainer>(
-        new BrowsingDataCookieHelper(profile_->GetRequestContext()),
+        new BrowsingDataCookieHelper(storage_partition),
         new BrowsingDataDatabaseHelper(profile_),
         new BrowsingDataLocalStorageHelper(profile_), nullptr,
         new BrowsingDataAppCacheHelper(profile_),
@@ -626,7 +627,7 @@ class SiteDataDeleteHelper : public CookiesTreeModel::Observer {
         nullptr);
 
     cookies_tree_model_ = std::make_unique<CookiesTreeModel>(
-        container.release(), profile_->GetExtensionSpecialStoragePolicy());
+        std::move(container), profile_->GetExtensionSpecialStoragePolicy());
     cookies_tree_model_->AddCookiesTreeObserver(this);
   }
 
@@ -704,7 +705,7 @@ void OnStorageInfoReady(const ScopedJavaGlobalRef<jobject>& java_callback,
         env, list, host, static_cast<jint>(i->type), i->usage);
   }
 
-  base::android::RunCallbackAndroid(java_callback, list);
+  base::android::RunObjectCallbackAndroid(java_callback, list);
 }
 
 void OnLocalStorageCleared(const ScopedJavaGlobalRef<jobject>& java_callback) {
@@ -775,7 +776,7 @@ void OnLocalStorageModelInfoLoaded(
         env, map, origin, full_origin, info.size, important);
   }
 
-  base::android::RunCallbackAndroid(java_callback, map);
+  base::android::RunObjectCallbackAndroid(java_callback, map);
 }
 
 }  // anonymous namespace
@@ -888,6 +889,37 @@ static jboolean JNI_WebsitePreferenceBridge_GetAdBlockingActivated(
   GURL url(ConvertJavaStringToUTF8(env, jorigin));
   return !!GetHostContentSettingsMap(false)->GetWebsiteSetting(
       url, GURL(), CONTENT_SETTINGS_TYPE_ADS_DATA, std::string(), nullptr);
+}
+
+static void JNI_WebsitePreferenceBridge_GetSensorsOrigins(
+    JNIEnv* env,
+    const JavaParamRef<jclass>& clazz,
+    const JavaParamRef<jobject>& list) {
+  JNI_WebsitePreferenceBridge_GetOrigins(
+      env, CONTENT_SETTINGS_TYPE_SENSORS,
+      &Java_WebsitePreferenceBridge_insertSensorsInfoIntoList, list, false);
+}
+
+static jint JNI_WebsitePreferenceBridge_GetSensorsSettingForOrigin(
+    JNIEnv* env,
+    const JavaParamRef<jclass>& clazz,
+    const JavaParamRef<jstring>& origin,
+    const JavaParamRef<jstring>& embedder,
+    jboolean is_incognito) {
+  return JNI_WebsitePreferenceBridge_GetSettingForOrigin(
+      env, CONTENT_SETTINGS_TYPE_SENSORS, origin, embedder, is_incognito);
+}
+
+static void JNI_WebsitePreferenceBridge_SetSensorsSettingForOrigin(
+    JNIEnv* env,
+    const JavaParamRef<jclass>& clazz,
+    const JavaParamRef<jstring>& origin,
+    const JavaParamRef<jstring>& embedder,
+    jint value,
+    jboolean is_incognito) {
+  JNI_WebsitePreferenceBridge_SetSettingForOrigin(
+      env, CONTENT_SETTINGS_TYPE_SENSORS, origin, embedder,
+      static_cast<ContentSetting>(value), is_incognito);
 }
 
 // On Android O+ notification channels are not stored in the Chrome profile and

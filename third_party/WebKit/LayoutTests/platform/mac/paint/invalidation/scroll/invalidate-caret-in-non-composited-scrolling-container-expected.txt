@@ -26,65 +26,14 @@
         {
           "object": "LayoutTextControl INPUT id='root'",
           "rect": [0, 0, 47, 25],
-          "reason": "appeared"
-        },
-        {
-          "object": "LayoutTextControl INPUT id='root'",
-          "rect": [0, 0, 47, 25],
-          "reason": "paint property change"
+          "reason": "full layer"
         },
         {
           "object": "LayoutTextControl INPUT id='root'",
           "rect": [0, 0, 41, 19],
-          "reason": "full"
-        },
-        {
-          "object": "LayoutTextControl INPUT id='root'",
-          "rect": [0, 0, 41, 19],
-          "reason": "paint property change"
-        },
-        {
-          "object": "LayoutBlockFlow DIV",
-          "rect": [3, 3, 35, 13],
-          "reason": "paint property change"
-        },
-        {
-          "object": "LayoutBlockFlow DIV",
-          "rect": [6, 6, 34, 13],
-          "reason": "paint property change"
-        },
-        {
-          "object": "Caret",
-          "rect": [39, 6, 1, 13],
-          "reason": "appeared"
+          "reason": "full layer"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutTextControl INPUT id='root'",
-      "reason": "subtree"
-    },
-    {
-      "object": "LayoutBlockFlow DIV",
-      "reason": "subtree"
-    },
-    {
-      "object": "RootInlineBox",
-      "reason": "subtree"
-    },
-    {
-      "object": "Caret",
-      "reason": "caret"
-    },
-    {
-      "object": "LayoutText #text",
-      "reason": "subtree"
-    },
-    {
-      "object": "InlineTextBox 'test test test'",
-      "reason": "subtree"
     }
   ]
 }

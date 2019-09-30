@@ -53,14 +53,13 @@ class SVGAnimatedLength : public ScriptWrappable,
   }
 
   void SetDefaultValueAsString(const String&);
-  SVGParsingError SetBaseValueAsString(const String&) override;
+  SVGParsingError AttributeChanged(const String&) override;
 
   const CSSValue& CssValue() const {
     return CurrentValue()->AsCSSPrimitiveValue();
   }
 
   void Trace(blink::Visitor*) override;
-  void TraceWrappers(const ScriptWrappableVisitor*) const override;
 
  protected:
   SVGAnimatedLength(SVGElement* context_element,

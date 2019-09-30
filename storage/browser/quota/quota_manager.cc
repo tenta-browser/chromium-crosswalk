@@ -19,20 +19,20 @@
 #include "base/command_line.h"
 #include "base/files/file_util.h"
 #include "base/macros.h"
-#include "base/metrics/histogram_macros.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/sequenced_task_runner.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/sys_info.h"
+#include "base/task/post_task.h"
 #include "base/task_runner_util.h"
-#include "base/task_scheduler/post_task.h"
 #include "base/threading/thread_restrictions.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "base/trace_event/trace_event.h"
 #include "net/base/url_util.h"
 #include "storage/browser/quota/client_usage_tracker.h"
+#include "storage/browser/quota/quota_macros.h"
 #include "storage/browser/quota/quota_manager_proxy.h"
 #include "storage/browser/quota/quota_temporary_storage_evictor.h"
 #include "storage/browser/quota/storage_monitor.h"
@@ -47,10 +47,6 @@ namespace {
 const int64_t kMBytes = 1024 * 1024;
 const int kMinutesInMilliSeconds = 60 * 1000;
 const int64_t kReportHistogramInterval = 60 * 60 * 1000;  // 1 hour
-
-#define UMA_HISTOGRAM_MBYTES(name, sample)                                     \
-  UMA_HISTOGRAM_CUSTOM_COUNTS((name), static_cast<int>((sample) / kMBytes), 1, \
-                              10 * 1024 * 1024 /* 10TB */, 100)
 
 }  // namespace
 
@@ -101,12 +97,10 @@ void CountOriginType(const std::set<GURL>& origins,
   *unlimited_origins = 0;
   if (!policy)
     return;
-  for (std::set<GURL>::const_iterator itr = origins.begin();
-       itr != origins.end();
-       ++itr) {
-    if (policy->IsStorageProtected(*itr))
+  for (const auto& origin : origins) {
+    if (policy->IsStorageProtected(origin))
       ++*protected_origins;
-    if (policy->IsStorageUnlimited(*itr))
+    if (policy->IsStorageUnlimited(origin))
       ++*unlimited_origins;
   }
 }
@@ -512,10 +506,9 @@ class QuotaManager::GetUsageInfoTask : public QuotaTask {
   void AddEntries(StorageType type, UsageTracker* tracker) {
     std::map<std::string, int64_t> host_usage;
     tracker->GetCachedHostsUsage(&host_usage);
-    for (std::map<std::string, int64_t>::const_iterator iter =
-             host_usage.begin();
-         iter != host_usage.end(); ++iter) {
-      entries_.push_back(UsageInfo(iter->first, type, iter->second));
+    for (const auto& host_usage_pair : host_usage) {
+      entries_.push_back(
+          UsageInfo(host_usage_pair.first, type, host_usage_pair.second));
     }
     if (--remaining_trackers_ == 0)
       CallCompleted();
@@ -561,10 +554,9 @@ class QuotaManager::OriginDataDeleter : public QuotaTask {
   void Run() override {
     error_count_ = 0;
     remaining_clients_ = manager()->clients_.size();
-    for (QuotaClientList::iterator iter = manager()->clients_.begin();
-         iter != manager()->clients_.end(); ++iter) {
-      if (quota_client_mask_ & (*iter)->id()) {
-        (*iter)->DeleteOriginData(
+    for (auto* client : manager()->clients_) {
+      if (quota_client_mask_ & client->id()) {
+        client->DeleteOriginData(
             url::Origin::Create(origin_), type_,
             base::BindOnce(&OriginDataDeleter::DidDeleteOriginData,
                            weak_factory_.GetWeakPtr()));
@@ -649,9 +641,8 @@ class QuotaManager::HostDataDeleter : public QuotaTask {
   void Run() override {
     error_count_ = 0;
     remaining_clients_ = manager()->clients_.size();
-    for (QuotaClientList::iterator iter = manager()->clients_.begin();
-         iter != manager()->clients_.end(); ++iter) {
-      (*iter)->GetOriginsForHost(
+    for (auto* client : manager()->clients_) {
+      client->GetOriginsForHost(
           type_, host_,
           base::BindOnce(&HostDataDeleter::DidGetOriginsForHost,
                          weak_factory_.GetWeakPtr()));
@@ -696,11 +687,9 @@ class QuotaManager::HostDataDeleter : public QuotaTask {
 
   void ScheduleOriginsDeletion() {
     remaining_deleters_ = origins_.size();
-    for (std::set<GURL>::const_iterator p = origins_.begin();
-         p != origins_.end();
-         ++p) {
+    for (const auto& origin : origins_) {
       OriginDataDeleter* deleter = new OriginDataDeleter(
-          manager(), *p, type_, quota_client_mask_, false,
+          manager(), origin, type_, quota_client_mask_, false,
           base::BindOnce(&HostDataDeleter::DidDeleteOriginData,
                          weak_factory_.GetWeakPtr()));
       deleter->Start();
@@ -1078,9 +1067,9 @@ void QuotaManager::GetStatistics(
   if (temporary_storage_evictor_) {
     std::map<std::string, int64_t> stats;
     temporary_storage_evictor_->GetStatistics(&stats);
-    for (std::map<std::string, int64_t>::iterator p = stats.begin();
-         p != stats.end(); ++p) {
-      (*statistics)[p->first] = base::Int64ToString(p->second);
+    for (const auto& origin_usage_pair : stats) {
+      (*statistics)[origin_usage_pair.first] =
+          base::Int64ToString(origin_usage_pair.second);
     }
   }
 }
@@ -1149,7 +1138,7 @@ void QuotaManager::RemoveStorageObserver(StorageObserver* observer) {
 }
 
 QuotaManager::~QuotaManager() {
-  proxy_->manager_ = NULL;
+  proxy_->manager_ = nullptr;
   for (auto* client : clients_)
     client->OnQuotaManagerDestroyed();
   if (database_)
@@ -1239,11 +1228,11 @@ UsageTracker* QuotaManager::GetUsageTracker(StorageType type) const {
     case StorageType::kSyncable:
       return syncable_usage_tracker_.get();
     case StorageType::kQuotaNotManaged:
-      return NULL;
+      return nullptr;
     case StorageType::kUnknown:
       NOTREACHED();
   }
-  return NULL;
+  return nullptr;
 }
 
 void QuotaManager::GetCachedOrigins(

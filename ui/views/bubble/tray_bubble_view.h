@@ -12,7 +12,7 @@
 #include "ui/accessibility/ax_enums.mojom.h"
 #include "ui/events/event.h"
 #include "ui/gfx/native_widget_types.h"
-#include "ui/views/bubble/bubble_dialog_delegate.h"
+#include "ui/views/bubble/bubble_dialog_delegate_view.h"
 #include "ui/views/mouse_watcher.h"
 #include "ui/views/views_export.h"
 
@@ -130,6 +130,9 @@ class VIEWS_EXPORT TrayBubbleView : public BubbleDialogDelegateView,
   // ResetDelegate.
   void ResetDelegate();
 
+  // Anchors the bubble to |anchor_view|.
+  void ChangeAnchorView(views::View* anchor_view);
+
   Delegate* delegate() { return delegate_; }
 
   void set_gesture_dragging(bool dragging) { is_gesture_dragging_ = dragging; }
@@ -150,7 +153,6 @@ class VIEWS_EXPORT TrayBubbleView : public BubbleDialogDelegateView,
 
   // Overridden from views::View.
   gfx::Size CalculatePreferredSize() const override;
-  gfx::Size GetMaximumSize() const override;
   int GetHeightForWidth(int width) const override;
   void OnMouseEntered(const ui::MouseEvent& event) override;
   void OnMouseExited(const ui::MouseEvent& event) override;

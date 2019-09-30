@@ -85,24 +85,19 @@ class ActivityLoggerTest : public testing::Test {
                                 "about:blank");
   }
 
-  ~ActivityLoggerTest() { WebCache::Clear(); }
+  ~ActivityLoggerTest() override { WebCache::Clear(); }
 
   void ExecuteScriptInMainWorld(const String& script) const {
     v8::HandleScope scope(v8::Isolate::GetCurrent());
     script_controller_->ExecuteScriptInMainWorld(script);
-    PumpPendingRequestsForFrameToLoad(
-        web_view_helper_.GetWebView()->MainFrame());
+    PumpPendingRequestsForFrameToLoad(web_view_helper_.LocalMainFrame());
   }
 
   void ExecuteScriptInIsolatedWorld(const String& script) const {
     v8::HandleScope scope(v8::Isolate::GetCurrent());
-    HeapVector<ScriptSourceCode> sources;
-    sources.push_back(ScriptSourceCode(script));
-    Vector<v8::Local<v8::Value>> results;
-    script_controller_->ExecuteScriptInIsolatedWorld(kIsolatedWorldId, sources,
-                                                     nullptr);
-    PumpPendingRequestsForFrameToLoad(
-        web_view_helper_.GetWebView()->MainFrame());
+    script_controller_->ExecuteScriptInIsolatedWorld(kIsolatedWorldId,
+                                                     ScriptSourceCode(script));
+    PumpPendingRequestsForFrameToLoad(web_view_helper_.LocalMainFrame());
   }
 
   bool VerifyActivities(const String& activities) {

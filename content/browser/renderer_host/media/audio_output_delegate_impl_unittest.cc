@@ -81,11 +81,12 @@ class MockObserver : public content::MediaObserver {
 
 class MockEventHandler : public media::AudioOutputDelegate::EventHandler {
  public:
-  void OnStreamCreated(int stream_id,
-                       const base::SharedMemory* shared_memory,
-                       std::unique_ptr<base::CancelableSyncSocket> socket) {
+  void OnStreamCreated(
+      int stream_id,
+      base::UnsafeSharedMemoryRegion shared_memory_region,
+      std::unique_ptr<base::CancelableSyncSocket> socket) override {
     EXPECT_EQ(stream_id, kStreamId);
-    EXPECT_NE(shared_memory, nullptr);
+    EXPECT_TRUE(shared_memory_region.IsValid());
     EXPECT_NE(socket.get(), nullptr);
     GotOnStreamCreated();
   }
@@ -128,6 +129,7 @@ class DummyMojoAudioLogImpl : public media::mojom::AudioLog {
   void OnClosed() override {}
   void OnError() override {}
   void OnSetVolume(double volume) override {}
+  void OnProcessingStateChanged(const std::string& message) override {}
   void OnLogMessage(const std::string& message) override {}
 };
 
@@ -160,7 +162,7 @@ class AudioOutputDelegateTest : public testing::Test {
         mirroring_manager_.GetRemoveDiverterCallback());
   }
 
-  ~AudioOutputDelegateTest() { audio_manager_->Shutdown(); }
+  ~AudioOutputDelegateTest() override { audio_manager_->Shutdown(); }
 
   mojo::StrongBindingPtr<media::mojom::AudioOutputStreamObserver>
   CreateObserverBinding(

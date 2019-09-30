@@ -11,8 +11,8 @@
 #include "base/rand_util.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/stringprintf.h"
+#include "base/task/post_task.h"
 #include "base/task_runner_util.h"
-#include "base/task_scheduler/post_task.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "chrome/browser/download/chrome_download_manager_delegate.h"
@@ -713,8 +713,10 @@ DownloadTargetDeterminer::Result
   // Checking if there are prior visits to the referrer is only necessary if the
   // danger level of the download depends on the file type.
   if (danger_type_ != download::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS &&
-      danger_type_ != download::DOWNLOAD_DANGER_TYPE_MAYBE_DANGEROUS_CONTENT)
+      danger_type_ != download::DOWNLOAD_DANGER_TYPE_MAYBE_DANGEROUS_CONTENT &&
+      danger_type_ != download::DOWNLOAD_DANGER_TYPE_WHITELISTED_BY_POLICY) {
     return CONTINUE;
+  }
 
   // First determine the danger level assuming that the user doesn't have any
   // prior visits to the referrer recoreded in history. The resulting danger

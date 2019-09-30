@@ -18,12 +18,13 @@
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
+#include "cc/paint/paint_canvas.h"
+#include "content/shell/common/layout_test/layout_test_switches.h"
 #include "content/shell/test_runner/layout_and_paint_async_then.h"
 #include "content/shell/test_runner/layout_dump.h"
 #include "content/shell/test_runner/mock_content_settings_client.h"
 #include "content/shell/test_runner/mock_screen_orientation_client.h"
 #include "content/shell/test_runner/mock_web_document_subresource_filter.h"
-#include "content/shell/test_runner/mock_web_speech_recognizer.h"
 #include "content/shell/test_runner/pixel_dump.h"
 #include "content/shell/test_runner/spell_check_client.h"
 #include "content/shell/test_runner/test_common.h"
@@ -37,10 +38,7 @@
 #include "gin/handle.h"
 #include "gin/object_template_builder.h"
 #include "gin/wrappable.h"
-#include "services/device/public/cpp/generic_sensor/motion_data.h"
-#include "services/device/public/cpp/generic_sensor/orientation_data.h"
-#include "third_party/blink/public/platform/modules/serviceworker/web_service_worker_registration.h"
-#include "third_party/blink/public/platform/web_canvas.h"
+#include "third_party/blink/public/platform/modules/service_worker/web_service_worker_registration.h"
 #include "third_party/blink/public/platform/web_data.h"
 #include "third_party/blink/public/platform/web_point.h"
 #include "third_party/blink/public/platform/web_url_response.h"
@@ -90,6 +88,53 @@ double GetDefaultDeviceScaleFactor() {
   return 1.f;
 }
 
+void ConvertAndSet(gin::Arguments* args, int* set_param) {
+  v8::Local<v8::Value> value = args->PeekNext();
+  v8::Maybe<int> result = value->Int32Value(args->GetHolderCreationContext());
+
+  if (result.IsNothing()) {
+    // Skip so the error is thrown for the correct argument as PeekNext doesn't
+    // update the current argument pointer.
+    args->Skip();
+    args->ThrowError();
+    return;
+  }
+
+  *set_param = result.ToChecked();
+}
+
+void ConvertAndSet(gin::Arguments* args, bool* set_param) {
+  v8::Local<v8::Value> value = args->PeekNext();
+  v8::Maybe<bool> result =
+      value->BooleanValue(args->GetHolderCreationContext());
+
+  if (result.IsNothing()) {
+    // Skip so the error is thrown for the correct argument as PeekNext doesn't
+    // update the current argument pointer.
+    args->Skip();
+    args->ThrowError();
+    return;
+  }
+
+  *set_param = result.ToChecked();
+}
+
+void ConvertAndSet(gin::Arguments* args, blink::WebString* set_param) {
+  v8::Local<v8::Value> value = args->PeekNext();
+  v8::MaybeLocal<v8::String> result =
+      value->ToString(args->GetHolderCreationContext());
+
+  if (result.IsEmpty()) {
+    // Skip so the error is thrown for the correct argument as PeekNext doesn't
+    // update the current argument pointer.
+    args->Skip();
+    args->ThrowError();
+    return;
+  }
+
+  *set_param = V8StringToWebString(args->isolate(), result.ToLocalChecked());
+}
+
 }  // namespace
 
 class TestRunnerBindings : public gin::Wrappable<TestRunnerBindings> {
@@ -111,9 +156,7 @@ class TestRunnerBindings : public gin::Wrappable<TestRunnerBindings> {
   gin::ObjectTemplateBuilder GetObjectTemplateBuilder(
       v8::Isolate* isolate) override;
 
-  void AddMockSpeechRecognitionResult(const std::string& transcript,
-                                      double confidence);
-  void AddOriginAccessWhitelistEntry(const std::string& source_origin,
+  void AddOriginAccessAllowListEntry(const std::string& source_origin,
                                      const std::string& destination_protocol,
                                      const std::string& destination_host,
                                      bool allow_destination_subdomains);
@@ -166,17 +209,13 @@ class TestRunnerBindings : public gin::Wrappable<TestRunnerBindings> {
   void LogToStderr(const std::string& output);
   void NotImplemented(const gin::Arguments& args);
   void NotifyDone();
-  void OverridePreference(const std::string& key, v8::Local<v8::Value> value);
+  void OverridePreference(gin::Arguments* args);
   void QueueBackNavigation(int how_far_back);
   void QueueForwardNavigation(int how_far_forward);
   void QueueLoad(gin::Arguments* args);
   void QueueLoadingScript(const std::string& script);
   void QueueNonLoadingScript(const std::string& script);
   void QueueReload();
-  void RemoveOriginAccessWhitelistEntry(const std::string& source_origin,
-                                        const std::string& destination_protocol,
-                                        const std::string& destination_host,
-                                        bool allow_destination_subdomains);
   void RemoveSpellCheckResolvedCallback();
   void RemoveWebPageOverlay();
   void ResetTestHelperControllers();
@@ -209,6 +248,7 @@ class TestRunnerBindings : public gin::Wrappable<TestRunnerBindings> {
   void SetDumpConsoleMessages(bool value);
   void SetDumpJavaScriptDialogs(bool value);
   void SetEffectiveConnectionType(const std::string& connection_type);
+  void SetFileChooserPaths(const std::vector<std::string>& paths);
   void SetMockSpellCheckerEnabled(bool enabled);
   void SetImagesAllowed(bool allowed);
   void SetIsolatedWorldContentSecurityPolicy(int world_id,
@@ -217,11 +257,7 @@ class TestRunnerBindings : public gin::Wrappable<TestRunnerBindings> {
                                       v8::Local<v8::Value> origin);
   void SetJavaScriptCanAccessClipboard(bool can_access);
   void SetMIDIAccessorResult(bool result);
-  void SetMockDeviceMotion(gin::Arguments* args);
-  void SetMockDeviceOrientation(gin::Arguments* args);
   void SetMockScreenOrientation(const std::string& orientation);
-  void SetMockSpeechRecognitionError(const std::string& error,
-                                     const std::string& message);
   void SetPOSIXLocale(const std::string& locale);
   void SetPageVisibility(const std::string& new_visibility);
   void SetPermission(const std::string& name,
@@ -318,11 +354,11 @@ void TestRunnerBindings::Install(
   //
   // 1. For normal reftest, we would like to take screenshots after web fonts
   //    are loaded, i.e. replicate the behavior of this injected script:
-  //    https://github.com/w3c/web-platform-tests/blob/master/tools/wptrunner/wptrunner/executors/reftest-wait_webdriver.js
+  //    https://github.com/web-platform-tests/wpt/blob/master/tools/wptrunner/wptrunner/executors/reftest-wait_webdriver.js
   // 2. For reftests with a 'reftest-wait' class on the root element, reference
   //    comparison is delayed until that class attribute is removed. To support
   //    this feature, we use a mutation observer.
-  //    http://web-platform-tests.org/writing-tests/reftests.html#controlling-when-comparison-occurs
+  //    https://web-platform-tests.org/writing-tests/reftests.html#controlling-when-comparison-occurs
   //
   // Note that this method may be called multiple times on a frame, so we put
   // the code behind a flag. The flag is safe to be installed on testRunner
@@ -365,10 +401,8 @@ gin::ObjectTemplateBuilder TestRunnerBindings::GetObjectTemplateBuilder(
   return gin::Wrappable<TestRunnerBindings>::GetObjectTemplateBuilder(isolate)
       .SetMethod("abortModal", &TestRunnerBindings::NotImplemented)
       .SetMethod("addDisallowedURL", &TestRunnerBindings::NotImplemented)
-      .SetMethod("addMockSpeechRecognitionResult",
-                 &TestRunnerBindings::AddMockSpeechRecognitionResult)
-      .SetMethod("addOriginAccessWhitelistEntry",
-                 &TestRunnerBindings::AddOriginAccessWhitelistEntry)
+      .SetMethod("addOriginAccessAllowListEntry",
+                 &TestRunnerBindings::AddOriginAccessAllowListEntry)
       .SetMethod("addWebPageOverlay", &TestRunnerBindings::AddWebPageOverlay)
       .SetMethod("callShouldCloseOnWebView",
                  &TestRunnerBindings::CallShouldCloseOnWebView)
@@ -476,8 +510,6 @@ gin::ObjectTemplateBuilder TestRunnerBindings::GetObjectTemplateBuilder(
       .SetMethod("queueNonLoadingScript",
                  &TestRunnerBindings::QueueNonLoadingScript)
       .SetMethod("queueReload", &TestRunnerBindings::QueueReload)
-      .SetMethod("removeOriginAccessWhitelistEntry",
-                 &TestRunnerBindings::RemoveOriginAccessWhitelistEntry)
       .SetMethod("removeSpellCheckResolvedCallback",
                  &TestRunnerBindings::RemoveSpellCheckResolvedCallback)
       .SetMethod("removeWebPageOverlay",
@@ -530,6 +562,8 @@ gin::ObjectTemplateBuilder TestRunnerBindings::GetObjectTemplateBuilder(
                  &TestRunnerBindings::SetDumpJavaScriptDialogs)
       .SetMethod("setEffectiveConnectionType",
                  &TestRunnerBindings::SetEffectiveConnectionType)
+      .SetMethod("setFileChooserPaths",
+                 &TestRunnerBindings::SetFileChooserPaths)
       .SetMethod("setMockSpellCheckerEnabled",
                  &TestRunnerBindings::SetMockSpellCheckerEnabled)
       .SetMethod("setIconDatabaseEnabled", &TestRunnerBindings::NotImplemented)
@@ -544,14 +578,8 @@ gin::ObjectTemplateBuilder TestRunnerBindings::GetObjectTemplateBuilder(
                  &TestRunnerBindings::SetMIDIAccessorResult)
       .SetMethod("setMainFrameIsFirstResponder",
                  &TestRunnerBindings::NotImplemented)
-      .SetMethod("setMockDeviceMotion",
-                 &TestRunnerBindings::SetMockDeviceMotion)
-      .SetMethod("setMockDeviceOrientation",
-                 &TestRunnerBindings::SetMockDeviceOrientation)
       .SetMethod("setMockScreenOrientation",
                  &TestRunnerBindings::SetMockScreenOrientation)
-      .SetMethod("setMockSpeechRecognitionError",
-                 &TestRunnerBindings::SetMockSpeechRecognitionError)
       .SetMethod("setPOSIXLocale", &TestRunnerBindings::SetPOSIXLocale)
       .SetMethod("setPageVisibility", &TestRunnerBindings::SetPageVisibility)
       .SetMethod("setPermission", &TestRunnerBindings::SetPermission)
@@ -760,6 +788,12 @@ void TestRunnerBindings::SetEffectiveConnectionType(
     runner_->SetEffectiveConnectionType(web_type);
 }
 
+void TestRunnerBindings::SetFileChooserPaths(
+    const std::vector<std::string>& paths) {
+  if (runner_)
+    runner_->SetFileChooserPaths(paths);
+}
+
 void TestRunnerBindings::SetMockSpellCheckerEnabled(bool enabled) {
   if (runner_)
     runner_->SetMockSpellCheckerEnabled(enabled);
@@ -807,27 +841,22 @@ void TestRunnerBindings::SetIsolatedWorldContentSecurityPolicy(
     view_runner_->SetIsolatedWorldContentSecurityPolicy(world_id, policy);
 }
 
-void TestRunnerBindings::AddOriginAccessWhitelistEntry(
+void TestRunnerBindings::AddOriginAccessAllowListEntry(
     const std::string& source_origin,
     const std::string& destination_protocol,
     const std::string& destination_host,
     bool allow_destination_subdomains) {
   if (runner_) {
-    runner_->AddOriginAccessWhitelistEntry(source_origin, destination_protocol,
+    // Non-standard schemes should be added to the scheme registeries to use
+    // for the origin access whitelisting.
+    GURL url(source_origin);
+    DCHECK(url.is_valid());
+    DCHECK(url.has_scheme());
+    DCHECK(url.has_host());
+
+    runner_->AddOriginAccessAllowListEntry(source_origin, destination_protocol,
                                            destination_host,
                                            allow_destination_subdomains);
-  }
-}
-
-void TestRunnerBindings::RemoveOriginAccessWhitelistEntry(
-    const std::string& source_origin,
-    const std::string& destination_protocol,
-    const std::string& destination_host,
-    bool allow_destination_subdomains) {
-  if (runner_) {
-    runner_->RemoveOriginAccessWhitelistEntry(
-        source_origin, destination_protocol, destination_host,
-        allow_destination_subdomains);
   }
 }
 
@@ -896,84 +925,6 @@ bool TestRunnerBindings::DisableAutoResizeMode(int new_width, int new_height) {
   if (runner_)
     return runner_->DisableAutoResizeMode(new_width, new_height);
   return false;
-}
-
-void TestRunnerBindings::SetMockDeviceMotion(gin::Arguments* args) {
-  if (!runner_)
-    return;
-
-  bool has_acceleration_x = false;
-  double acceleration_x = 0.0;
-  bool has_acceleration_y = false;
-  double acceleration_y = 0.0;
-  bool has_acceleration_z = false;
-  double acceleration_z = 0.0;
-  bool has_acceleration_including_gravity_x = false;
-  double acceleration_including_gravity_x = 0.0;
-  bool has_acceleration_including_gravity_y = false;
-  double acceleration_including_gravity_y = 0.0;
-  bool has_acceleration_including_gravity_z = false;
-  double acceleration_including_gravity_z = 0.0;
-  bool has_rotation_rate_alpha = false;
-  double rotation_rate_alpha = 0.0;
-  bool has_rotation_rate_beta = false;
-  double rotation_rate_beta = 0.0;
-  bool has_rotation_rate_gamma = false;
-  double rotation_rate_gamma = 0.0;
-  double interval = false;
-
-  args->GetNext(&has_acceleration_x);
-  args->GetNext(&acceleration_x);
-  args->GetNext(&has_acceleration_y);
-  args->GetNext(&acceleration_y);
-  args->GetNext(&has_acceleration_z);
-  args->GetNext(&acceleration_z);
-  args->GetNext(&has_acceleration_including_gravity_x);
-  args->GetNext(&acceleration_including_gravity_x);
-  args->GetNext(&has_acceleration_including_gravity_y);
-  args->GetNext(&acceleration_including_gravity_y);
-  args->GetNext(&has_acceleration_including_gravity_z);
-  args->GetNext(&acceleration_including_gravity_z);
-  args->GetNext(&has_rotation_rate_alpha);
-  args->GetNext(&rotation_rate_alpha);
-  args->GetNext(&has_rotation_rate_beta);
-  args->GetNext(&rotation_rate_beta);
-  args->GetNext(&has_rotation_rate_gamma);
-  args->GetNext(&rotation_rate_gamma);
-  args->GetNext(&interval);
-
-  runner_->SetMockDeviceMotion(
-      has_acceleration_x, acceleration_x, has_acceleration_y, acceleration_y,
-      has_acceleration_z, acceleration_z, has_acceleration_including_gravity_x,
-      acceleration_including_gravity_x, has_acceleration_including_gravity_y,
-      acceleration_including_gravity_y, has_acceleration_including_gravity_z,
-      acceleration_including_gravity_z, has_rotation_rate_alpha,
-      rotation_rate_alpha, has_rotation_rate_beta, rotation_rate_beta,
-      has_rotation_rate_gamma, rotation_rate_gamma, interval);
-}
-
-void TestRunnerBindings::SetMockDeviceOrientation(gin::Arguments* args) {
-  if (!runner_)
-    return;
-
-  bool has_alpha = false;
-  double alpha = 0.0;
-  bool has_beta = false;
-  double beta = 0.0;
-  bool has_gamma = false;
-  double gamma = 0.0;
-  bool absolute = false;
-
-  args->GetNext(&has_alpha);
-  args->GetNext(&alpha);
-  args->GetNext(&has_beta);
-  args->GetNext(&beta);
-  args->GetNext(&has_gamma);
-  args->GetNext(&gamma);
-  args->GetNext(&absolute);
-
-  runner_->SetMockDeviceOrientation(has_alpha, alpha, has_beta, beta, has_gamma,
-                                    gamma, absolute);
 }
 
 void TestRunnerBindings::SetMockScreenOrientation(
@@ -1045,10 +996,9 @@ void TestRunnerBindings::SetAllowFileAccessFromFileURLs(bool allow) {
     runner_->SetAllowFileAccessFromFileURLs(allow);
 }
 
-void TestRunnerBindings::OverridePreference(const std::string& key,
-                                            v8::Local<v8::Value> value) {
+void TestRunnerBindings::OverridePreference(gin::Arguments* args) {
   if (runner_)
-    runner_->OverridePreference(key, value);
+    runner_->OverridePreference(args);
 }
 
 void TestRunnerBindings::SetAcceptLanguages(
@@ -1386,20 +1336,6 @@ void TestRunnerBindings::SimulateWebNotificationClose(const std::string& title,
   runner_->SimulateWebNotificationClose(title, by_user);
 }
 
-void TestRunnerBindings::AddMockSpeechRecognitionResult(
-    const std::string& transcript,
-    double confidence) {
-  if (runner_)
-    runner_->AddMockSpeechRecognitionResult(transcript, confidence);
-}
-
-void TestRunnerBindings::SetMockSpeechRecognitionError(
-    const std::string& error,
-    const std::string& message) {
-  if (runner_)
-    runner_->SetMockSpeechRecognitionError(error, message);
-}
-
 void TestRunnerBindings::AddWebPageOverlay() {
   if (view_runner_)
     view_runner_->AddWebPageOverlay();
@@ -1529,7 +1465,7 @@ void TestRunner::WorkQueue::ProcessWorkSoon() {
 
   if (!queue_.empty()) {
     // We delay processing queued work to avoid recursion problems.
-    controller_->delegate_->PostTask(base::Bind(
+    controller_->delegate_->PostTask(base::BindOnce(
         &TestRunner::WorkQueue::ProcessWork, weak_factory_.GetWeakPtr()));
   } else if (!controller_->layout_test_runtime_flags_.wait_until_done()) {
     controller_->delegate_->TestFinished();
@@ -1607,8 +1543,6 @@ void TestRunner::SetDelegate(WebTestDelegate* delegate) {
   delegate_ = delegate;
   mock_content_settings_client_->SetDelegate(delegate);
   spellcheck_->SetDelegate(delegate);
-  if (speech_recognizer_)
-    speech_recognizer_->SetDelegate(delegate);
 }
 
 void TestRunner::SetMainView(WebView* web_view) {
@@ -1622,9 +1556,9 @@ void TestRunner::Reset() {
   top_loading_frame_ = nullptr;
   layout_test_runtime_flags_.Reset();
   mock_screen_orientation_client_->ResetData();
-  drag_image_.Reset();
+  drag_image_.reset();
 
-  WebSecurityPolicy::ResetOriginAccessWhitelists();
+  WebSecurityPolicy::ClearOriginAccessAllowList();
 #if defined(OS_LINUX) || defined(OS_ANDROID) || defined(OS_FUCHSIA)
   WebFontRenderStyle::SetSubpixelPositioning(false);
 #endif
@@ -1666,10 +1600,15 @@ void TestRunner::Reset() {
     close_remaining_windows_ = true;
 
   spellcheck_->Reset();
+  file_chooser_paths_.reset();
 }
 
 void TestRunner::SetTestIsRunning(bool running) {
   test_is_running_ = running;
+}
+
+bool TestRunner::ShouldDumpSelectionRect() const {
+  return layout_test_runtime_flags_.dump_selection_rect();
 }
 
 bool TestRunner::shouldDumpEditingCallbacks() const {
@@ -1732,22 +1671,36 @@ std::string TestRunner::DumpLayout(blink::WebLocalFrame* frame) {
   return ::test_runner::DumpLayout(frame, layout_test_runtime_flags_);
 }
 
-void TestRunner::DumpPixelsAsync(
+bool TestRunner::DumpPixelsAsync(
     blink::WebLocalFrame* frame,
     base::OnceCallback<void(const SkBitmap&)> callback) {
   if (layout_test_runtime_flags_.dump_drag_image()) {
-    if (drag_image_.IsNull()) {
+    if (drag_image_.isNull()) {
       // This means the test called dumpDragImage but did not initiate a drag.
       // Return a blank image so that the test fails.
       SkBitmap bitmap;
       bitmap.allocN32Pixels(1, 1);
       bitmap.eraseColor(0);
       std::move(callback).Run(bitmap);
-      return;
+      return false;
     }
 
-    std::move(callback).Run(drag_image_.GetSkBitmap());
-    return;
+    std::move(callback).Run(drag_image_);
+    return false;
+  }
+
+  // If we need to do a display compositor pixel dump, then delegate that to the
+  // browser by returning true. Note that printing case can be handled here.
+  if (!layout_test_runtime_flags_.is_printing() &&
+      base::CommandLine::ForCurrentProcess()->HasSwitch(
+          switches::kEnableDisplayCompositorPixelDump)) {
+    // Because of the plumbing, we should still call the callback with an empty
+    // bitmap, but return true so that the browser also captures the pixels.
+    SkBitmap bitmap;
+    bitmap.allocN32Pixels(1, 1);
+    bitmap.eraseColor(0);
+    std::move(callback).Run(bitmap);
+    return true;
   }
 
   // See if we need to draw the selection bounds rect on top of the snapshot.
@@ -1773,6 +1726,7 @@ void TestRunner::DumpPixelsAsync(
     test_runner::DumpPixelsAsync(frame, delegate_->GetDeviceScaleFactor(),
                                  std::move(callback));
   }
+  return false;
 }
 
 void TestRunner::ReplicateLayoutTestRuntimeFlagsChanges(
@@ -1947,9 +1901,9 @@ void TestRunner::setToolTipText(const WebString& text) {
   tooltip_text_ = text.Utf8();
 }
 
-void TestRunner::setDragImage(const blink::WebImage& drag_image) {
+void TestRunner::setDragImage(const SkBitmap& drag_image) {
   if (layout_test_runtime_flags_.dump_drag_image()) {
-    if (drag_image_.IsNull())
+    if (drag_image_.isNull())
       drag_image_ = drag_image;
   }
 }
@@ -2134,7 +2088,7 @@ void TestRunner::ResetTestHelperControllers() {
   test_interfaces_->ResetTestHelperControllers();
 }
 
-void TestRunner::AddOriginAccessWhitelistEntry(
+void TestRunner::AddOriginAccessAllowListEntry(
     const std::string& source_origin,
     const std::string& destination_protocol,
     const std::string& destination_host,
@@ -2143,21 +2097,7 @@ void TestRunner::AddOriginAccessWhitelistEntry(
   if (!url.IsValid())
     return;
 
-  WebSecurityPolicy::AddOriginAccessWhitelistEntry(
-      url, WebString::FromUTF8(destination_protocol),
-      WebString::FromUTF8(destination_host), allow_destination_subdomains);
-}
-
-void TestRunner::RemoveOriginAccessWhitelistEntry(
-    const std::string& source_origin,
-    const std::string& destination_protocol,
-    const std::string& destination_host,
-    bool allow_destination_subdomains) {
-  WebURL url((GURL(source_origin)));
-  if (!url.IsValid())
-    return;
-
-  WebSecurityPolicy::RemoveOriginAccessWhitelistEntry(
+  WebSecurityPolicy::AddOriginAccessAllowListEntry(
       url, WebString::FromUTF8(destination_protocol),
       WebString::FromUTF8(destination_host), allow_destination_subdomains);
 }
@@ -2190,97 +2130,8 @@ bool TestRunner::DisableAutoResizeMode(int new_width, int new_height) {
   return true;
 }
 
-void TestRunner::SetMockDeviceMotion(bool has_acceleration_x,
-                                     double acceleration_x,
-                                     bool has_acceleration_y,
-                                     double acceleration_y,
-                                     bool has_acceleration_z,
-                                     double acceleration_z,
-                                     bool has_acceleration_including_gravity_x,
-                                     double acceleration_including_gravity_x,
-                                     bool has_acceleration_including_gravity_y,
-                                     double acceleration_including_gravity_y,
-                                     bool has_acceleration_including_gravity_z,
-                                     double acceleration_including_gravity_z,
-                                     bool has_rotation_rate_alpha,
-                                     double rotation_rate_alpha,
-                                     bool has_rotation_rate_beta,
-                                     double rotation_rate_beta,
-                                     bool has_rotation_rate_gamma,
-                                     double rotation_rate_gamma,
-                                     double interval) {
-  device::MotionData motion;
-
-  // acceleration
-  motion.has_acceleration_x = has_acceleration_x;
-  motion.acceleration_x = acceleration_x;
-  motion.has_acceleration_y = has_acceleration_y;
-  motion.acceleration_y = acceleration_y;
-  motion.has_acceleration_z = has_acceleration_z;
-  motion.acceleration_z = acceleration_z;
-
-  // accelerationIncludingGravity
-  motion.has_acceleration_including_gravity_x =
-      has_acceleration_including_gravity_x;
-  motion.acceleration_including_gravity_x = acceleration_including_gravity_x;
-  motion.has_acceleration_including_gravity_y =
-      has_acceleration_including_gravity_y;
-  motion.acceleration_including_gravity_y = acceleration_including_gravity_y;
-  motion.has_acceleration_including_gravity_z =
-      has_acceleration_including_gravity_z;
-  motion.acceleration_including_gravity_z = acceleration_including_gravity_z;
-
-  // rotationRate
-  motion.has_rotation_rate_alpha = has_rotation_rate_alpha;
-  motion.rotation_rate_alpha = rotation_rate_alpha;
-  motion.has_rotation_rate_beta = has_rotation_rate_beta;
-  motion.rotation_rate_beta = rotation_rate_beta;
-  motion.has_rotation_rate_gamma = has_rotation_rate_gamma;
-  motion.rotation_rate_gamma = rotation_rate_gamma;
-
-  // interval
-  motion.interval = interval;
-
-  delegate_->SetDeviceMotionData(motion);
-}
-
-void TestRunner::SetMockDeviceOrientation(bool has_alpha,
-                                          double alpha,
-                                          bool has_beta,
-                                          double beta,
-                                          bool has_gamma,
-                                          double gamma,
-                                          bool absolute) {
-  device::OrientationData orientation;
-
-  // alpha
-  orientation.has_alpha = has_alpha;
-  orientation.alpha = alpha;
-
-  // beta
-  orientation.has_beta = has_beta;
-  orientation.beta = beta;
-
-  // gamma
-  orientation.has_gamma = has_gamma;
-  orientation.gamma = gamma;
-
-  // absolute
-  orientation.absolute = absolute;
-
-  delegate_->SetDeviceOrientationData(orientation);
-}
-
 MockScreenOrientationClient* TestRunner::getMockScreenOrientationClient() {
   return mock_screen_orientation_client_.get();
-}
-
-MockWebSpeechRecognizer* TestRunner::getMockWebSpeechRecognizer() {
-  if (!speech_recognizer_.get()) {
-    speech_recognizer_.reset(new MockWebSpeechRecognizer());
-    speech_recognizer_->SetDelegate(delegate_);
-  }
-  return speech_recognizer_.get();
 }
 
 void TestRunner::SetMockScreenOrientation(const std::string& orientation_str) {
@@ -2335,51 +2186,57 @@ void TestRunner::SetAllowFileAccessFromFileURLs(bool allow) {
   delegate_->ApplyPreferences();
 }
 
-void TestRunner::OverridePreference(const std::string& key,
-                                    v8::Local<v8::Value> value) {
+void TestRunner::OverridePreference(gin::Arguments* args) {
+  if (args->Length() != 2) {
+    args->ThrowTypeError("overridePreference expects 2 arguments");
+    return;
+  }
+
+  std::string key;
+  if (!args->GetNext(&key)) {
+    args->ThrowError();
+    return;
+  }
+
   TestPreferences* prefs = delegate_->Preferences();
   if (key == "WebKitDefaultFontSize") {
-    prefs->default_font_size = value->Int32Value();
+    ConvertAndSet(args, &prefs->default_font_size);
   } else if (key == "WebKitMinimumFontSize") {
-    prefs->minimum_font_size = value->Int32Value();
+    ConvertAndSet(args, &prefs->minimum_font_size);
   } else if (key == "WebKitDefaultTextEncodingName") {
-    v8::Isolate* isolate = blink::MainThreadIsolate();
-    prefs->default_text_encoding_name =
-        V8StringToWebString(value->ToString(isolate));
+    ConvertAndSet(args, &prefs->default_text_encoding_name);
   } else if (key == "WebKitJavaScriptEnabled") {
-    prefs->java_script_enabled = value->BooleanValue();
+    ConvertAndSet(args, &prefs->java_script_enabled);
   } else if (key == "WebKitSupportsMultipleWindows") {
-    prefs->supports_multiple_windows = value->BooleanValue();
+    ConvertAndSet(args, &prefs->supports_multiple_windows);
   } else if (key == "WebKitDisplayImagesKey") {
-    prefs->loads_images_automatically = value->BooleanValue();
+    ConvertAndSet(args, &prefs->loads_images_automatically);
   } else if (key == "WebKitPluginsEnabled") {
-    prefs->plugins_enabled = value->BooleanValue();
+    ConvertAndSet(args, &prefs->plugins_enabled);
   } else if (key == "WebKitTabToLinksPreferenceKey") {
-    prefs->tabs_to_links = value->BooleanValue();
+    ConvertAndSet(args, &prefs->tabs_to_links);
   } else if (key == "WebKitCSSGridLayoutEnabled") {
-    prefs->experimental_css_grid_layout_enabled = value->BooleanValue();
+    ConvertAndSet(args, &prefs->experimental_css_grid_layout_enabled);
   } else if (key == "WebKitHyperlinkAuditingEnabled") {
-    prefs->hyperlink_auditing_enabled = value->BooleanValue();
+    ConvertAndSet(args, &prefs->hyperlink_auditing_enabled);
   } else if (key == "WebKitEnableCaretBrowsing") {
-    prefs->caret_browsing_enabled = value->BooleanValue();
+    ConvertAndSet(args, &prefs->caret_browsing_enabled);
   } else if (key == "WebKitAllowRunningInsecureContent") {
-    prefs->allow_running_of_insecure_content = value->BooleanValue();
+    ConvertAndSet(args, &prefs->allow_running_of_insecure_content);
   } else if (key == "WebKitDisableReadingFromCanvas") {
-    prefs->disable_reading_from_canvas = value->BooleanValue();
+    ConvertAndSet(args, &prefs->disable_reading_from_canvas);
   } else if (key == "WebKitStrictMixedContentChecking") {
-    prefs->strict_mixed_content_checking = value->BooleanValue();
+    ConvertAndSet(args, &prefs->strict_mixed_content_checking);
   } else if (key == "WebKitStrictPowerfulFeatureRestrictions") {
-    prefs->strict_powerful_feature_restrictions = value->BooleanValue();
+    ConvertAndSet(args, &prefs->strict_powerful_feature_restrictions);
   } else if (key == "WebKitShouldRespectImageOrientation") {
-    prefs->should_respect_image_orientation = value->BooleanValue();
+    ConvertAndSet(args, &prefs->should_respect_image_orientation);
   } else if (key == "WebKitWebSecurityEnabled") {
-    prefs->web_security_enabled = value->BooleanValue();
+    ConvertAndSet(args, &prefs->web_security_enabled);
   } else if (key == "WebKitSpatialNavigationEnabled") {
-    prefs->spatial_navigation_enabled = value->BooleanValue();
+    ConvertAndSet(args, &prefs->spatial_navigation_enabled);
   } else {
-    std::string message("Invalid name for preference: ");
-    message.append(key);
-    delegate_->PrintMessage(std::string("CONSOLE MESSAGE: ") + message + "\n");
+    args->ThrowTypeError("Invalid name for preference: " + key);
   }
   delegate_->ApplyPreferences();
 }
@@ -2702,18 +2559,6 @@ void TestRunner::SimulateWebNotificationClose(const std::string& title,
   delegate_->SimulateWebNotificationClose(title, by_user);
 }
 
-void TestRunner::AddMockSpeechRecognitionResult(const std::string& transcript,
-                                                double confidence) {
-  getMockWebSpeechRecognizer()->AddMockResult(WebString::FromUTF8(transcript),
-                                              confidence);
-}
-
-void TestRunner::SetMockSpeechRecognitionError(const std::string& error,
-                                               const std::string& message) {
-  getMockWebSpeechRecognizer()->SetError(WebString::FromUTF8(error),
-                                         WebString::FromUTF8(message));
-}
-
 void TestRunner::OnLayoutTestRuntimeFlagsChanged() {
   if (layout_test_runtime_flags_.tracked_dictionary().changed_values().empty())
     return;
@@ -2723,6 +2568,10 @@ void TestRunner::OnLayoutTestRuntimeFlagsChanged() {
   delegate_->OnLayoutTestRuntimeFlagsChanged(
       layout_test_runtime_flags_.tracked_dictionary().changed_values());
   layout_test_runtime_flags_.tracked_dictionary().ResetChangeTracking();
+}
+
+void TestRunner::SetFileChooserPaths(const std::vector<std::string>& paths) {
+  file_chooser_paths_ = paths;
 }
 
 void TestRunner::LocationChangeDone() {

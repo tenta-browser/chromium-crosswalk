@@ -30,6 +30,7 @@
 #include "third_party/blink/renderer/core/layout/layout_box.h"
 #include "third_party/blink/renderer/core/layout/layout_grid.h"
 #include "third_party/blink/renderer/core/style/computed_style_constants.h"
+#include "third_party/blink/renderer/core/style/style_svg_resource.h"
 #include "third_party/blink/renderer/core/style_property_shorthand.h"
 
 namespace blink {
@@ -1891,6 +1892,13 @@ CSSValue* ComputedStyleUtils::AdjustSVGPaintForCurrentColor(
     return CSSColorValue::Create(current_color.Rgb());
 
   return CSSColorValue::Create(paint.GetColor().Rgb());
+}
+
+CSSValue* ComputedStyleUtils::ValueForSVGResource(
+    const StyleSVGResource* resource) {
+  if (resource)
+    return CSSURIValue::Create(resource->Url());
+  return CSSIdentifierValue::Create(CSSValueNone);
 }
 
 CSSValue* ComputedStyleUtils::ValueForShadowData(const ShadowData& shadow,

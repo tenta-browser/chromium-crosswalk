@@ -163,7 +163,11 @@ class AutofillWebDataBackendImpl
   WebDatabase::State UpdateServerAddressMetadata(const AutofillProfile& profile,
                                                  WebDatabase* db);
 
+  // Returns the PaymentsCustomerData from the database.
+  std::unique_ptr<WDTypedResult> GetPaymentsCustomerData(WebDatabase* db);
+
   WebDatabase::State ClearAllServerData(WebDatabase* db);
+  WebDatabase::State ClearAllLocalData(WebDatabase* db);
 
   // Removes Autofill records from the database. Valid only for local
   // cards/profiles.
@@ -178,6 +182,10 @@ class AutofillWebDataBackendImpl
       const base::Time& delete_begin,
       const base::Time& delete_end,
       WebDatabase* db);
+
+  // Removes the orphan rows in the autofill_profile_names,
+  // autofill_profile_emails and autofill_profile_phones tables.
+  WebDatabase::State RemoveOrphanAutofillTableRows(WebDatabase* db);
 
  protected:
   ~AutofillWebDataBackendImpl() override;
@@ -209,7 +217,7 @@ class AutofillWebDataBackendImpl
 
   WebDatabase::State RemoveExpiredFormElementsImpl(WebDatabase* db);
 
-  base::ObserverList<AutofillWebDataServiceObserverOnDBSequence>
+  base::ObserverList<AutofillWebDataServiceObserverOnDBSequence>::Unchecked
       db_observer_list_;
 
   // WebDatabaseBackend allows direct access to DB.

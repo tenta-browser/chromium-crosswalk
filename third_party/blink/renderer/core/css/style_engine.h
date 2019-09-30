@@ -32,23 +32,24 @@
 
 #include <memory>
 #include <utility>
+#include "base/auto_reset.h"
 #include "third_party/blink/public/web/web_document.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/css/active_style_sheets.h"
 #include "third_party/blink/renderer/core/css/css_global_rule_set.h"
 #include "third_party/blink/renderer/core/css/document_style_sheet_collection.h"
+#include "third_party/blink/renderer/core/css/invalidation/pending_invalidations.h"
 #include "third_party/blink/renderer/core/css/invalidation/style_invalidator.h"
 #include "third_party/blink/renderer/core/css/resolver/style_resolver.h"
 #include "third_party/blink/renderer/core/css/resolver/style_resolver_stats.h"
 #include "third_party/blink/renderer/core/css/style_engine_context.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/tree_ordered_list.h"
-#include "third_party/blink/renderer/platform/bindings/script_wrappable.h"
+#include "third_party/blink/renderer/platform/bindings/name_client.h"
 #include "third_party/blink/renderer/platform/bindings/trace_wrapper_member.h"
 #include "third_party/blink/renderer/platform/fonts/font_selector_client.h"
 #include "third_party/blink/renderer/platform/heap/handle.h"
 #include "third_party/blink/renderer/platform/wtf/allocator.h"
-#include "third_party/blink/renderer/platform/wtf/auto_reset.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
 
@@ -61,6 +62,7 @@ class MediaQueryEvaluator;
 class Node;
 class RuleFeatureSet;
 class ShadowTreeStyleSheetCollection;
+class DocumentStyleEnvironmentVariables;
 class StyleRuleFontFace;
 class StyleRuleUsageTracker;
 class StyleSheetContents;
@@ -76,7 +78,7 @@ using StyleSheetKey = AtomicString;
 class CORE_EXPORT StyleEngine final
     : public GarbageCollectedFinalized<StyleEngine>,
       public FontSelectorClient,
-      public TraceWrapperBase {
+      public NameClient {
   USING_GARBAGE_COLLECTED_MIXIN(StyleEngine);
 
  public:
@@ -88,7 +90,7 @@ class CORE_EXPORT StyleEngine final
         : scope_(&engine.ignore_pending_stylesheets_, true) {}
 
    private:
-    AutoReset<bool> scope_;
+    base::AutoReset<bool> scope_;
   };
 
   friend class IgnoringPendingStylesheet;
@@ -97,7 +99,7 @@ class CORE_EXPORT StyleEngine final
     return new StyleEngine(document);
   }
 
-  ~StyleEngine();
+  ~StyleEngine() override;
 
   const HeapVector<TraceWrapperMember<StyleSheet>>&
   StyleSheetsForStyleSheetList(TreeScope&);
@@ -117,11 +119,9 @@ class CORE_EXPORT StyleEngine final
   void AddStyleSheetCandidateNode(Node&);
   void RemoveStyleSheetCandidateNode(Node&, ContainerNode& insertion_point);
   void ModifiedStyleSheetCandidateNode(Node&);
-  void MoreStyleSheetsWillChange(TreeScope&,
-                                 StyleSheetList* old_sheets,
-                                 StyleSheetList* new_sheets);
   void MediaQueriesChangedInScope(TreeScope&);
   void WatchedSelectorsChanged();
+  void InitialStyleChanged();
   void InitialViewportChanged();
   void ViewportRulesChanged();
   void HtmlImportAddedOrRemoved();
@@ -154,11 +154,7 @@ class CORE_EXPORT StyleEngine final
   String PreferredStylesheetSetName() const {
     return preferred_stylesheet_set_name_;
   }
-  String SelectedStylesheetSetName() const {
-    return selected_stylesheet_set_name_;
-  }
   void SetPreferredStylesheetSetNameIfNotSet(const String&);
-  void SetSelectedStylesheetSetName(const String&);
   void SetHttpDefaultStyle(const String&);
 
   void AddPendingSheet(StyleEngineContext&);
@@ -172,10 +168,10 @@ class CORE_EXPORT StyleEngine final
     return pending_render_blocking_stylesheets_ > 0;
   }
   bool HaveScriptBlockingStylesheetsLoaded() const {
-    return !HasPendingScriptBlockingSheets() || ignore_pending_stylesheets_;
+    return !HasPendingScriptBlockingSheets();
   }
   bool HaveRenderBlockingStylesheetsLoaded() const {
-    return !HasPendingRenderBlockingSheets() || ignore_pending_stylesheets_;
+    return !HasPendingRenderBlockingSheets();
   }
   bool IgnoringPendingStylesheets() const {
     return ignore_pending_stylesheets_;
@@ -218,7 +214,11 @@ class CORE_EXPORT StyleEngine final
 
   bool HasResolver() const { return resolver_; }
 
-  StyleInvalidator& GetStyleInvalidator() { return style_invalidator_; }
+  PendingInvalidations& GetPendingNodeInvalidations() {
+    return pending_invalidations_;
+  }
+  // Push all pending invalidations on the document.
+  void InvalidateStyle();
   bool MediaQueryAffectedByViewportChange();
   bool MediaQueryAffectedByDeviceChange();
   bool HasViewportDependentMediaQueries() {
@@ -266,6 +266,9 @@ class CORE_EXPORT StyleEngine final
                            const AtomicString& new_id,
                            Element&);
   void PseudoStateChangedForElement(CSSSelector::PseudoType, Element&);
+  void PartChangedForElement(Element&);
+  void PartmapChangedForElement(Element&);
+
   void ScheduleSiblingInvalidationsForElement(Element&,
                                               ContainerNode& scheduling_parent,
                                               unsigned min_direct_adjacent);
@@ -297,6 +300,8 @@ class CORE_EXPORT StyleEngine final
 
   void CustomPropertyRegistered();
 
+  void EnvironmentVariableChanged();
+
   bool NeedsWhitespaceReattachment() const {
     return !whitespace_reattach_set_.IsEmpty();
   }
@@ -309,8 +314,9 @@ class CORE_EXPORT StyleEngine final
   StyleRuleKeyframes* KeyframeStylesForAnimation(
       const AtomicString& animation_name);
 
-  virtual void Trace(blink::Visitor*);
-  void TraceWrappers(const ScriptWrappableVisitor*) const override;
+  DocumentStyleEnvironmentVariables& EnsureEnvironmentVariables();
+
+  void Trace(blink::Visitor*) override;
   const char* NameInHeapSnapshot() const override { return "StyleEngine"; }
 
  private:
@@ -433,7 +439,6 @@ class CORE_EXPORT StyleEngine final
   TreeOrderedList tree_boundary_crossing_scopes_;
 
   String preferred_stylesheet_set_name_;
-  String selected_stylesheet_set_name_;
 
   bool uses_rem_units_ = false;
   bool ignore_pending_stylesheets_ = false;
@@ -442,7 +447,7 @@ class CORE_EXPORT StyleEngine final
   Member<ViewportStyleResolver> viewport_resolver_;
   Member<MediaQueryEvaluator> media_query_evaluator_;
   Member<CSSGlobalRuleSet> global_rule_set_;
-  StyleInvalidator style_invalidator_;
+  PendingInvalidations pending_invalidations_;
 
   // This is a set of rendered elements which had one or more of its rendered
   // children removed since the last lifecycle update. For such elements we need
@@ -471,6 +476,8 @@ class CORE_EXPORT StyleEngine final
   using KeyframesRuleMap =
       HeapHashMap<AtomicString, Member<StyleRuleKeyframes>>;
   KeyframesRuleMap keyframes_rule_map_;
+
+  scoped_refptr<DocumentStyleEnvironmentVariables> environment_variables_;
 
   friend class StyleEngineTest;
 };

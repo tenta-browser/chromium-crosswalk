@@ -18,9 +18,9 @@
       "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
         {
-          "object": "LayoutNGBlockFlow (positioned) DIV id='absolute'",
-          "rect": [8, 2056, 774, 246],
-          "reason": "appeared"
+          "object": "LayoutNGBlockFlow HTML",
+          "rect": [8, 2046, 774, 257],
+          "reason": "chunk appeared"
         }
       ],
       "transform": 1
@@ -36,40 +36,6 @@
         [0, -1750, 0, 1]
       ],
       "flattenInheritedTransform": false
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutNGBlockFlow DIV id='container'",
-      "reason": "style change"
-    },
-    {
-      "object": "LayoutNGBlockFlow (positioned) DIV id='absolute'",
-      "reason": "style change"
-    },
-    {
-      "object": "NGPaintFragment",
-      "reason": "style change"
-    },
-    {
-      "object": "NGPaintFragment",
-      "reason": "style change"
-    },
-    {
-      "object": "NGPaintFragment",
-      "reason": "style change"
-    },
-    {
-      "object": "NGPaintFragment",
-      "reason": "style change"
-    },
-    {
-      "object": "NGPaintFragment",
-      "reason": "style change"
-    },
-    {
-      "object": "NGPaintFragment",
-      "reason": "style change"
     }
   ]
 }

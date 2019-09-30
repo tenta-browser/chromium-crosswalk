@@ -19,12 +19,14 @@
 #include "ios/chrome/browser/ui/rtl_geometry.h"
 #import "ios/chrome/browser/ui/side_swipe/side_swipe_util.h"
 #import "ios/chrome/browser/ui/side_swipe_gesture_recognizer.h"
+#import "ios/chrome/browser/ui/tab_grid/grid/grid_constants.h"
 #import "ios/chrome/browser/ui/toolbar/public/side_swipe_toolbar_snapshot_providing.h"
 #include "ios/chrome/browser/ui/ui_util.h"
 #import "ios/chrome/browser/ui/uikit_ui_util.h"
-#import "ios/chrome/browser/ui/util/constraints_ui_util.h"
 #import "ios/chrome/browser/web/page_placeholder_tab_helper.h"
+#import "ios/chrome/common/ui_util/constraints_ui_util.h"
 #include "ios/chrome/grit/ios_theme_resources.h"
+#include "ios/web/public/features.h"
 #include "url/gurl.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
@@ -52,8 +54,9 @@ const CGFloat kResizeFactor = 4;
 @property(nonatomic, strong) UIImageView* topToolbarSnapshot;
 @property(nonatomic, strong) UIImageView* bottomToolbarSnapshot;
 
-@property CGFloat topMargin;
-@property NSLayoutConstraint* toolbarTopConstraint;
+@property(nonatomic, assign) CGFloat topMargin;
+@property(nonatomic, strong) NSLayoutConstraint* toolbarTopConstraint;
+@property(nonatomic, strong) NSLayoutConstraint* imageTopConstraint;
 
 @end
 
@@ -67,6 +70,7 @@ const CGFloat kResizeFactor = 4;
 @synthesize bottomToolbarSnapshot = _bottomToolbarSnapshot;
 @synthesize topMargin = _topMargin;
 @synthesize toolbarTopConstraint = _toolbarTopConstraint;
+@synthesize imageTopConstraint = _imageTopConstraint;
 
 - (instancetype)initWithFrame:(CGRect)frame topMargin:(CGFloat)topMargin {
   self = [super initWithFrame:frame];
@@ -101,12 +105,18 @@ const CGFloat kResizeFactor = 4;
     }
 
     _toolbarTopConstraint = [[_topToolbarSnapshot topAnchor]
-        constraintEqualToAnchor:self.topAnchor
-                       constant:-StatusBarHeight()];
+        constraintEqualToAnchor:self.topAnchor];
 
+    if (!base::FeatureList::IsEnabled(
+            web::features::kBrowserContainerFullscreen)) {
+      _toolbarTopConstraint.constant = -StatusBarHeight();
+    }
+
+    _imageTopConstraint =
+        [_image.topAnchor constraintEqualToAnchor:self.topAnchor
+                                         constant:topMargin];
     [constraints addObjectsFromArray:@[
-      [[_image topAnchor] constraintEqualToAnchor:self.topAnchor
-                                         constant:topMargin],
+      _imageTopConstraint,
       [[_image bottomAnchor] constraintEqualToAnchor:self.bottomAnchor],
       _toolbarTopConstraint,
       [_bottomToolbarSnapshot.bottomAnchor
@@ -145,6 +155,11 @@ const CGFloat kResizeFactor = 4;
   }
 }
 
+- (void)setTopMargin:(CGFloat)topMargin {
+  _topMargin = topMargin;
+  self.imageTopConstraint.constant = topMargin;
+}
+
 - (void)setImage:(UIImage*)image {
   [_image setImage:image];
   [self updateImageBoundsAndZoom];
@@ -152,8 +167,11 @@ const CGFloat kResizeFactor = 4;
 
 - (void)setTopToolbarImage:(UIImage*)image isNewTabPage:(BOOL)isNewTabPage {
   [self.topToolbarSnapshot setImage:image];
-  // Update constraints as StatusBarHeight changes depending on orientation.
-  self.toolbarTopConstraint.constant = -StatusBarHeight();
+  if (!base::FeatureList::IsEnabled(
+          web::features::kBrowserContainerFullscreen)) {
+    // Update constraints as StatusBarHeight changes depending on orientation.
+    self.toolbarTopConstraint.constant = -StatusBarHeight();
+  }
   [self.topToolbarSnapshot setNeedsLayout];
   [_shadowView setHidden:isNewTabPage];
 }
@@ -192,9 +210,6 @@ const CGFloat kResizeFactor = 4;
 
   // Tab model.
   __weak TabModel* model_;
-
-  // The image view containing the background image.
-  UIImageView* backgroundView_;
 }
 
 @synthesize backgroundTopConstraint = _backgroundTopConstraint;
@@ -226,7 +241,11 @@ const CGFloat kResizeFactor = 4;
       [[background bottomAnchor] constraintEqualToAnchor:self.bottomAnchor]
     ]];
 
-    InstallBackgroundInView(background);
+    if (IsUIRefreshPhase1Enabled()) {
+      background.backgroundColor = UIColorFromRGB(kGridBackgroundColor);
+    } else {
+      InstallBackgroundInView(background);
+    }
 
     _rightCard =
         [[SwipeView alloc] initWithFrame:CGRectZero topMargin:topMargin];
@@ -242,34 +261,33 @@ const CGFloat kResizeFactor = 4;
   return self;
 }
 
+- (void)setTopMargin:(CGFloat)topMargin {
+  _topMargin = topMargin;
+  _leftCard.topMargin = topMargin;
+  _rightCard.topMargin = topMargin;
+}
+
 - (void)updateConstraints {
   [super updateConstraints];
   self.backgroundTopConstraint.constant = -StatusBarHeight();
 }
 
-- (CGRect)cardFrame {
-  return self.bounds;
+- (CGFloat)cardWidth {
+  return CGRectGetWidth(self.bounds);
 }
 
 // Set up left and right card views depending on current tab and swipe
 // direction.
 - (void)updateViewsForDirection:(UISwipeGestureRecognizerDirection)direction {
   _direction = direction;
-  CGRect cardFrame = [self cardFrame];
   NSUInteger currentIndex = [model_ indexOfTab:model_.currentTab];
   CGFloat offset = UseRTLLayout() ? -1 : 1;
   if (_direction == UISwipeGestureRecognizerDirectionRight) {
     [self setupCard:_rightCard withIndex:currentIndex];
-    [_rightCard setFrame:cardFrame];
     [self setupCard:_leftCard withIndex:currentIndex - offset];
-    cardFrame.origin.x -= cardFrame.size.width + kCardHorizontalSpacing;
-    [_leftCard setFrame:cardFrame];
   } else {
     [self setupCard:_leftCard withIndex:currentIndex];
-    [_leftCard setFrame:cardFrame];
     [self setupCard:_rightCard withIndex:currentIndex + offset];
-    cardFrame.origin.x += cardFrame.size.width + kCardHorizontalSpacing;
-    [_rightCard setFrame:cardFrame];
   }
 }
 
@@ -326,40 +344,26 @@ const CGFloat kResizeFactor = 4;
       });
 }
 
-// Place cards around |currentPoint_.x|, and lean towards each card near the
-// X edges of |bounds|.  Shrink cards as they are dragged towards the middle of
-// the |bounds|, and edge cards only drag |kEdgeCardDragPercentage| of |bounds|.
+// Move cards according to |currentPoint_.x|. Edge cards only drag
+// |kEdgeCardDragPercentage| of |bounds|.
 - (void)updateCardPositions {
-  CGRect bounds = [self cardFrame];
-  [_rightCard setFrame:bounds];
-  [_leftCard setFrame:bounds];
+  CGFloat width = [self cardWidth];
 
-  CGFloat width = CGRectGetWidth([self cardFrame]);
-  CGPoint center = CGPointMake(bounds.origin.x + bounds.size.width / 2,
-                               bounds.origin.y + bounds.size.height / 2);
   if ([self isEdgeSwipe]) {
     // If an edge card, don't allow the card to be dragged across the screen.
     // Instead, drag across |kEdgeCardDragPercentage| of the screen.
-    center.x = currentPoint_.x - width / 2 -
-               (currentPoint_.x - width) / width *
-                   (width * (1 - kEdgeCardDragPercentage));
-    [_leftCard setCenter:center];
-    center.x = currentPoint_.x / width * (width * kEdgeCardDragPercentage) +
-               bounds.size.width / 2;
-    [_rightCard setCenter:center];
+    _rightCard.transform = CGAffineTransformMakeTranslation(
+        (currentPoint_.x) * kEdgeCardDragPercentage, 0);
+    _leftCard.transform = CGAffineTransformMakeTranslation(
+        (currentPoint_.x - width) * kEdgeCardDragPercentage, 0);
   } else {
-    // Place cards around the finger as it is dragged across the screen.
-    // Place the finger between the cards in the middle of the screen, on the
-    // right card border when on the left side of the screen, and on the left
-    // card border when on the right side of the screen.
     CGFloat rightXBuffer = kCardHorizontalSpacing * currentPoint_.x / width;
     CGFloat leftXBuffer = kCardHorizontalSpacing - rightXBuffer;
 
-    center.x = currentPoint_.x - leftXBuffer - width / 2;
-    [_leftCard setCenter:center];
-
-    center.x = currentPoint_.x + rightXBuffer + width / 2;
-    [_rightCard setCenter:center];
+    _rightCard.transform =
+        CGAffineTransformMakeTranslation(currentPoint_.x + rightXBuffer, 0);
+    _leftCard.transform = CGAffineTransformMakeTranslation(
+        -width + currentPoint_.x - leftXBuffer, 0);
   }
 }
 
@@ -370,7 +374,7 @@ const CGFloat kResizeFactor = 4;
 
   // Since it's difficult to touch the very edge of the screen (touches tend to
   // sit near x ~ 4), push the touch towards the edge.
-  CGFloat width = CGRectGetWidth([self cardFrame]);
+  CGFloat width = [self cardWidth];
   CGFloat half = floor(width / 2);
   CGFloat padding = floor(std::abs(currentPoint_.x - half) / half);
 
@@ -410,38 +414,41 @@ const CGFloat kResizeFactor = 4;
   if (currentIndex == NSNotFound)
     return [_delegate sideSwipeViewDismissAnimationDidEnd:self];
 
-  CGRect finalSize = [self cardFrame];
-  CGFloat width = CGRectGetWidth([self cardFrame]);
-  CGRect leftFrame, rightFrame;
+  CGFloat width = [self cardWidth];
+  CGAffineTransform rightTransform, leftTransform;
   SwipeView* dominantCard;
   Tab* destinationTab = model_.currentTab;
   CGFloat offset = UseRTLLayout() ? -1 : 1;
   if (_direction == UISwipeGestureRecognizerDirectionRight) {
     // If swipe is right and |currentPoint_.x| is over the first 1/3, move left.
     if (currentPoint_.x > width / 3.0 && ![self isEdgeSwipe]) {
+      rightTransform =
+          CGAffineTransformMakeTranslation(width + kCardHorizontalSpacing, 0);
+      leftTransform = CGAffineTransformIdentity;
       destinationTab = [model_ tabAtIndex:currentIndex - offset];
       dominantCard = _leftCard;
-      rightFrame = leftFrame = finalSize;
-      rightFrame.origin.x += rightFrame.size.width + kCardHorizontalSpacing;
       base::RecordAction(UserMetricsAction("MobileStackSwipeCompleted"));
     } else {
+      leftTransform =
+          CGAffineTransformMakeTranslation(-width - kCardHorizontalSpacing, 0);
+      rightTransform = CGAffineTransformIdentity;
       dominantCard = _rightCard;
-      leftFrame = rightFrame = finalSize;
-      leftFrame.origin.x -= rightFrame.size.width + kCardHorizontalSpacing;
       base::RecordAction(UserMetricsAction("MobileStackSwipeCancelled"));
     }
   } else {
     // If swipe is left and |currentPoint_.x| is over the first 1/3, move right.
     if (currentPoint_.x < (width / 3.0) * 2.0 && ![self isEdgeSwipe]) {
+      leftTransform =
+          CGAffineTransformMakeTranslation(-width - kCardHorizontalSpacing, 0);
+      rightTransform = CGAffineTransformIdentity;
       destinationTab = [model_ tabAtIndex:currentIndex + offset];
       dominantCard = _rightCard;
-      leftFrame = rightFrame = finalSize;
-      leftFrame.origin.x -= rightFrame.size.width + kCardHorizontalSpacing;
       base::RecordAction(UserMetricsAction("MobileStackSwipeCompleted"));
     } else {
+      rightTransform =
+          CGAffineTransformMakeTranslation(width + kCardHorizontalSpacing, 0);
+      leftTransform = CGAffineTransformIdentity;
       dominantCard = _leftCard;
-      rightFrame = leftFrame = finalSize;
-      rightFrame.origin.x += rightFrame.size.width + kCardHorizontalSpacing;
       base::RecordAction(UserMetricsAction("MobileStackSwipeCancelled"));
     }
   }
@@ -457,15 +464,10 @@ const CGFloat kResizeFactor = 4;
 
   [UIView animateWithDuration:kAnimationDuration
       animations:^{
-        [_leftCard setTransform:CGAffineTransformIdentity];
-        [_rightCard setTransform:CGAffineTransformIdentity];
-        [_leftCard setFrame:leftFrame];
-        [_rightCard setFrame:rightFrame];
+        _leftCard.transform = leftTransform;
+        _rightCard.transform = rightTransform;
       }
       completion:^(BOOL finished) {
-        // Changing the model even when the tab is the same at the end of the
-        // animation allows the UI to recover.
-        [model_ setCurrentTab:destinationTab];
         [_leftCard setImage:nil];
         [_rightCard setImage:nil];
         [_leftCard setTopToolbarImage:nil isNewTabPage:NO];
@@ -473,6 +475,12 @@ const CGFloat kResizeFactor = 4;
         [_leftCard setBottomToolbarImage:nil];
         [_rightCard setBottomToolbarImage:nil];
         [_delegate sideSwipeViewDismissAnimationDidEnd:self];
+        // Changing the model even when the tab is the same at the end of the
+        // animation allows the UI to recover.  This call must come last,
+        // because setCurrentTab triggers behavior that depends on the view
+        // hierarchy being reassembled, which happens in
+        // sideSwipeViewDismissAnimationDidEnd.
+        [model_ setCurrentTab:destinationTab];
       }];
 }
 

@@ -205,6 +205,8 @@ class WebURLResponse {
   BLINK_PLATFORM_EXPORT void SetSecurityDetails(const WebSecurityDetails&);
   BLINK_PLATFORM_EXPORT WebSecurityDetails SecurityDetailsForTesting();
 
+  BLINK_PLATFORM_EXPORT void SetAsyncRevalidationRequested(bool);
+
 #if INSIDE_BLINK
   BLINK_PLATFORM_EXPORT const ResourceResponse& ToResourceResponse() const;
 #endif
@@ -226,12 +228,9 @@ class WebURLResponse {
   // details.
   BLINK_PLATFORM_EXPORT void SetWasFallbackRequiredByServiceWorker(bool);
 
-  // The type of the response, if it was returned by a service worker. This is
-  // kDefault if the response was not returned by a service worker.
-  BLINK_PLATFORM_EXPORT void SetResponseTypeViaServiceWorker(
-      network::mojom::FetchResponseType);
-  BLINK_PLATFORM_EXPORT network::mojom::FetchResponseType
-  ResponseTypeViaServiceWorker() const;
+  // https://fetch.spec.whatwg.org/#concept-response-type
+  BLINK_PLATFORM_EXPORT void SetType(network::mojom::FetchResponseType);
+  BLINK_PLATFORM_EXPORT network::mojom::FetchResponseType GetType() const;
 
   // The URL list of the Response object the ServiceWorker passed to
   // respondWith(). See ServiceWorkerResponseInfo::url_list_via_service_worker()
@@ -262,12 +261,6 @@ class WebURLResponse {
   // See ServiceWorkerResponseInfo::did_navigation_preload() for
   // details.
   BLINK_PLATFORM_EXPORT void SetDidServiceWorkerNavigationPreload(bool);
-
-  // This indicates the location of a downloaded response if the
-  // WebURLRequest had the downloadToFile flag set to true. This file path
-  // remains valid for the lifetime of the WebURLLoader used to create it.
-  BLINK_PLATFORM_EXPORT WebString DownloadFilePath() const;
-  BLINK_PLATFORM_EXPORT void SetDownloadFilePath(const WebString&);
 
   // Remote IP address of the socket which fetched this resource.
   BLINK_PLATFORM_EXPORT WebString RemoteIPAddress() const;
@@ -309,15 +302,13 @@ class WebURLResponse {
 #endif
 
  private:
-  struct ResourceResponseContainer;
-
   // If this instance owns a ResourceResponse then |owned_resource_response_|
   // is non-null and |resource_response_| points to the ResourceResponse
   // instance it contains.
-  std::unique_ptr<ResourceResponseContainer> owned_resource_response_;
+  const std::unique_ptr<ResourceResponse> owned_resource_response_;
 
   // Should never be null.
-  ResourceResponse* resource_response_;
+  ResourceResponse* const resource_response_;
 };
 
 }  // namespace blink

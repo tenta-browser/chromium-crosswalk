@@ -8,8 +8,8 @@
 #import <UIKit/UIKit.h>
 
 #import "ios/web/public/web_state/js/crw_js_injection_evaluator.h"
-#import "ios/web/public/web_state/ui/crw_web_delegate.h"
 #include "ios/web/public/web_state/url_verification_constants.h"
+#import "ios/web/public/web_state/web_state.h"
 #import "ios/web/web_state/ui/crw_touch_tracking_recognizer.h"
 #import "ios/web/web_state/ui/crw_web_view_navigation_proxy.h"
 
@@ -60,7 +60,6 @@ class WebStateImpl;
 // Defaults to NO; this should be enabled before attempting to access the view.
 @property(nonatomic, assign) BOOL webUsageEnabled;
 
-@property(nonatomic, weak) id<CRWWebDelegate> delegate;
 @property(nonatomic, weak) id<CRWNativeContentProvider> nativeProvider;
 @property(nonatomic, weak) id<CRWSwipeRecognizerProvider>
     swipeRecognizerProvider;
@@ -172,9 +171,6 @@ class WebStateImpl;
 - (void)executeUserJavaScript:(NSString*)script
             completionHandler:(web::JavaScriptResultBlock)completion;
 
-// Dismisses the soft keyboard.
-- (void)dismissKeyboard;
-
 // Requires that the next load rebuild the web view. This is expensive, and
 // should be used only in the case where something has changed that the web view
 // only checks on creation, such that the whole object needs to be rebuilt.
@@ -194,9 +190,6 @@ class WebStateImpl;
 // Notifies the CRWWebController that it has been hidden.
 - (void)wasHidden;
 
-// Returns |YES| if the current page should show the keyboard shield.
-- (BOOL)wantsKeyboardShield;
-
 // Returns |YES| if the current page should should the location bar hint text.
 - (BOOL)wantsLocationBarHintText;
 
@@ -204,15 +197,6 @@ class WebStateImpl;
 - (void)addGestureRecognizerToWebView:(UIGestureRecognizer*)recognizer;
 // Removes |recognizer| from the web view.
 - (void)removeGestureRecognizerFromWebView:(UIGestureRecognizer*)recognizer;
-
-// Adds |toolbar| to the web view.
-- (void)addToolbarViewToWebView:(UIView*)toolbarView;
-// Removes |toolbar| from the web view.
-- (void)removeToolbarViewFromWebView:(UIView*)toolbarView;
-
-// Returns the always-visible frame, not including the part that could be
-// covered by the toolbar.
-- (CGRect)visibleFrame;
 
 - (CRWJSInjectionReceiver*)jsInjectionReceiver;
 
@@ -223,7 +207,8 @@ class WebStateImpl;
 // navigation. Updates HTML5 history state, current document URL and sends
 // approprivate navigation and loading WebStateObserver callbacks.
 - (void)didFinishGoToIndexSameDocumentNavigationWithType:
-    (web::NavigationInitiationType)type;
+            (web::NavigationInitiationType)type
+                                          hasUserGesture:(BOOL)hasUserGesture;
 
 @end
 

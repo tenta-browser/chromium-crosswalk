@@ -8,7 +8,7 @@
 #include "build/build_config.h"
 #include "chrome/browser/first_run/first_run.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/upgrade_detector.h"
+#include "chrome/browser/upgrade_detector/upgrade_detector.h"
 #include "chrome/common/pref_names.h"
 #include "components/pref_registry/pref_registry_syncable.h"
 #include "components/prefs/pref_registry_simple.h"
@@ -39,9 +39,7 @@ void RegisterBrowserPrefs(PrefRegistrySimple* registry) {
   registry->RegisterBooleanPref(prefs::kAllowFileSelectionDialogs, true);
 
 #if !defined(OS_ANDROID)
-#if !defined(OS_CHROMEOS)
   registry->RegisterIntegerPref(prefs::kRelaunchNotification, 0);
-#endif  // !defined(OS_CHROMEOS)
   registry->RegisterIntegerPref(
       prefs::kRelaunchNotificationPeriod,
       base::saturated_cast<int>(
@@ -75,7 +73,6 @@ void RegisterBrowserUserPrefs(user_prefs::PrefRegistrySyncable* registry) {
   registry->RegisterStringPref(prefs::kCloudPrintEmail, std::string());
   registry->RegisterBooleanPref(prefs::kCloudPrintProxyEnabled, true);
   registry->RegisterBooleanPref(prefs::kCloudPrintSubmitEnabled, true);
-  registry->RegisterBooleanPref(prefs::kDevToolsDisabled, false);
   registry->RegisterDictionaryPref(prefs::kBrowserWindowPlacement);
   registry->RegisterDictionaryPref(prefs::kBrowserWindowPlacementPopup);
   registry->RegisterDictionaryPref(prefs::kAppWindowPlacement);
@@ -87,14 +84,13 @@ void RegisterBrowserUserPrefs(user_prefs::PrefRegistrySyncable* registry) {
   registry->RegisterBooleanPref(prefs::kPrintPreviewUseSystemDefaultPrinter,
                                 false);
 #endif
-#if BUILDFLAG(ENABLE_WEBRTC)
   // TODO(guoweis): Remove next 2 options at M50.
   registry->RegisterBooleanPref(prefs::kWebRTCMultipleRoutesEnabled, true);
   registry->RegisterBooleanPref(prefs::kWebRTCNonProxiedUdpEnabled, true);
   registry->RegisterStringPref(prefs::kWebRTCIPHandlingPolicy,
                                content::kWebRTCIPHandlingDefault);
   registry->RegisterStringPref(prefs::kWebRTCUDPPortRange, std::string());
-#endif
+  registry->RegisterBooleanPref(prefs::kWebRtcEventLogCollectionAllowed, false);
 
   // Dictionaries to keep track of default tasks in the file browser.
   registry->RegisterDictionaryPref(

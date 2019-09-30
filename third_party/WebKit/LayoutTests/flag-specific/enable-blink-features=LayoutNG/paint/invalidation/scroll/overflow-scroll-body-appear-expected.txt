@@ -18,88 +18,46 @@
       "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
         {
-          "object": "NGPaintFragment",
-          "rect": [124, 56, 383, 14],
+          "object": "NGPhysicalTextFragment 'Bug 36461 - No vertical scrollbar after the CSS class change'",
+          "rect": [124, 52, 383, 19],
           "reason": "appeared"
         },
         {
-          "object": "NGPaintFragment",
-          "rect": [124, 56, 383, 14],
+          "object": "NGPhysicalTextFragment 'Bug 36461 - No vertical scrollbar after the CSS class change'",
+          "rect": [124, 52, 383, 19],
           "reason": "disappeared"
         },
         {
-          "object": "NGPaintFragment",
-          "rect": [8, 20, 339, 11],
+          "object": "NGPhysicalTextFragment 'You should see both vertical and horizontal scrollbars.'",
+          "rect": [8, 16, 340, 19],
           "reason": "appeared"
         },
         {
-          "object": "NGPaintFragment",
-          "rect": [8, 20, 339, 11],
+          "object": "NGPhysicalTextFragment 'You should see both vertical and horizontal scrollbars.'",
+          "rect": [8, 16, 340, 19],
           "reason": "disappeared"
         },
         {
-          "object": "NGPaintFragment",
-          "rect": [8, 56, 116, 14],
+          "object": "NGPhysicalTextFragment 'This is the test for '",
+          "rect": [8, 52, 116, 19],
           "reason": "appeared"
         },
         {
-          "object": "NGPaintFragment",
-          "rect": [8, 56, 116, 14],
+          "object": "NGPhysicalTextFragment 'This is the test for '",
+          "rect": [8, 52, 116, 19],
           "reason": "disappeared"
         },
         {
-          "object": "NGPaintFragment",
-          "rect": [507, 56, 3, 14],
+          "object": "NGPhysicalTextFragment '.'",
+          "rect": [507, 52, 4, 19],
           "reason": "appeared"
         },
         {
-          "object": "NGPaintFragment",
-          "rect": [507, 56, 3, 14],
+          "object": "NGPhysicalTextFragment '.'",
+          "rect": [507, 52, 4, 19],
           "reason": "disappeared"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutView #document",
-      "reason": "style change"
-    },
-    {
-      "object": "LayoutView #document",
-      "reason": "geometry"
-    },
-    {
-      "object": "LayoutView #document",
-      "reason": "geometry"
-    },
-    {
-      "object": "LayoutNGBlockFlow BODY",
-      "reason": "style change"
-    },
-    {
-      "object": "NGPaintFragment",
-      "reason": "subtree"
-    },
-    {
-      "object": "NGPaintFragment",
-      "reason": "subtree"
-    },
-    {
-      "object": "NGPaintFragment",
-      "reason": "subtree"
-    },
-    {
-      "object": "NGPaintFragment",
-      "reason": "subtree"
-    },
-    {
-      "object": "NGPaintFragment",
-      "reason": "subtree"
-    },
-    {
-      "object": "NGPaintFragment",
-      "reason": "subtree"
     }
   ]
 }

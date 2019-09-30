@@ -133,23 +133,24 @@ public class LayoutManager implements LayoutUpdateHost, LayoutProvider,
      * need to override any related calls to add new functionality */
     protected class LayoutManagerTabModelObserver extends EmptyTabModelObserver {
         @Override
-        public void didSelectTab(Tab tab, TabModel.TabSelectionType type, int lastId) {
+        public void didSelectTab(Tab tab, @TabModel.TabSelectionType int type, int lastId) {
             if (tab.getId() != lastId) tabSelected(tab.getId(), lastId, tab.isIncognito());
         }
 
         @Override
-        public void willAddTab(Tab tab, TabModel.TabLaunchType type) {
+        public void willAddTab(Tab tab, @TabModel.TabLaunchType int type) {
             // Open the new tab
-            if (type == TabModel.TabLaunchType.FROM_RESTORE) return;
-            if (type == TabModel.TabLaunchType.FROM_REPARENTING) return;
-            if (type == TabModel.TabLaunchType.FROM_EXTERNAL_APP) return;
-            if (type == TabModel.TabLaunchType.FROM_LAUNCHER_SHORTCUT) return;
+            if (type == TabModel.TabLaunchType.FROM_RESTORE
+                    || type == TabModel.TabLaunchType.FROM_REPARENTING
+                    || type == TabModel.TabLaunchType.FROM_EXTERNAL_APP
+                    || type == TabModel.TabLaunchType.FROM_LAUNCHER_SHORTCUT)
+                return;
 
             tabCreating(getTabModelSelector().getCurrentTabId(), tab.getUrl(), tab.isIncognito());
         }
 
         @Override
-        public void didAddTab(Tab tab, TabModel.TabLaunchType launchType) {
+        public void didAddTab(Tab tab, @TabModel.TabLaunchType int launchType) {
             int tabId = tab.getId();
             if (launchType == TabModel.TabLaunchType.FROM_RESTORE) {
                 getActiveLayout().onTabRestored(time(), tabId);
@@ -229,6 +230,13 @@ public class LayoutManager implements LayoutUpdateHost, LayoutProvider,
         mStaticLayout.setLayoutHandlesTabLifecycles(true);
 
         setNextLayout(null);
+    }
+
+    /**
+     * @return The layout manager's panel manager.
+     */
+    public OverlayPanelManager getOverlayPanelManager() {
+        return mOverlayPanelManager;
     }
 
     @Override
@@ -386,6 +394,16 @@ public class LayoutManager implements LayoutUpdateHost, LayoutProvider,
 
         mTabModelSelector = selector;
         mTabModelSelectorTabObserver = new TabModelSelectorTabObserver(mTabModelSelector) {
+            @Override
+            public void onShown(Tab tab) {
+                initLayoutTabFromHost(tab.getId());
+            }
+
+            @Override
+            public void onHidden(Tab tab) {
+                initLayoutTabFromHost(tab.getId());
+            }
+
             @Override
             public void onContentChanged(Tab tab) {
                 initLayoutTabFromHost(tab.getId());
@@ -569,7 +587,7 @@ public class LayoutManager implements LayoutUpdateHost, LayoutProvider,
      * @param originX        The x coordinate of the action that created this tab in dp.
      * @param originY        The y coordinate of the action that created this tab in dp.
      */
-    protected void tabCreated(int id, int sourceId, TabModel.TabLaunchType launchType,
+    protected void tabCreated(int id, int sourceId, @TabModel.TabLaunchType int launchType,
             boolean incognito, boolean willBeSelected, float originX, float originY) {
         int newIndex = TabModelUtils.getTabIndexById(getTabModelSelector().getModel(incognito), id);
         getActiveLayout().onTabCreated(
@@ -662,11 +680,12 @@ public class LayoutManager implements LayoutUpdateHost, LayoutProvider,
         if (layoutTab == null) return;
 
         String url = tab.getUrl();
-        boolean isNativePage = url != null && url.startsWith(UrlConstants.CHROME_NATIVE_URL_PREFIX);
+        boolean isNativePage = tab.isNativePage()
+                || (url != null && url.startsWith(UrlConstants.CHROME_NATIVE_URL_PREFIX));
         int themeColor = tab.getThemeColor();
 
-        boolean canUseLiveTexture =
-                tab.getContentViewCore() != null && !tab.isShowingSadTab() && !isNativePage;
+        boolean canUseLiveTexture = tab.getWebContents() != null && !tab.isShowingSadTab()
+                && !isNativePage && !tab.isHidden();
 
         boolean isNtp = tab.getNativePage() instanceof NewTabPage;
         boolean isLocationBarShownInNtp =
@@ -737,23 +756,20 @@ public class LayoutManager implements LayoutUpdateHost, LayoutProvider,
         }
 
         switch (getActiveLayout().getViewportMode()) {
-            case ALWAYS_FULLSCREEN:
+            case Layout.ViewportMode.ALWAYS_FULLSCREEN:
                 mHost.getWindowViewport(rect);
                 break;
-
-            case ALWAYS_SHOWING_BROWSER_CONTROLS:
+            case Layout.ViewportMode.ALWAYS_SHOWING_BROWSER_CONTROLS:
                 mHost.getViewportFullControls(rect);
                 break;
-
-            case USE_PREVIOUS_BROWSER_CONTROLS_STATE:
+            case Layout.ViewportMode.USE_PREVIOUS_BROWSER_CONTROLS_STATE:
                 if (mPreviousLayoutShowingToolbar) {
                     mHost.getViewportFullControls(rect);
                 } else {
                     mHost.getWindowViewport(rect);
                 }
                 break;
-
-            case DYNAMIC_BROWSER_CONTROLS:
+            case Layout.ViewportMode.DYNAMIC_BROWSER_CONTROLS:
             default:
                 mHost.getVisibleViewport(rect);
         }
@@ -785,9 +801,7 @@ public class LayoutManager implements LayoutUpdateHost, LayoutProvider,
         // TODO: If next layout is default layout clear caches (should this be a sub layout thing?)
 
         assert mNextActiveLayout != null : "Need to have a next active layout.";
-        if (mNextActiveLayout != null) {
-            startShowing(mNextActiveLayout, true);
-        }
+        if (mNextActiveLayout != null) startShowing(mNextActiveLayout, true);
     }
 
     @Override
@@ -813,6 +827,11 @@ public class LayoutManager implements LayoutUpdateHost, LayoutProvider,
             if (oldLayout != null) {
                 oldLayout.forceAnimationToFinish();
                 oldLayout.detachViews();
+            }
+            // TODO(fhorschig): This might be removed as soon as keyboard replacements get triggered
+            // by the normal keyboard hiding signals.
+            for (SceneChangeObserver observer : mSceneChangeObservers) {
+                observer.onSceneStartShowing(layout);
             }
             layout.contextChanged(mHost.getContext());
             layout.attachViews(mContentContainer);
@@ -873,7 +892,7 @@ public class LayoutManager implements LayoutUpdateHost, LayoutProvider,
      * @return The {@link EdgeSwipeHandler} responsible for processing swipe events for the toolbar.
      *         By default this returns null.
      */
-    public EdgeSwipeHandler getTopSwipeHandler() {
+    public EdgeSwipeHandler getToolbarSwipeHandler() {
         return null;
     }
 
@@ -925,11 +944,7 @@ public class LayoutManager implements LayoutUpdateHost, LayoutProvider,
     }
 
     private int getOrientation() {
-        if (mHost.getWidth() > mHost.getHeight()) {
-            return Orientation.LANDSCAPE;
-        } else {
-            return Orientation.PORTRAIT;
-        }
+        return mHost.getWidth() > mHost.getHeight() ? Orientation.LANDSCAPE : Orientation.PORTRAIT;
     }
 
     /**

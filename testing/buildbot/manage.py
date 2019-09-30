@@ -59,7 +59,7 @@ SKIP = {
   'WebKit Mac10.11',
   'WebKit Mac10.12',
   'WebKit Mac10.11 (dbg)',
-  'WebKit Mac10.12 (retina)',
+  'WebKit Mac10.13 (retina)',
   'Chromium Mac10.10 Tests',
   'Chromium Mac10.11 Tests',
 
@@ -88,7 +88,7 @@ SKIP_GN_ISOLATE_MAP_TARGETS = {
   'chromium_builder_perf',
   'chromiumos_preflight',
   'mini_installer',
-  'next_version_mini_installer',
+  'previous_version_mini_installer',
 
   # iOS tests are listed in //ios/build/bots.
   'cronet_test',
@@ -171,6 +171,9 @@ SKIP_GN_ISOLATE_MAP_TARGETS = {
   # These are only run on V8 CI.
   'pdfium_test',
   'postmortem-metadata',
+
+  # These are only for developer convenience and not on any bots.
+  'telemetry_gpu_integration_test_scripts_only',
 }
 
 

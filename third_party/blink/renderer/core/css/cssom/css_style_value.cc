@@ -4,15 +4,17 @@
 
 #include "third_party/blink/renderer/core/css/cssom/css_style_value.h"
 
-#include "third_party/blink/renderer/bindings/core/v8/exception_state.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_value.h"
 #include "third_party/blink/renderer/bindings/core/v8/to_v8_for_core.h"
 #include "third_party/blink/renderer/core/css/cssom/style_value_factory.h"
 #include "third_party/blink/renderer/core/css/parser/css_parser_context.h"
 #include "third_party/blink/renderer/core/css/properties/css_property.h"
 #include "third_party/blink/renderer/core/style_property_shorthand.h"
+#include "third_party/blink/renderer/platform/bindings/exception_state.h"
 
 namespace blink {
+
+class PropertyRegistration;
 
 namespace {
 
@@ -28,8 +30,10 @@ CSSStyleValueVector ParseCSSStyleValue(
     return CSSStyleValueVector();
   }
 
+  // TODO(andruud): Actually get PropertyRegistration and pass it.
   const auto style_values = StyleValueFactory::FromString(
-      property_id, value, CSSParserContext::Create(*execution_context));
+      property_id, nullptr, value,
+      CSSParserContext::Create(*execution_context));
   if (style_values.IsEmpty()) {
     exception_state.ThrowTypeError("The value provided ('" + value +
                                    "') could not be parsed as a '" +

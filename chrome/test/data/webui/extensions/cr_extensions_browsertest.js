@@ -5,35 +5,29 @@
 /** @fileoverview Runs the Polymer Settings tests. */
 
 /** @const {string} Path to source root. */
-var ROOT_PATH = '../../../../../';
+const ROOT_PATH = '../../../../../';
 
 // Polymer BrowserTest fixture.
-GEN_INCLUDE([
-    ROOT_PATH + 'chrome/test/data/webui/polymer_browser_test_base.js']);
+GEN_INCLUDE(
+    [ROOT_PATH + 'chrome/test/data/webui/polymer_browser_test_base.js']);
 GEN('#include "chrome/browser/ui/webui/extensions/' +
     'extension_settings_browsertest.h"');
-GEN('#include "chrome/common/chrome_features.h"');
 
 /**
  * Basic test fixture for the MD chrome://extensions page. Installs no
  * extensions.
  */
-var CrExtensionsBrowserTest = class extends PolymerTest {
+const CrExtensionsBrowserTest = class extends PolymerTest {
   /** @override */
   get browsePreload() {
     return 'chrome://extensions/';
   }
 
   /** @override */
-  get featureList() {
-    return ['features::kMaterialDesignExtensions', ''];
-  }
-
-  /** @override */
   get extraLibraries() {
     return PolymerTest.getLibraries(ROOT_PATH).concat([
       ROOT_PATH + 'ui/webui/resources/js/assert.js',
-      'extension_test_util.js',
+      'test_util.js',
       '../mock_controller.js',
       '../../../../../ui/webui/resources/js/promise_resolver.js',
       '../../../../../ui/webui/resources/js/webui_resource_test.js',
@@ -63,7 +57,7 @@ var CrExtensionsBrowserTest = class extends PolymerTest {
 /**
  * Test fixture with one installed extension.
  */
-var CrExtensionsBrowserTestWithInstalledExtension =
+CrExtensionsBrowserTestWithInstalledExtension =
     class extends CrExtensionsBrowserTest {
   /** @override */
   testGenPreamble() {
@@ -75,7 +69,7 @@ var CrExtensionsBrowserTestWithInstalledExtension =
 ////////////////////////////////////////////////////////////////////////////////
 // Extension Sidebar Tests
 
-var CrExtensionsSidebarTest = class extends CrExtensionsBrowserTest {
+CrExtensionsSidebarTest = class extends CrExtensionsBrowserTest {
   /** @override */
   get browsePreload() {
     return 'chrome://extensions/sidebar.html';
@@ -84,7 +78,7 @@ var CrExtensionsSidebarTest = class extends CrExtensionsBrowserTest {
   /** @override */
   get extraLibraries() {
     return super.extraLibraries.concat([
-      'extension_sidebar_test.js',
+      'sidebar_test.js',
     ]);
   }
 
@@ -105,11 +99,11 @@ TEST_F('CrExtensionsSidebarTest', 'SetSelected', function() {
 ////////////////////////////////////////////////////////////////////////////////
 // Extension Toolbar Tests
 
-var CrExtensionsToolbarTest = class extends CrExtensionsBrowserTest {
+CrExtensionsToolbarTest = class extends CrExtensionsBrowserTest {
   /** @override */
   get extraLibraries() {
     return super.extraLibraries.concat([
-      'extension_toolbar_test.js',
+      'toolbar_test.js',
     ]);
   }
 
@@ -140,7 +134,7 @@ GEN('#endif');
 ////////////////////////////////////////////////////////////////////////////////
 // Extension Item Tests
 
-var CrExtensionsItemsTest = class extends CrExtensionsBrowserTest {
+CrExtensionsItemsTest = class extends CrExtensionsBrowserTest {
   get browsePreload() {
     return 'chrome://extensions/item.html';
   }
@@ -148,7 +142,7 @@ var CrExtensionsItemsTest = class extends CrExtensionsBrowserTest {
   /** @override */
   get extraLibraries() {
     return super.extraLibraries.concat([
-      'extension_item_test.js',
+      'item_test.js',
     ]);
   }
 
@@ -199,7 +193,7 @@ TEST_F('CrExtensionsItemsTest', 'HtmlInName', function() {
 ////////////////////////////////////////////////////////////////////////////////
 // Extension Detail View Tests
 
-var CrExtensionsDetailViewTest = class extends CrExtensionsBrowserTest {
+CrExtensionsDetailViewTest = class extends CrExtensionsBrowserTest {
   /** @override */
   get browsePreload() {
     return 'chrome://extensions/detail_view.html';
@@ -208,7 +202,7 @@ var CrExtensionsDetailViewTest = class extends CrExtensionsBrowserTest {
   /** @override */
   get extraLibraries() {
     return super.extraLibraries.concat([
-      'extension_detail_view_test.js',
+      'detail_view_test.js',
     ]);
   }
 
@@ -226,11 +220,9 @@ TEST_F('CrExtensionsDetailViewTest', 'LayoutSource', function() {
   this.runMochaTest(extension_detail_view_tests.TestNames.LayoutSource);
 });
 
-TEST_F(
-    'CrExtensionsDetailViewTest', 'ClickableElements', function() {
-      this.runMochaTest(
-          extension_detail_view_tests.TestNames.ClickableElements);
-    });
+TEST_F('CrExtensionsDetailViewTest', 'ClickableElements', function() {
+  this.runMochaTest(extension_detail_view_tests.TestNames.ClickableElements);
+});
 
 TEST_F('CrExtensionsDetailViewTest', 'IndicatorTest', function() {
   this.runMochaTest(extension_detail_view_tests.TestNames.Indicator);
@@ -243,7 +235,7 @@ TEST_F('CrExtensionsDetailViewTest', 'Warnings', function() {
 ////////////////////////////////////////////////////////////////////////////////
 // Extension Item List Tests
 
-var CrExtensionsItemListTest = class extends CrExtensionsBrowserTest {
+CrExtensionsItemListTest = class extends CrExtensionsBrowserTest {
   /** @override */
   get browsePreload() {
     return 'chrome://extensions/item_list.html';
@@ -252,7 +244,7 @@ var CrExtensionsItemListTest = class extends CrExtensionsBrowserTest {
   /** @override */
   get extraLibraries() {
     return super.extraLibraries.concat([
-      'extension_item_list_test.js',
+      'item_list_test.js',
     ]);
   }
 
@@ -289,11 +281,11 @@ TEST_F('CrExtensionsItemListTest', 'NoSearchResults', function() {
 ////////////////////////////////////////////////////////////////////////////////
 // Extension Load Error Tests
 
-var CrExtensionsLoadErrorTest = class extends CrExtensionsBrowserTest {
+CrExtensionsLoadErrorTest = class extends CrExtensionsBrowserTest {
   /** @override */
   get extraLibraries() {
     return super.extraLibraries.concat([
-      'extension_load_error_test.js',
+      'load_error_test.js',
     ]);
   }
 
@@ -318,7 +310,7 @@ TEST_F('CrExtensionsLoadErrorTest', 'CodeSection', function() {
 ////////////////////////////////////////////////////////////////////////////////
 // Extension Manager Tests
 
-var CrExtensionsManagerUnitTest = class extends CrExtensionsBrowserTest {
+CrExtensionsManagerUnitTest = class extends CrExtensionsBrowserTest {
   /** @override */
   get browsePreload() {
     return 'chrome://extensions/manager.html';
@@ -328,7 +320,7 @@ var CrExtensionsManagerUnitTest = class extends CrExtensionsBrowserTest {
   get extraLibraries() {
     return super.extraLibraries.concat([
       'test_kiosk_browser_proxy.js',
-      'extension_manager_unit_test.js',
+      'manager_unit_test.js',
     ]);
   }
 
@@ -373,12 +365,12 @@ TEST_F('CrExtensionsManagerUnitTest', 'KioskMode', function() {
 GEN('#endif');
 
 
-var CrExtensionsManagerTestWithMultipleExtensionTypesInstalled =
+CrExtensionsManagerTestWithMultipleExtensionTypesInstalled =
     class extends CrExtensionsBrowserTest {
   /** @override */
   get extraLibraries() {
     return super.extraLibraries.concat([
-      'extension_manager_test.js',
+      'manager_test.js',
     ]);
   }
 
@@ -414,7 +406,7 @@ TEST_F(
       this.runMochaTest(extension_manager_tests.TestNames.ChangePages);
     });
 
-var CrExtensionsManagerTestWithIdQueryParam =
+CrExtensionsManagerTestWithIdQueryParam =
     class extends CrExtensionsBrowserTestWithInstalledExtension {
   /** @override */
   get browsePreload() {
@@ -424,7 +416,7 @@ var CrExtensionsManagerTestWithIdQueryParam =
   /** @override */
   get extraLibraries() {
     return super.extraLibraries.concat([
-      'extension_manager_test.js',
+      'manager_test.js',
     ]);
   }
 
@@ -445,7 +437,7 @@ TEST_F(
 ////////////////////////////////////////////////////////////////////////////////
 // Extension Keyboard Shortcuts Tests
 
-var CrExtensionsShortcutTest = class extends CrExtensionsBrowserTest {
+CrExtensionsShortcutTest = class extends CrExtensionsBrowserTest {
   /** @override */
   get browsePreload() {
     return 'chrome://extensions/keyboard_shortcuts.html';
@@ -454,7 +446,7 @@ var CrExtensionsShortcutTest = class extends CrExtensionsBrowserTest {
   /** @override */
   get extraLibraries() {
     return super.extraLibraries.concat([
-      'extension_keyboard_shortcuts_test.js',
+      'keyboard_shortcuts_test.js',
     ]);
   }
 
@@ -476,7 +468,11 @@ TEST_F('CrExtensionsShortcutTest', 'KeyStrokeToString', function() {
   this.runMochaTest(extension_shortcut_tests.TestNames.IsValidKeyCode);
 });
 
-var CrExtensionsShortcutInputTest = class extends CrExtensionsBrowserTest {
+TEST_F('CrExtensionsShortcutTest', 'ScopeChange', function() {
+  this.runMochaTest(extension_shortcut_tests.TestNames.ScopeChange);
+});
+
+CrExtensionsShortcutInputTest = class extends CrExtensionsBrowserTest {
   /** @override */
   get browsePreload() {
     return 'chrome://extensions/keyboard_shortcuts.html';
@@ -485,7 +481,7 @@ var CrExtensionsShortcutInputTest = class extends CrExtensionsBrowserTest {
   /** @override */
   get extraLibraries() {
     return super.extraLibraries.concat([
-      'extension_shortcut_input_test.js',
+      'shortcut_input_test.js',
     ]);
   }
 
@@ -502,11 +498,11 @@ TEST_F('CrExtensionsShortcutInputTest', 'Basic', function() {
 ////////////////////////////////////////////////////////////////////////////////
 // Extension Pack Dialog Tests
 
-var CrExtensionsPackDialogTest = class extends CrExtensionsBrowserTest {
+CrExtensionsPackDialogTest = class extends CrExtensionsBrowserTest {
   /** @override */
   get extraLibraries() {
     return super.extraLibraries.concat([
-      'extension_pack_dialog_test.js',
+      'pack_dialog_test.js',
     ]);
   }
 
@@ -520,7 +516,16 @@ TEST_F('CrExtensionsPackDialogTest', 'Interaction', function() {
   this.runMochaTest(extension_pack_dialog_tests.TestNames.Interaction);
 });
 
-TEST_F('CrExtensionsPackDialogTest', 'PackSuccess', function() {
+// Disabling on Windows due to flaky timeout on some build bots.
+// http://crbug.com/832885
+// Temporarily disabling on Mac due to flaky dialog visibility failure.
+// http://crbug.com/877109
+GEN('#if defined(OS_WIN) || defined(OS_MACOSX)');
+GEN('#define MAYBE_PackSuccess DISABLED_PackSuccess');
+GEN('#else');
+GEN('#define MAYBE_PackSuccess PackSuccess');
+GEN('#endif');
+TEST_F('CrExtensionsPackDialogTest', 'MAYBE_PackSuccess', function() {
   this.runMochaTest(extension_pack_dialog_tests.TestNames.PackSuccess);
 });
 
@@ -535,7 +540,7 @@ TEST_F('CrExtensionsPackDialogTest', 'PackWarning', function() {
 ////////////////////////////////////////////////////////////////////////////////
 // Extension Options Dialog Tests
 
-var CrExtensionsOptionsDialogTest = class extends CrExtensionsBrowserTest {
+CrExtensionsOptionsDialogTest = class extends CrExtensionsBrowserTest {
   /** @override */
   testGenPreamble() {
     GEN('  InstallExtensionWithInPageOptions();');
@@ -545,7 +550,7 @@ var CrExtensionsOptionsDialogTest = class extends CrExtensionsBrowserTest {
   get extraLibraries() {
     return super.extraLibraries.concat([
       '../settings/test_util.js',
-      'extension_options_dialog_test.js',
+      'options_dialog_test.js',
     ]);
   }
 
@@ -562,7 +567,7 @@ TEST_F('CrExtensionsOptionsDialogTest', 'Layout', function() {
 ////////////////////////////////////////////////////////////////////////////////
 // Extension Error Page Tests
 
-var CrExtensionsErrorPageTest = class extends CrExtensionsBrowserTest {
+CrExtensionsErrorPageTest = class extends CrExtensionsBrowserTest {
   /** @override */
   get browsePreload() {
     return 'chrome://extensions/error_page.html';
@@ -571,7 +576,7 @@ var CrExtensionsErrorPageTest = class extends CrExtensionsBrowserTest {
   /** @override */
   get extraLibraries() {
     return super.extraLibraries.concat([
-      'extension_error_page_test.js',
+      'error_page_test.js',
     ]);
   }
 
@@ -596,11 +601,11 @@ TEST_F('CrExtensionsErrorPageTest', 'ErrorSelection', function() {
 ////////////////////////////////////////////////////////////////////////////////
 // Extension Code Section Tests
 
-var CrExtensionsCodeSectionTest = class extends CrExtensionsBrowserTest {
+CrExtensionsCodeSectionTest = class extends CrExtensionsBrowserTest {
   /** @override */
   get extraLibraries() {
     return super.extraLibraries.concat([
-      'extension_code_section_test.js',
+      'code_section_test.js',
     ]);
   }
 
@@ -621,7 +626,7 @@ TEST_F('CrExtensionsCodeSectionTest', 'LongSource', function() {
 ////////////////////////////////////////////////////////////////////////////////
 // Extension Navigation Helper Tests
 
-var CrExtensionsNavigationHelperTest = class extends CrExtensionsBrowserTest {
+CrExtensionsNavigationHelperTest = class extends CrExtensionsBrowserTest {
   /** @override */
   get browsePreload() {
     return 'chrome://extensions/navigation_helper.html';
@@ -630,7 +635,7 @@ var CrExtensionsNavigationHelperTest = class extends CrExtensionsBrowserTest {
   /** @override */
   get extraLibraries() {
     return super.extraLibraries.concat([
-      'extension_navigation_helper_test.js',
+      'navigation_helper_test.js',
     ]);
   }
 
@@ -661,7 +666,7 @@ TEST_F('CrExtensionsNavigationHelperTest', 'SupportedRoutes', function() {
 ////////////////////////////////////////////////////////////////////////////////
 // Extension View Manager Tests
 
-var CrExtensionsViewManagerTest = class extends CrExtensionsBrowserTest {
+CrExtensionsViewManagerTest = class extends CrExtensionsBrowserTest {
   /** @override */
   get browsePreload() {
     return 'chrome://extensions/view_manager.html';
@@ -670,7 +675,7 @@ var CrExtensionsViewManagerTest = class extends CrExtensionsBrowserTest {
   /** @override */
   get extraLibraries() {
     return super.extraLibraries.concat([
-      'extension_view_manager_test.js',
+      'view_manager_test.js',
     ]);
   }
 
@@ -691,7 +696,7 @@ TEST_F('CrExtensionsViewManagerTest', 'EventFiringTest', function() {
 ////////////////////////////////////////////////////////////////////////////////
 // Error Console tests
 
-var CrExtensionsErrorConsoleTest = class extends CrExtensionsBrowserTest {
+CrExtensionsErrorConsoleTest = class extends CrExtensionsBrowserTest {
   /** @override */
   get suiteName() {
     return 'ErrorConsoleTests';
@@ -716,25 +721,35 @@ var CrExtensionsErrorConsoleTest = class extends CrExtensionsBrowserTest {
 };
 
 TEST_F('CrExtensionsErrorConsoleTest', 'TestUpDownErrors', function() {
-  const STACK_ERRORS = '* /deep/ li';
-  const ACTIVE_ERROR_IN_STACK = '* /deep/ li[tabindex="0"]';
+  const STACK_ERRORS = 'li';
+  const ACTIVE_ERROR_IN_STACK = 'li[tabindex="0"]';
 
-  let initialFocus = document.querySelector(ACTIVE_ERROR_IN_STACK);
+  let initialFocus =
+      extension_test_util.findMatches(document, ACTIVE_ERROR_IN_STACK)[0];
   assertTrue(!!initialFocus);
-  assertEquals(1, document.querySelectorAll(ACTIVE_ERROR_IN_STACK).length);
-  assertEquals(4, document.querySelectorAll(STACK_ERRORS).length);
+  assertEquals(
+      1,
+      extension_test_util.findMatches(document, ACTIVE_ERROR_IN_STACK).length);
+  assertEquals(
+      4, extension_test_util.findMatches(document, STACK_ERRORS).length);
 
   // Pressing up when the first item is focused should NOT change focus.
   MockInteractions.keyDownOn(initialFocus, 38, '', 'ArrowUp');
-  assertEquals(initialFocus, document.querySelector(ACTIVE_ERROR_IN_STACK));
+  assertEquals(
+      initialFocus,
+      extension_test_util.findMatches(document, ACTIVE_ERROR_IN_STACK)[0]);
 
   // Pressing down when the first item is focused should change focus.
   MockInteractions.keyDownOn(initialFocus, 40, '', 'ArrowDown');
-  assertNotEquals(initialFocus, document.querySelector(ACTIVE_ERROR_IN_STACK));
+  assertNotEquals(
+      initialFocus,
+      extension_test_util.findMatches(document, ACTIVE_ERROR_IN_STACK)[0]);
 
   // Pressing up when the second item is focused should focus the first again.
   MockInteractions.keyDownOn(initialFocus, 38, '', 'ArrowUp');
-  assertEquals(initialFocus, document.querySelector(ACTIVE_ERROR_IN_STACK));
+  assertEquals(
+      initialFocus,
+      extension_test_util.findMatches(document, ACTIVE_ERROR_IN_STACK)[0]);
 
   testDone();
 });
@@ -742,7 +757,7 @@ TEST_F('CrExtensionsErrorConsoleTest', 'TestUpDownErrors', function() {
 ////////////////////////////////////////////////////////////////////////////////
 // extensions-toggle-row tests.
 
-var CrExtensionsToggleRowTest = class extends CrExtensionsBrowserTest {
+CrExtensionsToggleRowTest = class extends CrExtensionsBrowserTest {
   /** @override */
   get browsePreload() {
     return 'chrome://extensions/toggle_row.html';
@@ -765,7 +780,7 @@ TEST_F('CrExtensionsToggleRowTest', 'ToggleRowTest', function() {
 
 GEN('#if defined(OS_CHROMEOS)');
 
-var CrExtensionsKioskModeTest = class extends CrExtensionsBrowserTest {
+CrExtensionsKioskModeTest = class extends CrExtensionsBrowserTest {
   /** @override */
   get browsePreload() {
     return 'chrome://extensions/kiosk_dialog.html';
@@ -775,7 +790,7 @@ var CrExtensionsKioskModeTest = class extends CrExtensionsBrowserTest {
   get extraLibraries() {
     return super.extraLibraries.concat([
       'test_kiosk_browser_proxy.js',
-      'extension_kiosk_mode_test.js',
+      'kiosk_mode_test.js',
     ]);
   }
   /** @override */
@@ -809,3 +824,43 @@ TEST_F('CrExtensionsKioskModeTest', 'AddError', function() {
 });
 
 GEN('#endif');
+
+////////////////////////////////////////////////////////////////////////////////
+// RuntimeHostsDialog tests
+
+CrExtensionsRuntimeHostsDialogTest = class extends CrExtensionsBrowserTest {
+  /** @override */
+  get browserPreload() {
+    return 'chrome://extensions/runtime_hosts_dialog.html';
+  }
+
+  get extraLibraries() {
+    return super.extraLibraries.concat([
+      'runtime_hosts_dialog_test.js',
+    ]);
+  }
+};
+
+TEST_F('CrExtensionsRuntimeHostsDialogTest', 'All', () => {
+  mocha.run();
+});
+
+////////////////////////////////////////////////////////////////////////////////
+// RuntimeHostPermissions tests
+
+CrExtensionsRuntimeHostPermissionsTest = class extends CrExtensionsBrowserTest {
+  /** @override */
+  get browserPreload() {
+    return 'chrome://extensions/runtime_host_permissions.html';
+  }
+
+  get extraLibraries() {
+    return super.extraLibraries.concat([
+      'runtime_host_permissions_test.js',
+    ]);
+  }
+};
+
+TEST_F('CrExtensionsRuntimeHostPermissionsTest', 'All', () => {
+  mocha.run();
+});

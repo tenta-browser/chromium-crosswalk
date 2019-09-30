@@ -11,8 +11,9 @@
 #include "components/omnibox/browser/autocomplete_classifier.h"
 #include "components/prefs/pref_service.h"
 #include "components/signin/core/browser/signin_manager.h"
-#include "components/sync/base/model_type.h"
-#include "components/sync/driver/sync_service_utils.h"
+#include "components/sync/driver/sync_service.h"
+#include "components/unified_consent/unified_consent_service.h"
+#include "components/unified_consent/url_keyed_data_collection_consent_helper.h"
 #include "ios/chrome/browser/application_context.h"
 #include "ios/chrome/browser/autocomplete/autocomplete_classifier_factory.h"
 #include "ios/chrome/browser/autocomplete/in_memory_url_index_factory.h"
@@ -25,17 +26,23 @@
 #include "ios/chrome/browser/pref_names.h"
 #include "ios/chrome/browser/search_engines/template_url_service_factory.h"
 #include "ios/chrome/browser/signin/signin_manager_factory.h"
-#include "ios/chrome/browser/sync/ios_chrome_profile_sync_service_factory.h"
+#include "ios/chrome/browser/sync/profile_sync_service_factory.h"
+#include "ios/chrome/browser/unified_consent/unified_consent_service_factory.h"
+#include "services/network/public/cpp/shared_url_loader_factory.h"
 
 AutocompleteProviderClientImpl::AutocompleteProviderClientImpl(
     ios::ChromeBrowserState* browser_state)
-    : browser_state_(browser_state), search_terms_data_(browser_state_) {}
+    : browser_state_(browser_state),
+      url_consent_helper_(unified_consent::UrlKeyedDataCollectionConsentHelper::
+                              NewPersonalizedDataCollectionConsentHelper(
+                                  ProfileSyncServiceFactory::GetForBrowserState(
+                                      browser_state_))) {}
 
 AutocompleteProviderClientImpl::~AutocompleteProviderClientImpl() {}
 
-net::URLRequestContextGetter*
-AutocompleteProviderClientImpl::GetRequestContext() {
-  return browser_state_->GetRequestContext();
+scoped_refptr<network::SharedURLLoaderFactory>
+AutocompleteProviderClientImpl::GetURLLoaderFactory() {
+  return browser_state_->GetSharedURLLoaderFactory();
 }
 
 PrefService* AutocompleteProviderClientImpl::GetPrefs() {
@@ -91,9 +98,10 @@ AutocompleteProviderClientImpl::GetContextualSuggestionsService(
   return nullptr;
 }
 
-const SearchTermsData& AutocompleteProviderClientImpl::GetSearchTermsData()
-    const {
-  return search_terms_data_;
+DocumentSuggestionsService*
+AutocompleteProviderClientImpl::GetDocumentSuggestionsService(
+    bool create_if_necessary) const {
+  return nullptr;
 }
 
 scoped_refptr<ShortcutsBackend>
@@ -113,17 +121,12 @@ AutocompleteProviderClientImpl::GetKeywordExtensionsDelegate(
   return nullptr;
 }
 
-physical_web::PhysicalWebDataSource*
-AutocompleteProviderClientImpl::GetPhysicalWebDataSource() {
-  return nullptr;
-}
-
 std::string AutocompleteProviderClientImpl::GetAcceptLanguages() const {
   return browser_state_->GetPrefs()->GetString(prefs::kAcceptLanguages);
 }
 
 std::string
-AutocompleteProviderClientImpl::GetEmbedderRepresentationOfAboutScheme() {
+AutocompleteProviderClientImpl::GetEmbedderRepresentationOfAboutScheme() const {
   return kChromeUIScheme;
 }
 
@@ -157,17 +160,27 @@ bool AutocompleteProviderClientImpl::SearchSuggestEnabled() const {
   return browser_state_->GetPrefs()->GetBoolean(prefs::kSearchSuggestEnabled);
 }
 
-bool AutocompleteProviderClientImpl::IsTabUploadToGoogleActive() const {
-  return syncer::GetUploadToGoogleState(
-             IOSChromeProfileSyncServiceFactory::GetForBrowserState(
-                 browser_state_),
-             syncer::ModelType::PROXY_TABS) == syncer::UploadState::ACTIVE;
+bool AutocompleteProviderClientImpl::IsPersonalizedUrlDataCollectionActive()
+    const {
+  return url_consent_helper_->IsEnabled();
 }
 
 bool AutocompleteProviderClientImpl::IsAuthenticated() const {
   SigninManagerBase* signin_manager =
       ios::SigninManagerFactory::GetForBrowserState(browser_state_);
   return signin_manager != nullptr && signin_manager->IsAuthenticated();
+}
+
+bool AutocompleteProviderClientImpl::IsUnifiedConsentGiven() const {
+  unified_consent::UnifiedConsentService* consent_service =
+      UnifiedConsentServiceFactory::GetForBrowserState(browser_state_);
+  return consent_service && consent_service->IsUnifiedConsentGiven();
+}
+
+bool AutocompleteProviderClientImpl::IsSyncActive() const {
+  syncer::SyncService* sync =
+      ProfileSyncServiceFactory::GetForBrowserState(browser_state_);
+  return sync && sync->IsSyncActive();
 }
 
 void AutocompleteProviderClientImpl::Classify(

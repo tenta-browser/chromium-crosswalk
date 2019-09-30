@@ -29,6 +29,10 @@ namespace device {
 class BluetoothAdapterCast;
 }
 
+namespace media {
+class CdmFactory;
+}
+
 namespace metrics {
 class MetricsService;
 }
@@ -55,7 +59,6 @@ class VideoResolutionPolicy;
 }
 
 namespace shell {
-
 class CastBrowserMainParts;
 class CastResourceDispatcherHostDelegate;
 class URLRequestContextFactory;
@@ -96,7 +99,7 @@ class CastContentBrowserClient : public content::ContentBrowserClient {
 
   std::unique_ptr<::media::AudioManager> CreateAudioManager(
       ::media::AudioLogFactory* audio_log_factory) override;
-  std::unique_ptr<::media::CdmFactory> CreateCdmFactory() override;
+  bool OverridesAudioManager() override;
 #endif  // BUILDFLAG(IS_CAST_USING_CMA_BACKEND)
   media::MediaCapsImpl* media_caps();
 
@@ -129,13 +132,11 @@ class CastContentBrowserClient : public content::ContentBrowserClient {
   void SiteInstanceGotProcess(content::SiteInstance* site_instance) override;
   void AppendExtraCommandLineSwitches(base::CommandLine* command_line,
                                       int child_process_id) override;
+  std::string GetAcceptLangs(content::BrowserContext* context) override;
   void OverrideWebkitPrefs(content::RenderViewHost* render_view_host,
                            content::WebPreferences* prefs) override;
   void ResourceDispatcherHostCreated() override;
   std::string GetApplicationLocale() override;
-  void GetGeolocationRequestContext(
-      base::OnceCallback<void(scoped_refptr<net::URLRequestContextGetter>)>
-          callback) override;
   content::QuotaPermissionContext* CreateQuotaPermissionContext() override;
   void GetQuotaSettings(
       content::BrowserContext* context,
@@ -176,7 +177,9 @@ class CastContentBrowserClient : public content::ContentBrowserClient {
   void ExposeInterfacesToMediaService(
       service_manager::BinderRegistry* registry,
       content::RenderFrameHost* render_frame_host) override;
-  void RegisterInProcessServices(StaticServiceMap* services) override;
+  void RegisterInProcessServices(
+      StaticServiceMap* services,
+      content::ServiceManagerConnection* connection) override;
   std::unique_ptr<base::Value> GetServiceManifestOverlay(
       base::StringPiece service_name) override;
   void GetAdditionalMappedFilesForChildProcess(
@@ -188,6 +191,11 @@ class CastContentBrowserClient : public content::ContentBrowserClient {
   content::DevToolsManagerDelegate* GetDevToolsManagerDelegate() override;
   std::unique_ptr<content::NavigationUIData> GetNavigationUIData(
       content::NavigationHandle* navigation_handle) override;
+  bool ShouldEnableStrictSiteIsolation() override;
+
+#if BUILDFLAG(USE_CHROMECAST_CDMS)
+  virtual std::unique_ptr<::media::CdmFactory> CreateCdmFactory();
+#endif  // BUILDFLAG(USE_CHROMECAST_CDMS)
 
  protected:
   CastContentBrowserClient();
@@ -212,6 +220,7 @@ class CastContentBrowserClient : public content::ContentBrowserClient {
       const base::Callback<void(scoped_refptr<net::X509Certificate>,
                                 scoped_refptr<net::SSLPrivateKey>)>&
           continue_callback);
+
 #if !defined(OS_ANDROID)
   // Returns the crash signal FD corresponding to the current process type.
   int GetCrashSignalFD(const base::CommandLine& command_line);

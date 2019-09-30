@@ -28,7 +28,6 @@
 #include "third_party/blink/renderer/core/layout/svg/svg_resources.h"
 #include "third_party/blink/renderer/core/layout/svg/svg_resources_cache.h"
 #include "third_party/blink/renderer/core/paint/svg_paint_context.h"
-#include "third_party/blink/renderer/core/paint/transform_recorder.h"
 #include "third_party/blink/renderer/core/svg/svg_fit_to_view_box.h"
 #include "third_party/blink/renderer/core/svg/svg_pattern_element.h"
 #include "third_party/blink/renderer/platform/graphics/graphics_context.h"
@@ -60,7 +59,8 @@ void LayoutSVGResourcePattern::RemoveAllClientsFromCache(
                             : SVGResourceClient::kParentOnlyInvalidation);
 }
 
-bool LayoutSVGResourcePattern::RemoveClientFromCache(LayoutObject& client) {
+bool LayoutSVGResourcePattern::RemoveClientFromCache(
+    SVGResourceClient& client) {
   auto entry = pattern_map_.find(&client);
   if (entry == pattern_map_.end())
     return false;
@@ -69,7 +69,7 @@ bool LayoutSVGResourcePattern::RemoveClientFromCache(LayoutObject& client) {
 }
 
 PatternData* LayoutSVGResourcePattern::PatternForClient(
-    const LayoutObject& object,
+    const SVGResourceClient& client,
     const FloatRect& object_bounding_box) {
   DCHECK(!should_collect_pattern_attributes_);
 
@@ -77,10 +77,10 @@ PatternData* LayoutSVGResourcePattern::PatternForClient(
   // invalidation (painting animated images may trigger layout invals which
   // delete our map entry). Hopefully that will be addressed at some point, and
   // then we can optimize the lookup.
-  if (PatternData* current_data = pattern_map_.at(&object))
+  if (PatternData* current_data = pattern_map_.at(&client))
     return current_data;
 
-  return pattern_map_.Set(&object, BuildPatternData(object_bounding_box))
+  return pattern_map_.Set(&client, BuildPatternData(object_bounding_box))
       .stored_value->value.get();
 }
 
@@ -133,7 +133,7 @@ std::unique_ptr<PatternData> LayoutSVGResourcePattern::BuildPatternData(
 }
 
 SVGPaintServer LayoutSVGResourcePattern::PreparePaintServer(
-    const LayoutObject& object,
+    const SVGResourceClient& client,
     const FloatRect& object_bounding_box) {
   ClearInvalidationMask();
 
@@ -156,7 +156,7 @@ SVGPaintServer LayoutSVGResourcePattern::PreparePaintServer(
       object_bounding_box.IsEmpty())
     return SVGPaintServer::Invalid();
 
-  PatternData* pattern_data = PatternForClient(object, object_bounding_box);
+  PatternData* pattern_data = PatternForClient(client, object_bounding_box);
   if (!pattern_data || !pattern_data->pattern)
     return SVGPaintServer::Invalid();
 
@@ -214,7 +214,7 @@ sk_sp<PaintRecord> LayoutSVGResourcePattern::AsPaintRecord(
        child = child->NextSibling())
     SVGPaintContext::PaintResourceSubtree(builder.Context(), child);
   PaintRecorder paint_recorder;
-  PaintCanvas* canvas = paint_recorder.beginRecording(bounds);
+  cc::PaintCanvas* canvas = paint_recorder.beginRecording(bounds);
   canvas->save();
   canvas->concat(AffineTransformToSkMatrix(tile_transform));
   builder.EndRecording(*canvas);

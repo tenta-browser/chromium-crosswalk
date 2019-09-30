@@ -6,13 +6,15 @@
 
 #include <utility>
 
+#include "base/bind.h"
 #include "build/build_config.h"
-#include "device/fido/fido_ble_discovery.h"
+#include "device/fido/ble/fido_ble_discovery.h"
+#include "device/fido/cable/fido_cable_discovery.h"
 #include "device/fido/fido_device.h"
 
 // HID is not supported on Android.
 #if !defined(OS_ANDROID)
-#include "device/fido/fido_hid_discovery.h"
+#include "device/fido/hid/fido_hid_discovery.h"
 #endif  // !defined(OS_ANDROID)
 
 namespace device {
@@ -33,12 +35,24 @@ std::unique_ptr<FidoDiscovery> CreateFidoDiscoveryImpl(
 #endif  // !defined(OS_ANDROID)
     case FidoTransportProtocol::kBluetoothLowEnergy:
       return std::make_unique<FidoBleDiscovery>();
+    case FidoTransportProtocol::kCloudAssistedBluetoothLowEnergy:
+      NOTREACHED() << "Cable discovery is constructed using the dedicated "
+                      "factory method.";
+      return nullptr;
     case FidoTransportProtocol::kNearFieldCommunication:
       // TODO(https://crbug.com/825949): Add NFC support.
       return nullptr;
+    case FidoTransportProtocol::kInternal:
+      NOTREACHED() << "Internal authenticators should be handled separately.";
+      return nullptr;
   }
-  NOTREACHED();
+  NOTREACHED() << "Unhandled transport type";
   return nullptr;
+}
+
+std::unique_ptr<FidoDiscovery> CreateCableDiscoveryImpl(
+    std::vector<CableDiscoveryData> cable_data) {
+  return std::make_unique<FidoCableDiscovery>(std::move(cable_data));
 }
 
 }  // namespace
@@ -50,23 +64,34 @@ FidoDiscovery::FactoryFuncPtr FidoDiscovery::g_factory_func_ =
     &CreateFidoDiscoveryImpl;
 
 // static
+FidoDiscovery::CableFactoryFuncPtr FidoDiscovery::g_cable_factory_func_ =
+    &CreateCableDiscoveryImpl;
+
+// static
 std::unique_ptr<FidoDiscovery> FidoDiscovery::Create(
     FidoTransportProtocol transport,
     service_manager::Connector* connector) {
   return (*g_factory_func_)(transport, connector);
 }
 
+//  static
+std::unique_ptr<FidoDiscovery> FidoDiscovery::CreateCable(
+    std::vector<CableDiscoveryData> cable_data) {
+  return (*g_cable_factory_func_)(std::move(cable_data));
+}
+
 FidoDiscovery::FidoDiscovery(FidoTransportProtocol transport)
-    : transport_(transport) {}
+    : transport_(transport), weak_factory_(this) {}
 
 FidoDiscovery::~FidoDiscovery() = default;
 
 void FidoDiscovery::Start() {
   DCHECK_EQ(state_, State::kIdle);
   state_ = State::kStarting;
+  // TODO(hongjunchoi): Fix so that NotifiyStarted() is never called
+  // synchronously after StartInternal().
+  // See: https://crbug.com/823686
   StartInternal();
-  // StartInternal should never synchronously call NotifyStarted().
-  DCHECK_EQ(state_, State::kStarting);
 }
 
 void FidoDiscovery::NotifyDiscoveryStarted(bool success) {
@@ -121,9 +146,12 @@ const FidoDevice* FidoDiscovery::GetDevice(base::StringPiece device_id) const {
 bool FidoDiscovery::AddDevice(std::unique_ptr<FidoDevice> device) {
   std::string device_id = device->GetId();
   const auto result = devices_.emplace(std::move(device_id), std::move(device));
-  if (result.second)
-    NotifyDeviceAdded(result.first->second.get());
-  return result.second;
+  if (!result.second) {
+    return false;  // Duplicate device id.
+  }
+
+  NotifyDeviceAdded(result.first->second.get());
+  return true;
 }
 
 bool FidoDiscovery::RemoveDevice(base::StringPiece device_id) {
@@ -147,11 +175,15 @@ ScopedFidoDiscoveryFactory::ScopedFidoDiscoveryFactory() {
   original_factory_func_ =
       std::exchange(FidoDiscovery::g_factory_func_,
                     &ForwardCreateFidoDiscoveryToCurrentFactory);
+  original_cable_factory_func_ =
+      std::exchange(FidoDiscovery::g_cable_factory_func_,
+                    &ForwardCreateCableDiscoveryToCurrentFactory);
 }
 
 ScopedFidoDiscoveryFactory::~ScopedFidoDiscoveryFactory() {
   g_current_factory = nullptr;
   FidoDiscovery::g_factory_func_ = original_factory_func_;
+  FidoDiscovery::g_cable_factory_func_ = original_cable_factory_func_;
 }
 
 // static
@@ -161,6 +193,17 @@ ScopedFidoDiscoveryFactory::ForwardCreateFidoDiscoveryToCurrentFactory(
     ::service_manager::Connector* connector) {
   DCHECK(g_current_factory);
   return g_current_factory->CreateFidoDiscovery(transport, connector);
+}
+
+// static
+std::unique_ptr<FidoDiscovery>
+ScopedFidoDiscoveryFactory::ForwardCreateCableDiscoveryToCurrentFactory(
+    std::vector<CableDiscoveryData> cable_data) {
+  DCHECK(g_current_factory);
+  g_current_factory->set_last_cable_data(std::move(cable_data));
+  return g_current_factory->CreateFidoDiscovery(
+      FidoTransportProtocol::kCloudAssistedBluetoothLowEnergy,
+      nullptr /* connector */);
 }
 
 // static

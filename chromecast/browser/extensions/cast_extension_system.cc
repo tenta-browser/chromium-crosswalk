@@ -11,6 +11,7 @@
 #include "base/json/json_string_value_serializer.h"
 #include "base/memory/ptr_util.h"
 #include "base/strings/stringprintf.h"
+#include "chromecast/browser/extensions/api/tts/tts_extension_api.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/notification_details.h"
@@ -127,9 +128,17 @@ const Extension* CastExtensionSystem::LoadExtension(
       LOG(WARNING) << warning.message;
   }
 
-  PostLoadExtension(extension);
+  content::BrowserThread::PostTask(
+      content::BrowserThread::UI, FROM_HERE,
+      base::BindOnce(&CastExtensionSystem::PostLoadExtension,
+                     base::Unretained(this), extension));
 
   return extension.get();
+}
+
+void CastExtensionSystem::UnloadExtension(const std::string& extension_id,
+                                          UnloadedExtensionReason reason) {
+  extension_registrar_->RemoveExtension(extension_id, reason);
 }
 
 void CastExtensionSystem::PostLoadExtension(
@@ -143,6 +152,9 @@ const Extension* CastExtensionSystem::LoadApp(const base::FilePath& app_dir) {
 
 void CastExtensionSystem::Init() {
   extensions::ProcessManager::Get(browser_context_);
+
+  // Prime the tts extension API.
+  extensions::TtsAPI::GetFactoryInstance();
 
   // Inform the rest of the extensions system to start.
   ready_.Signal();
@@ -265,6 +277,7 @@ void CastExtensionSystem::InstallUpdate(
     const std::string& extension_id,
     const std::string& public_key,
     const base::FilePath& unpacked_dir,
+    bool install_immediately,
     InstallUpdateCallback install_update_callback) {
   NOTREACHED();
 }

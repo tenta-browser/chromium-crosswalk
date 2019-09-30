@@ -12,7 +12,6 @@
 #include "base/callback.h"
 #include "base/files/file_enumerator.h"
 #include "base/files/file_util.h"
-#include "base/files/file_util_proxy.h"
 #include "base/lazy_instance.h"
 #include "base/logging.h"
 #include "base/macros.h"
@@ -20,8 +19,8 @@
 #include "base/stl_util.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/task_scheduler/lazy_task_runner.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/lazy_task_runner.h"
+#include "base/task/post_task.h"
 
 #include "content/public/browser/browser_thread.h"
 
@@ -42,8 +41,8 @@ namespace {
 using std::set;
 
 base::SequencedTaskRunner* impl_task_runner() {
-  constexpr base::TaskTraits kBlockingTraits = {base::MayBlock(),
-                                                base::TaskPriority::BACKGROUND};
+  constexpr base::TaskTraits kBlockingTraits = {
+      base::MayBlock(), base::TaskPriority::BEST_EFFORT};
   static base::LazySequencedTaskRunner s_sequenced_task_task_runner =
       LAZY_SEQUENCED_TASK_RUNNER_INITIALIZER(kBlockingTraits);
   return s_sequenced_task_task_runner.Get().get();

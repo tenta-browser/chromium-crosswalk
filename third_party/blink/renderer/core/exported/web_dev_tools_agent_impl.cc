@@ -54,30 +54,30 @@
 #include "third_party/blink/renderer/core/frame/settings.h"
 #include "third_party/blink/renderer/core/frame/web_frame_widget_base.h"
 #include "third_party/blink/renderer/core/frame/web_local_frame_impl.h"
-#include "third_party/blink/renderer/core/inspector/InspectorAnimationAgent.h"
-#include "third_party/blink/renderer/core/inspector/InspectorApplicationCacheAgent.h"
-#include "third_party/blink/renderer/core/inspector/InspectorAuditsAgent.h"
-#include "third_party/blink/renderer/core/inspector/InspectorCSSAgent.h"
-#include "third_party/blink/renderer/core/inspector/InspectorDOMAgent.h"
-#include "third_party/blink/renderer/core/inspector/InspectorDOMDebuggerAgent.h"
-#include "third_party/blink/renderer/core/inspector/InspectorDOMSnapshotAgent.h"
-#include "third_party/blink/renderer/core/inspector/InspectorEmulationAgent.h"
-#include "third_party/blink/renderer/core/inspector/InspectorIOAgent.h"
-#include "third_party/blink/renderer/core/inspector/InspectorLayerTreeAgent.h"
-#include "third_party/blink/renderer/core/inspector/InspectorLogAgent.h"
-#include "third_party/blink/renderer/core/inspector/InspectorMemoryAgent.h"
-#include "third_party/blink/renderer/core/inspector/InspectorNetworkAgent.h"
-#include "third_party/blink/renderer/core/inspector/InspectorOverlayAgent.h"
-#include "third_party/blink/renderer/core/inspector/InspectorPageAgent.h"
-#include "third_party/blink/renderer/core/inspector/InspectorPerformanceAgent.h"
-#include "third_party/blink/renderer/core/inspector/InspectorTracingAgent.h"
-#include "third_party/blink/renderer/core/inspector/InspectorWorkerAgent.h"
 #include "third_party/blink/renderer/core/inspector/dev_tools_emulator.h"
 #include "third_party/blink/renderer/core/inspector/inspected_frames.h"
+#include "third_party/blink/renderer/core/inspector/inspector_animation_agent.h"
+#include "third_party/blink/renderer/core/inspector/inspector_application_cache_agent.h"
+#include "third_party/blink/renderer/core/inspector/inspector_audits_agent.h"
+#include "third_party/blink/renderer/core/inspector/inspector_css_agent.h"
+#include "third_party/blink/renderer/core/inspector/inspector_dom_agent.h"
+#include "third_party/blink/renderer/core/inspector/inspector_dom_debugger_agent.h"
+#include "third_party/blink/renderer/core/inspector/inspector_dom_snapshot_agent.h"
+#include "third_party/blink/renderer/core/inspector/inspector_emulation_agent.h"
+#include "third_party/blink/renderer/core/inspector/inspector_io_agent.h"
+#include "third_party/blink/renderer/core/inspector/inspector_layer_tree_agent.h"
+#include "third_party/blink/renderer/core/inspector/inspector_log_agent.h"
+#include "third_party/blink/renderer/core/inspector/inspector_memory_agent.h"
+#include "third_party/blink/renderer/core/inspector/inspector_network_agent.h"
+#include "third_party/blink/renderer/core/inspector/inspector_overlay_agent.h"
+#include "third_party/blink/renderer/core/inspector/inspector_page_agent.h"
+#include "third_party/blink/renderer/core/inspector/inspector_performance_agent.h"
 #include "third_party/blink/renderer/core/inspector/inspector_resource_container.h"
 #include "third_party/blink/renderer/core/inspector/inspector_resource_content_loader.h"
 #include "third_party/blink/renderer/core/inspector/inspector_session.h"
 #include "third_party/blink/renderer/core/inspector/inspector_task_runner.h"
+#include "third_party/blink/renderer/core/inspector/inspector_testing_agent.h"
+#include "third_party/blink/renderer/core/inspector/inspector_worker_agent.h"
 #include "third_party/blink/renderer/core/inspector/main_thread_debugger.h"
 #include "third_party/blink/renderer/core/layout/layout_view.h"
 #include "third_party/blink/renderer/core/page/focus_controller.h"
@@ -160,7 +160,7 @@ class ClientMessageLoopAdapter : public MainThreadDebugger::ClientMessageLoop {
 
     // 1. Disable input events.
     WebFrameWidgetBase::SetIgnoreInputEvents(true);
-    for (const auto view : WebViewImpl::AllInstances())
+    for (auto* const view : WebViewImpl::AllInstances())
       view->GetChromeClient().NotifyPopupOpeningObservers();
 
     // 2. Disable active objects
@@ -168,18 +168,17 @@ class ClientMessageLoopAdapter : public MainThreadDebugger::ClientMessageLoop {
 
     // 3. Process messages until quitNow is called.
     message_loop_->Run();
-
-    // 4. Resume active objects
-    WebView::DidExitModalLoop();
-
-    // 5. Enable input events.
-    WebFrameWidgetBase::SetIgnoreInputEvents(false);
   }
 
   void QuitNow() override {
     if (running_for_debug_break_) {
       running_for_debug_break_ = false;
+      // Undo steps (3), (2) and (1) from above.
+      // NOTE: This code used to be above right after the |mesasge_loop_->Run()|
+      // code, but it is moved here to support browser-side navigation.
       message_loop_->QuitNow();
+      WebView::DidExitModalLoop();
+      WebFrameWidgetBase::SetIgnoreInputEvents(false);
     }
   }
 
@@ -208,7 +207,7 @@ class WebDevToolsAgentImpl::Session : public GarbageCollectedFinalized<Session>,
           mojom::blink::DevToolsSessionHostAssociatedPtrInfo host_ptr_info,
           mojom::blink::DevToolsSessionAssociatedRequest main_request,
           mojom::blink::DevToolsSessionRequest io_request,
-          const String& reattach_state);
+          mojom::blink::DevToolsSessionStatePtr reattach_session_state);
   ~Session() override;
 
   virtual void Trace(blink::Visitor*);
@@ -217,7 +216,6 @@ class WebDevToolsAgentImpl::Session : public GarbageCollectedFinalized<Session>,
   InspectorSession* inspector_session() { return inspector_session_.Get(); }
   InspectorNetworkAgent* network_agent() { return network_agent_.Get(); }
   InspectorPageAgent* page_agent() { return page_agent_.Get(); }
-  InspectorTracingAgent* tracing_agent() { return tracing_agent_.Get(); }
   InspectorOverlayAgent* overlay_agent() { return overlay_agent_.Get(); }
 
  private:
@@ -229,16 +227,21 @@ class WebDevToolsAgentImpl::Session : public GarbageCollectedFinalized<Session>,
                                const String& message) override;
 
   // InspectorSession::Client implementation.
-  void SendProtocolResponse(int session_id,
-                            int call_id,
-                            const String& response,
-                            const String& state) override;
-  void SendProtocolNotification(int session_id, const String& message) override;
+  void SendProtocolResponse(
+      int session_id,
+      int call_id,
+      const String& response,
+      mojom::blink::DevToolsSessionStatePtr updates) override;
+  void SendProtocolNotification(
+      int session_id,
+      const String& message,
+      mojom::blink::DevToolsSessionStatePtr updates) override;
 
   void DispatchProtocolCommandInternal(int call_id,
                                        const String& method,
                                        const String& message);
-  void InitializeInspectorSession(const String& reattach_state);
+  void InitializeInspectorSession(
+      mojom::blink::DevToolsSessionStatePtr reattach_session_state);
 
   Member<WebDevToolsAgentImpl> agent_;
   Member<WebLocalFrameImpl> frame_;
@@ -248,7 +251,6 @@ class WebDevToolsAgentImpl::Session : public GarbageCollectedFinalized<Session>,
   Member<InspectorSession> inspector_session_;
   Member<InspectorNetworkAgent> network_agent_;
   Member<InspectorPageAgent> page_agent_;
-  Member<InspectorTracingAgent> tracing_agent_;
   Member<InspectorOverlayAgent> overlay_agent_;
   bool detached_ = false;
 
@@ -309,7 +311,7 @@ WebDevToolsAgentImpl::Session::Session(
     mojom::blink::DevToolsSessionHostAssociatedPtrInfo host_ptr_info,
     mojom::blink::DevToolsSessionAssociatedRequest request,
     mojom::blink::DevToolsSessionRequest io_request,
-    const String& reattach_state)
+    mojom::blink::DevToolsSessionStatePtr reattach_session_state)
     : agent_(agent),
       frame_(agent->web_local_frame_impl_),
       binding_(this, std::move(request)) {
@@ -322,7 +324,7 @@ WebDevToolsAgentImpl::Session::Session(
   host_ptr_.set_connection_error_handler(WTF::Bind(
       &WebDevToolsAgentImpl::Session::Detach, WrapWeakPersistent(this)));
 
-  InitializeInspectorSession(reattach_state);
+  InitializeInspectorSession(std::move(reattach_session_state));
 }
 
 WebDevToolsAgentImpl::Session::~Session() {
@@ -335,7 +337,6 @@ void WebDevToolsAgentImpl::Session::Trace(blink::Visitor* visitor) {
   visitor->Trace(inspector_session_);
   visitor->Trace(network_agent_);
   visitor->Trace(page_agent_);
-  visitor->Trace(tracing_agent_);
   visitor->Trace(overlay_agent_);
 }
 
@@ -350,10 +351,11 @@ void WebDevToolsAgentImpl::Session::Detach() {
   inspector_session_->Dispose();
 }
 
-void WebDevToolsAgentImpl::Session::SendProtocolResponse(int session_id,
-                                                         int call_id,
-                                                         const String& response,
-                                                         const String& state) {
+void WebDevToolsAgentImpl::Session::SendProtocolResponse(
+    int session_id,
+    int call_id,
+    const String& response,
+    mojom::blink::DevToolsSessionStatePtr updates) {
   if (detached_)
     return;
 
@@ -361,13 +363,14 @@ void WebDevToolsAgentImpl::Session::SendProtocolResponse(int session_id,
   // protocol response in any of them.
   if (LayoutTestSupport::IsRunningLayoutTest())
     agent_->FlushProtocolNotifications();
-  host_ptr_->DispatchProtocolResponse(response, call_id, state);
+  host_ptr_->DispatchProtocolResponse(response, call_id, std::move(updates));
 }
 
 void WebDevToolsAgentImpl::Session::SendProtocolNotification(
     int session_id,
-    const String& message) {
-  host_ptr_->DispatchProtocolNotification(message);
+    const String& message,
+    mojom::blink::DevToolsSessionStatePtr updates) {
+  host_ptr_->DispatchProtocolNotification(message, std::move(updates));
 }
 
 void WebDevToolsAgentImpl::Session::DispatchProtocolCommand(
@@ -386,21 +389,23 @@ void WebDevToolsAgentImpl::Session::DispatchProtocolCommand(
   // detach, so we have to check a flag here.
   if (detached_)
     return;
-  inspector_session_->DispatchProtocolMessage(method, message);
+  inspector_session_->DispatchProtocolMessage(call_id, method, message);
 }
 
 void WebDevToolsAgentImpl::Session::InitializeInspectorSession(
-    const String& reattach_state) {
+    mojom::blink::DevToolsSessionStatePtr reattach_session_state) {
   ClientMessageLoopAdapter::EnsureMainThreadDebuggerCreated();
   MainThreadDebugger* main_thread_debugger = MainThreadDebugger::Instance();
   v8::Isolate* isolate = V8PerIsolateData::MainThreadIsolate();
   InspectedFrames* inspected_frames = agent_->inspected_frames_.Get();
 
+  bool should_reattach = !reattach_session_state.is_null();
+
   inspector_session_ = new InspectorSession(
       this, agent_->probe_sink_.Get(), 0,
       main_thread_debugger->GetV8Inspector(),
       main_thread_debugger->ContextGroupId(inspected_frames->Root()),
-      reattach_state);
+      std::move(reattach_session_state));
 
   InspectorDOMAgent* dom_agent = new InspectorDOMAgent(
       isolate, inspected_frames, inspector_session_->V8Session());
@@ -438,10 +443,8 @@ void WebDevToolsAgentImpl::Session::InitializeInspectorSession(
   inspector_session_->Append(
       InspectorApplicationCacheAgent::Create(inspected_frames));
 
-  inspector_session_->Append(new InspectorWorkerAgent(inspected_frames));
-
-  tracing_agent_ = new InspectorTracingAgent(agent_, inspected_frames);
-  inspector_session_->Append(tracing_agent_);
+  inspector_session_->Append(
+      new InspectorWorkerAgent(inspected_frames, nullptr));
 
   page_agent_ = InspectorPageAgent::Create(
       inspected_frames, agent_, agent_->resource_content_loader_.Get(),
@@ -468,12 +471,14 @@ void WebDevToolsAgentImpl::Session::InitializeInspectorSession(
   // we have to store the frame which will become the main frame later.
   inspector_session_->Append(new InspectorEmulationAgent(frame_.Get()));
 
+  inspector_session_->Append(new InspectorTestingAgent(inspected_frames));
+
   // Call session init callbacks registered from higher layers
   CoreInitializer::GetInstance().InitInspectorAgentSession(
       inspector_session_, agent_->include_view_agents_, dom_agent,
       inspected_frames, frame_->ViewImpl()->GetPage());
 
-  if (!reattach_state.IsNull()) {
+  if (should_reattach) {
     inspector_session_->Restore();
     if (agent_->worker_client_)
       agent_->worker_client_->ResumeStartup();
@@ -548,12 +553,12 @@ void WebDevToolsAgentImpl::AttachDevToolsSession(
     mojom::blink::DevToolsSessionHostAssociatedPtrInfo host,
     mojom::blink::DevToolsSessionAssociatedRequest session_request,
     mojom::blink::DevToolsSessionRequest io_session_request,
-    const String& reattach_state) {
+    mojom::blink::DevToolsSessionStatePtr reattach_session_state) {
   if (!sessions_.size())
     Platform::Current()->CurrentThread()->AddTaskObserver(this);
-  Session* session =
-      new Session(this, std::move(host), std::move(session_request),
-                  std::move(io_session_request), reattach_state);
+  Session* session = new Session(
+      this, std::move(host), std::move(session_request),
+      std::move(io_session_request), std::move(reattach_session_state));
   sessions_.insert(session);
   if (node_to_inspect_) {
     session->overlay_agent()->Inspect(node_to_inspect_);
@@ -570,7 +575,8 @@ void WebDevToolsAgentImpl::InspectElement(const WebPoint& point_in_local_root) {
   if (web_local_frame_impl_->ViewImpl() &&
       web_local_frame_impl_->ViewImpl()->Client()) {
     WebFloatRect rect(point.x, point.y, 0, 0);
-    web_local_frame_impl_->ViewImpl()->Client()->ConvertWindowToViewport(&rect);
+    web_local_frame_impl_->ViewImpl()->WidgetClient()->ConvertWindowToViewport(
+        &rect);
     point = WebPoint(rect.x, rect.y);
   }
 
@@ -580,15 +586,17 @@ void WebDevToolsAgentImpl::InspectElement(const WebPoint& point_in_local_root) {
   HitTestRequest request(hit_type);
   WebMouseEvent dummy_event(WebInputEvent::kMouseDown,
                             WebInputEvent::kNoModifiers,
-                            WTF::CurrentTimeTicksInSeconds());
+                            WTF::CurrentTimeTicks());
   dummy_event.SetPositionInWidget(point.x, point.y);
   IntPoint transformed_point = FlooredIntPoint(
       TransformWebMouseEvent(web_local_frame_impl_->GetFrameView(), dummy_event)
           .PositionInRootFrame());
-  HitTestResult result(
-      request, web_local_frame_impl_->GetFrameView()->RootFrameToContents(
-                   transformed_point));
-  web_local_frame_impl_->GetFrame()->ContentLayoutObject()->HitTest(result);
+  HitTestLocation location(
+      web_local_frame_impl_->GetFrameView()->ConvertFromRootFrame(
+          transformed_point));
+  HitTestResult result(request, location);
+  web_local_frame_impl_->GetFrame()->ContentLayoutObject()->HitTest(location,
+                                                                    result);
   Node* node = result.InnerNode();
   if (!node && web_local_frame_impl_->GetFrame()->GetDocument())
     node = web_local_frame_impl_->GetFrame()->GetDocument()->documentElement();
@@ -629,21 +637,6 @@ bool WebDevToolsAgentImpl::ScreencastEnabled() {
   return false;
 }
 
-void WebDevToolsAgentImpl::RootLayerCleared() {
-  for (auto& session : sessions_)
-    session->tracing_agent()->RootLayerCleared();
-}
-
-void WebDevToolsAgentImpl::ShowReloadingBlanket() {
-  for (auto& session : sessions_)
-    session->overlay_agent()->ShowReloadingBlanket();
-}
-
-void WebDevToolsAgentImpl::HideReloadingBlanket() {
-  for (auto& session : sessions_)
-    session->overlay_agent()->HideReloadingBlanket();
-}
-
 void WebDevToolsAgentImpl::PageLayoutInvalidated(bool resized) {
   for (auto& session : sessions_)
     session->overlay_agent()->PageLayoutInvalidated(resized);
@@ -664,14 +657,9 @@ String WebDevToolsAgentImpl::EvaluateInOverlayForTesting(const String& script) {
   return result;
 }
 
-void WebDevToolsAgentImpl::PaintOverlay() {
+void WebDevToolsAgentImpl::UpdateOverlays() {
   for (auto& session : sessions_)
-    session->overlay_agent()->PaintOverlay();
-}
-
-void WebDevToolsAgentImpl::LayoutOverlay() {
-  for (auto& session : sessions_)
-    session->overlay_agent()->LayoutOverlay();
+    session->overlay_agent()->UpdateAllOverlayLifecyclePhases();
 }
 
 void WebDevToolsAgentImpl::DispatchBufferedTouchEvents() {

@@ -22,13 +22,17 @@
 
 #include "third_party/blink/renderer/core/dom/events/event.h"
 
+#include "third_party/blink/renderer/core/dom/events/event_dispatcher.h"
+#include "third_party/blink/renderer/core/dom/events/event_path.h"
 #include "third_party/blink/renderer/core/dom/events/event_target.h"
+#include "third_party/blink/renderer/core/dom/events/window_event_context.h"
 #include "third_party/blink/renderer/core/dom/static_node_list.h"
 #include "third_party/blink/renderer/core/events/focus_event.h"
 #include "third_party/blink/renderer/core/events/mouse_event.h"
 #include "third_party/blink/renderer/core/events/pointer_event.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
 #include "third_party/blink/renderer/core/frame/hosts_using_features.h"
+#include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/frame/use_counter.h"
 #include "third_party/blink/renderer/core/svg/svg_element.h"
 #include "third_party/blink/renderer/core/timing/dom_window_performance.h"
@@ -93,7 +97,9 @@ Event::Event(const AtomicString& event_type,
       default_handled_(false),
       was_initialized_(true),
       is_trusted_(false),
+      executed_listener_or_default_action_(false),
       prevent_default_called_on_uncancelable_event_(false),
+      legacy_did_listeners_throw_flag_(false),
       handling_passive_(PassiveMode::kNotPassiveDefault),
       event_phase_(0),
       current_target_(nullptr),
@@ -199,10 +205,6 @@ bool Event::IsWheelEvent() const {
   return false;
 }
 
-bool Event::IsRelatedEvent() const {
-  return false;
-}
-
 bool Event::IsPointerEvent() const {
   return false;
 }
@@ -212,6 +214,14 @@ bool Event::IsInputEvent() const {
 }
 
 bool Event::IsDragEvent() const {
+  return false;
+}
+
+bool Event::IsCompositionEvent() const {
+  return false;
+}
+
+bool Event::IsActivateInvisibleEvent() const {
   return false;
 }
 
@@ -254,6 +264,10 @@ void Event::SetTarget(EventTarget* target) {
   target_ = target;
   if (target_)
     ReceivedTarget();
+}
+
+void Event::DoneDispatchingEventAtCurrentTarget() {
+  SetExecutedListenerOrDefaultAction();
 }
 
 void Event::SetRelatedTargetIfExists(EventTarget* related_target) {

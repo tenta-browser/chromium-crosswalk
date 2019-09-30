@@ -25,18 +25,12 @@ Animator::~Animator() = default;
 void Animator::Trace(blink::Visitor* visitor) {
   visitor->Trace(definition_);
   visitor->Trace(effect_);
-}
-
-void Animator::TraceWrappers(const ScriptWrappableVisitor* visitor) const {
-  visitor->TraceWrappers(definition_);
-  visitor->TraceWrappers(instance_.Cast<v8::Value>());
+  visitor->Trace(instance_.Cast<v8::Value>());
 }
 
 bool Animator::Animate(ScriptState* script_state,
-                       const CompositorMutatorInputState::AnimationState& input,
+                       double current_time,
                        CompositorMutatorOutputState::AnimationState* output) {
-  did_animate_ = true;
-
   v8::Isolate* isolate = script_state->GetIsolate();
 
   v8::Local<v8::Object> instance = instance_.NewLocal(isolate);
@@ -55,19 +49,19 @@ bool Animator::Animate(ScriptState* script_state,
       ToV8(effect_, script_state->GetContext()->Global(), isolate);
 
   v8::Local<v8::Value> v8_current_time =
-      ToV8(input.current_time, script_state->GetContext()->Global(), isolate);
+      ToV8(current_time, script_state->GetContext()->Global(), isolate);
 
   v8::Local<v8::Value> argv[] = {v8_current_time, v8_effect};
 
   V8ScriptRunner::CallFunction(animate, ExecutionContext::From(script_state),
-                               instance, WTF_ARRAY_LENGTH(argv), argv, isolate);
+                               instance, arraysize(argv), argv, isolate);
 
   // The animate function may have produced an error!
   // TODO(majidvp): We should probably just throw here.
   if (block.HasCaught())
     return false;
 
-  output->local_time = effect_->GetLocalTime();
+  output->local_time = effect_->local_time();
   return true;
 }
 

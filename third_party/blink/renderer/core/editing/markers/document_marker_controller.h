@@ -64,27 +64,27 @@ class CORE_EXPORT DocumentMarkerController final
   void AddTextMatchMarker(const EphemeralRange&, TextMatchMarker::MatchStatus);
   void AddCompositionMarker(const EphemeralRange&,
                             Color underline_color,
-                            ui::mojom::ImeTextSpanThickness,
+                            ws::mojom::ImeTextSpanThickness,
                             Color background_color);
   void AddActiveSuggestionMarker(const EphemeralRange&,
                                  Color underline_color,
-                                 ui::mojom::ImeTextSpanThickness,
+                                 ws::mojom::ImeTextSpanThickness,
                                  Color background_color);
   void AddSuggestionMarker(const EphemeralRange&,
                            const SuggestionMarkerProperties&);
 
-  void MoveMarkers(const Node* src_node, int length, const Node* dst_node);
+  void MoveMarkers(const Text& src_node, int length, const Text& dst_node);
 
   void PrepareForDestruction();
   void RemoveMarkersInRange(const EphemeralRange&, DocumentMarker::MarkerTypes);
   void RemoveMarkersOfTypes(DocumentMarker::MarkerTypes);
   void RemoveMarkersForNode(
       const Node*,
-      DocumentMarker::MarkerTypes = DocumentMarker::AllMarkers());
+      DocumentMarker::MarkerTypes = DocumentMarker::MarkerTypes::All());
   void RemoveSpellingMarkersUnderWords(const Vector<String>& words);
   void RemoveSuggestionMarkerByTag(const Node*, int32_t marker_tag);
   void RepaintMarkers(
-      DocumentMarker::MarkerTypes = DocumentMarker::AllMarkers());
+      DocumentMarker::MarkerTypes = DocumentMarker::MarkerTypes::All());
   // Returns true if markers within a range are found.
   bool SetTextMatchMarkersActive(const EphemeralRange&, bool);
   // Returns true if markers within a range defined by a node, |startOffset| and
@@ -117,15 +117,16 @@ class CORE_EXPORT DocumentMarkerController final
   MarkersIntersectingRange(const EphemeralRangeInFlatTree&,
                            DocumentMarker::MarkerTypes);
   DocumentMarkerVector MarkersFor(
-      const Node*,
-      DocumentMarker::MarkerTypes = DocumentMarker::AllMarkers());
-  DocumentMarkerVector Markers();
+      const Text&,
+      DocumentMarker::MarkerTypes = DocumentMarker::MarkerTypes::All()) const;
+  DocumentMarkerVector Markers() const;
+  DocumentMarkerVector ComputeMarkersToPaint(const Text&) const;
 
   Vector<IntRect> LayoutRectsForTextMatchMarkers();
   void InvalidateRectsForAllTextMatchMarkers();
   void InvalidateRectsForTextMatchMarkersInNode(const Node&);
 
-  void Trace(blink::Visitor*);
+  void Trace(blink::Visitor*) override;
 
 #ifndef NDEBUG
   void ShowMarkers() const;
@@ -143,20 +144,24 @@ class CORE_EXPORT DocumentMarkerController final
   void AddMarkerInternal(
       const EphemeralRange&,
       std::function<DocumentMarker*(int, int)> create_marker_from_offsets);
-  void AddMarkerToNode(const Node*, DocumentMarker*);
+  void AddMarkerToNode(const Node&, DocumentMarker*);
 
   using MarkerLists = HeapVector<Member<DocumentMarkerList>,
                                  DocumentMarker::kMarkerTypeIndexesCount>;
   using MarkerMap = HeapHashMap<WeakMember<const Node>, Member<MarkerLists>>;
   static Member<DocumentMarkerList>& ListForType(MarkerLists*,
                                                  DocumentMarker::MarkerType);
-  bool PossiblyHasMarkers(DocumentMarker::MarkerTypes);
+  bool PossiblyHasMarkers(DocumentMarker::MarkerTypes) const;
+  bool PossiblyHasMarkers(DocumentMarker::MarkerType) const;
   void RemoveMarkersFromList(MarkerMap::iterator, DocumentMarker::MarkerTypes);
   void RemoveMarkers(TextIterator&, DocumentMarker::MarkerTypes);
-  void RemoveMarkersInternal(const Node*,
+  void RemoveMarkersInternal(const Node&,
                              unsigned start_offset,
                              int length,
                              DocumentMarker::MarkerTypes);
+
+  // Called after weak processing of |markers_| is done.
+  void DidProcessMarkerMap(Visitor* visitor);
 
   MarkerMap markers_;
   // Provide a quick way to determine whether a particular marker type is absent

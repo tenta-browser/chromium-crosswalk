@@ -11,6 +11,7 @@
 #include "ash/shelf/shelf_constants.h"
 #include "ash/shelf/shelf_view.h"
 #include "ash/strings/grit/ash_strings.h"
+#include "chromeos/chromeos_switches.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/image/image_skia_operations.h"
@@ -19,6 +20,8 @@
 #include "ui/views/animation/flood_fill_ink_drop_ripple.h"
 #include "ui/views/animation/ink_drop_impl.h"
 #include "ui/views/animation/ink_drop_mask.h"
+#include "ui/views/controls/image_view.h"
+#include "ui/views/layout/fill_layout.h"
 
 namespace ash {
 
@@ -39,7 +42,19 @@ OverflowButton::OverflowButton(ShelfView* shelf_view, Shelf* shelf)
   SetFocusBehavior(FocusBehavior::ACCESSIBLE_ONLY);
   SetAccessibleName(l10n_util::GetStringUTF16(IDS_ASH_SHELF_OVERFLOW_NAME));
 
-  UpdateChevronImage();
+  if (chromeos::switches::ShouldUseShelfNewUi()) {
+    horizontal_dots_image_view_ = new views::ImageView();
+    horizontal_dots_image_view_->SetImage(gfx::CreateVectorIcon(
+        kShelfOverflowHorizontalDotsIcon, kShelfIconColor));
+    SetLayoutManager(std::make_unique<views::FillLayout>());
+    background_color_ = kShelfControlPermanentHighlightBackground;
+    AddChildView(horizontal_dots_image_view_);
+  } else {
+    // The new UI does not use a chevron icon.
+    // TODO(864701): Once the new UI has been default for a while, get rid
+    // of all the chevron image flipping logic.
+    UpdateChevronImage();
+  }
 }
 
 OverflowButton::~OverflowButton() = default;
@@ -59,6 +74,10 @@ void OverflowButton::OnOverflowBubbleHidden() {
 }
 
 void OverflowButton::UpdateShelfItemBackground(SkColor color) {
+  // In the new UI, this button has a permanent rounded highlight, regardless
+  // of the shelf state.
+  if (chromeos::switches::ShouldUseShelfNewUi())
+    return;
   background_color_ = color;
   SchedulePaint();
 }
@@ -141,7 +160,7 @@ void OverflowButton::NotifyClick(const ui::Event& event) {
 std::unique_ptr<views::InkDropMask> OverflowButton::CreateInkDropMask() const {
   gfx::Insets insets = GetLocalBounds().InsetsFrom(CalculateButtonBounds());
   return std::make_unique<views::RoundRectInkDropMask>(
-      size(), insets, kOverflowButtonCornerRadius);
+      size(), insets, ShelfConstants::overflow_button_corner_radius());
 }
 
 void OverflowButton::PaintButtonContents(gfx::Canvas* canvas) {
@@ -155,11 +174,16 @@ void OverflowButton::PaintBackground(gfx::Canvas* canvas,
   cc::PaintFlags flags;
   flags.setAntiAlias(true);
   flags.setColor(background_color_);
-  canvas->DrawRoundRect(bounds, kOverflowButtonCornerRadius, flags);
+  canvas->DrawRoundRect(bounds, ShelfConstants::overflow_button_corner_radius(),
+                        flags);
 }
 
 void OverflowButton::PaintForeground(gfx::Canvas* canvas,
                                      const gfx::Rect& bounds) {
+  // The image view is already a child view, no need to do any manual
+  // painting.
+  if (chromeos::switches::ShouldUseShelfNewUi())
+    return;
   DCHECK(chevron_image_);
   canvas->DrawImageInt(
       *chevron_image_,
@@ -168,16 +192,17 @@ void OverflowButton::PaintForeground(gfx::Canvas* canvas,
 }
 
 gfx::Rect OverflowButton::CalculateButtonBounds() const {
+  const int overflow_button_size = ShelfConstants::overflow_button_size();
   ShelfAlignment alignment = shelf_->alignment();
   gfx::Rect content_bounds = GetContentsBounds();
   // Align the button to the top of a bottom-aligned shelf, to the right edge
   // a left-aligned shelf, and to the left edge of a right-aligned shelf.
-  const int inset = (kShelfSize - kOverflowButtonSize) / 2;
+  const int inset = (ShelfConstants::shelf_size() - overflow_button_size) / 2;
   const int x = alignment == SHELF_ALIGNMENT_LEFT
-                    ? content_bounds.right() - inset - kOverflowButtonSize
+                    ? content_bounds.right() - inset - overflow_button_size
                     : content_bounds.x() + inset;
-  return gfx::Rect(x, content_bounds.y() + inset, kOverflowButtonSize,
-                   kOverflowButtonSize);
+  return gfx::Rect(x, content_bounds.y() + inset, overflow_button_size,
+                   overflow_button_size);
 }
 
 }  // namespace ash

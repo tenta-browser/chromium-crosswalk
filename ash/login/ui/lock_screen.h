@@ -5,7 +5,7 @@
 #ifndef ASH_LOGIN_UI_LOCK_SCREEN_H_
 #define ASH_LOGIN_UI_LOCK_SCREEN_H_
 
-#include <unordered_map>
+#include <memory>
 
 #include "ash/ash_export.h"
 #include "ash/session/session_observer.h"
@@ -13,8 +13,8 @@
 #include "base/macros.h"
 #include "base/scoped_observer.h"
 
-namespace ui {
-class Layer;
+namespace base {
+class OneShotTimer;
 }
 
 namespace ash {
@@ -50,19 +50,24 @@ class ASH_EXPORT LockScreen : public TrayActionObserver,
   // backend C++ via a mojo API.
   static void Show(ScreenType type);
 
-  // Check if the lock screen is currently shown.
-  static bool IsShown();
+  // Returns true if the instance has been instantiated.
+  static bool HasInstance();
 
   LockWindow* window() { return window_; }
 
   // Destroys an existing lock screen instance.
   void Destroy();
 
-  // Enables/disables background blur. Used for debugging purpose.
-  void ToggleBlurForDebug();
+  ScreenType screen_type() const { return type_; }
 
   // Returns the active data dispatcher.
   LoginDataDispatcher* data_dispatcher();
+
+  // Returns if the screen has been shown (i.e. |LockWindow::Show| was called).
+  bool is_shown() const { return is_shown_; }
+
+  void FocusNextUser();
+  void FocusPreviousUser();
 
   // TrayActionObserver:
   void OnLockScreenNoteStateChanged(mojom::TrayActionState state) override;
@@ -84,11 +89,14 @@ class ASH_EXPORT LockScreen : public TrayActionObserver,
   // Unowned pointer to the LockContentsView hosted in lock window.
   LockContentsView* contents_view_ = nullptr;
 
-  // The wallpaper bluriness before entering lock_screen.
-  std::unordered_map<ui::Layer*, float> initial_blur_;
+  // The fallback timer that ensures the login screen is shown in case the first
+  // wallpaper animation takes an extra long time to complete.
+  std::unique_ptr<base::OneShotTimer> show_login_screen_fallback_timer_;
 
-  ScopedObserver<TrayAction, TrayActionObserver> tray_action_observer_;
-  ScopedSessionObserver session_observer_;
+  bool is_shown_ = false;
+
+  ScopedObserver<TrayAction, TrayActionObserver> tray_action_observer_{this};
+  ScopedSessionObserver session_observer_{this};
 
   DISALLOW_COPY_AND_ASSIGN(LockScreen);
 };

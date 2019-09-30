@@ -7,20 +7,28 @@ cr.define('extensions', function() {
   class TestService extends TestBrowserProxy {
     constructor() {
       super([
+        'addRuntimeHostPermission',
         'getExtensionsInfo',
         'getExtensionSize',
         'getProfileConfiguration',
         'loadUnpacked',
         'retryLoadUnpacked',
         'reloadItem',
+        'removeRuntimeHostPermission',
+        'setItemHostAccess',
         'setProfileInDevMode',
         'setShortcutHandlingSuspended',
+        'shouldIgnoreUpdate',
         'updateAllExtensions',
-        'updateExtensionCommand',
+        'updateExtensionCommandKeybinding',
+        'updateExtensionCommandScope',
       ]);
 
       this.itemStateChangedTarget = new FakeChromeEvent();
       this.profileStateChangedTarget = new FakeChromeEvent();
+
+      /** @type {boolean} */
+      this.acceptRuntimeHostPermission = true;
 
       /** @private {!chrome.developerPrivate.LoadError} */
       this.retryLoadUnpackedError_;
@@ -41,6 +49,13 @@ cr.define('extensions', function() {
      */
     setForceReloadItemError(force) {
       this.forceReloadItemError_ = force;
+    }
+
+    /** @override */
+    addRuntimeHostPermission(id, site) {
+      this.methodCalled('addRuntimeHostPermission', [id, site]);
+      return this.acceptRuntimeHostPermission ? Promise.resolve() :
+                                                Promise.reject();
     }
 
     /** @override */
@@ -72,14 +87,36 @@ cr.define('extensions', function() {
     }
 
     /** @override */
+    removeRuntimeHostPermission(id, site) {
+      this.methodCalled('removeRuntimeHostPermission', [id, site]);
+      return Promise.resolve();
+    }
+
+    /** @override */
+    setItemHostAccess(id, access) {
+      this.methodCalled('setItemHostAccess', [id, access]);
+    }
+
+    /** @override */
     setShortcutHandlingSuspended(enable) {
       this.methodCalled('setShortcutHandlingSuspended', enable);
     }
 
     /** @override */
-    updateExtensionCommand(item, commandName, keybinding) {
+    shouldIgnoreUpdate(extensionId, eventType) {
+      this.methodCalled('shouldIgnoreUpdate', [extensionId, eventType]);
+    }
+
+    /** @override */
+    updateExtensionCommandKeybinding(item, commandName, keybinding) {
       this.methodCalled(
-          'updateExtensionCommand', [item, commandName, keybinding]);
+          'updateExtensionCommandKeybinding', [item, commandName, keybinding]);
+    }
+
+    /** @override */
+    updateExtensionCommandScope(item, commandName, scope) {
+      this.methodCalled(
+          'updateExtensionCommandScope', [item, commandName, scope]);
     }
 
     /** @override */

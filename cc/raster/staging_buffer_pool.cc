@@ -14,6 +14,8 @@
 #include "components/viz/common/gpu/raster_context_provider.h"
 #include "components/viz/common/resources/resource_sizes.h"
 #include "gpu/command_buffer/client/raster_interface.h"
+#include "third_party/khronos/GLES2/gl2.h"
+#include "third_party/khronos/GLES2/gl2ext.h"
 #include "ui/gfx/gpu_memory_buffer.h"
 
 using base::trace_event::MemoryAllocatorDump;
@@ -113,28 +115,18 @@ void StagingBuffer::OnMemoryDump(base::trace_event::ProcessMemoryDump* pmd,
   const uint64_t tracing_process_id =
       base::trace_event::MemoryDumpManager::GetInstance()
           ->GetTracingProcessId();
-  auto shared_memory_guid = gpu_memory_buffer->GetHandle().handle.GetGUID();
   const int kImportance = 2;
-  if (!shared_memory_guid.is_empty()) {
-    pmd->CreateSharedMemoryOwnershipEdge(buffer_dump->guid(),
-                                         shared_memory_guid, kImportance);
-  } else {
-    auto shared_buffer_guid =
-        gpu_memory_buffer->GetGUIDForTracing(tracing_process_id);
-    pmd->CreateSharedGlobalAllocatorDump(shared_buffer_guid);
-    pmd->AddOwnershipEdge(buffer_dump->guid(), shared_buffer_guid, kImportance);
-  }
+  gpu_memory_buffer->OnMemoryDump(pmd, buffer_dump->guid(), tracing_process_id,
+                                  kImportance);
 }
 
 StagingBufferPool::StagingBufferPool(
     scoped_refptr<base::SequencedTaskRunner> task_runner,
     viz::RasterContextProvider* worker_context_provider,
-    LayerTreeResourceProvider* resource_provider,
     bool use_partial_raster,
     int max_staging_buffer_usage_in_bytes)
     : task_runner_(std::move(task_runner)),
       worker_context_provider_(worker_context_provider),
-      resource_provider_(resource_provider),
       use_partial_raster_(use_partial_raster),
       max_staging_buffer_usage_in_bytes_(max_staging_buffer_usage_in_bytes),
       staging_buffer_usage_in_bytes_(0),
@@ -146,7 +138,12 @@ StagingBufferPool::StagingBufferPool(
   DCHECK(worker_context_provider_);
   base::trace_event::MemoryDumpManager::GetInstance()->RegisterDumpProvider(
       this, "cc::StagingBufferPool", base::ThreadTaskRunnerHandle::Get());
+
   base::MemoryCoordinatorClientRegistry::GetInstance()->Register(this);
+  memory_pressure_listener_.reset(new base::MemoryPressureListener(
+      base::BindRepeating(&StagingBufferPool::OnMemoryPressure,
+                          weak_ptr_factory_.GetWeakPtr())));
+
   reduce_memory_usage_callback_ = base::Bind(
       &StagingBufferPool::ReduceMemoryUsage, weak_ptr_factory_.GetWeakPtr());
 }
@@ -260,7 +257,7 @@ std::unique_ptr<StagingBuffer> StagingBufferPool::AcquireStagingBuffer(
   DCHECK(ri);
 
   // Check if any busy buffers have become available.
-  if (resource_provider_->use_sync_query()) {
+  if (worker_context_provider_->ContextCapabilities().sync_query) {
     while (!busy_buffers_.empty()) {
       if (!CheckForQueryResult(ri, busy_buffers_.front()->query_id))
         break;
@@ -278,7 +275,7 @@ std::unique_ptr<StagingBuffer> StagingBufferPool::AcquireStagingBuffer(
     if (busy_buffers_.empty())
       break;
 
-    if (resource_provider_->use_sync_query()) {
+    if (worker_context_provider_->ContextCapabilities().sync_query) {
       WaitForQueryResult(ri, busy_buffers_.front()->query_id);
       MarkStagingBufferAsFree(busy_buffers_.front().get());
       free_buffers_.push_back(PopFront(&busy_buffers_));
@@ -431,6 +428,19 @@ void StagingBufferPool::OnPurgeMemory() {
   base::AutoLock lock(lock_);
   // Release all buffers, regardless of how recently they were used.
   ReleaseBuffersNotUsedSince(base::TimeTicks() + base::TimeDelta::Max());
+}
+
+void StagingBufferPool::OnMemoryPressure(
+    base::MemoryPressureListener::MemoryPressureLevel level) {
+  base::AutoLock lock(lock_);
+  switch (level) {
+    case base::MemoryPressureListener::MEMORY_PRESSURE_LEVEL_NONE:
+    case base::MemoryPressureListener::MEMORY_PRESSURE_LEVEL_MODERATE:
+      break;
+    case base::MemoryPressureListener::MEMORY_PRESSURE_LEVEL_CRITICAL:
+      ReleaseBuffersNotUsedSince(base::TimeTicks() + base::TimeDelta::Max());
+      break;
+  }
 }
 
 }  // namespace cc

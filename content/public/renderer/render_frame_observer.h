@@ -11,8 +11,10 @@
 #include "base/macros.h"
 #include "base/strings/string16.h"
 #include "content/common/content_export.h"
+#include "content/public/common/resource_type.h"
 #include "ipc/ipc_listener.h"
 #include "ipc/ipc_sender.h"
+#include "mojo/public/cpp/bindings/scoped_interface_endpoint_handle.h"
 #include "mojo/public/cpp/system/message_pipe.h"
 #include "third_party/blink/public/platform/web_client_hints_types.mojom.h"
 #include "third_party/blink/public/platform/web_feature.mojom.h"
@@ -29,6 +31,11 @@ class WebString;
 struct WebURLError;
 class WebWorkerFetchContext;
 }
+
+namespace network {
+struct ResourceResponseHead;
+struct URLLoaderCompletionStatus;
+}  // namespace network
 
 namespace content {
 
@@ -123,6 +130,25 @@ class CONTENT_EXPORT RenderFrameObserver : public IPC::Listener,
   virtual void DidObserveNewCssPropertyUsage(int css_property,
                                              bool is_animated) {}
 
+  // Notification when the renderer a response started, completed or canceled.
+  // Complete or Cancel is guaranteed to be called for a response that started.
+  // |request_id| uniquely identifies the request within this render frame.
+  virtual void DidStartResponse(
+      int request_id,
+      const network::ResourceResponseHead& response_head,
+      content::ResourceType resource_type) {}
+  virtual void DidCompleteResponse(
+      int request_id,
+      const network::URLLoaderCompletionStatus& status) {}
+  virtual void DidCancelResponse(int request_id) {}
+
+  // Notification when the renderer observes data used during the page load.
+  // This is used for page load metrics. |received_data_length| is the received
+  // network bytes. |resource_id| uniquely identifies the resource within this
+  // render frame.
+  virtual void DidReceiveTransferSizeUpdate(int resource_id,
+                                            int received_data_length) {}
+
   // Called when the focused node has changed to |node|.
   virtual void FocusedNodeChanged(const blink::WebNode& node) {}
 
@@ -143,6 +169,14 @@ class CONTENT_EXPORT RenderFrameObserver : public IPC::Listener,
   virtual void OnInterfaceRequestForFrame(
       const std::string& interface_name,
       mojo::ScopedMessagePipeHandle* interface_pipe) {}
+
+  // Similar to above but for handling Channel-associated interface requests.
+  // Returns |true| if the request is handled by the implementation (taking
+  // ownership of |*handle|) and |false| otherwise (leaving |*handle|
+  // unmodified).
+  virtual bool OnAssociatedInterfaceRequestForFrame(
+      const std::string& interface_name,
+      mojo::ScopedInterfaceEndpointHandle* handle);
 
   // IPC::Listener implementation.
   bool OnMessageReceived(const IPC::Message& message) override;

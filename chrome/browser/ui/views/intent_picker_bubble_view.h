@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "base/macros.h"
+#include "chrome/browser/apps/foundation/app_service/public/mojom/types.mojom.h"
 #include "chrome/browser/chromeos/apps/intent_helper/apps_navigation_types.h"
 #include "chrome/browser/ui/browser_dialogs.h"
 #include "chrome/browser/ui/views/location_bar/location_bar_bubble_delegate_view.h"
@@ -75,6 +76,8 @@ class IntentPickerBubbleView : public LocationBarBubbleDelegateView,
   }
   static void CloseCurrentBubble();
 
+  const std::vector<AppInfo>& GetAppInfoForTesting() const { return app_info_; }
+
   // LocationBarBubbleDelegateView overrides:
   bool Accept() override;
   bool Cancel() override;
@@ -122,7 +125,7 @@ class IntentPickerBubbleView : public LocationBarBubbleDelegateView,
   // the internal ScrollView.
   IntentPickerLabelButton* GetIntentPickerLabelButtonAt(size_t index);
   void RunCallback(const std::string& launch_name,
-                   chromeos::AppType app_type,
+                   apps::mojom::AppType app_type,
                    chromeos::IntentPickerCloseReason close_reason,
                    bool should_persist);
 
@@ -138,6 +141,9 @@ class IntentPickerBubbleView : public LocationBarBubbleDelegateView,
 
   // Calculate the next app to select given the current selection and |delta|.
   size_t CalculateNextAppIndex(int delta);
+
+  // Updates whether the persistence checkbox is enabled or not.
+  void UpdateCheckboxState();
 
   gfx::ImageSkia GetAppImageForTesting(size_t index);
   views::InkDropState GetInkDropStateForTesting(size_t);

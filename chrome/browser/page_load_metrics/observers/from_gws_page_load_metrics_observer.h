@@ -8,7 +8,7 @@
 #include "base/macros.h"
 #include "base/optional.h"
 #include "chrome/browser/page_load_metrics/page_load_metrics_observer.h"
-#include "components/ukm/ukm_source.h"
+#include "services/metrics/public/cpp/ukm_source.h"
 #include "url/gurl.h"
 
 namespace internal {
@@ -35,8 +35,6 @@ extern const char kHistogramFromGWSAbortReloadBeforeInteraction[];
 extern const char kHistogramFromGWSForegroundDuration[];
 extern const char kHistogramFromGWSForegroundDurationAfterPaint[];
 extern const char kHistogramFromGWSForegroundDurationNoCommit[];
-
-extern const char kUkmFromGoogleSearchName[];
 
 }  // namespace internal
 

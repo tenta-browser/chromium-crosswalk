@@ -36,6 +36,7 @@
 #include "content/app/resources/grit/content_resources.h"
 #include "content/app/strings/grit/content_strings.h"
 #include "content/child/child_thread_impl.h"
+#include "content/common/service_worker/service_worker_utils.h"
 #include "content/public/common/content_client.h"
 #include "content/public/common/content_features.h"
 #include "content/public/common/content_switches.h"
@@ -46,7 +47,6 @@
 #include "third_party/blink/public/platform/scheduler/child/webthread_base.h"
 #include "third_party/blink/public/platform/web_data.h"
 #include "third_party/blink/public/platform/web_float_point.h"
-#include "third_party/blink/public/platform/web_gesture_curve.h"
 #include "third_party/blink/public/platform/web_security_origin.h"
 #include "third_party/blink/public/platform/web_string.h"
 #include "third_party/blink/public/platform/web_url.h"
@@ -59,7 +59,6 @@
 #include "ui/events/keycodes/dom/keycode_converter.h"
 
 using blink::WebData;
-using blink::WebFallbackThemeEngine;
 using blink::WebLocalizedString;
 using blink::WebString;
 using blink::WebThemeEngine;
@@ -72,6 +71,8 @@ static int ToMessageID(WebLocalizedString::Name name) {
   switch (name) {
     case WebLocalizedString::kAXAMPMFieldText:
       return IDS_AX_AM_PM_FIELD_TEXT;
+    case WebLocalizedString::kAXCalendarShowDatePicker:
+      return IDS_AX_CALENDAR_SHOW_DATE_PICKER;
     case WebLocalizedString::kAXCalendarShowMonthSelector:
       return IDS_AX_CALENDAR_SHOW_MONTH_SELECTOR;
     case WebLocalizedString::kAXCalendarShowNextMonth:
@@ -106,6 +107,12 @@ static int ToMessageID(WebLocalizedString::Name name) {
       return IDS_AX_MEDIA_ENTER_FULL_SCREEN_BUTTON;
     case WebLocalizedString::kAXMediaExitFullscreenButton:
       return IDS_AX_MEDIA_EXIT_FULL_SCREEN_BUTTON;
+    case WebLocalizedString::kAXMediaDisplayCutoutFullscreenButton:
+      return IDS_AX_MEDIA_DISPLAY_CUT_OUT_FULL_SCREEN_BUTTON;
+    case WebLocalizedString::kAXMediaEnterPictureInPictureButton:
+      return IDS_AX_MEDIA_ENTER_PICTURE_IN_PICTURE_BUTTON;
+    case WebLocalizedString::kAXMediaExitPictureInPictureButton:
+      return IDS_AX_MEDIA_EXIT_PICTURE_IN_PICTURE_BUTTON;
     case WebLocalizedString::kAXMediaShowClosedCaptionsButton:
       return IDS_AX_MEDIA_SHOW_CLOSED_CAPTIONS_BUTTON;
     case WebLocalizedString::kAXMediaHideClosedCaptionsButton:
@@ -142,6 +149,12 @@ static int ToMessageID(WebLocalizedString::Name name) {
       return IDS_AX_MEDIA_ENTER_FULL_SCREEN_BUTTON_HELP;
     case WebLocalizedString::kAXMediaExitFullscreenButtonHelp:
       return IDS_AX_MEDIA_EXIT_FULL_SCREEN_BUTTON_HELP;
+    case WebLocalizedString::kAXMediaDisplayCutoutFullscreenButtonHelp:
+      return IDS_AX_MEDIA_DISPLAY_CUT_OUT_FULL_SCREEN_BUTTON_HELP;
+    case WebLocalizedString::kAXMediaEnterPictureInPictureButtonHelp:
+      return IDS_AX_MEDIA_ENTER_PICTURE_IN_PICTURE_BUTTON_HELP;
+    case WebLocalizedString::kAXMediaExitPictureInPictureButtonHelp:
+      return IDS_AX_MEDIA_EXIT_PICTURE_IN_PICTURE_BUTTON_HELP;
     case WebLocalizedString::kAXMediaShowClosedCaptionsButtonHelp:
       return IDS_AX_MEDIA_SHOW_CLOSED_CAPTIONS_BUTTON_HELP;
     case WebLocalizedString::kAXMediaHideClosedCaptionsButtonHelp:
@@ -224,8 +237,10 @@ static int ToMessageID(WebLocalizedString::Name name) {
       return IDS_MEDIA_OVERFLOW_MENU_PAUSE;
     case WebLocalizedString::kOverflowMenuDownload:
       return IDS_MEDIA_OVERFLOW_MENU_DOWNLOAD;
-    case WebLocalizedString::kOverflowMenuPictureInPicture:
-      return IDS_MEDIA_OVERFLOW_MENU_PICTURE_IN_PICTURE;
+    case WebLocalizedString::kOverflowMenuEnterPictureInPicture:
+      return IDS_MEDIA_OVERFLOW_MENU_ENTER_PICTURE_IN_PICTURE;
+    case WebLocalizedString::kOverflowMenuExitPictureInPicture:
+      return IDS_MEDIA_OVERFLOW_MENU_EXIT_PICTURE_IN_PICTURE;
     case WebLocalizedString::kPictureInPictureInterstitialText:
       return IDS_MEDIA_PICTURE_IN_PICTURE_INTERSTITIAL_TEXT;
     case WebLocalizedString::kPlaceholderForDayOfMonthField:
@@ -364,10 +379,6 @@ void BlinkPlatformImpl::UpdateWebThreadTLS(blink::WebThread* thread,
 }
 
 BlinkPlatformImpl::~BlinkPlatformImpl() {
-}
-
-WebString BlinkPlatformImpl::UserAgent() {
-  return blink::WebString::FromUTF8(GetContentClient()->GetUserAgent());
 }
 
 std::unique_ptr<blink::WebThread> BlinkPlatformImpl::CreateThread(
@@ -657,29 +668,6 @@ WebString BlinkPlatformImpl::QueryLocalizedString(WebLocalizedString::Name name,
       GetContentClient()->GetLocalizedString(message_id), values, nullptr));
 }
 
-bool BlinkPlatformImpl::IsRendererSideResourceSchedulerEnabled() const {
-  // We are assuming that kRendererSideResourceScheduler will be shipped when
-  // launching Network Service, so let's act as if
-  // kRendererSideResourceScheduler is enabled when kNetworkService is enabled.
-  // Note: This is identical to
-  // ResourceScheduler::IsRendererSideResourceSchedulerEnabled but we duplicate
-  // the logic in order to avoid a DEPS issue.
-  return base::FeatureList::IsEnabled(
-             network::features::kRendererSideResourceScheduler) ||
-         base::FeatureList::IsEnabled(network::features::kNetworkService);
-}
-
-std::unique_ptr<blink::WebGestureCurve>
-BlinkPlatformImpl::CreateFlingAnimationCurve(
-    blink::WebGestureDevice device_source,
-    const blink::WebFloatPoint& velocity,
-    const blink::WebSize& cumulative_scroll) {
-  return ui::WebGestureCurveImpl::CreateFromDefaultPlatformCurve(
-      device_source, gfx::Vector2dF(velocity.x, velocity.y),
-      gfx::Vector2dF(cumulative_scroll.width, cumulative_scroll.height),
-      IsMainThread());
-}
-
 bool BlinkPlatformImpl::AllowScriptExtensionForServiceWorker(
     const blink::WebURL& scriptUrl) {
   return GetContentClient()->AllowScriptExtensionForServiceWorker(scriptUrl);
@@ -702,16 +690,12 @@ WebThemeEngine* BlinkPlatformImpl::ThemeEngine() {
   return &native_theme_engine_;
 }
 
-WebFallbackThemeEngine* BlinkPlatformImpl::FallbackThemeEngine() {
-  return &fallback_theme_engine_;
-}
-
 blink::Platform::FileHandle BlinkPlatformImpl::DatabaseOpenFile(
     const blink::WebString& vfs_file_name,
     int desired_flags) {
 #if defined(OS_WIN)
   return INVALID_HANDLE_VALUE;
-#elif defined(OS_POSIX)
+#elif defined(OS_POSIX) || defined(OS_FUCHSIA)
   return -1;
 #endif
 }
@@ -740,10 +724,6 @@ bool BlinkPlatformImpl::DatabaseSetFileSize(
     const blink::WebString& vfs_file_name,
     long long size) {
   return false;
-}
-
-size_t BlinkPlatformImpl::NumberOfProcessors() {
-  return static_cast<size_t>(base::SysInfo::NumberOfProcessors());
 }
 
 size_t BlinkPlatformImpl::MaxDecodedImageBytes() {
@@ -779,12 +759,6 @@ size_t BlinkPlatformImpl::MaxDecodedImageBytes() {
 
 bool BlinkPlatformImpl::IsLowEndDevice() {
   return base::SysInfo::IsLowEndDevice();
-}
-
-uint32_t BlinkPlatformImpl::GetUniqueIdForProcess() {
-  // TODO(rickyz): Replace this with base::GetUniqueIdForProcess when that's
-  // ready.
-  return base::trace_event::TraceLog::GetInstance()->process_id();
 }
 
 bool BlinkPlatformImpl::IsMainThread() const {

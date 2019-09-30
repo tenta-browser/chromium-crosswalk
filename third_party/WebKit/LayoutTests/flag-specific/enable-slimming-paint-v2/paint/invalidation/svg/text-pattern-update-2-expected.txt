@@ -9,61 +9,19 @@
         {
           "object": "InlineTextBox 'X'",
           "rect": [8, 8, 300, 100],
-          "reason": "SVG resource change"
+          "reason": "subtree"
         },
         {
           "object": "InlineTextBox 'Y'",
           "rect": [8, 8, 300, 100],
-          "reason": "SVG resource change"
+          "reason": "subtree"
         },
         {
           "object": "InlineTextBox 'Z'",
           "rect": [8, 8, 300, 100],
-          "reason": "SVG resource change"
+          "reason": "subtree"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutSVGText text",
-      "reason": "SVG resource change"
-    },
-    {
-      "object": "RootInlineBox",
-      "reason": "SVG resource change"
-    },
-    {
-      "object": "LayoutSVGInlineText #text",
-      "reason": "SVG resource change"
-    },
-    {
-      "object": "InlineTextBox 'X'",
-      "reason": "SVG resource change"
-    },
-    {
-      "object": "LayoutSVGTSpan tspan",
-      "reason": "SVG resource change"
-    },
-    {
-      "object": "InlineFlowBox",
-      "reason": "SVG resource change"
-    },
-    {
-      "object": "LayoutSVGInlineText #text",
-      "reason": "SVG resource change"
-    },
-    {
-      "object": "InlineTextBox 'Y'",
-      "reason": "SVG resource change"
-    },
-    {
-      "object": "LayoutSVGInlineText #text",
-      "reason": "SVG resource change"
-    },
-    {
-      "object": "InlineTextBox 'Z'",
-      "reason": "SVG resource change"
     }
   ]
 }

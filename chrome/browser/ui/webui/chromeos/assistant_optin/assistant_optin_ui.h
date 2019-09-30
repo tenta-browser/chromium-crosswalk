@@ -7,17 +7,15 @@
 
 #include <vector>
 
+#include "ash/public/interfaces/assistant_controller.mojom.h"
 #include "base/callback.h"
 #include "base/macros.h"
-#include "chrome/browser/ui/webui/chromeos/assistant_optin/assistant_optin_screen_exit_code.h"
+#include "chrome/browser/ui/webui/chromeos/assistant_optin/assistant_optin_handler.h"
+#include "chrome/browser/ui/webui/chromeos/assistant_optin/assistant_optin_utils.h"
 #include "chrome/browser/ui/webui/chromeos/login/base_webui_handler.h"
 #include "chrome/browser/ui/webui/chromeos/system_web_dialog_delegate.h"
 #include "content/public/browser/web_ui_controller.h"
 #include "ui/web_dialogs/web_dialog_ui.h"
-
-namespace arc {
-class ArcVoiceInteractionArcHomeService;
-}
 
 namespace chromeos {
 
@@ -34,9 +32,8 @@ class AssistantOptInUI : public ui::WebDialogUI {
   // Called by a screen when user's done with it.
   void OnExit(AssistantOptInScreenExitCode exit_code);
 
-  // Get ArcHomeService for user action handling.
-  arc::ArcVoiceInteractionArcHomeService* GetVoiceInteractionHomeService();
-
+  AssistantOptInHandler* assistant_handler_ = nullptr;
+  std::unique_ptr<JSCallsContainer> js_calls_container_;
   std::vector<BaseWebUIHandler*> screen_handlers_;
   base::WeakPtrFactory<AssistantOptInUI> weak_factory_;
 
@@ -47,21 +44,27 @@ class AssistantOptInUI : public ui::WebDialogUI {
 class AssistantOptInDialog : public SystemWebDialogDelegate {
  public:
   // Shows the assistant optin dialog.
-  static void Show();
+  static void Show(ash::mojom::AssistantSetup::StartAssistantOptInFlowCallback
+                       callback = base::DoNothing());
 
   // Returns whether the dialog is being shown.
   static bool IsActive();
 
  protected:
-  AssistantOptInDialog();
+  explicit AssistantOptInDialog(
+      ash::mojom::AssistantSetup::StartAssistantOptInFlowCallback callback);
   ~AssistantOptInDialog() override;
 
   // ui::WebDialogDelegate
   void GetDialogSize(gfx::Size* size) const override;
   std::string GetDialogArgs() const override;
   bool ShouldShowDialogTitle() const override;
+  void OnDialogClosed(const std::string& json_retval) override;
 
  private:
+  // Callback to run if the flow is completed.
+  ash::mojom::AssistantSetup::StartAssistantOptInFlowCallback callback_;
+
   DISALLOW_COPY_AND_ASSIGN(AssistantOptInDialog);
 };
 

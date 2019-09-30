@@ -27,7 +27,6 @@
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/storage_partition.h"
 #include "content/public/browser/web_contents.h"
-#include "content/public/common/push_event_payload.h"
 #include "content/public/common/push_messaging_status.mojom.h"
 #include "third_party/blink/public/mojom/service_worker/service_worker_object.mojom.h"
 #include "third_party/blink/public/mojom/service_worker/service_worker_provider_type.mojom.h"
@@ -114,9 +113,10 @@ void DidFindRegistrationForDispatchSyncEventOnIO(
     scoped_refptr<BackgroundSyncContext> sync_context,
     const std::string& tag,
     bool last_chance,
-    ServiceWorkerStatusCode status,
+    blink::ServiceWorkerStatusCode status,
     scoped_refptr<content::ServiceWorkerRegistration> registration) {
-  if (status != SERVICE_WORKER_OK || !registration->active_version())
+  if (status != blink::ServiceWorkerStatusCode::kOk ||
+      !registration->active_version())
     return;
   BackgroundSyncManager* background_sync_manager =
       sync_context->background_sync_manager();
@@ -127,7 +127,7 @@ void DidFindRegistrationForDispatchSyncEventOnIO(
       tag, std::move(version), last_chance,
       base::BindOnce(base::DoNothing::Once<
                          scoped_refptr<content::ServiceWorkerRegistration>,
-                         ServiceWorkerStatusCode>(),
+                         blink::ServiceWorkerStatusCode>(),
                      std::move(registration)));
 }
 
@@ -308,11 +308,11 @@ Response ServiceWorkerHandler::DeliverPushMessage(
   int64_t id = 0;
   if (!base::StringToInt64(registration_id, &id))
     return CreateInvalidVersionIdErrorResponse();
-  PushEventPayload payload;
+  base::Optional<std::string> payload;
   if (data.size() > 0)
-    payload.setData(data);
+    payload = data;
   BrowserContext::DeliverPushMessage(
-      browser_context_, GURL(origin), id, payload,
+      browser_context_, GURL(origin), id, std::move(payload),
       base::BindRepeating([](mojom::PushDeliveryStatus status) {}));
 
   return Response::OK();

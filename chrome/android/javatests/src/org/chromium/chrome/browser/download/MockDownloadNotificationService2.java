@@ -27,15 +27,15 @@ public class MockDownloadNotificationService2 extends DownloadNotificationServic
     private final List<Integer> mNotificationIds = new ArrayList<Integer>();
     private boolean mPaused = false;
     private int mLastNotificationId = DEFAULT_NOTIFICATION_ID;
+    private int mNumberOfNotifications;
 
     List<String> mResumedDownloads = new ArrayList<>();
 
     @Override
     void updateNotification(int id, Notification notification) {
-        if (!mNotificationIds.contains(id)) {
-            mNotificationIds.add(id);
-            mLastNotificationId = id;
-        }
+        mNumberOfNotifications++;
+        mLastNotificationId = id;
+        if (!mNotificationIds.contains(id)) mNotificationIds.add(id);
     }
 
     public boolean isPaused() {
@@ -50,6 +50,10 @@ public class MockDownloadNotificationService2 extends DownloadNotificationServic
         return mLastNotificationId;
     }
 
+    public int getNumberOfNotifications() {
+        return mNumberOfNotifications;
+    }
+
     @Override
     public void cancelNotification(int notificationId, ContentId id) {
         super.cancelNotification(notificationId, id);
@@ -60,12 +64,13 @@ public class MockDownloadNotificationService2 extends DownloadNotificationServic
     public int notifyDownloadSuccessful(final ContentId id, final String filePath,
             final String fileName, final long systemDownloadId, final boolean isOffTheRecord,
             final boolean isSupportedMimeType, final boolean isOpenable, final Bitmap icon,
-            final String originalUrl, final String referrer) {
+            final String originalUrl, final String referrer, final long totalBytes) {
         return ThreadUtils.runOnUiThreadBlockingNoException(
                 ()
                         -> MockDownloadNotificationService2.super.notifyDownloadSuccessful(id,
                                 filePath, fileName, systemDownloadId, isOffTheRecord,
-                                isSupportedMimeType, isOpenable, icon, originalUrl, referrer));
+                                isSupportedMimeType, isOpenable, icon, originalUrl, referrer,
+                                totalBytes));
     }
 
     @Override

@@ -20,85 +20,19 @@
         {
           "object": "LayoutSVGContainer g",
           "rect": [209, 57, 46, 66],
-          "reason": "appeared"
+          "reason": "chunk appeared"
         },
         {
           "object": "LayoutSVGContainer g",
           "rect": [209, 57, 46, 66],
-          "reason": "appeared"
+          "reason": "chunk appeared"
         },
         {
           "object": "LayoutSVGContainer g",
           "rect": [209, 57, 46, 66],
-          "reason": "disappeared"
+          "reason": "chunk disappeared"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutSVGContainer g id='use'",
-      "reason": "appeared"
-    },
-    {
-      "object": "LayoutSVGContainer use",
-      "reason": "appeared"
-    },
-    {
-      "object": "LayoutSVGText text id='use_text'",
-      "reason": "appeared"
-    },
-    {
-      "object": "RootInlineBox",
-      "reason": "appeared"
-    },
-    {
-      "object": "LayoutSVGInlineText #text",
-      "reason": "appeared"
-    },
-    {
-      "object": "InlineTextBox 'use'",
-      "reason": "appeared"
-    },
-    {
-      "object": "LayoutSVGContainer use",
-      "reason": "appeared"
-    },
-    {
-      "object": "LayoutSVGEllipse circle id='use_circle'",
-      "reason": "appeared"
-    },
-    {
-      "object": "LayoutSVGContainer g id='use'",
-      "reason": "appeared"
-    },
-    {
-      "object": "LayoutSVGContainer use",
-      "reason": "appeared"
-    },
-    {
-      "object": "LayoutSVGText text id='use_text'",
-      "reason": "appeared"
-    },
-    {
-      "object": "RootInlineBox",
-      "reason": "appeared"
-    },
-    {
-      "object": "LayoutSVGInlineText #text",
-      "reason": "appeared"
-    },
-    {
-      "object": "InlineTextBox 'use'",
-      "reason": "appeared"
-    },
-    {
-      "object": "LayoutSVGContainer use",
-      "reason": "appeared"
-    },
-    {
-      "object": "LayoutSVGEllipse circle id='use_circle'",
-      "reason": "appeared"
     }
   ]
 }

@@ -18,16 +18,6 @@
       "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
         {
-          "object": "NGPaintFragment",
-          "rect": [8, 20, 446, 14],
-          "reason": "appeared"
-        },
-        {
-          "object": "NGPaintFragment",
-          "rect": [8, 20, 446, 14],
-          "reason": "disappeared"
-        },
-        {
           "object": "LayoutNGBlockFlow (relative positioned) DIV id='ul'",
           "rect": [677, 252, 100, 100],
           "reason": "paint property change"
@@ -51,36 +41,6 @@
         [0, -200, 0, 1]
       ],
       "flattenInheritedTransform": false
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "NGPaintFragment",
-      "reason": "subtree"
-    },
-    {
-      "object": "NGPaintFragment",
-      "reason": "subtree"
-    },
-    {
-      "object": "NGPaintFragment",
-      "reason": "subtree"
-    },
-    {
-      "object": "LayoutNGBlockFlow (positioned) DIV id='scrollpanel'",
-      "reason": "subtree"
-    },
-    {
-      "object": "LayoutNGBlockFlow (relative positioned) DIV class='container'",
-      "reason": "subtree"
-    },
-    {
-      "object": "LayoutNGBlockFlow (relative positioned) DIV id='ul'",
-      "reason": "subtree"
-    },
-    {
-      "object": "LayoutNGBlockFlow DIV",
-      "reason": "subtree"
     }
   ]
 }

@@ -14,14 +14,20 @@ import zipfile
 
 from util import build_utils
 from util import md5_check
+from util import jar_info_utils
 
 import jar
 
-sys.path.append(build_utils.COLORAMA_ROOT)
+sys.path.append(
+    os.path.join(build_utils.DIR_SOURCE_ROOT, 'third_party', 'colorama', 'src'))
 import colorama
 
 
 ERRORPRONE_WARNINGS_TO_TURN_OFF = [
+  # TODO(crbug.com/834807): Follow steps in bug
+  'DoubleBraceInitialization',
+  # TODO(crbug.com/834790): Follow steps in bug.
+  'CatchAndPrintStackTrace',
   # TODO(crbug.com/801210): Follow steps in bug.
   'SynchronizeOnNonFinalField',
   # TODO(crbug.com/802073): Follow steps in bug.
@@ -30,8 +36,6 @@ ERRORPRONE_WARNINGS_TO_TURN_OFF = [
   'CatchFail',
   # TODO(crbug.com/803485): Follow steps in bug.
   'JUnitAmbiguousTestClass',
-  # TODO(crbug.com/803589): Follow steps in bug.
-  'MissingFail',
   # Android platform default is always UTF-8.
   # https://developer.android.com/reference/java/nio/charset/Charset.html#defaultCharset()
   'DefaultCharset',
@@ -45,8 +49,6 @@ ERRORPRONE_WARNINGS_TO_TURN_OFF = [
   'OperatorPrecedence',
   # Just false positives in our code.
   'ThreadJoinLoop',
-  # Alias of ParameterName warning.
-  'NamedParameters',
   # Low priority corner cases with String.split.
   # Linking Guava and using Splitter was rejected
   # in the https://chromium-review.googlesource.com/c/chromium/src/+/871630.
@@ -91,9 +93,12 @@ ERRORPRONE_WARNINGS_TO_ERROR = [
   'AssertionFailureIgnored',
   'FloatingPointLiteralPrecision',
   'JavaLangClash',
+  'MissingFail',
   'MissingOverride',
   'NarrowingCompoundAssignment',
+  'OrphanedFormatString',
   'ParameterName',
+  'ParcelableCreator',
   'ReferenceEquality',
   'StaticGuardedByInstance',
   'StaticQualifiedUsingExpression',
@@ -227,44 +232,6 @@ def _CheckPathMatchesClassName(java_file, package_name, class_name):
                     (java_file, expected_path_suffix))
 
 
-def _ParseInfoFile(info_path):
-  info_data = dict()
-  if os.path.exists(info_path):
-    with open(info_path, 'r') as info_file:
-      for line in info_file:
-        line = line.strip()
-        if line:
-          fully_qualified_name, path = line.split(',', 1)
-          info_data[fully_qualified_name] = path
-  return info_data
-
-
-def _WriteInfoFile(info_path, info_data, srcjar_files):
-  with open(info_path, 'w') as info_file:
-    for fully_qualified_name, path in info_data.iteritems():
-      if path in srcjar_files:
-        path = srcjar_files[path]
-      assert not path.startswith('/tmp'), (
-          'Java file path should not be in temp dir: {}'.format(path))
-      info_file.write('{},{}\n'.format(fully_qualified_name, path))
-
-
-def _FullJavaNameFromClassFilePath(path):
-  # Input:  base/android/java/src/org/chromium/Foo.class
-  # Output: base.android.java.src.org.chromium.Foo
-  if not path.endswith('.class'):
-    return ''
-  path = os.path.splitext(path)[0]
-  parts = []
-  while path:
-    # Use split to be platform independent.
-    head, tail = os.path.split(path)
-    path = head
-    parts.append(tail)
-  parts.reverse()  # Package comes first
-  return '.'.join(parts)
-
-
 def _CreateInfoFile(java_files, options, srcjar_files):
   """Writes a .jar.info file.
 
@@ -282,33 +249,14 @@ def _CreateInfoFile(java_files, options, srcjar_files):
       info_data[fully_qualified_name] = java_file
     # Skip aidl srcjars since they don't indent code correctly.
     source = srcjar_files.get(java_file, java_file)
-    if source.endswith('_aidl.srcjar'):
+    if '_aidl.srcjar' in source:
       continue
     assert not options.chromium_code or len(class_names) == 1, (
         'Chromium java files must only have one class: {}'.format(source))
     if options.chromium_code:
       _CheckPathMatchesClassName(java_file, package_name, class_names[0])
-  _WriteInfoFile(options.jar_path + '.info', info_data, srcjar_files)
-
-  # Collect all the info files for transitive dependencies of the apk.
-  if options.apk_jar_info_path:
-    for jar_path in options.full_classpath:
-      # android_java_prebuilt adds jar files in the src directory (relative to
-      #     the output directory, usually ../../third_party/example.jar).
-      # android_aar_prebuilt collects jar files in the aar file and uses the
-      #     java_prebuilt rule to generate gen/example/classes.jar files.
-      # We scan these prebuilt jars to parse each class path for the FQN. This
-      #     allows us to later map these classes back to their respective src
-      #     directories.
-      if jar_path.startswith('..') or jar_path.endswith('classes.jar'):
-        with zipfile.ZipFile(jar_path) as zip_info:
-          for path in zip_info.namelist():
-            fully_qualified_name = _FullJavaNameFromClassFilePath(path)
-            if fully_qualified_name:
-              info_data[fully_qualified_name] = jar_path
-      else:
-        info_data.update(_ParseInfoFile(jar_path + '.info'))
-    _WriteInfoFile(options.apk_jar_info_path, info_data, srcjar_files)
+  with build_utils.AtomicOutput(options.jar_path + '.info') as f:
+    jar_info_utils.WriteJarInfoFile(f.name, info_data, srcjar_files)
 
 
 def _OnStaleMd5(changes, options, javac_cmd, java_files, classpath_inputs,
@@ -362,7 +310,10 @@ def _OnStaleMd5(changes, options, javac_cmd, java_files, classpath_inputs,
         extracted_files = build_utils.ExtractAll(
             srcjar, path=java_dir, pattern='*.java')
         for path in extracted_files:
-          srcjar_files[path] = srcjar
+          # We want the path inside the srcjar so the viewer can have a tree
+          # structure.
+          srcjar_files[path] = '{}/{}'.format(
+              srcjar, os.path.relpath(path, java_dir))
       jar_srcs = build_utils.FindInDirectory(java_dir, '*.java')
       java_files.extend(jar_srcs)
       if changed_paths:
@@ -418,7 +369,8 @@ def _OnStaleMd5(changes, options, javac_cmd, java_files, classpath_inputs,
         attempt_build()
       except build_utils.CalledProcessError as e:
         # Work-around for a bug in jmake (http://crbug.com/551449).
-        if 'project database corrupted' not in e.output:
+        if ('project database corrupted' not in e.output
+            and 'jmake: internal Java exception' not in e.output):
           raise
         print ('Applying work-around for jmake project database corrupted '
                '(http://crbug.com/551449).')
@@ -429,10 +381,11 @@ def _OnStaleMd5(changes, options, javac_cmd, java_files, classpath_inputs,
       # Make sure output exists.
       build_utils.Touch(pdb_path)
 
-    jar.JarDirectory(classes_dir,
-                     options.jar_path,
-                     provider_configurations=options.provider_configurations,
-                     additional_files=options.additional_jar_files)
+    with build_utils.AtomicOutput(options.jar_path) as f:
+      jar.JarDirectory(classes_dir,
+                       f.name,
+                       provider_configurations=options.provider_configurations,
+                       additional_files=options.additional_jar_files)
 
 
 def _ParseAndFlattenGnLists(gn_lists):
@@ -514,9 +467,6 @@ def _ParseOptions(argv):
       action='append',
       default=[],
       help='Additional arguments to pass to javac.')
-  parser.add_option(
-      '--apk-jar-info-path',
-      help='Coalesced jar.info files for the apk')
 
   options, args = parser.parse_args(argv)
   build_utils.CheckOptions(options, parser, required=('jar_path',))
@@ -625,7 +575,7 @@ def main(argv):
                       options.processorpath)
   # GN already knows of java_files, so listing them just make things worse when
   # they change.
-  depfile_deps = [javac_path] + classpath_inputs + options.java_srcjars
+  depfile_deps = ([javac_path] + classpath_inputs + options.java_srcjars)
   input_paths = depfile_deps + java_files
 
   output_paths = [
@@ -634,8 +584,6 @@ def main(argv):
   ]
   if options.incremental:
     output_paths.append(options.jar_path + '.pdb')
-  if options.apk_jar_info_path:
-    output_paths.append(options.apk_jar_info_path)
 
   # An escape hatch to be able to check if incremental compiles are causing
   # problems.
@@ -652,7 +600,8 @@ def main(argv):
       input_strings=javac_cmd + classpath,
       output_paths=output_paths,
       force=force,
-      pass_changes=True)
+      pass_changes=True,
+      add_pydeps=False)
 
 
 if __name__ == '__main__':

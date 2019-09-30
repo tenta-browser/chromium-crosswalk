@@ -25,32 +25,14 @@
         {
           "object": "LayoutSVGRoot svg",
           "rect": [0, 0, 577, 433],
-          "reason": "appeared"
+          "reason": "paint property change"
         },
         {
           "object": "LayoutSVGRoot svg",
           "rect": [0, 0, 481, 361],
-          "reason": "disappeared"
+          "reason": "paint property change"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "Scrolling Contents Layer",
-      "reason": "background on scrolling contents layer"
-    },
-    {
-      "object": "LayoutView #document",
-      "reason": "style change"
-    },
-    {
-      "object": "LayoutSVGRoot svg",
-      "reason": "style change"
-    },
-    {
-      "object": "LayoutSVGRect rect",
-      "reason": "style change"
     }
   ]
 }

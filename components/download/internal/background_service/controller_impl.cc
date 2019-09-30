@@ -5,9 +5,8 @@
 #include "components/download/internal/background_service/controller_impl.h"
 
 #include <inttypes.h>
-
-#include <string>
-#include <vector>
+#include <algorithm>
+#include <utility>
 
 #include "base/bind.h"
 #include "base/callback_helpers.h"
@@ -304,10 +303,9 @@ DownloadClient ControllerImpl::GetOwnerOfDownload(const std::string& guid) {
   return entry ? entry->client : DownloadClient::INVALID;
 }
 
-void ControllerImpl::OnStartScheduledTask(
-    DownloadTaskType task_type,
-    const TaskFinishedCallback& callback) {
-  task_finished_callbacks_[task_type] = callback;
+void ControllerImpl::OnStartScheduledTask(DownloadTaskType task_type,
+                                          TaskFinishedCallback callback) {
+  task_finished_callbacks_[task_type] = std::move(callback);
 
   switch (controller_state_) {
     case State::READY:
@@ -458,8 +456,8 @@ void ControllerImpl::OnDownloadFailed(const DriverEntry& download,
     // immediately again.
     base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
         FROM_HERE,
-        base::Bind(&ControllerImpl::UpdateDriverStateWithGuid,
-                   weak_ptr_factory_.GetWeakPtr(), download.guid),
+        base::BindOnce(&ControllerImpl::UpdateDriverStateWithGuid,
+                       weak_ptr_factory_.GetWeakPtr(), download.guid),
         config_->download_retry_delay);
   } else {
     HandleCompleteDownload(CompletionType::FAIL, download.guid);
@@ -493,9 +491,9 @@ void ControllerImpl::OnDownloadUpdated(const DriverEntry& download) {
 
   log_sink_->OnServiceDownloadChanged(entry->guid);
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::Bind(&ControllerImpl::SendOnDownloadUpdated,
-                            weak_ptr_factory_.GetWeakPtr(), entry->client,
-                            download.guid, download.bytes_downloaded));
+      FROM_HERE, base::BindOnce(&ControllerImpl::SendOnDownloadUpdated,
+                                weak_ptr_factory_.GetWeakPtr(), entry->client,
+                                download.guid, download.bytes_downloaded));
 }
 
 bool ControllerImpl::IsTrackingDownload(const std::string& guid) const {
@@ -686,8 +684,8 @@ void ControllerImpl::HandleUnrecoverableSetup() {
 
   // If we cannot recover, notify Clients that the service is unavailable.
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::Bind(&ControllerImpl::SendOnServiceUnavailable,
-                            weak_ptr_factory_.GetWeakPtr()));
+      FROM_HERE, base::BindOnce(&ControllerImpl::SendOnServiceUnavailable,
+                                weak_ptr_factory_.GetWeakPtr()));
 }
 
 void ControllerImpl::StartHardRecoveryAttempt() {
@@ -1051,13 +1049,13 @@ void ControllerImpl::KillTimedOutUploads() {
 
 void ControllerImpl::NotifyClientsOfStartup(bool state_lost) {
   auto categorized = util::MapEntriesToMetadataForClients(
-      clients_->GetRegisteredClients(), model_->PeekEntries());
+      clients_->GetRegisteredClients(), model_->PeekEntries(), driver_.get());
 
   for (auto client_id : clients_->GetRegisteredClients()) {
     base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE, base::Bind(&ControllerImpl::SendOnServiceInitialized,
-                              weak_ptr_factory_.GetWeakPtr(), client_id,
-                              state_lost, categorized[client_id]));
+        FROM_HERE, base::BindOnce(&ControllerImpl::SendOnServiceInitialized,
+                                  weak_ptr_factory_.GetWeakPtr(), client_id,
+                                  state_lost, categorized[client_id]));
   }
 }
 
@@ -1100,7 +1098,7 @@ void ControllerImpl::HandleStartDownloadResponse(
   if (callback.is_null())
     return;
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::Bind(callback, guid, result));
+      FROM_HERE, base::BindOnce(callback, guid, result));
 }
 
 void ControllerImpl::HandleCompleteDownload(CompletionType type,
@@ -1131,16 +1129,16 @@ void ControllerImpl::HandleCompleteDownload(CompletionType type,
 
     entry->last_cleanup_check_time = driver_entry->completion_time;
     base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE, base::Bind(&ControllerImpl::SendOnDownloadSucceeded,
-                              weak_ptr_factory_.GetWeakPtr(), entry->client,
-                              guid, completion_info));
+        FROM_HERE, base::BindOnce(&ControllerImpl::SendOnDownloadSucceeded,
+                                  weak_ptr_factory_.GetWeakPtr(), entry->client,
+                                  guid, completion_info));
     TransitTo(entry, Entry::State::COMPLETE, model_.get());
     ScheduleCleanupTask();
   } else {
     base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE, base::Bind(&ControllerImpl::SendOnDownloadFailed,
-                              weak_ptr_factory_.GetWeakPtr(), entry->client,
-                              guid, FailureReasonFromCompletionType(type)));
+        FROM_HERE, base::BindOnce(&ControllerImpl::SendOnDownloadFailed,
+                                  weak_ptr_factory_.GetWeakPtr(), entry->client,
+                                  guid, FailureReasonFromCompletionType(type)));
     log_sink_->OnServiceDownloadFailed(type, *entry);
 
     // TODO(dtrainor): Handle the case where we crash before the model write

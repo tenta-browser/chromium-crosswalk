@@ -4,7 +4,7 @@
 <script src="../resources/testharness.js"></script>
 <script src="../resources/testharnessreport.js"></script>
 <script src="file:///gen/layout_test_data/mojo/public/js/mojo_bindings.js"></script>
-<script src="file:///gen/third_party/blink/public/platform/modules/presentation/presentation.mojom.js"></script>
+<script src="file:///gen/third_party/blink/public/mojom/presentation/presentation.mojom.js"></script>
 <script src="resources/presentation-service-mock.js"></script>
 <button>click me</button>
 <script>
@@ -23,14 +23,12 @@ async_test(t => {
           assert_equals(connection.state, "closed");
           controllerConnectionClosed = true;
         };
-        connection.onconnect = () => {
-          // Open a receiver page and pass controller connection's
-          // controllerConnectionPtr and receiverConnectionRequest to it.
-          w = window.open("resources/presentation-receiver-close-connection.html");
-          w.controllerConnectionPtr = presentationServiceMock.getControllerConnectionPtr();
-          w.receiverConnectionRequest = presentationServiceMock.getReceiverConnectionRequest();
-          w.shouldCallClose = true;
-        };
+        // Open a receiver page and pass controller connection's
+        // controllerConnectionPtr and receiverConnectionRequest to it.
+        w = window.open("resources/presentation-receiver-close-connection.html");
+        w.controllerConnectionPtr = presentationServiceMock.getControllerConnectionPtr();
+        w.receiverConnectionRequest = presentationServiceMock.getReceiverConnectionRequest();
+        w.shouldCallClose = true;
       });
   }, button);
 

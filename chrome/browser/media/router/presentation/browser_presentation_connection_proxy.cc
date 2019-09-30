@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "chrome/browser/media/router/media_router.h"
+#include "chrome/browser/media/router/route_message_util.h"
 
 namespace media_router {
 
@@ -16,6 +17,10 @@ namespace {
 void OnMessageReceivedByRenderer(bool success) {
   DLOG_IF(ERROR, !success)
       << "Renderer PresentationConnection failed to process message!";
+}
+
+void LogMojoPipeError() {
+  DVLOG(1) << "BrowserPresentationConnectionProxy mojo pipe error!";
 }
 
 }  // namespace
@@ -35,34 +40,42 @@ BrowserPresentationConnectionProxy::BrowserPresentationConnectionProxy(
 
   binding_.Bind(std::move(receiver_connection_request));
   target_connection_ptr_->DidChangeState(
-      content::PRESENTATION_CONNECTION_STATE_CONNECTED);
+      blink::mojom::PresentationConnectionState::CONNECTED);
+  // TODO(btolsch): These pipes may need proper mojo error handlers.  They
+  // probably need to be plumbed up to PSDImpl so the PresentationFrame knows
+  // about the error.
+  binding_.set_connection_error_handler(base::BindOnce(LogMojoPipeError));
+  target_connection_ptr_.set_connection_error_handler(
+      base::BindOnce(LogMojoPipeError));
 }
 
 BrowserPresentationConnectionProxy::~BrowserPresentationConnectionProxy() {}
 
 void BrowserPresentationConnectionProxy::OnMessage(
-    content::PresentationConnectionMessage message,
+    blink::mojom::PresentationConnectionMessagePtr message,
     OnMessageCallback on_message_callback) {
   DVLOG(2) << "BrowserPresentationConnectionProxy::OnMessage";
-  if (message.is_binary()) {
+  if (message->is_data()) {
     router_->SendRouteBinaryMessage(
         route_id_,
-        std::make_unique<std::vector<uint8_t>>(std::move(message.data.value())),
+        std::make_unique<std::vector<uint8_t>>(std::move(message->get_data())),
         std::move(on_message_callback));
   } else {
-    router_->SendRouteMessage(route_id_, message.message.value(),
+    router_->SendRouteMessage(route_id_, message->get_message(),
                               std::move(on_message_callback));
   }
 }
 
 void BrowserPresentationConnectionProxy::OnMessagesReceived(
-    const std::vector<content::PresentationConnectionMessage>& messages) {
+    std::vector<mojom::RouteMessagePtr> messages) {
   DVLOG(2) << __func__ << ", number of messages : " << messages.size();
   // TODO(imcheng): It would be slightly more efficient to send messages in
   // a single batch.
-  for (const auto& message : messages) {
+  for (auto& message : messages) {
     target_connection_ptr_->OnMessage(
-        message, base::BindOnce(&OnMessageReceivedByRenderer));
+        message_util::PresentationConnectionFromRouteMessage(
+            std::move(message)),
+        base::BindOnce(&OnMessageReceivedByRenderer));
   }
 }
 }  // namespace media_router

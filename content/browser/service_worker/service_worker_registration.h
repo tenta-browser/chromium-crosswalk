@@ -15,6 +15,7 @@
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/single_thread_task_runner.h"
+#include "base/time/time.h"
 #include "content/browser/service_worker/service_worker_version.h"
 #include "content/common/content_export.h"
 #include "content/common/service_worker/service_worker_types.h"
@@ -36,10 +37,10 @@ class ServiceWorkerActivationTest;
 // facilitate multiple controllees being associated with the same registration.
 class CONTENT_EXPORT ServiceWorkerRegistration
     : public base::RefCounted<ServiceWorkerRegistration>,
-      public ServiceWorkerVersion::Listener {
+      public ServiceWorkerVersion::Observer {
  public:
   using StatusCallback =
-      base::OnceCallback<void(ServiceWorkerStatusCode status)>;
+      base::OnceCallback<void(blink::ServiceWorkerStatusCode status)>;
 
   class CONTENT_EXPORT Listener {
    public:
@@ -47,6 +48,8 @@ class CONTENT_EXPORT ServiceWorkerRegistration
         ServiceWorkerRegistration* registration,
         ChangedVersionAttributesMask changed_mask,
         const ServiceWorkerRegistrationInfo& info) {}
+    virtual void OnUpdateViaCacheChanged(
+        ServiceWorkerRegistration* registation) {}
     virtual void OnRegistrationFailed(
         ServiceWorkerRegistration* registration) {}
     virtual void OnRegistrationFinishedUninstalling(
@@ -67,10 +70,6 @@ class CONTENT_EXPORT ServiceWorkerRegistration
   const GURL& pattern() const { return pattern_; }
   blink::mojom::ServiceWorkerUpdateViaCache update_via_cache() const {
     return update_via_cache_;
-  }
-  void set_update_via_cache(
-      blink::mojom::ServiceWorkerUpdateViaCache update_via_cache) {
-    update_via_cache_ = update_via_cache;
   }
 
   bool is_deleted() const { return is_deleted_; }
@@ -93,7 +92,7 @@ class CONTENT_EXPORT ServiceWorkerRegistration
   // state. If you require an ACTIVATED version, use
   // ServiceWorkerContextWrapper::FindReadyRegistration* to get a registration
   // with such a version. Alternatively, use
-  // ServiceWorkerVersion::Listener::OnVersionStateChanged to wait for the
+  // ServiceWorkerVersion::Observer::OnVersionStateChanged to wait for the
   // ACTIVATING version to become ACTIVATED.
   ServiceWorkerVersion* active_version() const {
     return active_version_.get();
@@ -137,6 +136,11 @@ class CONTENT_EXPORT ServiceWorkerRegistration
   // listeners via OnVersionAttributesChanged.
   void UnsetVersion(ServiceWorkerVersion* version);
 
+  // Sets the updateViaCache attribute, and notifies listeners via
+  // OnUpdateViaCacheChanged.
+  void SetUpdateViaCache(
+      blink::mojom::ServiceWorkerUpdateViaCache update_via_cache);
+
   // Triggers the [[Activate]] algorithm when the currently active version is
   // ready to become redundant (see IsReadyToActivate()). The algorithm is
   // triggered immediately if it's already ready.
@@ -158,6 +162,13 @@ class CONTENT_EXPORT ServiceWorkerRegistration
   // The time of the most recent update check.
   base::Time last_update_check() const { return last_update_check_; }
   void set_last_update_check(base::Time last) { last_update_check_ = last; }
+
+  // The delay for self-updating service workers, to prevent them from running
+  // forever (see https://crbug.com/805496).
+  base::TimeDelta self_update_delay() const { return self_update_delay_; }
+  void set_self_update_delay(const base::TimeDelta& delay) {
+    self_update_delay_ = delay;
+  }
 
   // Unsets the version and deletes its resources. Also deletes this
   // registration from storage if there is no longer a stored version.
@@ -184,7 +195,7 @@ class CONTENT_EXPORT ServiceWorkerRegistration
       ServiceWorkerVersion* version,
       ChangedVersionAttributesMask* mask);
 
-  // ServiceWorkerVersion::Listener override.
+  // ServiceWorkerVersion::Observer override.
   void OnNoControllees(ServiceWorkerVersion* version) override;
   void OnNoWork(ServiceWorkerVersion* version) override;
 
@@ -201,19 +212,19 @@ class CONTENT_EXPORT ServiceWorkerRegistration
       scoped_refptr<ServiceWorkerVersion> activating_version);
   void DispatchActivateEvent(
       scoped_refptr<ServiceWorkerVersion> activating_version,
-      ServiceWorkerStatusCode start_worker_status);
+      blink::ServiceWorkerStatusCode start_worker_status);
   void OnActivateEventFinished(
       scoped_refptr<ServiceWorkerVersion> activating_version,
-      ServiceWorkerStatusCode status);
+      blink::ServiceWorkerStatusCode status);
 
-  void OnDeleteFinished(ServiceWorkerStatusCode status);
+  void OnDeleteFinished(blink::ServiceWorkerStatusCode status);
 
   // This method corresponds to the [[ClearRegistration]] algorithm.
   void Clear();
 
   void OnRestoreFinished(StatusCallback callback,
                          scoped_refptr<ServiceWorkerVersion> version,
-                         ServiceWorkerStatusCode status);
+                         blink::ServiceWorkerStatusCode status);
 
   const GURL pattern_;
   blink::mojom::ServiceWorkerUpdateViaCache update_via_cache_;
@@ -224,6 +235,7 @@ class CONTENT_EXPORT ServiceWorkerRegistration
   bool should_activate_when_ready_;
   blink::mojom::NavigationPreloadState navigation_preload_state_;
   base::Time last_update_check_;
+  base::TimeDelta self_update_delay_;
   int64_t resources_total_size_bytes_;
 
   // This registration is the primary owner of these versions.
@@ -231,7 +243,7 @@ class CONTENT_EXPORT ServiceWorkerRegistration
   scoped_refptr<ServiceWorkerVersion> waiting_version_;
   scoped_refptr<ServiceWorkerVersion> installing_version_;
 
-  base::ObserverList<Listener> listeners_;
+  base::ObserverList<Listener>::Unchecked listeners_;
   std::vector<base::Closure> registration_finished_callbacks_;
   base::WeakPtr<ServiceWorkerContextCore> context_;
   scoped_refptr<base::SingleThreadTaskRunner> task_runner_;

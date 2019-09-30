@@ -55,7 +55,7 @@ void RunOrPostGetMostVisitedURLsCallback(
   if (task_runner->RunsTasksInCurrentSequence())
     callback.Run(urls);
   else
-    task_runner->PostTask(FROM_HERE, base::Bind(callback, urls));
+    task_runner->PostTask(FROM_HERE, base::BindOnce(callback, urls));
 }
 
 // Compares two MostVisitedURL having a non-null |last_forced_time|.
@@ -890,19 +890,16 @@ void TopSitesImpl::OnTopSitesAvailableFromHistory(
 }
 
 void TopSitesImpl::OnURLsDeleted(HistoryService* history_service,
-                                 bool all_history,
-                                 bool expired,
-                                 const URLRows& deleted_rows,
-                                 const std::set<GURL>& favicon_urls) {
+                                 const DeletionInfo& deletion_info) {
   if (!loaded_)
     return;
 
-  if (all_history) {
+  if (deletion_info.IsAllHistory()) {
     SetTopSites(MostVisitedURLList(), CALL_LOCATION_FROM_OTHER_PLACES);
     backend_->ResetDatabase();
   } else {
     std::set<size_t> indices_to_delete;  // Indices into top_sites_.
-    for (const auto& row : deleted_rows) {
+    for (const auto& row : deletion_info.deleted_rows()) {
       if (cache_->IsKnownURL(row.url()))
         indices_to_delete.insert(cache_->GetURLIndex(row.url()));
     }

@@ -17,6 +17,7 @@
 #include "base/memory/linked_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
+#include "base/timer/elapsed_timer.h"
 #include "chrome/browser/chromeos/file_system_provider/abort_callback.h"
 #include "chrome/browser/chromeos/file_system_provider/provided_file_system_info.h"
 #include "chrome/browser/chromeos/file_system_provider/provided_file_system_interface.h"
@@ -38,10 +39,10 @@ namespace smb_client {
 
 class RequestManager;
 
-// Smb provided file system implementation. For communication with Smb
+// SMB provided file system implementation. For communication with SMB
 // filesystems.
-// Smb is an application level protocol used by Windows and Samba fileservers.
-// Allows Files App to mount smb filesystems.
+// SMB is an application level protocol used by Windows and Samba fileservers.
+// Allows Files App to mount SMB filesystems.
 class SmbFileSystem : public file_system_provider::ProvidedFileSystemInterface,
                       public base::SupportsWeakPtr<SmbFileSystem> {
  public:
@@ -53,8 +54,6 @@ class SmbFileSystem : public file_system_provider::ProvidedFileSystemInterface,
       const file_system_provider::ProvidedFileSystemInfo& file_system_info,
       UnmountCallback unmount_callback);
   ~SmbFileSystem() override;
-
-  static base::File::Error TranslateError(smbprovider::ErrorType);
 
   // ProvidedFileSystemInterface overrides.
   file_system_provider::AbortCallback RequestUnmount(
@@ -175,10 +174,39 @@ class SmbFileSystem : public file_system_provider::ProvidedFileSystemInterface,
  private:
   void Abort(OperationId operation_id);
 
+  // Calls CreateTempFileManager() and executes |task|.
+  void CreateTempFileManagerAndExecuteTask(SmbTask task);
+
+  // Initializes |temp_file_manager_| with |temp_file_manager| and executes
+  // |task|.
+  void InitTempFileManagerAndExecuteTask(
+      SmbTask task,
+      std::unique_ptr<TempFileManager> temp_file_manager);
+
+  // Calls WriteFile in SmbProviderClient.
+  file_system_provider::AbortCallback CallWriteFile(
+      int file_handle,
+      const std::vector<uint8_t>& data,
+      int64_t offset,
+      int length,
+      storage::AsyncFileUtil::StatusCallback callback);
+
   file_system_provider::AbortCallback CreateAbortCallback(
       OperationId operation_id);
 
   file_system_provider::AbortCallback CreateAbortCallback();
+
+  // Starts a copy operation to copy |source_path| to |target_path| with the
+  // OperationId |operation_id|.
+  void StartCopy(const base::FilePath& source_path,
+                 const base::FilePath& target_path,
+                 OperationId operation_id,
+                 storage::AsyncFileUtil::StatusCallback callback);
+
+  // Continues a copy corresponding to |operation_id| and |copy_token|.
+  void ContinueCopy(OperationId operation_id,
+                    int32_t copy_token,
+                    storage::AsyncFileUtil::StatusCallback callback);
 
   void HandleRequestUnmountCallback(
       storage::AsyncFileUtil::StatusCallback callback,
@@ -186,8 +214,13 @@ class SmbFileSystem : public file_system_provider::ProvidedFileSystemInterface,
 
   void HandleRequestReadDirectoryCallback(
       storage::AsyncFileUtil::ReadDirectoryCallback callback,
+      const base::ElapsedTimer& metrics_timer,
       smbprovider::ErrorType error,
       const smbprovider::DirectoryEntryListProto& entries) const;
+
+  file_system_provider::AbortCallback HandleSyncRedundantGetMetadata(
+      ProvidedFileSystemInterface::MetadataFieldMask fields,
+      ProvidedFileSystemInterface::GetMetadataCallback callback);
 
   void HandleRequestGetMetadataEntryCallback(
       ProvidedFileSystemInterface::MetadataFieldMask fields,
@@ -224,6 +257,17 @@ class SmbFileSystem : public file_system_provider::ProvidedFileSystemInterface,
       bool is_last_entry,
       smbprovider::ErrorType delete_error) const;
 
+  void HandleStartCopyCallback(storage::AsyncFileUtil::StatusCallback callback,
+                               OperationId operation_id,
+                               smbprovider::ErrorType error,
+                               int32_t copy_token);
+
+  void HandleContinueCopyCallback(
+      storage::AsyncFileUtil::StatusCallback callback,
+      OperationId operation_id,
+      int32_t copy_token,
+      smbprovider::ErrorType error);
+
   int32_t GetMountId() const;
 
   SmbProviderClient* GetSmbProviderClient() const;
@@ -245,7 +289,7 @@ class SmbFileSystem : public file_system_provider::ProvidedFileSystemInterface,
   const file_system_provider::OpenedFiles opened_files_;
 
   UnmountCallback unmount_callback_;
-  TempFileManager temp_file_manager_;
+  std::unique_ptr<TempFileManager> temp_file_manager_;
   mutable SmbTaskQueue task_queue_;
 
   DISALLOW_COPY_AND_ASSIGN(SmbFileSystem);

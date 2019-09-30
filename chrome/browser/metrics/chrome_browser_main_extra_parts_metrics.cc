@@ -14,8 +14,8 @@
 #include "base/metrics/histogram_macros.h"
 #include "base/metrics/sparse_histogram.h"
 #include "base/sys_info.h"
-#include "base/task_scheduler/post_task.h"
-#include "base/task_scheduler/task_traits.h"
+#include "base/task/post_task.h"
+#include "base/task/task_traits.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "chrome/browser/about_flags.h"
@@ -23,7 +23,7 @@
 #include "chrome/browser/chrome_browser_main.h"
 #include "chrome/browser/mac/bluetooth_utility.h"
 #include "chrome/browser/shell_integration.h"
-#include "chrome/browser/vr/service/vr_device_manager.h"
+#include "chrome/browser/vr/service/xr_runtime_manager.h"
 #include "components/flags_ui/pref_service_flags_storage.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/common/service_manager_connection.h"
@@ -108,7 +108,9 @@ enum UMALinuxDistro {
   UMA_LINUX_DISTRO_OPENSUSE_OTHER = 150,
   UMA_LINUX_DISTRO_OPENSUSE_LEAP_42_2 = 151,
   UMA_LINUX_DISTRO_OPENSUSE_LEAP_42_3 = 152,
-  UMA_LINUX_DISTRO_OPENSUSE_LEAP_15 = 153,
+  UMA_LINUX_DISTRO_OPENSUSE_LEAP_15_0 = 153,
+  UMA_LINUX_DISTRO_OPENSUSE_LEAP_15_1 = 154,
+  UMA_LINUX_DISTRO_OPENSUSE_LEAP_15_2 = 155,
   // Ubuntu
   UMA_LINUX_DISTRO_UBUNTU_OTHER = 200,
   UMA_LINUX_DISTRO_UBUNTU_14_04 = 201,
@@ -278,8 +280,12 @@ void RecordLinuxDistro() {
           distro_result = UMA_LINUX_DISTRO_OPENSUSE_LEAP_42_2;
         } else if (distro_tokens[2] == "42.3") {
           distro_result = UMA_LINUX_DISTRO_OPENSUSE_LEAP_42_3;
-        } else if (distro_tokens[2] == "15") {
-          distro_result = UMA_LINUX_DISTRO_OPENSUSE_LEAP_15;
+        } else if (distro_tokens[2] == "15.0") {
+          distro_result = UMA_LINUX_DISTRO_OPENSUSE_LEAP_15_0;
+        } else if (distro_tokens[2] == "15.1") {
+          distro_result = UMA_LINUX_DISTRO_OPENSUSE_LEAP_15_1;
+        } else if (distro_tokens[2] == "15.2") {
+          distro_result = UMA_LINUX_DISTRO_OPENSUSE_LEAP_15_2;
         }
       }
     } else if (distro_tokens[0] == "Debian") {
@@ -519,7 +525,7 @@ void RecordIsPinnedToTaskbarHistogram(
 }
 
 void RecordVrStartupHistograms() {
-  vr::VRDeviceManager::RecordVrStartupHistograms();
+  vr::XRRuntimeManager::RecordVrStartupHistograms();
 }
 #endif  // defined(OS_WIN)
 
@@ -562,7 +568,7 @@ void ChromeBrowserMainExtraPartsMetrics::PostBrowserStart() {
 #endif
 
   constexpr base::TaskTraits background_task_traits = {
-      base::MayBlock(), base::TaskPriority::BACKGROUND,
+      base::MayBlock(), base::TaskPriority::BEST_EFFORT,
       base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN};
 #if defined(OS_LINUX) && !defined(OS_CHROMEOS)
   base::PostTaskWithTraits(FROM_HERE, background_task_traits,

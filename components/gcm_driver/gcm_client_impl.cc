@@ -41,9 +41,7 @@
 #include "google_apis/gcm/monitoring/gcm_stats_recorder.h"
 #include "google_apis/gcm/protocol/checkin.pb.h"
 #include "google_apis/gcm/protocol/mcs.pb.h"
-#include "net/http/http_network_session.h"
-#include "net/http/http_transaction_factory.h"
-#include "net/url_request/url_request_context.h"
+#include "services/network/public/cpp/shared_url_loader_factory.h"
 #include "url/gurl.h"
 
 namespace gcm {
@@ -280,12 +278,13 @@ std::unique_ptr<MCSClient> GCMInternalsBuilder::BuildMCSClient(
 std::unique_ptr<ConnectionFactory> GCMInternalsBuilder::BuildConnectionFactory(
     const std::vector<GURL>& endpoints,
     const net::BackoffEntry::Policy& backoff_policy,
-    net::HttpNetworkSession* gcm_network_session,
-    net::HttpNetworkSession* http_network_session,
+    base::RepeatingCallback<
+        void(network::mojom::ProxyResolvingSocketFactoryRequest)>
+        get_socket_factory_callback,
     GCMStatsRecorder* recorder) {
-  return base::WrapUnique<ConnectionFactory>(
-      new ConnectionFactoryImpl(endpoints, backoff_policy, gcm_network_session,
-                                http_network_session, nullptr, recorder));
+  return std::make_unique<ConnectionFactoryImpl>(
+      endpoints, backoff_policy, std::move(get_socket_factory_callback),
+      recorder);
 }
 
 GCMClientImpl::CheckinInfo::CheckinInfo()
@@ -321,7 +320,6 @@ GCMClientImpl::GCMClientImpl(
       start_mode_(DELAYED_START),
       clock_(internals_builder_->GetClock()),
       gcm_store_reset_(false),
-      url_request_context_getter_(nullptr),
       periodic_checkin_ptr_factory_(this),
       destroying_gcm_store_ptr_factory_(this),
       weak_ptr_factory_(this) {}
@@ -333,25 +331,17 @@ void GCMClientImpl::Initialize(
     const ChromeBuildInfo& chrome_build_info,
     const base::FilePath& path,
     const scoped_refptr<base::SequencedTaskRunner>& blocking_task_runner,
-    const scoped_refptr<net::URLRequestContextGetter>&
-        url_request_context_getter,
+    base::RepeatingCallback<
+        void(network::mojom::ProxyResolvingSocketFactoryRequest)>
+        get_socket_factory_callback,
+    const scoped_refptr<network::SharedURLLoaderFactory>& url_loader_factory,
     std::unique_ptr<Encryptor> encryptor,
     GCMClient::Delegate* delegate) {
   DCHECK_EQ(UNINITIALIZED, state_);
-  DCHECK(url_request_context_getter.get());
   DCHECK(delegate);
 
-  url_request_context_getter_ = url_request_context_getter;
-  const net::HttpNetworkSession::Params* network_session_params =
-      url_request_context_getter_->GetURLRequestContext()->
-          GetNetworkSessionParams();
-  DCHECK(network_session_params);
-  const net::HttpNetworkSession::Context* network_session_context =
-      url_request_context_getter_->GetURLRequestContext()
-          ->GetNetworkSessionContext();
-  network_session_.reset(new net::HttpNetworkSession(*network_session_params,
-                                                     *network_session_context));
-
+  get_socket_factory_callback_ = std::move(get_socket_factory_callback);
+  url_loader_factory_ = url_loader_factory;
   chrome_build_info_ = chrome_build_info;
 
   gcm_store_.reset(
@@ -447,7 +437,7 @@ void GCMClientImpl::OnLoadCompleted(
         RegistrationInfo::BuildFromString(iter->first, iter->second,
                                           &registration_id);
     // TODO(jianli): Add UMA to track the error case.
-    if (registration.get())
+    if (registration)
       registrations_[make_linked_ptr(registration.release())] = registration_id;
   }
 
@@ -470,8 +460,9 @@ void GCMClientImpl::OnLoadCompleted(
     // to have the store wiped out.
     if (device_checkin_info_.android_id) {
       base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
-          FROM_HERE, base::Bind(&GCMClientImpl::DestroyStoreWhenNotNeeded,
-                                destroying_gcm_store_ptr_factory_.GetWeakPtr()),
+          FROM_HERE,
+          base::BindOnce(&GCMClientImpl::DestroyStoreWhenNotNeeded,
+                         destroying_gcm_store_ptr_factory_.GetWeakPtr()),
           base::TimeDelta::FromMilliseconds(kDestroyGCMStoreDelayMS));
     }
 
@@ -508,12 +499,7 @@ void GCMClientImpl::InitializeMCSClient() {
   if (fallback_endpoint.is_valid())
     endpoints.push_back(fallback_endpoint);
   connection_factory_ = internals_builder_->BuildConnectionFactory(
-      endpoints,
-      GetGCMBackoffPolicy(),
-      network_session_.get(),
-      url_request_context_getter_->GetURLRequestContext()
-          ->http_transaction_factory()
-          ->GetSession(),
+      endpoints, GetGCMBackoffPolicy(), get_socket_factory_callback_,
       &recorder_);
   connection_factory_->SetConnectionListener(this);
   mcs_client_ = internals_builder_->BuildMCSClient(
@@ -651,7 +637,8 @@ void GCMClientImpl::SetLastTokenFetchTime(const base::Time& time) {
                  weak_ptr_factory_.GetWeakPtr()));
 }
 
-void GCMClientImpl::UpdateHeartbeatTimer(std::unique_ptr<base::Timer> timer) {
+void GCMClientImpl::UpdateHeartbeatTimer(
+    std::unique_ptr<base::RetainingOneShotTimer> timer) {
   DCHECK(mcs_client_);
   mcs_client_->UpdateHeartbeatTimer(std::move(timer));
 }
@@ -700,7 +687,7 @@ void GCMClientImpl::RemoveHeartbeatInterval(const std::string& scope) {
 
 void GCMClientImpl::StartCheckin() {
   // Make sure no checkin is in progress.
-  if (checkin_request_.get())
+  if (checkin_request_)
     return;
 
   checkin_proto::ChromeBuildProto chrome_build_proto;
@@ -710,14 +697,11 @@ void GCMClientImpl::StartCheckin() {
                                            device_checkin_info_.account_tokens,
                                            gservices_settings_.digest(),
                                            chrome_build_proto);
-  checkin_request_.reset(
-      new CheckinRequest(gservices_settings_.GetCheckinURL(),
-                         request_info,
-                         GetGCMBackoffPolicy(),
-                         base::Bind(&GCMClientImpl::OnCheckinCompleted,
-                                    weak_ptr_factory_.GetWeakPtr()),
-                         url_request_context_getter_.get(),
-                         &recorder_));
+  checkin_request_.reset(new CheckinRequest(
+      gservices_settings_.GetCheckinURL(), request_info, GetGCMBackoffPolicy(),
+      base::Bind(&GCMClientImpl::OnCheckinCompleted,
+                 weak_ptr_factory_.GetWeakPtr()),
+      url_loader_factory_, &recorder_));
   // Taking a snapshot of the accounts count here, as there might be an asynch
   // update of the account tokens while checkin is in progress.
   device_checkin_info_.SnapshotCheckinAccounts();
@@ -790,8 +774,9 @@ void GCMClientImpl::SchedulePeriodicCheckin() {
     time_to_next_checkin = base::TimeDelta();
 
   base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
-      FROM_HERE, base::Bind(&GCMClientImpl::StartCheckin,
-                            periodic_checkin_ptr_factory_.GetWeakPtr()),
+      FROM_HERE,
+      base::BindOnce(&GCMClientImpl::StartCheckin,
+                     periodic_checkin_ptr_factory_.GetWeakPtr()),
       time_to_next_checkin);
 }
 
@@ -917,7 +902,7 @@ void GCMClientImpl::Register(
       base::TimeDelta token_invalidation_period =
           features::GetTokenInvalidationInterval();
       base::TimeDelta time_since_last_validation =
-          clock_->Now() - registrations_iter->first.get()->last_validated;
+          clock_->Now() - registrations_iter->first->last_validated;
       if (token_invalidation_period.is_zero() ||
           time_since_last_validation < token_invalidation_period) {
         // Token is fresh, or token invalidation is disabled.
@@ -992,7 +977,7 @@ void GCMClientImpl::Register(
           std::move(request_handler), GetGCMBackoffPolicy(),
           base::Bind(&GCMClientImpl::OnRegisterCompleted,
                      weak_ptr_factory_.GetWeakPtr(), registration_info),
-          kMaxRegistrationRetries, url_request_context_getter_, &recorder_,
+          kMaxRegistrationRetries, url_loader_factory_, &recorder_,
           source_to_record));
   registration_request->Start();
   pending_registration_requests_.insert(
@@ -1177,7 +1162,7 @@ void GCMClientImpl::Unregister(
           std::move(request_handler), GetGCMBackoffPolicy(),
           base::Bind(&GCMClientImpl::OnUnregisterCompleted,
                      weak_ptr_factory_.GetWeakPtr(), registration_info),
-          kMaxUnregistrationRetries, url_request_context_getter_, &recorder_,
+          kMaxUnregistrationRetries, url_loader_factory_, &recorder_,
           source_to_record));
   unregistration_request->Start();
   pending_unregistration_requests_.insert(
@@ -1280,18 +1265,21 @@ GCMClient::GCMStatistics GCMClientImpl::GetStatistics() const {
   stats.gcm_client_created = true;
   stats.is_recording = recorder_.is_recording();
   stats.gcm_client_state = GetStateString();
-  stats.connection_client_created = mcs_client_.get() != nullptr;
+  stats.connection_client_created = mcs_client_ != nullptr;
   stats.last_checkin = last_checkin_time_;
   stats.next_checkin =
       last_checkin_time_ + gservices_settings_.GetCheckinInterval();
-  if (connection_factory_.get())
+  if (connection_factory_)
     stats.connection_state = connection_factory_->GetConnectionStateString();
-  if (mcs_client_.get()) {
+  if (mcs_client_) {
     stats.send_queue_size = mcs_client_->GetSendQueueSize();
     stats.resend_queue_size = mcs_client_->GetResendQueueSize();
   }
   if (device_checkin_info_.android_id > 0)
     stats.android_id = device_checkin_info_.android_id;
+  if (device_checkin_info_.secret > 0)
+    stats.android_secret = device_checkin_info_.secret;
+
   recorder_.CollectActivities(&stats.recorded_activities);
 
   for (RegistrationInfoMap::const_iterator it = registrations_.begin();

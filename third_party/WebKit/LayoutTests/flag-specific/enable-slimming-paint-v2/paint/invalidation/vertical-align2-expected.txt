@@ -18,7 +18,7 @@
         },
         {
           "object": "LayoutBlockFlow DIV id='target'",
-          "rect": [200, 147, 100, 100],
+          "rect": [200, 146, 100, 100],
           "reason": "geometry"
         },
         {
@@ -27,28 +27,6 @@
           "reason": "geometry"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutBlockFlow BODY",
-      "reason": "geometry"
-    },
-    {
-      "object": "RootInlineBox",
-      "reason": "geometry"
-    },
-    {
-      "object": "LayoutBlockFlow DIV class='other'",
-      "reason": "geometry"
-    },
-    {
-      "object": "LayoutBlockFlow DIV id='target'",
-      "reason": "geometry"
-    },
-    {
-      "object": "LayoutBlockFlow DIV class='other'",
-      "reason": "geometry"
     }
   ]
 }

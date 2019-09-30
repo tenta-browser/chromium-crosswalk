@@ -81,6 +81,11 @@ class OmniboxEditModel {
     const AutocompleteInput autocomplete_input;
   };
 
+  // This is a mirror of content::kMaxURLDisplayChars because ios cannot depend
+  // on content. If clipboard contains more than kMaxPasteAndGoTextLength
+  // characters, then the paste & go option will be disabled.
+  static const size_t kMaxPasteAndGoTextLength = 32 * 1024;
+
   OmniboxEditModel(OmniboxView* view,
                    OmniboxEditController* controller,
                    std::unique_ptr<OmniboxClient> client);
@@ -131,17 +136,12 @@ class OmniboxEditModel {
   // URL/navigation, as opposed to a search.
   bool CurrentTextIsURL() const;
 
-  // Returns the match type for the current edit contents.
-  AutocompleteMatch::Type CurrentTextType() const;
-
   // Invoked to adjust the text before writting to the clipboard for a copy
   // (e.g. by adding 'http' to the front). |sel_min| gives the minimum position
   // of the selection e.g. min(selection_start, selection_end). |text| is the
-  // currently selected text. If |is_all_selected| is true all the text in the
-  // edit is selected. If the url should be copied to the clipboard |write_url|
-  // is set to true and |url_from_text| set to the url to write.
+  // currently selected text. If the url should be copied to the clipboard
+  // |write_url| is set to true and |url_from_text| set to the url to write.
   void AdjustTextForCopy(int sel_min,
-                         bool is_all_selected,
                          base::string16* text,
                          GURL* url_from_text,
                          bool* write_url);
@@ -195,9 +195,8 @@ class OmniboxEditModel {
   // Navigates to the destination last supplied to CanPasteAndGo.
   void PasteAndGo(const base::string16& text);
 
-  // Returns true if this is a paste-and-search rather than paste-and-go (or
-  // nothing).
-  bool IsPasteAndSearch(const base::string16& text) const;
+  // Returns true if |text| classifies as a Search rather than a URL.
+  bool ClassifiesAsSearch(const base::string16& text) const;
 
   // Asks the browser to load the popup's currently selected item, using the
   // supplied disposition.  This may close the popup. If |for_drop| is true,
@@ -231,6 +230,8 @@ class OmniboxEditModel {
 
   OmniboxFocusState focus_state() const { return focus_state_; }
   bool has_focus() const { return focus_state_ != OMNIBOX_FOCUS_NONE; }
+
+  // This is the same as when the Omnibox is visibly focused.
   bool is_caret_visible() const {
     return focus_state_ == OMNIBOX_FOCUS_VISIBLE;
   }
@@ -288,6 +289,10 @@ class OmniboxEditModel {
   // Caret visibility is tracked per-tab and updates automatically upon
   // switching tabs.
   void SetCaretVisibility(bool visible);
+
+  // If the ctrl key is down, marks it as consumed to prevent it from triggering
+  // ctrl-enter behavior unless it is released and re-pressed.
+  void ConsumeCtrlKey();
 
   // Sent before |OnKillFocus| and before the popup is closed.
   void OnWillKillFocus();
@@ -351,11 +356,17 @@ class OmniboxEditModel {
   // Called when the current match has changed in the OmniboxController.
   void OnCurrentMatchChanged();
 
+  // Used for testing purposes only.
+  base::string16 GetUserTextForTesting() const { return user_text_; }
+
   // Name of the histogram tracking cut or copy omnibox commands.
   static const char kCutOrCopyAllTextHistogram[];
 
  private:
   friend class OmniboxControllerTest;
+  FRIEND_TEST_ALL_PREFIXES(OmniboxEditModelTest, ConsumeCtrlKey);
+  FRIEND_TEST_ALL_PREFIXES(OmniboxEditModelTest, ConsumeCtrlKeyOnRequestFocus);
+  FRIEND_TEST_ALL_PREFIXES(OmniboxEditModelTest, ConsumeCtrlKeyOnCtrlAction);
 
   enum PasteState {
     NONE,           // Most recent edit was not a paste.
@@ -369,17 +380,14 @@ class OmniboxEditModel {
   };
 
   enum ControlKeyState {
-    UP,                   // The control key is not depressed.
-    DOWN_WITHOUT_CHANGE,  // The control key is depressed, and the edit's
-                          // contents/selection have not changed since it was
-                          // depressed.  This is the only state in which we
-                          // do the "ctrl-enter" behavior when the user hits
-                          // enter.
-    DOWN_WITH_CHANGE,     // The control key is depressed, and the edit's
-                          // contents/selection have changed since it was
-                          // depressed.  If the user now hits enter, we assume
-                          // they simply haven't released the key, rather than
-                          // that they intended to hit "ctrl-enter".
+    UP,                // The control key is not depressed.
+    DOWN,              // The control key is depressed and should trigger the
+                       // "ctrl-enter" behavior when the user hits enter.
+    DOWN_AND_CONSUMED  // The control key is depressed, but has been consumed
+                       // and should not trigger the "ctrl-enter" behavior.
+                       // The control key becomes consumed if it has been used
+                       // for another action such as focusing the location bar
+                       // with ctrl-l or copying the selected text with ctrl-c.
   };
 
   // Returns true if a query to an autocomplete provider is currently
@@ -442,9 +450,9 @@ class OmniboxEditModel {
 
   // Sets |match| and |alternate_nav_url| based on classifying |text|.
   // |alternate_nav_url| may be NULL.
-  void ClassifyStringForPasteAndGo(const base::string16& text,
-                                   AutocompleteMatch* match,
-                                   GURL* alternate_nav_url) const;
+  void ClassifyString(const base::string16& text,
+                      AutocompleteMatch* match,
+                      GURL* alternate_nav_url) const;
 
   // Sets the state of user_input_in_progress_. Returns whether said state
   // changed, so that the caller can evoke NotifyObserversInputInProgress().

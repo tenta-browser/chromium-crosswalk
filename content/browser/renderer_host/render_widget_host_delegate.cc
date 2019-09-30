@@ -17,14 +17,27 @@ KeyboardEventProcessingResult RenderWidgetHostDelegate::PreHandleKeyboardEvent(
   return KeyboardEventProcessingResult::NOT_HANDLED;
 }
 
+bool RenderWidgetHostDelegate::PreHandleMouseEvent(
+    const blink::WebMouseEvent& event) {
+  return false;
+}
+
 bool RenderWidgetHostDelegate::HandleWheelEvent(
     const blink::WebMouseWheelEvent& event) {
+  return false;
+}
+
+bool RenderWidgetHostDelegate::ShouldIgnoreInputEvents() {
   return false;
 }
 
 bool RenderWidgetHostDelegate::PreHandleGestureEvent(
     const blink::WebGestureEvent& event) {
   return false;
+}
+
+double RenderWidgetHostDelegate::GetPendingPageZoomLevel() const {
+  return 0.0;
 }
 
 BrowserAccessibilityManager*
@@ -114,9 +127,10 @@ bool RenderWidgetHostDelegate::AddDomainInfoToRapporSample(
   return false;
 }
 
-void RenderWidgetHostDelegate::UpdateUrlForUkmSource(
-    ukm::UkmRecorder* service,
-    ukm::SourceId ukm_source_id) {}
+ukm::SourceId RenderWidgetHostDelegate::GetUkmSourceIdForLastCommittedSource()
+    const {
+  return ukm::kInvalidSourceId;
+}
 
 gfx::Size RenderWidgetHostDelegate::GetAutoResizeSize() {
   return gfx::Size();

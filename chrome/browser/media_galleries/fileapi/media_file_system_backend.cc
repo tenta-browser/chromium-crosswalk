@@ -16,7 +16,7 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/task_scheduler/lazy_task_runner.h"
+#include "base/task/lazy_task_runner.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
@@ -91,7 +91,7 @@ void AttemptAutoMountOnUIThread(
     Profile* profile =
         Profile::FromBrowserContext(web_contents->GetBrowserContext());
 
-    ExtensionService* extension_service =
+    extensions::ExtensionService* extension_service =
         extensions::ExtensionSystem::Get(profile)->extension_service();
     const extensions::Extension* extension =
         extension_service->GetExtensionById(storage_domain,
@@ -134,9 +134,10 @@ content::WebContents* GetWebContentsFromFrameTreeNodeID(
 MediaFileSystemBackend::MediaFileSystemBackend(
     const base::FilePath& profile_path)
     : profile_path_(profile_path),
-      media_path_filter_(new MediaPathFilter),
-      media_copy_or_move_file_validator_factory_(new MediaFileValidatorFactory),
-      native_media_file_util_(new NativeMediaFileUtil(media_path_filter_.get()))
+      media_copy_or_move_file_validator_factory_(
+          std::make_unique<MediaFileValidatorFactory>()),
+      native_media_file_util_(
+          std::make_unique<NativeMediaFileUtil>(g_media_task_runner.Get()))
 #if defined(OS_WIN) || defined(OS_MACOSX) || defined(OS_CHROMEOS)
       ,
       device_media_async_file_util_(

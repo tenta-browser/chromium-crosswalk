@@ -7,7 +7,7 @@
   border: 1px solid black;
   width: 200px;
   height: 100px;
-  padding: 50px;
+  padding: 5px 10px 15px 20px;
 }
 #target {
   width: 300px;
@@ -15,7 +15,7 @@
   background-color: rgba(0, 255, 0, 0.3);
 }
 </style>
-<p>Overflow with container padding: container block_end, inline_end padding, are not part of overflow.</p>
+<p>Overflow with container padding, and block children: container block_end padding is part of overflow, inline_end is not part of overflow.</p>
 <div id="container">
   <div id="target"></div>
 </div>
@@ -27,17 +27,19 @@ var target = document.querySelector('#target');
 test(function() {
   var containerStyle = window.getComputedStyle(container);
   assert_equals(container.scrollHeight, target.offsetHeight +
-    parseInt(containerStyle.paddingTop));
+    parseInt(containerStyle.paddingTop) +
+    parseInt(containerStyle.paddingBottom));
   assert_equals(container.scrollWidth, target.offsetWidth +
-    parseInt(containerStyle.paddingTop));
+    parseInt(containerStyle.paddingLeft));
 }, "overflow with padding");
 
 test(function() {
   target.style.height = "400px";
   var containerStyle = window.getComputedStyle(container);
   assert_equals(container.scrollHeight, target.offsetHeight +
-    parseInt(containerStyle.paddingTop));
+    parseInt(containerStyle.paddingTop) +
+    parseInt(containerStyle.paddingBottom));
   assert_equals(container.scrollWidth, target.offsetWidth +
-    parseInt(containerStyle.paddingTop));
+    parseInt(containerStyle.paddingLeft));
 }, "overflow with paddding, after resize");
 </script>

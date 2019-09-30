@@ -8,9 +8,13 @@
 #include "base/command_line.h"
 #include "base/logging.h"
 #include "base/run_loop.h"
+#include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "build/build_config.h"
 #include "chrome/browser/background_fetch/background_fetch_delegate_impl.h"
+#include "chrome/browser/browser_process.h"
+#include "chrome/browser/content_settings/host_content_settings_map_factory.h"
+#include "chrome/browser/download/download_request_limiter.h"
 #include "chrome/browser/download/download_service_factory.h"
 #include "chrome/browser/offline_items_collection/offline_content_aggregator_factory.h"
 #include "chrome/browser/profiles/profile.h"
@@ -18,6 +22,8 @@
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/ui_test_utils.h"
+#include "components/content_settings/core/browser/host_content_settings_map.h"
+#include "components/content_settings/core/common/content_settings_types.h"
 #include "components/download/public/background_service/download_service.h"
 #include "components/download/public/background_service/logger.h"
 #include "components/offline_items_collection/core/offline_content_aggregator.h"
@@ -50,6 +56,17 @@ const char kResultAccepted[] = "ACCEPTED";
 // Title of a Background Fetch started by StartSingleFileDownload().
 const char kSingleFileDownloadTitle[] = "Single-file Background Fetch";
 
+// Size of the downloaded resource, used in BackgroundFetch tests.
+const int kDownloadedResourceSizeInBytes = 82;
+
+// Incorrect downloadTotal, when it's set too high in the JavaScript file
+// loaded by this test (chrome/test/data/background_fetch/background_fetch.js)
+const int kDownloadTotalBytesTooHigh = 1000;
+
+// Incorrect downloadTotal, when it's set too low in the JavaScript file
+// loaded by this test (chrome/test/data/background_fetch/background_fetch.js)
+const int kDownloadTotalBytesTooLow = 80;
+
 // Implementation of a download system logger that provides the ability to wait
 // for certain events to happen, notably added and progressing downloads.
 class WaitableDownloadLoggerObserver : public download::Logger::Observer {
@@ -77,7 +94,7 @@ class WaitableDownloadLoggerObserver : public download::Logger::Observer {
     const std::string& result = service_request.FindKey("result")->GetString();
 
     if (client != kBackgroundFetchClient)
-      return;  // this event is not targeted to us
+      return;  // This event is not targeted to us.
 
     if (result == kResultAccepted && download_accepted_callback_)
       std::move(download_accepted_callback_).Run(guid);
@@ -95,12 +112,19 @@ class OfflineContentProviderObserver : public OfflineContentProvider::Observer {
  public:
   using ItemsAddedCallback =
       base::OnceCallback<void(const std::vector<OfflineItem>&)>;
+  using FinishedProcessingItemCallback =
+      base::OnceCallback<void(const OfflineItem&)>;
 
   OfflineContentProviderObserver() = default;
   ~OfflineContentProviderObserver() final = default;
 
   void set_items_added_callback(ItemsAddedCallback callback) {
     items_added_callback_ = std::move(callback);
+  }
+
+  void set_finished_processing_item_callback(
+      FinishedProcessingItemCallback callback) {
+    finished_processing_item_callback_ = std::move(callback);
   }
 
   // OfflineContentProvider::Observer implementation:
@@ -111,13 +135,26 @@ class OfflineContentProviderObserver : public OfflineContentProvider::Observer {
   }
 
   void OnItemRemoved(const ContentId& id) override {}
-  void OnItemUpdated(const OfflineItem& item) override {}
+  void OnItemUpdated(const OfflineItem& item) override {
+    if (item.state != offline_items_collection::OfflineItemState::IN_PROGRESS &&
+        item.state != offline_items_collection::OfflineItemState::PENDING &&
+        finished_processing_item_callback_)
+      std::move(finished_processing_item_callback_).Run(item);
+    latest_item_ = item;
+  }
+
+  const OfflineItem& latest_item() const { return latest_item_; }
 
  private:
   ItemsAddedCallback items_added_callback_;
+  FinishedProcessingItemCallback finished_processing_item_callback_;
+
+  OfflineItem latest_item_;
 
   DISALLOW_COPY_AND_ASSIGN(OfflineContentProviderObserver);
 };
+
+}  // namespace
 
 class BackgroundFetchBrowserTest : public InProcessBrowserTest {
  public:
@@ -193,6 +230,15 @@ class BackgroundFetchBrowserTest : public InProcessBrowserTest {
     run_loop.Run();
   }
 
+  // Runs the |script| and waits for a message.
+  // Wrap in ASSERT_NO_FATAL_FAILURE().
+  void RunScriptAndCheckResultingMessage(const std::string& script,
+                                         const std::string& expected_message) {
+    std::string result;
+    ASSERT_NO_FATAL_FAILURE(RunScript(script, &result));
+    ASSERT_EQ(expected_message, result);
+  }
+
   void GetVisualsForOfflineItemSync(
       const ContentId& offline_item_id,
       std::unique_ptr<OfflineItemVisuals>* out_visuals) {
@@ -242,6 +288,39 @@ class BackgroundFetchBrowserTest : public InProcessBrowserTest {
     *out_guid = guid;
 
     std::move(quit_closure).Run();
+  }
+
+  // Called when the an offline item has been processed.
+  void DidFinishProcessingItem(base::OnceClosure quit_closure,
+                               OfflineItem* out_item,
+                               const OfflineItem& processed_item) {
+    DCHECK(out_item);
+    *out_item = processed_item;
+    std::move(quit_closure).Run();
+  }
+
+  void RevokeDownloadPermission() {
+    content::WebContents* web_contents =
+        browser()->tab_strip_model()->GetActiveWebContents();
+    DownloadRequestLimiter::TabDownloadState* tab_download_state =
+        g_browser_process->download_request_limiter()->GetDownloadState(
+            web_contents, web_contents, true /* create */);
+    tab_download_state->set_download_seen();
+    tab_download_state->SetDownloadStatusAndNotify(
+        DownloadRequestLimiter::DOWNLOADS_NOT_ALLOWED);
+  }
+
+  void SetPermission(ContentSettingsType content_type, ContentSetting setting) {
+    auto* settings_map =
+        HostContentSettingsMapFactory::GetForProfile(browser()->profile());
+    DCHECK(settings_map);
+
+    ContentSettingsPattern host_pattern =
+        ContentSettingsPattern::FromURL(https_server_->base_url());
+
+    settings_map->SetContentSettingCustomScope(
+        host_pattern, host_pattern, content_type,
+        std::string() /* resource_identifier */, setting);
   }
 
  protected:
@@ -312,8 +391,9 @@ IN_PROC_BROWSER_TEST_F(BackgroundFetchBrowserTest,
   EXPECT_FALSE(offline_item.is_suggested);
   EXPECT_FALSE(offline_item.is_off_the_record);
 
+  // When downloadTotal isn't specified, we report progress by parts.
   EXPECT_EQ(offline_item.progress.value, 0);
-  EXPECT_EQ(offline_item.progress.max, 1);
+  EXPECT_EQ(offline_item.progress.max.value(), 1);
   EXPECT_EQ(offline_item.progress.unit, OfflineItemProgressUnit::PERCENTAGE);
 
   // Change-detector tests for values we might want to provide or change.
@@ -337,20 +417,9 @@ IN_PROC_BROWSER_TEST_F(BackgroundFetchBrowserTest,
   const OfflineItem& offline_item = items[0];
 
   // Verify that the appropriate data is being set.
-  EXPECT_EQ(offline_item.title, GetExpectedTitle(kSingleFileDownloadTitle));
-  EXPECT_EQ(offline_item.filter, OfflineItemFilter::FILTER_OTHER);
-  EXPECT_TRUE(offline_item.is_transient);
-  EXPECT_FALSE(offline_item.is_suggested);
-  EXPECT_FALSE(offline_item.is_off_the_record);
-
   EXPECT_EQ(offline_item.progress.value, 0);
-  EXPECT_EQ(offline_item.progress.max, 1);
+  EXPECT_EQ(offline_item.progress.max.value(), 1);
   EXPECT_EQ(offline_item.progress.unit, OfflineItemProgressUnit::PERCENTAGE);
-
-  // Change-detector tests for values we might want to provide or change.
-  EXPECT_TRUE(offline_item.description.empty());
-  EXPECT_TRUE(offline_item.page_url.is_empty());
-  EXPECT_FALSE(offline_item.is_resumable);
 
   // Get visuals associated with the newly added offline item.
   std::unique_ptr<OfflineItemVisuals> out_visuals;
@@ -364,4 +433,170 @@ IN_PROC_BROWSER_TEST_F(BackgroundFetchBrowserTest,
 #endif
 }
 
-}  // namespace
+IN_PROC_BROWSER_TEST_F(
+    BackgroundFetchBrowserTest,
+    OfflineItemCollection_VerifyResourceDownloadedWhenDownloadTotalLargerThanActualSize) {
+  // Starts a Background Fetch for a single to-be-downloaded file and waits for
+  // the fetch to be registered with the offline items collection.
+  std::vector<OfflineItem> items;
+  ASSERT_NO_FATAL_FAILURE(RunScriptAndWaitForOfflineItems(
+      "StartSingleFileDownloadWithBiggerThanActualDownloadTotal()", &items));
+  ASSERT_EQ(items.size(), 1u);
+
+  OfflineItem offline_item = items[0];
+
+  // Verify that the appropriate data is being set when we start downloading.
+  EXPECT_EQ(offline_item.progress.value, 0);
+  EXPECT_EQ(offline_item.progress.max.value(), kDownloadTotalBytesTooHigh);
+  EXPECT_EQ(offline_item.progress.unit, OfflineItemProgressUnit::PERCENTAGE);
+
+  // Wait for the download to be completed.
+  {
+    base::RunLoop run_loop;
+    offline_content_provider_observer_->set_finished_processing_item_callback(
+        base::BindOnce(&BackgroundFetchBrowserTest::DidFinishProcessingItem,
+                       base::Unretained(this), run_loop.QuitClosure(),
+                       &offline_item));
+    run_loop.Run();
+  }
+
+  // Download total is too high; check that we're still reporting by size,
+  // but have set the max value of the progress bar to the actual download size.
+  EXPECT_EQ(offline_item.state,
+            offline_items_collection::OfflineItemState::COMPLETE);
+  EXPECT_EQ(offline_item.progress.max.value(), offline_item.progress.value);
+  EXPECT_EQ(offline_item.progress.max.value(), kDownloadedResourceSizeInBytes);
+}
+
+IN_PROC_BROWSER_TEST_F(
+    BackgroundFetchBrowserTest,
+    OfflineItemCollection_VerifyResourceDownloadedWhenDownloadTotalSmallerThanActualSize) {
+  // Starts a Background Fetch for a single to-be-downloaded file and waits for
+  // the fetch to be registered with the offline items collection.
+  std::vector<OfflineItem> items;
+  ASSERT_NO_FATAL_FAILURE(RunScriptAndWaitForOfflineItems(
+      "StartSingleFileDownloadWithSmallerThanActualDownloadTotal()", &items));
+  ASSERT_EQ(items.size(), 1u);
+
+  OfflineItem offline_item = items[0];
+
+  // Verify that the appropriate data is being set when we start downloading.
+  EXPECT_EQ(offline_item.progress.value, 0);
+  EXPECT_EQ(offline_item.progress.max.value(), kDownloadTotalBytesTooLow);
+  EXPECT_EQ(offline_item.progress.unit, OfflineItemProgressUnit::PERCENTAGE);
+
+  // Wait for the offline_item to be processed.
+  {
+    base::RunLoop run_loop;
+    offline_content_provider_observer_->set_finished_processing_item_callback(
+        base::BindOnce(&BackgroundFetchBrowserTest::DidFinishProcessingItem,
+                       base::Unretained(this), run_loop.QuitClosure(),
+                       &offline_item));
+    run_loop.Run();
+  }
+
+  // Download total is too low; check that we cancel the download when the
+  // bytes downloaded exceed downloadTotal.
+  EXPECT_EQ(offline_item.state,
+            offline_items_collection::OfflineItemState::CANCELLED);
+}
+
+IN_PROC_BROWSER_TEST_F(
+    BackgroundFetchBrowserTest,
+    OfflineItemCollection_VerifyResourceDownloadedWhenCorrectDownloadTotalSpecified) {
+  // Starts a Background Fetch for a single to-be-downloaded file and waits for
+  // the fetch to be registered with the offline items collection.
+
+  std::vector<OfflineItem> items;
+  ASSERT_NO_FATAL_FAILURE(RunScriptAndWaitForOfflineItems(
+      "StartSingleFileDownloadWithCorrectDownloadTotal()", &items));
+  ASSERT_EQ(items.size(), 1u);
+
+  const OfflineItem& offline_item = items[0];
+
+  // Verify that the appropriate data is being set when downloadTotal is
+  // correctly set.
+  EXPECT_EQ(offline_item.progress.value, 0);
+  EXPECT_EQ(offline_item.progress.max.value(), kDownloadedResourceSizeInBytes);
+  EXPECT_EQ(offline_item.progress.unit, OfflineItemProgressUnit::PERCENTAGE);
+}
+
+IN_PROC_BROWSER_TEST_F(BackgroundFetchBrowserTest,
+                       FetchesRunToCompletionAndUpdateTitle_Fetched) {
+  ASSERT_NO_FATAL_FAILURE(RunScriptAndCheckResultingMessage(
+      "RunFetchTillCompletion()", "backgroundfetchsuccess"));
+  base::RunLoop().RunUntilIdle();  // Give `updateUI` a chance to propagate.
+  EXPECT_TRUE(
+      base::StartsWith(offline_content_provider_observer_->latest_item().title,
+                       "New Fetched Title!", base::CompareCase::SENSITIVE));
+}
+
+IN_PROC_BROWSER_TEST_F(BackgroundFetchBrowserTest,
+                       FetchesRunToCompletionAndUpdateTitle_Failed) {
+  ASSERT_NO_FATAL_FAILURE(RunScriptAndCheckResultingMessage(
+      "RunFetchTillCompletionWithMissingResource()", "backgroundfetchfail"));
+  base::RunLoop().RunUntilIdle();  // Give `updateUI` a chance to propagate.
+  EXPECT_TRUE(
+      base::StartsWith(offline_content_provider_observer_->latest_item().title,
+                       "New Failed Title!", base::CompareCase::SENSITIVE));
+}
+
+IN_PROC_BROWSER_TEST_F(BackgroundFetchBrowserTest,
+                       FetchRejectedWithoutPermission) {
+  RevokeDownloadPermission();
+  ASSERT_NO_FATAL_FAILURE(RunScriptAndCheckResultingMessage(
+      "RunFetchAnExpectAnException()",
+      "This origin does not have permission to start a fetch."));
+}
+
+IN_PROC_BROWSER_TEST_F(BackgroundFetchBrowserTest, FetchFromServiceWorker) {
+  auto* settings_map =
+      HostContentSettingsMapFactory::GetForProfile(browser()->profile());
+  DCHECK(settings_map);
+
+  // Give the needed permissions.
+  SetPermission(CONTENT_SETTINGS_TYPE_AUTOMATIC_DOWNLOADS,
+                CONTENT_SETTING_ALLOW);
+  SetPermission(CONTENT_SETTINGS_TYPE_BACKGROUND_SYNC, CONTENT_SETTING_ALLOW);
+
+  // The fetch should succeed.
+  ASSERT_NO_FATAL_FAILURE(RunScriptAndCheckResultingMessage(
+      "StartFetchFromServiceWorker()", "backgroundfetchsuccess"));
+
+  // Revoke Automatic Downloads permission.
+  SetPermission(CONTENT_SETTINGS_TYPE_AUTOMATIC_DOWNLOADS,
+                CONTENT_SETTING_BLOCK);
+
+  // This should fail without the Automatic Downloads permission.
+  ASSERT_NO_FATAL_FAILURE(RunScriptAndCheckResultingMessage(
+      "StartFetchFromServiceWorker()", "permissionerror"));
+
+  // Reset Automatic Downloads permission and remove Background Sync permission
+  SetPermission(CONTENT_SETTINGS_TYPE_AUTOMATIC_DOWNLOADS,
+                CONTENT_SETTING_ALLOW);
+  SetPermission(CONTENT_SETTINGS_TYPE_BACKGROUND_SYNC, CONTENT_SETTING_BLOCK);
+
+  // This should also fail now.
+  ASSERT_NO_FATAL_FAILURE(RunScriptAndCheckResultingMessage(
+      "StartFetchFromServiceWorker()", "permissionerror"));
+}
+
+IN_PROC_BROWSER_TEST_F(BackgroundFetchBrowserTest,
+                       FetchFromChildFrameWithPermissions) {
+  // Give the needed permissions.
+  SetPermission(CONTENT_SETTINGS_TYPE_AUTOMATIC_DOWNLOADS,
+                CONTENT_SETTING_ALLOW);
+  SetPermission(CONTENT_SETTINGS_TYPE_BACKGROUND_SYNC, CONTENT_SETTING_ALLOW);
+  ASSERT_NO_FATAL_FAILURE(RunScriptAndCheckResultingMessage(
+      "StartFetchFromIframe()", "backgroundfetchsuccess"));
+}
+
+IN_PROC_BROWSER_TEST_F(BackgroundFetchBrowserTest,
+                       FetchFromChildFrameWithMissingPermissions) {
+  SetPermission(CONTENT_SETTINGS_TYPE_AUTOMATIC_DOWNLOADS,
+                CONTENT_SETTING_ALLOW);
+  // Revoke Background Sync permission.
+  SetPermission(CONTENT_SETTINGS_TYPE_BACKGROUND_SYNC, CONTENT_SETTING_BLOCK);
+  ASSERT_NO_FATAL_FAILURE(RunScriptAndCheckResultingMessage(
+      "StartFetchFromIframe()", "permissionerror"));
+}

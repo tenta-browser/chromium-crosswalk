@@ -20,8 +20,8 @@
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/sys_info.h"
+#include "base/task/post_task.h"
 #include "base/task_runner_util.h"
-#include "base/task_scheduler/post_task.h"
 #include "base/timer/elapsed_timer.h"
 #include "base/values.h"
 #include "base/version.h"
@@ -37,6 +37,7 @@
 #include "components/prefs/pref_service.h"
 #include "components/variations/pref_names.h"
 #include "components/variations/proto/variations_seed.pb.h"
+#include "components/variations/seed_response.h"
 #include "components/variations/variations_seed_processor.h"
 #include "components/variations/variations_seed_simulator.h"
 #include "components/variations/variations_switches.h"
@@ -50,10 +51,15 @@
 #include "net/http/http_status_code.h"
 #include "net/http/http_util.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
-#include "net/url_request/url_fetcher.h"
-#include "net/url_request/url_request_status.h"
+#include "services/network/public/cpp/resource_request.h"
+#include "services/network/public/cpp/shared_url_loader_factory.h"
+#include "services/network/public/cpp/simple_url_loader.h"
 #include "ui/base/device_form_factor.h"
 #include "url/gurl.h"
+
+#if defined(OS_ANDROID)
+#include "components/variations/android/variations_seed_bridge.h"
+#endif  // OS_ANDROID
 
 namespace variations {
 namespace {
@@ -232,6 +238,17 @@ bool IsFetchingEnabled() {
   return true;
 }
 
+std::unique_ptr<SeedResponse> MaybeImportFirstRunSeed(
+    PrefService* local_state) {
+#if defined(OS_ANDROID)
+  if (!local_state->HasPrefPath(prefs::kVariationsSeedSignature)) {
+    DVLOG(1) << "Importing first run seed from Java preferences.";
+    return android::GetVariationsFirstRunSeed();
+  }
+#endif
+  return nullptr;
+}
+
 }  // namespace
 
 VariationsService::VariationsService(
@@ -250,10 +267,13 @@ VariationsService::VariationsService(
       request_count_(0),
       safe_seed_manager_(state_manager->clean_exit_beacon()->exited_cleanly(),
                          local_state),
-      field_trial_creator_(local_state, client_.get(), ui_string_overrider),
+      field_trial_creator_(local_state,
+                           client_.get(),
+                           ui_string_overrider,
+                           MaybeImportFirstRunSeed(local_state)),
       weak_ptr_factory_(this) {
-  DCHECK(client_.get());
-  DCHECK(resource_request_allowed_notifier_.get());
+  DCHECK(client_);
+  DCHECK(resource_request_allowed_notifier_);
 }
 
 VariationsService::~VariationsService() {
@@ -442,7 +462,7 @@ bool VariationsService::StoreSeed(const std::string& seed_data,
   // simulation with, which must be done on a background thread, and then do the
   // actual simulation on the UI thread.
   base::PostTaskWithTraitsAndReplyWithResult(
-      FROM_HERE, {base::MayBlock(), base::TaskPriority::BACKGROUND},
+      FROM_HERE, {base::MayBlock(), base::TaskPriority::BEST_EFFORT},
       client_->GetVersionForSimulationCallback(),
       base::Bind(&VariationsService::PerformSimulationWithVersion,
                  weak_ptr_factory_.GetWeakPtr(), base::Passed(&seed)));
@@ -494,15 +514,9 @@ bool VariationsService::DoFetchFromURL(const GURL& url, bool is_http_retry) {
           policy_exception_justification:
             "Not implemented, considered not required."
         })");
-  pending_seed_request_ = net::URLFetcher::Create(0, url, net::URLFetcher::GET,
-                                                  this, traffic_annotation);
-  data_use_measurement::DataUseUserData::AttachToFetcher(
-      pending_seed_request_.get(),
-      data_use_measurement::DataUseUserData::VARIATIONS);
-  pending_seed_request_->SetLoadFlags(net::LOAD_DO_NOT_SEND_COOKIES |
-                                      net::LOAD_DO_NOT_SEND_AUTH_DATA |
-                                      net::LOAD_DO_NOT_SAVE_COOKIES);
-  pending_seed_request_->SetRequestContext(client_->GetURLRequestContext());
+  auto resource_request = std::make_unique<network::ResourceRequest>();
+  resource_request->url = url;
+  resource_request->allow_credentials = false;
   bool enable_deltas = false;
   std::string serial_number =
       field_trial_creator_.seed_store()->GetLatestSerialNumber();
@@ -513,19 +527,29 @@ bool VariationsService::DoFetchFromURL(const GURL& url, bool is_http_retry) {
     // If the fetch is an HTTP retry, encrypt the If-None-Match header.
     if (is_http_retry) {
       if (!EncryptString(serial_number, &serial_number)) {
-        pending_seed_request_.reset();
         return false;
       }
       base::Base64Encode(serial_number, &serial_number);
     }
-    pending_seed_request_->AddExtraRequestHeader("If-None-Match:" +
-                                                 serial_number);
+    resource_request->headers.SetHeader("If-None-Match", serial_number);
   }
   // Tell the server that delta-compressed and gzipped seeds are supported.
-  const char* supported_im = enable_deltas ? "A-IM:x-bm,gzip" : "A-IM:gzip";
-  pending_seed_request_->AddExtraRequestHeader(supported_im);
+  const char* supported_im = enable_deltas ? "x-bm,gzip" : "gzip";
+  resource_request->headers.SetHeader("A-IM", supported_im);
 
-  pending_seed_request_->Start();
+  // TODO(https://crbug.com/808498): Re-add data use measurement once
+  // SimpleURLLoader supports it.
+  // ID=data_use_measurement::DataUseUserData::VARIATIONS
+  pending_seed_request_ = network::SimpleURLLoader::Create(
+      std::move(resource_request), traffic_annotation);
+  // Ensure our callback is called even with "304 Not Modified" responses.
+  pending_seed_request_->SetAllowHttpErrorResults(true);
+  // base::Unretained is safe here since this class owns
+  // |pending_seed_request_|'s lifetime.
+  pending_seed_request_->DownloadToStringOfUnboundedSizeUntilCrashAndDie(
+      client_->GetURLLoaderFactory().get(),
+      base::BindOnce(&VariationsService::OnSimpleLoaderComplete,
+                     base::Unretained(this)));
 
   const base::TimeTicks now = base::TimeTicks::Now();
   base::TimeDelta time_since_last_fetch;
@@ -555,7 +579,7 @@ void VariationsService::StartRepeatedVariationsSeedFetch() {
         GetVariationsServerURL(policy_pref_service_, restrict_mode_, USE_HTTP);
   }
 
-  DCHECK(!request_scheduler_.get());
+  DCHECK(!request_scheduler_);
   request_scheduler_.reset(VariationsRequestScheduler::Create(
       base::Bind(&VariationsService::FetchVariationsSeed,
                  weak_ptr_factory_.GetWeakPtr()),
@@ -592,31 +616,35 @@ void VariationsService::NotifyObservers(
   }
 }
 
-void VariationsService::OnURLFetchComplete(const net::URLFetcher* source) {
+void VariationsService::OnSimpleLoaderComplete(
+    std::unique_ptr<std::string> response_body) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  DCHECK_EQ(pending_seed_request_.get(), source);
 
   const bool is_first_request = !initial_request_completed_;
   initial_request_completed_ = true;
 
-  // The fetcher will be deleted when the request is handled.
-  std::unique_ptr<const net::URLFetcher> request(
-      pending_seed_request_.release());
-  const net::URLRequestStatus& status = request->GetStatus();
-  const int response_code = request->GetResponseCode();
-  bool was_https = request->GetURL().SchemeIs(url::kHttpsScheme);
-  if (was_https) {
-    base::UmaHistogramSparse(
-        "Variations.SeedFetchResponseOrErrorCode",
-        status.is_success() ? response_code : status.error());
-  } else {
-    base::UmaHistogramSparse(
-        "Variations.SeedFetchResponseOrErrorCode.HTTP",
-        status.is_success() ? response_code : status.error());
+  int net_error = pending_seed_request_->NetError();
+  int response_code = -1;
+  scoped_refptr<net::HttpResponseHeaders> headers;
+  if (pending_seed_request_->ResponseInfo() &&
+      pending_seed_request_->ResponseInfo()->headers) {
+    headers = pending_seed_request_->ResponseInfo()->headers;
+    response_code = headers->response_code();
   }
-  if (status.status() != net::URLRequestStatus::SUCCESS) {
-    DVLOG(1) << "Variations server request failed with error: "
-             << status.error() << ": " << net::ErrorToString(status.error());
+  bool is_success = headers && (net_error == net::OK);
+  bool was_https =
+      pending_seed_request_->GetFinalURL().SchemeIs(url::kHttpsScheme);
+  pending_seed_request_.reset();
+  if (was_https) {
+    base::UmaHistogramSparse("Variations.SeedFetchResponseOrErrorCode",
+                             is_success ? response_code : net_error);
+  } else {
+    base::UmaHistogramSparse("Variations.SeedFetchResponseOrErrorCode.HTTP",
+                             is_success ? response_code : net_error);
+  }
+  if (!is_success) {
+    DVLOG(1) << "Variations server request failed with error: " << net_error
+             << ": " << net::ErrorToString(net_error);
     // If the current fetch attempt was over an HTTPS connection, retry the
     // fetch immediately over an HTTP connection.
     // Currently we only do this if if the 'VariationsHttpRetry' feature is
@@ -630,7 +658,8 @@ void VariationsService::OnURLFetchComplete(const net::URLFetcher* source) {
     // It's common for the very first fetch attempt to fail (e.g. the network
     // may not yet be available). In such a case, try again soon, rather than
     // waiting the full time interval.
-    if (is_first_request)
+    // |request_scheduler_| will be null during unit tests.
+    if (is_first_request && request_scheduler_)
       request_scheduler_->ScheduleFetchShortly();
     return;
   }
@@ -641,7 +670,7 @@ void VariationsService::OnURLFetchComplete(const net::URLFetcher* source) {
   base::Time response_date;
   if (response_code == net::HTTP_OK ||
       response_code == net::HTTP_NOT_MODIFIED) {
-    bool success = request->GetResponseHeaders()->GetDateValue(&response_date);
+    bool success = headers->GetDateValue(&response_date);
     DCHECK(success || response_date.is_null());
 
     if (!response_date.is_null()) {
@@ -669,14 +698,9 @@ void VariationsService::OnURLFetchComplete(const net::URLFetcher* source) {
     return;
   }
 
-  std::string seed_data;
-  bool success = request->GetResponseAsString(&seed_data);
-  DCHECK(success);
-
-  net::HttpResponseHeaders* headers = request->GetResponseHeaders();
   bool is_delta_compressed;
   bool is_gzip_compressed;
-  if (!GetInstanceManipulations(headers, &is_delta_compressed,
+  if (!GetInstanceManipulations(headers.get(), &is_delta_compressed,
                                 &is_gzip_compressed)) {
     // The header does not specify supported instance manipulations, unable to
     // process data. Details of errors were logged by GetInstanceManipulations.
@@ -684,14 +708,17 @@ void VariationsService::OnURLFetchComplete(const net::URLFetcher* source) {
     return;
   }
 
-  const std::string signature = GetHeaderValue(headers, "X-Seed-Signature");
-  const std::string country_code = GetHeaderValue(headers, "X-Country");
+  const std::string signature =
+      GetHeaderValue(headers.get(), "X-Seed-Signature");
+  const std::string country_code = GetHeaderValue(headers.get(), "X-Country");
   const bool store_success =
-      StoreSeed(seed_data, signature, country_code, response_date,
+      StoreSeed(*response_body, signature, country_code, response_date,
                 is_delta_compressed, is_gzip_compressed, !was_https);
   if (!store_success && is_delta_compressed) {
     disable_deltas_for_next_request_ = true;
-    request_scheduler_->ScheduleFetchShortly();
+    // |request_scheduler_| will be null during unit tests.
+    if (request_scheduler_)
+      request_scheduler_->ScheduleFetchShortly();
   }
 }
 
@@ -709,7 +736,7 @@ void VariationsService::OnResourceRequestsAllowed() {
   DoActualFetch();
 
   // This service must have created a scheduler in order for this to be called.
-  DCHECK(request_scheduler_.get());
+  DCHECK(request_scheduler_);
   request_scheduler_->Reset();
 }
 

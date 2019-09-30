@@ -31,7 +31,7 @@
 #include "components/prefs/pref_service.h"
 #include "components/signin/core/browser/account_info.h"
 #include "components/signin/core/browser/account_tracker_service.h"
-#include "components/signin/core/browser/signin_manager.h"
+#include "components/signin/core/browser/signin_manager_base.h"
 #include "components/sync_preferences/pref_service_syncable.h"
 #include "components/user_manager/user_manager.h"
 #include "content/public/browser/notification_observer.h"
@@ -48,7 +48,7 @@ namespace first_run {
 namespace {
 
 void LaunchDialogForProfile(Profile* profile) {
-  ExtensionService* service =
+  extensions::ExtensionService* service =
       extensions::ExtensionSystem::Get(profile)->extension_service();
   if (!service)
     return;
@@ -123,13 +123,14 @@ class DialogLauncher : public content::NotificationObserver {
     // Whether the account is supported for voice interaction.
     bool account_supported = false;
     SigninManagerBase* signin_manager =
-        SigninManagerFactory::GetForProfile(profile_);
+        SigninManagerFactory::GetForProfileIfExists(profile_);
     if (signin_manager) {
       std::string hosted_domain =
           signin_manager->GetAuthenticatedAccountInfo().hosted_domain;
       if (hosted_domain == AccountTrackerService::kNoHostedDomainFound ||
-          hosted_domain == "google.com")
+          hosted_domain == "google.com") {
         account_supported = true;
+      }
     }
 
     // If voice interaction value prop needs to be shown, the tutorial will be

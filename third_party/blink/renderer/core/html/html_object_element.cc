@@ -29,7 +29,6 @@
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/element_traversal.h"
 #include "third_party/blink/renderer/core/dom/shadow_root.h"
-#include "third_party/blink/renderer/core/dom/sync_reattach_context.h"
 #include "third_party/blink/renderer/core/dom/tag_collection.h"
 #include "third_party/blink/renderer/core/dom/text.h"
 #include "third_party/blink/renderer/core/exported/web_plugin_container_impl.h"
@@ -107,8 +106,6 @@ void HTMLObjectElement::ParseAttribute(
     // Should we suppress the reload stuff when a persistable widget-type is
     // specified?
     ReloadPluginOnAttributeChange(name);
-    if (!GetLayoutObject())
-      RequestPluginCreationWithoutLayoutObjectIfPossible();
   } else if (name == dataAttr) {
     SetUrl(StripLeadingAndTrailingHTMLSpaces(params.new_value));
     if (GetLayoutObject() && IsImageType()) {
@@ -292,13 +289,13 @@ void HTMLObjectElement::UpdatePluginInternal() {
 }
 
 Node::InsertionNotificationRequest HTMLObjectElement::InsertedInto(
-    ContainerNode* insertion_point) {
+    ContainerNode& insertion_point) {
   HTMLPlugInElement::InsertedInto(insertion_point);
   ListedElement::InsertedInto(insertion_point);
   return kInsertionDone;
 }
 
-void HTMLObjectElement::RemovedFrom(ContainerNode* insertion_point) {
+void HTMLObjectElement::RemovedFrom(ContainerNode& insertion_point) {
   HTMLPlugInElement::RemovedFrom(insertion_point);
   ListedElement::RemovedFrom(insertion_point);
 }
@@ -331,15 +328,9 @@ const AtomicString HTMLObjectElement::ImageSourceURL() const {
   return getAttribute(dataAttr);
 }
 
-// TODO(schenney): crbug.com/572908 Remove this hack.
 void HTMLObjectElement::ReattachFallbackContent() {
-  if (GetDocument().InStyleRecalc()) {
-    // This can happen inside of AttachLayoutTree() in the middle of a
-    // RebuildLayoutTree, so we need to reattach synchronously here.
-    ReattachLayoutTree(SyncReattachContext::CurrentAttachContext());
-  } else {
+  if (!GetDocument().InStyleRecalc())
     LazyReattachIfAttached();
-  }
 }
 
 void HTMLObjectElement::RenderFallbackContent() {
@@ -428,11 +419,6 @@ bool HTMLObjectElement::WillUseFallbackContentAtLayout() const {
 
 void HTMLObjectElement::AssociateWith(HTMLFormElement* form) {
   AssociateByParser(form);
-}
-
-void HTMLObjectElement::AttachLayoutTree(AttachContext& context) {
-  SyncReattachContext reattach_context(context);
-  HTMLPlugInElement::AttachLayoutTree(context);
 }
 
 const HTMLObjectElement* ToHTMLObjectElementFromListedElement(

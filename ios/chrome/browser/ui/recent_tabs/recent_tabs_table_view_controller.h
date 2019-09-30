@@ -16,6 +16,7 @@ class ChromeBrowserState;
 @protocol LegacyRecentTabsTableViewControllerDelegate;
 @protocol RecentTabsHandsetViewControllerCommand;
 @protocol UrlLoader;
+@protocol RecentTabsImageDataSource;
 
 @interface RecentTabsTableViewController
     : ChromeTableViewController<RecentTabsTableConsumer>
@@ -30,9 +31,19 @@ class ChromeBrowserState;
 @property(nonatomic, weak) id<LegacyRecentTabsTableViewControllerDelegate>
     delegate;
 
-// RecentTabsHandsetViewControllerCommand delegate.
+// Delegate to present the tab UI.
 @property(nonatomic, weak) id<RecentTabsHandsetViewControllerCommand>
-    handsetCommandHandler;
+    presentationDelegate;
+
+// Data source for images.
+@property(nonatomic, weak) id<RecentTabsImageDataSource> imageDataSource;
+
+// Initializers.
+- (instancetype)init NS_DESIGNATED_INITIALIZER;
+- (instancetype)initWithTableViewStyle:(UITableViewStyle)style
+                           appBarStyle:
+                               (ChromeTableViewControllerStyle)appBarStyle
+    NS_UNAVAILABLE;
 
 @end
 

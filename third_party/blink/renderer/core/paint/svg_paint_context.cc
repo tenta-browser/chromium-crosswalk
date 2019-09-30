@@ -78,17 +78,11 @@ bool SVGPaintContext::ApplyClipMaskAndFilterIfNecessary() {
   }
 
   bool is_svg_root = object_.IsSVGRoot();
-
-  // Layer takes care of root opacity and blend mode.
   if (is_svg_root) {
-    DCHECK(!(object_.IsTransparent() || object_.StyleRef().HasBlendMode()) ||
-           object_.HasLayer());
-  } else {
-    ApplyCompositingIfNecessary();
-  }
-
-  if (is_svg_root) {
-    DCHECK(!object_.StyleRef().ClipPath() || object_.HasLayer());
+    // Layer takes care of root opacity and blend mode.
+    DCHECK(object_.HasLayer() ||
+           !(object_.IsTransparent() || object_.StyleRef().HasBlendMode() ||
+             object_.StyleRef().ClipPath()));
   } else {
     ApplyClipIfNecessary();
   }
@@ -100,64 +94,40 @@ bool SVGPaintContext::ApplyClipMaskAndFilterIfNecessary() {
     return false;
 
   if (is_svg_root) {
-    DCHECK(!object_.StyleRef().HasFilter() || object_.HasLayer());
+    // Layer takes care of root filter.
+    DCHECK(object_.HasLayer() || !object_.StyleRef().HasFilter());
   } else if (!ApplyFilterIfNecessary(resources)) {
     return false;
-  }
-
-  if (!IsIsolationInstalled() &&
-      SVGLayoutSupport::IsIsolationRequired(&object_)) {
-    compositing_recorder_ = std::make_unique<CompositingRecorder>(
-        GetPaintInfo().context, object_, SkBlendMode::kSrcOver, 1);
   }
 
   return true;
 }
 
 void SVGPaintContext::ApplyPaintPropertyState() {
-  if (!RuntimeEnabledFeatures::SlimmingPaintV175Enabled())
-    return;
-
   // SVGRoot works like normal CSS replaced element and its effects are
   // applied as stacking context effect by PaintLayerPainter.
   if (object_.IsSVGRoot())
     return;
 
-  if (const auto* properties = object_.FirstFragment().PaintProperties()) {
-    // MaskClip() implies Effect(), thus we don't need to check MaskClip().
-    if (properties->Effect() || properties->ClipPathClip()) {
-      auto& paint_controller = GetPaintInfo().context.GetPaintController();
-      PropertyTreeState state(paint_controller.CurrentPaintChunkProperties()
-                                  .property_tree_state.GetPropertyTreeState());
-      if (const auto* effect = properties->Effect())
-        state.SetEffect(effect);
-      if (const auto* mask_clip = properties->MaskClip())
-        state.SetClip(mask_clip);
-      else if (const auto* clip_path_clip = properties->ClipPathClip())
-        state.SetClip(clip_path_clip);
-      scoped_paint_chunk_properties_.emplace(
-          paint_controller, state, object_,
-          DisplayItem::PaintPhaseToSVGEffectType(GetPaintInfo().phase));
-    }
-  }
-}
+  const auto* fragment = GetPaintInfo().FragmentToPaint(object_);
+  if (!fragment)
+    return;
+  const auto* properties = fragment->PaintProperties();
+  // MaskClip() implies Effect(), thus we don't need to check MaskClip().
+  if (!properties || (!properties->Effect() && !properties->ClipPathClip()))
+    return;
 
-void SVGPaintContext::ApplyCompositingIfNecessary() {
-  DCHECK(!GetPaintInfo().IsRenderingClipPathAsMaskImage());
-
-  const ComputedStyle& style = object_.StyleRef();
-  float opacity = style.Opacity();
-  WebBlendMode blend_mode = style.HasBlendMode() && object_.IsBlendingAllowed()
-                                ? style.BlendMode()
-                                : WebBlendMode::kNormal;
-  if (opacity < 1 || blend_mode != WebBlendMode::kNormal) {
-    const FloatRect compositing_bounds =
-        object_.VisualRectInLocalSVGCoordinates();
-    compositing_recorder_ = std::make_unique<CompositingRecorder>(
-        GetPaintInfo().context, object_,
-        WebCoreCompositeToSkiaComposite(kCompositeSourceOver, blend_mode),
-        opacity, &compositing_bounds);
-  }
+  auto& paint_controller = GetPaintInfo().context.GetPaintController();
+  PropertyTreeState state = paint_controller.CurrentPaintChunkProperties();
+  if (const auto* effect = properties->Effect())
+    state.SetEffect(effect);
+  if (const auto* mask_clip = properties->MaskClip())
+    state.SetClip(mask_clip);
+  else if (const auto* clip_path_clip = properties->ClipPathClip())
+    state.SetClip(clip_path_clip);
+  scoped_paint_chunk_properties_.emplace(
+      paint_controller, state, object_,
+      DisplayItem::PaintPhaseToSVGEffectType(GetPaintInfo().phase));
 }
 
 void SVGPaintContext::ApplyClipIfNecessary() {
@@ -207,23 +177,8 @@ bool SVGPaintContext::ApplyFilterIfNecessary(SVGResources* resources) {
   // Because we cache the filter contents and do not invalidate on paint
   // invalidation rect changes, we need to paint the entire filter region
   // so elements outside the initial paint (due to scrolling, etc) paint.
-  filter_paint_info_->cull_rect_.rect_ = LayoutRect::InfiniteIntRect();
+  filter_paint_info_->cull_rect_ = CullRect(LayoutRect::InfiniteIntRect());
   return true;
-}
-
-bool SVGPaintContext::IsIsolationInstalled() const {
-  // In SPv175+ isolation is modeled by effect nodes, and will be applied by
-  // PaintArtifactCompositor or PaintChunksToCcLayer depends on compositing
-  // state.
-  if (RuntimeEnabledFeatures::SlimmingPaintV175Enabled())
-    return true;
-  if (compositing_recorder_)
-    return true;
-  if (masker_ || filter_)
-    return true;
-  if (clip_path_clipper_ && clip_path_clipper_->IsIsolationInstalled())
-    return true;
-  return false;
 }
 
 void SVGPaintContext::PaintResourceSubtree(GraphicsContext& context,
@@ -234,7 +189,7 @@ void SVGPaintContext::PaintResourceSubtree(GraphicsContext& context,
   PaintInfo info(context, LayoutRect::InfiniteIntRect(),
                  PaintPhase::kForeground, kGlobalPaintNormalPhase,
                  kPaintLayerPaintingRenderingResourceSubtree);
-  item->Paint(info, IntPoint());
+  item->Paint(info);
 }
 
 bool SVGPaintContext::PaintForLayoutObject(

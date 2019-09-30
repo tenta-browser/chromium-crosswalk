@@ -132,20 +132,21 @@ bool V8UnitTest::RunJavascriptTestF(const std::string& test_fixture,
     return false;
 
   // Ok if ran successfully, passed tests, and didn't have console errors.
-  return result->BooleanValue() && g_test_result_ok && !g_had_errors;
+  return result->BooleanValue(context).ToChecked() && g_test_result_ok &&
+         !g_had_errors;
 }
 
 void V8UnitTest::InitPathsAndLibraries() {
   base::FilePath test_data;
-  ASSERT_TRUE(PathService::Get(chrome::DIR_TEST_DATA, &test_data));
+  ASSERT_TRUE(base::PathService::Get(chrome::DIR_TEST_DATA, &test_data));
 
   g_test_data_directory = test_data.AppendASCII("webui");
 
-  ASSERT_TRUE(
-      PathService::Get(chrome::DIR_GEN_TEST_DATA, &g_gen_test_data_directory));
+  ASSERT_TRUE(base::PathService::Get(chrome::DIR_GEN_TEST_DATA,
+                                     &g_gen_test_data_directory));
 
   base::FilePath src_root;
-  ASSERT_TRUE(PathService::Get(base::DIR_SOURCE_ROOT, &src_root));
+  ASSERT_TRUE(base::PathService::Get(base::DIR_SOURCE_ROOT, &src_root));
 
   AddLibrary(src_root.AppendASCII("chrome")
                      .AppendASCII("third_party")
@@ -325,7 +326,9 @@ void V8UnitTest::ChromeSend(const v8::FunctionCallbackInfo<v8::Value>& args) {
   EXPECT_EQ(2U, test_result->Length());
   if (::testing::Test::HasNonfatalFailure())
     return;
-  g_test_result_ok = test_result->Get(0)->BooleanValue();
+  g_test_result_ok = test_result->Get(0)
+                         ->BooleanValue(isolate->GetCurrentContext())
+                         .ToChecked();
   if (!g_test_result_ok) {
     v8::String::Utf8Value message(isolate, test_result->Get(1));
     LOG(ERROR) << *message;

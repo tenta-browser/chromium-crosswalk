@@ -28,13 +28,15 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "third_party/blink/renderer/bindings/core/v8/exception_messages.h"
-#include "third_party/blink/renderer/bindings/core/v8/exception_state.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise.h"
+
+#include "third_party/blink/renderer/bindings/core/v8/script_function.h"
 #include "third_party/blink/renderer/bindings/core/v8/to_v8_for_core.h"
 #include "third_party/blink/renderer/core/dom/dom_exception.h"
+#include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/bindings/v8_throw_exception.h"
 #include "third_party/blink/renderer/platform/instance_counters.h"
+#include "third_party/blink/renderer/platform/wtf/compiler.h"
 #include "v8/include/v8.h"
 
 namespace blink {
@@ -73,7 +75,7 @@ class PromiseAllHandler final
       return self->BindToV8Function();
     }
 
-    virtual void Trace(blink::Visitor* visitor) {
+    void Trace(blink::Visitor* visitor) override {
       visitor->Trace(handler_);
       ScriptFunction::Trace(visitor);
     }
@@ -169,7 +171,10 @@ class PromiseAllHandler final
 
 ScriptPromise::InternalResolver::InternalResolver(ScriptState* script_state)
     : resolver_(script_state,
-                v8::Promise::Resolver::New(script_state->GetContext())) {}
+                v8::Promise::Resolver::New(script_state->GetContext())) {
+  // |resolver| can be empty when the thread is being terminated. We ignore such
+  // errors.
+}
 
 v8::Local<v8::Promise> ScriptPromise::InternalResolver::V8Promise() const {
   if (resolver_.IsEmpty())
@@ -186,20 +191,26 @@ ScriptPromise ScriptPromise::InternalResolver::Promise() const {
 void ScriptPromise::InternalResolver::Resolve(v8::Local<v8::Value> value) {
   if (resolver_.IsEmpty())
     return;
-  resolver_.V8Value()
-      .As<v8::Promise::Resolver>()
-      ->Resolve(resolver_.GetContext(), value)
-      .ToChecked();
+  v8::Maybe<bool> result =
+      resolver_.V8Value().As<v8::Promise::Resolver>()->Resolve(
+          resolver_.GetContext(), value);
+  // |result| can be empty when the thread is being terminated. We ignore such
+  // errors.
+  ALLOW_UNUSED_LOCAL(result);
+
   Clear();
 }
 
 void ScriptPromise::InternalResolver::Reject(v8::Local<v8::Value> value) {
   if (resolver_.IsEmpty())
     return;
-  resolver_.V8Value()
-      .As<v8::Promise::Resolver>()
-      ->Reject(resolver_.GetContext(), value)
-      .ToChecked();
+  v8::Maybe<bool> result =
+      resolver_.V8Value().As<v8::Promise::Resolver>()->Reject(
+          resolver_.GetContext(), value);
+  // |result| can be empty when the thread is being terminated. We ignore such
+  // errors.
+  ALLOW_UNUSED_LOCAL(result);
+
   Clear();
 }
 
@@ -258,7 +269,7 @@ ScriptPromise ScriptPromise::Then(v8::Local<v8::Function> on_fulfilled,
       return ScriptPromise();
   }
 
-  return ScriptPromise(script_state_.get(), result_promise);
+  return ScriptPromise(script_state_, result_promise);
 }
 
 ScriptPromise ScriptPromise::CastUndefined(ScriptState* script_state) {
@@ -296,6 +307,14 @@ ScriptPromise ScriptPromise::Reject(ScriptState* script_state,
   InternalResolver resolver(script_state);
   ScriptPromise promise = resolver.Promise();
   resolver.Reject(value);
+  return promise;
+}
+
+ScriptPromise ScriptPromise::Reject(ScriptState* script_state,
+                                    ExceptionState& exception_state) {
+  DCHECK(exception_state.HadException());
+  ScriptPromise promise = Reject(script_state, exception_state.GetException());
+  exception_state.ClearException();
   return promise;
 }
 

@@ -74,8 +74,7 @@ FileTaskExecutor::FileTaskExecutor(
       current_index_(0),
       weak_ptr_factory_(this) {}
 
-FileTaskExecutor::~FileTaskExecutor() {
-}
+FileTaskExecutor::~FileTaskExecutor() = default;
 
 void FileTaskExecutor::Execute(
     const std::vector<FileSystemURL>& file_urls,
@@ -106,9 +105,8 @@ void FileTaskExecutor::Execute(
 
   for (size_t i = 0; i < paths.size(); ++i) {
     file_system->GetResourceEntry(
-        paths[i],
-        base::Bind(&FileTaskExecutor::OnFileEntryFetched,
-                   weak_ptr_factory_.GetWeakPtr()));
+        paths[i], base::BindOnce(&FileTaskExecutor::OnFileEntryFetched,
+                                 weak_ptr_factory_.GetWeakPtr()));
   }
 }
 

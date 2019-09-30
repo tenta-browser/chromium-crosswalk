@@ -34,14 +34,16 @@
 #include <memory>
 
 #include "third_party/blink/renderer/core/core_export.h"
+#include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/platform/geometry/float_point.h"
 #include "third_party/blink/renderer/platform/geometry/int_size.h"
 #include "third_party/blink/renderer/platform/graphics/color.h"
+#include "third_party/blink/renderer/platform/heap/persistent.h"
 
 namespace blink {
 
 class Element;
-class LocalFrame;
+class FullscreenOptions;
 class WebViewImpl;
 
 // FullscreenController is a per-WebView class that manages the transition into
@@ -53,7 +55,7 @@ class CORE_EXPORT FullscreenController {
 
   // Called by Fullscreen (via ChromeClient) to request entering or exiting
   // fullscreen.
-  void EnterFullscreen(LocalFrame&);
+  void EnterFullscreen(LocalFrame&, const FullscreenOptions&);
   void ExitFullscreen(LocalFrame&);
 
   // Called by content::RenderWidget (via WebWidget) to notify that we've
@@ -70,7 +72,7 @@ class CORE_EXPORT FullscreenController {
 
   void UpdateSize();
 
-  void DidUpdateLayout();
+  void DidUpdateMainFrameLayout();
 
  protected:
   explicit FullscreenController(WebViewImpl*);
@@ -103,6 +105,10 @@ class CORE_EXPORT FullscreenController {
   FloatPoint initial_visual_viewport_offset_;
   bool initial_background_color_override_enabled_ = false;
   RGBA32 initial_background_color_override_ = Color::kTransparent;
+
+  using PendingFullscreenSet =
+      PersistentHeapLinkedHashSet<WeakMember<LocalFrame>>;
+  PendingFullscreenSet pending_frames_;
 };
 
 }  // namespace blink

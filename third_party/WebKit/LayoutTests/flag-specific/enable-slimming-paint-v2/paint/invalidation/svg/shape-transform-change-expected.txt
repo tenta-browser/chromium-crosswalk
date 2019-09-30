@@ -9,7 +9,7 @@
         {
           "object": "LayoutSVGRect rect",
           "rect": [8, 8, 200, 200],
-          "reason": "appeared"
+          "reason": "chunk appeared"
         },
         {
           "object": "LayoutSVGRect rect",
@@ -17,12 +17,6 @@
           "reason": "disappeared"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutSVGRect rect",
-      "reason": "full"
     }
   ]
 }

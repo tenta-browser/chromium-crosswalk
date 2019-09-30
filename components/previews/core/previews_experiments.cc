@@ -129,11 +129,50 @@ base::TimeDelta OfflinePreviewFreshnessDuration() {
                          "offline_preview_freshness_duration_in_days", 7));
 }
 
+base::TimeDelta LitePagePreviewsSingleBypassDuration() {
+  return base::TimeDelta::FromSeconds(base::GetFieldTrialParamByFeatureAsInt(
+      features::kLitePageServerPreviews, "single_bypass_duration_in_seconds",
+      60 * 5));
+}
+
+std::vector<std::string> LitePagePreviewsBlacklistedPathSuffixes() {
+  const std::string csv = base::GetFieldTrialParamValueByFeature(
+      features::kLitePageServerPreviews, "blacklisted_path_suffixes");
+  if (csv == "")
+    return {};
+  return base::SplitString(csv, ",", base::TRIM_WHITESPACE,
+                           base::SPLIT_WANT_NONEMPTY);
+}
+
+int PreviewServerLoadshedMaxSeconds() {
+  return base::GetFieldTrialParamByFeatureAsInt(
+      features::kLitePageServerPreviews, "loadshed_max_seconds",
+      5 * 60 /* 5 minutes */);
+}
+
+bool LitePagePreviewsTriggerOnLocalhost() {
+  return base::GetFieldTrialParamByFeatureAsBool(
+      features::kLitePageServerPreviews, "trigger_on_localhost", false);
+}
+
+GURL GetLitePagePreviewsDomainURL() {
+  std::string variable_host_str = GetFieldTrialParamValueByFeature(
+      features::kLitePageServerPreviews, "previews_host");
+  if (!variable_host_str.empty()) {
+    GURL variable_host(variable_host_str);
+    DCHECK(variable_host.is_valid());
+    DCHECK(variable_host.has_scheme());
+    return variable_host;
+  }
+  return GURL("https://litepages.googlezip.net/");
+}
+
 net::EffectiveConnectionType GetECTThresholdForPreview(
     previews::PreviewsType type) {
   switch (type) {
     case PreviewsType::OFFLINE:
     case PreviewsType::NOSCRIPT:
+    case PreviewsType::LITE_PAGE_REDIRECT:
       return GetParamValueAsECT(kClientSidePreviewsFieldTrial,
                                 kEffectiveConnectionTypeThreshold,
                                 net::EFFECTIVE_CONNECTION_TYPE_2G);
@@ -144,11 +183,13 @@ net::EffectiveConnectionType GetECTThresholdForPreview(
     case PreviewsType::LITE_PAGE:
       NOTREACHED();
       break;
-    case PreviewsType::AMP_REDIRECTION:
-      return net::EFFECTIVE_CONNECTION_TYPE_LAST;  // Trigger irrespective of
-                                                   // ECT.
     case PreviewsType::NONE:
     case PreviewsType::UNSPECIFIED:
+    case PreviewsType::RESOURCE_LOADING_HINTS:
+      return GetParamValueAsECTByFeature(features::kResourceLoadingHints,
+                                         kEffectiveConnectionTypeThreshold,
+                                         net::EFFECTIVE_CONNECTION_TYPE_2G);
+    case PreviewsType::DEPRECATED_AMP_REDIRECTION:
     case PreviewsType::LAST:
       break;
   }
@@ -168,12 +209,16 @@ bool IsClientLoFiEnabled() {
   return base::FeatureList::IsEnabled(features::kClientLoFi);
 }
 
-bool IsAMPRedirectionPreviewEnabled() {
-  return base::FeatureList::IsEnabled(features::kAMPRedirection);
-}
-
 bool IsNoScriptPreviewsEnabled() {
   return base::FeatureList::IsEnabled(features::kNoScriptPreviews);
+}
+
+bool IsResourceLoadingHintsEnabled() {
+  return base::FeatureList::IsEnabled(features::kResourceLoadingHints);
+}
+
+bool IsLitePageServerPreviewsEnabled() {
+  return base::FeatureList::IsEnabled(features::kLitePageServerPreviews);
 }
 
 int OfflinePreviewsVersion() {
@@ -185,14 +230,25 @@ int ClientLoFiVersion() {
                                                 0);
 }
 
-int AMPRedirectionPreviewsVersion() {
-  return GetFieldTrialParamByFeatureAsInt(features::kAMPRedirection, kVersion,
-                                          0);
+int LitePageServerPreviewsVersion() {
+  return base::GetFieldTrialParamByFeatureAsInt(
+      features::kLitePageServerPreviews, kVersion, 0);
 }
 
 int NoScriptPreviewsVersion() {
   return GetFieldTrialParamByFeatureAsInt(features::kNoScriptPreviews, kVersion,
                                           0);
+}
+
+int ResourceLoadingHintsVersion() {
+  return GetFieldTrialParamByFeatureAsInt(features::kResourceLoadingHints,
+                                          kVersion, 0);
+}
+
+size_t GetMaxPageHintsInMemoryThreshhold() {
+  return GetFieldTrialParamByFeatureAsInt(features::kResourceLoadingHints,
+                                          "max_page_hints_in_memory_threshold",
+                                          500);
 }
 
 bool IsOptimizationHintsEnabled() {
@@ -239,12 +295,15 @@ std::string GetStringNameForType(PreviewsType type) {
       return "LoFi";
     case PreviewsType::LITE_PAGE:
       return "LitePage";
-    case PreviewsType::AMP_REDIRECTION:
-      return "AMPRedirection";
+    case PreviewsType::LITE_PAGE_REDIRECT:
+      return "LitePageRedirect";
     case PreviewsType::NOSCRIPT:
       return "NoScript";
     case PreviewsType::UNSPECIFIED:
       return "Unspecified";
+    case PreviewsType::RESOURCE_LOADING_HINTS:
+      return "ResourceLoadingHints";
+    case PreviewsType::DEPRECATED_AMP_REDIRECTION:
     case PreviewsType::LAST:
       break;
   }

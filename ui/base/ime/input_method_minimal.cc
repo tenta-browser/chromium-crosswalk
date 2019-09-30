@@ -12,10 +12,8 @@
 
 namespace ui {
 
-InputMethodMinimal::InputMethodMinimal(
-    internal::InputMethodDelegate* delegate) {
-  SetDelegate(delegate);
-}
+InputMethodMinimal::InputMethodMinimal(internal::InputMethodDelegate* delegate)
+    : InputMethodBase(delegate) {}
 
 InputMethodMinimal::~InputMethodMinimal() {}
 
@@ -29,7 +27,7 @@ ui::EventDispatchDetails InputMethodMinimal::DispatchKeyEvent(
 
   // Insert the character.
   ui::EventDispatchDetails dispatch_details = DispatchKeyEventPostIME(event);
-  if (!dispatch_details.dispatcher_destroyed &&
+  if (!event->stopped_propagation() && !dispatch_details.dispatcher_destroyed &&
       event->type() == ET_KEY_PRESSED && GetTextInputClient()) {
     const uint16_t ch = event->GetCharacter();
     if (ch) {

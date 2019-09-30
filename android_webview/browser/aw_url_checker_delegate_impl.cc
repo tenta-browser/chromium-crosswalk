@@ -28,7 +28,8 @@ AwUrlCheckerDelegateImpl::AwUrlCheckerDelegateImpl(
       ui_manager_(std::move(ui_manager)),
       threat_types_(safe_browsing::CreateSBThreatTypeSet(
           {safe_browsing::SB_THREAT_TYPE_URL_MALWARE,
-           safe_browsing::SB_THREAT_TYPE_URL_PHISHING})),
+           safe_browsing::SB_THREAT_TYPE_URL_PHISHING,
+           safe_browsing::SB_THREAT_TYPE_URL_UNWANTED})),
       whitelist_manager_(whitelist_manager) {}
 
 AwUrlCheckerDelegateImpl::~AwUrlCheckerDelegateImpl() = default;
@@ -76,6 +77,10 @@ bool AwUrlCheckerDelegateImpl::ShouldSkipRequestCheck(
   // Consider the request as whitelisted, if SafeBrowsing is not enabled.
   return client && !client->GetSafeBrowsingEnabled();
 }
+
+void AwUrlCheckerDelegateImpl::NotifySuspiciousSiteDetected(
+    const base::RepeatingCallback<content::WebContents*()>&
+        web_contents_getter) {}
 
 const safe_browsing::SBThreatTypeSet&
 AwUrlCheckerDelegateImpl::GetThreatTypes() {

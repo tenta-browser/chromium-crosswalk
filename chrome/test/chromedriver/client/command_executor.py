@@ -4,9 +4,6 @@
 
 import httplib
 import json
-import socket
-import subprocess
-import sys
 
 
 class _Method(object):
@@ -38,6 +35,8 @@ class Command(object):
   GET_TITLE = (_Method.GET, '/session/:sessionId/title')
   GET_PAGE_SOURCE = (_Method.GET, '/session/:sessionId/source')
   SCREENSHOT = (_Method.GET, '/session/:sessionId/screenshot')
+  ELEMENT_SCREENSHOT = (
+      _Method.GET, '/session/:sessionId/element/:id/screenshot')
   SET_BROWSER_VISIBLE = (_Method.POST, '/session/:sessionId/visible')
   IS_BROWSER_VISIBLE = (_Method.GET, '/session/:sessionId/visible')
   FIND_ELEMENT = (_Method.POST, '/session/:sessionId/element')
@@ -104,7 +103,7 @@ class Command(object):
       _Method.POST, '/session/:sessionId/timeouts/implicit_wait')
   SET_SCRIPT_TIMEOUT = (
       _Method.POST, '/session/:sessionId/timeouts/async_script')
-  SET_TIMEOUT = (_Method.POST, '/session/:sessionId/timeouts')
+  SET_TIMEOUTS = (_Method.POST, '/session/:sessionId/timeouts')
   GET_TIMEOUTS = (_Method.GET, '/session/:sessionId/timeouts')
   EXECUTE_SQL = (_Method.POST, '/session/:sessionId/execute_sql')
   GET_LOCATION = (_Method.GET, '/session/:sessionId/location')
@@ -196,13 +195,8 @@ class CommandExecutor(object):
     body = None
     if command[0] == _Method.POST:
       body = json.dumps(params)
-    try:
-      self._http_client.request(command[0], '/'.join(substituted_parts), body)
-      response = self._http_client.getresponse()
-    except socket.timeout:
-      if sys.platform == 'linux2' or sys.platform == 'darwin':
-        subprocess.call(['ps', 'alx'])
-      raise
+    self._http_client.request(command[0], '/'.join(substituted_parts), body)
+    response = self._http_client.getresponse()
 
     if response.status == 303:
       self._http_client.request(_Method.GET, response.getheader('location'))

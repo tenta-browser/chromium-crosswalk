@@ -5,36 +5,76 @@
 (async function() {
   TestRunner.addResult(`Test device orientation\n`);
   await TestRunner.loadModule('console_test_runner');
+  await TestRunner.addScriptTag('/resources/testharness.js');
+  await TestRunner.addScriptTag('/resources/sensor-helpers.js');
+  await TestRunner.addScriptTag('/gen/layout_test_data/mojo/public/js/mojo_bindings.js');
+  await TestRunner.addScriptTag('/gen/services/device/public/mojom/sensor.mojom.js');
+  await TestRunner.addScriptTag('/gen/services/device/public/mojom/sensor_provider.mojom.js');
   await TestRunner.evaluateInPagePromise(`
+      var sensorProvider = null;
       var mockAlpha = 1.1;
       var mockBeta = 2.2;
       var mockGamma = 3.3;
-      var absolute = true;
 
-      function setup()
+      function setUpDeviceOrientation()
       {
-          testRunner.setMockDeviceOrientation(true, mockAlpha, true, mockBeta, true, mockGamma, absolute);
-          window.addEventListener("deviceorientation", handler, false);
+          sensorProvider = sensorMocks();
+          let mockDataPromise = setMockSensorDataForType(
+              sensorProvider,
+              device.mojom.SensorType.RELATIVE_ORIENTATION_EULER_ANGLES,
+              [mockBeta, mockGamma, mockAlpha]);
+          window.addEventListener("deviceorientation", handler);
+          return mockDataPromise;
       }
 
       function handler(evt)
       {
           console.log("alpha: " + evt.alpha + " beta: " + evt.beta + " gamma: " + evt.gamma);
       }
+
+      function setUpOrientationSensor()
+      {
+          let orientationSensor = new RelativeOrientationSensor();
+          orientationSensor.onreading = () =>
+            console.log("quaternion: "
+                + orientationSensor.quaternion[0].toFixed(6) + ','
+                + orientationSensor.quaternion[1].toFixed(6) + ','
+                + orientationSensor.quaternion[2].toFixed(6) + ','
+                + orientationSensor.quaternion[3].toFixed(6));
+          orientationSensor.start();
+      }
+
+      function cleanUpDeviceOrientation()
+      {
+          window.removeEventListener("deviceorientation", handler);
+          sensorProvider.reset();
+          return new Promise(done => setTimeout(done, 0));
+      }
   `);
 
   TestRunner.runTestSuite([
-    function setUp(next) {
-      TestRunner.evaluateInPage('setup()', next);
+    async function setUpDeviceOrientation(next) {
+      await TestRunner.evaluateInPageAsync('setUpDeviceOrientation()');
+      ConsoleTestRunner.addConsoleSniffer(next);
     },
 
-    function setOverride(next) {
+    function firstOrientationOverride(next) {
       ConsoleTestRunner.addConsoleSniffer(next);
       TestRunner.DeviceOrientationAgent.setDeviceOrientationOverride(20, 30, 40);
     },
 
+    function setUpOrientationSensor(next) {
+      TestRunner.evaluateInPage('setUpOrientationSensor()', next);
+    },
+
+    function secondOrientationOverride(next) {
+      ConsoleTestRunner.addConsoleSniffer(next);
+      TestRunner.DeviceOrientationAgent.setDeviceOrientationOverride(90, 0, 0);
+    },
+
     async function clearOverride(next) {
       await TestRunner.DeviceOrientationAgent.clearDeviceOrientationOverride();
+      await TestRunner.evaluateInPageAsync('cleanUpDeviceOrientation()');
       ConsoleTestRunner.dumpConsoleMessages();
       next();
     },

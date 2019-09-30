@@ -20,28 +20,14 @@
         {
           "object": "LayoutSVGRoot svg",
           "rect": [58, 58, 100, 100],
-          "reason": "appeared"
+          "reason": "paint property change"
         },
         {
           "object": "LayoutSVGRoot svg",
           "rect": [33, 33, 50, 50],
-          "reason": "disappeared"
+          "reason": "paint property change"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutBlockFlow DIV id='target'",
-      "reason": "geometry"
-    },
-    {
-      "object": "RootInlineBox",
-      "reason": "geometry"
-    },
-    {
-      "object": "LayoutSVGRoot svg",
-      "reason": "geometry"
     }
   ]
 }

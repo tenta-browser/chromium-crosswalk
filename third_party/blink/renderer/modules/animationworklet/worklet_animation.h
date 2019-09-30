@@ -5,19 +5,23 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_MODULES_ANIMATIONWORKLET_WORKLET_ANIMATION_H_
 #define THIRD_PARTY_BLINK_RENDERER_MODULES_ANIMATIONWORKLET_WORKLET_ANIMATION_H_
 
-#include "third_party/blink/renderer/bindings/core/v8/serialization/serialized_script_value.h"
+#include "base/optional.h"
 #include "third_party/blink/renderer/bindings/modules/v8/document_timeline_or_scroll_timeline.h"
 #include "third_party/blink/renderer/core/animation/animation.h"
+#include "third_party/blink/renderer/core/animation/animation_effect_owner.h"
 #include "third_party/blink/renderer/core/animation/keyframe_effect.h"
 #include "third_party/blink/renderer/core/animation/worklet_animation_base.h"
+#include "third_party/blink/renderer/modules/animationworklet/worklet_animation_options.h"
 #include "third_party/blink/renderer/modules/modules_export.h"
 #include "third_party/blink/renderer/platform/animation/compositor_animation.h"
 #include "third_party/blink/renderer/platform/animation/compositor_animation_client.h"
 #include "third_party/blink/renderer/platform/animation/compositor_animation_delegate.h"
+#include "third_party/blink/renderer/platform/graphics/compositor_animators_state.h"
 
 namespace blink {
 
 class AnimationEffectOrAnimationEffectSequence;
+class SerializedScriptValue;
 
 // The main-thread controller for a single AnimationWorklet animator instance.
 //
@@ -32,12 +36,26 @@ class AnimationEffectOrAnimationEffectSequence;
 // Spec: https://wicg.github.io/animation-worklet/#worklet-animation-desc
 class MODULES_EXPORT WorkletAnimation : public WorkletAnimationBase,
                                         public CompositorAnimationClient,
-                                        public CompositorAnimationDelegate {
+                                        public CompositorAnimationDelegate,
+                                        public AnimationEffectOwner {
   DEFINE_WRAPPERTYPEINFO();
+  USING_GARBAGE_COLLECTED_MIXIN(WorkletAnimation);
   USING_PRE_FINALIZER(WorkletAnimation, Dispose);
 
  public:
   static WorkletAnimation* Create(
+      ScriptState*,
+      String animator_name,
+      const AnimationEffectOrAnimationEffectSequence&,
+      ExceptionState&);
+  static WorkletAnimation* Create(
+      ScriptState*,
+      String animator_name,
+      const AnimationEffectOrAnimationEffectSequence&,
+      DocumentTimelineOrScrollTimeline,
+      ExceptionState&);
+  static WorkletAnimation* Create(
+      ScriptState*,
       String animator_name,
       const AnimationEffectOrAnimationEffectSequence&,
       DocumentTimelineOrScrollTimeline,
@@ -46,12 +64,30 @@ class MODULES_EXPORT WorkletAnimation : public WorkletAnimationBase,
 
   ~WorkletAnimation() override = default;
 
+  AnimationTimeline* timeline() { return timeline_; }
   String playState();
   void play();
   void cancel();
 
+  // AnimationEffectOwner implementation:
+  unsigned SequenceNumber() const override { return sequence_number_; }
+  bool Playing() const override;
+  // Always allow dispatching events for worklet animations. This is only ever
+  // relevant to CSS animations which means it does not have any material effect
+  // on worklet animations either way.
+  bool IsEventDispatchAllowed() const override { return true; }
+  // Effect supression is used by devtool's animation inspection machinery which
+  // is not currently supported by worklet animations.
+  bool EffectSuppressed() const override { return false; }
+
+  void EffectInvalidated() override;
+  void UpdateIfNecessary() override;
+
+  Animation* GetAnimation() override { return nullptr; }
+
   // WorkletAnimationBase implementation.
-  bool StartOnCompositor(String* failure_message) override;
+  void Update(TimingUpdateReason) override;
+  bool UpdateCompositingState() override;
 
   // CompositorAnimationClient implementation.
   CompositorAnimation* GetCompositorAnimation() const override {
@@ -66,32 +102,52 @@ class MODULES_EXPORT WorkletAnimation : public WorkletAnimationBase,
   void Dispose();
 
   Document* GetDocument() const override { return document_.Get(); }
+  AnimationTimeline* GetTimeline() const override { return timeline_; }
   const String& Name() { return animator_name_; }
 
-  const DocumentTimelineOrScrollTimeline& Timeline() { return timeline_; }
-
-  const scoped_refptr<SerializedScriptValue> Options() { return options_; }
-  KeyframeEffect* GetEffect() const override { return effects_.at(0); }
+  KeyframeEffect* GetEffect() const override;
 
   void Trace(blink::Visitor*) override;
 
  private:
-  WorkletAnimation(const String& animator_name,
+  WorkletAnimation(WorkletAnimationId id,
+                   const String& animator_name,
                    Document&,
                    const HeapVector<Member<KeyframeEffect>>&,
-                   DocumentTimelineOrScrollTimeline,
+                   AnimationTimeline*,
                    scoped_refptr<SerializedScriptValue>);
+  void DestroyCompositorAnimation();
+
+  // Attempts to start the animation on the compositor side, returning true if
+  // it succeeds or false otherwise. If false is returned and failure_message
+  // was non-null, failure_message may be filled with an error description.
+  bool StartOnCompositor(String* failure_message);
+
+  // Updates a running animation on the compositor side.
+  void UpdateOnCompositor();
+
+  unsigned sequence_number_;
+
+  WorkletAnimationId id_;
 
   const String animator_name_;
   Animation::AnimationPlayState play_state_;
+  // Start time in ms.
+  base::Optional<double> start_time_;
 
   Member<Document> document_;
 
   HeapVector<Member<KeyframeEffect>> effects_;
-  DocumentTimelineOrScrollTimeline timeline_;
-  scoped_refptr<SerializedScriptValue> options_;
+  Member<AnimationTimeline> timeline_;
+  std::unique_ptr<WorkletAnimationOptions> options_;
 
   std::unique_ptr<CompositorAnimation> compositor_animation_;
+
+  // Tracks whether any KeyframeEffect associated with this WorkletAnimation has
+  // been invalidated and needs to be restarted. Used to avoid unnecessarily
+  // restarting the effect on the compositor. When true, a call to
+  // |UpdateOnCompositor| will update the effect on the compositor.
+  bool effect_needs_restart_;
 };
 
 }  // namespace blink

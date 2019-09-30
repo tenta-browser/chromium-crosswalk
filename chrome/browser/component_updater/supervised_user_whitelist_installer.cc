@@ -26,8 +26,8 @@
 #include "base/sequenced_task_runner.h"
 #include "base/stl_util.h"
 #include "base/strings/string_util.h"
-#include "base/task_scheduler/post_task.h"
-#include "base/task_scheduler/task_traits.h"
+#include "base/task/post_task.h"
+#include "base/task/task_traits.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/value_conversions.h"
 #include "base/values.h"
@@ -67,7 +67,7 @@ const char kExtensionIcons[] = "icons";
 const char kExtensionLargeIcon[] = "128";
 
 constexpr base::TaskTraits kTaskTraits = {
-    base::MayBlock(), base::TaskPriority::BACKGROUND,
+    base::MayBlock(), base::TaskPriority::BEST_EFFORT,
     base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN};
 
 base::string16 GetWhitelistTitle(const base::DictionaryValue& manifest) {
@@ -113,7 +113,8 @@ base::FilePath GetRawWhitelistPath(const base::DictionaryValue& manifest,
 
 base::FilePath GetSanitizedWhitelistPath(const std::string& crx_id) {
   base::FilePath base_dir;
-  PathService::Get(chrome::DIR_SUPERVISED_USER_INSTALLED_WHITELISTS, &base_dir);
+  base::PathService::Get(chrome::DIR_SUPERVISED_USER_INSTALLED_WHITELISTS,
+                         &base_dir);
   return base_dir.empty()
              ? base::FilePath()
              : base_dir.AppendASCII(crx_id + kSanitizedWhitelistExtension);
@@ -187,7 +188,7 @@ void CheckForSanitizedWhitelistOnTaskRunner(
 void RemoveUnregisteredWhitelistsOnTaskRunner(
     const std::set<std::string>& registered_whitelists) {
   base::FilePath base_dir;
-  PathService::Get(DIR_SUPERVISED_USER_WHITELISTS, &base_dir);
+  base::PathService::Get(DIR_SUPERVISED_USER_WHITELISTS, &base_dir);
   if (!base_dir.empty()) {
     base::FileEnumerator file_enumerator(base_dir, false,
                                          base::FileEnumerator::DIRECTORIES);
@@ -210,7 +211,8 @@ void RemoveUnregisteredWhitelistsOnTaskRunner(
     }
   }
 
-  PathService::Get(chrome::DIR_SUPERVISED_USER_INSTALLED_WHITELISTS, &base_dir);
+  base::PathService::Get(chrome::DIR_SUPERVISED_USER_INSTALLED_WHITELISTS,
+                         &base_dir);
   if (!base_dir.empty()) {
     base::FilePath pattern(FILE_PATH_LITERAL("*"));
     pattern = pattern.AppendASCII(kSanitizedWhitelistExtension);
@@ -667,7 +669,8 @@ void SupervisedUserWhitelistInstaller::TriggerComponentUpdate(
     OnDemandUpdater* updater,
     const std::string& crx_id) {
   // TODO(sorin): use a callback to check the result (crbug.com/639189).
-  updater->OnDemandUpdate(crx_id, component_updater::Callback());
+  updater->OnDemandUpdate(crx_id, OnDemandUpdater::Priority::FOREGROUND,
+                          component_updater::Callback());
 }
 
 }  // namespace component_updater

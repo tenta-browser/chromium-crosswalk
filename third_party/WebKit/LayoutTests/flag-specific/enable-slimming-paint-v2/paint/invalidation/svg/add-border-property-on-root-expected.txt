@@ -9,15 +9,9 @@
         {
           "object": "LayoutSVGRoot (positioned) svg",
           "rect": [8, 8, 120, 120],
-          "reason": "appeared"
+          "reason": "chunk appeared"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutSVGRoot (positioned) svg",
-      "reason": "style change"
     }
   ]
 }

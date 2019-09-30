@@ -10,7 +10,6 @@
 #include "base/memory/ref_counted.h"
 #include "base/metrics/field_trial.h"
 #include "base/run_loop.h"
-#include "base/single_thread_task_runner.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/test/scoped_task_environment.h"
 #include "base/time/time.h"
@@ -33,6 +32,7 @@
 #include "net/url_request/url_request_context_getter.h"
 #include "net/url_request/url_request_interceptor.h"
 #include "net/url_request/url_request_test_util.h"
+#include "services/network/test/test_network_connection_tracker.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace {
@@ -46,7 +46,7 @@ class CountingNetworkDelegate : public net::NetworkDelegateImpl {
   }
 
   int OnBeforeURLRequest(net::URLRequest* request,
-                         const net::CompletionCallback& callback,
+                         net::CompletionOnceCallback callback,
                          GURL* new_url) final {
     created_requests_++;
     return net::OK;
@@ -104,9 +104,12 @@ class DataReductionProxyIODataTest : public testing::Test {
 };
 
 TEST_F(DataReductionProxyIODataTest, TestConstruction) {
+  network::TestNetworkConnectionTracker network_connection_tracker(
+      true, network::mojom::ConnectionType::CONNECTION_UNKNOWN);
+
   std::unique_ptr<DataReductionProxyIOData> io_data(
       new DataReductionProxyIOData(
-          Client::UNKNOWN, prefs(), net_log(),
+          Client::UNKNOWN, prefs(), net_log(), &network_connection_tracker,
           scoped_task_environment_.GetMainThreadTaskRunner(),
           scoped_task_environment_.GetMainThreadTaskRunner(),
           false /* enabled */, std::string() /* user_agent */,
@@ -114,7 +117,7 @@ TEST_F(DataReductionProxyIODataTest, TestConstruction) {
 
   // Check that the SimpleURLRequestContextGetter uses vanilla HTTP.
   net::URLRequestContext* request_context =
-      io_data->basic_url_request_context_getter_.get()->GetURLRequestContext();
+      io_data->basic_url_request_context_getter_->GetURLRequestContext();
   const net::HttpNetworkSession::Params* http_params =
       request_context->GetNetworkSessionParams();
   EXPECT_FALSE(http_params->enable_http2);
@@ -139,8 +142,9 @@ TEST_F(DataReductionProxyIODataTest, TestConstruction) {
                                      false);
   network_delegate->NotifyBeforeURLRequest(
       fake_request.get(),
-      base::Bind(&DataReductionProxyIODataTest::RequestCallback,
-                 base::Unretained(this)), nullptr);
+      base::BindOnce(&DataReductionProxyIODataTest::RequestCallback,
+                     base::Unretained(this)),
+      nullptr);
   EXPECT_EQ(1, wrapped_network_delegate->created_requests());
   EXPECT_NE(nullptr, io_data->bypass_stats());
 

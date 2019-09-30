@@ -6,14 +6,13 @@
 
 #import "ios/chrome/browser/ui/commands/command_dispatcher.h"
 #import "ios/chrome/browser/ui/commands/toolbar_commands.h"
-#import "ios/chrome/browser/ui/history_popup/requirements/tab_history_ui_updater.h"
 #import "ios/chrome/browser/ui/toolbar/adaptive/toolbar_coordinatee.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
 #error "This file requires ARC support."
 #endif
 
-@interface ToolbarCoordinatorAdaptor ()<TabHistoryUIUpdater, ToolbarCommands>
+@interface ToolbarCoordinatorAdaptor ()<ToolbarCommands>
 @property(nonatomic, strong)
     NSMutableArray<id<NewTabPageControllerDelegate, ToolbarCommands>>*
         coordinators;
@@ -43,9 +42,7 @@
 #pragma mark - NewTabPageControllerDelegate
 
 - (void)setToolbarBackgroundToIncognitoNTPColorWithAlpha:(CGFloat)alpha {
-  for (id<NewTabPageControllerDelegate> coordinator in self.coordinators) {
-    [coordinator setToolbarBackgroundToIncognitoNTPColorWithAlpha:alpha];
-  }
+  // No-op, not needed in UI refresh.
 }
 
 - (void)setScrollProgressForTabletOmnibox:(CGFloat)progress {
@@ -70,31 +67,26 @@
     // points on the max X and Y edges, which will happen frequently with edge
     // swipes from the right side.
     CGRect toolbarFrame =
-        CGRectInset([coordinator viewController].view.frame, -1, -1);
-    if (CGRectContainsPoint(toolbarFrame, point))
+        CGRectInset([coordinator viewController].view.bounds, -1, -1);
+    CGPoint pointInToolbarCoordinates =
+        [[coordinator viewController].view convertPoint:point fromView:nil];
+    if (CGRectContainsPoint(toolbarFrame, pointInToolbarCoordinates))
       return YES;
   }
   return NO;
 }
 
-#pragma mark - ToolbarCoordinating
+#pragma mark - PopupMenuUIUpdating
 
-- (id<TabHistoryUIUpdater>)tabHistoryUIUpdater {
-  return self;
-}
-
-#pragma mark - TabHistoryUIUpdater
-
-- (void)updateUIForTabHistoryPresentationFrom:(ToolbarButtonType)button {
+- (void)updateUIForMenuDisplayed:(PopupMenuType)popupType {
   for (id<ToolbarCoordinatee> coordinator in self.coordinators) {
-    [coordinator.tabHistoryUIUpdater
-        updateUIForTabHistoryPresentationFrom:button];
+    [coordinator.popupMenuUIUpdater updateUIForMenuDisplayed:popupType];
   }
 }
 
-- (void)updateUIForTabHistoryWasDismissed {
+- (void)updateUIForMenuDismissed {
   for (id<ToolbarCoordinatee> coordinator in self.coordinators) {
-    [coordinator.tabHistoryUIUpdater updateUIForTabHistoryWasDismissed];
+    [coordinator.popupMenuUIUpdater updateUIForMenuDismissed];
   }
 }
 

@@ -16,6 +16,7 @@
 namespace blink {
 
 class ExceptionState;
+class WorkletAnimationOptions;
 
 // Represents the animation worklet global scope and implements all methods that
 // the global scope exposes to user script (See
@@ -37,14 +38,11 @@ class MODULES_EXPORT AnimationWorkletGlobalScope
       WorkerThread*);
   ~AnimationWorkletGlobalScope() override;
   void Trace(blink::Visitor*) override;
-  void TraceWrappers(const ScriptWrappableVisitor*) const override;
   void Dispose() override;
   bool IsAnimationWorkletGlobalScope() const final { return true; }
 
-  Animator* CreateInstance(const String& name);
   // Invokes the |animate| function of all of its active animators.
-  std::unique_ptr<CompositorMutatorOutputState> Mutate(
-      const CompositorMutatorInputState&);
+  std::unique_ptr<AnimationWorkletOutput> Mutate(const AnimationWorkletInput&);
 
   // Registers a animator definition with the given name and constructor.
   void registerAnimator(const String& name,
@@ -59,13 +57,20 @@ class MODULES_EXPORT AnimationWorkletGlobalScope
                               v8::Isolate*,
                               WorkerThread*);
 
-  Animator* GetAnimatorFor(int animation_id, const String& name);
+  void RegisterWithProxyClientIfNeeded();
+  Animator* CreateInstance(const String& name,
+                           WorkletAnimationOptions* options);
+  Animator* CreateAnimatorFor(int animation_id,
+                              const String& name,
+                              WorkletAnimationOptions* options);
   typedef HeapHashMap<String, TraceWrapperMember<AnimatorDefinition>>
       DefinitionMap;
   DefinitionMap animator_definitions_;
 
   typedef HeapHashMap<int, TraceWrapperMember<Animator>> AnimatorMap;
   AnimatorMap animators_;
+
+  bool registered_ = false;
 };
 
 DEFINE_TYPE_CASTS(AnimationWorkletGlobalScope,

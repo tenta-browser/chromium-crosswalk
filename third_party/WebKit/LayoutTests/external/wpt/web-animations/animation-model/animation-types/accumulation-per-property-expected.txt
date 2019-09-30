@@ -1,5 +1,6 @@
 This is a testharness.js-based test.
-Found 581 tests; 394 PASS, 187 FAIL, 0 TIMEOUT, 0 NOTRUN.
+Found 566 tests; 393 PASS, 173 FAIL, 0 TIMEOUT, 0 NOTRUN.
+PASS Setup
 PASS align-content (type: discrete) has testAccumulation function
 PASS align-content: "flex-end" onto "flex-start"
 PASS align-content: "flex-start" onto "flex-end"
@@ -184,12 +185,9 @@ FAIL column-width: length of rem assert_equals: The value should be 20px at 0ms 
 PASS column-width (type: discrete) has testAccumulation function
 PASS column-width: "1px" onto "auto"
 PASS column-width: "auto" onto "1px"
-PASS contain (type: discrete) has testAccumulation function
-PASS contain: "none" onto "strict"
-PASS contain: "strict" onto "none"
 PASS content (type: discrete) has testAccumulation function
-FAIL content: ""b"" onto ""a"" assert_equals: expected (string) "::before" but got (undefined) undefined
-FAIL content: ""a"" onto ""b"" assert_equals: expected (string) "::before" but got (undefined) undefined
+PASS content: ""b"" onto ""a""
+PASS content: ""a"" onto ""b""
 PASS counter-increment (type: discrete) has testAccumulation function
 PASS counter-increment: "ident-2 2" onto "ident-1 1"
 PASS counter-increment: "ident-1 1" onto "ident-2 2"
@@ -199,9 +197,6 @@ PASS counter-reset: "ident-1 1" onto "ident-2 2"
 PASS cursor (type: discrete) has testAccumulation function
 PASS cursor: "wait" onto "pointer"
 PASS cursor: "pointer" onto "wait"
-PASS direction (type: discrete) has testAccumulation function
-PASS direction: "rtl" onto "ltr"
-PASS direction: "ltr" onto "rtl"
 PASS dominant-baseline (type: discrete) has testAccumulation function
 PASS dominant-baseline: "alphabetic" onto "ideographic"
 PASS dominant-baseline: "ideographic" onto "alphabetic"
@@ -252,8 +247,8 @@ FAIL flood-color supports animating as color of hsla() assert_equals: The value 
 PASS flood-opacity (type: opacity) has testAccumulation function
 FAIL flood-opacity: [0, 1] number assert_equals: The value should be 0.6 at 0ms expected "0.6" but got "0.3"
 FAIL flood-opacity: [0, 1] number (clamped) assert_equals: The value should be 1 at 0ms expected "1" but got "0.3"
-PASS font-stretch (type: fontStretch) has testAccumulation function
-FAIL font-stretch uses font-stretch behavior for composite type accumulate assert_equals: The value should be normal at 0ms expected "normal" but got "125%"
+PASS font-stretch (type: percentage) has testAccumulation function
+FAIL font-stretch: percentage assert_equals: The value should be 130% at 0ms expected "130%" but got "70%"
 PASS font-style (type: discrete) has testAccumulation function
 FAIL font-style: "oblique" onto "italic" assert_equals: The value should be oblique at 0ms expected "oblique" but got "italic"
 PASS font-style: "italic" onto "oblique"
@@ -319,11 +314,11 @@ PASS grid-template-rows (type: discrete) has testAccumulation function
 PASS grid-template-rows: "5px" onto "1px"
 PASS grid-template-rows: "1px" onto "5px"
 PASS hyphens (type: discrete) has testAccumulation function
-FAIL hyphens: "auto" onto "manual" assert_equals: The value should be auto at 0ms expected "auto" but got "manual"
-PASS hyphens: "manual" onto "auto"
+PASS hyphens: "none" onto "manual"
+PASS hyphens: "manual" onto "none"
 PASS image-orientation (type: discrete) has testAccumulation function
-FAIL image-orientation: "90deg" onto "0deg" assert_equals: The value should be 90deg at 0ms expected "90deg" but got "0deg"
-PASS image-orientation: "0deg" onto "90deg"
+PASS image-orientation: "from-image" onto "none"
+FAIL image-orientation: "none" onto "from-image" assert_equals: The value should be none at 0ms expected "none" but got "from-image"
 PASS isolation (type: discrete) has testAccumulation function
 PASS isolation: "isolate" onto "auto"
 PASS isolation: "auto" onto "isolate"
@@ -356,17 +351,17 @@ PASS list-style-type (type: discrete) has testAccumulation function
 PASS list-style-type: "square" onto "circle"
 PASS list-style-type: "circle" onto "square"
 PASS marker-end (type: discrete) has testAccumulation function
-FAIL marker-end: "url("http://localhost/test-2")" onto "url("http://localhost/test-1")" assert_equals: The value should be url("http://localhost/test-2") at 0ms expected "url(\"http://localhost/test-2\")" but got "none"
-FAIL marker-end: "url("http://localhost/test-1")" onto "url("http://localhost/test-2")" assert_equals: The value should be url("http://localhost/test-1") at 0ms expected "url(\"http://localhost/test-1\")" but got "none"
+PASS marker-end: "url("http://localhost/test-2")" onto "url("http://localhost/test-1")"
+PASS marker-end: "url("http://localhost/test-1")" onto "url("http://localhost/test-2")"
 PASS marker-mid (type: discrete) has testAccumulation function
-FAIL marker-mid: "url("http://localhost/test-2")" onto "url("http://localhost/test-1")" assert_equals: The value should be url("http://localhost/test-2") at 0ms expected "url(\"http://localhost/test-2\")" but got "none"
-FAIL marker-mid: "url("http://localhost/test-1")" onto "url("http://localhost/test-2")" assert_equals: The value should be url("http://localhost/test-1") at 0ms expected "url(\"http://localhost/test-1\")" but got "none"
+PASS marker-mid: "url("http://localhost/test-2")" onto "url("http://localhost/test-1")"
+PASS marker-mid: "url("http://localhost/test-1")" onto "url("http://localhost/test-2")"
 PASS marker-start (type: discrete) has testAccumulation function
-FAIL marker-start: "url("http://localhost/test-2")" onto "url("http://localhost/test-1")" assert_equals: The value should be url("http://localhost/test-2") at 0ms expected "url(\"http://localhost/test-2\")" but got "none"
-FAIL marker-start: "url("http://localhost/test-1")" onto "url("http://localhost/test-2")" assert_equals: The value should be url("http://localhost/test-1") at 0ms expected "url(\"http://localhost/test-1\")" but got "none"
+PASS marker-start: "url("http://localhost/test-2")" onto "url("http://localhost/test-1")"
+PASS marker-start: "url("http://localhost/test-1")" onto "url("http://localhost/test-2")"
 PASS mask (type: discrete) has testAccumulation function
-FAIL mask: "url("http://localhost/test-2")" onto "url("http://localhost/test-1")" assert_equals: The value should be url("http://localhost/test-2") at 0ms expected "url(\"http://localhost/test-2\")" but got "none"
-FAIL mask: "url("http://localhost/test-1")" onto "url("http://localhost/test-2")" assert_equals: The value should be url("http://localhost/test-1") at 0ms expected "url(\"http://localhost/test-1\")" but got "none"
+PASS mask: "url("http://localhost/test-2")" onto "url("http://localhost/test-1")"
+PASS mask: "url("http://localhost/test-1")" onto "url("http://localhost/test-2")"
 PASS mask-type (type: discrete) has testAccumulation function
 PASS mask-type: "luminance" onto "alpha"
 PASS mask-type: "alpha" onto "luminance"
@@ -441,8 +436,8 @@ PASS shape-outside (type: discrete) has testAccumulation function
 PASS shape-outside: "url("http://localhost/test-2")" onto "url("http://localhost/test-1")"
 PASS shape-outside: "url("http://localhost/test-1")" onto "url("http://localhost/test-2")"
 PASS shape-rendering (type: discrete) has testAccumulation function
-FAIL shape-rendering: "crispEdges" onto "optimizeSpeed" assert_equals: The value should be crispedges at 0ms expected "crispedges" but got "crispEdges"
-FAIL shape-rendering: "optimizeSpeed" onto "crispEdges" assert_equals: The value should be optimizespeed at 0ms expected "optimizespeed" but got "optimizeSpeed"
+PASS shape-rendering: "crispEdges" onto "optimizeSpeed"
+PASS shape-rendering: "optimizeSpeed" onto "crispEdges"
 PASS stop-color (type: color) has testAccumulation function
 FAIL stop-color supports animating as color of rgb() with overflowed  from and to values assert_equals: The value should be rgb(255, 128, 128) at 0ms expected "rgb(255, 128, 128)" but got "rgb(255, 0, 0)"
 FAIL stop-color supports animating as color of #RGB assert_equals: The value should be rgb(255, 128, 128) at 0ms expected "rgb(255, 128, 128)" but got "rgb(255, 0, 0)"
@@ -497,15 +492,12 @@ PASS text-decoration-line: "underline" onto "overline"
 PASS text-decoration-style (type: discrete) has testAccumulation function
 PASS text-decoration-style: "dotted" onto "solid"
 PASS text-decoration-style: "solid" onto "dotted"
-PASS text-orientation (type: discrete) has testAccumulation function
-PASS text-orientation: "sideways" onto "upright"
-PASS text-orientation: "upright" onto "sideways"
 PASS text-overflow (type: discrete) has testAccumulation function
 PASS text-overflow: "ellipsis" onto "clip"
 PASS text-overflow: "clip" onto "ellipsis"
 PASS text-rendering (type: discrete) has testAccumulation function
-FAIL text-rendering: "optimizeLegibility" onto "optimizeSpeed" assert_equals: The value should be optimizelegibility at 0ms expected "optimizelegibility" but got "optimizeLegibility"
-FAIL text-rendering: "optimizeSpeed" onto "optimizeLegibility" assert_equals: The value should be optimizespeed at 0ms expected "optimizespeed" but got "optimizeSpeed"
+PASS text-rendering: "optimizeLegibility" onto "optimizeSpeed"
+PASS text-rendering: "optimizeSpeed" onto "optimizeLegibility"
 PASS text-shadow (type: textShadowList) has testAccumulation function
 FAIL text-shadow: shadow assert_equals: The value should be rgb(240, 240, 240) 20px 20px 20px at 0ms expected "rgb(240, 240, 240) 20px 20px 20px" but got "rgb(120, 120, 120) 10px 10px 10px"
 PASS text-transform (type: discrete) has testAccumulation function
@@ -521,6 +513,8 @@ FAIL transform: scale assert_approx_equals: expected matrix(-2,0,0,-2,0,0) but g
 FAIL transform: skew assert_approx_equals: expected matrix(1,0.5773502691896257,-0.36397023426620234,1,0,0) but got matrix(1, 0.36397, -0.57735, 1, 0, 0): The value should be matrix(1,0.5773502691896257,-0.36397023426620234,1,0,0) at 0ms but got matrix(1, 0.36397, -0.57735, 1, 0, 0) expected 0.5773502691896257 +/- 0.0001 but got 0.36397
 FAIL transform: rotate on translate assert_approx_equals: expected matrix(0,1,-1,0,100,0) but got matrix(6.12323e-17, 1, -1, 6.12323e-17, 0, 0): The value should be matrix(0,1,-1,0,100,0) at 0ms but got matrix(6.12323e-17, 1, -1, 6.12323e-17, 0, 0) expected 100 +/- 0.0001 but got 0
 FAIL transform: translate on rotate assert_approx_equals: expected matrix(0,1,-1,0,100,0) but got matrix(1, 0, 0, 1, 100, 0): The value should be matrix(0,1,-1,0,100,0) at 0ms but got matrix(1, 0, 0, 1, 100, 0) expected 0 +/- 0.0001 but got 1
+FAIL transform: rotate and translate on rotate assert_approx_equals: expected matrix(6.123233995736766e-17,1,-1,6.123233995736766e-17,0,0) but got matrix(0.707107, 0.707107, -0.707107, 0.707107, 0, 0): The value should be matrix(6.123233995736766e-17,1,-1,6.123233995736766e-17,0,0) at 0ms but got matrix(0.707107, 0.707107, -0.707107, 0.707107, 0, 0) expected 6.123233995736766e-17 +/- 0.0001 but got 0.707107
+FAIL transform: rotate on roate and translate assert_approx_equals: expected matrix(6.123233995736766e-17,1,-1,6.123233995736766e-17,6.123233995736766e-15,100) but got matrix(0.707107, 0.707107, -0.707107, 0.707107, 0, 0): The value should be matrix(6.123233995736766e-17,1,-1,6.123233995736766e-17,6.123233995736766e-15,100) at 0ms but got matrix(0.707107, 0.707107, -0.707107, 0.707107, 0, 0) expected 6.123233995736766e-17 +/- 0.0001 but got 0.707107
 FAIL transform: matrix assert_approx_equals: expected matrix(0,1,-1,0,100,0) but got matrix(1, 0, 0, 1, 100, 0): The value should be matrix(0,1,-1,0,100,0) at 0ms but got matrix(1, 0, 0, 1, 100, 0) expected 0 +/- 0.0001 but got 1
 FAIL transform: rotate3d assert_approx_equals: expected matrix3d(0.8535533905932737,0.1464466094067262,0.5,0,0.1464466094067262,0.8535533905932737,-0.5,0,-0.5,0.5,0.7071067811865476,0,0,0,0,1) but got matrix3d(0.5, 0.5, 0.707107, 0, 0.5, 0.5, -0.707107, 0, -0.707107, 0.707107, 6.12323e-17, 0, 0, 0, 0, 1): The value should be matrix3d(0.8535533905932737,0.1464466094067262,0.5,0,0.1464466094067262,0.8535533905932737,-0.5,0,-0.5,0.5,0.7071067811865476,0,0,0,0,1) at 0ms but got matrix3d(0.5, 0.5, 0.707107, 0, 0.5, 0.5, -0.707107, 0, -0.707107, 0.707107, 6.12323e-17, 0, 0, 0, 0, 1) expected 0.8535533905932737 +/- 0.0001 but got 0.5
 FAIL transform: matrix3d assert_approx_equals: expected matrix3d(0.8535533905932737,0.1464466094067262,0.5,0,0.1464466094067262,0.8535533905932737,-0.5,0,-0.5,0.5,0.7071067811865476,0,0,0,0,1) but got matrix3d(0.5, 0.5, 0.707107, 0, 0.5, 0.5, -0.707107, 0, -0.707107, 0.707107, 4.44089e-16, 0, 0, 0, 0, 1): The value should be matrix3d(0.8535533905932737,0.1464466094067262,0.5,0,0.1464466094067262,0.8535533905932737,-0.5,0,-0.5,0.5,0.7071067811865476,0,0,0,0,1) at 0ms but got matrix3d(0.5, 0.5, 0.707107, 0, 0.5, 0.5, -0.707107, 0, -0.707107, 0.707107, 4.44089e-16, 0, 0, 0, 0, 1) expected 0.8535533905932737 +/- 0.0001 but got 0.5
@@ -532,7 +526,7 @@ PASS transform: non-invertible matrices in matched transform lists (invertible o
 PASS transform: non-invertible matrices in mismatched transform lists (non-invertible onto invertible)
 PASS transform: non-invertible matrices in mismatched transform lists (invertible onto non-invertible)
 PASS transform-box (type: discrete) has testAccumulation function
-FAIL transform-box: "border-box" onto "fill-box" assert_equals: The value should be border-box at 0ms expected "border-box" but got "view-box"
+FAIL transform-box: "border-box" onto "fill-box" assert_equals: The value should be border-box at 0ms expected "border-box" but got "fill-box"
 PASS transform-box: "fill-box" onto "border-box"
 PASS transform-style (type: discrete) has testAccumulation function
 PASS transform-style: "preserve-3d" onto "flat"
@@ -548,9 +542,6 @@ PASS scale (type: scaleList) has testAccumulation function
 FAIL scale with two unspecified values assert_equals: The value should be -2 at 0ms expected "-2" but got "-3 1"
 FAIL scale with one unspecified value assert_equals: The value should be -2 -2 at 0ms expected "-2 -2" but got "-3 -3"
 FAIL scale assert_equals: The value should be 0 -1 -2 at 0ms expected "0 -1 -2" but got "-1 -2 -3"
-PASS unicode-bidi (type: discrete) has testAccumulation function
-PASS unicode-bidi: "bidi-override" onto "embed"
-PASS unicode-bidi: "embed" onto "bidi-override"
 PASS vector-effect (type: discrete) has testAccumulation function
 PASS vector-effect: "non-scaling-stroke" onto "none"
 PASS vector-effect: "none" onto "non-scaling-stroke"
@@ -575,11 +566,5 @@ FAIL word-spacing: units "rem" onto "em" assert_equals: The value should be 40px
 FAIL word-spacing: units "em" onto "rem" assert_equals: The value should be 40px at 0ms expected "40px" but got "20px"
 FAIL word-spacing: units "calc" onto "px" assert_equals: The value should be calc(30px + 20%) at 0ms expected "calc(30px + 20%)" but got "10px"
 FAIL word-spacing: calc assert_equals: The value should be calc(30px + 30%) at 0ms expected "calc(30px + 30%)" but got "0px"
-PASS will-change (type: discrete) has testAccumulation function
-PASS will-change: "contents" onto "scroll-position"
-PASS will-change: "scroll-position" onto "contents"
-PASS writing-mode (type: discrete) has testAccumulation function
-FAIL writing-mode: "sideways-rl" onto "vertical-rl" assert_equals: The value should be sideways-rl at 0ms expected "sideways-rl" but got "vertical-rl"
-PASS writing-mode: "vertical-rl" onto "sideways-rl"
 Harness: the test ran to completion.
 

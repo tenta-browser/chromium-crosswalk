@@ -20,20 +20,14 @@
         {
           "object": "LayoutBlockFlow (positioned) DIV id='container'",
           "rect": [100, 100, 200, 200],
-          "reason": "appeared"
+          "reason": "chunk appeared"
         },
         {
-          "object": "LayoutBlockFlow (positioned) DIV id='container'",
+          "object": "LayoutBlockFlow HTML",
           "rect": [100, 100, 120, 120],
-          "reason": "disappeared"
+          "reason": "chunk disappeared"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutBlockFlow DIV id='target'",
-      "reason": "geometry"
     }
   ]
 }

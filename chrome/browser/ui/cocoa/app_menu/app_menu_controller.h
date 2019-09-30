@@ -24,16 +24,15 @@ class RecentTabsMenuModelDelegate;
 @class AppMenuButtonViewController;
 class AppMenuModel;
 
-namespace app_menu_controller {
-// The vertical offset of the app menu bubbles from the app menu button.
-extern const CGFloat kAppMenuBubblePointOffsetY;
-}
-
 namespace AppMenuControllerInternal {
 class AcceleratorDelegate;
 class ToolbarActionsBarObserverHelper;
 class ZoomLevelObserver;
 }  // namespace AppMenuControllerInternal
+
+namespace ui {
+class AcceleratorProvider;
+}  // namespace ui
 
 // The App menu has a creative layout, with buttons in menu items. There is a
 // cross-platform model for this special menu, but on the Mac it's easier to
@@ -108,6 +107,8 @@ class ZoomLevelObserver;
 
 // Retuns the weak reference to the BrowserActionsController.
 - (BrowserActionsController*)browserActionsController;
+
+- (ui::AcceleratorProvider*)acceleratorProvider;
 
 @end
 

@@ -10,10 +10,10 @@
 
 namespace {
 
-const char kJsScreenPath[] = "AssistantValuePropScreen";
+constexpr char kJsScreenPath[] = "assistant.ValuePropScreen";
 
-constexpr const char kUserActionSkipPressed[] = "skip-pressed";
-constexpr const char kUserActionNextPressed[] = "next-pressed";
+constexpr char kUserActionSkipPressed[] = "skip-pressed";
+constexpr char kUserActionNextPressed[] = "next-pressed";
 
 }  // namespace
 
@@ -30,25 +30,27 @@ ValuePropScreenHandler::~ValuePropScreenHandler() = default;
 void ValuePropScreenHandler::DeclareLocalizedValues(
     ::login::LocalizedValuesBuilder* builder) {
   builder->Add("locale", g_browser_process->GetApplicationLocale());
-  builder->Add("voiceInteractionValuePropLoading",
+  // TODO(updowndota) Replace this with new string constants.
+  // Use string constant for old flow for now before we have final UX.
+  builder->Add("assistantOptinLoading",
                IDS_VOICE_INTERACTION_VALUE_PROP_LOADING);
-  builder->Add("voiceInteractionValuePropLoadErrorTitle",
+  builder->Add("assistantOptinLoadErrorTitle",
                IDS_VOICE_INTERACTION_VALUE_PROP_LOAD_ERROR_TITLE);
-  builder->Add("voiceInteractionValuePropLoadErrorMessage",
+  builder->Add("assistantOptinLoadErrorMessage",
                IDS_VOICE_INTERACTION_VALUE_PROP_LOAD_ERROR_MESSAGE);
-  builder->Add("voiceInteractionValuePropSkipButton",
+  builder->Add("assistantOptinSkipButton",
                IDS_VOICE_INTERACTION_VALUE_PROP_SKIP_BUTTON);
-  builder->Add("voiceInteractionValuePropRetryButton",
+  builder->Add("assistantOptinRetryButton",
                IDS_VOICE_INTERACTION_VALUE_PROP_RETRY_BUTTON);
-  builder->Add("voiceInteractionValuePropNextButton",
-               IDS_VOICE_INTERACTION_VALUE_PROP_NEXT_BUTTION);
-
+  builder->Add("assistantOptinOKButton", IDS_OOBE_OK_BUTTON_TEXT);
   builder->Add("back", IDS_EULA_BACK_BUTTON);
   builder->Add("next", IDS_EULA_NEXT_BUTTON);
 }
 
 void ValuePropScreenHandler::RegisterMessages() {
   AddPrefixedCallback("userActed", &ValuePropScreenHandler::HandleUserAction);
+  AddPrefixedCallback("screenShown",
+                      &ValuePropScreenHandler::HandleScreenShown);
 }
 
 void ValuePropScreenHandler::Initialize() {}
@@ -61,6 +63,10 @@ void ValuePropScreenHandler::HandleUserAction(const std::string& action) {
   else if (action == kUserActionNextPressed)
     std::move(exit_callback_)
         .Run(AssistantOptInScreenExitCode::VALUE_PROP_ACCEPTED);
+}
+
+void ValuePropScreenHandler::HandleScreenShown() {
+  RecordAssistantOptInStatus(ACTIVITY_CONTROL_SHOWN);
 }
 
 }  // namespace chromeos

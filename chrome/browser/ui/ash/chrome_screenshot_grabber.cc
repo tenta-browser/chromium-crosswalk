@@ -22,7 +22,8 @@
 #include "base/metrics/user_metrics.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/syslog_logging.h"
+#include "base/task/post_task.h"
 #include "base/threading/thread_restrictions.h"
 #include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
@@ -539,6 +540,10 @@ void ChromeScreenshotGrabber::OnScreenshotCompleted(
     return;
   }
 
+#if defined(OS_CHROMEOS)
+  SYSLOG(INFO) << "Screenshot taken";
+#endif
+
   if (drive::util::IsUnderDriveMountPoint(screenshot_path)) {
     drive::FileSystemInterface* file_system =
         drive::util::GetFileSystemByProfile(GetProfile());
@@ -686,7 +691,6 @@ void ChromeScreenshotGrabber::OnReadScreenshotFileForPreviewCompleted(
           kNotificationId,
           l10n_util::GetStringUTF16(GetScreenshotNotificationTitle(result)),
           l10n_util::GetStringUTF16(GetScreenshotNotificationText(result)),
-          gfx::Image(),
           l10n_util::GetStringUTF16(IDS_SCREENSHOT_NOTIFICATION_NOTIFIER_NAME),
           GURL(kNotificationOriginUrl),
           message_center::NotifierId(

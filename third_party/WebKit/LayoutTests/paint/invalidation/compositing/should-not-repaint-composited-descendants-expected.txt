@@ -28,27 +28,12 @@
         {
           "object": "LayoutBlockFlow (positioned) DIV id='composited-box'",
           "rect": [0, 0, 20, 70],
-          "reason": "paint property change"
-        },
-        {
-          "object": "LayoutBlockFlow (positioned) DIV id='composited-box'",
-          "rect": [0, 0, 20, 20],
-          "reason": "paint property change"
+          "reason": "full layer"
         },
         {
           "object": "LayoutBlockFlow (positioned) DIV id='composited-box'",
           "rect": [0, 0, 10, 60],
-          "reason": "full"
-        },
-        {
-          "object": "LayoutBlockFlow (positioned) DIV id='composited-box'",
-          "rect": [0, 0, 10, 60],
-          "reason": "paint property change"
-        },
-        {
-          "object": "LayoutBlockFlow (positioned) DIV id='composited-box'",
-          "rect": [0, 0, 10, 10],
-          "reason": "paint property change"
+          "reason": "full layer"
         }
       ]
     },
@@ -65,16 +50,6 @@
       "contentsOpaque": true,
       "backfaceVisibility": "hidden",
       "backgroundColor": "#008000"
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutBlockFlow (positioned) DIV id='composited-box'",
-      "reason": "subtree"
-    },
-    {
-      "object": "LayoutBlockFlow DIV class='child'",
-      "reason": "subtree"
     }
   ]
 }

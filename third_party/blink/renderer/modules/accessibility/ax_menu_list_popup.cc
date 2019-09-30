@@ -103,7 +103,7 @@ void AXMenuListPopup::AddChildren() {
   if (active_index_ == -1)
     active_index_ = GetSelectedIndex();
 
-  for (const auto& option_element : html_select_element->GetOptionList()) {
+  for (auto* const option_element : html_select_element->GetOptionList()) {
     AXMenuListOption* option = MenuListOptionAXObject(option_element);
     if (option) {
       option->SetParent(this);
@@ -148,11 +148,13 @@ void AXMenuListPopup::DidUpdateActiveOption(int option_index,
 
 void AXMenuListPopup::DidHide() {
   AXObjectCacheImpl& cache = AXObjectCache();
+  AXObject* descendant = ActiveDescendant();
   cache.PostNotification(this, AXObjectCacheImpl::kAXHide);
-  if (ActiveDescendant())
+  if (descendant) {
     cache.PostNotification(this, AXObjectCacheImpl::kAXChildrenChanged);
-    cache.PostNotification(ActiveDescendant(),
+    cache.PostNotification(descendant,
                            AXObjectCacheImpl::kAXMenuListItemUnselected);
+  }
 }
 
 void AXMenuListPopup::DidShow() {

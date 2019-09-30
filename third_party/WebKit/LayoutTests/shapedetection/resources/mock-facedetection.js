@@ -37,21 +37,40 @@ class MockFaceDetection {
         new mojo.Binding(shapeDetection.mojom.FaceDetection, this, request);
   }
 
-  detect(bitmap_data) {
-    let receivedStruct = new Uint8Array(bitmap_data.pixelData);
-    this.bufferData_ = new Uint32Array(receivedStruct.buffer);
+  detect(bitmapData) {
+    this.bufferData_ =
+        new Uint32Array(getArrayBufferFromBigBuffer(bitmapData.pixelData));
     return Promise.resolve({
       results: [
         {
           boundingBox: {x: 1.0, y: 1.0, width: 100.0, height: 100.0},
           landmarks: [{
             type: shapeDetection.mojom.LandmarkType.EYE,
-            location: {x: 4.0, y: 5.0}
+            locations: [{x: 4.0, y: 5.0}]
+          },
+          {
+            type: shapeDetection.mojom.LandmarkType.EYE,
+            locations: [
+              {x: 4.0, y: 5.0}, {x: 5.0, y: 4.0}, {x: 6.0, y: 3.0},
+              {x: 7.0, y: 4.0}, {x: 8.0, y: 5.0}, {x: 7.0, y: 6.0},
+              {x: 6.0, y: 7.0}, {x: 5.0, y: 6.0}
+            ]
           }]
         },
         {
           boundingBox: {x: 2.0, y: 2.0, width: 200.0, height: 200.0},
-          landmarks: []
+          landmarks: [{
+            type: shapeDetection.mojom.LandmarkType.NOSE,
+            locations: [{x: 100.0, y: 50.0}]
+          },
+          {
+            type: shapeDetection.mojom.LandmarkType.NOSE,
+            locations: [
+              {x: 80.0, y: 50.0}, {x: 70.0, y: 60.0}, {x: 60.0, y: 70.0},
+              {x: 70.0, y: 60.0}, {x: 80.0, y: 70.0}, {x: 90.0, y: 80.0},
+              {x: 100.0, y: 70.0}, {x: 90.0, y: 60.0}, {x: 80.0, y: 50.0}
+            ]
+          }]
         },
         {
           boundingBox: {x: 3.0, y: 3.0, width: 300.0, height: 300.0},

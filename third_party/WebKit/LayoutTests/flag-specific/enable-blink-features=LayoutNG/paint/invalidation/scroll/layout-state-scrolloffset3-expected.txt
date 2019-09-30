@@ -18,26 +18,16 @@
       "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
         {
-          "object": "NGPaintFragment",
-          "rect": [100, 124, 34, 11],
+          "object": "NGPhysicalTextFragment 'before'",
+          "rect": [100, 120, 34, 19],
           "reason": "disappeared"
         },
         {
-          "object": "NGPaintFragment",
-          "rect": [100, 124, 29, 11],
+          "object": "NGPhysicalTextFragment 'after'",
+          "rect": [100, 120, 29, 19],
           "reason": "appeared"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "NGPaintFragment",
-      "reason": "subtree"
-    },
-    {
-      "object": "NGPaintFragment",
-      "reason": "subtree"
     }
   ]
 }

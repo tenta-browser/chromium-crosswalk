@@ -7,6 +7,7 @@
 
 #include <map>
 #include <memory>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -80,6 +81,15 @@ class TranslateManager {
   static std::string GetTargetLanguage(const TranslatePrefs* prefs,
                                        language::LanguageModel* language_model);
 
+  // Returns the language to translate to using the same logic as
+  // GetTargetLanguage but doesn't returned languages contained in
+  // |skipped_languages| if |language_model| is not null and there is at least
+  // one other suitable language.
+  static std::string GetTargetLanguage(
+      const TranslatePrefs* prefs,
+      language::LanguageModel* language_model,
+      const std::set<std::string>& skipped_languages);
+
   // Returns the language to automatically translate to. |original_language| is
   // the webpage's original language.
   static std::string GetAutoTargetLanguage(const std::string& original_language,
@@ -130,6 +140,12 @@ class TranslateManager {
   // testing, set to true to offer anyway.
   static void SetIgnoreMissingKeyForTesting(bool ignore);
 
+  // Returns true if the TranslateManager is available and enabled by user
+  // preferences. It is not available for builds without API keys.
+  // blink's hrefTranslate attribute existence relies on the result.
+  // See https://github.com/dtapuska/html-translate
+  static bool IsAvailable(const TranslatePrefs* prefs);
+
   // Returns true if the decision should be overridden and logs the event
   // appropriately. |event_type| must be one of the
   // values defined by metrics::TranslateEventProto::EventType.
@@ -161,6 +177,9 @@ class TranslateManager {
   void InitTranslateEvent(const std::string& src_lang,
                           const std::string& dst_lang,
                           const TranslatePrefs& translate_prefs);
+
+  void AddTargetLanguageToAcceptLanguages(
+      const std::string& target_language_code);
 
   // Sequence number of the current page.
   int page_seq_no_;

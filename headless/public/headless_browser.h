@@ -19,6 +19,7 @@
 #include "base/optional.h"
 #include "base/time/time.h"
 #include "headless/public/headless_browser_context.h"
+#include "headless/public/headless_devtools_channel.h"
 #include "headless/public/headless_export.h"
 #include "headless/public/headless_web_contents.h"
 #include "net/base/host_port_pair.h"
@@ -57,7 +58,14 @@ class HEADLESS_EXPORT HeadlessBrowser {
   // method only returns a valid target after browser has been initialized on
   // the main thread. The target only supports the domains available on the
   // browser endpoint excluding the Tethering domain.
+  // TODO(dgozman): remove together with HeadlessDevToolsTarget.
   virtual HeadlessDevToolsTarget* GetDevToolsTarget() = 0;
+
+  // Creates a channel connected to the browser. Note that this
+  // method only returns a valid channel after browser has been initialized on
+  // the main thread. The channel only supports the domains available on the
+  // browser endpoint excluding the Tethering domain.
+  virtual std::unique_ptr<HeadlessDevToolsChannel> CreateDevToolsChannel() = 0;
 
   // Returns the HeadlessWebContents associated with the
   // |devtools_agent_host_id| if any.  Otherwise returns null.
@@ -74,10 +82,6 @@ class HEADLESS_EXPORT HeadlessBrowser {
   virtual void SetDefaultBrowserContext(
       HeadlessBrowserContext* browser_context) = 0;
   virtual HeadlessBrowserContext* GetDefaultBrowserContext() = 0;
-
-  // Returns a task runner for submitting work to the browser io thread.
-  virtual scoped_refptr<base::SingleThreadTaskRunner> BrowserIOThread()
-      const = 0;
 
   // Returns a task runner for submitting work to the browser main thread.
   virtual scoped_refptr<base::SingleThreadTaskRunner> BrowserMainThread()
@@ -148,10 +152,6 @@ struct HEADLESS_EXPORT HeadlessBrowser::Options {
   // string can be used to disable GL rendering (e.g., WebGL support).
   std::string gl_implementation;
 
-  // Names of mojo services exposed by the browser to the renderer. These
-  // services will be added to the browser's service manifest.
-  std::unordered_set<std::string> mojo_service_names;
-
   // Default per-context options, can be specialized on per-context basis.
 
   std::string product_name_and_version;
@@ -179,25 +179,12 @@ struct HEADLESS_EXPORT HeadlessBrowser::Options {
   // If true, then all pop-ups and calls to window.open will fail.
   bool block_new_web_contents = false;
 
-  // If set the renderer will be constructed with virtual time enabled and
-  // base::Time::Now will be overridden to initially return this value.
-  base::Optional<base::Time> initial_virtual_time;
-
-  // Whether cookies are allowed. Enabled by default.
-  bool allow_cookies = true;
-
   // Whether or not BeginFrames will be issued over DevTools protocol
   // (experimental).
   bool enable_begin_frame_control = false;
 
   // Whether or not all sites should have a dedicated process.
   bool site_per_process = false;
-
-  // Whether or not the net::HttpCache should be replaced with a custom one that
-  // intercepts metadata writes which are surfaced via
-  // HeadlessBrowserContext::Observer:OnMetadataForResource. The custom cache
-  // blacks holes all writes.
-  bool capture_resource_metadata = false;
 
   // Set a callback that is invoked to override WebPreferences for RenderViews
   // created within the HeadlessBrowser. Called whenever the WebPreferences of a
@@ -255,7 +242,6 @@ class HEADLESS_EXPORT HeadlessBrowser::Options::Builder {
   Builder& SetDisableSandbox(bool disable_sandbox);
   Builder& SetEnableResourceScheduler(bool enable_resource_scheduler);
   Builder& SetGLImplementation(const std::string& gl_implementation);
-  Builder& AddMojoServiceName(const std::string& mojo_service_name);
   Builder& SetAppendCommandLineFlagsCallback(
       const Options::AppendCommandLineFlagsCallback& callback);
 #if defined(OS_WIN)
@@ -277,12 +263,9 @@ class HEADLESS_EXPORT HeadlessBrowser::Options::Builder {
   Builder& SetIncognitoMode(bool incognito_mode);
   Builder& SetSitePerProcess(bool site_per_process);
   Builder& SetBlockNewWebContents(bool block_new_web_contents);
-  Builder& SetInitialVirtualTime(base::Time initial_virtual_time);
-  Builder& SetAllowCookies(bool allow_cookies);
   Builder& SetOverrideWebPreferencesCallback(
       base::RepeatingCallback<void(WebPreferences*)> callback);
   Builder& SetCrashReporterEnabled(bool enabled);
-  Builder& SetCaptureResourceMetadata(bool capture_resource_metadata);
   Builder& SetCrashDumpsDir(const base::FilePath& dir);
   Builder& SetFontRenderHinting(
       gfx::FontRenderParams::Hinting font_render_hinting);

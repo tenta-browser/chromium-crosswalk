@@ -14,7 +14,8 @@
 
 namespace blink {
 
-class StyleInheritedVariables : public RefCounted<StyleInheritedVariables> {
+class CORE_EXPORT StyleInheritedVariables
+    : public RefCounted<StyleInheritedVariables> {
  public:
   static scoped_refptr<StyleInheritedVariables> Create() {
     return base::AdoptRef(new StyleInheritedVariables());
@@ -31,6 +32,8 @@ class StyleInheritedVariables : public RefCounted<StyleInheritedVariables> {
 
   void SetVariable(const AtomicString& name,
                    scoped_refptr<CSSVariableData> value) {
+    needs_resolution_ = needs_resolution_ || value->NeedsVariableResolution() ||
+                        value->NeedsUrlResolution();
     data_.Set(name, std::move(value));
   }
   CSSVariableData* GetVariable(const AtomicString& name) const;
@@ -39,21 +42,24 @@ class StyleInheritedVariables : public RefCounted<StyleInheritedVariables> {
   void SetRegisteredVariable(const AtomicString&, const CSSValue*);
   const CSSValue* RegisteredVariable(const AtomicString&) const;
 
-  // This map will contain null pointers if variables are invalid due to
-  // cycles or referencing invalid variables without using a fallback.
-  // Note that this method is slow as a new map is constructed.
-  std::unique_ptr<HashMap<AtomicString, scoped_refptr<CSSVariableData>>>
-  GetVariables() const;
+  // Note that not all custom property names returned here necessarily have
+  // valid values, due to cycles or references to invalid variables without
+  // using a fallback.
+  HashSet<AtomicString> GetCustomPropertyNames() const;
+
+  bool NeedsResolution() const { return needs_resolution_; }
+  void ClearNeedsResolution() { needs_resolution_ = false; }
 
  private:
-  StyleInheritedVariables() : root_(nullptr) {}
+  StyleInheritedVariables() : root_(nullptr), needs_resolution_(false) {}
   StyleInheritedVariables(StyleInheritedVariables& other);
 
   friend class CSSVariableResolver;
 
   HashMap<AtomicString, scoped_refptr<CSSVariableData>> data_;
-  HashMap<AtomicString, Persistent<CSSValue>> registered_data_;
+  PersistentHeapHashMap<AtomicString, Member<CSSValue>> registered_data_;
   scoped_refptr<StyleInheritedVariables> root_;
+  bool needs_resolution_;
 };
 
 }  // namespace blink

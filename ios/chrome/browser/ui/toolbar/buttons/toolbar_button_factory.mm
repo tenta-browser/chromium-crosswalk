@@ -7,19 +7,19 @@
 #include "components/strings/grit/components_strings.h"
 #import "ios/chrome/browser/ui/commands/application_commands.h"
 #import "ios/chrome/browser/ui/commands/browser_commands.h"
-#import "ios/chrome/browser/ui/popup_menu/popup_menu_flags.h"
 #import "ios/chrome/browser/ui/rtl_geometry.h"
 #import "ios/chrome/browser/ui/toolbar/buttons/toolbar_button.h"
 #import "ios/chrome/browser/ui/toolbar/buttons/toolbar_button_visibility_configuration.h"
 #import "ios/chrome/browser/ui/toolbar/buttons/toolbar_configuration.h"
 #import "ios/chrome/browser/ui/toolbar/buttons/toolbar_constants.h"
+#import "ios/chrome/browser/ui/toolbar/buttons/toolbar_search_button.h"
 #import "ios/chrome/browser/ui/toolbar/buttons/toolbar_tab_grid_button.h"
 #import "ios/chrome/browser/ui/toolbar/buttons/toolbar_tools_menu_button.h"
+#import "ios/chrome/browser/ui/toolbar/public/features.h"
 #import "ios/chrome/browser/ui/toolbar/public/omnibox_focuser.h"
-#import "ios/chrome/browser/ui/toolbar/public/toolbar_controller_base_feature.h"
 #include "ios/chrome/browser/ui/toolbar/toolbar_resource_macros.h"
 #import "ios/chrome/browser/ui/uikit_ui_util.h"
-#import "ios/chrome/browser/ui/util/constraints_ui_util.h"
+#import "ios/chrome/common/ui_util/constraints_ui_util.h"
 #include "ios/chrome/grit/ios_strings.h"
 #include "ios/chrome/grit/ios_theme_resources.h"
 #import "ios/public/provider/chrome/browser/chrome_browser_provider.h"
@@ -41,10 +41,6 @@ typedef NS_ENUM(NSInteger, ToolbarButtonState) {
 
 // Number of style used for the buttons.
 const int styleCount = 2;
-// Omnibox background.
-const CGFloat kOmniboxBackgroundHeight = 38;
-const CGFloat kOmniboxBackgroundCornerRadius = 13;
-const CGFloat kOmniboxBackgroundAlpha = 0.05;
 }  // namespace
 
 @implementation ToolbarButtonFactory
@@ -159,6 +155,9 @@ const CGFloat kOmniboxBackgroundAlpha = 0.05;
             forControlEvents:UIControlEventTouchUpInside];
   } else {
     [tabGridButton addTarget:self.dispatcher
+                      action:@selector(prepareTabSwitcher)
+            forControlEvents:UIControlEventTouchDown];
+    [tabGridButton addTarget:self.dispatcher
                       action:@selector(displayTabSwitcher)
             forControlEvents:UIControlEventTouchUpInside];
   }
@@ -198,6 +197,9 @@ const CGFloat kOmniboxBackgroundAlpha = 0.05;
                         action:@selector(navigateToMemexTabSwitcher)
               forControlEvents:UIControlEventTouchUpInside];
   } else {
+    [stackViewButton addTarget:self.dispatcher
+                        action:@selector(prepareTabSwitcher)
+              forControlEvents:UIControlEventTouchDown];
     [stackViewButton addTarget:self.dispatcher
                         action:@selector(displayTabSwitcher)
               forControlEvents:UIControlEventTouchUpInside];
@@ -346,7 +348,7 @@ const CGFloat kOmniboxBackgroundAlpha = 0.05;
     bookmarkButton = [ToolbarButton
         toolbarButtonWithImage:[UIImage imageNamed:@"toolbar_bookmark"]];
     [bookmarkButton setImage:[UIImage imageNamed:@"toolbar_bookmark_active"]
-                    forState:UIControlStateHighlighted];
+                    forState:ControlStateSpotlighted];
     [self configureButton:bookmarkButton width:kAdaptiveToolbarButtonWidth];
   } else {
     bookmarkButton = [ToolbarButton
@@ -397,6 +399,8 @@ const CGFloat kOmniboxBackgroundAlpha = 0.05;
                                                imageNamed:collapsePressedName]
                      imageForDisabledState:nil];
   contractButton.accessibilityLabel = l10n_util::GetNSString(IDS_CANCEL);
+  contractButton.accessibilityIdentifier =
+      kToolbarCancelOmniboxEditButtonIdentifier;
   contractButton.alpha = 0;
   contractButton.hidden = YES;
   [self configureButton:contractButton width:kToolbarButtonWidth];
@@ -410,27 +414,20 @@ const CGFloat kOmniboxBackgroundAlpha = 0.05;
 }
 
 - (ToolbarButton*)omniboxButton {
-  ToolbarButton* omniboxButton = [ToolbarButton
+  ToolbarSearchButton* omniboxButton = [ToolbarSearchButton
       toolbarButtonWithImage:[UIImage imageNamed:@"toolbar_search"]];
 
   [self configureButton:omniboxButton width:kOmniboxButtonWidth];
   [omniboxButton addTarget:self.dispatcher
+                    action:@selector(closeFindInPage)
+          forControlEvents:UIControlEventTouchUpInside];
+  [omniboxButton addTarget:self.dispatcher
                     action:@selector(focusOmniboxFromSearchButton)
           forControlEvents:UIControlEventTouchUpInside];
-  omniboxButton.accessibilityIdentifier = kToolbarOmniboxButtonIdentifier;
 
-  UIView* background = [[UIView alloc] init];
-  background.translatesAutoresizingMaskIntoConstraints = NO;
-  background.userInteractionEnabled = NO;
-  background.backgroundColor =
-      [UIColor colorWithWhite:0 alpha:kOmniboxBackgroundAlpha];
-  background.layer.cornerRadius = kOmniboxBackgroundCornerRadius;
-  [omniboxButton addSubview:background];
-  AddSameCenterConstraints(omniboxButton, background);
-  [background.heightAnchor constraintEqualToConstant:kOmniboxBackgroundHeight]
-      .active = YES;
-  [background.widthAnchor constraintEqualToAnchor:omniboxButton.widthAnchor]
-      .active = YES;
+  omniboxButton.accessibilityLabel =
+      l10n_util::GetNSString(IDS_IOS_TOOLBAR_SEARCH);
+  omniboxButton.accessibilityIdentifier = kToolbarOmniboxButtonIdentifier;
 
   omniboxButton.visibilityMask =
       self.visibilityConfiguration.omniboxButtonVisibility;
@@ -460,6 +457,10 @@ const CGFloat kOmniboxBackgroundAlpha = 0.05;
 
 - (UIButton*)cancelButton {
   UIButton* cancelButton = [UIButton buttonWithType:UIButtonTypeSystem];
+  cancelButton.titleLabel.font = [UIFont systemFontOfSize:kLocationBarFontSize];
+  cancelButton.tintColor = self.style == NORMAL
+                               ? UIColorFromRGB(kLocationBarTintBlue)
+                               : [UIColor whiteColor];
   [cancelButton setTitle:l10n_util::GetNSString(IDS_CANCEL)
                 forState:UIControlStateNormal];
   [cancelButton setContentHuggingPriority:UILayoutPriorityDefaultHigh
@@ -485,13 +486,13 @@ const CGFloat kOmniboxBackgroundAlpha = 0.05;
 // there is a conflict when the buttons are hidden as the stack view is setting
 // their width to 0. Setting the priority to UILayoutPriorityDefaultHigh doesn't
 // work as they would have a lower priority than other elements.
-- (void)configureButton:(UIView*)button width:(CGFloat)width {
+- (void)configureButton:(ToolbarButton*)button width:(CGFloat)width {
   NSLayoutConstraint* constraint =
       [button.widthAnchor constraintEqualToConstant:width];
   constraint.priority = UILayoutPriorityRequired - 1;
   constraint.active = YES;
   if (IsUIRefreshPhase1Enabled()) {
-    button.tintColor = self.toolbarConfiguration.buttonsTintColor;
+    button.configuration = self.toolbarConfiguration;
   }
 }
 

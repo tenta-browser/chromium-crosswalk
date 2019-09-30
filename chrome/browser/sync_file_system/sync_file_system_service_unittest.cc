@@ -13,7 +13,7 @@
 #include "base/single_thread_task_runner.h"
 #include "base/stl_util.h"
 #include "base/synchronization/waitable_event.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/sync_file_system/local/canned_syncable_file_system.h"
 #include "chrome/browser/sync_file_system/local/local_file_sync_context.h"
@@ -85,7 +85,7 @@ void VerifyFileError(base::Closure callback,
 class MockSyncEventObserver : public SyncEventObserver {
  public:
   MockSyncEventObserver() {}
-  virtual ~MockSyncEventObserver() {}
+  ~MockSyncEventObserver() override {}
 
   MOCK_METHOD3(OnSyncStateUpdated,
                void(const GURL& app_origin,
@@ -131,7 +131,7 @@ class SyncFileSystemServiceTest : public testing::Test {
       : thread_bundle_(content::TestBrowserThreadBundle::REAL_IO_THREAD) {}
 
   void SetUp() override {
-    in_memory_env_.reset(leveldb_chrome::NewMemEnv(leveldb::Env::Default()));
+    in_memory_env_ = leveldb_chrome::NewMemEnv("SyncFileSystemServiceTest");
     file_system_.reset(new CannedSyncableFileSystem(
         GURL(kOrigin), in_memory_env_.get(),
         BrowserThread::GetTaskRunnerForThread(BrowserThread::IO),

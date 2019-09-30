@@ -10,7 +10,7 @@
 #include "third_party/blink/public/platform/web_storage_namespace.h"
 #include "third_party/blink/public/web/web_view_client.h"
 #include "third_party/blink/renderer/core/frame/content_settings_client.h"
-#include "third_party/blink/renderer/modules/storage/InspectorDOMStorageAgent.h"
+#include "third_party/blink/renderer/modules/storage/inspector_dom_storage_agent.h"
 #include "third_party/blink/renderer/modules/storage/storage_namespace.h"
 
 namespace blink {
@@ -18,9 +18,9 @@ namespace blink {
 #define STATIC_ASSERT_MATCHING_ENUM(enum_name1, enum_name2)                   \
   static_assert(static_cast<int>(enum_name1) == static_cast<int>(enum_name2), \
                 "mismatching enums: " #enum_name1)
-STATIC_ASSERT_MATCHING_ENUM(StorageArea::kLocalStorage,
+STATIC_ASSERT_MATCHING_ENUM(StorageArea::StorageType::kLocalStorage,
                             ContentSettingsClient::StorageType::kLocal);
-STATIC_ASSERT_MATCHING_ENUM(StorageArea::kSessionStorage,
+STATIC_ASSERT_MATCHING_ENUM(StorageArea::StorageType::kSessionStorage,
                             ContentSettingsClient::StorageType::kSession);
 
 const char StorageNamespaceController::kSupplementName[] =
@@ -59,7 +59,7 @@ StorageNamespaceController::CreateSessionStorageNamespace() {
           web_view_client_->GetSessionStorageNamespaceId()));
 }
 
-bool StorageNamespaceController::CanAccessStorage(
+bool StorageNamespaceController::CanAccessStorageArea(
     LocalFrame* frame,
     StorageArea::StorageType type) const {
   DCHECK(frame->GetContentSettingsClient());

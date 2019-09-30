@@ -17,25 +17,11 @@
           "reason": "full"
         },
         {
-          "object": "LayoutBlockFlow (positioned) DIV id='blockDiv'",
+          "object": "InlineTextBox 'A'",
           "rect": [90, 30, 12, 19],
           "reason": "disappeared"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutTableRow TR",
-      "reason": "style change"
-    },
-    {
-      "object": "LayoutTableCell TD id='foo'",
-      "reason": "style change"
-    },
-    {
-      "object": "LayoutBlockFlow (positioned) DIV id='blockDiv'",
-      "reason": "full"
     }
   ]
 }

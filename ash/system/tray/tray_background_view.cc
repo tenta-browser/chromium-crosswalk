@@ -7,13 +7,14 @@
 #include <algorithm>
 #include <memory>
 
-#include "ash/ash_constants.h"
 #include "ash/focus_cycler.h"
 #include "ash/login/ui/lock_screen.h"
 #include "ash/login/ui/lock_window.h"
+#include "ash/public/cpp/ash_constants.h"
 #include "ash/public/cpp/shell_window_ids.h"
 #include "ash/shelf/shelf.h"
 #include "ash/shelf/shelf_constants.h"
+#include "ash/shelf/shelf_layout_manager.h"
 #include "ash/shelf/shelf_widget.h"
 #include "ash/shell.h"
 #include "ash/system/status_area_widget.h"
@@ -22,6 +23,7 @@
 #include "ash/system/tray/tray_constants.h"
 #include "ash/system/tray/tray_container.h"
 #include "ash/system/tray/tray_event_filter.h"
+#include "ash/window_factory.h"
 #include "ash/wm/tablet_mode/tablet_mode_controller.h"
 #include "ui/accessibility/ax_node_data.h"
 #include "ui/compositor/layer.h"
@@ -66,12 +68,19 @@ void MirrorInsetsIfNecessary(gfx::Insets* insets) {
 // mirrored if RTL mode is active.
 gfx::Insets GetMirroredBackgroundInsets(bool is_shelf_horizontal) {
   gfx::Insets insets;
+  // "Primary" is the same direction as the shelf, "secondary" is orthogonal.
+  const int primary_padding =
+      chromeos::switches::ShouldUseShelfNewUi() ? 0 : ash::kHitRegionPadding;
+  const int secondary_padding =
+      chromeos::switches::ShouldUseShelfNewUi() ? -ash::kHitRegionPadding : 0;
+  const int separator_width = ash::TrayConstants::separator_width();
+
   if (is_shelf_horizontal) {
-    insets.Set(0, ash::kHitRegionPadding, 0,
-               ash::kHitRegionPadding + ash::kSeparatorWidth);
+    insets.Set(secondary_padding, primary_padding, secondary_padding,
+               primary_padding + separator_width);
   } else {
-    insets.Set(ash::kHitRegionPadding, 0,
-               ash::kHitRegionPadding + ash::kSeparatorWidth, 0);
+    insets.Set(primary_padding, secondary_padding,
+               primary_padding + separator_width, secondary_padding);
   }
   MirrorInsetsIfNecessary(&insets);
   return insets;
@@ -123,12 +132,18 @@ class TrayBackground : public views::Background {
     gfx::ScopedCanvas scoped_canvas(canvas);
     cc::PaintFlags background_flags;
     background_flags.setAntiAlias(true);
-    background_flags.setColor(color_);
+    int border_radius = kTrayRoundedBorderRadius;
+    if (chromeos::switches::ShouldUseShelfNewUi()) {
+      background_flags.setColor(kShelfControlPermanentHighlightBackground);
+      border_radius = ShelfConstants::control_border_radius();
+    } else {
+      background_flags.setColor(color_);
+    }
 
     gfx::Rect bounds = tray_background_view_->GetBackgroundBounds();
     const float dsf = canvas->UndoDeviceScaleFactor();
     canvas->DrawRoundRect(gfx::ScaleToRoundedRect(bounds, dsf),
-                          kTrayRoundedBorderRadius * dsf, background_flags);
+                          border_radius * dsf, background_flags);
   }
 
   // Reference to the TrayBackgroundView for which this is a background.
@@ -308,7 +323,7 @@ void TrayBackgroundView::GetAccessibleNodeData(ui::AXNodeData* node_data) {
   ActionableView::GetAccessibleNodeData(node_data);
   node_data->SetName(GetAccessibleNameForTray());
 
-  if (LockScreen::IsShown()) {
+  if (LockScreen::HasInstance()) {
     int next_id = views::AXAuraObjCache::GetInstance()->GetID(
         static_cast<views::Widget*>(LockScreen::Get()->window()));
     node_data->AddIntAttribute(ax::mojom::IntAttribute::kNextFocusId, next_id);
@@ -364,16 +379,18 @@ void TrayBackgroundView::PaintButtonContents(gfx::Canvas* canvas) {
   // underneath the items instead.
   const gfx::Rect local_bounds = GetLocalBounds();
   const SkColor color = SkColorSetA(SK_ColorWHITE, 0x4D);
+  const int shelf_size = ShelfConstants::shelf_size();
+  const int separator_width = ash::TrayConstants::separator_width();
 
   if (shelf_->IsHorizontalAlignment()) {
     const gfx::PointF point(
-        base::i18n::IsRTL() ? 0 : (local_bounds.width() - kSeparatorWidth),
-        (kShelfSize - kTrayItemSize) / 2);
+        base::i18n::IsRTL() ? 0 : (local_bounds.width() - separator_width),
+        (shelf_size - kTrayItemSize) / 2);
     const gfx::Vector2dF vector(0, kTrayItemSize);
     canvas->Draw1pxLine(point, point + vector, color);
   } else {
-    const gfx::PointF point((kShelfSize - kTrayItemSize) / 2,
-                            local_bounds.height() - kSeparatorWidth);
+    const gfx::PointF point((shelf_size - kTrayItemSize) / 2,
+                            local_bounds.height() - separator_width);
     const gfx::Vector2dF vector(kTrayItemSize, 0);
     canvas->Draw1pxLine(point, point + vector, color);
   }
@@ -501,7 +518,7 @@ aura::Window* TrayBackgroundView::GetBubbleWindowContainer() {
           ->IsTabletModeWindowManagerEnabled() &&
       drag_controller()) {
     if (!clipping_window_.get()) {
-      clipping_window_ = std::make_unique<aura::Window>(nullptr);
+      clipping_window_ = window_factory::NewWindow();
       clipping_window_->Init(ui::LAYER_NOT_DRAWN);
       clipping_window_->layer()->SetMasksToBounds(true);
       container->AddChild(clipping_window_.get());
@@ -538,8 +555,11 @@ gfx::Rect TrayBackgroundView::GetBackgroundBounds() const {
 
 std::unique_ptr<views::InkDropMask> TrayBackgroundView::CreateInkDropMask()
     const {
+  const int border_radius = chromeos::switches::ShouldUseShelfNewUi()
+                                ? ShelfConstants::control_border_radius()
+                                : kTrayRoundedBorderRadius;
   return std::make_unique<views::RoundRectInkDropMask>(
-      size(), GetBackgroundInsets(), kTrayRoundedBorderRadius);
+      size(), GetBackgroundInsets(), border_radius);
 }
 
 bool TrayBackgroundView::ShouldEnterPushedState(const ui::Event& event) {

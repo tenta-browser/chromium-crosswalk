@@ -1,5 +1,5 @@
 This is a testharness.js-based test.
-Found 513 tests; 329 PASS, 184 FAIL, 0 TIMEOUT, 0 NOTRUN.
+Found 515 tests; 330 PASS, 185 FAIL, 0 TIMEOUT, 0 NOTRUN.
 PASS Loading data…
 PASS Parsing: <http://example	.
 org> against <http://example.org/foo/bar>
@@ -308,6 +308,8 @@ PASS Parsing: <#> against <test:test?test>
 PASS Parsing: <https://@test@test@example:800/> against <http://doesnotmatter/>
 PASS Parsing: <https://@@@example> against <http://doesnotmatter/>
 PASS Parsing: <http://`{}:`{}@h/`{}?`{}> against <http://doesnotmatter/>
+PASS Parsing: <http://host/?'> against <about:blank>
+FAIL Parsing: <notspecial://host/?'> against <about:blank> assert_equals: host expected "host" but got ""
 PASS Parsing: </some/path> against <http://user@example.org/smth>
 PASS Parsing: <> against <http://user:pass@example.org:21/smth>
 PASS Parsing: </some/path> against <http://user:pass@example.org:21/smth>
@@ -513,13 +515,13 @@ PASS Parsing: <http://example.org/test?%23%23> against <about:blank>
 PASS Parsing: <http://example.org/test?%GH> against <about:blank>
 PASS Parsing: <http://example.org/test?a#%EF> against <about:blank>
 PASS Parsing: <http://example.org/test?a#%GH> against <about:blank>
-FAIL Parsing: <test-a.html> against <a> assert_unreached: Expected URL to fail parsing Reached unreachable code
-FAIL Parsing: <test-a-slash.html> against <a/> assert_unreached: Expected URL to fail parsing Reached unreachable code
-FAIL Parsing: <test-a-slash-slash.html> against <a//> assert_unreached: Expected URL to fail parsing Reached unreachable code
+FAIL Parsing: <a> against <about:blank> assert_equals: failure should set href to input expected "a" but got ""
+FAIL Parsing: <a/> against <about:blank> assert_equals: failure should set href to input expected "a/" but got ""
+FAIL Parsing: <a//> against <about:blank> assert_equals: failure should set href to input expected "a//" but got ""
 FAIL Parsing: <test-a-colon.html> against <a:> assert_unreached: Expected URL to fail parsing Reached unreachable code
+FAIL Parsing: <test-a-colon-b.html> against <a:b> assert_unreached: Expected URL to fail parsing Reached unreachable code
 FAIL Parsing: <test-a-colon-slash.html> against <a:/> assert_equals: href expected "a:/test-a-colon-slash.html" but got "file:///A:/test-a-colon-slash.html"
 FAIL Parsing: <test-a-colon-slash-slash.html> against <a://> assert_equals: href expected "a:///test-a-colon-slash-slash.html" but got "file:///A://test-a-colon-slash-slash.html"
-FAIL Parsing: <test-a-colon-b.html> against <a:b> assert_unreached: Expected URL to fail parsing Reached unreachable code
 FAIL Parsing: <test-a-colon-slash-b.html> against <a:/b> assert_equals: href expected "a:/test-a-colon-slash-b.html" but got "file:///A:/test-a-colon-slash-b.html"
 FAIL Parsing: <test-a-colon-slash-slash-b.html> against <a://b> assert_equals: href expected "a://b/test-a-colon-slash-slash-b.html" but got "file:///A://test-a-colon-slash-slash-b.html"
 PASS Parsing: <http://example.org/test?a#b\0c> against <about:blank>

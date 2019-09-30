@@ -192,6 +192,7 @@ base::string16 InterruptReasonStatusMessage(
       NOTREACHED();
       FALLTHROUGH;
     case download::DOWNLOAD_INTERRUPT_REASON_SERVER_NO_RANGE:
+    case download::DOWNLOAD_INTERRUPT_REASON_SERVER_CROSS_ORIGIN_REDIRECT:
     case download::DOWNLOAD_INTERRUPT_REASON_FILE_FAILED:
     case download::DOWNLOAD_INTERRUPT_REASON_FILE_HASH_MISMATCH:
       string_id = IDS_DOWNLOAD_INTERRUPTED_STATUS;
@@ -284,6 +285,7 @@ base::string16 InterruptReasonMessage(
       FALLTHROUGH;
     // fallthrough
     case download::DOWNLOAD_INTERRUPT_REASON_SERVER_NO_RANGE:
+    case download::DOWNLOAD_INTERRUPT_REASON_SERVER_CROSS_ORIGIN_REDIRECT:
     case download::DOWNLOAD_INTERRUPT_REASON_FILE_FAILED:
     case download::DOWNLOAD_INTERRUPT_REASON_FILE_HASH_MISMATCH:
       string_id = IDS_DOWNLOAD_INTERRUPTED_STATUS;
@@ -443,6 +445,7 @@ base::string16 DownloadItemModel::GetWarningText(const gfx::FontList& font_list,
     case download::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS:
     case download::DOWNLOAD_DANGER_TYPE_MAYBE_DANGEROUS_CONTENT:
     case download::DOWNLOAD_DANGER_TYPE_USER_VALIDATED:
+    case download::DOWNLOAD_DANGER_TYPE_WHITELISTED_BY_POLICY:
     case download::DOWNLOAD_DANGER_TYPE_MAX: {
       break;
     }
@@ -497,6 +500,7 @@ bool DownloadItemModel::MightBeMalicious() const {
     case download::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS:
     case download::DOWNLOAD_DANGER_TYPE_MAYBE_DANGEROUS_CONTENT:
     case download::DOWNLOAD_DANGER_TYPE_USER_VALIDATED:
+    case download::DOWNLOAD_DANGER_TYPE_WHITELISTED_BY_POLICY:
     case download::DOWNLOAD_DANGER_TYPE_MAX:
       // We shouldn't get any of these due to the IsDangerous() test above.
       NOTREACHED();
@@ -523,6 +527,7 @@ bool DownloadItemModel::IsMalicious() const {
     case download::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS:
     case download::DOWNLOAD_DANGER_TYPE_MAYBE_DANGEROUS_CONTENT:
     case download::DOWNLOAD_DANGER_TYPE_USER_VALIDATED:
+    case download::DOWNLOAD_DANGER_TYPE_WHITELISTED_BY_POLICY:
     case download::DOWNLOAD_DANGER_TYPE_MAX:
     case download::DOWNLOAD_DANGER_TYPE_DANGEROUS_FILE:
       // We shouldn't get any of these due to the MightBeMalicious() test above.

@@ -30,11 +30,10 @@ void EventSourceParser::AddBytes(const char* bytes, size_t size) {
   for (size_t i = 0; i < size && !is_stopped_; ++i) {
     // As kBOM contains neither CR nor LF, we can think BOM and the line
     // break separately.
-    if (is_recognizing_bom_ &&
-        line_.size() + (i - start) == WTF_ARRAY_LENGTH(kBOM)) {
+    if (is_recognizing_bom_ && line_.size() + (i - start) == arraysize(kBOM)) {
       Vector<char> line = line_;
       line.Append(&bytes[start], i - start);
-      DCHECK_EQ(line.size(), WTF_ARRAY_LENGTH(kBOM));
+      DCHECK_EQ(line.size(), arraysize(kBOM));
       is_recognizing_bom_ = false;
       if (memcmp(line.data(), kBOM, sizeof(kBOM)) == 0) {
         start = i;
@@ -128,7 +127,7 @@ void EventSourceParser::ParseLine() {
 }
 
 String EventSourceParser::FromUTF8(const char* bytes, size_t size) {
-  return codec_->Decode(bytes, size, WTF::kDataEOF);
+  return codec_->Decode(bytes, size, WTF::FlushBehavior::kDataEOF);
 }
 
 void EventSourceParser::Trace(blink::Visitor* visitor) {

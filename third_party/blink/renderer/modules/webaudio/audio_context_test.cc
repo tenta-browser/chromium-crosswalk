@@ -9,6 +9,7 @@
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/public/platform/web_audio_device.h"
 #include "third_party/blink/public/platform/web_audio_latency_hint.h"
+#include "third_party/blink/public/platform/web_thread.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/testing/page_test_base.h"
 #include "third_party/blink/renderer/platform/testing/testing_platform_support.h"
@@ -41,8 +42,7 @@ class AudioContextTestPlatform : public TestingPlatformSupport {
       unsigned number_of_channels,
       const WebAudioLatencyHint& latency_hint,
       WebAudioDevice::RenderCallback*,
-      const WebString& device_id,
-      const WebSecurityOrigin&) override {
+      const WebString& device_id) override {
     double buffer_size = 0;
     const double interactive_size = AudioHardwareBufferSize();
     const double balanced_size = AudioHardwareBufferSize() * 2;
@@ -88,9 +88,7 @@ class AudioContextTest : public PageTestBase {
   AudioContextTest() :
       platform_(new ScopedTestingPlatformSupport<AudioContextTestPlatform>) {}
 
-  ~AudioContextTest() {
-    platform_.reset();
-  }
+  ~AudioContextTest() override { platform_.reset(); }
 
   void SetUp() override { PageTestBase::SetUp(IntSize()); }
 

@@ -90,6 +90,9 @@ AXObject* AccessibilityMediaControl::Create(
     case kMediaOverflowList:
     case kMediaDownloadButton:
     case kMediaScrubbingMessage:
+    case kMediaEnterPictureInPictureButton:
+    case kMediaExitPictureInPictureButton:
+    case kMediaDisplayCutoutFullscreenButton:
       return new AccessibilityMediaControl(layout_object, ax_object_cache);
   }
 
@@ -171,6 +174,15 @@ String AccessibilityMediaControl::TextAlternative(
     case kMediaOverflowList:
     case kMediaScrubbingMessage:
       return QueryString(WebLocalizedString::kAXMediaDefault);
+    case kMediaEnterPictureInPictureButton:
+      return QueryString(
+          WebLocalizedString::kAXMediaEnterPictureInPictureButton);
+    case kMediaExitPictureInPictureButton:
+      return QueryString(
+          WebLocalizedString::kAXMediaExitPictureInPictureButton);
+    case kMediaDisplayCutoutFullscreenButton:
+      return QueryString(
+          WebLocalizedString::kAXMediaDisplayCutoutFullscreenButton);
     case kMediaSlider:
       NOTREACHED();
       return QueryString(WebLocalizedString::kAXMediaDefault);
@@ -215,6 +227,15 @@ String AccessibilityMediaControl::Description(
       return QueryString(WebLocalizedString::kAXMediaCastOnButtonHelp);
     case kMediaOverflowButton:
       return QueryString(WebLocalizedString::kAXMediaOverflowButtonHelp);
+    case kMediaEnterPictureInPictureButton:
+      return QueryString(
+          WebLocalizedString::kAXMediaEnterPictureInPictureButtonHelp);
+    case kMediaExitPictureInPictureButton:
+      return QueryString(
+          WebLocalizedString::kAXMediaExitPictureInPictureButtonHelp);
+    case kMediaDisplayCutoutFullscreenButton:
+      return QueryString(
+          WebLocalizedString::kAXMediaDisplayCutoutFullscreenButtonHelp);
     case kMediaSliderThumb:
     case kMediaTextTrackList:
     case kMediaTimelineContainer:
@@ -262,6 +283,9 @@ AccessibilityRole AccessibilityMediaControl::RoleValue() const {
     case kMediaDownloadButton:
     case kMediaCastOnButton:
     case kMediaCastOffButton:
+    case kMediaEnterPictureInPictureButton:
+    case kMediaExitPictureInPictureButton:
+    case kMediaDisplayCutoutFullscreenButton:
       return kButtonRole;
 
     case kMediaTimelineContainer:

@@ -57,7 +57,7 @@ base::FilePath PackCRXInTempDir(base::ScopedTempDir* temp_dir,
   base::FilePath crx_path = temp_dir->GetPath().AppendASCII("temp.crx");
 
   base::FilePath test_data;
-  EXPECT_TRUE(PathService::Get(chrome::DIR_TEST_DATA, &test_data));
+  EXPECT_TRUE(base::PathService::Get(chrome::DIR_TEST_DATA, &test_data));
   test_data = test_data.AppendASCII("extensions");
 
   base::FilePath dir_path = test_data.AppendASCII(extension_folder);
@@ -93,7 +93,7 @@ void GlobalErrorBubbleTest::ShowUi(const std::string& name) {
         return content::Details<GlobalError>(details).ptr()->HasBubbleView();
       }));
   Profile* profile = browser()->profile();
-  ExtensionService* extension_service =
+  extensions::ExtensionService* extension_service =
       extensions::ExtensionSystem::Get(profile)->extension_service();
   extensions::ExtensionRegistry* extension_registry =
       extensions::ExtensionRegistry::Get(profile);

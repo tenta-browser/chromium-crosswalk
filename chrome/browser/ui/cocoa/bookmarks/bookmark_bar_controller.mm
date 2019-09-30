@@ -33,15 +33,14 @@
 #import "chrome/browser/ui/cocoa/bookmarks/bookmark_bar_folder_controller.h"
 #import "chrome/browser/ui/cocoa/bookmarks/bookmark_bar_folder_window.h"
 #import "chrome/browser/ui/cocoa/bookmarks/bookmark_bar_toolbar_view.h"
+#import "chrome/browser/ui/cocoa/bookmarks/bookmark_bar_util.h"
 #import "chrome/browser/ui/cocoa/bookmarks/bookmark_bar_view_cocoa.h"
 #import "chrome/browser/ui/cocoa/bookmarks/bookmark_button.h"
 #import "chrome/browser/ui/cocoa/bookmarks/bookmark_button_cell.h"
 #import "chrome/browser/ui/cocoa/bookmarks/bookmark_context_menu_cocoa_controller.h"
-#import "chrome/browser/ui/cocoa/bookmarks/bookmark_editor_controller.h"
 #import "chrome/browser/ui/cocoa/bookmarks/bookmark_folder_target.h"
 #import "chrome/browser/ui/cocoa/bookmarks/bookmark_menu_cocoa_controller.h"
 #import "chrome/browser/ui/cocoa/bookmarks/bookmark_model_observer_for_cocoa.h"
-#import "chrome/browser/ui/cocoa/bookmarks/bookmark_name_folder_controller.h"
 #import "chrome/browser/ui/cocoa/browser_window_controller.h"
 #import "chrome/browser/ui/cocoa/l10n_util.h"
 #import "chrome/browser/ui/cocoa/menu_button.h"
@@ -79,6 +78,7 @@
 #include "ui/gfx/paint_vector_icon.h"
 
 using base::UserMetricsAction;
+using bookmarks::bookmark_bar_util::ValueInRangeInclusive;
 using bookmarks::BookmarkBarLayout;
 using bookmarks::BookmarkModel;
 using bookmarks::BookmarkNode;
@@ -189,7 +189,7 @@ void RecordAppLaunch(Profile* profile, GURL url) {
 }
 
 CGFloat GetBookmarkButtonHeightMinusPadding() {
-  return GetLayoutConstant(BOOKMARK_BAR_HEIGHT) -
+  return GetCocoaLayoutConstant(BOOKMARK_BAR_HEIGHT) -
          bookmarks::kBookmarkVerticalPadding * 2;
 }
 
@@ -333,7 +333,7 @@ bool operator!=(const BookmarkBarLayout& lhs, const BookmarkBarLayout& rhs) {
   [[self controlledView] setController:self];
   [[self controlledView] setDelegate:self];
 
-  buttonView_.reset([[BookmarkBarView alloc]
+  buttonView_.reset([[BookmarkBarViewCocoa alloc]
       initWithController:self
                    frame:NSMakeRect(0, -2, 584, 144)]);
   [buttonView_ setAutoresizingMask:NSViewWidthSizable | NSViewMaxXMargin];
@@ -386,7 +386,7 @@ bool operator!=(const BookmarkBarLayout& lhs, const BookmarkBarLayout& rhs) {
 
   [pulsingButton_ setPulseIsStuckOn:YES];
   pulsingBookmarkObserver_.reset(
-      new BookmarkModelObserverForCocoa(bookmarkModel_, ^() {
+      new BookmarkModelObserverForCocoa(bookmarkModel_, ^{
         // Stop pulsing if anything happened to the node.
         [self stopPulsingBookmarkNode];
       }));
@@ -500,7 +500,7 @@ bool operator!=(const BookmarkBarLayout& lhs, const BookmarkBarLayout& rhs) {
                                       bookmarkModel_));
 }
 
-// Called by our main view (a BookmarkBarView) when it gets moved to a
+// Called by our main view (a BookmarkBarViewCocoa) when it gets moved to a
 // window.  We perform operations which need to know the relevant
 // window (e.g. watch for a window close) so they can't be performed
 // earlier (such as in awakeFromNib).
@@ -571,7 +571,7 @@ bool operator!=(const BookmarkBarLayout& lhs, const BookmarkBarLayout& rhs) {
   // The state of our morph (if any); 1 is total bubble, 0 is the regular bar.
   CGFloat morph = [self detachedMorphProgress];
   CGFloat padding = 0;
-  padding = GetLayoutConstant(BOOKMARK_BAR_NTP_PADDING);
+  padding = GetCocoaLayoutConstant(BOOKMARK_BAR_NTP_PADDING);
   buttonViewFrame =
       NSInsetRect(buttonViewFrame, morph * padding, morph * padding);
   [buttonView_ setFrame:buttonViewFrame];
@@ -952,10 +952,10 @@ bool operator!=(const BookmarkBarLayout& lhs, const BookmarkBarLayout& rhs) {
     [view setHidden:NO];
     // Height takes into account the extra height we have since the toolbar
     // only compresses when we're done.
-    [view
-        animateToNewHeight:(GetLayoutConstant(BOOKMARK_BAR_HEIGHT_NO_OVERLAP) -
-                            bookmarks::kBookmarkBarOverlap)
-                  duration:kBookmarkBarAnimationDuration];
+    [view animateToNewHeight:(GetCocoaLayoutConstant(
+                                  BOOKMARK_BAR_HEIGHT_NO_OVERLAP) -
+                              bookmarks::kBookmarkBarOverlap)
+                    duration:kBookmarkBarAnimationDuration];
   } else if ([self isAnimatingFromState:BookmarkBar::SHOW
                                 toState:BookmarkBar::HIDDEN]) {
     [view setShowsDivider:YES];
@@ -966,7 +966,7 @@ bool operator!=(const BookmarkBarLayout& lhs, const BookmarkBarLayout& rhs) {
                                 toState:BookmarkBar::DETACHED]) {
     [view setShowsDivider:YES];
     [view setHidden:NO];
-    [view animateToNewHeight:GetLayoutConstant(BOOKMARK_BAR_NTP_HEIGHT)
+    [view animateToNewHeight:GetCocoaLayoutConstant(BOOKMARK_BAR_NTP_HEIGHT)
                     duration:kBookmarkBarAnimationDuration];
   } else if ([self isAnimatingFromState:BookmarkBar::DETACHED
                                 toState:BookmarkBar::SHOW]) {
@@ -974,10 +974,10 @@ bool operator!=(const BookmarkBarLayout& lhs, const BookmarkBarLayout& rhs) {
     [view setHidden:NO];
     // Height takes into account the extra height we have since the toolbar
     // only compresses when we're done.
-    [view
-        animateToNewHeight:(GetLayoutConstant(BOOKMARK_BAR_HEIGHT_NO_OVERLAP) -
-                            bookmarks::kBookmarkBarOverlap)
-                  duration:kBookmarkBarAnimationDuration];
+    [view animateToNewHeight:(GetCocoaLayoutConstant(
+                                  BOOKMARK_BAR_HEIGHT_NO_OVERLAP) -
+                              bookmarks::kBookmarkBarOverlap)
+                    duration:kBookmarkBarAnimationDuration];
   } else {
     // Oops! An animation we don't know how to handle.
     return NO;
@@ -1003,9 +1003,9 @@ bool operator!=(const BookmarkBarLayout& lhs, const BookmarkBarLayout& rhs) {
 
   switch (currentState_) {
     case BookmarkBar::SHOW:
-      return GetLayoutConstant(BOOKMARK_BAR_HEIGHT_NO_OVERLAP);
+      return GetCocoaLayoutConstant(BOOKMARK_BAR_HEIGHT_NO_OVERLAP);
     case BookmarkBar::DETACHED:
-      return GetLayoutConstant(BOOKMARK_BAR_NTP_HEIGHT);
+      return GetCocoaLayoutConstant(BOOKMARK_BAR_NTP_HEIGHT);
     case BookmarkBar::HIDDEN:
       return 0;
   }
@@ -1381,7 +1381,7 @@ bool operator!=(const BookmarkBarLayout& lhs, const BookmarkBarLayout& rhs) {
 
 #pragma mark Private Methods Exposed for Testing
 
-- (BookmarkBarView*)buttonView {
+- (BookmarkBarViewCocoa*)buttonView {
   return buttonView_;
 }
 
@@ -1528,11 +1528,6 @@ bool operator!=(const BookmarkBarLayout& lhs, const BookmarkBarLayout& rhs) {
 }
 
 #pragma mark Drag & Drop
-
-// Find something like std::is_between<T>?  I can't believe one doesn't exist.
-static BOOL ValueInRangeInclusive(CGFloat low, CGFloat value, CGFloat high) {
-  return ((value >= low) && (value <= high));
-}
 
 // Return the proposed drop target for a hover open button from the
 // given array, or nil if none.  We use this for distinguishing
@@ -1999,7 +1994,7 @@ static BOOL ValueInRangeInclusive(CGFloat low, CGFloat value, CGFloat high) {
   }
   hasInsertionPos_ = NO;
   BookmarkButton* draggedButton = [BookmarkButton draggedButton];
-  if (!draggedButton) {
+  if (!draggedButton || [draggedButton bookmarkNode] == nullptr) {
     [self applyLayout:layout_ animated:YES];
     return;
   }
@@ -2046,7 +2041,7 @@ static BOOL ValueInRangeInclusive(CGFloat low, CGFloat value, CGFloat high) {
   // Make sure there are no stale pointers in the pasteboard.  This
   // can be important if a bookmark is deleted (via bookmark sync)
   // while in the middle of a drag.  The "drag completed" code
-  // (e.g. [BookmarkBarView performDragOperationForBookmarkButton:]) is
+  // (e.g. [BookmarkBarViewCocoa performDragOperationForBookmarkButton:]) is
   // careful enough to bail if there is no data found at "drop" time.
   [[NSPasteboard pasteboardWithName:NSDragPboard] clearContents];
 

@@ -14,9 +14,11 @@
 namespace blink {
 
 AnimationWorkletProxyClientImpl::AnimationWorkletProxyClientImpl(
+    int scope_id,
     base::WeakPtr<CompositorMutatorImpl> mutator,
     scoped_refptr<base::SingleThreadTaskRunner> mutator_runner)
-    : mutator_(std::move(mutator)),
+    : scope_id_(scope_id),
+      mutator_(std::move(mutator)),
       mutator_runner_(std::move(mutator_runner)),
       state_(RunState::kUninitialized) {
   DCHECK(IsMainThread());
@@ -37,7 +39,7 @@ void AnimationWorkletProxyClientImpl::SetGlobalScope(
 
   global_scope_ = static_cast<AnimationWorkletGlobalScope*>(global_scope);
   // TODO(majidvp): Add an AnimationWorklet task type when the spec is final.
-  scoped_refptr<base::SingleThreadTaskRunner> global_runner_ =
+  scoped_refptr<base::SingleThreadTaskRunner> global_scope_runner =
       global_scope_->GetThread()->GetTaskRunner(TaskType::kMiscPlatformAPI);
   state_ = RunState::kWorking;
   DCHECK(mutator_runner_);
@@ -45,52 +47,62 @@ void AnimationWorkletProxyClientImpl::SetGlobalScope(
       *mutator_runner_, FROM_HERE,
       CrossThreadBind(&CompositorMutatorImpl::RegisterCompositorAnimator,
                       mutator_, WrapCrossThreadPersistent(this),
-                      global_runner_));
+                      global_scope_runner));
 }
 
 void AnimationWorkletProxyClientImpl::Dispose() {
-  // At worklet scope termination break the reference to theClient from
-  // the comositor if it is still alive.
-  DCHECK(mutator_runner_);
-  PostCrossThreadTask(
-      *mutator_runner_, FROM_HERE,
-      CrossThreadBind(&CompositorMutatorImpl::UnregisterCompositorAnimator,
-                      mutator_, WrapCrossThreadPersistent(this)));
+  if (state_ == RunState::kWorking) {
+    // At worklet scope termination break the reference to the Client from
+    // the compositor if it is still alive.
+    DCHECK(mutator_runner_);
+    PostCrossThreadTask(
+        *mutator_runner_, FROM_HERE,
+        CrossThreadBind(&CompositorMutatorImpl::UnregisterCompositorAnimator,
+                        mutator_, WrapCrossThreadPersistent(this)));
+
+    DCHECK(global_scope_);
+    DCHECK(global_scope_->IsContextThread());
+
+    // At worklet scope termination break the reference cycle between
+    // AnimationWorkletGlobalScope and AnimationWorkletProxyClientImpl.
+    global_scope_ = nullptr;
+  }
+
   mutator_runner_ = nullptr;
   DCHECK(state_ != RunState::kDisposed);
   state_ = RunState::kDisposed;
-
-  DCHECK(global_scope_);
-  DCHECK(global_scope_->IsContextThread());
-
-  // At worklet scope termination break the reference cycle between
-  // AnimationWorkletGlobalScope and AnimationWorkletProxyClientImpl.
-  global_scope_ = nullptr;
 }
 
-std::unique_ptr<CompositorMutatorOutputState>
-AnimationWorkletProxyClientImpl::Mutate(
-    const CompositorMutatorInputState& input_state) {
+std::unique_ptr<AnimationWorkletOutput> AnimationWorkletProxyClientImpl::Mutate(
+    std::unique_ptr<AnimationWorkletInput> input) {
+  DCHECK(input);
+#if DCHECK_IS_ON()
+  DCHECK(input->ValidateScope(scope_id_))
+      << "Input has state that does not belong to this global scope: "
+      << scope_id_;
+#endif
+
   if (!global_scope_)
     return nullptr;
 
-  auto output_state = global_scope_->Mutate(input_state);
+  auto output = global_scope_->Mutate(*input);
 
   // TODO(petermayo): https://crbug.com/791280 PostCrossThreadTask to supply
   // this rather than return it.
-  return output_state;
+  return output;
 }
 
 // static
 AnimationWorkletProxyClientImpl* AnimationWorkletProxyClientImpl::FromDocument(
-    Document* document) {
+    Document* document,
+    int scope_id) {
   WebLocalFrameImpl* local_frame =
       WebLocalFrameImpl::FromFrame(document->GetFrame());
   scoped_refptr<base::SingleThreadTaskRunner> mutator_queue;
   base::WeakPtr<CompositorMutatorImpl> mutator =
       local_frame->LocalRootFrameWidget()->EnsureCompositorMutator(
           &mutator_queue);
-  return new AnimationWorkletProxyClientImpl(std::move(mutator),
+  return new AnimationWorkletProxyClientImpl(scope_id, std::move(mutator),
                                              std::move(mutator_queue));
 }
 

@@ -21,7 +21,7 @@
 #include "base/command_line.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/message_loop/message_loop.h"
-#include "mojo/edk/embedder/embedder.h"
+#include "mojo/core/embedder/embedder.h"
 #include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/renderer/platform/image-decoders/image_decoder.h"
 #include "third_party/blink/renderer/platform/shared_buffer.h"
@@ -72,8 +72,10 @@ void DecodeFailure(ImageMeta* image) {
 }
 
 void DecodeImageData(SharedBuffer* data, ImageMeta* image) {
+  const bool data_complete = true;
   std::unique_ptr<ImageDecoder> decoder = ImageDecoder::Create(
-      data, true, ImageDecoder::kAlphaPremultiplied, ColorBehavior::Ignore());
+      data, data_complete, ImageDecoder::kAlphaPremultiplied,
+      ImageDecoder::kDefaultBitDepth, ColorBehavior::Ignore());
 
   auto start = CurrentTimeTicks();
 
@@ -126,7 +128,8 @@ int ImageDecodeBenchMain(int argc, char* argv[]) {
   // has a protected constructor.
 
   class WebPlatform : public Platform {};
-  Platform::Initialize(new WebPlatform());
+  std::unique_ptr<WebPlatform> platform(new WebPlatform());
+  Platform::Initialize(platform.get(), platform->CurrentThread());
 
   // Read entire file content into |data| (a contiguous block of memory) then
   // decode it to verify the image and record its ImageMeta data.
@@ -155,6 +158,6 @@ int ImageDecodeBenchMain(int argc, char* argv[]) {
 
 int main(int argc, char* argv[]) {
   base::MessageLoop message_loop;
-  mojo::edk::Init();
+  mojo::core::Init();
   return blink::ImageDecodeBenchMain(argc, argv);
 }

@@ -13,7 +13,7 @@ import sys
 import tarfile
 import tempfile
 
-SDK_HASH_FILE = os.path.join(os.path.dirname(__file__), 'sdk.sha1')
+from common import GetHostOsFromPlatform, GetHostArchFromPlatform
 
 REPOSITORY_ROOT = os.path.abspath(os.path.join(
     os.path.dirname(__file__), '..', '..'))
@@ -23,6 +23,14 @@ import find_depot_tools
 
 SDK_SUBDIRS = ["arch", "pkg", "qemu", "sysroot", "target",
                "toolchain_libs", "tools"]
+
+def GetSdkHashForPlatform():
+  filename = '{platform}.sdk.sha1'.format(platform =  GetHostOsFromPlatform())
+  return os.path.join(os.path.dirname(__file__), filename)
+
+def GetBucketForPlatform():
+  return 'gs://fuchsia/sdk/{platform}-amd64/'.format(
+      platform = GetHostOsFromPlatform())
 
 
 def EnsureDirExists(path):
@@ -43,6 +51,16 @@ def Cleanup(path):
     os.remove(hash_file)
 
 
+# Updates the modification timestamps of |path| and its contents to the
+# current time.
+def UpdateTimestampsRecursive(path):
+  for root, dirs, files in os.walk(path):
+    for f in files:
+      os.utime(os.path.join(root, f), None)
+    for d in dirs:
+      os.utime(os.path.join(root, d), None)
+
+
 def main():
   if len(sys.argv) != 1:
     print >>sys.stderr, 'usage: %s' % sys.argv[0]
@@ -53,11 +71,12 @@ def main():
   # there.
   Cleanup(os.path.join(REPOSITORY_ROOT, 'third_party', 'fuchsia-sdk'))
 
-  with open(SDK_HASH_FILE, 'r') as f:
+  hash_file = GetSdkHashForPlatform()
+  with open(hash_file, 'r') as f:
     sdk_hash = f.read().strip()
 
   if not sdk_hash:
-    print >>sys.stderr, 'No SHA1 found in %s' % SDK_HASH_FILE
+    print >>sys.stderr, 'No SHA1 found in %s' % hash_file
     return 1
 
   output_dir = os.path.join(REPOSITORY_ROOT, 'third_party', 'fuchsia-sdk',
@@ -79,9 +98,8 @@ def main():
   os.close(fd)
 
   try:
-    bucket = 'gs://fuchsia/sdk/linux-amd64/'
     cmd = [os.path.join(find_depot_tools.DEPOT_TOOLS_PATH, 'gsutil.py'),
-           'cp', bucket + sdk_hash, tmp]
+           'cp', GetBucketForPlatform() + sdk_hash, tmp]
     subprocess.check_call(cmd)
     with open(tmp, 'rb') as f:
       EnsureDirExists(output_dir)
@@ -91,6 +109,8 @@ def main():
 
   with open(hash_filename, 'w') as f:
     f.write(sdk_hash)
+
+  UpdateTimestampsRecursive(output_dir)
 
   return 0
 

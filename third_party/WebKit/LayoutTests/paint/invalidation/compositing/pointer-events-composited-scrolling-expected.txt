@@ -25,12 +25,7 @@
         {
           "object": "LayoutBlockFlow DIV id='target'",
           "rect": [0, 0, 100, 100],
-          "reason": "full"
-        },
-        {
-          "object": "LayoutBlockFlow DIV id='target'",
-          "rect": [0, 30, 50, 50],
-          "reason": "appeared"
+          "reason": "full layer"
         }
       ]
     },
@@ -49,24 +44,6 @@
       "name": "Vertical Scrollbar Layer",
       "position": [108, 8],
       "bounds": [0, 100]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutBlockFlow DIV id='target'",
-      "reason": "compositing update"
-    },
-    {
-      "object": "LayoutBlockFlow DIV id='target'",
-      "reason": "geometry"
-    },
-    {
-      "object": "LayoutBlockFlow DIV id='target'",
-      "reason": "geometry"
-    },
-    {
-      "object": "LayoutBlockFlow DIV id='content'",
-      "reason": "compositing update"
     }
   ]
 }

@@ -89,19 +89,17 @@ UserSwitchAnimatorChromeOS::UserSwitchAnimatorChromeOS(
       animation_step_(ANIMATION_STEP_HIDE_OLD_USER),
       screen_cover_(GetScreenCover(NULL)),
       windows_by_account_id_() {
-  ash::Shell::Get()->app_list_controller()->DismissAppList();
   BuildUserToWindowsListMap();
   AdvanceUserTransitionAnimation();
 
   if (!animation_speed_ms_) {
     FinalizeAnimation();
   } else {
-    user_changed_animation_timer_.reset(new base::Timer(
+    user_changed_animation_timer_.reset(new base::RepeatingTimer());
+    user_changed_animation_timer_->Start(
         FROM_HERE, base::TimeDelta::FromMilliseconds(animation_speed_ms_),
         base::Bind(&UserSwitchAnimatorChromeOS::AdvanceUserTransitionAnimation,
-                   base::Unretained(this)),
-        true));
-    user_changed_animation_timer_->Reset();
+                   base::Unretained(this)));
   }
 }
 

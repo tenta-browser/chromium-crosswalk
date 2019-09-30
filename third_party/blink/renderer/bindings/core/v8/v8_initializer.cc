@@ -28,6 +28,9 @@
 #include <memory>
 
 #include "base/memory/scoped_refptr.h"
+#include "base/metrics/histogram_macros.h"
+#include "services/metrics/public/cpp/ukm_builders.h"
+#include "services/metrics/public/cpp/ukm_recorder.h"
 #include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/public/platform/web_thread.h"
 #include "third_party/blink/renderer/bindings/core/v8/binding_security.h"
@@ -49,29 +52,32 @@
 #include "third_party/blink/renderer/bindings/core/v8/v8_wasm_response_extensions.h"
 #include "third_party/blink/renderer/bindings/core/v8/worker_or_worklet_script_controller.h"
 #include "third_party/blink/renderer/core/dom/document.h"
+#include "third_party/blink/renderer/core/dom/events/event_dispatch_forbidden_scope.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
 #include "third_party/blink/renderer/core/frame/csp/content_security_policy.h"
 #include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/inspector/console_message.h"
 #include "third_party/blink/renderer/core/inspector/main_thread_debugger.h"
+#include "third_party/blink/renderer/core/origin_trials/origin_trials.h"
+#include "third_party/blink/renderer/core/page/page.h"
 #include "third_party/blink/renderer/core/script/modulator.h"
 #include "third_party/blink/renderer/core/workers/worker_global_scope.h"
 #include "third_party/blink/renderer/platform/bindings/dom_wrapper_world.h"
-#include "third_party/blink/renderer/platform/bindings/script_wrappable_marking_visitor.h"
 #include "third_party/blink/renderer/platform/bindings/v8_per_context_data.h"
 #include "third_party/blink/renderer/platform/bindings/v8_private_property.h"
-#include "third_party/blink/renderer/platform/event_dispatch_forbidden_scope.h"
 #include "third_party/blink/renderer/platform/instrumentation/tracing/trace_event.h"
 #include "third_party/blink/renderer/platform/loader/fetch/access_control_status.h"
 #include "third_party/blink/renderer/platform/runtime_enabled_features.h"
-#include "third_party/blink/renderer/platform/scheduler/child/web_scheduler.h"
+#include "third_party/blink/renderer/platform/scheduler/public/thread_scheduler.h"
 #include "third_party/blink/renderer/platform/weborigin/kurl.h"
 #include "third_party/blink/renderer/platform/weborigin/security_violation_reporting_policy.h"
 #include "third_party/blink/renderer/platform/wtf/address_sanitizer.h"
 #include "third_party/blink/renderer/platform/wtf/assertions.h"
+#include "third_party/blink/renderer/platform/wtf/stack_util.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 #include "third_party/blink/renderer/platform/wtf/typed_arrays/array_buffer_contents.h"
 #include "v8/include/v8-profiler.h"
+#include "v8/include/v8.h"
 
 namespace blink {
 
@@ -85,6 +91,107 @@ static void ReportOOMErrorInMainThread(const char* location, bool is_js_heap) {
   DVLOG(1) << "V8 " << (is_js_heap ? "javascript" : "process") << " OOM: ("
            << location << ").";
   OOM_CRASH();
+}
+
+namespace {
+
+// Set to BloatedRendererDetector::OnNearV8HeapLimitOnMainThread during startup.
+static NearV8HeapLimitCallback g_near_heap_limit_on_main_thread_callback_ =
+    nullptr;
+
+void Record(NearV8HeapLimitHandling handling,
+            v8::Isolate* isolate,
+            size_t heap_limit,
+            ukm::UkmRecorder* ukm_recorder,
+            int64_t ukm_source_id) {
+  UMA_HISTOGRAM_ENUMERATION("BloatedRenderer.V8.NearV8HeapLimitHandling",
+                            handling);
+  if (ukm_recorder) {
+    // Record size metrics in MB similar to Memory.Experimental.Renderer2.V8.
+    const size_t kMB = 1024 * 1024;
+    v8::HeapStatistics heap_statistics;
+    isolate->GetHeapStatistics(&heap_statistics);
+    ukm::builders::BloatedRenderer(ukm_source_id)
+        .SetV8_NearV8HeapLimitHandling(static_cast<int64_t>(handling))
+        .SetV8_Heap(heap_statistics.total_physical_size() / kMB)
+        .SetV8_Heap_AllocatedObjects(heap_statistics.used_heap_size() / kMB)
+        .SetV8_Heap_Limit(heap_limit / kMB)
+        .Record(ukm_recorder);
+  }
+}
+
+size_t IncreaseV8HeapLimit(size_t v8_heap_limit) {
+  // The heap limit for a bloated page should be increased to avoid immediate
+  // OOM crash. The exact amount is not important, it should be sufficiently
+  // large to give enough time for the browser process to reload the page.
+  // Increase the heap limit by 25%.
+  return v8_heap_limit + v8_heap_limit / 4;
+}
+
+size_t NearHeapLimitCallbackOnMainThread(void* data,
+                                         size_t current_heap_limit,
+                                         size_t initial_heap_limit) {
+  v8::Isolate* isolate = reinterpret_cast<v8::Isolate*>(data);
+  V8PerIsolateData* per_isolate_data = V8PerIsolateData::From(isolate);
+  if (per_isolate_data->IsNearV8HeapLimitHandled()) {
+    // Ignore all calls after the first one.
+    return current_heap_limit;
+  }
+  per_isolate_data->HandledNearV8HeapLimit();
+
+  // Find the main document for UKM recording.
+  Document* document = nullptr;
+  int pages = 0;
+  for (Page* page : Page::OrdinaryPages()) {
+    if (page->MainFrame()->IsLocalFrame()) {
+      ++pages;
+      document = ToLocalFrame(page->MainFrame())->GetDocument();
+    }
+  }
+  ukm::UkmRecorder* ukm_recorder = nullptr;
+  int64_t ukm_source_id = 0;
+  // Do not record UKM if there are multiple pages as we cannot attribute
+  // the heap size to a specific page.
+  if (pages == 1 && document) {
+    ukm_recorder = document->UkmRecorder();
+    ukm_source_id = document->UkmSourceID();
+  }
+
+  if (current_heap_limit != initial_heap_limit) {
+    Record(NearV8HeapLimitHandling::kIgnoredDueToChangedHeapLimit, isolate,
+           current_heap_limit, ukm_recorder, ukm_source_id);
+    return current_heap_limit;
+  }
+
+  NearV8HeapLimitHandling handling =
+      g_near_heap_limit_on_main_thread_callback_();
+  Record(handling, isolate, current_heap_limit, ukm_recorder, ukm_source_id);
+  return (handling == NearV8HeapLimitHandling::kForwardedToBrowser)
+             ? IncreaseV8HeapLimit(current_heap_limit)
+             : current_heap_limit;
+}
+
+size_t NearHeapLimitCallbackOnWorkerThread(void* data,
+                                           size_t current_heap_limit,
+                                           size_t initial_heap_limit) {
+  v8::Isolate* isolate = reinterpret_cast<v8::Isolate*>(data);
+  V8PerIsolateData* per_isolate_data = V8PerIsolateData::From(isolate);
+  if (per_isolate_data->IsNearV8HeapLimitHandled()) {
+    // Ignore all calls after the first one.
+    return current_heap_limit;
+  }
+  per_isolate_data->HandledNearV8HeapLimit();
+  // Do not record UKM on worker thread.
+  Record(NearV8HeapLimitHandling::kIgnoredDueToWorker, isolate,
+         current_heap_limit, nullptr, 0);
+  return current_heap_limit;
+}
+
+}  // anonymous namespace
+
+void V8Initializer::SetNearV8HeapLimitOnMainThreadCallback(
+    NearV8HeapLimitCallback callback) {
+  g_near_heap_limit_on_main_thread_callback_ = callback;
 }
 
 static String ExtractMessageForConsole(v8::Isolate* isolate,
@@ -246,9 +353,13 @@ static void PromiseRejectHandler(v8::PromiseRejectMessage data,
   if (data.GetEvent() == v8::kPromiseHandlerAddedAfterReject) {
     rejected_promises.HandlerAdded(data);
     return;
+  } else if (data.GetEvent() == v8::kPromiseRejectAfterResolved ||
+             data.GetEvent() == v8::kPromiseResolveAfterResolved) {
+    // Ignore reject/resolve after resolved.
+    return;
   }
 
-  DCHECK_EQ(data.GetEvent(), v8::kPromiseRejectWithNoHandler);
+  DCHECK_EQ(v8::kPromiseRejectWithNoHandler, data.GetEvent());
 
   v8::Isolate* isolate = script_state->GetIsolate();
   ExecutionContext* context = ExecutionContext::From(script_state);
@@ -395,6 +506,14 @@ static bool WasmCodeGenerationCheckCallbackInMainThread(
   return false;
 }
 
+static bool WasmThreadsEnabledCallback(v8::Local<v8::Context> context) {
+  ExecutionContext* execution_context = ToExecutionContext(context);
+  if (!execution_context)
+    return false;
+
+  return OriginTrials::WebAssemblyThreadsEnabled(execution_context);
+}
+
 v8::Local<v8::Value> NewRangeException(v8::Isolate* isolate,
                                        const char* message) {
   return v8::Exception::RangeError(
@@ -442,8 +561,7 @@ static bool WasmInstanceOverride(
 
   v8::Local<v8::WasmCompiledModule> module =
       v8::Local<v8::WasmCompiledModule>::Cast(source);
-  if (static_cast<size_t>(module->GetWasmWireBytes()->Length()) >
-      kWasmWireBytesLimit) {
+  if (module->GetWasmWireBytesRef().size > kWasmWireBytesLimit) {
     ThrowRangeException(
         args.GetIsolate(),
         "WebAssembly.Instance is disallowed on the main thread, "
@@ -513,10 +631,7 @@ static void HostGetImportMetaProperties(v8::Local<v8::Context> context,
 static void InitializeV8Common(v8::Isolate* isolate) {
   isolate->AddGCPrologueCallback(V8GCController::GcPrologue);
   isolate->AddGCEpilogueCallback(V8GCController::GcEpilogue);
-  std::unique_ptr<ScriptWrappableMarkingVisitor> visitor(
-      new ScriptWrappableMarkingVisitor(isolate));
-  V8PerIsolateData::From(isolate)->SetScriptWrappableMarkingVisitor(
-      std::move(visitor));
+
   isolate->SetEmbedderHeapTracer(
       V8PerIsolateData::From(isolate)->GetScriptWrappableMarkingVisitor());
 
@@ -525,6 +640,7 @@ static void InitializeV8Common(v8::Isolate* isolate) {
   isolate->SetUseCounterCallback(&UseCounterCallback);
   isolate->SetWasmModuleCallback(WasmModuleOverride);
   isolate->SetWasmInstanceCallback(WasmInstanceOverride);
+  isolate->SetWasmThreadsEnabledCallback(WasmThreadsEnabledCallback);
   if (RuntimeEnabledFeatures::ModuleScriptsDynamicImportEnabled()) {
     isolate->SetHostImportModuleDynamicallyCallback(
         HostImportModuleDynamically);
@@ -592,7 +708,8 @@ void V8Initializer::InitializeMainThread(const intptr_t* reference_table) {
                                  reference_table);
 
   // NOTE: Some threads (namely utility threads) don't have a scheduler.
-  WebScheduler* scheduler = Platform::Current()->CurrentThread()->Scheduler();
+  ThreadScheduler* scheduler =
+      Platform::Current()->CurrentThread()->Scheduler();
 
 #if defined(USE_V8_CONTEXT_SNAPSHOT)
   V8PerIsolateData::V8ContextSnapshotMode v8_context_snapshot_mode =
@@ -618,6 +735,12 @@ void V8Initializer::InitializeMainThread(const intptr_t* reference_table) {
   InitializeV8Common(isolate);
 
   isolate->SetOOMErrorHandler(ReportOOMErrorInMainThread);
+
+  if (RuntimeEnabledFeatures::BloatedRendererDetectionEnabled()) {
+    DCHECK(g_near_heap_limit_on_main_thread_callback_);
+    isolate->AddNearHeapLimitCallback(NearHeapLimitCallbackOnMainThread,
+                                      isolate);
+  }
   isolate->SetFatalErrorHandler(ReportFatalErrorInMainThread);
   isolate->AddMessageListenerWithErrorLevel(
       MessageHandlerInMainThread,
@@ -638,8 +761,8 @@ void V8Initializer::InitializeMainThread(const intptr_t* reference_table) {
   isolate->SetPromiseRejectCallback(PromiseRejectHandlerInMainThread);
 
   if (v8::HeapProfiler* profiler = isolate->GetHeapProfiler()) {
-    profiler->SetBuildEmbedderGraphCallback(
-        &V8EmbedderGraphBuilder::BuildEmbedderGraphCallback);
+    profiler->AddBuildEmbedderGraphCallback(
+        &V8EmbedderGraphBuilder::BuildEmbedderGraphCallback, nullptr);
   }
 
   DCHECK(ThreadState::MainThreadState());
@@ -666,11 +789,6 @@ static void ReportFatalErrorInWorker(const char* location,
 // base/threading/platform_thread_mac.mm for details.
 static const int kWorkerMaxStackSize = 500 * 1024;
 
-// This function uses a local stack variable to determine the isolate's stack
-// limit. AddressSanitizer may relocate that local variable to a fake stack,
-// which may lead to problems during JavaScript execution.  Therefore we disable
-// AddressSanitizer for V8Initializer::initializeWorker().
-NO_SANITIZE_ADDRESS
 void V8Initializer::InitializeWorker(v8::Isolate* isolate) {
   InitializeV8Common(isolate);
 
@@ -681,10 +799,12 @@ void V8Initializer::InitializeWorker(v8::Isolate* isolate) {
           v8::Isolate::kMessageLog);
   isolate->SetFatalErrorHandler(ReportFatalErrorInWorker);
 
-  uint32_t here;
-  isolate->SetStackLimit(reinterpret_cast<uintptr_t>(&here) -
-                         kWorkerMaxStackSize);
+  isolate->SetStackLimit(WTF::GetCurrentStackPosition() - kWorkerMaxStackSize);
   isolate->SetPromiseRejectCallback(PromiseRejectHandlerInWorker);
+  if (RuntimeEnabledFeatures::BloatedRendererDetectionEnabled()) {
+    isolate->AddNearHeapLimitCallback(NearHeapLimitCallbackOnWorkerThread,
+                                      isolate);
+  }
 }
 
 }  // namespace blink

@@ -56,8 +56,6 @@ public class NewTabPageUiCaptureTest {
             Arrays.asList(new ParameterSet().value(false).name("DisableNTPModernLayout"),
                     new ParameterSet().value(true).name("EnableNTPModernLayout"));
     @Rule
-    public TestRule mFeaturesProcessor = new Features.InstrumentationProcessor();
-    @Rule
     public ChromeTabbedActivityTestRule mActivityTestRule = new ChromeTabbedActivityTestRule();
     @Rule
     public ScreenShooter mScreenShooter = new ScreenShooter();
@@ -89,6 +87,17 @@ public class NewTabPageUiCaptureTest {
         NewTabPageTestUtils.waitForNtpLoaded(tab);
         Assert.assertTrue(tab.getNativePage() instanceof NewTabPage);
         mNtp = (NewTabPage) tab.getNativePage();
+
+        // When scrolling to a View, we wait until the View is no longer updating - when it is no
+        // longer dirty. If scroll to load is triggered, the animated progress spinner will keep
+        // the RecyclerView dirty as it is constantly updating.
+        //
+        // We do not want to disable the Scroll to Load feature entirely because its presence
+        // effects other elements of the UI - it moves the Learn More link into the Context Menu.
+        // Removing the ScrollToLoad listener from the RecyclerView allows us to prevent scroll to
+        // load triggering while maintaining the UI otherwise.
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> mNtp.getNewTabPageView().getRecyclerView().clearScrollToLoadListener());
     }
 
     @Test

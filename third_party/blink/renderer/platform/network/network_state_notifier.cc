@@ -36,6 +36,7 @@
 #include "third_party/blink/renderer/platform/wtf/std_lib_extras.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_hash.h"
 #include "third_party/blink/renderer/platform/wtf/threading.h"
+#include "third_party/blink/renderer/platform/wtf/wtf.h"
 
 namespace blink {
 
@@ -173,7 +174,7 @@ NetworkStateNotifier::AddOnLineObserver(
 void NetworkStateNotifier::SetNetworkConnectionInfoOverride(
     bool on_line,
     WebConnectionType type,
-    Optional<WebEffectiveConnectionType> effective_type,
+    base::Optional<WebEffectiveConnectionType> effective_type,
     unsigned long http_rtt_msec,
     double max_bandwidth_mbps) {
   DCHECK(IsMainThread());
@@ -396,7 +397,7 @@ double NetworkStateNotifier::GetRandomMultiplier(const String& host) const {
 
 unsigned long NetworkStateNotifier::RoundRtt(
     const String& host,
-    const Optional<TimeDelta>& rtt) const {
+    const base::Optional<TimeDelta>& rtt) const {
   // Limit the size of the buckets and the maximum reported value to reduce
   // fingerprinting.
   static const size_t kBucketSize = 50;
@@ -420,7 +421,7 @@ unsigned long NetworkStateNotifier::RoundRtt(
 
 double NetworkStateNotifier::RoundMbps(
     const String& host,
-    const Optional<double>& downlink_mbps) const {
+    const base::Optional<double>& downlink_mbps) const {
   // Limit the size of the buckets and the maximum reported value to reduce
   // fingerprinting.
   static const size_t kBucketSize = 50;

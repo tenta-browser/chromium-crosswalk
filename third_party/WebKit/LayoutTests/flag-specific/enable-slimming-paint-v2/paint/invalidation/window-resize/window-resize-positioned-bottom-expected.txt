@@ -13,16 +13,6 @@
         }
       ]
     }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutView #document",
-      "reason": "incremental"
-    },
-    {
-      "object": "LayoutBlockFlow (positioned) DIV",
-      "reason": "geometry"
-    }
   ]
 }
 {
@@ -39,12 +29,6 @@
           "reason": "background"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutView #document",
-      "reason": "background"
     }
   ]
 }
@@ -64,34 +48,24 @@
         {
           "object": "LayoutBlockFlow (positioned) DIV",
           "rect": [0, 560, 20, 20],
-          "reason": "incremental"
+          "reason": "geometry"
         },
         {
-          "object": "LayoutBlockFlow (positioned) DIV",
+          "object": "LayoutBlockFlow HTML",
           "rect": [0, 560, 20, 20],
-          "reason": "geometry"
-        },
-        {
-          "object": "LayoutBlockFlow (positioned) DIV",
-          "rect": [0, 210, 20, 20],
           "reason": "incremental"
         },
         {
           "object": "LayoutBlockFlow (positioned) DIV",
           "rect": [0, 210, 20, 20],
           "reason": "geometry"
+        },
+        {
+          "object": "LayoutBlockFlow HTML",
+          "rect": [0, 210, 20, 20],
+          "reason": "incremental"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutView #document",
-      "reason": "incremental"
-    },
-    {
-      "object": "LayoutBlockFlow (positioned) DIV",
-      "reason": "geometry"
     }
   ]
 }
@@ -109,12 +83,6 @@
           "reason": "background"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutView #document",
-      "reason": "background"
     }
   ]
 }

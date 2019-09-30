@@ -9,9 +9,9 @@
 
 #include "base/macros.h"
 #include "base/threading/thread_checker.h"
-#include "net/base/network_change_notifier.h"
 #include "net/base/proxy_delegate.h"
 #include "net/proxy_resolution/proxy_retry_info.h"
+#include "services/network/public/cpp/network_connection_tracker.h"
 #include "url/gurl.h"
 
 namespace base {
@@ -34,15 +34,17 @@ class DataReductionProxyIOData;
 
 class DataReductionProxyDelegate
     : public net::ProxyDelegate,
-      public net::NetworkChangeNotifier::IPAddressObserver {
+      public network::NetworkConnectionTracker::NetworkConnectionObserver {
  public:
   // ProxyDelegate instance is owned by io_thread. |auth_handler| and |config|
   // outlives this class instance.
-  DataReductionProxyDelegate(DataReductionProxyConfig* config,
-                             const DataReductionProxyConfigurator* configurator,
-                             DataReductionProxyEventCreator* event_creator,
-                             DataReductionProxyBypassStats* bypass_stats,
-                             net::NetLog* net_log);
+  DataReductionProxyDelegate(
+      DataReductionProxyConfig* config,
+      const DataReductionProxyConfigurator* configurator,
+      DataReductionProxyEventCreator* event_creator,
+      DataReductionProxyBypassStats* bypass_stats,
+      net::NetLog* net_log,
+      network::NetworkConnectionTracker* network_connection_tracker);
 
   ~DataReductionProxyDelegate() override;
 
@@ -77,8 +79,8 @@ class DataReductionProxyDelegate
   // Records the availability status of data reduction proxy.
   void RecordQuicProxyStatus(QuicProxyStatus status) const;
 
-  // NetworkChangeNotifier::IPAddressObserver:
-  void OnIPAddressChanged() override;
+  // network::NetworkConnectionTracker::NetworkConnectionObserver:
+  void OnConnectionChanged(network::mojom::ConnectionType type) override;
 
   // Checks if the first proxy server in |result| supports QUIC and if so
   // adds an alternative proxy configuration to |result|.
@@ -94,11 +96,6 @@ class DataReductionProxyDelegate
   // Tick clock used for obtaining the current time.
   const base::TickClock* tick_clock_;
 
-  // True if the metrics related to the first request whose resolved proxy was a
-  // data saver proxy has been recorded. |first_data_saver_request_recorded_| is
-  // reset to false on IP address change events.
-  bool first_data_saver_request_recorded_;
-
   // Set to the time when last IP address change event was received, or the time
   // of initialization of |this|, whichever is later.
   base::TimeTicks last_network_change_time_;
@@ -106,6 +103,8 @@ class DataReductionProxyDelegate
   DataReductionProxyIOData* io_data_;
 
   net::NetLog* net_log_;
+
+  network::NetworkConnectionTracker* network_connection_tracker_;
 
   base::ThreadChecker thread_checker_;
 

@@ -14,8 +14,11 @@
 #include "url/gurl.h"
 
 namespace base {
-class CommandLine;
 class Version;
+}
+
+namespace update_client {
+class CommandLineConfigPolicy;
 }
 
 namespace component_updater {
@@ -24,7 +27,7 @@ namespace component_updater {
 // Can be used both on iOS and other platforms.
 class ConfiguratorImpl {
  public:
-  ConfiguratorImpl(const base::CommandLine* cmdline,
+  ConfiguratorImpl(const update_client::CommandLineConfigPolicy& config_policy,
                    bool require_encryption);
 
   ~ConfiguratorImpl();
@@ -82,14 +85,19 @@ class ConfiguratorImpl {
   // Returns the key hash corresponding to a CRX trusted by ActionRun.
   std::vector<uint8_t> GetRunActionKeyHash() const;
 
+  // Returns the app GUID with which Chrome is registered with Google Update, or
+  // an empty string if this brand does not integrate with Google Update.
+  std::string GetAppGuid() const;
+
  private:
   std::string extra_info_;
-  GURL url_source_override_;
-  bool fast_update_;
-  bool pings_enabled_;
-  bool deltas_enabled_;
-  bool background_downloads_enabled_;
-  bool require_encryption_;
+  const bool background_downloads_enabled_;
+  const bool deltas_enabled_;
+  const bool fast_update_;
+  const bool pings_enabled_;
+  const bool require_encryption_;
+  const GURL url_source_override_;
+  const int initial_delay_;
 
   DISALLOW_COPY_AND_ASSIGN(ConfiguratorImpl);
 };

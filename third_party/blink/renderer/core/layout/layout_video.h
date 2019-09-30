@@ -48,10 +48,11 @@ class LayoutVideo final : public LayoutMedia {
 
   const char* GetName() const override { return "LayoutVideo"; }
 
+  void IntrinsicSizeChanged() override;
+
  private:
   void UpdateFromElement() override;
 
-  void IntrinsicSizeChanged() override;
   LayoutSize CalculateIntrinsicSize();
   void UpdateIntrinsicSize();
 
@@ -63,7 +64,8 @@ class LayoutVideo final : public LayoutMedia {
     return type == kLayoutObjectVideo || LayoutMedia::IsOfType(type);
   }
 
-  void PaintReplaced(const PaintInfo&, const LayoutPoint&) const override;
+  void PaintReplaced(const PaintInfo&,
+                     const LayoutPoint& paint_offset) const override;
 
   void UpdateLayout() override;
 
@@ -72,11 +74,6 @@ class LayoutVideo final : public LayoutMedia {
   LayoutUnit ComputeReplacedLogicalHeight(
       LayoutUnit estimated_used_width = LayoutUnit()) const override;
   LayoutUnit MinimumReplacedHeight() const override;
-
-  LayoutUnit OffsetLeft(const Element*) const override;
-  LayoutUnit OffsetTop(const Element*) const override;
-  LayoutUnit OffsetWidth() const override;
-  LayoutUnit OffsetHeight() const override;
 
   CompositingReasons AdditionalCompositingReasons() const override;
 

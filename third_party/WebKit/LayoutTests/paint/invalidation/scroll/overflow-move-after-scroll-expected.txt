@@ -67,7 +67,7 @@
         {
           "object": "Vertical Scrollbar Layer",
           "rect": [0, 0, 15, 385],
-          "reason": "full"
+          "reason": "full layer"
         }
       ]
     },
@@ -87,12 +87,6 @@
         [0, -100, 0, 1]
       ],
       "flattenInheritedTransform": false
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutBlockFlow (positioned) DIV id='block'",
-      "reason": "geometry"
     }
   ]
 }

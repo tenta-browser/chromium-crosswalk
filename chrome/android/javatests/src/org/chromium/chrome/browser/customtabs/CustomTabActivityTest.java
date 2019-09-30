@@ -11,9 +11,6 @@ import static org.hamcrest.Matchers.not;
 
 import static org.chromium.base.test.util.Restriction.RESTRICTION_TYPE_NON_LOW_END_DEVICE;
 import static org.chromium.chrome.browser.customtabs.CustomTabActivityTestRule.LONG_TIMEOUT_MS;
-import static org.chromium.chrome.browser.customtabs.CustomTabIntentDataProvider.CUSTOM_TABS_UI_TYPE_MEDIA_VIEWER;
-import static org.chromium.chrome.browser.customtabs.CustomTabIntentDataProvider.CUSTOM_TABS_UI_TYPE_OFFLINE_PAGE;
-import static org.chromium.chrome.browser.customtabs.CustomTabIntentDataProvider.CUSTOM_TABS_UI_TYPE_READER_MODE;
 
 import android.app.Activity;
 import android.app.Instrumentation;
@@ -60,7 +57,6 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.TestRule;
 import org.junit.runner.RunWith;
 
 import org.chromium.base.ActivityState;
@@ -110,7 +106,6 @@ import org.chromium.chrome.browser.util.ColorUtils;
 import org.chromium.chrome.test.ChromeActivityTestRule;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 import org.chromium.chrome.test.util.ChromeTabUtils;
-import org.chromium.chrome.test.util.browser.Features;
 import org.chromium.chrome.test.util.browser.Features.EnableFeatures;
 import org.chromium.chrome.test.util.browser.LocationSettingsTestUtil;
 import org.chromium.chrome.test.util.browser.contextmenu.ContextMenuUtils;
@@ -118,6 +113,7 @@ import org.chromium.content.browser.test.util.Criteria;
 import org.chromium.content.browser.test.util.CriteriaHelper;
 import org.chromium.content.browser.test.util.DOMUtils;
 import org.chromium.content.browser.test.util.JavaScriptUtils;
+import org.chromium.content.browser.test.util.WebContentsUtils;
 import org.chromium.content_public.browser.LoadUrlParams;
 import org.chromium.content_public.browser.WebContentsObserver;
 import org.chromium.net.test.EmbeddedTestServer;
@@ -202,8 +198,6 @@ public class CustomTabActivityTest {
 
     @Rule
     public final ScreenShooter mScreenShooter = new ScreenShooter();
-    @Rule
-    public TestRule mProcessor = new Features.InstrumentationProcessor();
 
     @Before
     public void setUp() throws Exception {
@@ -216,7 +210,7 @@ public class CustomTabActivityTest {
         mTestPage = mTestServer.getURL(TEST_PAGE);
         mTestPage2 = mTestServer.getURL(TEST_PAGE_2);
         PathUtils.setPrivateDataDirectorySuffix(PRIVATE_DATA_DIRECTORY_SUFFIX);
-        LibraryLoader.get(LibraryProcessType.PROCESS_BROWSER).ensureInitialized();
+        LibraryLoader.getInstance().ensureInitialized(LibraryProcessType.PROCESS_BROWSER);
         mWebServer = TestWebServer.start();
     }
 
@@ -380,6 +374,12 @@ public class CustomTabActivityTest {
         vectorDrawable.setBounds(0, 0, widthPx, heightPx);
         vectorDrawable.draw(canvas);
         return bitmap;
+    }
+
+    private static boolean isSelectPopupVisible(ChromeActivity activity) {
+        Tab tab = activity.getActivityTab();
+        if (tab == null || tab.getWebContents() == null) return false;
+        return WebContentsUtils.isSelectPopupVisible(tab.getWebContents());
     }
 
     /**
@@ -593,8 +593,8 @@ public class CustomTabActivityTest {
     @RetryOnFailure
     public void testAppMenuForMediaViewer() throws InterruptedException {
         Intent intent = createMinimalCustomTabIntent();
-        intent.putExtra(
-                CustomTabIntentDataProvider.EXTRA_UI_TYPE, CUSTOM_TABS_UI_TYPE_MEDIA_VIEWER);
+        intent.putExtra(CustomTabIntentDataProvider.EXTRA_UI_TYPE,
+                CustomTabIntentDataProvider.CustomTabsUiType.MEDIA_VIEWER);
         IntentHandler.addTrustedIntentExtras(intent);
         mCustomTabActivityTestRule.startCustomTabActivityWithIntent(intent);
 
@@ -616,7 +616,8 @@ public class CustomTabActivityTest {
     @RetryOnFailure
     public void testAppMenuForReaderMode() throws InterruptedException {
         Intent intent = createMinimalCustomTabIntent();
-        intent.putExtra(CustomTabIntentDataProvider.EXTRA_UI_TYPE, CUSTOM_TABS_UI_TYPE_READER_MODE);
+        intent.putExtra(CustomTabIntentDataProvider.EXTRA_UI_TYPE,
+                CustomTabIntentDataProvider.CustomTabsUiType.READER_MODE);
         IntentHandler.addTrustedIntentExtras(intent);
         mCustomTabActivityTestRule.startCustomTabActivityWithIntent(intent);
 
@@ -640,8 +641,8 @@ public class CustomTabActivityTest {
     @RetryOnFailure
     public void testAppMenuForOfflinePage() throws InterruptedException {
         Intent intent = createMinimalCustomTabIntent();
-        intent.putExtra(
-                CustomTabIntentDataProvider.EXTRA_UI_TYPE, CUSTOM_TABS_UI_TYPE_OFFLINE_PAGE);
+        intent.putExtra(CustomTabIntentDataProvider.EXTRA_UI_TYPE,
+                CustomTabIntentDataProvider.CustomTabsUiType.OFFLINE_PAGE);
         IntentHandler.addTrustedIntentExtras(intent);
         mCustomTabActivityTestRule.startCustomTabActivityWithIntent(intent);
 
@@ -858,29 +859,21 @@ public class CustomTabActivityTest {
             @Override
             public boolean isSatisfied() {
                 Tab currentTab = mCustomTabActivityTestRule.getActivity().getActivityTab();
-                return currentTab != null
-                        && currentTab.getContentViewCore() != null;
+                return currentTab != null && currentTab.getWebContents() != null;
             }
         });
-        DOMUtils.clickNode(
-                mCustomTabActivityTestRule.getActivity().getActivityTab().getContentViewCore(),
-                "select");
+        DOMUtils.clickNode(mCustomTabActivityTestRule.getWebContents(), "select");
         CriteriaHelper.pollUiThread(new Criteria() {
             @Override
             public boolean isSatisfied() {
-                return mCustomTabActivityTestRule.getActivity()
-                        .getActivityTab()
-                        .getContentViewCore()
-                        .isSelectPopupVisibleForTest();
+                return isSelectPopupVisible(mCustomTabActivityTestRule.getActivity());
             }
         });
         final ChromeActivity newActivity = reparentAndVerifyTab();
         CriteriaHelper.pollUiThread(new Criteria() {
             @Override
             public boolean isSatisfied() {
-                Tab currentTab = newActivity.getActivityTab();
-                return currentTab != null && currentTab.getContentViewCore() != null
-                        && !currentTab.getContentViewCore().isSelectPopupVisibleForTest();
+                return isSelectPopupVisible(newActivity);
             }
         });
     }
@@ -902,8 +895,16 @@ public class CustomTabActivityTest {
                 "A custom tab toolbar is never shown", toolbarView instanceof CustomTabToolbar);
         CustomTabToolbar toolbar = (CustomTabToolbar) toolbarView;
         Assert.assertEquals(expectedColor, toolbar.getBackground().getColor());
-        Assert.assertFalse(toolbar.shouldEmphasizeHttpsScheme());
-        if (Build.VERSION.SDK_INT > Build.VERSION_CODES.LOLLIPOP) {
+        Assert.assertFalse(mCustomTabActivityTestRule.getActivity()
+                                   .getToolbarManager()
+                                   .getToolbarModelForTesting()
+                                   .shouldEmphasizeHttpsScheme());
+        // TODO(https://crbug.com/871805): Use helper class to determine whether dark status icons
+        // are supported.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            Assert.assertEquals(expectedColor,
+                    mCustomTabActivityTestRule.getActivity().getWindow().getStatusBarColor());
+        } else if (Build.VERSION.SDK_INT > Build.VERSION_CODES.LOLLIPOP) {
             Assert.assertEquals(ColorUtils.getDarkenedColorForStatusBar(expectedColor),
                     mCustomTabActivityTestRule.getActivity().getWindow().getStatusBarColor());
         }
@@ -1207,14 +1208,12 @@ public class CustomTabActivityTest {
         ThreadUtils.runOnUiThreadBlocking(() -> {
             tabSelector.getModel(false).addObserver(new EmptyTabModelObserver() {
                 @Override
-                public void didAddTab(Tab tab, TabLaunchType type) {
+                public void didAddTab(Tab tab, @TabLaunchType int type) {
                     openTabHelper.notifyCalled();
                 }
             });
         });
-        DOMUtils.clickNode(
-                mCustomTabActivityTestRule.getActivity().getActivityTab().getContentViewCore(),
-                "new_window");
+        DOMUtils.clickNode(mCustomTabActivityTestRule.getWebContents(), "new_window");
 
         openTabHelper.waitForCallback(0, 1);
         Assert.assertEquals(
@@ -1330,77 +1329,22 @@ public class CustomTabActivityTest {
     }
 
     /**
-     * Tests that Time To First Contentful Paint and Load Event Start timings are sent.
+     * Tests that page load metrice are sent.
      */
     @Test
     @SmallTest
     @RetryOnFailure
-    public void testPageLoadMetricIsSent() throws Exception {
-        final AtomicReference<Long> firstContentfulPaintMs = new AtomicReference<>(-1L);
-        final AtomicReference<Long> activityStartTimeMs = new AtomicReference<>(-1L);
-        final AtomicReference<Long> loadEventStartMs = new AtomicReference<>(-1L);
-        final AtomicReference<Boolean> sawNetworkQualityEstimates = new AtomicReference<>(false);
+    public void testPageLoadMetricsAreSent() throws Exception {
+        checkPageLoadMetrics(true);
+    }
 
-        CustomTabsCallback cb = new CustomTabsCallback() {
-            @Override
-            public void extraCallback(String callbackName, Bundle args) {
-                Assert.assertEquals(CustomTabsConnection.PAGE_LOAD_METRICS_CALLBACK, callbackName);
-
-                if (-1 != args.getLong(PageLoadMetrics.EFFECTIVE_CONNECTION_TYPE, -1)) {
-                    sawNetworkQualityEstimates.set(true);
-                }
-
-                long navigationStart = args.getLong(PageLoadMetrics.NAVIGATION_START, -1);
-                if (navigationStart == -1) {
-                    // Untested metric callback.
-                    return;
-                }
-                long current = SystemClock.uptimeMillis();
-                Assert.assertTrue(navigationStart <= current);
-                Assert.assertTrue(navigationStart >= activityStartTimeMs.get());
-
-                long firstContentfulPaint =
-                        args.getLong(PageLoadMetrics.FIRST_CONTENTFUL_PAINT, -1);
-                if (firstContentfulPaint > 0) {
-                    Assert.assertTrue(firstContentfulPaint <= (current - navigationStart));
-                    firstContentfulPaintMs.set(firstContentfulPaint);
-                }
-
-                long loadEventStart = args.getLong(PageLoadMetrics.LOAD_EVENT_START, -1);
-                if (loadEventStart > 0) {
-                    Assert.assertTrue(loadEventStart <= (current - navigationStart));
-                    loadEventStartMs.set(loadEventStart);
-                }
-            }
-        };
-
-        CustomTabsSession session = CustomTabsTestUtils.bindWithCallback(cb);
-        Intent intent = new CustomTabsIntent.Builder(session).build().intent;
-        intent.setData(Uri.parse(mTestPage));
-        intent.setComponent(new ComponentName(
-                InstrumentationRegistry.getTargetContext(), ChromeLauncherActivity.class));
-        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-
-        activityStartTimeMs.set(SystemClock.uptimeMillis());
-        mCustomTabActivityTestRule.startCustomTabActivityWithIntent(intent);
-        CriteriaHelper.pollInstrumentationThread(new Criteria() {
-            @Override
-            public boolean isSatisfied() {
-                return firstContentfulPaintMs.get() > 0;
-            }
-        });
-        CriteriaHelper.pollInstrumentationThread(new Criteria() {
-            @Override
-            public boolean isSatisfied() {
-                return loadEventStartMs.get() > 0;
-            }
-        });
-        CriteriaHelper.pollInstrumentationThread(new Criteria() {
-            @Override
-            public boolean isSatisfied() {
-                return sawNetworkQualityEstimates.get();
-            }
-        });
+    /**
+     * Tests that page load metrics are not sent when the client is not whitelisted.
+     */
+    @Test
+    @SmallTest
+    public void testPageLoadMetricsAreNotSentByDefault() throws Exception {
+        checkPageLoadMetrics(false);
     }
 
     private static void assertSuffixedHistogramTotalCount(long expected, String histogramPrefix) {
@@ -1578,8 +1522,7 @@ public class CustomTabActivityTest {
                 connection.postMessage(token, "Message", null) == CustomTabsService.RESULT_SUCCESS);
 
         final CallbackHelper renderProcessCallback = new CallbackHelper();
-        new WebContentsObserver(
-                mCustomTabActivityTestRule.getActivity().getActivityTab().getWebContents()) {
+        new WebContentsObserver(mCustomTabActivityTestRule.getWebContents()) {
             @Override
             public void renderProcessGone(boolean wasOomProtected) {
                 renderProcessCallback.notifyCalled();
@@ -2391,6 +2334,17 @@ public class CustomTabActivityTest {
         ApplicationStatus.unregisterActivityStateListener(listener);
     }
 
+    @Test
+    @MediumTest
+    public void testLaunchIncognitoCustomTabForPaymentRequest() throws Exception {
+        Intent intent = createMinimalCustomTabIntent();
+        intent.putExtra(IntentHandler.EXTRA_OPEN_NEW_INCOGNITO_TAB, true);
+        CustomTabIntentDataProvider.addPaymentRequestUIExtras(intent);
+        mCustomTabActivityTestRule.startCustomTabActivityWithIntent(intent);
+
+        Assert.assertTrue(mCustomTabActivityTestRule.getActivity().getActivityTab().isIncognito());
+    }
+
     /**
      * Tests that a Weblite URL from an external app uses the lite_url param when Data Reduction
      * Proxy previews are being used.
@@ -2640,6 +2594,77 @@ public class CustomTabActivityTest {
             Assert.assertFalse(observers.next() instanceof CustomTabObserver);
         }
         return newActivity;
+    }
+
+    private void checkPageLoadMetrics(boolean allowMetrics)
+            throws InterruptedException, TimeoutException {
+        final AtomicReference<Long> firstContentfulPaintMs = new AtomicReference<>(-1L);
+        final AtomicReference<Long> activityStartTimeMs = new AtomicReference<>(-1L);
+        final AtomicReference<Long> loadEventStartMs = new AtomicReference<>(-1L);
+        final AtomicReference<Boolean> sawNetworkQualityEstimates = new AtomicReference<>(false);
+
+        CustomTabsCallback cb = new CustomTabsCallback() {
+            @Override
+            public void extraCallback(String callbackName, Bundle args) {
+                if (callbackName.equals(CustomTabsConnection.ON_WARMUP_COMPLETED)) return;
+
+                Assert.assertEquals(CustomTabsConnection.PAGE_LOAD_METRICS_CALLBACK, callbackName);
+                if (-1 != args.getLong(PageLoadMetrics.EFFECTIVE_CONNECTION_TYPE, -1)) {
+                    sawNetworkQualityEstimates.set(true);
+                }
+
+                long navigationStart = args.getLong(PageLoadMetrics.NAVIGATION_START, -1);
+                if (navigationStart == -1) {
+                    // Untested metric callback.
+                    return;
+                }
+                long current = SystemClock.uptimeMillis();
+                Assert.assertTrue(navigationStart <= current);
+                Assert.assertTrue(navigationStart >= activityStartTimeMs.get());
+
+                long firstContentfulPaint =
+                        args.getLong(PageLoadMetrics.FIRST_CONTENTFUL_PAINT, -1);
+                if (firstContentfulPaint > 0) {
+                    Assert.assertTrue(firstContentfulPaint <= (current - navigationStart));
+                    firstContentfulPaintMs.set(firstContentfulPaint);
+                }
+
+                long loadEventStart = args.getLong(PageLoadMetrics.LOAD_EVENT_START, -1);
+                if (loadEventStart > 0) {
+                    Assert.assertTrue(loadEventStart <= (current - navigationStart));
+                    loadEventStartMs.set(loadEventStart);
+                }
+            }
+        };
+
+        CustomTabsSession session = CustomTabsTestUtils.bindWithCallback(cb);
+        Intent intent = new CustomTabsIntent.Builder(session).build().intent;
+
+        if (allowMetrics) {
+            CustomTabsSessionToken token = CustomTabsSessionToken.getSessionTokenFromIntent(intent);
+            CustomTabsConnection connection = CustomTabsTestUtils.warmUpAndWait();
+            connection.mClientManager.setShouldGetPageLoadMetricsForSession(token, true);
+        }
+
+        intent.setData(Uri.parse(mTestPage));
+        intent.setComponent(new ComponentName(
+                InstrumentationRegistry.getTargetContext(), ChromeLauncherActivity.class));
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+
+        activityStartTimeMs.set(SystemClock.uptimeMillis());
+        mCustomTabActivityTestRule.startCustomTabActivityWithIntent(intent);
+        if (allowMetrics) {
+            CriteriaHelper.pollInstrumentationThread(() -> firstContentfulPaintMs.get() > 0);
+            CriteriaHelper.pollInstrumentationThread(() -> loadEventStartMs.get() > 0);
+            CriteriaHelper.pollInstrumentationThread(() -> sawNetworkQualityEstimates.get());
+        } else {
+            try {
+                CriteriaHelper.pollInstrumentationThread(() -> firstContentfulPaintMs.get() > 0);
+            } catch (AssertionError e) {
+                // Expected.
+            }
+            Assert.assertEquals(-1L, (long) firstContentfulPaintMs.get());
+        }
     }
 
     private CustomTabsSessionToken warmUpAndLaunchUrlWithSession(Intent intentWithSession)

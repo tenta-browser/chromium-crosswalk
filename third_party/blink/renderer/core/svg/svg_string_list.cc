@@ -20,11 +20,9 @@
 
 #include "third_party/blink/renderer/core/svg/svg_string_list.h"
 
-#include "third_party/blink/renderer/bindings/core/v8/exception_messages.h"
-#include "third_party/blink/renderer/bindings/core/v8/exception_state.h"
-#include "third_party/blink/renderer/core/dom/exception_code.h"
-#include "third_party/blink/renderer/core/svg/svg_element.h"
 #include "third_party/blink/renderer/core/svg/svg_parser_utilities.h"
+#include "third_party/blink/renderer/platform/bindings/exception_messages.h"
+#include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_builder.h"
 
 namespace blink {
@@ -117,6 +115,9 @@ SVGParsingError SVGStringList::SetValueAsString(const String& data) {
 }
 
 String SVGStringList::ValueAsString() const {
+  if (values_.IsEmpty())
+    return String();
+
   StringBuilder builder;
 
   Vector<String>::const_iterator it = values_.begin();
@@ -138,8 +139,9 @@ bool SVGStringList::CheckIndexBound(size_t index,
                                     ExceptionState& exception_state) {
   if (index >= values_.size()) {
     exception_state.ThrowDOMException(
-        kIndexSizeError, ExceptionMessages::IndexExceedsMaximumBound(
-                             "index", index, values_.size()));
+        DOMExceptionCode::kIndexSizeError,
+        ExceptionMessages::IndexExceedsMaximumBound(
+            "index", index, static_cast<size_t>(values_.size())));
     return false;
   }
 

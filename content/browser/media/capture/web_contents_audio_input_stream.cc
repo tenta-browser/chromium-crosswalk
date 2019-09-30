@@ -5,6 +5,7 @@
 #include "content/browser/media/capture/web_contents_audio_input_stream.h"
 
 #include <memory>
+#include <set>
 #include <string>
 
 #include "base/bind.h"
@@ -60,8 +61,6 @@ class WebContentsAudioInputStream::Impl
  private:
   friend class base::RefCountedThreadSafe<WebContentsAudioInputStream::Impl>;
 
-  typedef AudioMirroringManager::SourceFrameRef SourceFrameRef;
-
   enum State {
     CONSTRUCTED,
     OPENED,
@@ -88,10 +87,11 @@ class WebContentsAudioInputStream::Impl
   void UnmuteWebContentsAudio();
 
   // AudioMirroringManager::MirroringDestination implementation
-  void QueryForMatches(const std::set<SourceFrameRef>& candidates,
-                       const MatchesCallback& results_callback) override;
-  void QueryForMatchesOnUIThread(const std::set<SourceFrameRef>& candidates,
-                                 const MatchesCallback& results_callback);
+  void QueryForMatches(const std::set<GlobalFrameRoutingId>& candidates,
+                       MatchesCallback results_callback) override;
+  void QueryForMatchesOnUIThread(
+      const std::set<GlobalFrameRoutingId>& candidates,
+      MatchesCallback results_callback);
   media::AudioOutputStream* AddInput(
       const media::AudioParameters& params) override;
   media::AudioPushSink* AddPushInput(
@@ -177,15 +177,20 @@ bool WebContentsAudioInputStream::Impl::Open() {
   tracker_->Start(
       initial_render_process_id_, initial_main_render_frame_id_,
       base::Bind(&Impl::OnTargetChanged, this));
-  BrowserThread::PostTask(BrowserThread::UI, FROM_HERE,
-                          base::BindOnce(&Impl::IncrementCapturerCount, this));
+  IncrementCapturerCount();
 
   return true;
 }
 
 void WebContentsAudioInputStream::Impl::IncrementCapturerCount() {
-  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+  if (!BrowserThread::CurrentlyOn(BrowserThread::UI)) {
+    BrowserThread::PostTask(
+        BrowserThread::UI, FROM_HERE,
+        base::BindOnce(&Impl::IncrementCapturerCount, this));
+    return;
+  }
 
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
   if (WebContents* contents = tracker_->web_contents())
     contents->IncrementCapturerCount(gfx::Size());
 }
@@ -237,9 +242,7 @@ void WebContentsAudioInputStream::Impl::Close() {
 
   if (state_ == OPENED) {
     state_ = CONSTRUCTED;
-    BrowserThread::PostTask(
-        BrowserThread::UI, FROM_HERE,
-        base::BindOnce(&Impl::DecrementCapturerCount, this));
+    DecrementCapturerCount();
     tracker_->Stop();
     mixer_stream_->Close();
   }
@@ -249,8 +252,14 @@ void WebContentsAudioInputStream::Impl::Close() {
 }
 
 void WebContentsAudioInputStream::Impl::DecrementCapturerCount() {
-  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+  if (!BrowserThread::CurrentlyOn(BrowserThread::UI)) {
+    BrowserThread::PostTask(
+        BrowserThread::UI, FROM_HERE,
+        base::BindOnce(&Impl::DecrementCapturerCount, this));
+    return;
+  }
 
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
   if (WebContents* contents = tracker_->web_contents())
     contents->DecrementCapturerCount();
 }
@@ -288,35 +297,34 @@ void WebContentsAudioInputStream::Impl::UnmuteWebContentsAudio() {
 }
 
 void WebContentsAudioInputStream::Impl::QueryForMatches(
-    const std::set<SourceFrameRef>& candidates,
-    const MatchesCallback& results_callback) {
+    const std::set<GlobalFrameRoutingId>& candidates,
+    MatchesCallback results_callback) {
   BrowserThread::PostTask(
       BrowserThread::UI, FROM_HERE,
       base::BindOnce(&Impl::QueryForMatchesOnUIThread, this, candidates,
-                     media::BindToCurrentLoop(results_callback)));
+                     media::BindToCurrentLoop(std::move(results_callback))));
 }
 
 void WebContentsAudioInputStream::Impl::QueryForMatchesOnUIThread(
-    const std::set<SourceFrameRef>& candidates,
-    const MatchesCallback& results_callback) {
+    const std::set<GlobalFrameRoutingId>& candidates,
+    MatchesCallback results_callback) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
-  std::set<SourceFrameRef> matches;
+  std::set<GlobalFrameRoutingId> matches;
   WebContents* const contents = tracker_->web_contents();
   if (contents) {
     // Add each ID to |matches| if it maps to a RenderFrameHost that maps to the
     // currently-tracked WebContents.
-    for (std::set<SourceFrameRef>::const_iterator i = candidates.begin();
-         i != candidates.end(); ++i) {
+    for (const auto& it : candidates) {
       WebContents* const contents_containing_frame =
           WebContents::FromRenderFrameHost(
-              RenderFrameHost::FromID(i->first, i->second));
+              RenderFrameHost::FromID(it.child_id, it.frame_routing_id));
       if (contents_containing_frame == contents)
-        matches.insert(*i);
+        matches.insert(it);
     }
   }
 
-  results_callback.Run(matches, is_duplication_);
+  std::move(results_callback).Run(matches, is_duplication_);
 }
 
 media::AudioOutputStream* WebContentsAudioInputStream::Impl::AddInput(
@@ -439,6 +447,11 @@ bool WebContentsAudioInputStream::GetAutomaticGainControl() {
 
 bool WebContentsAudioInputStream::IsMuted() {
   return false;
+}
+
+void WebContentsAudioInputStream::SetOutputDeviceForAec(
+    const std::string& output_device_id) {
+  // Not supported. Do nothing.
 }
 
 }  // namespace content

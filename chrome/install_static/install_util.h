@@ -66,6 +66,14 @@ std::wstring GetChromeInstallSubDirectory();
 // their browsing data.
 std::wstring GetRegistryPath();
 
+// Returns the path "Software\Google\Update\Clients\<guid>" where "<guid>" is
+// the current install mode's appguid.
+std::wstring GetClientsKeyPath();
+
+// Returns the path "Software\Google\Update\ClientState\<guid>" where "<guid>"
+// is the current install mode's appguid.
+std::wstring GetClientStateKeyPath();
+
 // Returns the path
 // "Software\Microsoft\Windows\CurrentVersion\Uninstall\[kCompanyPathName ]
 // kProductPathName[install_suffix]. This is the key used for the browser's
@@ -81,6 +89,9 @@ const wchar_t* GetAppGuid();
 // Returns the toast activator CLSID with which Chrome is registered with the
 // the Windows OS.
 const CLSID& GetToastActivatorClsid();
+
+// The CLSID of the COM server that provides silent elevation functionality.
+const CLSID& GetElevatorClsid();
 
 // Returns the unsuffixed application name of this program. This is the base of
 // the name registered with Default Programs. IMPORTANT: This must only be
@@ -126,6 +137,12 @@ bool SupportsRetentionExperiments();
 
 // Returns the index of the icon resource in the main executable for the mode.
 int GetIconResourceIndex();
+
+// Get sandbox id of current install mode.
+const wchar_t* GetSandboxSidPrefix();
+
+// Returns the brand-specific safe browsing client name.
+std::string GetSafeBrowsingName();
 
 // Returns true if usage stats collecting is enabled for this user for the
 // current executable.

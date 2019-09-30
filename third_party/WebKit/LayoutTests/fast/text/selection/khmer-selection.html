@@ -6,14 +6,14 @@
   <meta http-equiv="content-type" content="text/html; charset=UTF-8">
   <script>
     function main() {
-      window.eventSender.mouseMoveTo(5, 8);
-      window.eventSender.mouseDown();
+      eventSender.mouseMoveTo(5, 8);
+      eventSender.mouseDown();
 
       for (var x = 5; x < 600; x += 5) {
-        window.eventSender.mouseMoveTo(x, 8);
+        eventSender.mouseMoveTo(x, 8);
       }
 
-      window.eventSender.mouseUp();
+      eventSender.mouseUp();
     }
   </script>
 </head>
@@ -28,6 +28,6 @@
     "http://www.google.com.kh/dirhp?hl=km&amp;tab=wd" class=
     "gb1">ថតឯកសារ</a></nobr>
   </p>
-  <p>Some Harfbuzz shapers will output cluster logs which suggest that some glyphs had <i>no</i> contributing code points. This test contains such text and uses <tt>eventSender</tt> to select the text. You should see some of the above text selected and <tt>test_shell</tt> shouldn't trigger any assertions or crash.</p>
+  <p>Some Harfbuzz shapers will output cluster logs which suggest that some glyphs had <i>no</i> contributing code points. This test contains such text and uses eventSender to select the text. You should see some of the above text selected and test_shell shouldn't trigger any assertions or crash.</p>
 </body>
 </html>

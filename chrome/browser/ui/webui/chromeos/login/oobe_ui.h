@@ -25,19 +25,25 @@ class DictionaryValue;
 }  // namespace base
 
 namespace chromeos {
+class AppDownloadingScreenView;
 class AppLaunchSplashScreenView;
 class ArcKioskSplashScreenView;
 class ArcTermsOfServiceScreenView;
+class AssistantOptInFlowScreenView;
 class AutoEnrollmentCheckScreenView;
 class BaseScreenHandler;
 class ControllerPairingScreenView;
 class CoreOobeView;
+class DemoPreferencesScreenView;
+class DemoSetupScreenView;
 class DeviceDisabledScreenView;
 class EnableDebuggingScreenView;
 class EncryptionMigrationScreenView;
 class EnrollmentScreenView;
 class EulaView;
 class ErrorScreen;
+class DiscoverScreenView;
+class FingerprintSetupScreenView;
 class GaiaView;
 class HIDDetectionView;
 class HostPairingScreenView;
@@ -45,16 +51,16 @@ class KioskAppMenuHandler;
 class KioskAutolaunchScreenView;
 class KioskEnableScreenView;
 class LoginScreenContext;
+class MarketingOptInScreenView;
 class NativeWindowDelegate;
-class NetworkDropdownHandler;
+class NetworkScreenView;
 class NetworkStateInformer;
-class NetworkView;
 class OobeDisplayChooser;
+class RecommendAppsScreenView;
+class ResetView;
 class SigninScreenHandler;
 class SigninScreenHandlerDelegate;
 class SupervisedUserCreationScreenHandler;
-class ResetView;
-class DemoSetupScreenView;
 class SyncConsentScreenView;
 class TermsOfServiceScreenView;
 class UserBoardView;
@@ -63,6 +69,7 @@ class UpdateView;
 class UpdateRequiredView;
 class VoiceInteractionValuePropScreenView;
 class WaitForContainerReadyScreenView;
+class WelcomeView;
 class WrongHWIDScreenView;
 
 // A custom WebUI that defines datasource for out-of-box-experience (OOBE) UI:
@@ -74,13 +81,14 @@ class OobeUI : public content::WebUIController,
  public:
   // List of known types of OobeUI. Type added as path in chrome://oobe url, for
   // example chrome://oobe/user-adding.
-  static const char kOobeDisplay[];
-  static const char kLoginDisplay[];
-  static const char kLockDisplay[];
-  static const char kUserAddingDisplay[];
   static const char kAppLaunchSplashDisplay[];
   static const char kArcKioskSplashDisplay[];
+  static const char kDiscoverDisplay[];
   static const char kGaiaSigninDisplay[];
+  static const char kLockDisplay[];
+  static const char kLoginDisplay[];
+  static const char kOobeDisplay[];
+  static const char kUserAddingDisplay[];
 
   class Observer {
    public:
@@ -99,18 +107,22 @@ class OobeUI : public content::WebUIController,
   ~OobeUI() override;
 
   CoreOobeView* GetCoreOobeView();
-  NetworkView* GetNetworkView();
+  WelcomeView* GetWelcomeView();
   EulaView* GetEulaView();
   UpdateView* GetUpdateView();
   EnableDebuggingScreenView* GetEnableDebuggingScreenView();
   EnrollmentScreenView* GetEnrollmentScreenView();
   ResetView* GetResetView();
   DemoSetupScreenView* GetDemoSetupScreenView();
+  DemoPreferencesScreenView* GetDemoPreferencesScreenView();
+  FingerprintSetupScreenView* GetFingerprintSetupScreenView();
   KioskAutolaunchScreenView* GetKioskAutolaunchScreenView();
   KioskEnableScreenView* GetKioskEnableScreenView();
   TermsOfServiceScreenView* GetTermsOfServiceScreenView();
   SyncConsentScreenView* GetSyncConsentScreenView();
   ArcTermsOfServiceScreenView* GetArcTermsOfServiceScreenView();
+  RecommendAppsScreenView* GetRecommendAppsScreenView();
+  AppDownloadingScreenView* GetAppDownloadingScreenView();
   UserImageView* GetUserImageView();
   ErrorScreen* GetErrorScreen();
   WrongHWIDScreenView* GetWrongHWIDScreenView();
@@ -126,8 +138,12 @@ class OobeUI : public content::WebUIController,
   VoiceInteractionValuePropScreenView* GetVoiceInteractionValuePropScreenView();
   WaitForContainerReadyScreenView* GetWaitForContainerReadyScreenView();
   UpdateRequiredView* GetUpdateRequiredScreenView();
+  AssistantOptInFlowScreenView* GetAssistantOptInFlowScreenView();
   GaiaView* GetGaiaScreenView();
   UserBoardView* GetUserBoardView();
+  DiscoverScreenView* GetDiscoverScreenView();
+  NetworkScreenView* GetNetworkScreenView();
+  MarketingOptInScreenView* GetMarketingOptInScreenView();
 
   // ShutdownPolicyHandler::Delegate
   void OnShutdownPolicyChanged(bool reboot_on_shutdown) override;
@@ -160,6 +176,9 @@ class OobeUI : public content::WebUIController,
                         SigninScreenHandlerDelegate* delegate,
                         NativeWindowDelegate* native_window_delegate);
 
+  // Forwards an accelerator to the webui to be handled.
+  void ForwardAccelerator(std::string accelerator_name);
+
   // Resets the delegate set in ShowSigninScreen.
   void ResetSigninScreenHandlerDelegate();
 
@@ -181,12 +200,11 @@ class OobeUI : public content::WebUIController,
     return network_state_informer_.get();
   }
 
-  // Does ReloadContent() if needed (for example, if material design mode has
-  // changed).
-  void UpdateLocalizedStringsIfNeeded();
-
   // Re-evaluate OOBE display placement.
   void OnDisplayConfigurationChanged();
+
+  // Notify WebUI of the user count on the views login screen.
+  void SetLoginUserCount(int user_count);
 
  private:
   // Lookup a view by its statically registered OobeScreen.
@@ -206,6 +224,10 @@ class OobeUI : public content::WebUIController,
   void AddWebUIHandler(std::unique_ptr<BaseWebUIHandler> handler);
   void AddScreenHandler(std::unique_ptr<BaseScreenHandler> handler);
 
+  // Configures all the relevant screen shandlers and resources for OOBE/Login
+  // display type.
+  void ConfigureOobeDisplay();
+
   // Type of UI.
   std::string display_type_;
 
@@ -215,10 +237,6 @@ class OobeUI : public content::WebUIController,
 
   // Reference to CoreOobeHandler that handles common requests of Oobe page.
   CoreOobeHandler* core_handler_ = nullptr;
-
-  // Reference to NetworkDropdownHandler that handles interaction with
-  // network dropdown.
-  NetworkDropdownHandler* network_dropdown_handler_ = nullptr;
 
   SupervisedUserCreationScreenHandler* supervised_user_creation_screen_view_ =
       nullptr;
@@ -245,15 +263,11 @@ class OobeUI : public content::WebUIController,
   // calls.
   bool ready_ = false;
 
-  // This flag stores material-design mode (on/off) of currently displayed UI.
-  // If different version of UI is required, UI is updated.
-  bool oobe_ui_md_mode_ = false;
-
   // Callbacks to notify when JS part is fully loaded and ready to accept calls.
   std::vector<base::Closure> ready_callbacks_;
 
   // List of registered observers.
-  base::ObserverList<Observer> observer_list_;
+  base::ObserverList<Observer>::Unchecked observer_list_;
 
   // Observer of CrosSettings watching the kRebootOnShutdown policy.
   std::unique_ptr<ShutdownPolicyHandler> shutdown_policy_handler_;

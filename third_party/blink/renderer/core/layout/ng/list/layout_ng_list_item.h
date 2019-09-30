@@ -26,6 +26,7 @@ class CORE_EXPORT LayoutNGListItem final : public LayoutNGBlockFlow {
     return StyleRef().ListStyleImage() &&
            !StyleRef().ListStyleImage()->ErrorOccurred();
   }
+  bool IsLayoutNGObject() const override { return true; }
 
   void UpdateMarkerTextIfNeeded() {
     if (marker_ && !is_marker_text_updated_ && !IsMarkerImage())
@@ -35,6 +36,9 @@ class CORE_EXPORT LayoutNGListItem final : public LayoutNGBlockFlow {
 
   void OrdinalValueChanged();
   void WillCollectInlines() override;
+
+  LayoutObject* SymbolMarkerLayoutText() const;
+  static const LayoutObject* FindSymbolMarkerLayoutText(const LayoutObject*);
 
   const char* GetName() const override { return "LayoutNGListItem"; }
 
@@ -50,7 +54,7 @@ class CORE_EXPORT LayoutNGListItem final : public LayoutNGBlockFlow {
   bool IsInside() const;
 
   enum MarkerTextFormat { kWithSuffix, kWithoutSuffix };
-  enum MarkerType { kStatic, kOrdinalValue };
+  enum MarkerType { kStatic, kOrdinalValue, kSymbolValue };
   MarkerType MarkerText(StringBuilder*, MarkerTextFormat) const;
   void UpdateMarkerText();
   void UpdateMarkerText(LayoutText*);
@@ -60,7 +64,7 @@ class CORE_EXPORT LayoutNGListItem final : public LayoutNGBlockFlow {
   ListItemOrdinal ordinal_;
   LayoutObject* marker_ = nullptr;
 
-  unsigned marker_type_ : 1;  // MarkerType
+  unsigned marker_type_ : 2;  // MarkerType
   unsigned is_marker_text_updated_ : 1;
 };
 

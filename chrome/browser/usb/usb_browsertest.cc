@@ -14,19 +14,26 @@
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/usb/usb_chooser_context_factory.h"
 #include "chrome/browser/usb/usb_chooser_controller.h"
-#include "chrome/browser/usb/web_usb_chooser_service.h"
+#include "chrome/browser/usb/web_usb_chooser.h"
+#include "chrome/browser/usb/web_usb_service_impl.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "components/content_settings/core/browser/host_content_settings_map.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/test/browser_test_utils.h"
+#include "content/public/test/test_navigation_observer.h"
 #include "device/base/mock_device_client.h"
 #include "device/usb/mock_usb_device.h"
 #include "device/usb/mock_usb_service.h"
-#include "device/usb/public/mojom/chooser_service.mojom.h"
 #include "mojo/public/cpp/bindings/strong_binding.h"
 #include "services/service_manager/public/cpp/binder_registry.h"
+
+namespace blink {
+namespace mojom {
+class WebUsbService;
+}
+}  // namespace blink
 
 using content::RenderFrameHost;
 using device::MockDeviceClient;
@@ -63,36 +70,55 @@ class FakeChooserView : public ChooserController::View {
   DISALLOW_COPY_AND_ASSIGN(FakeChooserView);
 };
 
-class FakeChooserService : public WebUsbChooserService {
+class FakeUsbChooser : public WebUsbChooser {
  public:
-  explicit FakeChooserService(RenderFrameHost* render_frame_host)
-      : WebUsbChooserService(render_frame_host) {}
+  explicit FakeUsbChooser(RenderFrameHost* render_frame_host)
+      : WebUsbChooser(render_frame_host), weak_factory_(this) {}
 
-  ~FakeChooserService() override {}
+  ~FakeUsbChooser() override {}
 
   void ShowChooser(std::unique_ptr<UsbChooserController> controller) override {
     new FakeChooserView(std::move(controller));
   }
 
+  base::WeakPtr<WebUsbChooser> GetWeakPtr() override {
+    return weak_factory_.GetWeakPtr();
+  }
+
  private:
-  DISALLOW_COPY_AND_ASSIGN(FakeChooserService);
+  base::WeakPtrFactory<FakeUsbChooser> weak_factory_;
+
+  DISALLOW_COPY_AND_ASSIGN(FakeUsbChooser);
 };
 
 class TestContentBrowserClient : public ChromeContentBrowserClient {
  public:
   TestContentBrowserClient() {}
+
   ~TestContentBrowserClient() override {}
 
   // ChromeContentBrowserClient:
-  void CreateUsbChooserService(
+  void CreateWebUsbService(
       content::RenderFrameHost* render_frame_host,
-      device::mojom::UsbChooserServiceRequest request) override {
-    mojo::MakeStrongBinding(
-        std::make_unique<FakeChooserService>(render_frame_host),
-        std::move(request));
+      mojo::InterfaceRequest<blink::mojom::WebUsbService> request) override {
+    if (use_real_chooser_) {
+      ChromeContentBrowserClient::CreateWebUsbService(render_frame_host,
+                                                      std::move(request));
+    } else {
+      usb_chooser_.reset(new FakeUsbChooser(render_frame_host));
+      web_usb_service_.reset(
+          new WebUsbServiceImpl(render_frame_host, usb_chooser_->GetWeakPtr()));
+      web_usb_service_->BindRequest(std::move(request));
+    }
   }
 
+  void UseRealChooser() { use_real_chooser_ = true; }
+
  private:
+  bool use_real_chooser_ = false;
+  std::unique_ptr<WebUsbServiceImpl> web_usb_service_;
+  std::unique_ptr<WebUsbChooser> usb_chooser_;
+
   DISALLOW_COPY_AND_ASSIGN(TestContentBrowserClient);
 };
 
@@ -139,6 +165,8 @@ class WebUsbTest : public InProcessBrowserTest {
   }
 
   const GURL& origin() { return origin_; }
+
+  void UseRealChooser() { test_content_browser_client_.UseRealChooser(); }
 
  private:
   std::unique_ptr<MockDeviceClient> device_client_;
@@ -285,6 +313,24 @@ IN_PROC_BROWSER_TEST_F(WebUsbTest, AddRemoveDeviceEphemeral) {
       "}",
       &result));
   EXPECT_EQ("", result);
+}
+
+IN_PROC_BROWSER_TEST_F(WebUsbTest, NavigateWithChooserCrossOrigin) {
+  UseRealChooser();
+  content::WebContents* web_contents =
+      browser()->tab_strip_model()->GetActiveWebContents();
+
+  content::TestNavigationObserver observer(
+      web_contents, 1 /* number_of_navigations */,
+      content::MessageLoopRunner::QuitMode::DEFERRED);
+
+  EXPECT_TRUE(content::ExecuteScript(
+      web_contents,
+      "navigator.usb.requestDevice({ filters: [] });"
+      "document.location.href = \"https://google.com\";"));
+
+  observer.Wait();
+  EXPECT_EQ(0u, browser()->GetBubbleManager()->GetBubbleCountForTesting());
 }
 
 }  // namespace

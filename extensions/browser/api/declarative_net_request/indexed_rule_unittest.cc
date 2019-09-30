@@ -11,6 +11,7 @@
 #include "base/macros.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/strings/stringprintf.h"
+#include "base/strings/utf_string_conversions.h"
 #include "components/version_info/version_info.h"
 #include "extensions/browser/api/declarative_net_request/constants.h"
 #include "extensions/common/api/declarative_net_request.h"
@@ -28,7 +29,7 @@ std::unique_ptr<dnr_api::Rule> CreateGenericParsedRule() {
   auto rule = std::make_unique<dnr_api::Rule>();
   rule->id = kMinValidID;
   rule->condition.url_filter = std::make_unique<std::string>("filter");
-  rule->action.type = dnr_api::RULE_ACTION_TYPE_BLACKLIST;
+  rule->action.type = dnr_api::RULE_ACTION_TYPE_BLOCK;
   return rule;
 }
 
@@ -119,10 +120,10 @@ TEST_F(IndexedRuleTest, OptionsParsing) {
     std::unique_ptr<bool> is_url_filter_case_sensitive;
     const uint8_t expected_options;
   } cases[] = {
-      {dnr_api::DOMAIN_TYPE_NONE, dnr_api::RULE_ACTION_TYPE_BLACKLIST, nullptr,
+      {dnr_api::DOMAIN_TYPE_NONE, dnr_api::RULE_ACTION_TYPE_BLOCK, nullptr,
        flat_rule::OptionFlag_APPLIES_TO_THIRD_PARTY |
            flat_rule::OptionFlag_APPLIES_TO_FIRST_PARTY},
-      {dnr_api::DOMAIN_TYPE_FIRSTPARTY, dnr_api::RULE_ACTION_TYPE_WHITELIST,
+      {dnr_api::DOMAIN_TYPE_FIRSTPARTY, dnr_api::RULE_ACTION_TYPE_ALLOW,
        std::make_unique<bool>(true),
        flat_rule::OptionFlag_IS_WHITELIST |
            flat_rule::OptionFlag_APPLIES_TO_FIRST_PARTY |
@@ -156,7 +157,8 @@ TEST_F(IndexedRuleTest, ResourceTypesParsing) {
     // Only valid if |expected_result| is SUCCESS.
     const uint16_t expected_element_types;
   } cases[] = {
-      {nullptr, nullptr, ParseResult::SUCCESS, flat_rule::ElementType_ANY},
+      {nullptr, nullptr, ParseResult::SUCCESS,
+       flat_rule::ElementType_ANY & ~flat_rule::ElementType_MAIN_FRAME},
       {nullptr,
        std::make_unique<ResourceTypeVec>(
            ResourceTypeVec({dnr_api::RESOURCE_TYPE_SCRIPT})),
@@ -174,12 +176,13 @@ TEST_F(IndexedRuleTest, ResourceTypesParsing) {
        flat_rule::ElementType_NONE},
       {nullptr,
        std::make_unique<ResourceTypeVec>(ResourceTypeVec(
-           {dnr_api::RESOURCE_TYPE_SUB_FRAME, dnr_api::RESOURCE_TYPE_STYLESHEET,
-            dnr_api::RESOURCE_TYPE_SCRIPT, dnr_api::RESOURCE_TYPE_IMAGE,
-            dnr_api::RESOURCE_TYPE_FONT, dnr_api::RESOURCE_TYPE_OBJECT,
+           {dnr_api::RESOURCE_TYPE_MAIN_FRAME, dnr_api::RESOURCE_TYPE_SUB_FRAME,
+            dnr_api::RESOURCE_TYPE_STYLESHEET, dnr_api::RESOURCE_TYPE_SCRIPT,
+            dnr_api::RESOURCE_TYPE_IMAGE, dnr_api::RESOURCE_TYPE_FONT,
+            dnr_api::RESOURCE_TYPE_OBJECT,
             dnr_api::RESOURCE_TYPE_XMLHTTPREQUEST, dnr_api::RESOURCE_TYPE_PING,
-            dnr_api::RESOURCE_TYPE_MEDIA, dnr_api::RESOURCE_TYPE_WEBSOCKET,
-            dnr_api::RESOURCE_TYPE_OTHER})),
+            dnr_api::RESOURCE_TYPE_CSP_REPORT, dnr_api::RESOURCE_TYPE_MEDIA,
+            dnr_api::RESOURCE_TYPE_WEBSOCKET, dnr_api::RESOURCE_TYPE_OTHER})),
        ParseResult::ERROR_NO_APPLICABLE_RESOURCE_TYPES,
        flat_rule::ElementType_NONE},
       {std::make_unique<ResourceTypeVec>(ResourceTypeVec()),
@@ -256,6 +259,11 @@ TEST_F(IndexedRuleTest, UrlFilterParsing) {
       {std::make_unique<std::string>("||google.com"),
        flat_rule::UrlPatternType_SUBSTRING, flat_rule::AnchorType_SUBDOMAIN,
        flat_rule::AnchorType_NONE, "google.com", ParseResult::SUCCESS},
+      // Url pattern with non-ascii characters -ⱴase.com.
+      {std::make_unique<std::string>(base::WideToUTF8(L"\x2c74"
+                                                      L"ase.com")),
+       flat_rule::UrlPatternType_SUBSTRING, flat_rule::AnchorType_NONE,
+       flat_rule::AnchorType_NONE, "", ParseResult::ERROR_NON_ASCII_URL_FILTER},
   };
 
   for (size_t i = 0; i < arraysize(cases); ++i) {
@@ -304,7 +312,30 @@ TEST_F(IndexedRuleTest, DomainsParsing) {
            DomainVec({"g.com", "XY.COM", "zzz.com", "a.com", "google.com"})),
        ParseResult::SUCCESS,
        {"a.com", "a.com", "b.com"},
-       {"google.com", "zzz.com", "xy.com", "a.com", "g.com"}}};
+       {"google.com", "zzz.com", "xy.com", "a.com", "g.com"}},
+      // Domain with non-ascii characters.
+      {std::make_unique<DomainVec>(
+           DomainVec({base::WideToUTF8(L"abc\x2010" /*hyphen*/ L"def.com")})),
+       nullptr,
+       ParseResult::ERROR_NON_ASCII_DOMAIN,
+       {},
+       {}},
+      // Excluded domain with non-ascii characters.
+      {nullptr,
+       std::make_unique<DomainVec>(
+           DomainVec({base::WideToUTF8(L"36\x00b0"
+                                       L"c.com" /*36°c.com*/)})),
+       ParseResult::ERROR_NON_ASCII_EXCLUDED_DOMAIN,
+       {},
+       {}},
+      // Internationalized domain in punycode.
+      {std::make_unique<DomainVec>(
+           DomainVec({"xn--36c-tfa.com" /* punycode for 36°c.com*/})),
+       nullptr,
+       ParseResult::SUCCESS,
+       {"xn--36c-tfa.com"},
+       {}},
+  };
 
   for (size_t i = 0; i < arraysize(cases); ++i) {
     SCOPED_TRACE(base::StringPrintf("Testing case[%" PRIuS "]", i));

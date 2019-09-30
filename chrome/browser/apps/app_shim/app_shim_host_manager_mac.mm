@@ -11,7 +11,7 @@
 #include "base/files/file_util.h"
 #include "base/logging.h"
 #include "base/path_service.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "chrome/browser/apps/app_shim/app_shim_handler_mac.h"
 #include "chrome/browser/apps/app_shim/app_shim_host_mac.h"
 #include "chrome/browser/apps/app_shim/extension_app_shim_handler_mac.h"
@@ -22,9 +22,9 @@
 
 namespace {
 
-void CreateAppShimHost(mojo::edk::ScopedPlatformHandle handle) {
+void CreateAppShimHost(mojo::PlatformChannelEndpoint endpoint) {
   // AppShimHost takes ownership of itself.
-  (new AppShimHost)->ServeChannel(std::move(handle));
+  (new AppShimHost)->ServeChannel(std::move(endpoint));
 }
 
 base::FilePath GetDirectoryInTmpTemplate(const base::FilePath& user_data_dir) {
@@ -87,7 +87,7 @@ AppShimHostManager::~AppShimHostManager() {
         user_data_dir.Append(app_mode::kRunningChromeVersionSymlinkName);
   }
   base::PostTaskWithTraits(FROM_HERE,
-                           {base::MayBlock(), base::TaskPriority::BACKGROUND,
+                           {base::MayBlock(), base::TaskPriority::BEST_EFFORT,
                             base::TaskShutdownBehavior::BLOCK_SHUTDOWN},
                            base::BindOnce(&DeleteSocketFiles, directory_in_tmp_,
                                           symlink_path, version_path));
@@ -157,11 +157,11 @@ void AppShimHostManager::ListenOnIOThread() {
 }
 
 void AppShimHostManager::OnClientConnected(
-    mojo::edk::ScopedPlatformHandle handle) {
+    mojo::PlatformChannelEndpoint endpoint) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::IO);
   content::BrowserThread::GetTaskRunnerForThread(content::BrowserThread::UI)
       ->PostTask(FROM_HERE,
-                 base::Bind(&CreateAppShimHost, base::Passed(&handle)));
+                 base::BindOnce(&CreateAppShimHost, std::move(endpoint)));
 }
 
 void AppShimHostManager::OnListenError() {

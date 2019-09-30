@@ -41,12 +41,12 @@ float GetMonitorScaleFactor(HMONITOR monitor) {
     return Display::GetForcedDeviceScaleFactor();
 
   if (base::win::IsProcessPerMonitorDpiAware()) {
-    static auto get_dpi_for_monitor_func = [](){
+    static auto get_dpi_for_monitor_func = []() {
       using GetDpiForMonitorPtr = decltype(::GetDpiForMonitor)*;
       HMODULE shcore_dll = ::LoadLibrary(L"shcore.dll");
       if (shcore_dll) {
         return reinterpret_cast<GetDpiForMonitorPtr>(
-                   ::GetProcAddress(shcore_dll, "GetDpiForMonitor"));
+            ::GetProcAddress(shcore_dll, "GetDpiForMonitor"));
       }
       return static_cast<GetDpiForMonitorPtr>(nullptr);
     }();
@@ -54,8 +54,8 @@ float GetMonitorScaleFactor(HMONITOR monitor) {
     UINT dpi_x;
     UINT dpi_y;
     if (get_dpi_for_monitor_func &&
-        SUCCEEDED(get_dpi_for_monitor_func(monitor, MDT_EFFECTIVE_DPI,
-                                           &dpi_x, &dpi_y))) {
+        SUCCEEDED(get_dpi_for_monitor_func(monitor, MDT_EFFECTIVE_DPI, &dpi_x,
+                                           &dpi_y))) {
       DCHECK_EQ(dpi_x, dpi_y);
       return GetScalingFactorFromDPI(dpi_x);
     }
@@ -63,20 +63,81 @@ float GetMonitorScaleFactor(HMONITOR monitor) {
   return GetDPIScale();
 }
 
+bool GetPathInfo(HMONITOR monitor, DISPLAYCONFIG_PATH_INFO* path_info) {
+  LONG result;
+  uint32_t num_path_array_elements = 0;
+  uint32_t num_mode_info_array_elements = 0;
+  std::vector<DISPLAYCONFIG_PATH_INFO> path_infos;
+  std::vector<DISPLAYCONFIG_MODE_INFO> mode_infos;
+
+  // Get the monitor name.
+  MONITORINFOEXW view_info;
+  view_info.cbSize = sizeof(view_info);
+  if (!GetMonitorInfoW(monitor, &view_info))
+    return false;
+
+  // Get all path infos.
+  do {
+    if (GetDisplayConfigBufferSizes(
+            QDC_ONLY_ACTIVE_PATHS, &num_path_array_elements,
+            &num_mode_info_array_elements) != ERROR_SUCCESS) {
+      return false;
+    }
+    path_infos.resize(num_path_array_elements);
+    mode_infos.resize(num_mode_info_array_elements);
+    result = QueryDisplayConfig(
+        QDC_ONLY_ACTIVE_PATHS, &num_path_array_elements, path_infos.data(),
+        &num_mode_info_array_elements, mode_infos.data(), nullptr);
+  } while (result == ERROR_INSUFFICIENT_BUFFER);
+
+  // Iterate of the path infos and see if we find one with a matching name.
+  if (result == ERROR_SUCCESS) {
+    for (uint32_t p = 0; p < num_path_array_elements; p++) {
+      DISPLAYCONFIG_SOURCE_DEVICE_NAME device_name;
+      device_name.header.type = DISPLAYCONFIG_DEVICE_INFO_GET_SOURCE_NAME;
+      device_name.header.size = sizeof(device_name);
+      device_name.header.adapterId = path_infos[p].sourceInfo.adapterId;
+      device_name.header.id = path_infos[p].sourceInfo.id;
+      if (DisplayConfigGetDeviceInfo(&device_name.header) == ERROR_SUCCESS) {
+        if (wcscmp(view_info.szDevice, device_name.viewGdiDeviceName) == 0) {
+          *path_info = path_infos[p];
+          return true;
+        }
+      }
+    }
+  }
+  return false;
+}
+
+float GetMonitorSDRWhiteLevel(HMONITOR monitor) {
+  float ret = 200.0;  // default value
+  DISPLAYCONFIG_PATH_INFO path_info = {};
+  if (!GetPathInfo(monitor, &path_info))
+    return ret;
+
+  DISPLAYCONFIG_SDR_WHITE_LEVEL white_level = {};
+  white_level.header.type = DISPLAYCONFIG_DEVICE_INFO_GET_SDR_WHITE_LEVEL;
+  white_level.header.size = sizeof(white_level);
+  white_level.header.adapterId = path_info.targetInfo.adapterId;
+  white_level.header.id = path_info.targetInfo.id;
+  if (DisplayConfigGetDeviceInfo(&white_level.header) != ERROR_SUCCESS)
+    return ret;
+  ret = white_level.SDRWhiteLevel * 80.0 / 1000.0;
+  return ret;
+}
+
 std::vector<DisplayInfo> FindAndRemoveTouchingDisplayInfos(
     const DisplayInfo& ref_display_info,
     std::vector<DisplayInfo>* display_infos) {
   std::vector<DisplayInfo> touching_display_infos;
-  display_infos->erase(
-      std::remove_if(display_infos->begin(), display_infos->end(),
-          [&touching_display_infos, ref_display_info](
-              const DisplayInfo& display_info) {
-            if (DisplayInfosTouch(ref_display_info, display_info)) {
-              touching_display_infos.push_back(display_info);
-              return true;
-            }
-            return false;
-          }), display_infos->end());
+  base::EraseIf(*display_infos, [&touching_display_infos, ref_display_info](
+      const DisplayInfo& display_info) {
+    if (DisplayInfosTouch(ref_display_info, display_info)) {
+      touching_display_infos.push_back(display_info);
+      return true;
+    }
+    return false;
+  });
   return touching_display_infos;
 }
 
@@ -94,7 +155,9 @@ Display CreateDisplayFromDisplayInfo(const DisplayInfo& display_info,
   display.set_rotation(display_info.rotation());
   if (!Display::HasForceColorProfile()) {
     if (hdr_enabled) {
-      display.SetColorSpaceAndDepth(gfx::ColorSpace::CreateSCRGBLinear());
+      display.SetColorSpaceAndDepth(
+          gfx::ColorSpace::CreateSCRGBLinear().GetScaledColorSpace(
+              80.0 / display_info.sdr_white_level()));
     } else {
       display.SetColorSpaceAndDepth(
           color_profile_reader->GetDisplayColorSpace(display_info.id()));
@@ -191,7 +254,8 @@ BOOL CALLBACK EnumMonitorForDisplayInfoCallback(HMONITOR monitor,
       reinterpret_cast<std::vector<DisplayInfo>*>(data);
   DCHECK(display_infos);
   display_infos->push_back(DisplayInfo(MonitorInfoFromHMONITOR(monitor),
-                                       GetMonitorScaleFactor(monitor)));
+                                       GetMonitorScaleFactor(monitor),
+                                       GetMonitorSDRWhiteLevel(monitor)));
   return TRUE;
 }
 
@@ -231,6 +295,34 @@ ScreenWin::ScreenWin(bool initialize)
 ScreenWin::~ScreenWin() {
   DCHECK_EQ(g_screen_win_instance, this);
   g_screen_win_instance = nullptr;
+}
+
+// static
+int ScreenWin::GetSystemMetricsForScaleFactor(float scale_factor, int metric) {
+  if (base::win::IsProcessPerMonitorDpiAware()) {
+    static auto get_metric_for_dpi_func = []() {
+      using GetSystemMetricsForDpiPtr = decltype(::GetSystemMetricsForDpi)*;
+      HMODULE user32_dll = ::LoadLibrary(L"user32.dll");
+      if (user32_dll) {
+        return reinterpret_cast<GetSystemMetricsForDpiPtr>(
+            ::GetProcAddress(user32_dll, "GetSystemMetricsForDpi"));
+      }
+      return static_cast<GetSystemMetricsForDpiPtr>(nullptr);
+    }();
+
+    if (get_metric_for_dpi_func) {
+      return get_metric_for_dpi_func(metric,
+                                     GetDPIFromScalingFactor(scale_factor));
+    }
+  }
+
+  // Fallback for when we're running Windows 8.1, which doesn't support
+  // GetSystemMetricsForDpi and yet does support per-process dpi awareness.
+  Display primary_display(g_screen_win_instance->GetPrimaryDisplay());
+  int system_metrics_result = g_screen_win_instance->GetSystemMetrics(metric);
+
+  return static_cast<int>(std::round(scale_factor * system_metrics_result /
+                                     primary_display.device_scale_factor()));
 }
 
 // static
@@ -323,19 +415,28 @@ gfx::Size ScreenWin::DIPToScreenSize(HWND hwnd, const gfx::Size& dip_size) {
 
 // static
 int ScreenWin::GetSystemMetricsForHwnd(HWND hwnd, int metric) {
-  // GetSystemMetrics returns screen values based off of the primary monitor's
-  // DPI. This will further scale based off of the DPI for |hwnd|.
   if (!g_screen_win_instance)
     return ::GetSystemMetrics(metric);
 
   Display primary_display(g_screen_win_instance->GetPrimaryDisplay());
-  int system_metrics_result = g_screen_win_instance->GetSystemMetrics(metric);
 
-  float metrics_relative_scale_factor = hwnd
-      ? GetScaleFactorForHWND(hwnd) / primary_display.device_scale_factor()
-      : 1.0f;
-  return static_cast<int>(std::round(
-      system_metrics_result * metrics_relative_scale_factor));
+  return GetSystemMetricsForScaleFactor(
+      hwnd ? GetScaleFactorForHWND(hwnd)
+           : primary_display.device_scale_factor(),
+      metric);
+}
+
+// static
+int ScreenWin::GetSystemMetricsForMonitor(HMONITOR monitor, int metric) {
+  if (!g_screen_win_instance)
+    return ::GetSystemMetrics(metric);
+
+  Display primary_display(g_screen_win_instance->GetPrimaryDisplay());
+
+  return GetSystemMetricsForScaleFactor(
+      monitor ? GetMonitorScaleFactor(monitor)
+              : primary_display.device_scale_factor(),
+      metric);
 }
 
 // static
@@ -343,12 +444,7 @@ int ScreenWin::GetSystemMetricsInDIP(int metric) {
   if (!g_screen_win_instance)
     return ::GetSystemMetrics(metric);
 
-  // GetSystemMetrics returns screen values based off of the primary monitor's
-  // DPI.
-  Display primary_display(g_screen_win_instance->GetPrimaryDisplay());
-  int system_metrics_result = g_screen_win_instance->GetSystemMetrics(metric);
-  return static_cast<int>(std::round(
-      system_metrics_result / primary_display.device_scale_factor()));
+  return GetSystemMetricsForScaleFactor(1.0f, metric);
 }
 
 // static

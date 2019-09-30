@@ -25,6 +25,7 @@
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/grit/browser_resources.h"
+#include "components/heap_profiling/supervisor.h"
 #include "components/services/heap_profiling/public/cpp/settings.h"
 #include "content/public/browser/browser_child_process_host_iterator.h"
 #include "content/public/browser/browser_thread.h"
@@ -49,7 +50,11 @@ namespace {
 // Returns the string to display at the top of the page for help.
 std::string GetMessageString() {
 #if BUILDFLAG(USE_ALLOCATOR_SHIM)
-  switch (ProfilingProcessHost::GetInstance()->GetMode()) {
+  Mode mode = Mode::kNone;
+  if (heap_profiling::Supervisor::GetInstance()->HasStarted()) {
+    mode = heap_profiling::Supervisor::GetInstance()->GetMode();
+  }
+  switch (mode) {
     case Mode::kAll:
       return std::string("Memory logging is enabled for all processes.");
 
@@ -69,8 +74,14 @@ std::string GetMessageString() {
 
     case Mode::kRendererSampling:
       return std::string(
-          "Memory logging is enabled for an automatic sample of renderer "
-          "processes. This UI is disabled.");
+          "Memory logging is enabled for at most one renderer process. Each "
+          "renderer process has a fixed probability of being sampled at "
+          "startup.");
+
+    case Mode::kUtilitySampling:
+      return std::string(
+          "Each utility process has a fixed probability of being profiled at "
+          "startup.");
 
     case Mode::kNone:
     case Mode::kManual:
@@ -212,7 +223,7 @@ void MemoryInternalsDOMHandler::HandleSaveDump(const base::ListValue* args) {
   // TODO(bug 757115) Does it make sense to show the Android file picker here
   // instead? Need to test what that looks like.
   base::FilePath user_data_dir;
-  PathService::Get(chrome::DIR_USER_DATA, &user_data_dir);
+  base::PathService::Get(chrome::DIR_USER_DATA, &user_data_dir);
   base::FilePath output_path = user_data_dir.Append(default_file);
   ProfilingProcessHost::GetInstance()->SaveTraceWithHeapDumpToFile(
       std::move(output_path),
@@ -246,25 +257,36 @@ void MemoryInternalsDOMHandler::HandleReportProcess(
 
 void MemoryInternalsDOMHandler::HandleStartProfiling(
     const base::ListValue* args) {
+  DCHECK(content::BrowserThread::CurrentlyOn(content::BrowserThread::UI));
   if (!args->is_list() || args->GetList().size() != 1)
     return;
 
-  ProfilingProcessHost::GetInstance()->StartManualProfiling(
-      args->GetList()[0].GetInt());
+  base::ProcessId pid = args->GetList()[0].GetInt();
+  heap_profiling::Supervisor* supervisor =
+      heap_profiling::Supervisor::GetInstance();
+  if (supervisor->HasStarted()) {
+    supervisor->StartManualProfiling(pid);
+  } else {
+    supervisor->Start(
+        content::ServiceManagerConnection::GetForProcess(),
+        base::BindOnce(&heap_profiling::Supervisor::StartManualProfiling,
+                       base::Unretained(supervisor), pid));
+  }
 }
 
 void MemoryInternalsDOMHandler::GetChildProcessesOnIOThread(
     base::WeakPtr<MemoryInternalsDOMHandler> dom_handler) {
   std::vector<base::Value> result;
 
-  // The only non-renderer child process that currently supports out-of-process
-  // heap profiling is GPU.
+  // The only non-renderer child processes that currently support out-of-process
+  // heap profiling are GPU and UTILITY.
   for (content::BrowserChildProcessHostIterator iter; !iter.Done(); ++iter) {
     // Note that ChildProcessData.id is a child ID and not an OS PID.
     const content::ChildProcessData& data = iter.GetData();
 
-    if (data.process_type == content::PROCESS_TYPE_GPU) {
-      result.push_back(MakeProcessInfo(base::GetProcId(data.handle),
+    if (data.process_type == content::PROCESS_TYPE_GPU ||
+        data.process_type == content::PROCESS_TYPE_UTILITY) {
+      result.push_back(MakeProcessInfo(base::GetProcId(data.GetHandle()),
                                        GetChildDescription(data)));
     }
   }
@@ -278,7 +300,20 @@ void MemoryInternalsDOMHandler::GetChildProcessesOnIOThread(
 void MemoryInternalsDOMHandler::GetProfiledPids(
     std::vector<base::Value> children) {
   DCHECK(content::BrowserThread::CurrentlyOn(content::BrowserThread::UI));
-  ProfilingProcessHost::GetInstance()->GetProfiledPids(
+  heap_profiling::Supervisor* supervisor =
+      heap_profiling::Supervisor::GetInstance();
+
+  // The supervisor hasn't started, so return an empty list.
+  if (!supervisor->HasStarted()) {
+    content::BrowserThread::PostTask(
+        content::BrowserThread::UI, FROM_HERE,
+        base::BindOnce(&MemoryInternalsDOMHandler::ReturnProcessListOnUIThread,
+                       weak_factory_.GetWeakPtr(), std::move(children),
+                       std::vector<base::ProcessId>()));
+    return;
+  }
+
+  supervisor->GetProfiledPids(
       base::BindOnce(&MemoryInternalsDOMHandler::ReturnProcessListOnUIThread,
                      weak_factory_.GetWeakPtr(), std::move(children)));
 }
@@ -298,12 +333,13 @@ void MemoryInternalsDOMHandler::ReturnProcessListOnUIThread(
   // Append renderer processes.
   auto iter = content::RenderProcessHost::AllHostsIterator();
   while (!iter.IsAtEnd()) {
-    base::ProcessHandle renderer_handle = iter.GetCurrentValue()->GetHandle();
-    base::ProcessId renderer_pid = base::GetProcId(renderer_handle);
-    if (renderer_pid != 0) {
-      // TODO(brettw) make a better description of the process, maybe see
-      // what TaskManager does to get the page title.
-      process_list.push_back(MakeProcessInfo(renderer_pid, "Renderer"));
+    if (iter.GetCurrentValue()->GetProcess().IsValid()) {
+      base::ProcessId renderer_pid = iter.GetCurrentValue()->GetProcess().Pid();
+      if (renderer_pid != 0) {
+        // TODO(brettw) make a better description of the process, maybe see
+        // what TaskManager does to get the page title.
+        process_list.push_back(MakeProcessInfo(renderer_pid, "Renderer"));
+      }
     }
     iter.Advance();
   }

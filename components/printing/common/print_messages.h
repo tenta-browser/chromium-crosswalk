@@ -17,7 +17,7 @@
 #include "components/printing/common/printing_param_traits_macros.h"
 #include "ipc/ipc_message_macros.h"
 #include "printing/buildflags/buildflags.h"
-#include "printing/common/pdf_metafile_utils.h"
+#include "printing/common/metafile_utils.h"
 #include "printing/page_range.h"
 #include "printing/page_size_margins.h"
 #include "printing/print_job_constants.h"
@@ -26,7 +26,6 @@
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/ipc/geometry/gfx_param_traits.h"
 #include "ui/gfx/ipc/skia/gfx_skia_param_traits.h"
-#include "ui/gfx/native_widget_types.h"
 
 #ifndef INTERNAL_COMPONENTS_PRINTING_COMMON_PRINT_MESSAGES_H_
 #define INTERNAL_COMPONENTS_PRINTING_COMMON_PRINT_MESSAGES_H_
@@ -63,6 +62,7 @@ struct PrintMsg_Print_Params {
   bool should_print_backgrounds;
   printing::SkiaDocumentType printed_doc_type;
   bool prefer_css_page_size;
+  int pages_per_sheet;
 };
 
 struct PrintMsg_PrintPages_Params {
@@ -93,6 +93,14 @@ struct PrintHostMsg_RequestPrintPreview_Params {
   bool webnode_only;
   bool has_selection;
   bool selection_only;
+};
+
+struct PrintHostMsg_PreviewIds {
+  PrintHostMsg_PreviewIds();
+  PrintHostMsg_PreviewIds(int request_id, int ui_id);
+  ~PrintHostMsg_PreviewIds();
+  int request_id;
+  int ui_id;
 };
 
 struct PrintHostMsg_SetOptionsFromDocument_Params {
@@ -191,6 +199,11 @@ IPC_STRUCT_TRAITS_BEGIN(PrintMsg_Print_Params)
 
   // True if page size defined by css should be preferred.
   IPC_STRUCT_TRAITS_MEMBER(prefer_css_page_size)
+
+  // Number of pages per sheet.  This parameter is for N-up mode.
+  // Defaults to 1 if the feature is disabled, and some number greater
+  // than 1 otherwise.  See printing::NupParameters for supported values.
+  IPC_STRUCT_TRAITS_MEMBER(pages_per_sheet)
 IPC_STRUCT_TRAITS_END()
 
 IPC_STRUCT_TRAITS_BEGIN(printing::PageRange)
@@ -204,6 +217,11 @@ IPC_STRUCT_TRAITS_BEGIN(PrintHostMsg_RequestPrintPreview_Params)
   IPC_STRUCT_TRAITS_MEMBER(webnode_only)
   IPC_STRUCT_TRAITS_MEMBER(has_selection)
   IPC_STRUCT_TRAITS_MEMBER(selection_only)
+IPC_STRUCT_TRAITS_END()
+
+IPC_STRUCT_TRAITS_BEGIN(PrintHostMsg_PreviewIds)
+  IPC_STRUCT_TRAITS_MEMBER(request_id)
+  IPC_STRUCT_TRAITS_MEMBER(ui_id)
 IPC_STRUCT_TRAITS_END()
 
 IPC_STRUCT_TRAITS_BEGIN(PrintHostMsg_SetOptionsFromDocument_Params)
@@ -265,22 +283,14 @@ IPC_STRUCT_BEGIN(PrintHostMsg_DidPrintContent_Params)
 IPC_STRUCT_END()
 
 #if BUILDFLAG(ENABLE_PRINT_PREVIEW)
-// Parameters to describe a rendered document.
-IPC_STRUCT_BEGIN(PrintHostMsg_DidPreviewDocument_Params)
-  // Document's content including metafile data and subframe info.
-  IPC_STRUCT_MEMBER(PrintHostMsg_DidPrintContent_Params, content)
+// Parameters to describe the to-be-rendered preview document.
+IPC_STRUCT_BEGIN(PrintHostMsg_DidStartPreview_Params)
+  // Total page count for the rendered preview. (Not the number of pages the
+  // user selected to print.)
+  IPC_STRUCT_MEMBER(int, page_count)
 
-  // Cookie for the document to ensure correctness.
-  IPC_STRUCT_MEMBER(int, document_cookie)
-
-  // Store the expected pages count.
-  IPC_STRUCT_MEMBER(int, expected_pages_count)
-
-  // Whether the preview can be modified.
-  IPC_STRUCT_MEMBER(bool, modifiable)
-
-  // The id of the preview request.
-  IPC_STRUCT_MEMBER(int, preview_request_id)
+  // Scaling % to fit to page
+  IPC_STRUCT_MEMBER(int, fit_to_page_scaling)
 IPC_STRUCT_END()
 
 // Parameters to describe a rendered preview page.
@@ -291,23 +301,20 @@ IPC_STRUCT_BEGIN(PrintHostMsg_DidPreviewPage_Params)
   // |page_number| is zero-based and should not be negative.
   IPC_STRUCT_MEMBER(int, page_number)
 
-  // The id of the preview request.
-  IPC_STRUCT_MEMBER(int, preview_request_id)
-
   // Cookie for the document to ensure correctness.
   IPC_STRUCT_MEMBER(int, document_cookie)
 IPC_STRUCT_END()
 
-// Parameters sent along with the page count.
-IPC_STRUCT_BEGIN(PrintHostMsg_DidGetPreviewPageCount_Params)
-  // Total page count.
-  IPC_STRUCT_MEMBER(int, page_count)
+// Parameters to describe the final rendered preview document.
+IPC_STRUCT_BEGIN(PrintHostMsg_DidPreviewDocument_Params)
+  // Document's content including metafile data and subframe info.
+  IPC_STRUCT_MEMBER(PrintHostMsg_DidPrintContent_Params, content)
 
-  // Scaling % to fit to page
-  IPC_STRUCT_MEMBER(int, fit_to_page_scaling)
+  // Cookie for the document to ensure correctness.
+  IPC_STRUCT_MEMBER(int, document_cookie)
 
-  // The id of the preview request.
-  IPC_STRUCT_MEMBER(int, preview_request_id)
+  // Store the expected pages count.
+  IPC_STRUCT_MEMBER(int, expected_pages_count)
 IPC_STRUCT_END()
 #endif  // BUILDFLAG(ENABLE_PRINT_PREVIEW)
 
@@ -327,7 +334,6 @@ IPC_STRUCT_BEGIN(PrintHostMsg_DidPrintDocument_Params)
 
   // The physical offsets of the printer in DPI. Used for PS printing.
   IPC_STRUCT_MEMBER(gfx::Point, physical_offsets)
-
 IPC_STRUCT_END()
 
 // TODO(dgn) Rename *ScriptedPrint messages because they are not called only
@@ -354,7 +360,7 @@ IPC_MESSAGE_ROUTED1(PrintMsg_InitiatePrintPreview, bool /* has_selection */)
 // node, depending on which mode the RenderFrame is in.
 IPC_MESSAGE_ROUTED0(PrintMsg_PrintNodeUnderContextMenu)
 
-#if BUILDFLAG(ENABLE_BASIC_PRINTING)
+#if BUILDFLAG(ENABLE_PRINTING)
 // Tells the RenderFrame to switch the CSS to print media type, renders every
 // requested pages and switch back the CSS to display media type.
 IPC_MESSAGE_ROUTED0(PrintMsg_PrintPages)
@@ -434,7 +440,7 @@ IPC_SYNC_MESSAGE_ROUTED1_1(PrintHostMsg_ScriptedPrint,
 
 #if defined(OS_ANDROID)
 // Asks the browser to create a temporary file for the renderer to fill
-// in resulting PdfMetafileSkia in printing.
+// in resulting MetafileSkia in printing.
 IPC_SYNC_MESSAGE_CONTROL1_2(PrintHostMsg_AllocateTempFileForPrinting,
                             int /* render_frame_id */,
                             base::FileDescriptor /* temp file fd */,
@@ -450,35 +456,38 @@ IPC_MESSAGE_CONTROL3(PrintHostMsg_TempFileForPrintingWritten,
 IPC_MESSAGE_ROUTED1(PrintHostMsg_RequestPrintPreview,
                     PrintHostMsg_RequestPrintPreview_Params /* params */)
 
-// Notify the browser the number of pages in the print preview document.
-IPC_MESSAGE_ROUTED1(PrintHostMsg_DidGetPreviewPageCount,
-                    PrintHostMsg_DidGetPreviewPageCount_Params /* params */)
+// Notify the browser the about the to-be-rendered print preview document.
+IPC_MESSAGE_ROUTED2(PrintHostMsg_DidStartPreview,
+                    PrintHostMsg_DidStartPreview_Params /* params */,
+                    PrintHostMsg_PreviewIds /* ids */)
 
 // Notify the browser of the default page layout according to the currently
 // selected printer and page size.
 // |printable_area_in_points| Specifies the printable area in points.
 // |has_custom_page_size_style| is true when the printing frame has a custom
 // page size css otherwise false.
-IPC_MESSAGE_ROUTED3(PrintHostMsg_DidGetDefaultPageLayout,
+IPC_MESSAGE_ROUTED4(PrintHostMsg_DidGetDefaultPageLayout,
                     printing::PageSizeMargins /* page layout in points */,
                     gfx::Rect /* printable area in points */,
-                    bool /* has custom page size style */)
+                    bool /* has custom page size style */,
+                    PrintHostMsg_PreviewIds /* ids */)
 
 // Notify the browser a print preview page has been rendered.
-IPC_MESSAGE_ROUTED1(PrintHostMsg_DidPreviewPage,
-                    PrintHostMsg_DidPreviewPage_Params /* params */)
+IPC_MESSAGE_ROUTED2(PrintHostMsg_DidPreviewPage,
+                    PrintHostMsg_DidPreviewPage_Params /* params */,
+                    PrintHostMsg_PreviewIds /* ids */)
 
 // Asks the browser whether the print preview has been cancelled.
-IPC_SYNC_MESSAGE_ROUTED2_1(PrintHostMsg_CheckForCancel,
-                           int32_t /* PrintPreviewUI ID */,
-                           int /* request id */,
+IPC_SYNC_MESSAGE_ROUTED1_1(PrintHostMsg_CheckForCancel,
+                           PrintHostMsg_PreviewIds /* ids */,
                            bool /* print preview cancelled */)
 
 // Sends back to the browser the complete rendered document (non-draft mode,
 // used for printing) that was requested by a PrintMsg_PrintPreview message.
 // The memory handle in this message is already valid in the browser process.
-IPC_MESSAGE_ROUTED1(PrintHostMsg_MetafileReadyForPrinting,
-                    PrintHostMsg_DidPreviewDocument_Params /* params */)
+IPC_MESSAGE_ROUTED2(PrintHostMsg_MetafileReadyForPrinting,
+                    PrintHostMsg_DidPreviewDocument_Params /* params */,
+                    PrintHostMsg_PreviewIds /* ids */)
 #endif  // BUILDFLAG(ENABLE_PRINT_PREVIEW)
 
 // This is sent when there are invalid printer settings.
@@ -490,18 +499,21 @@ IPC_MESSAGE_ROUTED1(PrintHostMsg_PrintingFailed,
 
 #if BUILDFLAG(ENABLE_PRINT_PREVIEW)
 // Tell the browser print preview failed.
-IPC_MESSAGE_ROUTED1(PrintHostMsg_PrintPreviewFailed,
-                    int /* document cookie */)
+IPC_MESSAGE_ROUTED2(PrintHostMsg_PrintPreviewFailed,
+                    int /* document cookie */,
+                    PrintHostMsg_PreviewIds /* ids */)
 
 // Tell the browser print preview was cancelled.
-IPC_MESSAGE_ROUTED1(PrintHostMsg_PrintPreviewCancelled,
-                    int /* document cookie */)
+IPC_MESSAGE_ROUTED2(PrintHostMsg_PrintPreviewCancelled,
+                    int /* document cookie */,
+                    PrintHostMsg_PreviewIds /* ids */)
 
 // Tell the browser print preview found the selected printer has invalid
 // settings (which typically caused by disconnected network printer or printer
 // driver is bogus).
-IPC_MESSAGE_ROUTED1(PrintHostMsg_PrintPreviewInvalidPrinterSettings,
-                    int /* document cookie */)
+IPC_MESSAGE_ROUTED2(PrintHostMsg_PrintPreviewInvalidPrinterSettings,
+                    int /* document cookie */,
+                    PrintHostMsg_PreviewIds /* ids */)
 
 // Run a nested run loop in the renderer until print preview for
 // window.print() finishes.
@@ -513,8 +525,9 @@ IPC_MESSAGE_ROUTED1(PrintHostMsg_ShowScriptedPrintPreview,
                     bool /* is_modifiable */)
 
 // Notify the browser to set print presets based on source PDF document.
-IPC_MESSAGE_ROUTED1(PrintHostMsg_SetOptionsFromDocument,
-                    PrintHostMsg_SetOptionsFromDocument_Params /* params */)
+IPC_MESSAGE_ROUTED2(PrintHostMsg_SetOptionsFromDocument,
+                    PrintHostMsg_SetOptionsFromDocument_Params /* params */,
+                    PrintHostMsg_PreviewIds /* ids */)
 #endif  // BUILDFLAG(ENABLE_PRINT_PREVIEW)
 
 #endif  // COMPONENTS_PRINTING_COMMON_PRINT_MESSAGES_H_

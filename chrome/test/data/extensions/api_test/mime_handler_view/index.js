@@ -58,6 +58,18 @@ function checkStreamDetailsNoFile() {
   chrome.test.assertTrue(streamDetails.tabId != -1);
 }
 
+// The following helper methods are used in BrowserPlugin-specific tests.
+function dummyTouchStartHandler(e) {
+}
+
+function ensurePageIsScrollable() {
+  document.body.style = " width: 100%; height: 100%; overflow: scroll;";
+  let div = document.createElement("div");
+  div.style = "width: 1000px; height: 500px; margin: 50%;";
+  document.body.appendChild(div);
+  window.scrollTo(0, 0);
+}
+
 var tests = [
   function testBasic() {
     checkStreamDetails('testBasic.csv', false);
@@ -118,7 +130,7 @@ var tests = [
       } else if (event.data == expectedMessages[messagesReceived]) {
         event.source.postMessage(event.data, '*');
         messagesReceived++;
-      } else {
+      } else if (event.data != 'initBeforeUnload') {
         chrome.test.fail('unexpected message ' + event.data);
       }
     }
@@ -235,6 +247,28 @@ var tests = [
         chrome.test.succeed();
       }, 100);
     });
+  },
+
+  function testTargetBlankAnchor() {
+    checkStreamDetails('testTargetBlankAnchor.csv', false);
+    var anchor = document.createElement('a');
+    anchor.href = 'about:blank';
+    anchor.target = '_blank';
+    document.body.appendChild(anchor);
+    anchor.click();
+    chrome.test.succeed();
+  },
+
+  function testBeforeUnloadNoDialog() {
+    checkStreamDetails('testBeforeUnloadNoDialog.csv', false);
+    chrome.mimeHandlerPrivate.setShowBeforeUnloadDialog(
+        false, chrome.test.succeed);
+  },
+
+  function testBeforeUnloadShowDialog() {
+    checkStreamDetails('testBeforeUnloadShowDialog.csv', false);
+    chrome.mimeHandlerPrivate.setShowBeforeUnloadDialog(
+        true, chrome.test.succeed);
   },
 ];
 

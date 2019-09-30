@@ -13,11 +13,13 @@
 #include "base/debug/profiler.h"
 #include "base/macros.h"
 #include "base/metrics/user_metrics.h"
+#include "base/stl_util.h"
 #include "build/build_config.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/defaults.h"
+#include "chrome/browser/devtools/devtools_window.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/extension_util.h"
 #include "chrome/browser/lifetime/application_lifetime.h"
@@ -91,6 +93,10 @@
 #include "chrome/browser/feature_engagement/new_tab/new_tab_tracker_factory.h"
 #endif
 
+#if defined(USE_OZONE)
+#include "ui/ozone/public/ozone_platform.h"
+#endif
+
 using content::NavigationEntry;
 using content::NavigationController;
 using content::WebContents;
@@ -116,7 +122,7 @@ BrowserCommandController::BrowserCommandController(Browser* browser)
 
   profile_pref_registrar_.Init(profile()->GetPrefs());
   profile_pref_registrar_.Add(
-      prefs::kDevToolsDisabled,
+      prefs::kDevToolsAvailability,
       base::Bind(&BrowserCommandController::UpdateCommandsForDevTools,
                  base::Unretained(this)));
   profile_pref_registrar_.Add(
@@ -484,15 +490,18 @@ bool BrowserCommandController::ExecuteCommandWithDisposition(
       Print(browser_);
       break;
 
-#if BUILDFLAG(ENABLE_BASIC_PRINTING)
+#if BUILDFLAG(ENABLE_PRINTING)
     case IDC_BASIC_PRINT:
       base::RecordAction(base::UserMetricsAction("Accel_Advanced_Print"));
       BasicPrint(browser_);
       break;
-#endif  // ENABLE_BASIC_PRINTING
+#endif  // ENABLE_PRINTING
 
     case IDC_SAVE_CREDIT_CARD_FOR_PAGE:
       SaveCreditCard(browser_);
+      break;
+    case IDC_MIGRATE_LOCAL_CREDIT_CARD_FOR_PAGE:
+      MigrateLocalCards(browser_);
       break;
     case IDC_TRANSLATE_PAGE:
       Translate(browser_);
@@ -564,8 +573,13 @@ bool BrowserCommandController::ExecuteCommandWithDisposition(
     case IDC_OPEN_FILE:
       browser_->OpenFile();
       break;
-    case IDC_CREATE_HOSTED_APP:
-      CreateBookmarkAppFromCurrentWebContents(browser_);
+    case IDC_CREATE_SHORTCUT:
+      CreateBookmarkAppFromCurrentWebContents(browser_,
+                                              true /* force_shortcut_app */);
+      break;
+    case IDC_INSTALL_PWA:
+      CreateBookmarkAppFromCurrentWebContents(browser_,
+                                              false /* force_shortcut_app */);
       break;
     case IDC_DEV_TOOLS:
       ToggleDevToolsWindow(browser_, DevToolsToggleAction::Show());
@@ -644,9 +658,6 @@ bool BrowserCommandController::ExecuteCommandWithDisposition(
       break;
     case IDC_UPGRADE_DIALOG:
       OpenUpdateChromeDialog(browser_);
-      break;
-    case IDC_VIEW_INCOMPATIBILITIES:
-      ShowConflicts(browser_);
       break;
     case IDC_HELP_PAGE_VIA_KEYBOARD:
       ShowHelp(browser_, HELP_SOURCE_KEYBOARD);
@@ -740,7 +751,9 @@ void BrowserCommandController::TabInsertedAt(TabStripModel* tab_strip_model,
   AddInterstitialObservers(contents);
 }
 
-void BrowserCommandController::TabDetachedAt(WebContents* contents, int index) {
+void BrowserCommandController::TabDetachedAt(WebContents* contents,
+                                             int index,
+                                             bool was_active) {
   RemoveInterstitialObservers(contents);
 }
 
@@ -840,7 +853,14 @@ void BrowserCommandController::InitCommandState() {
   command_updater_.UpdateCommandEnabled(IDC_MINIMIZE_WINDOW, true);
   command_updater_.UpdateCommandEnabled(IDC_MAXIMIZE_WINDOW, true);
   command_updater_.UpdateCommandEnabled(IDC_RESTORE_WINDOW, true);
-  command_updater_.UpdateCommandEnabled(IDC_USE_SYSTEM_TITLE_BAR, true);
+  bool use_system_title_bar = true;
+#if defined(USE_OZONE)
+  use_system_title_bar = ui::OzonePlatform::GetInstance()
+                             ->GetPlatformProperties()
+                             .use_system_title_bar;
+#endif
+  command_updater_.UpdateCommandEnabled(IDC_USE_SYSTEM_TITLE_BAR,
+                                        use_system_title_bar);
 #endif
   command_updater_.UpdateCommandEnabled(IDC_OPEN_IN_PWA_WINDOW, true);
 
@@ -923,7 +943,6 @@ void BrowserCommandController::InitCommandState() {
 
   // These are always enabled; the menu determines their menu item visibility.
   command_updater_.UpdateCommandEnabled(IDC_UPGRADE_DIALOG, true);
-  command_updater_.UpdateCommandEnabled(IDC_VIEW_INCOMPATIBILITIES, true);
 
   // Distill current page.
   command_updater_.UpdateCommandEnabled(
@@ -961,7 +980,7 @@ void BrowserCommandController::UpdateSharedCommandsForIncognitoAvailability(
   command_updater->UpdateCommandEnabled(
       IDC_SHOW_BOOKMARK_MANAGER,
       browser_defaults::bookmarks_enabled && !forced_incognito);
-  ExtensionService* extension_service =
+  extensions::ExtensionService* extension_service =
       extensions::ExtensionSystem::Get(profile)->extension_service();
   const bool enable_extensions =
       extension_service && extension_service->extensions_enabled();
@@ -1026,8 +1045,13 @@ void BrowserCommandController::UpdateCommandsForTabState() {
   if (browser_->is_devtools())
     command_updater_.UpdateCommandEnabled(IDC_OPEN_FILE, false);
 
-  command_updater_.UpdateCommandEnabled(IDC_CREATE_HOSTED_APP,
-                                        CanCreateBookmarkApp(browser_));
+  bool can_create_bookmark_app = CanCreateBookmarkApp(browser_);
+  command_updater_.UpdateCommandEnabled(IDC_INSTALL_PWA,
+                                        can_create_bookmark_app);
+  command_updater_.UpdateCommandEnabled(IDC_CREATE_SHORTCUT,
+                                        can_create_bookmark_app);
+  command_updater_.UpdateCommandEnabled(IDC_OPEN_IN_PWA_WINDOW,
+                                        can_create_bookmark_app);
 
   command_updater_.UpdateCommandEnabled(
       IDC_TOGGLE_REQUEST_TABLET_SITE,
@@ -1071,8 +1095,8 @@ void BrowserCommandController::UpdateCommandsForDevTools() {
   if (is_locked_fullscreen_)
     return;
 
-  bool dev_tools_enabled =
-      !profile()->GetPrefs()->GetBoolean(prefs::kDevToolsDisabled);
+  bool dev_tools_enabled = DevToolsWindow::AllowDevToolsFor(
+      profile(), browser_->tab_strip_model()->GetActiveWebContents());
   command_updater_.UpdateCommandEnabled(IDC_DEV_TOOLS,
                                         dev_tools_enabled);
   command_updater_.UpdateCommandEnabled(IDC_DEV_TOOLS_CONSOLE,
@@ -1214,8 +1238,7 @@ void NonWhitelistedCommandsAreDisabled(CommandUpdaterImpl* command_updater) {
 
   // Go through all the command ids, skip the whitelisted ones.
   for (int id : command_updater->GetAllIds()) {
-    if (std::find(std::begin(kWhitelistedIds), std::end(kWhitelistedIds), id)
-            != std::end(kWhitelistedIds)) {
+    if (base::ContainsValue(kWhitelistedIds, id)) {
       continue;
     }
     DCHECK(!command_updater->IsCommandEnabled(id));
@@ -1324,10 +1347,10 @@ void BrowserCommandController::UpdatePrintingState() {
 
   bool print_enabled = CanPrint(browser_);
   command_updater_.UpdateCommandEnabled(IDC_PRINT, print_enabled);
-#if BUILDFLAG(ENABLE_BASIC_PRINTING)
+#if BUILDFLAG(ENABLE_PRINTING)
   command_updater_.UpdateCommandEnabled(IDC_BASIC_PRINT,
                                         CanBasicPrint(browser_));
-#endif  // ENABLE_BASIC_PRINTING
+#endif
 }
 
 void BrowserCommandController::UpdateSaveAsState() {

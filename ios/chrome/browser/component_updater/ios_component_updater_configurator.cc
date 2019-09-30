@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "base/version.h"
+#include "components/component_updater/component_updater_command_line_config_policy.h"
 #include "components/component_updater/configurator_impl.h"
 #include "components/update_client/activity_data_service.h"
 #include "components/update_client/update_query_params.h"
@@ -42,7 +43,8 @@ class IOSConfigurator : public update_client::Configurator {
   std::string GetOSLongName() const override;
   std::string ExtraRequestParams() const override;
   std::string GetDownloadPreference() const override;
-  scoped_refptr<net::URLRequestContextGetter> RequestContext() const override;
+  scoped_refptr<network::SharedURLLoaderFactory> URLLoaderFactory()
+      const override;
   std::unique_ptr<service_manager::Connector> CreateServiceManagerConnector()
       const override;
   bool EnabledDeltas() const override;
@@ -53,6 +55,7 @@ class IOSConfigurator : public update_client::Configurator {
   update_client::ActivityDataService* GetActivityDataService() const override;
   bool IsPerUserInstall() const override;
   std::vector<uint8_t> GetRunActionKeyHash() const override;
+  std::string GetAppGuid() const override;
 
  private:
   friend class base::RefCountedThreadSafe<IOSConfigurator>;
@@ -66,7 +69,8 @@ class IOSConfigurator : public update_client::Configurator {
 // update backend. The security of the update checks is enforced using
 // a custom message signing protocol and it does not depend on using HTTPS.
 IOSConfigurator::IOSConfigurator(const base::CommandLine* cmdline)
-    : configurator_impl_(cmdline, false) {}
+    : configurator_impl_(ComponentUpdaterCommandLineConfigPolicy(cmdline),
+                         false) {}
 
 int IOSConfigurator::InitialDelay() const {
   return configurator_impl_.InitialDelay();
@@ -127,9 +131,9 @@ std::string IOSConfigurator::GetDownloadPreference() const {
   return configurator_impl_.GetDownloadPreference();
 }
 
-scoped_refptr<net::URLRequestContextGetter> IOSConfigurator::RequestContext()
-    const {
-  return GetApplicationContext()->GetSystemURLRequestContext();
+scoped_refptr<network::SharedURLLoaderFactory>
+IOSConfigurator::URLLoaderFactory() const {
+  return GetApplicationContext()->GetSharedURLLoaderFactory();
 }
 
 std::unique_ptr<service_manager::Connector>
@@ -168,6 +172,10 @@ bool IOSConfigurator::IsPerUserInstall() const {
 
 std::vector<uint8_t> IOSConfigurator::GetRunActionKeyHash() const {
   return configurator_impl_.GetRunActionKeyHash();
+}
+
+std::string IOSConfigurator::GetAppGuid() const {
+  return configurator_impl_.GetAppGuid();
 }
 
 }  // namespace

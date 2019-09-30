@@ -9,10 +9,10 @@
 
 #include "base/logging.h"
 #include "base/metrics/metrics_hashes.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "base/threading/sequenced_task_runner_handle.h"
-#include "components/ukm/ukm_source.h"
 #include "services/metrics/public/cpp/delegating_ukm_recorder.h"
+#include "services/metrics/public/cpp/ukm_source.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace ukm {
@@ -29,7 +29,7 @@ void MergeEntry(const mojom::UkmEntry* in, mojom::UkmEntry* out) {
     out->source_id = in->source_id;
   }
   for (const auto& metric : in->metrics) {
-    out->metrics.emplace_back(metric->Clone());
+    out->metrics.emplace(metric);
   }
 }
 
@@ -37,6 +37,8 @@ void MergeEntry(const mojom::UkmEntry* in, mojom::UkmEntry* out) {
 
 TestUkmRecorder::TestUkmRecorder() {
   EnableRecording(/*extensions=*/true);
+  StoreWhitelistedEntries();
+  DisableSamplingForTesting();
 }
 
 TestUkmRecorder::~TestUkmRecorder() {
@@ -112,10 +114,9 @@ bool TestUkmRecorder::EntryHasMetric(const mojom::UkmEntry* entry,
 const int64_t* TestUkmRecorder::GetEntryMetric(const mojom::UkmEntry* entry,
                                                base::StringPiece metric_name) {
   uint64_t hash = base::HashMetricName(metric_name);
-  for (const auto& metric : entry->metrics) {
-    if (metric->metric_hash == hash)
-      return &metric->value;
-  }
+  const auto it = entry->metrics.find(hash);
+  if (it != entry->metrics.end())
+    return &it->second;
   return nullptr;
 }
 

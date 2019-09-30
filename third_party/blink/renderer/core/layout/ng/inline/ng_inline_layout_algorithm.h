@@ -6,14 +6,13 @@
 #define NGInlineLayoutAlgorithm_h
 
 #include "third_party/blink/renderer/core/core_export.h"
-#include "third_party/blink/renderer/core/layout/ng/geometry/ng_logical_offset.h"
-#include "third_party/blink/renderer/core/layout/ng/inline/ng_inline_box_state.h"
-#include "third_party/blink/renderer/core/layout/ng/inline/ng_inline_item_result.h"
 #include "third_party/blink/renderer/core/layout/ng/inline/ng_inline_node.h"
 #include "third_party/blink/renderer/core/layout/ng/inline/ng_line_box_fragment_builder.h"
 #include "third_party/blink/renderer/core/layout/ng/ng_constraint_space_builder.h"
 #include "third_party/blink/renderer/core/layout/ng/ng_fragment_builder.h"
 #include "third_party/blink/renderer/core/layout/ng/ng_layout_algorithm.h"
+#include "third_party/blink/renderer/core/layout/ng/ng_unpositioned_float.h"
+#include "third_party/blink/renderer/core/layout/ng/ng_unpositioned_float_vector.h"
 #include "third_party/blink/renderer/platform/fonts/font_baseline.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
 
@@ -23,7 +22,10 @@ class NGConstraintSpace;
 class NGInlineBreakToken;
 class NGInlineNode;
 class NGInlineItem;
-class NGLineBoxFragmentBuilder;
+class NGInlineLayoutStateStack;
+class NGLineInfo;
+struct NGInlineBoxState;
+struct NGInlineItemResult;
 struct NGPositionedFloat;
 
 // A class for laying out an inline formatting context, i.e. a block with inline
@@ -40,13 +42,15 @@ class CORE_EXPORT NGInlineLayoutAlgorithm final
   NGInlineLayoutAlgorithm(NGInlineNode,
                           const NGConstraintSpace&,
                           NGInlineBreakToken* = nullptr);
+  ~NGInlineLayoutAlgorithm() override;
 
   void CreateLine(NGLineInfo*, NGExclusionSpace*);
 
   scoped_refptr<NGLayoutResult> Layout() override;
 
  private:
-  unsigned PositionLeadingItems(NGExclusionSpace*);
+  unsigned PositionLeadingFloats(NGExclusionSpace*);
+
   void PositionPendingFloats(LayoutUnit content_size, NGExclusionSpace*);
 
   bool IsHorizontalWritingMode() const { return is_horizontal_writing_mode_; }
@@ -59,9 +63,10 @@ class CORE_EXPORT NGInlineLayoutAlgorithm final
   void BidiReorder();
 
   void PlaceControlItem(const NGInlineItem&,
+                        const NGLineInfo&,
                         NGInlineItemResult*,
                         NGInlineBoxState*);
-  void PlaceGeneratedContent(scoped_refptr<NGPhysicalFragment>,
+  void PlaceGeneratedContent(scoped_refptr<const NGPhysicalFragment>,
                              UBiDiLevel,
                              NGInlineBoxState*);
   NGInlineBoxState* PlaceAtomicInline(const NGInlineItem&,
@@ -70,7 +75,9 @@ class CORE_EXPORT NGInlineLayoutAlgorithm final
   void PlaceLayoutResult(NGInlineItemResult*,
                          NGInlineBoxState*,
                          LayoutUnit inline_offset = LayoutUnit());
-  bool PlaceOutOfFlowObjects(const NGLineInfo&, const NGLineHeightMetrics&);
+  void PlaceOutOfFlowObjects(const NGLineInfo&,
+                             const NGLineHeightMetrics&,
+                             LayoutUnit inline_size);
   void PlaceListMarker(const NGInlineItem&,
                        NGInlineItemResult*,
                        const NGLineInfo&);
@@ -91,7 +98,7 @@ class CORE_EXPORT NGInlineLayoutAlgorithm final
   unsigned quirks_mode_ : 1;
 
   Vector<NGPositionedFloat> positioned_floats_;
-  Vector<scoped_refptr<NGUnpositionedFloat>> unpositioned_floats_;
+  NGUnpositionedFloatVector unpositioned_floats_;
 };
 
 }  // namespace blink

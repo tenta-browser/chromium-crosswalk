@@ -9,6 +9,8 @@
 #include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/html/html_frame_owner_element.h"
+#include "third_party/blink/renderer/core/layout/layout_object.h"
+#include "third_party/blink/renderer/core/layout/layout_view.h"
 #include "third_party/blink/renderer/core/page/chrome_client.h"
 #include "third_party/blink/renderer/core/page/scrolling/scrolling_coordinator.h"
 
@@ -16,15 +18,15 @@ namespace blink {
 
 namespace {
 
-WebEventListenerProperties GetWebEventListenerProperties(bool has_blocking,
-                                                         bool has_passive) {
+cc::EventListenerProperties GetEventListenerProperties(bool has_blocking,
+                                                       bool has_passive) {
   if (has_blocking && has_passive)
-    return WebEventListenerProperties::kBlockingAndPassive;
+    return cc::EventListenerProperties::kBlockingAndPassive;
   if (has_blocking)
-    return WebEventListenerProperties::kBlocking;
+    return cc::EventListenerProperties::kBlocking;
   if (has_passive)
-    return WebEventListenerProperties::kPassive;
-  return WebEventListenerProperties::kNothing;
+    return cc::EventListenerProperties::kPassive;
+  return cc::EventListenerProperties::kNone;
 }
 
 LocalFrame* GetLocalFrameForTarget(EventTarget* target) {
@@ -41,7 +43,7 @@ LocalFrame* GetLocalFrameForTarget(EventTarget* target) {
 
 }  // namespace
 
-EventHandlerRegistry::EventHandlerRegistry(Page& page) : page_(&page) {}
+EventHandlerRegistry::EventHandlerRegistry(LocalFrame& frame) : frame_(frame) {}
 
 EventHandlerRegistry::~EventHandlerRegistry() {
   for (size_t i = 0; i < kEventHandlerClassCount; ++i) {
@@ -67,6 +69,11 @@ bool EventHandlerRegistry::EventTypeToClass(
              event_type == EventTypeNames::touchmove) {
     *result = options.passive() ? kTouchStartOrMoveEventPassive
                                 : kTouchStartOrMoveEventBlocking;
+  } else if (event_type == EventTypeNames::pointerrawmove) {
+    // This will be used to avoid waking up the main thread to
+    // process pointerrawmove events and hit-test them when
+    // there is no listener on the page.
+    *result = kPointerRawMoveEvent;
   } else if (EventUtil::IsPointerEventType(event_type)) {
     // The pointer events never block scrolling and the compositor
     // only needs to know about the touch listeners.
@@ -242,38 +249,44 @@ void EventHandlerRegistry::NotifyHasHandlersChanged(
 
   switch (handler_class) {
     case kScrollEvent:
-      page_->GetChromeClient().SetHasScrollEventHandlers(frame,
-                                                         has_active_handlers);
+      GetPage()->GetChromeClient().SetHasScrollEventHandlers(
+          frame, has_active_handlers);
       break;
     case kWheelEventBlocking:
     case kWheelEventPassive:
-      page_->GetChromeClient().SetEventListenerProperties(
-          frame, WebEventListenerClass::kMouseWheel,
-          GetWebEventListenerProperties(HasEventHandlers(kWheelEventBlocking),
-                                        HasEventHandlers(kWheelEventPassive)));
+      GetPage()->GetChromeClient().SetEventListenerProperties(
+          frame, cc::EventListenerClass::kMouseWheel,
+          GetEventListenerProperties(HasEventHandlers(kWheelEventBlocking),
+                                     HasEventHandlers(kWheelEventPassive)));
       break;
     case kTouchStartOrMoveEventBlockingLowLatency:
-      page_->GetChromeClient().SetNeedsLowLatencyInput(frame,
-                                                       has_active_handlers);
+      GetPage()->GetChromeClient().SetNeedsLowLatencyInput(frame,
+                                                           has_active_handlers);
       FALLTHROUGH;
     case kTouchAction:
     case kTouchStartOrMoveEventBlocking:
     case kTouchStartOrMoveEventPassive:
     case kPointerEvent:
-      page_->GetChromeClient().SetEventListenerProperties(
-          frame, WebEventListenerClass::kTouchStartOrMove,
-          GetWebEventListenerProperties(
+      GetPage()->GetChromeClient().SetEventListenerProperties(
+          frame, cc::EventListenerClass::kTouchStartOrMove,
+          GetEventListenerProperties(
               HasEventHandlers(kTouchAction) ||
                   HasEventHandlers(kTouchStartOrMoveEventBlocking) ||
                   HasEventHandlers(kTouchStartOrMoveEventBlockingLowLatency),
               HasEventHandlers(kTouchStartOrMoveEventPassive) ||
                   HasEventHandlers(kPointerEvent)));
       break;
+    case kPointerRawMoveEvent:
+      GetPage()->GetChromeClient().SetEventListenerProperties(
+          frame, cc::EventListenerClass::kPointerRawMove,
+          GetEventListenerProperties(false,
+                                     HasEventHandlers(kPointerRawMoveEvent)));
+      break;
     case kTouchEndOrCancelEventBlocking:
     case kTouchEndOrCancelEventPassive:
-      page_->GetChromeClient().SetEventListenerProperties(
-          frame, WebEventListenerClass::kTouchEndOrCancel,
-          GetWebEventListenerProperties(
+      GetPage()->GetChromeClient().SetEventListenerProperties(
+          frame, cc::EventListenerClass::kTouchEndOrCancel,
+          GetEventListenerProperties(
               HasEventHandlers(kTouchEndOrCancelEventBlocking),
               HasEventHandlers(kTouchEndOrCancelEventPassive)));
       break;
@@ -285,13 +298,35 @@ void EventHandlerRegistry::NotifyHasHandlersChanged(
       NOTREACHED();
       break;
   }
+
+  if (RuntimeEnabledFeatures::PaintTouchActionRectsEnabled()) {
+    if (handler_class == kTouchStartOrMoveEventBlocking ||
+        handler_class == kTouchStartOrMoveEventBlockingLowLatency) {
+      if (auto* node = target->ToNode()) {
+        if (auto* layout_object = node->GetLayoutObject()) {
+          layout_object->MarkEffectiveWhitelistedTouchActionChanged();
+          auto* continuation = layout_object->VirtualContinuation();
+          while (continuation) {
+            continuation->MarkEffectiveWhitelistedTouchActionChanged();
+            continuation = continuation->VirtualContinuation();
+          }
+        }
+      } else if (auto* dom_window = target->ToLocalDOMWindow()) {
+        // This event handler is on a window. Ensure the layout view is
+        // invalidated because the layout view tracks the window's blocking
+        // touch event rects.
+        if (auto* layout_view = dom_window->GetFrame()->ContentLayoutObject())
+          layout_view->MarkEffectiveWhitelistedTouchActionChanged();
+      }
+    }
+  }
 }
 
 void EventHandlerRegistry::NotifyDidAddOrRemoveEventHandlerTarget(
     LocalFrame* frame,
     EventHandlerClass handler_class) {
   ScrollingCoordinator* scrolling_coordinator =
-      page_->GetScrollingCoordinator();
+      GetPage()->GetScrollingCoordinator();
   if (scrolling_coordinator &&
       (handler_class == kTouchAction ||
        handler_class == kTouchStartOrMoveEventBlocking ||
@@ -302,7 +337,7 @@ void EventHandlerRegistry::NotifyDidAddOrRemoveEventHandlerTarget(
 }
 
 void EventHandlerRegistry::Trace(blink::Visitor* visitor) {
-  visitor->Trace(page_);
+  visitor->Trace(frame_);
   visitor->template RegisterWeakMembers<
       EventHandlerRegistry, &EventHandlerRegistry::ClearWeakMembers>(this);
 }
@@ -366,16 +401,21 @@ void EventHandlerRegistry::CheckConsistency(
       // See the comment for |documentDetached| if either of these assertions
       // fails.
       DCHECK(node->GetDocument().GetPage());
-      DCHECK(node->GetDocument().GetPage() == page_);
+      DCHECK_EQ(frame_, &node->GetDocument().GetFrame()->LocalFrameRoot());
     } else if (LocalDOMWindow* window = event_target.key->ToLocalDOMWindow()) {
       // If any of these assertions fail, LocalDOMWindow failed to unregister
       // its handlers properly.
       DCHECK(window->GetFrame());
       DCHECK(window->GetFrame()->GetPage());
-      DCHECK(window->GetFrame()->GetPage() == page_);
+      DCHECK_EQ(frame_, &window->GetFrame()->LocalFrameRoot());
     }
   }
 #endif  // DCHECK_IS_ON()
+}
+
+Page* EventHandlerRegistry::GetPage() const {
+  DCHECK(frame_->GetPage());
+  return frame_->GetPage();
 }
 
 }  // namespace blink

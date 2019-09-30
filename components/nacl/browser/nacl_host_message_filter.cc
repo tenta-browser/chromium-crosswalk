@@ -9,7 +9,7 @@
 #include <utility>
 
 #include "base/sys_info.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "build/build_config.h"
 #include "components/nacl/browser/bad_message.h"
 #include "components/nacl/browser/nacl_browser.h"
@@ -23,8 +23,6 @@
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/web_contents.h"
 #include "ipc/ipc_platform_file.h"
-#include "net/url_request/url_request_context.h"
-#include "net/url_request/url_request_context_getter.h"
 #include "ppapi/shared_impl/ppapi_permissions.h"
 #include "url/gurl.h"
 
@@ -77,15 +75,12 @@ ppapi::PpapiPermissions GetPpapiPermissions(uint32_t permission_bits,
 NaClHostMessageFilter::NaClHostMessageFilter(
     int render_process_id,
     bool is_off_the_record,
-    const base::FilePath& profile_directory,
-    net::URLRequestContextGetter* request_context)
+    const base::FilePath& profile_directory)
     : BrowserMessageFilter(NaClHostMsgStart),
       render_process_id_(render_process_id),
       off_the_record_(is_off_the_record),
       profile_directory_(profile_directory),
-      request_context_(request_context),
-      weak_ptr_factory_(this) {
-}
+      weak_ptr_factory_(this) {}
 
 NaClHostMessageFilter::~NaClHostMessageFilter() {
 }
@@ -122,10 +117,6 @@ bool NaClHostMessageFilter::OnMessageReceived(const IPC::Message& message) {
   return handled;
 }
 
-net::HostResolver* NaClHostMessageFilter::GetHostResolver() {
-  return request_context_->GetURLRequestContext()->host_resolver();
-}
-
 void NaClHostMessageFilter::OnLaunchNaCl(
     const nacl::NaClLaunchParams& launch_params,
     IPC::Message* reply_msg) {
@@ -142,12 +133,9 @@ void NaClHostMessageFilter::OnLaunchNaCl(
     return;
   }
   content::BrowserThread::PostTask(
-      content::BrowserThread::UI,
-      FROM_HERE,
-      base::Bind(&NaClHostMessageFilter::LaunchNaClContinuation,
-                 this,
-                 launch_params,
-                 reply_msg));
+      content::BrowserThread::UI, FROM_HERE,
+      base::BindOnce(&NaClHostMessageFilter::LaunchNaClContinuation, this,
+                     launch_params, reply_msg));
 }
 
 void NaClHostMessageFilter::LaunchNaClContinuation(
@@ -199,8 +187,8 @@ void NaClHostMessageFilter::LaunchNaClContinuation(
       FROM_HERE,
       {base::MayBlock(), base::TaskPriority::USER_BLOCKING,
        base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN},
-      base::Bind(&NaClHostMessageFilter::BatchOpenResourceFiles, this,
-                 safe_launch_params, reply_msg, permissions));
+      base::BindOnce(&NaClHostMessageFilter::BatchOpenResourceFiles, this,
+                     safe_launch_params, reply_msg, permissions));
 }
 
 void NaClHostMessageFilter::BatchOpenResourceFiles(
@@ -234,14 +222,10 @@ void NaClHostMessageFilter::BatchOpenResourceFiles(
   }
 
   content::BrowserThread::PostTask(
-      content::BrowserThread::IO,
-      FROM_HERE,
-      base::Bind(&NaClHostMessageFilter::LaunchNaClContinuationOnIOThread,
-                 this,
-                 launch_params,
-                 reply_msg,
-                 prefetched_resource_files,
-                 permissions));
+      content::BrowserThread::IO, FROM_HERE,
+      base::BindOnce(&NaClHostMessageFilter::LaunchNaClContinuationOnIOThread,
+                     this, launch_params, reply_msg, prefetched_resource_files,
+                     permissions));
 }
 
 void NaClHostMessageFilter::LaunchNaClContinuationOnIOThread(

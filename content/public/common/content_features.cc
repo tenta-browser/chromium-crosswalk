@@ -5,6 +5,10 @@
 #include "content/public/common/content_features.h"
 #include "build/build_config.h"
 
+#if defined(OS_CHROMEOS)
+#include "media/capture/video/chromeos/public/cros_features.h"
+#endif
+
 namespace features {
 
 // All features in alphabetical order.
@@ -21,20 +25,50 @@ const base::Feature kAllowContentInitiatedDataUrlNavigations{
     "AllowContentInitiatedDataUrlNavigations",
     base::FEATURE_DISABLED_BY_DEFAULT};
 
-// Enables Array.prototype.values method
-const base::Feature kArrayPrototypeValues{"ArrayPrototypeValues",
-                                          base::FEATURE_ENABLED_BY_DEFAULT};
+// Accepts Origin-Signed HTTP Exchanges to be signed with certificates
+// that do not have CanSignHttpExchangesDraft extension.
+// TODO(https://crbug.com/862003): Remove when certificates with
+// CanSignHttpExchangesDraft extension are available from trusted CAs.
+const base::Feature kAllowSignedHTTPExchangeCertsWithoutExtension{
+    "AllowSignedHTTPExchangeCertsWithoutExtension",
+    base::FEATURE_DISABLED_BY_DEFAULT};
 
 // Enables asm.js to WebAssembly V8 backend.
 // http://asmjs.org/spec/latest/
 const base::Feature kAsmJsToWebAssembly{"AsmJsToWebAssembly",
                                         base::FEATURE_ENABLED_BY_DEFAULT};
 
-// Enables async wheel events. Note that this feature depends on
-// TouchpadAndWheelScrollLatching and enabling it when latching is disabled
-// won't have any impacts.
-const base::Feature kAsyncWheelEvents{"AsyncWheelEvents",
-                                      base::FEATURE_ENABLED_BY_DEFAULT};
+// Creates audio output and input streams using the audio service.
+const base::Feature kAudioServiceAudioStreams{
+    "AudioServiceAudioStreams", base::FEATURE_DISABLED_BY_DEFAULT};
+
+// Launches the audio service on the browser startup.
+const base::Feature kAudioServiceLaunchOnStartup{
+    "AudioServiceLaunchOnStartup", base::FEATURE_DISABLED_BY_DEFAULT};
+
+// Runs the audio service in a separate process.
+const base::Feature kAudioServiceOutOfProcess{
+    "AudioServiceOutOfProcess", base::FEATURE_DISABLED_BY_DEFAULT};
+
+// Enable incremental marking for Blink's heap managed by the Oilpan garbage
+// collector.
+const base::Feature kBlinkHeapIncrementalMarking{
+    "BlinkHeapIncrementalMarking", base::FEATURE_DISABLED_BY_DEFAULT};
+
+// Enable bloated renderer detection.
+const base::Feature kBloatedRendererDetection{
+    "BloatedRendererDetection", base::FEATURE_DISABLED_BY_DEFAULT};
+
+// Allows swipe left/right from touchpad change browser navigation. Currently
+// only enabled by default on CrOS.
+const base::Feature kTouchpadOverscrollHistoryNavigation {
+  "TouchpadOverscrollHistoryNavigation",
+#if defined(OS_CHROMEOS) || defined(OS_WIN)
+      base::FEATURE_ENABLED_BY_DEFAULT
+#else
+      base::FEATURE_DISABLED_BY_DEFAULT
+#endif
+};
 
 // Allows swipe left/right from touchpad change browser navigation. Currently
 // only enabled by default on CrOS.
@@ -59,27 +93,18 @@ const base::Feature kBrotliEncoding{"brotli-encoding",
 
 // Enables code caching for inline scripts.
 const base::Feature kCacheInlineScriptCode{"CacheInlineScriptCode",
-                                           base::FEATURE_DISABLED_BY_DEFAULT};
+                                           base::FEATURE_ENABLED_BY_DEFAULT};
 
 // If Canvas2D Image Chromium is allowed, this feature controls whether it is
 // enabled.
 const base::Feature kCanvas2DImageChromium {
   "Canvas2DImageChromium",
-#if defined(OS_MACOSX) || defined(OS_CHROMEOS)
+#if defined(OS_MACOSX)
       base::FEATURE_ENABLED_BY_DEFAULT
 #else
       base::FEATURE_DISABLED_BY_DEFAULT
 #endif
 };
-
-// Enabled decoding images asynchronously from raster in the renderer
-// compositor.
-const base::Feature kCheckerImaging{"CheckerImaging",
-                                    base::FEATURE_DISABLED_BY_DEFAULT};
-
-// Enables code caching after executing the script.
-const base::Feature kCodeCacheAfterExecute{"CodeCacheAfterExecute",
-                                           base::FEATURE_ENABLED_BY_DEFAULT};
 
 // Enables the compositing of fixed position content that is opaque and can
 // preserve LCD text.
@@ -99,12 +124,17 @@ const base::Feature kCompositorTouchAction{"CompositorTouchAction",
 // Enables blocking cross-site document responses (not paying attention to
 // whether a site isolation mode is also enabled).
 const base::Feature kCrossSiteDocumentBlockingAlways{
-    "CrossSiteDocumentBlockingAlways", base::FEATURE_DISABLED_BY_DEFAULT};
+    "CrossSiteDocumentBlockingAlways", base::FEATURE_ENABLED_BY_DEFAULT};
 
 // Enables blocking cross-site document responses if one of site isolation modes
 // is (e.g. site-per-process or isolate-origins) is enabled.
 const base::Feature kCrossSiteDocumentBlockingIfIsolating{
     "CrossSiteDocumentBlockingIfIsolating", base::FEATURE_ENABLED_BY_DEFAULT};
+
+// Enables specification of a target element in the fragment identifier
+// via a CSS selector.
+const base::Feature kCSSFragmentIdentifiers{"CSSFragmentIdentifiers",
+                                            base::FEATURE_DISABLED_BY_DEFAULT};
 
 // Puts save-data header in the holdback mode. This disables sending of
 // save-data header to origins, and to the renderer processes within Chrome.
@@ -125,6 +155,12 @@ const base::Feature kExtendedMouseButtons{"ExtendedMouseButtons",
 const base::Feature kFontCacheScaling{"FontCacheScaling",
                                       base::FEATURE_DISABLED_BY_DEFAULT};
 
+// Enables fixes for matching src: local() for web fonts correctly against full
+// font name or postscript name. Rolling out behind a flag, as enabling this
+// enables a font indexer on Android which we need to test in the field first.
+const base::Feature kFontSrcLocalMatching{"FontSrcLocalMatching",
+                                          base::FEATURE_DISABLED_BY_DEFAULT};
+
 // Enables a security restriction on iframes navigating their top frame.
 // When enabled, the navigation will only be permitted if the iframe is
 // same-origin to the top frame, or if a user gesture is being processed.
@@ -135,6 +171,11 @@ const base::Feature kFramebustingNeedsSameOriginOrUserGesture{
 // Enables extended Gamepad API features like motion tracking and haptics.
 const base::Feature kGamepadExtensions{"GamepadExtensions",
                                        base::FEATURE_DISABLED_BY_DEFAULT};
+
+// Enables haptic vibration effects on supported gamepads.
+const base::Feature kGamepadVibration{"GamepadVibration",
+                                      base::FEATURE_ENABLED_BY_DEFAULT};
+
 // When WebXR Device API is enabled, exposes VR controllers as Gamepads and
 // enables additional Gamepad attributes for use with WebXR Device API. Each
 // XRInputSource will have a corresponding Gamepad instance.
@@ -154,6 +195,11 @@ const base::Feature kHeapCompaction{"HeapCompaction",
 const base::Feature kImageCaptureAPI{"ImageCaptureAPI",
                                      base::FEATURE_ENABLED_BY_DEFAULT};
 
+// Use the requester origin as a second key to enfore site isolation policy for
+// code caches.
+const base::Feature kIsolatedCodeCache{"IsolatedCodeCache",
+                                       base::FEATURE_DISABLED_BY_DEFAULT};
+
 // Alternative to switches::kIsolateOrigins, for turning on origin isolation.
 // List of origins to isolate has to be specified via
 // kIsolateOriginsFieldTrialParamName.
@@ -164,10 +210,19 @@ const char kIsolateOriginsFieldTrialParamName[] = "OriginsList";
 // Enables an API which allows websites to capture reserved keys in fullscreen.
 // Defined by w3c here: https://w3c.github.io/keyboard-lock/
 const base::Feature kKeyboardLockAPI{"KeyboardLockAPI",
-                                     base::FEATURE_DISABLED_BY_DEFAULT};
+                                     base::FEATURE_ENABLED_BY_DEFAULT};
+
+const base::Feature kLayeredAPI{"LayeredAPI",
+                                base::FEATURE_DISABLED_BY_DEFAULT};
 
 const base::Feature kLazyFrameLoading{"LazyFrameLoading",
                                       base::FEATURE_DISABLED_BY_DEFAULT};
+const base::Feature kLazyFrameVisibleLoadTimeMetrics{
+    "LazyFrameVisibleLoadTimeMetrics", base::FEATURE_DISABLED_BY_DEFAULT};
+const base::Feature kLazyImageLoading{"LazyImageLoading",
+                                      base::FEATURE_DISABLED_BY_DEFAULT};
+const base::Feature kLazyImageVisibleLoadTimeMetrics{
+    "LazyImageVisibleLoadTimeMetrics", base::FEATURE_DISABLED_BY_DEFAULT};
 
 // Enable lazy initialization of the media controls.
 const base::Feature kLazyInitializeMediaControls{
@@ -180,11 +235,6 @@ const base::Feature kLazyParseCSS{"LazyParseCSS",
 // Enables lowering the priority of the resources in iframes.
 const base::Feature kLowPriorityIframes{"LowPriorityIframes",
                                         base::FEATURE_DISABLED_BY_DEFAULT};
-
-// An experiment forcing events to be non-blocking when the main thread is
-// deemed unresponsive.  See https://crbug.com/599609.
-const base::Feature kMainThreadBusyScrollIntervention{
-    "MainThreadBusyScrollIntervention", base::FEATURE_DISABLED_BY_DEFAULT};
 
 // If this feature is enabled, media-device enumerations use a cache that is
 // invalidated upon notifications sent by base::SystemMonitor. If disabled, the
@@ -205,6 +255,11 @@ const base::Feature kMediaDevicesSystemMonitorCache {
 const base::Feature kMemoryCoordinator{"MemoryCoordinator",
                                        base::FEATURE_DISABLED_BY_DEFAULT};
 
+// Instead of BrowserPlugin or GuestViews, MimeHandlerView will use a cross
+// process frame to render its handler.
+const base::Feature kMimeHandlerViewInCrossProcessFrame{
+    "MimeHandlerViewInCrossProcessFrame", base::FEATURE_DISABLED_BY_DEFAULT};
+
 // ES6 Modules dynamic imports.
 const base::Feature kModuleScriptsDynamicImport{
     "ModuleScriptsDynamicImport", base::FEATURE_ENABLED_BY_DEFAULT};
@@ -212,10 +267,6 @@ const base::Feature kModuleScriptsDynamicImport{
 // ES6 Modules import.meta.url.
 const base::Feature kModuleScriptsImportMetaUrl{
     "ModuleScriptsImportMetaUrl", base::FEATURE_ENABLED_BY_DEFAULT};
-
-// Mojo-based Input Event routing.
-const base::Feature kMojoInputMessages{"MojoInputMessages",
-                                       base::FEATURE_ENABLED_BY_DEFAULT};
 
 // Mojo-based Session Storage.
 const base::Feature kMojoSessionStorage{"MojoSessionStorage",
@@ -231,12 +282,12 @@ const base::Feature kMojoVideoCapture {
 #endif
 };
 
-// Browser side navigation (aka PlzNavigate) is using blob URLs to deliver
-// the body of the main resource to the renderer process. When enabled, the
-// NavigationMojoResponse feature replaces this mechanism by a Mojo DataPipe.
-// Design doc: https://goo.gl/Rrrc7n.
-const base::Feature kNavigationMojoResponse{"NavigationMojoResponse",
-                                            base::FEATURE_ENABLED_BY_DEFAULT};
+// A secondary switch used in combination with kMojoVideoCapture.
+// This is intended as a kill switch to allow disabling the service on
+// particular groups of devices even if they forcibly enable kMojoVideoCapture
+// via a command-line argument.
+const base::Feature kMojoVideoCaptureSecondary{
+    "MojoVideoCaptureSecondary", base::FEATURE_ENABLED_BY_DEFAULT};
 
 // If the network service is enabled, runs it in process.
 const base::Feature kNetworkServiceInProcess{"NetworkServiceInProcess",
@@ -246,25 +297,26 @@ const base::Feature kNetworkServiceInProcess{"NetworkServiceInProcess",
 const base::Feature kNotificationContentImage{"NotificationContentImage",
                                               base::FEATURE_ENABLED_BY_DEFAULT};
 
-// Use Mojo IPC for notifications.
-const base::Feature kNotificationsWithMojo{"NotificationsWithMojo",
-                                           base::FEATURE_DISABLED_BY_DEFAULT};
-
-// Off-main-thread WebSocket. See https://crbug.com/825740
-const base::Feature kOffMainThreadWebSocket{"OffMainThreadWebSocket",
-                                            base::FEATURE_DISABLED_BY_DEFAULT};
-
-// Origin Manifest. See crbug.com/751996
-const base::Feature kOriginManifest{"OriginManifest",
-                                    base::FEATURE_DISABLED_BY_DEFAULT};
+// Origin Policy. See https://crbug.com/751996
+const base::Feature kOriginPolicy{"OriginPolicy",
+                                  base::FEATURE_DISABLED_BY_DEFAULT};
 
 // Origin Trials for controlling access to feature/API experiments.
 const base::Feature kOriginTrials{"OriginTrials",
                                   base::FEATURE_ENABLED_BY_DEFAULT};
 
+// Blink PageLifecycle feature. See https://crbug.com/775194
+const base::Feature kPageLifecycle{"PageLifecycle",
+                                   base::FEATURE_DISABLED_BY_DEFAULT};
+
 // Whether document level event listeners should default 'passive' to true.
 const base::Feature kPassiveDocumentEventListeners{
     "PassiveDocumentEventListeners", base::FEATURE_ENABLED_BY_DEFAULT};
+
+// Whether document level wheel and mousewheel event listeners should default
+// 'passive' to true.
+const base::Feature kPassiveDocumentWheelEventListeners{
+    "PassiveDocumentWheelEventListeners", base::FEATURE_DISABLED_BY_DEFAULT};
 
 // Whether we should force a touchstart and first touchmove per scroll event
 // listeners to be non-blocking during fling.
@@ -274,6 +326,10 @@ const base::Feature kPassiveEventListenersDueToFling{
 // Whether PDF files should be rendered in diffent processes based on origin.
 const base::Feature kPdfIsolation = {"PdfIsolation",
                                      base::FEATURE_DISABLED_BY_DEFAULT};
+
+// Whether we should use the navigation_client mojo interface for navigations.
+const base::Feature kPerNavigationMojoInterface = {
+    "PerNavigationMojoInterface", base::FEATURE_DISABLED_BY_DEFAULT};
 
 // If Pepper 3D Image Chromium is allowed, this feature controls whether it is
 // enabled.
@@ -316,23 +372,19 @@ const base::Feature kRenderingPipelineThrottling{
 const base::Feature kRequireCSSExtensionForFile{
     "RequireCSSExtensionForFile", base::FEATURE_ENABLED_BY_DEFAULT};
 
+// Enables resampling input events on main thread.
+const base::Feature kResamplingInputEvents{"ResamplingInputEvents",
+                                           base::FEATURE_DISABLED_BY_DEFAULT};
+
 // Loading Dispatcher v0 support with ResourceLoadScheduler (crbug.com/729954).
 const base::Feature kResourceLoadScheduler{"ResourceLoadScheduler",
                                            base::FEATURE_DISABLED_BY_DEFAULT};
-
-// Use common overflow scroll mechanism for frames. See http://crbug.com/417782.
-const base::Feature kRootLayerScrolling{"RootLayerScrolling",
-                                        base::FEATURE_ENABLED_BY_DEFAULT};
 
 // Run video capture service in the Browser process as opposed to a dedicated
 // utility process
 const base::Feature kRunVideoCaptureServiceInBrowserProcess{
     "RunVideoCaptureServiceInBrowserProcess",
     base::FEATURE_DISABLED_BY_DEFAULT};
-
-// Scrolls to compensate for layout movements (bit.ly/scroll-anchoring).
-const base::Feature kScrollAnchoring{"ScrollAnchoring",
-                                     base::FEATURE_ENABLED_BY_DEFAULT};
 
 // Save the scroll anchor and use it to restore scroll position.
 const base::Feature kScrollAnchorSerialization{
@@ -343,66 +395,48 @@ const base::Feature kSendBeaconThrowForBlobWithNonSimpleType{
     "SendBeaconThrowForBlobWithNonSimpleType",
     base::FEATURE_DISABLED_BY_DEFAULT};
 
+const base::Feature kSecMetadata{"SecMetadata",
+                                 base::FEATURE_DISABLED_BY_DEFAULT};
+
+// Enables long running message dispatch for service workers.
+// This is a temporary addition only to be used for the Android Messages
+// integration with ChromeOS (http://crbug.com/823256).
+const base::Feature kServiceWorkerLongRunningMessage{
+    "ServiceWorkerLongRunningMessage", base::FEATURE_ENABLED_BY_DEFAULT};
+
 // Service worker based payment apps as defined by w3c here:
 // https://w3c.github.io/webpayments-payment-apps-api/
-const base::Feature kServiceWorkerPaymentApps{
-    "ServiceWorkerPaymentApps", base::FEATURE_DISABLED_BY_DEFAULT};
+const base::Feature kServiceWorkerPaymentApps{"ServiceWorkerPaymentApps",
+                                              base::FEATURE_ENABLED_BY_DEFAULT};
 
 // Generate V8 full code cache of service worker scripts.
 const base::Feature kServiceWorkerScriptFullCodeCache{
     "ServiceWorkerScriptFullCodeCache", base::FEATURE_ENABLED_BY_DEFAULT};
 
-// Establish direct connection from clients to the service worker.
-const base::Feature kServiceWorkerServicification{
-    "ServiceWorkerServicification", base::FEATURE_DISABLED_BY_DEFAULT};
-
 // http://tc39.github.io/ecmascript_sharedmem/shmem.html
-const base::Feature kSharedArrayBuffer{"SharedArrayBuffer",
-                                       base::FEATURE_DISABLED_BY_DEFAULT};
+const base::Feature kSharedArrayBuffer {
+  "SharedArrayBuffer",
+#if defined(OS_ANDROID)
+      base::FEATURE_DISABLED_BY_DEFAULT
+#else
+      base::FEATURE_ENABLED_BY_DEFAULT
+#endif
+};
 
 // Origin-Signed HTTP Exchanges (for WebPackage Loading)
 // https://www.chromestatus.com/features/5745285984681984
 const base::Feature kSignedHTTPExchange{"SignedHTTPExchange",
                                         base::FEATURE_DISABLED_BY_DEFAULT};
 
-// http://tc39.github.io/ecmascript_sharedmem/shmem.html
-const base::Feature kSharedArrayBuffer{"SharedArrayBuffer",
-                                       base::FEATURE_DISABLED_BY_DEFAULT};
-
-// An experiment to require process isolation for the sign-in origin,
-// https://accounts.google.com.  Launch bug: https://crbug.com/739418.
-const base::Feature kSignInProcessIsolation{"sign-in-process-isolation",
-                                            base::FEATURE_ENABLED_BY_DEFAULT};
-
-// Slimming Paint V1.75. See http://crbug.com/771643.
-const base::Feature kSlimmingPaintV175{"SlimmingPaintV175",
-                                       base::FEATURE_ENABLED_BY_DEFAULT};
+// Origin Trial of Origin-Signed HTTP Exchanges (for WebPackage Loading)
+const base::Feature kSignedHTTPExchangeOriginTrial{
+    "SignedHTTPExchangeOriginTrial", base::FEATURE_DISABLED_BY_DEFAULT};
 
 // Controls whether SpareRenderProcessHostManager tries to always have a warm
 // spare renderer process around for the most recently requested BrowserContext.
 // This feature is only consulted in site-per-process mode.
 const base::Feature kSpareRendererForSitePerProcess{
     "SpareRendererForSitePerProcess", base::FEATURE_ENABLED_BY_DEFAULT};
-
-// Stop scheduler task queues in background after allowed grace time.
-const base::Feature kStopInBackground {
-  "stop-in-background",
-#if defined(OS_ANDROID)
-      base::FEATURE_ENABLED_BY_DEFAULT
-#else
-      base::FEATURE_DISABLED_BY_DEFAULT
-#endif
-};
-
-// Stop loading tasks and loading of resources in background, on Android,
-// after allowed grace time. Launch bug: https://crbug.com/775761.
-const base::Feature kStopLoadingInBackground{"stop-loading-in-background",
-                                             base::FEATURE_DISABLED_BY_DEFAULT};
-
-// Stop non-timer task queues in background, on Android,
-// after allowed grace time. Launch bug: https://crbug.com/822954.
-const base::Feature kStopNonTimersInBackground{
-    "stop-non-timers-in-background", base::FEATURE_DISABLED_BY_DEFAULT};
 
 // Throttle Blink timers in out-of-view cross origin frames.
 const base::Feature kTimerThrottlingForHiddenFrames{
@@ -414,34 +448,12 @@ const base::Feature kTimerThrottlingForHiddenFrames{
 const base::Feature kTopDocumentIsolation{"top-document-isolation",
                                           base::FEATURE_DISABLED_BY_DEFAULT};
 
-// Enables touchpad and wheel scroll latching.
-const base::Feature kTouchpadAndWheelScrollLatching{
-    "TouchpadAndWheelScrollLatching", base::FEATURE_ENABLED_BY_DEFAULT};
-
-// An experiment to turn off compositing for 2D transform & opacity animations.
-const base::Feature kTurnOff2DAndOpacityCompositorAnimations{
-    "TurnOff2DAndOpacityCompositorAnimations",
-    base::FEATURE_DISABLED_BY_DEFAULT};
-
-// Enables unified touch adjustment which adjusts touch events target to a best
-// nearby node.
-const base::Feature kUnifiedTouchAdjustment{"UnifiedTouchAdjustment",
-                                            base::FEATURE_DISABLED_BY_DEFAULT};
-
-// Use Feature Policy to gate the use of permission features like midi,
-// geolocation, camera, microphone, etc.
-const base::Feature kUseFeaturePolicyForPermissions{
-    "UseFeaturePolicyForPermissions", base::FEATURE_ENABLED_BY_DEFAULT};
-
-// Use MojoAudioInputIPC and RenderFrameAudioInputStreamFactory rather than
-// AudioInputMessageFilter and AudioInputRendererHost.
-const base::Feature kUseMojoAudioInputStreamFactory{
-    "UseMojoAudioInputStreamFactory", base::FEATURE_ENABLED_BY_DEFAULT};
-
-// Use MojoAudioOutputIPC and RenderFrameAudioOutputStreamFactory rather than
-// AudioMessageFilter and AudioRendererHost.
-const base::Feature kUseMojoAudioOutputStreamFactory{
-    "UseMojoAudioOutputStreamFactory", base::FEATURE_ENABLED_BY_DEFAULT};
+// Enables async touchpad pinch zoom events. We check the ACK of the first
+// synthetic wheel event in a pinch sequence, then send the rest of the
+// synthetic wheel events of the pinch sequence as non-blocking if the first
+// event’s ACK is not canceled.
+const base::Feature kTouchpadAsyncPinchEvents{
+    "TouchpadAsyncPinchEvents", base::FEATURE_DISABLED_BY_DEFAULT};
 
 // An experimental simple user-activation model where the user gesture state is
 // tracked through a frame-based state instead of the gesture tokens we use
@@ -449,25 +461,28 @@ const base::Feature kUseMojoAudioOutputStreamFactory{
 const base::Feature kUserActivationV2{"UserActivationV2",
                                       base::FEATURE_DISABLED_BY_DEFAULT};
 
-// Use RenderWidgetHostView::CreateVideoCapturer instead of
-// RenderWidgetHostView::CopyFromSurface to obtain a stream of snapshots
-// captured from the renderer for DevTools performance timeline and eyedropper
-// tool.
-const base::Feature kUseVideoCaptureApiForDevToolsSnapshots{
-    "UseVideoCaptureApiForDevToolsSnapshots",
-    base::FEATURE_DISABLED_BY_DEFAULT};
-
 // Enables to use a snapshot file in creating V8 contexts.
 const base::Feature kV8ContextSnapshot{"V8ContextSnapshot",
                                        base::FEATURE_ENABLED_BY_DEFAULT};
+
+// Enables V8's low memory mode for subframes. This is used only
+// in conjunction with the --site-per-process feature.
+const base::Feature kV8LowMemoryModeForSubframes{
+    "V8LowMemoryModeForSubframes", base::FEATURE_DISABLED_BY_DEFAULT};
+
+// Enables to use the V8 Orinoco garbage collector.
+const base::Feature kV8Orinoco{"V8Orinoco", base::FEATURE_ENABLED_BY_DEFAULT};
 
 // Enables future V8 VM features
 const base::Feature kV8VmFuture{"V8VmFuture",
                                 base::FEATURE_DISABLED_BY_DEFAULT};
 
-// Controls whether editing web input fields is enabled in VR.
-const base::Feature kVrWebInputEditing{"VrWebInputEditing",
-                                       base::FEATURE_ENABLED_BY_DEFAULT};
+// Controls the decode acceleration of JPEG images (as opposed to camera
+// captures) in Chrome OS using the VA-API.
+// TODO(andrescj): remove or enable by default in Chrome OS once
+// https://crbug.com/868400 is resolved.
+const base::Feature kVaapiJpegImageDecodeAcceleration{
+    "VaapiJpegImageDecodeAcceleration", base::FEATURE_DISABLED_BY_DEFAULT};
 
 // Enable WebAssembly structured cloning.
 // http://webassembly.org/
@@ -478,7 +493,16 @@ const base::Feature kWebAssembly{"WebAssembly",
 const base::Feature kWebAssemblyStreaming{"WebAssemblyStreaming",
                                           base::FEATURE_ENABLED_BY_DEFAULT};
 
-// Enable WebAssembly streamed compilation.
+// Enable WebAssembly baseline compilation and tier up.
+const base::Feature kWebAssemblyBaseline{"WebAssemblyBaseline",
+                                         base::FEATURE_ENABLED_BY_DEFAULT};
+
+// Enable WebAssembly threads.
+// https://github.com/WebAssembly/threads
+const base::Feature kWebAssemblyThreads{"WebAssemblyThreads",
+                                        base::FEATURE_DISABLED_BY_DEFAULT};
+
+// Enable WebAssembly trap handler.
 const base::Feature kWebAssemblyTrapHandler{"WebAssemblyTrapHandler",
                                             base::FEATURE_DISABLED_BY_DEFAULT};
 
@@ -497,11 +521,7 @@ const base::Feature kWebContentsOcclusion {
 // https://w3c.github.io/webauthn
 const base::Feature kWebAuth {
   "WebAuthentication",
-#if defined(OS_ANDROID)
-      base::FEATURE_DISABLED_BY_DEFAULT
-#else
       base::FEATURE_ENABLED_BY_DEFAULT
-#endif
 };
 
 // Controls whether BLE authenticators can be used via the WebAuthentication
@@ -509,29 +529,30 @@ const base::Feature kWebAuth {
 const base::Feature kWebAuthBle{"WebAuthenticationBle",
                                 base::FEATURE_DISABLED_BY_DEFAULT};
 
-// Controls whether CTAP2 authenticators can be used via the WebAuthentication
-// API. https://w3c.github.io/webauthn
-const base::Feature kWebAuthCtap2{"WebAuthenticationCtap2",
-                                  base::FEATURE_DISABLED_BY_DEFAULT};
+// Controls whether CTAP2 devices can communicate via the WebAuthentication API
+// using pairingless BLE protocol.
+// https://w3c.github.io/webauthn
+const base::Feature kWebAuthCable{"WebAuthenticationCable",
+                                  base::FEATURE_ENABLED_BY_DEFAULT};
+
+// Controls whether CTAP2 devices can communicate via the WebAuthentication API
+// using pairingless BLE protocol on Windows.
+// https://w3c.github.io/webauthn
+const base::Feature kWebAuthCableWin{"WebAuthenticationCableWin",
+                                     base::FEATURE_DISABLED_BY_DEFAULT};
 
 // If WebGL Image Chromium is allowed, this feature controls whether it is
 // enabled.
 const base::Feature kWebGLImageChromium{"WebGLImageChromium",
                                         base::FEATURE_ENABLED_BY_DEFAULT};
 
+// Enable experimental policy-controlled features and LAPIs
+const base::Feature kExperimentalProductivityFeatures{
+    "ExperimentalProductivityFeatures", base::FEATURE_DISABLED_BY_DEFAULT};
+
 // The JavaScript API for payments on the web.
 const base::Feature kWebPayments{"WebPayments",
                                  base::FEATURE_ENABLED_BY_DEFAULT};
-
-// Informs the WebRTC Acoustic Echo Canceler (AEC) that echo path loss is
-// bounded.
-const base::Feature kWebRtcAecBoundedErlSetup{
-    "WebRtcAecBoundedErlSetup", base::FEATURE_DISABLED_BY_DEFAULT};
-
-// Informs the WebRTC Acoustic Echo Canceler (AEC) that the playout and
-// capture is done using different clocks.
-const base::Feature kWebRtcAecClockDriftSetup{
-    "WebRtcAecClockDriftSetup", base::FEATURE_DISABLED_BY_DEFAULT};
 
 // Makes WebRTC use ECDSA certs by default (i.e., when no cert type was
 // specified in JS).
@@ -567,6 +588,11 @@ const base::Feature kWebRtcScreenshareSwEncoding{
 const base::Feature kWebRtcUseEchoCanceller3{"WebRtcUseEchoCanceller3",
                                              base::FEATURE_DISABLED_BY_DEFAULT};
 
+// Enables the WebRTC Agc2 digital adaptation with WebRTC Agc1 analog
+// adaptation. Feature for http://crbug.com/873650. Is sent to WebRTC.
+const base::Feature kWebRtcHybridAgc{"WebRtcHybridAgc",
+                                     base::FEATURE_DISABLED_BY_DEFAULT};
+
 // Use GpuMemoryBuffer backed VideoFrames in media streams.
 const base::Feature kWebRtcUseGpuMemoryBufferVideoFrames{
     "WebRTC-UseGpuMemoryBufferVideoFrames", base::FEATURE_ENABLED_BY_DEFAULT};
@@ -590,9 +616,17 @@ const base::Feature kWebXrHitTest{"WebXRHitTest",
 const base::Feature kWebXrOrientationSensorDevice{
     "WebXROrientationSensorDevice", base::FEATURE_DISABLED_BY_DEFAULT};
 
+// Wipe corrupt v2 IndexedDB databases.
+const base::Feature kWipeCorruptV2IDBDatabases{
+    "WipeCorruptV2IDBDatabases", base::FEATURE_ENABLED_BY_DEFAULT};
+
 // Enabled "work stealing" in the script runner.
 const base::Feature kWorkStealingInScriptRunner{
     "WorkStealingInScriptRunner", base::FEATURE_DISABLED_BY_DEFAULT};
+
+// Enabled scheduler use for script streaming.
+const base::Feature kScheduledScriptStreaming{
+    "ScheduledScriptStreaming", base::FEATURE_DISABLED_BY_DEFAULT};
 
 #if defined(OS_ANDROID)
 // Autofill Accessibility in Android.
@@ -600,9 +634,20 @@ const base::Feature kWorkStealingInScriptRunner{
 const base::Feature kAndroidAutofillAccessibility{
     "AndroidAutofillAccessibility", base::FEATURE_ENABLED_BY_DEFAULT};
 
+// Enables developers to use the CSS safe-area-* and viewport-fit APIs which
+// allow them to support devices with a display cutout.
+const base::Feature kDisplayCutoutAPI{"DisplayCutoutAPI",
+                                      base::FEATURE_ENABLED_BY_DEFAULT};
+
 // Enables hiding incorrectly-sized frames while in fullscreen.
 const base::Feature kHideIncorrectlySizedFullscreenFrames{
     "HideIncorrectlySizedFullscreenFrames", base::FEATURE_ENABLED_BY_DEFAULT};
+
+// Sets moderate binding to background renderers playing media, when enabled.
+// Else the renderer will have strong binding.
+const base::Feature kBackgroundMediaRendererHasModerateBinding{
+    "BackgroundMediaRendererHasModerateBinding",
+    base::FEATURE_DISABLED_BY_DEFAULT};
 
 // Controls whether the WebNFC API is enabled:
 // https://w3c.github.io/web-nfc/
@@ -620,35 +665,66 @@ const char kWebXrRenderPathParamValueGpuFence[] = "GpuFence";
 const char kWebXrRenderPathParamValueSharedBuffer[] = "SharedBuffer";
 #endif  // defined(OS_ANDROID)
 
+#if !defined(OS_ANDROID)
+// Makes all WebUI that uses Polymer use 2.x version.
+// TODO(dpapad): Remove this once Polymer 2 migration is done,
+// https://crbug.com/738611.
+const base::Feature kWebUIPolymer2{"WebUIPolymer2",
+                                   base::FEATURE_DISABLED_BY_DEFAULT};
+#endif  // !defined(OS_ANDROID)
+
 #if defined(OS_MACOSX)
 // Enables caching of media devices for the purpose of enumerating them.
 const base::Feature kDeviceMonitorMac{"DeviceMonitorMac",
                                       base::FEATURE_ENABLED_BY_DEFAULT};
 
+// Enable IOSurface based screen capturer.
+const base::Feature kIOSurfaceCapturer{"IOSurfaceCapturer",
+                                       base::FEATURE_ENABLED_BY_DEFAULT};
+
 // The V2 sandbox on MacOS removes the unsandboed warmup phase and sandboxes the
 // entire life of the process.
 const base::Feature kMacV2Sandbox{"MacV2Sandbox",
-                                  base::FEATURE_DISABLED_BY_DEFAULT};
+                                  base::FEATURE_ENABLED_BY_DEFAULT};
 #endif  // defined(OS_MACOSX)
 
-bool IsVideoCaptureServiceEnabledForOutOfProcess() {
-#if defined(OS_ANDROID)
-  return false;
-#else
+enum class VideoCaptureServiceConfiguration {
+  kEnabledForOutOfProcess,
+  kEnabledForBrowserProcess,
+  kDisabled
+};
+
+bool ShouldEnableVideoCaptureService() {
   return base::FeatureList::IsEnabled(features::kMojoVideoCapture) &&
-         !base::FeatureList::IsEnabled(
-             features::kRunVideoCaptureServiceInBrowserProcess);
+         base::FeatureList::IsEnabled(features::kMojoVideoCaptureSecondary);
+}
+
+VideoCaptureServiceConfiguration GetVideoCaptureServiceConfiguration() {
+  if (!ShouldEnableVideoCaptureService())
+    return VideoCaptureServiceConfiguration::kDisabled;
+
+#if defined(OS_ANDROID)
+  return VideoCaptureServiceConfiguration::kEnabledForBrowserProcess;
+#elif defined(OS_CHROMEOS)
+  return media::ShouldUseCrosCameraService()
+             ? VideoCaptureServiceConfiguration::kEnabledForBrowserProcess
+             : VideoCaptureServiceConfiguration::kEnabledForOutOfProcess;
+#else
+  return base::FeatureList::IsEnabled(
+             features::kRunVideoCaptureServiceInBrowserProcess)
+             ? VideoCaptureServiceConfiguration::kEnabledForBrowserProcess
+             : VideoCaptureServiceConfiguration::kEnabledForOutOfProcess;
 #endif
 }
 
+bool IsVideoCaptureServiceEnabledForOutOfProcess() {
+  return GetVideoCaptureServiceConfiguration() ==
+         VideoCaptureServiceConfiguration::kEnabledForOutOfProcess;
+}
+
 bool IsVideoCaptureServiceEnabledForBrowserProcess() {
-#if defined(OS_ANDROID)
-  return base::FeatureList::IsEnabled(features::kMojoVideoCapture);
-#else
-  return base::FeatureList::IsEnabled(features::kMojoVideoCapture) &&
-         base::FeatureList::IsEnabled(
-             features::kRunVideoCaptureServiceInBrowserProcess);
-#endif
+  return GetVideoCaptureServiceConfiguration() ==
+         VideoCaptureServiceConfiguration::kEnabledForBrowserProcess;
 }
 
 }  // namespace features

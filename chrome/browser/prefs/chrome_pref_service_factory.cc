@@ -99,9 +99,9 @@ bool g_disable_domain_check_for_testing = false;
 #endif  // OS_WIN
 
 // These preferences must be kept in sync with the TrackedPreference enum in
-// tools/metrics/histograms/histograms.xml. To add a new preference, append it
-// to the array and add a corresponding value to the histogram enum. Each
-// tracked preference must be given a unique reporting ID.
+// tools/metrics/histograms/enums.xml. To add a new preference, append it to the
+// array and add a corresponding value to the histogram enum. Each tracked
+// preference must be given a unique reporting ID.
 // See CleanupDeprecatedTrackedPreferences() in pref_hash_filter.cc to remove a
 // deprecated tracked preference.
 const prefs::TrackedPreferenceMetadata kTrackedPrefs[] = {
@@ -178,6 +178,11 @@ const prefs::TrackedPreferenceMetadata kTrackedPrefs[] = {
 #endif  // defined(OS_WIN)
     {29, prefs::kMediaStorageIdSalt, EnforcementLevel::ENFORCE_ON_LOAD,
      PrefTrackingStrategy::ATOMIC, ValueType::IMPERSONAL},
+#if defined(OS_WIN) && defined(GOOGLE_CHROME_BUILD)
+    {30, prefs::kModuleBlacklistCacheMD5Digest,
+     EnforcementLevel::ENFORCE_ON_LOAD, PrefTrackingStrategy::ATOMIC,
+     ValueType::IMPERSONAL},
+#endif
 
     // See note at top, new items added here also need to be added to
     // histograms.xml's TrackedPreference enum.
@@ -448,16 +453,21 @@ const char kSettingsEnforcementGroupEnforceAlwaysWithExtensionsAndDSE[] =
 
 std::unique_ptr<PrefService> CreateLocalState(
     const base::FilePath& pref_filename,
-    base::SequencedTaskRunner* pref_io_task_runner,
     policy::PolicyService* policy_service,
     scoped_refptr<PrefRegistry> pref_registry,
     bool async,
-    std::unique_ptr<PrefValueStore::Delegate> delegate) {
+    std::unique_ptr<PrefValueStore::Delegate> delegate,
+    scoped_refptr<PersistentPrefStore> user_pref_store) {
+  if (!user_pref_store) {
+    // The new JsonPrefStore will read content from |pref_filename| in
+    // PrefServiceSyncableFactory. Errors are ignored.
+    user_pref_store = base::MakeRefCounted<JsonPrefStore>(
+        pref_filename, std::unique_ptr<PrefFilter>());
+  }
   sync_preferences::PrefServiceSyncableFactory factory;
   PrepareFactory(&factory, pref_filename, policy_service,
                  nullptr,  // supervised_user_settings
-                 new JsonPrefStore(pref_filename, pref_io_task_runner,
-                                   std::unique_ptr<PrefFilter>()),
+                 std::move(user_pref_store),
                  nullptr,  // extension_prefs
                  async);
   return factory.Create(std::move(pref_registry), std::move(delegate));

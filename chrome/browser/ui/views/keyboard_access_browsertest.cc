@@ -10,6 +10,7 @@
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/message_loop/message_loop.h"
+#include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_util.h"
 #include "base/threading/thread_task_runner_handle.h"
@@ -75,7 +76,7 @@ class ViewFocusChangeWaiter : public views::FocusChangeListener {
                         views::View* focused_now) override {
     if (focused_now && focused_now->id() != previous_view_id_) {
       base::ThreadTaskRunnerHandle::Get()->PostTask(
-          FROM_HERE, base::MessageLoop::QuitWhenIdleClosure());
+          FROM_HERE, base::RunLoop::QuitCurrentWhenIdleClosureDeprecated());
     }
   }
 
@@ -119,7 +120,7 @@ class SendKeysMenuListener : public views::MenuListener {
     } else {
       SendKeyPress(browser_, ui::VKEY_ESCAPE);
       base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
-          FROM_HERE, base::MessageLoop::QuitWhenIdleClosure(),
+          FROM_HERE, base::RunLoop::QuitCurrentWhenIdleClosureDeprecated(),
           base::TimeDelta::FromMilliseconds(200));
     }
   }
@@ -430,7 +431,13 @@ IN_PROC_BROWSER_TEST_F(KeyboardAccessTest, MAYBE_ReserveKeyboardAccelerators) {
 }
 
 #if defined(OS_WIN)  // These keys are Windows-only.
-IN_PROC_BROWSER_TEST_F(KeyboardAccessTest, BackForwardKeys) {
+// Disabled on debug due to high flake rate; see https://crbug.com/846623.
+#if !defined(NDEBUG)
+#define MAYBE_BackForwardKeys DISABLED_BackForwardKeys
+#else
+#define MAYBE_BackForwardKeys BackForwardKeys
+#endif
+IN_PROC_BROWSER_TEST_F(KeyboardAccessTest, MAYBE_BackForwardKeys) {
   // Navigate to create some history.
   ui_test_utils::NavigateToURL(browser(), GURL("chrome://version/"));
   ui_test_utils::NavigateToURL(browser(), GURL("chrome://about/"));

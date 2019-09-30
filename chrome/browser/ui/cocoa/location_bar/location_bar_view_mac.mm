@@ -5,6 +5,7 @@
 #import "chrome/browser/ui/cocoa/location_bar/location_bar_view_mac.h"
 
 #include "base/bind.h"
+#include "base/bind_helpers.h"
 #import "base/mac/mac_util.h"
 #include "base/stl_util.h"
 #include "base/strings/string_util.h"
@@ -24,7 +25,6 @@
 #include "chrome/browser/ui/autofill/save_card_bubble_controller_impl.h"
 #include "chrome/browser/ui/browser_list.h"
 #import "chrome/browser/ui/cocoa/browser_window_controller.h"
-#import "chrome/browser/ui/cocoa/content_settings/content_setting_bubble_cocoa.h"
 #import "chrome/browser/ui/cocoa/info_bubble_view.h"
 #import "chrome/browser/ui/cocoa/l10n_util.h"
 #import "chrome/browser/ui/cocoa/location_bar/autocomplete_text_field.h"
@@ -124,8 +124,7 @@ LocationBarViewMac::LocationBarViewMac(AutocompleteTextField* field,
       base::Bind(&LocationBarViewMac::OnEditBookmarksEnabledChanged,
                  base::Unretained(this)));
 
-  zoom::ZoomEventManager::GetForBrowserContext(profile)
-      ->AddZoomEventManagerObserver(this);
+  zoom::ZoomEventManager::GetForBrowserContext(profile)->AddObserver(this);
 
   [[field_ cell] setIsPopupMode:
       !browser->SupportsWindowFeature(Browser::FEATURE_TABSTRIP)];
@@ -139,8 +138,7 @@ LocationBarViewMac::~LocationBarViewMac() {
   // Disconnect from cell in case it outlives us.
   [[field_ cell] clearDecorations];
 
-  zoom::ZoomEventManager::GetForBrowserContext(profile())
-      ->RemoveZoomEventManagerObserver(this);
+  zoom::ZoomEventManager::GetForBrowserContext(profile())->RemoveObserver(this);
 }
 
 GURL LocationBarViewMac::GetDestinationURL() const {
@@ -202,18 +200,13 @@ void LocationBarViewMac::UpdateSaveCreditCardIcon() {
   OnDecorationsChanged();
 }
 
-void LocationBarViewMac::UpdateFindBarIconVisibility() {
-  // TODO(crbug/651643): Implement for mac.
+void LocationBarViewMac::UpdateLocalCardMigrationIcon() {
+  // TODO(crbug.com/859652): Implement for mac.
   NOTIMPLEMENTED();
 }
 
 void LocationBarViewMac::UpdateBookmarkStarVisibility() {
   star_decoration_->SetVisible(IsStarEnabled());
-}
-
-void LocationBarViewMac::UpdateZoomViewVisibility() {
-  UpdateZoomDecoration(/*default_zoom_changed=*/false);
-  OnChanged();
 }
 
 void LocationBarViewMac::UpdateLocationBarVisibility(bool visible,
@@ -235,11 +228,6 @@ void LocationBarViewMac::SaveStateToContents(WebContents* contents) {
 
 void LocationBarViewMac::Revert() {
   omnibox_view_->RevertAll();
-}
-
-bool LocationBarViewMac::ShowPageInfoDialog(WebContents* contents) {
-  // Cocoa doesn't show page info on the location bar.
-  return ::ShowPageInfoDialog(contents);
 }
 
 const OmniboxView* LocationBarViewMac::GetOmniboxView() const {
@@ -459,15 +447,19 @@ void LocationBarViewMac::UpdateWithoutTabRestore() {
 
 void LocationBarViewMac::UpdateLocationIcon() {
   SkColor vector_icon_color = GetLocationBarIconColor();
-  const gfx::VectorIcon& vector_icon_id =
-      GetPageInfoVerboseType() == PageInfoVerboseType::kEVCert
-          ? toolbar::kHttpsValidIcon
-          : omnibox_view_->GetVectorIcon();
+  gfx::ImageSkia image_skia;
+  if (GetPageInfoVerboseType() == PageInfoVerboseType::kEVCert) {
+    image_skia = gfx::CreateVectorIcon(toolbar::kHttpsValidIcon,
+                                       kDefaultIconSize, vector_icon_color);
+  } else {
+    // The view may return an icon asynchronously when certain flags are on,
+    // but the Cocoa implementation should just ignore them.
+    image_skia = omnibox_view_->GetIcon(kDefaultIconSize, vector_icon_color,
+                                        base::DoNothing());
+  }
 
   NSImage* image = NSImageFromImageSkiaWithColorSpace(
-      gfx::CreateVectorIcon(vector_icon_id, kDefaultIconSize,
-                            vector_icon_color),
-      base::mac::GetSRGBColorSpace());
+      image_skia, base::mac::GetSRGBColorSpace());
   page_info_decoration_->SetImage(image);
   page_info_decoration_->SetLabelColor(vector_icon_color);
 
@@ -511,6 +503,22 @@ const ToolbarModel* LocationBarViewMac::GetToolbarModel() const {
 
 WebContents* LocationBarViewMac::GetWebContents() {
   return browser_->tab_strip_model()->GetActiveWebContents();
+}
+
+void LocationBarViewMac::UpdatePageActionIcon(PageActionIconType type) {
+  // TODO(https://crbug.com/788051): Return page action icons for updating here
+  // as update methods are migrated out of LocationBar to the
+  // PageActionIconContainer interface.
+  switch (type) {
+    case PageActionIconType::kFind:
+      // TODO(crbug/651643): Implement for mac.
+      NOTIMPLEMENTED();
+      break;
+    case PageActionIconType::kZoom:
+      UpdateZoomDecoration(/*default_zoom_changed=*/false);
+      OnChanged();
+      break;
+  }
 }
 
 PageInfoVerboseType LocationBarViewMac::GetPageInfoVerboseType() const {

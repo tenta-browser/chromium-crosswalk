@@ -11,7 +11,6 @@
 
 #include "apps/test/app_window_waiter.h"
 #include "base/memory/ref_counted.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/strings/pattern.h"
 #include "base/strings/string_split.h"
@@ -20,7 +19,7 @@
 #include "base/test/simple_test_tick_clock.h"
 #include "base/values.h"
 #include "build/build_config.h"
-#include "chrome/browser/apps/app_browsertest_util.h"
+#include "chrome/browser/apps/platform_apps/app_browsertest_util.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/devtools/devtools_window_testing.h"
 #include "chrome/browser/extensions/api/tabs/tabs_api.h"
@@ -447,7 +446,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionTabsTest,
       new TabsUpdateFunction());
   scoped_refptr<Extension> extension(ExtensionBuilder("Test").Build());
   update_tab_function->set_extension(extension.get());
-  update_tab_function->set_include_incognito(true);
+  update_tab_function->set_include_incognito_information(true);
 
   static const char kArgsWithNonIncognitoUrl[] =
       "[null, {\"url\": \"chrome://extensions/configureCommands\"}]";
@@ -889,12 +888,8 @@ base::Value* ExtensionWindowLastFocusedTest::RunFunction(
 
 IN_PROC_BROWSER_TEST_F(ExtensionWindowLastFocusedTest,
                        ExtensionAPICannotNavigateDevtools) {
-  std::unique_ptr<base::DictionaryValue> test_extension_value(
-      api_test_utils::ParseDictionary(
-          "{\"name\": \"Test\", \"version\": \"1.0\", \"permissions\": "
-          "[\"tabs\"]}"));
-  scoped_refptr<Extension> extension(
-      api_test_utils::CreateExtension(test_extension_value.get()));
+  scoped_refptr<const Extension> extension =
+      ExtensionBuilder("Test").AddPermission("tabs").Build();
 
   DevToolsWindow* devtools = DevToolsWindowTesting::OpenDevToolsWindowSync(
       browser()->tab_strip_model()->GetWebContentsAt(0), false /* is_docked */);
@@ -1033,7 +1028,13 @@ IN_PROC_BROWSER_TEST_F(ExtensionWindowLastFocusedTest,
 }
 #endif  // !defined(OS_MACOSX)
 
-IN_PROC_BROWSER_TEST_F(ExtensionWindowCreateTest, AcceptState) {
+#if defined(OS_MACOSX)
+// https://crbug.com/836327
+#define MAYBE_AcceptState DISABLED_AcceptState
+#else
+#define MAYBE_AcceptState AcceptState
+#endif
+IN_PROC_BROWSER_TEST_F(ExtensionWindowCreateTest, MAYBE_AcceptState) {
 #if defined(OS_MACOSX)
   if (base::mac::IsOS10_10())
     return;  // Fails when swarmed. http://crbug.com/660582
@@ -1074,18 +1075,6 @@ IN_PROC_BROWSER_TEST_F(ExtensionWindowCreateTest, AcceptState) {
 }
 
 IN_PROC_BROWSER_TEST_F(ExtensionWindowCreateTest, ValidateCreateWindowState) {
-  EXPECT_TRUE(base::MatchPattern(
-      RunCreateWindowExpectError(
-          "[{\"state\": \"fullscreen\", \"type\": \"panel\"}]"),
-      keys::kInvalidWindowStateError));
-  EXPECT_TRUE(base::MatchPattern(
-      RunCreateWindowExpectError(
-          "[{\"state\": \"maximized\", \"type\": \"panel\"}]"),
-      keys::kInvalidWindowStateError));
-  EXPECT_TRUE(base::MatchPattern(
-      RunCreateWindowExpectError(
-          "[{\"state\": \"minimized\", \"type\": \"panel\"}]"),
-      keys::kInvalidWindowStateError));
   EXPECT_TRUE(
       base::MatchPattern(RunCreateWindowExpectError(
                              "[{\"state\": \"minimized\", \"focused\": true}]"),
@@ -1125,12 +1114,8 @@ IN_PROC_BROWSER_TEST_F(ExtensionTabsTest, DuplicateTab) {
 
   scoped_refptr<TabsDuplicateFunction> duplicate_tab_function(
       new TabsDuplicateFunction());
-  std::unique_ptr<base::DictionaryValue> test_extension_value(
-      api_test_utils::ParseDictionary(
-          "{\"name\": \"Test\", \"version\": \"1.0\", \"permissions\": "
-          "[\"tabs\"]}"));
-  scoped_refptr<Extension> empty_tab_extension(
-      api_test_utils::CreateExtension(test_extension_value.get()));
+  scoped_refptr<const Extension> empty_tab_extension =
+      ExtensionBuilder("Test").AddPermission("tabs").Build();
   duplicate_tab_function->set_extension(empty_tab_extension.get());
   duplicate_tab_function->set_has_callback(true);
 
@@ -1273,12 +1258,8 @@ IN_PROC_BROWSER_TEST_F(ExtensionTabsTest, MAYBE_FilteredEvents) {
 }
 
 IN_PROC_BROWSER_TEST_F(ExtensionTabsTest, ExecuteScriptOnDevTools) {
-  std::unique_ptr<base::DictionaryValue> test_extension_value(
-      api_test_utils::ParseDictionary(
-          "{\"name\": \"Test\", \"version\": \"1.0\", \"permissions\": "
-          "[\"tabs\"]}"));
-  scoped_refptr<Extension> extension(
-      api_test_utils::CreateExtension(test_extension_value.get()));
+  scoped_refptr<const Extension> extension =
+      ExtensionBuilder("Test").AddPermission("tabs").Build();
 
   DevToolsWindow* devtools = DevToolsWindowTesting::OpenDevToolsWindowSync(
       browser()->tab_strip_model()->GetWebContentsAt(0), false /* is_docked */);

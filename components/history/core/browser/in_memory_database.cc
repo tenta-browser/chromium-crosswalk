@@ -13,8 +13,7 @@
 
 namespace history {
 
-InMemoryDatabase::InMemoryDatabase() : URLDatabase() {
-}
+InMemoryDatabase::InMemoryDatabase() {}
 
 InMemoryDatabase::~InMemoryDatabase() {
 }
@@ -158,7 +157,7 @@ bool InMemoryDatabase::InitFromDisk(const base::FilePath& history_name) {
   return true;
 }
 
-sql::Connection& InMemoryDatabase::GetDB() {
+sql::Database& InMemoryDatabase::GetDB() {
   return db_;
 }
 

@@ -15,7 +15,7 @@
 
 namespace {
 
-class ExtensionDialogUiTest : public ExtensionBrowserTest {
+class ExtensionDialogUiTest : public extensions::ExtensionBrowserTest {
  public:
   ExtensionDialogUiTest() = default;
   ~ExtensionDialogUiTest() override = default;
@@ -55,9 +55,9 @@ IN_PROC_BROWSER_TEST_F(ExtensionDialogUiTest, MAYBE_TabFocusLoop) {
   ASSERT_TRUE(init_listener.WaitUntilSatisfied());
 
   // Focus the second button.
-  ASSERT_TRUE(content::ExecuteScript(
-                  dialog->host()->render_view_host(),
-                  "document.querySelector('#button2').focus()"));
+  ASSERT_TRUE(
+      content::ExecuteScript(dialog->host()->host_contents(),
+                             "document.querySelector('#button2').focus()"));
   ASSERT_TRUE(button2_focus_listener.WaitUntilSatisfied());
 
   // Pressing TAB should focus the third(last) button.

@@ -6,7 +6,12 @@
 
 #include <stdint.h>
 
+#include <memory>
+#include <string>
+#include <utility>
+
 #include "base/command_line.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "ui/accessibility/ax_action_data.h"
@@ -41,6 +46,158 @@ G_BEGIN_DECLS
 
 typedef struct _AXPlatformNodeAuraLinuxObject AXPlatformNodeAuraLinuxObject;
 typedef struct _AXPlatformNodeAuraLinuxClass AXPlatformNodeAuraLinuxClass;
+
+// TODO(aleventhal) Remove this and use atk_role_get_name() once the following
+// GNOME bug is fixed: https://bugzilla.gnome.org/show_bug.cgi?id=795983
+const char* role_names[] = {
+    "invalid",  // ATK_ROLE_INVALID.
+    "accelerator label",
+    "alert",
+    "animation",
+    "arrow",
+    "calendar",
+    "canvas",
+    "check box",
+    "check menu item",
+    "color chooser",
+    "column header",
+    "combo box",
+    "dateeditor",
+    "desktop icon",
+    "desktop frame",
+    "dial",
+    "dialog",
+    "directory pane",
+    "drawing area",
+    "file chooser",
+    "filler",
+    "fontchooser",
+    "frame",
+    "glass pane",
+    "html container",
+    "icon",
+    "image",
+    "internal frame",
+    "label",
+    "layered pane",
+    "list",
+    "list item",
+    "menu",
+    "menu bar",
+    "menu item",
+    "option pane",
+    "page tab",
+    "page tab list",
+    "panel",
+    "password text",
+    "popup menu",
+    "progress bar",
+    "push button",
+    "radio button",
+    "radio menu item",
+    "root pane",
+    "row header",
+    "scroll bar",
+    "scroll pane",
+    "separator",
+    "slider",
+    "split pane",
+    "spin button",
+    "statusbar",
+    "table",
+    "table cell",
+    "table column header",
+    "table row header",
+    "tear off menu item",
+    "terminal",
+    "text",
+    "toggle button",
+    "tool bar",
+    "tool tip",
+    "tree",
+    "tree table",
+    "unknown",
+    "viewport",
+    "window",
+    "header",
+    "footer",
+    "paragraph",
+    "ruler",
+    "application",
+    "autocomplete",
+    "edit bar",
+    "embedded component",
+    "entry",
+    "chart",
+    "caption",
+    "document frame",
+    "heading",
+    "page",
+    "section",
+    "redundant object",
+    "form",
+    "link",
+    "input method window",
+    "table row",
+    "tree item",
+    "document spreadsheet",
+    "document presentation",
+    "document text",
+    "document web",
+    "document email",
+    "comment",
+    "list box",
+    "grouping",
+    "image map",
+    "notification",
+    "info bar",
+    "level bar",
+    "title bar",
+    "block quote",
+    "audio",
+    "video",
+    "definition",
+    "article",
+    "landmark",
+    "log",
+    "marquee",
+    "math",
+    "rating",
+    "timer",
+    "description list",
+    "description term",
+    "description value",
+    "static",
+    "math fraction",
+    "math root",
+    "subscript",
+    "superscript",
+    "footnote",  // ATK_ROLE_FOOTNOTE = 122.
+};
+
+#if defined(ATK_CHECK_VERSION) && ATK_CHECK_VERSION(2, 16, 0)
+#define ATK_216
+#endif
+
+#if defined(ATK_CHECK_VERSION) && ATK_CHECK_VERSION(2, 26, 0)
+#define ATK_226
+#endif
+
+#if defined(ATK_216)
+constexpr AtkRole kStaticRole = ATK_ROLE_STATIC;
+constexpr AtkRole kSubscriptRole = ATK_ROLE_SUBSCRIPT;
+constexpr AtkRole kSuperscriptRole = ATK_ROLE_SUPERSCRIPT;
+#else
+constexpr AtkRole kStaticRole = ATK_ROLE_TEXT;
+constexpr AtkRole kSubscriptRole = ATK_ROLE_TEXT;
+constexpr AtkRole kSuperscriptRole = ATK_ROLE_TEXT;
+#endif
+
+#if defined(ATK_226)
+constexpr AtkRole kAtkFootnoteRole = ATK_ROLE_FOOTNOTE;
+#else
+constexpr AtkRole kAtkFootnoteRole = ATK_ROLE_LIST_ITEM;
+#endif
 
 struct _AXPlatformNodeAuraLinuxObject {
   AtkObject parent;
@@ -158,7 +315,13 @@ static AtkRelationSet* ax_platform_node_auralinux_ref_relation_set(
 
 static AtkAttributeSet* ax_platform_node_auralinux_get_attributes(
     AtkObject* atk_object) {
-  return NULL;
+
+  ui::AXPlatformNodeAuraLinux* obj =
+      AtkObjectToAXPlatformNodeAuraLinux(atk_object);
+  if (!obj)
+    return nullptr;
+
+  return obj->GetAtkAttributes();
 }
 
 static AtkRole ax_platform_node_auralinux_get_role(AtkObject* atk_object) {
@@ -193,7 +356,7 @@ static gfx::Point FindAtkObjectParentCoords(AtkObject* atk_object) {
   if (!atk_object)
     return gfx::Point(0, 0);
 
-  if (atk_object_get_role(atk_object) == ATK_ROLE_WINDOW) {
+  if (atk_object_get_role(atk_object) == ATK_ROLE_FRAME) {
     int x, y;
     atk_component_get_extents(ATK_COMPONENT(atk_object),
         &x, &y, nullptr, nullptr, ATK_XY_WINDOW);
@@ -591,6 +754,67 @@ static const GInterfaceInfo HyperlinkImplInfo = {
     nullptr, nullptr};
 
 //
+// AtkText interface.
+//
+
+static gchar* ax_platform_node_auralinux_get_text(AtkText* atk_text,
+                                                  gint start_offset,
+                                                  gint end_offset) {
+  AtkObject* atk_object = ATK_OBJECT(atk_text);
+  ui::AXPlatformNodeAuraLinux* obj =
+      AtkObjectToAXPlatformNodeAuraLinux(atk_object);
+  if (!obj)
+    return nullptr;
+
+  std::string text = obj->GetTextForATK();
+  if (end_offset < 0)
+    end_offset = g_utf8_strlen(text.c_str(), -1);
+
+  return g_utf8_substring(text.c_str(), start_offset, end_offset);
+}
+
+static gint ax_platform_node_auralinux_get_character_count(AtkText* atk_text) {
+  AtkObject* atk_object = ATK_OBJECT(atk_text);
+  ui::AXPlatformNodeAuraLinux* obj =
+      AtkObjectToAXPlatformNodeAuraLinux(atk_object);
+  if (!obj)
+    return 0;
+
+  std::string text = obj->GetTextForATK();
+  return g_utf8_strlen(text.c_str(), -1);
+}
+
+static AtkAttributeSet* ax_platform_node_auralinux_get_run_attributes(
+    AtkText* atk_text,
+    gint offset,
+    gint* start_offset,
+    gint* end_offset) {
+  *start_offset = -1;
+  *end_offset = -1;
+
+  AtkObject* atk_object = ATK_OBJECT(atk_text);
+  ui::AXPlatformNodeAuraLinux* obj =
+      AtkObjectToAXPlatformNodeAuraLinux(atk_object);
+  if (!obj)
+    return nullptr;
+
+  *start_offset = 0;
+  *end_offset = ax_platform_node_auralinux_get_character_count(atk_text);
+
+  return nullptr;
+}
+
+static void ax_text_interface_base_init(AtkTextIface* iface) {
+  iface->get_text = ax_platform_node_auralinux_get_text;
+  iface->get_run_attributes = ax_platform_node_auralinux_get_run_attributes;
+  iface->get_character_count = ax_platform_node_auralinux_get_character_count;
+}
+
+static const GInterfaceInfo TextInfo = {
+    reinterpret_cast<GInterfaceInitFunc>(ax_text_interface_base_init), nullptr,
+    nullptr};
+
+//
 // The rest of the AXPlatformNodeAtk code, not specific to one
 // of the Atk* interfaces.
 //
@@ -696,6 +920,11 @@ int AXPlatformNodeAuraLinux::GetGTypeInterfaceMask() {
   // for each object.
   interface_mask |= 1 << ATK_ACTION_INTERFACE;
 
+  // TODO(accessibility): We should only expose this for some elements, but
+  // it might be better to do this after exposing the hypertext interface
+  // as well.
+  interface_mask |= 1 << ATK_TEXT_INTERFACE;
+
   // Value Interface
   int role = GetAtkRole();
   if (role == ATK_ROLE_SCROLL_BAR || role == ATK_ROLE_SLIDER ||
@@ -753,6 +982,8 @@ GType AXPlatformNodeAuraLinux::GetAccessibilityGType() {
   if (interface_mask_ & (1 << ATK_HYPERLINK_INTERFACE))
     g_type_add_interface_static(type, ATK_TYPE_HYPERLINK_IMPL,
                                 &HyperlinkImplInfo);
+  if (interface_mask_ & (1 << ATK_TEXT_INTERFACE))
+    g_type_add_interface_static(type, ATK_TYPE_TEXT, &TextInfo);
 
   return type;
 }
@@ -820,84 +1051,210 @@ AtkRole AXPlatformNodeAuraLinux::GetAtkRole() {
       return ATK_ROLE_ALERT;
     case ax::mojom::Role::kAlertDialog:
       return ATK_ROLE_ALERT;
+    case ax::mojom::Role::kAnchor:
+      return ATK_ROLE_LINK;
+    case ax::mojom::Role::kAnnotation:
+      // TODO(accessibility) Panels are generally for containers of widgets.
+      // This should probably be a section (if a container) or static if text.
+      return ATK_ROLE_PANEL;
     case ax::mojom::Role::kApplication:
-      return ATK_ROLE_APPLICATION;
+      // Only use ATK_ROLE_APPLICATION for elements with no parent, since it
+      // is only for top level app windows and not ARIA applications.
+      if (!GetParent()) {
+        return ATK_ROLE_APPLICATION;
+      } else {
+        return ATK_ROLE_EMBEDDED;
+      }
+    case ax::mojom::Role::kArticle:
+      return ATK_ROLE_ARTICLE;
     case ax::mojom::Role::kAudio:
-#if defined(ATK_CHECK_VERSION)
-#if ATK_CHECK_VERSION(2, 12, 0)
       return ATK_ROLE_AUDIO;
-#else
-      return ATK_ROLE_SECTION;
-#endif
-#else
-      return ATK_ROLE_SECTION;
-#endif
+    case ax::mojom::Role::kBanner:
+      return ATK_ROLE_LANDMARK;
+    case ax::mojom::Role::kBlockquote:
+      return ATK_ROLE_BLOCK_QUOTE;
+    case ax::mojom::Role::kCaret:
+      return ATK_ROLE_UNKNOWN;
     case ax::mojom::Role::kButton:
       return ATK_ROLE_PUSH_BUTTON;
     case ax::mojom::Role::kCanvas:
       return ATK_ROLE_CANVAS;
     case ax::mojom::Role::kCaption:
       return ATK_ROLE_CAPTION;
+    case ax::mojom::Role::kCell:
+      return ATK_ROLE_TABLE_CELL;
     case ax::mojom::Role::kCheckBox:
       return ATK_ROLE_CHECK_BOX;
+    case ax::mojom::Role::kSwitch:
+      return ATK_ROLE_TOGGLE_BUTTON;
     case ax::mojom::Role::kColorWell:
-      return ATK_ROLE_COLOR_CHOOSER;
+      return ATK_ROLE_PUSH_BUTTON;
+    case ax::mojom::Role::kColumn:
+      return ATK_ROLE_UNKNOWN;
     case ax::mojom::Role::kColumnHeader:
       return ATK_ROLE_COLUMN_HEADER;
     case ax::mojom::Role::kComboBoxGrouping:
       return ATK_ROLE_COMBO_BOX;
     case ax::mojom::Role::kComboBoxMenuButton:
       return ATK_ROLE_COMBO_BOX;
+    case ax::mojom::Role::kComplementary:
+      return ATK_ROLE_LANDMARK;
+    case ax::mojom::Role::kContentDeletion:
+    case ax::mojom::Role::kContentInsertion:
+      // TODO(accessibility) https://github.com/w3c/html-aam/issues/141
+      return ATK_ROLE_SECTION;
+    case ax::mojom::Role::kContentInfo:
+      return ATK_ROLE_LANDMARK;
     case ax::mojom::Role::kDate:
       return ATK_ROLE_DATE_EDITOR;
     case ax::mojom::Role::kDateTime:
       return ATK_ROLE_DATE_EDITOR;
+    case ax::mojom::Role::kDefinition:
+    case ax::mojom::Role::kDescriptionListDetail:
+      return ATK_ROLE_DESCRIPTION_VALUE;
+    case ax::mojom::Role::kDescriptionList:
+      return ATK_ROLE_DESCRIPTION_LIST;
+    case ax::mojom::Role::kDescriptionListTerm:
+      return ATK_ROLE_DESCRIPTION_TERM;
+    case ax::mojom::Role::kDetails:
+      return ATK_ROLE_PANEL;
     case ax::mojom::Role::kDialog:
       return ATK_ROLE_DIALOG;
+    case ax::mojom::Role::kDirectory:
+      return ATK_ROLE_LIST;
+    case ax::mojom::Role::kDisclosureTriangle:
+      return ATK_ROLE_TOGGLE_BUTTON;
+    case ax::mojom::Role::kDocCover:
+      return ATK_ROLE_IMAGE;
+    case ax::mojom::Role::kDocBackLink:
+    case ax::mojom::Role::kDocBiblioRef:
+    case ax::mojom::Role::kDocGlossRef:
+    case ax::mojom::Role::kDocNoteRef:
+      return ATK_ROLE_LINK;
+    case ax::mojom::Role::kDocBiblioEntry:
+    case ax::mojom::Role::kDocEndnote:
+      return ATK_ROLE_LIST_ITEM;
+    case ax::mojom::Role::kDocNotice:
+    case ax::mojom::Role::kDocTip:
+      return ATK_ROLE_COMMENT;
+    case ax::mojom::Role::kDocFootnote:
+      return kAtkFootnoteRole;
+    case ax::mojom::Role::kDocPageBreak:
+      return ATK_ROLE_SEPARATOR;
+    case ax::mojom::Role::kDocAcknowledgments:
+    case ax::mojom::Role::kDocAfterword:
+    case ax::mojom::Role::kDocAppendix:
+    case ax::mojom::Role::kDocBibliography:
+    case ax::mojom::Role::kDocChapter:
+    case ax::mojom::Role::kDocConclusion:
+    case ax::mojom::Role::kDocCredits:
+    case ax::mojom::Role::kDocEndnotes:
+    case ax::mojom::Role::kDocEpilogue:
+    case ax::mojom::Role::kDocErrata:
+    case ax::mojom::Role::kDocForeword:
+    case ax::mojom::Role::kDocGlossary:
+    case ax::mojom::Role::kDocIndex:
+    case ax::mojom::Role::kDocIntroduction:
+    case ax::mojom::Role::kDocPageList:
+    case ax::mojom::Role::kDocPart:
+    case ax::mojom::Role::kDocPreface:
+    case ax::mojom::Role::kDocPrologue:
+    case ax::mojom::Role::kDocToc:
+      return ATK_ROLE_LANDMARK;
+    case ax::mojom::Role::kDocAbstract:
+    case ax::mojom::Role::kDocColophon:
+    case ax::mojom::Role::kDocCredit:
+    case ax::mojom::Role::kDocDedication:
+    case ax::mojom::Role::kDocEpigraph:
+    case ax::mojom::Role::kDocExample:
+    case ax::mojom::Role::kDocPullquote:
+    case ax::mojom::Role::kDocQna:
+      return ATK_ROLE_SECTION;
+    case ax::mojom::Role::kDocSubtitle:
+      return ATK_ROLE_HEADING;
     case ax::mojom::Role::kDocument:
       return ATK_ROLE_DOCUMENT_WEB;
+    case ax::mojom::Role::kEmbeddedObject:
+      return ATK_ROLE_EMBEDDED;
     case ax::mojom::Role::kForm:
+      // TODO(accessibility) Forms which lack an accessible name are no longer
+      // exposed as forms. http://crbug.com/874384. Forms which have accessible
+      // names should be exposed as ATK_ROLE_LANDMARK according to Core AAM.
       return ATK_ROLE_FORM;
-    case ax::mojom::Role::kGenericContainer:
+    case ax::mojom::Role::kFigure:
+    case ax::mojom::Role::kFeed:
       return ATK_ROLE_PANEL;
+    case ax::mojom::Role::kGenericContainer:
+      return ATK_ROLE_SECTION;
+    case ax::mojom::Role::kGraphicsDocument:
+      return ATK_ROLE_DOCUMENT_WEB;
+    case ax::mojom::Role::kGraphicsObject:
+      return ATK_ROLE_PANEL;
+    case ax::mojom::Role::kGraphicsSymbol:
+      return ATK_ROLE_IMAGE;
+    case ax::mojom::Role::kGrid:
+      return ATK_ROLE_TABLE;
     case ax::mojom::Role::kGroup:
       return ATK_ROLE_PANEL;
+    case ax::mojom::Role::kHeading:
+      return ATK_ROLE_HEADING;
+    case ax::mojom::Role::kIframe:
+    case ax::mojom::Role::kIframePresentational:
+      return ATK_ROLE_INTERNAL_FRAME;
     case ax::mojom::Role::kIgnored:
       return ATK_ROLE_REDUNDANT_OBJECT;
     case ax::mojom::Role::kImage:
       return ATK_ROLE_IMAGE;
     case ax::mojom::Role::kImageMap:
       return ATK_ROLE_IMAGE_MAP;
+    case ax::mojom::Role::kInputTime:
+      return ATK_ROLE_DATE_EDITOR;
     case ax::mojom::Role::kLabelText:
+      return ATK_ROLE_LABEL;
+    case ax::mojom::Role::kLegend:
       return ATK_ROLE_LABEL;
     // Layout table objects are treated the same as Role::kGenericContainer.
     case ax::mojom::Role::kLayoutTable:
-      return ATK_ROLE_PANEL;
+      return ATK_ROLE_SECTION;
     case ax::mojom::Role::kLayoutTableCell:
-      return ATK_ROLE_PANEL;
+      return ATK_ROLE_SECTION;
     case ax::mojom::Role::kLayoutTableColumn:
-      return ATK_ROLE_PANEL;
+      return ATK_ROLE_SECTION;
     case ax::mojom::Role::kLayoutTableRow:
-      return ATK_ROLE_PANEL;
+      return ATK_ROLE_SECTION;
+    case ax::mojom::Role::kLineBreak:
+      // TODO(Accessibility) Having a separate accessible object for line breaks
+      // is inconsistent with other implementations. http://crbug.com/873144#c1.
+      return ATK_ROLE_TEXT;
     case ax::mojom::Role::kLink:
       return ATK_ROLE_LINK;
     case ax::mojom::Role::kList:
       return ATK_ROLE_LIST;
     case ax::mojom::Role::kListBox:
       return ATK_ROLE_LIST_BOX;
+    // TODO(Accessibility) Use ATK_ROLE_MENU_ITEM inside a combo box, see how
+    // ax_platform_node_win.cc code does this.
+    case ax::mojom::Role::kListBoxOption:
+      return ATK_ROLE_LIST_ITEM;
+    case ax::mojom::Role::kListMarker:
+      // TODO(Accessibility) Having a separate accessible object for the marker
+      // is inconsistent with other implementations. http://crbug.com/873144.
+      return kStaticRole;
     case ax::mojom::Role::kListItem:
       return ATK_ROLE_LIST_ITEM;
+    case ax::mojom::Role::kLog:
+      return ATK_ROLE_LOG;
+    case ax::mojom::Role::kMain:
+      return ATK_ROLE_LANDMARK;
+    case ax::mojom::Role::kMark:
+      return kStaticRole;
     case ax::mojom::Role::kMath:
-#if defined(ATK_CHECK_VERSION)
-#if ATK_CHECK_VERSION(2, 12, 0)
       return ATK_ROLE_MATH;
-#else
-      return ATK_ROLE_TEXT;
-#endif
-#else
-      return ATK_ROLE_TEXT;
-#endif
+    case ax::mojom::Role::kMarquee:
+      return ATK_ROLE_MARQUEE;
     case ax::mojom::Role::kMenu:
+      return ATK_ROLE_MENU;
+    case ax::mojom::Role::kMenuButton:
       return ATK_ROLE_MENU;
     case ax::mojom::Role::kMenuBar:
       return ATK_ROLE_MENU_BAR;
@@ -907,38 +1264,125 @@ AtkRole AXPlatformNodeAuraLinux::GetAtkRole() {
       return ATK_ROLE_CHECK_MENU_ITEM;
     case ax::mojom::Role::kMenuItemRadio:
       return ATK_ROLE_RADIO_MENU_ITEM;
+    case ax::mojom::Role::kMenuListPopup:
+      return ATK_ROLE_MENU;
+    case ax::mojom::Role::kMenuListOption:
+      return ATK_ROLE_MENU_ITEM;
     case ax::mojom::Role::kMeter:
-      return ATK_ROLE_PROGRESS_BAR;
+      return ATK_ROLE_LEVEL_BAR;
+    case ax::mojom::Role::kNavigation:
+      return ATK_ROLE_LANDMARK;
+    case ax::mojom::Role::kNote:
+      return ATK_ROLE_COMMENT;
+    case ax::mojom::Role::kPane:
+    case ax::mojom::Role::kScrollView:
+      return ATK_ROLE_PANEL;
     case ax::mojom::Role::kParagraph:
       return ATK_ROLE_PARAGRAPH;
+    case ax::mojom::Role::kPopUpButton: {
+      std::string html_tag =
+          GetData().GetStringAttribute(ax::mojom::StringAttribute::kHtmlTag);
+      if (html_tag == "select")
+        return ATK_ROLE_COMBO_BOX;
+      return ATK_ROLE_PUSH_BUTTON;
+    }
+    case ax::mojom::Role::kPre:
+      return ATK_ROLE_SECTION;
+    case ax::mojom::Role::kProgressIndicator:
+      return ATK_ROLE_PROGRESS_BAR;
     case ax::mojom::Role::kRadioButton:
       return ATK_ROLE_RADIO_BUTTON;
-    case ax::mojom::Role::kRowHeader:
-      return ATK_ROLE_ROW_HEADER;
+    case ax::mojom::Role::kRadioGroup:
+      return ATK_ROLE_PANEL;
+    case ax::mojom::Role::kRegion: {
+      std::string html_tag =
+          GetData().GetStringAttribute(ax::mojom::StringAttribute::kHtmlTag);
+      if (html_tag == "section" &&
+          GetData()
+              .GetString16Attribute(ax::mojom::StringAttribute::kName)
+              .empty()) {
+        // Do not use ARIA mapping for nameless <section>.
+        return ATK_ROLE_SECTION;
+      } else {
+        // Use ARIA mapping.
+        return ATK_ROLE_LANDMARK;
+      }
+    }
     case ax::mojom::Role::kRootWebArea:
       return ATK_ROLE_DOCUMENT_WEB;
+    case ax::mojom::Role::kRow:
+      return ATK_ROLE_TABLE_ROW;
+    case ax::mojom::Role::kRowHeader:
+      return ATK_ROLE_ROW_HEADER;
+    case ax::mojom::Role::kRuby:
+      return kStaticRole;
     case ax::mojom::Role::kScrollBar:
       return ATK_ROLE_SCROLL_BAR;
+    case ax::mojom::Role::kSearch:
+      return ATK_ROLE_LANDMARK;
     case ax::mojom::Role::kSlider:
+    case ax::mojom::Role::kSliderThumb:
       return ATK_ROLE_SLIDER;
     case ax::mojom::Role::kSpinButton:
       return ATK_ROLE_SPIN_BUTTON;
     case ax::mojom::Role::kSplitter:
       return ATK_ROLE_SEPARATOR;
-    case ax::mojom::Role::kStaticText:
+    case ax::mojom::Role::kStaticText: {
+      switch (static_cast<ax::mojom::TextPosition>(
+          GetIntAttribute(ax::mojom::IntAttribute::kTextPosition))) {
+        case ax::mojom::TextPosition::kSubscript:
+          return kSubscriptRole;
+        case ax::mojom::TextPosition::kSuperscript:
+          return kSuperscriptRole;
+        default:
+          break;
+      }
       return ATK_ROLE_TEXT;
+    }
     case ax::mojom::Role::kStatus:
       return ATK_ROLE_STATUSBAR;
+    case ax::mojom::Role::kSvgRoot:
+      return ATK_ROLE_DOCUMENT_FRAME;
     case ax::mojom::Role::kTab:
       return ATK_ROLE_PAGE_TAB;
     case ax::mojom::Role::kTable:
       return ATK_ROLE_TABLE;
+    case ax::mojom::Role::kTableHeaderContainer:
+      // TODO(accessibility) This mapping is correct, but it doesn't seem to be
+      // used. We don't necessarily want to always expose these containers, but
+      // we must do so if they are focusable. http://crbug.com/874043
+      return ATK_ROLE_PANEL;
     case ax::mojom::Role::kTabList:
       return ATK_ROLE_PAGE_TAB_LIST;
+    case ax::mojom::Role::kTabPanel:
+      return ATK_ROLE_SCROLL_PANE;
+    case ax::mojom::Role::kTerm:
+      // TODO(accessibility) This mapping should also be applied to the dfn
+      // element. http://crbug.com/874411
+      return ATK_ROLE_DESCRIPTION_TERM;
+    case ax::mojom::Role::kTitleBar:
+      return ATK_ROLE_TITLE_BAR;
+    case ax::mojom::Role::kInlineTextBox:
     case ax::mojom::Role::kTextField:
+    case ax::mojom::Role::kSearchBox:
+      if (GetData().HasState(ax::mojom::State::kProtected))
+        return ATK_ROLE_PASSWORD_TEXT;
+      // TODO(crbug.com/865101) Use
+      // GetData().HasState(ax::mojom::State::kAutofillAvailable) instead of
+      // IsFocusedInputWithSuggestions()
+      if (!GetStringAttribute(ax::mojom::StringAttribute::kAutoComplete)
+               .empty() ||
+          IsFocusedInputWithSuggestions()) {
+        return ATK_ROLE_AUTOCOMPLETE;
+      }
       return ATK_ROLE_ENTRY;
     case ax::mojom::Role::kTextFieldWithComboBox:
       return ATK_ROLE_COMBO_BOX;
+    case ax::mojom::Role::kAbbr:
+    case ax::mojom::Role::kTime:
+      return kStaticRole;
+    case ax::mojom::Role::kTimer:
+      return ATK_ROLE_TIMER;
     case ax::mojom::Role::kToggleButton:
       return ATK_ROLE_TOGGLE_BUTTON;
     case ax::mojom::Role::kToolbar:
@@ -952,44 +1396,93 @@ AtkRole AXPlatformNodeAuraLinux::GetAtkRole() {
     case ax::mojom::Role::kTreeGrid:
       return ATK_ROLE_TREE_TABLE;
     case ax::mojom::Role::kVideo:
-#if defined(ATK_CHECK_VERSION)
-#if ATK_CHECK_VERSION(2, 12, 0)
       return ATK_ROLE_VIDEO;
-#else
-      return ATK_ROLE_SECTION;
-#endif
-#else
-      return ATK_ROLE_SECTION;
-#endif
     case ax::mojom::Role::kWebArea:
+    case ax::mojom::Role::kWebView:
       return ATK_ROLE_DOCUMENT_WEB;
     case ax::mojom::Role::kWindow:
-      return ATK_ROLE_WINDOW;
-    default:
-      return ATK_ROLE_UNKNOWN;
+      // In ATK elements with ATK_ROLE_FRAME are windows with titles and
+      // buttons, while those with ATK_ROLE_WINDOW are windows without those
+      // elements.
+      return ATK_ROLE_FRAME;
+    case ax::mojom::Role::kClient:
+    case ax::mojom::Role::kDesktop:
+      return ATK_ROLE_PANEL;
+    case ax::mojom::Role::kFigcaption:
+      return ATK_ROLE_CAPTION;
+    case ax::mojom::Role::kFooter:
+      return ATK_ROLE_FOOTER;
+    case ax::mojom::Role::kKeyboard:
+    case ax::mojom::Role::kNone:
+    case ax::mojom::Role::kPresentational:
+    case ax::mojom::Role::kUnknown:
+      return ATK_ROLE_REDUNDANT_OBJECT;
   }
 }
 
 void AXPlatformNodeAuraLinux::GetAtkState(AtkStateSet* atk_state_set) {
   AXNodeData data = GetData();
+  if (data.HasState(ax::mojom::State::kCollapsed))
+    atk_state_set_add_state(atk_state_set, ATK_STATE_EXPANDABLE);
   if (data.HasState(ax::mojom::State::kDefault))
     atk_state_set_add_state(atk_state_set, ATK_STATE_DEFAULT);
-  if (data.HasState(ax::mojom::State::kEditable))
+  if (data.HasState(ax::mojom::State::kEditable) &&
+      data.GetRestriction() != ax::mojom::Restriction::kReadOnly) {
     atk_state_set_add_state(atk_state_set, ATK_STATE_EDITABLE);
-  if (data.HasState(ax::mojom::State::kExpanded))
+  }
+  if (data.HasState(ax::mojom::State::kExpanded)) {
+    atk_state_set_add_state(atk_state_set, ATK_STATE_EXPANDABLE);
     atk_state_set_add_state(atk_state_set, ATK_STATE_EXPANDED);
+  }
   if (data.HasState(ax::mojom::State::kFocusable))
     atk_state_set_add_state(atk_state_set, ATK_STATE_FOCUSABLE);
-#if defined(ATK_CHECK_VERSION)
-#if ATK_CHECK_VERSION(2, 11, 2)
-  if (data.HasState(ax::mojom::State::kHaspopup))
+  if (data.HasState(ax::mojom::State::kHorizontal))
+    atk_state_set_add_state(atk_state_set, ATK_STATE_HORIZONTAL);
+  if (!data.HasState(ax::mojom::State::kInvisible)) {
+    atk_state_set_add_state(atk_state_set, ATK_STATE_VISIBLE);
+    if (!delegate_->IsOffscreen())
+      atk_state_set_add_state(atk_state_set, ATK_STATE_SHOWING);
+  }
+  if (data.HasState(ax::mojom::State::kMultiselectable))
+    atk_state_set_add_state(atk_state_set, ATK_STATE_MULTISELECTABLE);
+  if (data.HasState(ax::mojom::State::kRequired))
+    atk_state_set_add_state(atk_state_set, ATK_STATE_REQUIRED);
+  if (data.HasState(ax::mojom::State::kVertical))
+    atk_state_set_add_state(atk_state_set, ATK_STATE_VERTICAL);
+  if (data.HasState(ax::mojom::State::kVisited))
+    atk_state_set_add_state(atk_state_set, ATK_STATE_VISITED);
+  if (data.HasIntAttribute(ax::mojom::IntAttribute::kInvalidState) &&
+      data.GetIntAttribute(ax::mojom::IntAttribute::kInvalidState) !=
+          static_cast<int32_t>(ax::mojom::InvalidState::kFalse))
+    atk_state_set_add_state(atk_state_set, ATK_STATE_INVALID_ENTRY);
+#if defined(ATK_216)
+  if (data.HasIntAttribute(ax::mojom::IntAttribute::kCheckedState))
+    atk_state_set_add_state(atk_state_set, ATK_STATE_CHECKABLE);
+  if (data.HasIntAttribute(ax::mojom::IntAttribute::kHasPopup))
     atk_state_set_add_state(atk_state_set, ATK_STATE_HAS_POPUP);
 #endif
-#endif
-  if (data.GetBoolAttribute(ax::mojom::BoolAttribute::kSelected))
-    atk_state_set_add_state(atk_state_set, ATK_STATE_SELECTED);
-  if (data.HasBoolAttribute(ax::mojom::BoolAttribute::kSelected))
+  if (data.GetBoolAttribute(ax::mojom::BoolAttribute::kBusy))
+    atk_state_set_add_state(atk_state_set, ATK_STATE_BUSY);
+  if (data.GetBoolAttribute(ax::mojom::BoolAttribute::kModal))
+    atk_state_set_add_state(atk_state_set, ATK_STATE_MODAL);
+  if (data.GetBoolAttribute(ax::mojom::BoolAttribute::kSelected)) {
     atk_state_set_add_state(atk_state_set, ATK_STATE_SELECTABLE);
+    atk_state_set_add_state(atk_state_set, ATK_STATE_SELECTED);
+  }
+  if (IsPlainTextField() || IsRichTextField()) {
+    atk_state_set_add_state(atk_state_set, ATK_STATE_SELECTABLE_TEXT);
+    if (data.HasState(ax::mojom::State::kMultiline))
+      atk_state_set_add_state(atk_state_set, ATK_STATE_MULTI_LINE);
+    else
+      atk_state_set_add_state(atk_state_set, ATK_STATE_SINGLE_LINE);
+  }
+
+  // TODO(crbug.com/865101) Use
+  // GetData().HasState(ax::mojom::State::kAutofillAvailable) instead of
+  // IsFocusedInputWithSuggestions()
+  if (!GetStringAttribute(ax::mojom::StringAttribute::kAutoComplete).empty() ||
+      IsFocusedInputWithSuggestions())
+    atk_state_set_add_state(atk_state_set, ATK_STATE_SUPPORTS_AUTOCOMPLETION);
 
   // Checked state
   const auto checked_state = GetData().GetCheckedState();
@@ -1010,12 +1503,11 @@ void AXPlatformNodeAuraLinux::GetAtkState(AtkStateSet* atk_state_set) {
   switch (GetData().GetRestriction()) {
     case ax::mojom::Restriction::kNone:
       atk_state_set_add_state(atk_state_set, ATK_STATE_ENABLED);
+      atk_state_set_add_state(atk_state_set, ATK_STATE_SENSITIVE);
       break;
     case ax::mojom::Restriction::kReadOnly:
-#if defined(ATK_CHECK_VERSION)
-#if ATK_CHECK_VERSION(2, 16, 0)
+#if defined(ATK_216)
       atk_state_set_add_state(atk_state_set, ATK_STATE_READ_ONLY);
-#endif
 #endif
       break;
     default:
@@ -1026,8 +1518,8 @@ void AXPlatformNodeAuraLinux::GetAtkState(AtkStateSet* atk_state_set) {
     atk_state_set_add_state(atk_state_set, ATK_STATE_FOCUSED);
 }
 
-void AXPlatformNodeAuraLinux::GetAtkRelations(AtkRelationSet* atk_relation_set)
-{
+void AXPlatformNodeAuraLinux::GetAtkRelations(
+    AtkRelationSet* atk_relation_set) {
 }
 
 AXPlatformNodeAuraLinux::AXPlatformNodeAuraLinux()
@@ -1066,8 +1558,10 @@ void AXPlatformNodeAuraLinux::DataChanged() {
 void AXPlatformNodeAuraLinux::AddAccessibilityTreeProperties(
     base::DictionaryValue* dict) {
   AtkRole role = GetAtkRole();
-  if (role != ATK_ROLE_UNKNOWN)
-    dict->SetString("role", std::string(atk_role_get_name(role)));
+  if (role != ATK_ROLE_UNKNOWN) {
+    int role_index = static_cast<int>(role);
+    dict->SetString("role", role_names[role_index]);
+  }
   const gchar* name = atk_object_get_name(atk_object_);
   if (name)
     dict->SetString("name", std::string(name));
@@ -1083,6 +1577,13 @@ void AXPlatformNodeAuraLinux::AddAccessibilityTreeProperties(
       states->AppendString(atk_state_type_get_name(state_type));
   }
   dict->Set("states", std::move(states));
+
+  AtkAttributeSet* attributes = atk_object_get_attributes(atk_object_);
+  for (AtkAttributeSet* attr = attributes; attr; attr = attr->next) {
+    AtkAttribute* attribute = static_cast<AtkAttribute*>(attr->data);
+    dict->SetString(attribute->name, attribute->value);
+  }
+  atk_attribute_set_free(attributes);
 }
 
 gfx::NativeViewAccessible AXPlatformNodeAuraLinux::GetNativeViewAccessible() {
@@ -1119,6 +1620,10 @@ void AXPlatformNodeAuraLinux::NotifyAccessibilityEvent(
     default:
       break;
   }
+}
+
+void AXPlatformNodeAuraLinux::UpdateHypertext() {
+  hypertext_ = ComputeHypertext();
 }
 
 int AXPlatformNodeAuraLinux::GetIndexInParent() {
@@ -1211,6 +1716,12 @@ const gchar* AXPlatformNodeAuraLinux::GetDefaultActionName() {
   ATK_AURALINUX_RETURN_STRING(base::UTF16ToUTF8(action_verb));
 }
 
+AtkAttributeSet* AXPlatformNodeAuraLinux::GetAtkAttributes() {
+  AtkAttributeSet* attribute_list = nullptr;
+  ComputeAttributes(&attribute_list);
+  return attribute_list;
+}
+
 // AtkDocumentHelpers
 
 const gchar* AXPlatformNodeAuraLinux::GetDocumentAttributeValue(
@@ -1227,6 +1738,17 @@ const gchar* AXPlatformNodeAuraLinux::GetDocumentAttributeValue(
   return nullptr;
 }
 
+static AtkAttributeSet* PrependAtkAttributeToAtkAttributeSet(
+    const char* name,
+    const char* value,
+    AtkAttributeSet* attribute_set) {
+  AtkAttribute* attribute =
+      static_cast<AtkAttribute*>(g_malloc(sizeof(AtkAttribute)));
+  attribute->name = g_strdup(name);
+  attribute->value = g_strdup(value);
+  return g_slist_prepend(attribute_set, attribute);
+}
+
 AtkAttributeSet* AXPlatformNodeAuraLinux::GetDocumentAttributes() const {
   AtkAttributeSet* attribute_set = nullptr;
   const gchar* doc_attributes[] = {"DocType", "MimeType", "Title", "URI"};
@@ -1235,11 +1757,8 @@ AtkAttributeSet* AXPlatformNodeAuraLinux::GetDocumentAttributes() const {
   for (unsigned i = 0; i < G_N_ELEMENTS(doc_attributes); i++) {
     value = GetDocumentAttributeValue(doc_attributes[i]);
     if (value) {
-      AtkAttribute* attribute =
-          static_cast<AtkAttribute*>(g_malloc(sizeof(AtkAttribute)));
-      attribute->name = g_strdup(doc_attributes[i]);
-      attribute->value = g_strdup(value);
-      attribute_set = g_slist_prepend(attribute_set, attribute);
+      attribute_set = PrependAtkAttributeToAtkAttributeSet(
+          doc_attributes[i], value, attribute_set);
     }
   }
 
@@ -1277,6 +1796,23 @@ void AXPlatformNodeAuraLinux::GetFloatAttributeInGValue(
     g_value_init(value, G_TYPE_FLOAT);
     g_value_set_float(value, float_val);
   }
+}
+
+void AXPlatformNodeAuraLinux::AddAttributeToList(const char* name,
+                                                 const char* value,
+                                                 AtkAttributeSet** attributes) {
+  *attributes = PrependAtkAttributeToAtkAttributeSet(name, value, *attributes);
+}
+
+std::string AXPlatformNodeAuraLinux::GetTextForATK() {
+  // Special case allows us to get text even in non-HTML case, e.g. browser UI.
+  if (IsPlainTextField())
+    return GetStringAttribute(ax::mojom::StringAttribute::kValue);
+
+  if (IsChildOfLeaf())
+    return AXPlatformNodeBase::GetText();
+
+  return base::UTF16ToUTF8(hypertext_.hypertext);
 }
 
 }  // namespace ui

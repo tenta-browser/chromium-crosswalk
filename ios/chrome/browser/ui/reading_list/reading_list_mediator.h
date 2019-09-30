@@ -13,8 +13,10 @@ namespace favicon {
 class LargeIconService;
 }
 
+class FaviconLoader;
 class GURL;
 class ReadingListEntry;
+@class ReadingListListItemFactory;
 class ReadingListModel;
 
 // Mediator between the Model and the UI.
@@ -22,16 +24,22 @@ class ReadingListModel;
 
 - (nullable instancetype)init NS_UNAVAILABLE;
 
+// TODO(crbug.com/878796): Deprecated. Remove this as part of UIRefresh cleanup.
+- (nullable instancetype)
+   initWithModel:(nonnull ReadingListModel*)model
+largeIconService:(nonnull favicon::LargeIconService*)largeIconService
+ listItemFactory:(nonnull ReadingListListItemFactory*)itemFactory;
+
 - (nullable instancetype)initWithModel:(nonnull ReadingListModel*)model
-                      largeIconService:
-                          (nonnull favicon::LargeIconService*)largeIconService
-    NS_DESIGNATED_INITIALIZER;
+                         faviconLoader:(nonnull FaviconLoader*)faviconLoader
+                       listItemFactory:
+                           (nonnull ReadingListListItemFactory*)itemFactory;
 
 // Returns the entry corresponding to the |item|. The item should be of type
 // ReadingListCollectionViewItem. Returns nullptr if there is no corresponding
 // entry.
 - (nullable const ReadingListEntry*)entryFromItem:
-    (nonnull CollectionViewItem*)item;
+    (nonnull id<ReadingListListItem>)item;
 
 // Marks the entry with |URL| as read.
 - (void)markEntryRead:(const GURL&)URL;

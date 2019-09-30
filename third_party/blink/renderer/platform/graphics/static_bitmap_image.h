@@ -49,7 +49,7 @@ class PLATFORM_EXPORT StaticBitmapImage : public Image {
   bool IsStaticBitmapImage() const override { return true; }
 
   // Methods overridden by all sub-classes
-  virtual ~StaticBitmapImage() = default;
+  ~StaticBitmapImage() override = default;
   // Creates a gpu copy of the image using the given ContextProvider. Should
   // not be called if IsTextureBacked() is already true. May return null if the
   // conversion failed (for instance if the context had an error).
@@ -58,7 +58,7 @@ class PLATFORM_EXPORT StaticBitmapImage : public Image {
 
   // Methods have common implementation for all sub-classes
   bool CurrentFrameIsComplete() override { return true; }
-  void DestroyDecodedData() {}
+  void DestroyDecodedData() override {}
 
   // Methods that have a default implementation, and overridden by only one
   // sub-class
@@ -113,9 +113,7 @@ class PLATFORM_EXPORT StaticBitmapImage : public Image {
   // Methods have exactly the same implementation for all sub-classes
   bool OriginClean() const { return is_origin_clean_; }
   void SetOriginClean(bool flag) { is_origin_clean_ = flag; }
-  scoped_refptr<StaticBitmapImage> ConvertToColorSpace(
-      sk_sp<SkColorSpace>,
-      SkTransferFunctionBehavior);
+  scoped_refptr<StaticBitmapImage> ConvertToColorSpace(sk_sp<SkColorSpace>);
 
   static bool ConvertToArrayBufferContents(
       scoped_refptr<StaticBitmapImage> src_image,
@@ -126,8 +124,8 @@ class PLATFORM_EXPORT StaticBitmapImage : public Image {
 
  protected:
   // Helper for sub-classes
-  void DrawHelper(PaintCanvas*,
-                  const PaintFlags&,
+  void DrawHelper(cc::PaintCanvas*,
+                  const cc::PaintFlags&,
                   const FloatRect&,
                   const FloatRect&,
                   ImageClampingMode,
@@ -139,6 +137,8 @@ class PLATFORM_EXPORT StaticBitmapImage : public Image {
   // have to call SetOriginClean().
   bool is_origin_clean_ = true;
 };
+
+DEFINE_IMAGE_TYPE_CASTS(StaticBitmapImage);
 
 }  // namespace blink
 

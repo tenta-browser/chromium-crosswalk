@@ -4,8 +4,17 @@
 
 #include "content/public/test/url_loader_interceptor.h"
 
+#include <string>
+#include <utility>
+
+#include "base/files/file_path.h"
+#include "base/files/file_util.h"
+#include "base/path_service.h"
 #include "base/test/bind_test_util.h"
+#include "base/threading/thread_restrictions.h"
+#include "build/build_config.h"
 #include "content/browser/frame_host/render_frame_host_impl.h"
+#include "content/browser/loader/navigation_url_loader_impl.h"
 #include "content/browser/loader/resource_message_filter.h"
 #include "content/browser/loader/url_loader_factory_impl.h"
 #include "content/browser/storage_partition_impl.h"
@@ -13,10 +22,27 @@
 #include "content/public/browser/browser_thread.h"
 #include "mojo/public/cpp/bindings/binding_set.h"
 #include "net/http/http_util.h"
+#include "net/test/embedded_test_server/request_handler_util.h"
 #include "services/network/public/cpp/features.h"
 #include "services/network/public/mojom/url_loader.mojom.h"
 
 namespace content {
+
+namespace {
+
+base::FilePath GetDataFilePath(const std::string& relative_path) {
+  base::FilePath root_path;
+  CHECK(base::PathService::Get(base::DIR_SOURCE_ROOT, &root_path));
+  return root_path.AppendASCII(relative_path);
+}
+
+static std::string ReadFile(const base::FilePath& path) {
+  std::string contents;
+  CHECK(base::ReadFileToString(path, &contents));
+  return contents;
+}
+
+}  // namespace
 
 class URLLoaderInterceptor::Interceptor
     : public network::mojom::URLLoaderFactory {
@@ -64,24 +90,9 @@ class URLLoaderInterceptor::Interceptor
     params.url_request = std::move(url_request);
     params.client = std::move(client);
     params.traffic_annotation = traffic_annotation;
-    // We don't intercept the blob URL for plznavigate requests.
-    if (params.url_request.resource_body_stream_url.is_empty() &&
-        parent_->callback_.Run(&params))
-      return;
 
-    // mock.failed.request is a special request whereby the query indicates what
-    // error code to respond with.
-    if (params.url_request.url.DomainIs("mock.failed.request")) {
-      std::string query = params.url_request.url.query();
-      std::string error_code = query.substr(query.find("=") + 1);
-
-      int error = 0;
-      base::StringToInt(error_code, &error);
-      network::URLLoaderCompletionStatus status;
-      status.error_code = error;
-      params.client->OnComplete(status);
+    if (parent_->Intercept(&params))
       return;
-    }
 
     original_factory_getter_.Run()->CreateLoaderAndStart(
         std::move(params.request), params.routing_id, params.request_id,
@@ -257,17 +268,19 @@ URLLoaderInterceptor::~URLLoaderInterceptor() {
 void URLLoaderInterceptor::WriteResponse(
     const std::string& headers,
     const std::string& body,
-    network::mojom::URLLoaderClient* client) {
+    network::mojom::URLLoaderClient* client,
+    base::Optional<net::SSLInfo> ssl_info) {
   net::HttpResponseInfo info;
   info.headers = new net::HttpResponseHeaders(
       net::HttpUtil::AssembleRawHeaders(headers.c_str(), headers.length()));
   network::ResourceResponseHead response;
   response.headers = info.headers;
   response.headers->GetMimeType(&response.mime_type);
-  client->OnReceiveResponse(response, nullptr);
+  response.ssl_info = std::move(ssl_info);
+  client->OnReceiveResponse(response);
 
   uint32_t bytes_written = body.size();
-  mojo::DataPipe data_pipe;
+  mojo::DataPipe data_pipe(body.size());
   CHECK_EQ(MOJO_RESULT_OK,
            data_pipe.producer_handle->WriteData(
                body.data(), &bytes_written, MOJO_WRITE_DATA_FLAG_ALL_OR_NONE));
@@ -277,6 +290,45 @@ void URLLoaderInterceptor::WriteResponse(
   status.decoded_body_length = body.size();
   status.error_code = net::OK;
   client->OnComplete(status);
+}
+
+void URLLoaderInterceptor::WriteResponse(
+    const std::string& relative_path,
+    network::mojom::URLLoaderClient* client,
+    const std::string* headers,
+    base::Optional<net::SSLInfo> ssl_info) {
+  return WriteResponse(GetDataFilePath(relative_path), client, headers,
+                       std::move(ssl_info));
+}
+
+void URLLoaderInterceptor::WriteResponse(
+    const base::FilePath& file_path,
+    network::mojom::URLLoaderClient* client,
+    const std::string* headers,
+    base::Optional<net::SSLInfo> ssl_info) {
+  base::ScopedAllowBlockingForTesting allow_io;
+  std::string headers_str;
+  if (headers) {
+    headers_str = *headers;
+  } else {
+    base::FilePath::StringPieceType mock_headers_extension;
+#if defined(OS_WIN)
+    base::string16 temp =
+        base::ASCIIToUTF16(net::test_server::kMockHttpHeadersExtension);
+    mock_headers_extension = temp;
+#else
+    mock_headers_extension = net::test_server::kMockHttpHeadersExtension;
+#endif
+
+    base::FilePath headers_path(file_path.AddExtension(mock_headers_extension));
+    if (base::PathExists(headers_path)) {
+      headers_str = ReadFile(headers_path);
+    } else {
+      headers_str = "HTTP/1.0 200 OK\nContent-type: " +
+                    net::test_server::GetContentType(file_path) + "\n\n";
+    }
+  }
+  WriteResponse(headers_str, ReadFile(file_path), client, std::move(ssl_info));
 }
 
 void URLLoaderInterceptor::CreateURLLoaderFactoryForSubresources(
@@ -315,6 +367,53 @@ void URLLoaderInterceptor::GetNetworkFactoryCallback(
                                                       this));
 }
 
+bool URLLoaderInterceptor::BeginNavigationCallback(
+    network::mojom::URLLoaderRequest* request,
+    int32_t routing_id,
+    int32_t request_id,
+    uint32_t options,
+    const network::ResourceRequest& url_request,
+    network::mojom::URLLoaderClientPtr* client,
+    const net::MutableNetworkTrafficAnnotationTag& traffic_annotation) {
+  RequestParams params;
+  params.process_id = 0;
+  params.request = std::move(*request);
+  params.routing_id = routing_id;
+  params.request_id = request_id;
+  params.options = options;
+  params.url_request = url_request;
+  params.client = std::move(*client);
+  params.traffic_annotation = traffic_annotation;
+
+  if (Intercept(&params))
+    return true;
+
+  *request = std::move(params.request);
+  *client = std::move(params.client);
+  return false;
+}
+
+bool URLLoaderInterceptor::Intercept(RequestParams* params) {
+  if (callback_.Run(params))
+    return true;
+
+  // mock.failed.request is a special request whereby the query indicates what
+  // error code to respond with.
+  if (params->url_request.url.DomainIs("mock.failed.request")) {
+    std::string query = params->url_request.url.query();
+    std::string error_code = query.substr(query.find("=") + 1);
+
+    int error = 0;
+    base::StringToInt(error_code, &error);
+    network::URLLoaderCompletionStatus status;
+    status.error_code = error;
+    params->client->OnComplete(status);
+    return true;
+  }
+
+  return false;
+}
+
 void URLLoaderInterceptor::SubresourceWrapperBindingError(
     SubresourceWrapper* wrapper) {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::IO));
@@ -329,11 +428,13 @@ void URLLoaderInterceptor::SubresourceWrapperBindingError(
 }
 
 void URLLoaderInterceptor::InitializeOnIOThread(base::OnceClosure closure) {
-  // Once http://crbug.com/747130 is fixed, the codepath above will work for
-  // the non-network service code path.
   if (base::FeatureList::IsEnabled(network::features::kNetworkService)) {
     URLLoaderFactoryGetter::SetGetNetworkFactoryCallbackForTesting(
         base::BindRepeating(&URLLoaderInterceptor::GetNetworkFactoryCallback,
+                            base::Unretained(this)));
+  } else {
+    NavigationURLLoaderImpl::SetBeginNavigationInterceptorForTesting(
+        base::BindRepeating(&URLLoaderInterceptor::BeginNavigationCallback,
                             base::Unretained(this)));
   }
 
@@ -362,6 +463,9 @@ void URLLoaderInterceptor::ShutdownOnIOThread(base::OnceClosure closure) {
   if (base::FeatureList::IsEnabled(network::features::kNetworkService)) {
     URLLoaderFactoryGetter::SetGetNetworkFactoryCallbackForTesting(
         URLLoaderFactoryGetter::GetNetworkFactoryCallback());
+  } else {
+    NavigationURLLoaderImpl::SetBeginNavigationInterceptorForTesting(
+        NavigationURLLoaderImpl::BeginNavigationInterceptor());
   }
 
   if (!base::FeatureList::IsEnabled(network::features::kNetworkService)) {
@@ -369,6 +473,21 @@ void URLLoaderInterceptor::ShutdownOnIOThread(base::OnceClosure closure) {
   }
 
   std::move(closure).Run();
+}
+
+// static
+std::unique_ptr<content::URLLoaderInterceptor>
+URLLoaderInterceptor::SetupRequestFailForURL(const GURL& url,
+                                             net::Error error) {
+  return std::make_unique<content::URLLoaderInterceptor>(base::BindRepeating(
+      [](const GURL& url, net::Error error,
+         content::URLLoaderInterceptor::RequestParams* params) {
+        if (params->url_request.url != url)
+          return false;
+        params->client->OnComplete(network::URLLoaderCompletionStatus(error));
+        return true;
+      },
+      url, error));
 }
 
 }  // namespace content

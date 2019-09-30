@@ -9,7 +9,7 @@
         {
           "object": "LayoutSVGImage image",
           "rect": [20, 20, 60, 60],
-          "reason": "appeared"
+          "reason": "chunk appeared"
         },
         {
           "object": "LayoutSVGImage image",
@@ -22,24 +22,6 @@
           "reason": "paint property change"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutSVGContainer g id='g'",
-      "reason": "full"
-    },
-    {
-      "object": "LayoutSVGImage image",
-      "reason": "full"
-    },
-    {
-      "object": "LayoutSVGContainer g id='g'",
-      "reason": "full"
-    },
-    {
-      "object": "LayoutSVGImage image",
-      "reason": "full"
     }
   ]
 }

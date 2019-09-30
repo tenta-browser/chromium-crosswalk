@@ -9,7 +9,8 @@
 #include "third_party/blink/renderer/platform/platform_export.h"
 #include "third_party/blink/renderer/platform/wtf/allocator.h"
 #include "third_party/blink/renderer/platform/wtf/forward.h"
-#include "third_party/skia/include/core/SkColorSpace.h"
+
+struct skcms_ICCProfile;
 
 namespace blink {
 
@@ -48,13 +49,13 @@ class PLATFORM_EXPORT BitmapImageMetrics {
 
   static void CountDecodedImageType(const String& type);
   static void CountImageOrientation(const ImageOrientationEnum);
-  static void CountImageGammaAndGamut(SkColorSpace*);
-  static void CountOutputGammaAndGamut(SkColorSpace*);
+  static void CountImageJpegDensity(int64_t density_centi_bpp);
+  static void CountImageGammaAndGamut(const skcms_ICCProfile*);
 
  private:
-  static Gamma GetColorSpaceGamma(SkColorSpace*);
+  static Gamma GetColorSpaceGamma(const skcms_ICCProfile*);
 };
 
 }  // namespace blink
 
-#endif
+#endif  // THIRD_PARTY_BLINK_RENDERER_PLATFORM_GRAPHICS_BITMAP_IMAGE_METRICS_H_

@@ -18,24 +18,24 @@
       "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
         {
-          "object": "NGPaintFragment",
-          "rect": [8, 238, 528, 14],
-          "reason": "appeared"
-        },
-        {
-          "object": "NGPaintFragment",
-          "rect": [8, 238, 528, 14],
-          "reason": "disappeared"
+          "object": "NGPhysicalTextFragment 'You should see a yellow rect on the left, and a green one on the right. No red pixels.'",
+          "rect": [8, 234, 529, 19],
+          "reason": "subtree"
         },
         {
           "object": "LayoutNGBlockFlow (positioned) DIV id='toMove'",
           "rect": [158, 278, 100, 100],
-          "reason": "style change"
+          "reason": "subtree"
+        },
+        {
+          "object": "LayoutNGBlockFlow (positioned) DIV",
+          "rect": [18, 278, 100, 100],
+          "reason": "subtree"
         },
         {
           "object": "LayoutNGBlockFlow (positioned) DIV id='toMove'",
           "rect": [18, 278, 100, 100],
-          "reason": "style change"
+          "reason": "subtree"
         }
       ],
       "transform": 1
@@ -51,20 +51,6 @@
         [0, -200, 0, 1]
       ],
       "flattenInheritedTransform": false
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "NGPaintFragment",
-      "reason": "subtree"
-    },
-    {
-      "object": "NGPaintFragment",
-      "reason": "subtree"
-    },
-    {
-      "object": "LayoutNGBlockFlow (positioned) DIV id='toMove'",
-      "reason": "style change"
     }
   ]
 }

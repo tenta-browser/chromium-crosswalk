@@ -6,7 +6,7 @@ layer at (0,0) size 800x84
 layer at (8,8) size 784x68
   LayoutBlockFlow {DIV} at (0,0) size 784x68
     LayoutMultiColumnSet (anonymous) at (0,0) size 784x68
-layer at (8,8) size 384x136 backgroundClip at (0,0) size 400x76 clip at (0,0) size 400x76
+layer at (8,8) size 384x136 backgroundClip at (0,0) size 800x76 clip at (0,0) size 800x76
   LayoutMultiColumnFlowThread (anonymous) at (0,0) size 384x136
     LayoutBlockFlow {DIV} at (0,0) size 384x100
 layer at (408,40) size 384x36 scrollHeight 37

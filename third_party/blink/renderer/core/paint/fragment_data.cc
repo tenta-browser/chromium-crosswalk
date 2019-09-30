@@ -11,11 +11,21 @@ namespace blink {
 
 // These are defined here because of PaintLayer dependency.
 
-FragmentData::RareData::RareData(const LayoutPoint& location_in_backing)
-    : unique_id(NewUniqueObjectId()),
-      location_in_backing(location_in_backing) {}
+FragmentData::RareData::RareData() : unique_id(NewUniqueObjectId()) {}
 
 FragmentData::RareData::~RareData() = default;
+
+void FragmentData::DestroyTail() {
+  while (next_fragment_) {
+    // Take the following (next-next) fragment, clearing
+    // |next_fragment_->next_fragment_|.
+    std::unique_ptr<FragmentData> next =
+        std::move(next_fragment_->next_fragment_);
+    // Point |next_fragment_| to the following fragment and destroy
+    // the current |next_fragment_|.
+    next_fragment_ = std::move(next);
+  }
+}
 
 FragmentData& FragmentData::EnsureNextFragment() {
   if (!next_fragment_)
@@ -25,7 +35,7 @@ FragmentData& FragmentData::EnsureNextFragment() {
 
 FragmentData::RareData& FragmentData::EnsureRareData() {
   if (!rare_data_)
-    rare_data_ = std::make_unique<RareData>(visual_rect_.Location());
+    rare_data_ = std::make_unique<RareData>();
   return *rare_data_;
 }
 
@@ -46,6 +56,8 @@ const TransformPaintPropertyNode* FragmentData::PostScrollTranslation() const {
   if (const auto* properties = PaintProperties()) {
     if (properties->ScrollTranslation())
       return properties->ScrollTranslation();
+    if (properties->ReplacedContentTransform())
+      return properties->ReplacedContentTransform();
     if (properties->Perspective())
       return properties->Perspective();
   }
@@ -71,8 +83,10 @@ const ClipPaintPropertyNode* FragmentData::PreClip() const {
 
 const ClipPaintPropertyNode* FragmentData::PostOverflowClip() const {
   if (const auto* properties = PaintProperties()) {
-    if (const auto* clip = properties->OverflowOrInnerBorderRadiusClip())
-      return clip;
+    if (properties->OverflowClip())
+      return properties->OverflowClip();
+    if (properties->InnerBorderRadiusClip())
+      return properties->InnerBorderRadiusClip();
   }
   return LocalBorderBoxProperties().Clip();
 }
@@ -100,11 +114,11 @@ void FragmentData::InvalidateClipPathCache() {
     return;
 
   rare_data_->is_clip_path_cache_valid = false;
-  rare_data_->clip_path_bounding_box = WTF::nullopt;
+  rare_data_->clip_path_bounding_box = base::nullopt;
   rare_data_->clip_path_path = nullptr;
 }
 
-void FragmentData::SetClipPathCache(const Optional<IntRect>& bounding_box,
+void FragmentData::SetClipPathCache(const base::Optional<IntRect>& bounding_box,
                                     scoped_refptr<const RefCountedPath> path) {
   EnsureRareData().is_clip_path_cache_valid = true;
   rare_data_->clip_path_bounding_box = bounding_box;

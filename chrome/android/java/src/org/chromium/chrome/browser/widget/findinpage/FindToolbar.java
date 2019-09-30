@@ -13,6 +13,7 @@ import android.graphics.Rect;
 import android.os.Handler;
 import android.os.Vibrator;
 import android.provider.Settings;
+import android.support.annotation.IntDef;
 import android.support.v4.view.accessibility.AccessibilityEventCompat;
 import android.text.Editable;
 import android.text.InputType;
@@ -23,12 +24,10 @@ import android.view.ActionMode;
 import android.view.Gravity;
 import android.view.KeyEvent;
 import android.view.View;
-import android.view.View.OnKeyListener;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
 import org.chromium.base.ApiCompatibilityUtils;
-import org.chromium.base.Log;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.VisibleForTesting;
 import org.chromium.chrome.R;
@@ -51,6 +50,9 @@ import org.chromium.chrome.browser.widget.VerticallyFixedEditText;
 import org.chromium.ui.UiUtils;
 import org.chromium.ui.base.WindowAndroid;
 
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
+
 /** A toolbar providing find in page functionality. */
 public class FindToolbar extends LinearLayout
         implements TabWebContentsDelegateAndroid.FindResultListener,
@@ -58,6 +60,16 @@ public class FindToolbar extends LinearLayout
     private static final String TAG = "FindInPage";
 
     private static final long ACCESSIBLE_ANNOUNCEMENT_DELAY_MILLIS = 500;
+
+    @IntDef({FindToolbarState.SHOWN, FindToolbarState.SHOWING, FindToolbarState.HIDDEN,
+            FindToolbarState.HIDING})
+    @Retention(RetentionPolicy.SOURCE)
+    private @interface FindToolbarState {
+        int SHOWN = 0;
+        int SHOWING = 1;
+        int HIDDEN = 2;
+        int HIDING = 3;
+    }
 
     // Toolbar UI
     private TextView mFindStatus;
@@ -86,17 +98,14 @@ public class FindToolbar extends LinearLayout
     /** Whether the search key should trigger a new search. */
     private boolean mSearchKeyShouldTriggerSearch;
 
-    /** Whether startFinding() should also hide the keyboard. **/
-    private boolean mHideKeyboardWhileFinding;
-
-    private boolean mActive;
+    @FindToolbarState
+    private int mCurrentState = FindToolbarState.HIDDEN;
+    @FindToolbarState
+    private int mDesiredState = FindToolbarState.HIDDEN;
 
     private Handler mHandler = new Handler();
     private Runnable mAccessibleAnnouncementRunnable;
     private boolean mAccessibilityDidActivateResult;
-
-    // TODO(tedchoc): Should be removed after debugging https://crbug.com/624332
-    private Throwable mDeactivateCallStack;
 
     /** Subclasses EditText in order to intercept BACK key presses. */
     @SuppressLint("Instantiatable")
@@ -134,7 +143,7 @@ public class FindToolbar extends LinearLayout
         public boolean onKeyDown(int keyCode, KeyEvent event) {
             if (keyCode == KeyEvent.KEYCODE_ENTER || keyCode == KeyEvent.KEYCODE_F3
                     || (keyCode == KeyEvent.KEYCODE_G && event.isCtrlPressed())) {
-                mFindToolbar.startFinding(!event.isShiftPressed());
+                mFindToolbar.hideKeyboardAndStartFinding(!event.isShiftPressed());
                 return true;
             }
             return super.onKeyDown(keyCode, event);
@@ -204,7 +213,7 @@ public class FindToolbar extends LinearLayout
 
         mTabModelObserver = new EmptyTabModelObserver() {
             @Override
-            public void didSelectTab(Tab tab, TabSelectionType type, int lastId) {
+            public void didSelectTab(Tab tab, @TabSelectionType int type, int lastId) {
                 deactivate();
             }
 
@@ -214,8 +223,6 @@ public class FindToolbar extends LinearLayout
                 deactivate();
             }
         };
-
-        mHideKeyboardWhileFinding = true;
     }
 
     @Override
@@ -253,8 +260,8 @@ public class FindToolbar extends LinearLayout
                 // If we're called during onRestoreInstanceState() the current
                 // view won't have been set yet. TODO(husky): Find a better fix.
                 assert mCurrentTab != null;
-                assert mCurrentTab.getContentViewCore() != null;
-                if (mCurrentTab.getContentViewCore() == null) return;
+                assert mCurrentTab.getWebContents() != null;
+                if (mCurrentTab.getWebContents() == null) return;
 
                 if (s.length() > 0) {
                     // Don't clearResults() as that would cause flicker.
@@ -292,7 +299,7 @@ public class FindToolbar extends LinearLayout
                 // Otherwise just revisit the current active match.
                 if (mSearchKeyShouldTriggerSearch) {
                     mSearchKeyShouldTriggerSearch = false;
-                    startFinding(true);
+                    hideKeyboardAndStartFinding(true);
                 } else {
                     UiUtils.hideKeyboard(mFindQuery);
                     mFindInPageBridge.activateFindInPageResultForAccessibility();
@@ -308,7 +315,7 @@ public class FindToolbar extends LinearLayout
         mFindPrevButton.setOnClickListener(new OnClickListener() {
             @Override
             public void onClick(View v) {
-                startFinding(false);
+                hideKeyboardAndStartFinding(false);
             }
         });
 
@@ -316,7 +323,7 @@ public class FindToolbar extends LinearLayout
         mFindNextButton.setOnClickListener(new OnClickListener() {
             @Override
             public void onClick(View v) {
-                startFinding(true);
+                hideKeyboardAndStartFinding(true);
             }
         });
 
@@ -335,13 +342,13 @@ public class FindToolbar extends LinearLayout
     protected void findResultSelected(Rect rect) {
     }
 
-    private void startFinding(boolean forward) {
+    private void hideKeyboardAndStartFinding(boolean forward) {
         if (mFindInPageBridge == null) return;
 
         final String findQuery = mFindQuery.getText().toString();
         if (findQuery.length() == 0) return;
 
-        if (mHideKeyboardWhileFinding) UiUtils.hideKeyboard(mFindQuery);
+        UiUtils.hideKeyboard(mFindQuery);
         mFindInPageBridge.startFinding(findQuery, forward, false);
         mFindInPageBridge.activateFindInPageResultForAccessibility();
         mAccessibilityDidActivateResult = true;
@@ -514,13 +521,6 @@ public class FindToolbar extends LinearLayout
     }
 
     /**
-     * By default the keyboard is hidden when the user arrows through results. Calling this method
-     * will disable keyboard hiding while finding.
-     */
-    public void disableHideKeyboardWhileFinding() {
-        mHideKeyboardWhileFinding = false;
-    }
-    /**
      * Handles updating any visual elements of the find toolbar based on changes to the tab model.
      * @param isIncognito Whether the current tab model is incognito or not.
      */
@@ -545,25 +545,37 @@ public class FindToolbar extends LinearLayout
     }
 
     /**
-     * Checks to see if a ContentViewCore is available to hook into.
+     * Checks to see if a WebContents is available to hook into.
      */
-    protected boolean isViewAvailable() {
+    protected boolean isWebContentAvailable() {
         Tab currentTab = mTabModelSelector.getCurrentTab();
-        return currentTab != null && currentTab.getContentViewCore() != null;
+        return currentTab != null && currentTab.getWebContents() != null
+                && !currentTab.isNativePage();
     }
 
     /**
      * Initializes the find toolbar. Should be called just after the find toolbar is shown.
      * If the toolbar is already showing, this just focuses the toolbar.
      */
-    public void activate() {
+    public final void activate() {
         ThreadUtils.checkUiThread();
-        if (!isViewAvailable()) return;
-        if (mActive) {
+        if (!isWebContentAvailable()) return;
+
+        if (mCurrentState == FindToolbarState.SHOWN) {
             requestQueryFocus();
             return;
         }
 
+        mDesiredState = FindToolbarState.SHOWN;
+        if (mCurrentState != FindToolbarState.HIDDEN) return;
+        setCurrentState(FindToolbarState.SHOWING);
+        handleActivate();
+    }
+
+    /**
+     * Logic for handling the activation of the find toolbar.
+     */
+    protected void handleActivate() {
         mTabModelSelector.addObserver(mTabModelSelectorObserver);
         for (TabModel model : mTabModelSelector.getModels()) {
             model.addObserver(mTabModelObserver);
@@ -579,17 +591,15 @@ public class FindToolbar extends LinearLayout
         showKeyboard();
         // Always show the bar to make the FindToolbar more distinct from the Omnibox.
         setResultsBarVisibility(true);
-        mActive = true;
         updateVisualsForTabModel(mTabModelSelector.isIncognitoSelected());
 
-        // Let everyone know that we've just updated.
-        if (mObserver != null) mObserver.onFindToolbarShown();
+        setCurrentState(FindToolbarState.SHOWN);
     }
 
     /**
      * Call this just before closing the find toolbar. The selection on the page will be cleared.
      */
-    public void deactivate() {
+    public final void deactivate() {
         deactivate(true);
     }
 
@@ -597,17 +607,19 @@ public class FindToolbar extends LinearLayout
      * Call this just before closing the find toolbar.
      * @param clearSelection Whether the selection on the page should be cleared.
      */
-    public void deactivate(boolean clearSelection) {
+    public final void deactivate(boolean clearSelection) {
         ThreadUtils.checkUiThread();
-        if (!mActive) return;
-        if (mDeactivateCallStack != null) {
-            Log.e(TAG, "Re-entrant call to deactive, previous stack", mDeactivateCallStack);
-            throw new IllegalStateException("Re-entrant call to deactivate", mDeactivateCallStack);
-        }
-        mDeactivateCallStack = new Throwable();
 
-        if (mObserver != null) mObserver.onFindToolbarHidden();
+        mDesiredState = FindToolbarState.HIDDEN;
+        if (mCurrentState != FindToolbarState.SHOWN) return;
+        setCurrentState(FindToolbarState.HIDING);
+        handleDeactivation(clearSelection);
+    }
 
+    /**
+     * Logic for handling deactivating the find toolbar.
+     */
+    protected void handleDeactivation(boolean clearSelection) {
         setResultsBarVisibility(false);
 
         mTabModelSelector.removeObserver(mTabModelSelectorObserver);
@@ -632,8 +644,31 @@ public class FindToolbar extends LinearLayout
         mFindInPageBridge.destroy();
         mFindInPageBridge = null;
         mCurrentTab = null;
-        mActive = false;
-        mDeactivateCallStack = null;
+
+        setCurrentState(FindToolbarState.HIDDEN);
+    }
+
+    private void setCurrentState(@FindToolbarState int state) {
+        mCurrentState = state;
+
+        // Notify the observers if we hit the transition states.
+        if (mObserver != null) {
+            if (mCurrentState == FindToolbarState.HIDDEN) {
+                mObserver.onFindToolbarHidden();
+            } else if (mCurrentState == FindToolbarState.SHOWN) {
+                mObserver.onFindToolbarShown();
+            }
+        }
+
+        // Ensure the current state reflects the desired state if the state change happened while
+        // processing the previous state change.
+        assert mDesiredState == FindToolbarState.HIDDEN || mDesiredState == FindToolbarState.SHOWN;
+        if (mCurrentState == FindToolbarState.HIDDEN && mDesiredState == FindToolbarState.SHOWN) {
+            activate();
+        } else if (mCurrentState == FindToolbarState.SHOWN
+                && mDesiredState == FindToolbarState.HIDDEN) {
+            deactivate();
+        }
     }
 
     /**
@@ -701,7 +736,7 @@ public class FindToolbar extends LinearLayout
 
     private void setResultsBarVisibility(boolean visibility) {
         if (visibility && mResultBar == null && mCurrentTab != null
-                && mCurrentTab.getContentViewCore() != null) {
+                && mCurrentTab.getWebContents() != null) {
             assert mFindInPageBridge != null;
 
             mResultBar = new FindResultBar(getContext(), mCurrentTab, mFindInPageBridge);

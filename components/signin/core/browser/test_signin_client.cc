@@ -9,12 +9,14 @@
 #include "base/logging.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "components/signin/core/browser/webdata/token_service_table.h"
-#include "components/webdata/common/web_data_service_base.h"
-#include "components/webdata/common/web_database_service.h"
+#include "services/network/public/cpp/shared_url_loader_factory.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 TestSigninClient::TestSigninClient(PrefService* pref_service)
-    : pref_service_(pref_service),
+    : shared_factory_(
+          base::MakeRefCounted<network::WeakWrapperSharedURLLoaderFactory>(
+              &test_url_loader_factory_)),
+      pref_service_(pref_service),
       are_signin_cookies_allowed_(true),
       network_calls_delayed_(false) {}
 
@@ -26,16 +28,6 @@ PrefService* TestSigninClient::GetPrefs() {
   return pref_service_;
 }
 
-scoped_refptr<TokenWebData> TestSigninClient::GetDatabase() {
-  return database_;
-}
-
-bool TestSigninClient::CanRevokeCredentials() { return true; }
-
-std::string TestSigninClient::GetSigninScopedDeviceId() {
-  return std::string();
-}
-
 void TestSigninClient::OnSignedOut() {}
 
 void TestSigninClient::PostSignedIn(const std::string& account_id,
@@ -44,41 +36,25 @@ void TestSigninClient::PostSignedIn(const std::string& account_id,
   signed_in_password_ = password;
 }
 
-net::URLRequestContextGetter* TestSigninClient::GetURLRequestContext() {
-  return request_context_.get();
+scoped_refptr<network::SharedURLLoaderFactory>
+TestSigninClient::GetURLLoaderFactory() {
+  return shared_factory_;
 }
 
-void TestSigninClient::SetURLRequestContext(
-    net::URLRequestContextGetter* request_context) {
-  request_context_ = request_context;
+network::mojom::CookieManager* TestSigninClient::GetCookieManager() {
+  return nullptr;
 }
 
 std::string TestSigninClient::GetProductVersion() { return ""; }
 
-void TestSigninClient::LoadTokenDatabase() {
-  ASSERT_TRUE(temp_dir_.CreateUniqueTempDir());
-  base::FilePath path = temp_dir_.GetPath().AppendASCII("TestWebDB");
-  scoped_refptr<WebDatabaseService> web_database =
-      new WebDatabaseService(path, base::ThreadTaskRunnerHandle::Get(),
-                             base::ThreadTaskRunnerHandle::Get());
-  web_database->AddTable(std::make_unique<TokenServiceTable>());
-  web_database->LoadDatabase();
-  database_ =
-      new TokenWebData(web_database, base::ThreadTaskRunnerHandle::Get(),
-                       base::ThreadTaskRunnerHandle::Get(),
-                       WebDataServiceBase::ProfileErrorCallback());
-  database_->Init();
-}
+void TestSigninClient::SetNetworkCallsDelayed(bool value) {
+  network_calls_delayed_ = value;
 
-bool TestSigninClient::ShouldMergeSigninCredentialsIntoCookieJar() {
-  return true;
-}
-
-std::unique_ptr<SigninClient::CookieChangeSubscription>
-TestSigninClient::AddCookieChangeCallback(const GURL& url,
-                                          const std::string& name,
-                                          net::CookieChangeCallback callback) {
-  return std::make_unique<SigninClient::CookieChangeSubscription>();
+  if (!network_calls_delayed_) {
+    for (base::OnceClosure& call : delayed_network_calls_)
+      std::move(call).Run();
+    delayed_network_calls_.clear();
+  }
 }
 
 void TestSigninClient::SetNetworkCallsDelayed(bool value) {
@@ -122,8 +98,9 @@ void TestSigninClient::DelayNetworkCall(const base::Closure& callback) {
 std::unique_ptr<GaiaAuthFetcher> TestSigninClient::CreateGaiaAuthFetcher(
     GaiaAuthConsumer* consumer,
     const std::string& source,
-    net::URLRequestContextGetter* getter) {
-  return std::make_unique<GaiaAuthFetcher>(consumer, source, getter);
+    scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory) {
+  return std::make_unique<GaiaAuthFetcher>(consumer, source,
+                                           url_loader_factory);
 }
 
 void TestSigninClient::PreGaiaLogout(base::OnceClosure callback) {

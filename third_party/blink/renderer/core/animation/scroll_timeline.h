@@ -38,23 +38,47 @@ class CORE_EXPORT ScrollTimeline final : public AnimationTimeline {
 
   // AnimationTimeline implementation.
   double currentTime(bool& is_null) final;
+  bool IsScrollTimeline() const override { return true; }
 
   // IDL API implementation.
   Element* scrollSource();
   String orientation();
   void timeRange(DoubleOrScrollTimelineAutoKeyword&);
 
+  // Returns the Node that should actually have the ScrollableArea (if one
+  // exists). This can differ from |scrollSource| when |scroll_source_| is the
+  // Document's scrollingElement.
+  Node* ResolvedScrollSource() const;
+
   ScrollDirection GetOrientation() const { return orientation_; }
+
+  // Must be called when this ScrollTimeline is attached/detached from an
+  // animation.
+  void AttachAnimation();
+  void DetachAnimation();
 
   void Trace(blink::Visitor*) override;
 
+  // For the AnimationWorklet origin trial, we need to automatically composite
+  // elements that are targets of ScrollTimelines (http://crbug.com/776533). We
+  // expose a static lookup method to enable this.
+  //
+  // TODO(crbug.com/839341): Remove once WorkletAnimations can run on main.
+  static bool HasActiveScrollTimeline(Node* node);
+
  private:
-  ScrollTimeline(const Document&, Element*, ScrollDirection, double);
+  ScrollTimeline(Element*, ScrollDirection, double);
 
   Member<Element> scroll_source_;
   ScrollDirection orientation_;
   double time_range_;
 };
+
+DEFINE_TYPE_CASTS(ScrollTimeline,
+                  AnimationTimeline,
+                  value,
+                  value->IsScrollTimeline(),
+                  value.IsScrollTimeline());
 
 }  // namespace blink
 

@@ -66,12 +66,12 @@ class ReadingListModel;
 // ignored.
 @property(nonatomic, assign) BOOL isShowing;
 
-// Toolbar to be embedded in header view.
-@property(nonatomic, strong)
-    PrimaryToolbarViewController* toolbarViewController;
-
 // Return the toolbar view;
 - (UIView*)toolBarView;
+
+// Animates the NTP fakebox to the focused position and focuses the real
+// omnibox.
+- (void)focusFakebox;
 
 @end
 

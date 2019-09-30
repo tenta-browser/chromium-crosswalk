@@ -189,6 +189,15 @@ bool TestExtensionsBrowserClient::DidVersionUpdate(BrowserContext* context) {
 void TestExtensionsBrowserClient::PermitExternalProtocolHandler() {
 }
 
+bool TestExtensionsBrowserClient::IsInDemoMode() {
+  return false;
+}
+
+bool TestExtensionsBrowserClient::IsScreensaverInDemoMode(
+    const std::string& app_id) {
+  return false;
+}
+
 bool TestExtensionsBrowserClient::IsRunningInForcedAppMode() { return false; }
 
 bool TestExtensionsBrowserClient::IsAppModeForcedForApp(
@@ -205,9 +214,6 @@ TestExtensionsBrowserClient::GetExtensionSystemFactory() {
   DCHECK(extension_system_factory_);
   return extension_system_factory_;
 }
-
-void TestExtensionsBrowserClient::RegisterExtensionFunctions(
-    ExtensionFunctionRegistry* registry) const {}
 
 void TestExtensionsBrowserClient::RegisterExtensionInterfaces(
     service_manager::BinderRegistryWithArgs<content::RenderFrameHost*>*

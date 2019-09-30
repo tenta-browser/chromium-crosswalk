@@ -26,7 +26,8 @@
 namespace test_runner {
 
 TestInterfaces::TestInterfaces()
-    : test_runner_(new TestRunner(this)),
+    : gamepad_controller_(new GamepadController()),
+      test_runner_(new TestRunner(this)),
       delegate_(nullptr),
       main_view_(nullptr) {
   blink::SetLayoutTestMode(true);
@@ -51,23 +52,17 @@ void TestInterfaces::SetMainView(blink::WebView* web_view) {
 }
 
 void TestInterfaces::SetDelegate(WebTestDelegate* delegate) {
-  if (delegate)
-    gamepad_controller_ = GamepadController::Create(delegate);
-  else
-    gamepad_controller_ = nullptr;
   test_runner_->SetDelegate(delegate);
   delegate_ = delegate;
 }
 
 void TestInterfaces::BindTo(blink::WebLocalFrame* frame) {
-  if (gamepad_controller_)
-    gamepad_controller_->Install(frame);
+  gamepad_controller_->Install(frame);
   GCController::Install(frame);
 }
 
 void TestInterfaces::ResetTestHelperControllers() {
-  if (gamepad_controller_)
-    gamepad_controller_->Reset();
+  gamepad_controller_->Reset();
   blink::WebCache::Clear();
 
   for (WebViewTestProxyBase* web_view_test_proxy_base : window_list_)
@@ -95,6 +90,9 @@ void TestInterfaces::ConfigureForTestWithURL(const blink::WebURL& test_url,
   if (path_start != std::string::npos)
     spec = spec.substr(path_start);
   bool is_devtools_test = spec.find("/devtools/") != std::string::npos;
+  if (is_devtools_test) {
+    test_runner_->SetDumpConsoleMessages(false);
+  }
   test_runner_->setShouldGeneratePixelResults(generate_pixels);
   // For http/tests/loading/, which is served via httpd and becomes /loading/.
   if (spec.find("/loading/") != std::string::npos)

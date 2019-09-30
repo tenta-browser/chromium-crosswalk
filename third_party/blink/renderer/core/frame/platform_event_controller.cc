@@ -4,6 +4,7 @@
 
 #include "third_party/blink/renderer/core/frame/platform_event_controller.h"
 
+#include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/page/page.h"
 
 namespace blink {
@@ -29,7 +30,7 @@ void PlatformEventController::StartUpdating() {
 
   if (HasLastData() && !update_callback_handle_.IsActive()) {
     update_callback_handle_ = PostCancellableTask(
-        *document_->GetTaskRunner(TaskType::kUnspecedTimer), FROM_HERE,
+        *document_->GetTaskRunner(TaskType::kInternalDefault), FROM_HERE,
         WTF::Bind(&PlatformEventController::UpdateCallback,
                   WrapWeakPersistent(this)));
   }

@@ -26,10 +26,17 @@ VP9Decoder::VP9Decoder(std::unique_ptr<VP9Accelerator> accelerator)
 
 VP9Decoder::~VP9Decoder() = default;
 
-void VP9Decoder::SetStream(int32_t id, const uint8_t* ptr, size_t size) {
+void VP9Decoder::SetStream(int32_t id,
+                           const uint8_t* ptr,
+                           size_t size,
+                           const DecryptConfig* decrypt_config) {
   DCHECK(ptr);
   DCHECK(size);
-
+  if (decrypt_config) {
+    NOTIMPLEMENTED();
+    state_ = kError;
+    return;
+  }
   DVLOG(4) << "New input stream id: " << id << " at: " << (void*)ptr
            << " size: " << size;
   stream_id_ = id;
@@ -120,9 +127,15 @@ VP9Decoder::DecodeResult VP9Decoder::Decode() {
       if (!curr_frame_hdr_->IsKeyframe()) {
         // TODO(posciak): This is doable, but requires a few modifications to
         // VDA implementations to allow multiple picture buffer sets in flight.
+        // http://crbug.com/832264
         DVLOG(1) << "Resolution change currently supported for keyframes only";
-        SetError();
-        return kDecodeError;
+        if (++size_change_failure_counter_ > kVPxMaxNumOfSizeChangeFailures) {
+          SetError();
+          return kDecodeError;
+        }
+
+        curr_frame_hdr_.reset();
+        return kRanOutOfStreamData;
       }
 
       // TODO(posciak): This requires us to be on a keyframe (see above) and is
@@ -133,6 +146,7 @@ VP9Decoder::DecodeResult VP9Decoder::Decode() {
         ref_frame = nullptr;
 
       pic_size_ = new_pic_size;
+      size_change_failure_counter_ = 0;
       return kAllocateNewSurfaces;
     }
 
@@ -153,7 +167,7 @@ VP9Decoder::DecodeResult VP9Decoder::Decode() {
 
     pic->set_visible_rect(new_render_rect);
     pic->set_bitstream_id(stream_id_);
-    pic->frame_hdr.reset(curr_frame_hdr_.release());
+    pic->frame_hdr = std::move(curr_frame_hdr_);
 
     if (!DecodeAndOutputPicture(pic)) {
       SetError();

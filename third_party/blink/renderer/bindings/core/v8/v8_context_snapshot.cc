@@ -17,6 +17,7 @@
 #include "third_party/blink/renderer/platform/bindings/dom_wrapper_world.h"
 #include "third_party/blink/renderer/platform/bindings/origin_trial_features.h"
 #include "third_party/blink/renderer/platform/bindings/v8_object_constructor.h"
+#include "third_party/blink/renderer/platform/bindings/v8_per_context_data.h"
 #include "third_party/blink/renderer/platform/bindings/v8_per_isolate_data.h"
 #include "third_party/blink/renderer/platform/bindings/v8_private_property.h"
 #include "third_party/blink/renderer/platform/instrumentation/tracing/trace_event.h"
@@ -83,8 +84,7 @@ SnapshotInterface g_snapshot_interfaces[] = {
     {&V8Document::wrapperTypeInfo,
      V8Document::InstallRuntimeEnabledFeaturesOnTemplate},
 };
-constexpr size_t kSnapshotInterfaceSize =
-    WTF_ARRAY_LENGTH(g_snapshot_interfaces);
+constexpr size_t kSnapshotInterfaceSize = base::size(g_snapshot_interfaces);
 
 enum class InternalFieldType : uint8_t {
   kNone,
@@ -114,6 +114,8 @@ const WrapperTypeInfo* FieldTypeToWrapperTypeInfo(InternalFieldType type) {
 
 struct DataForDeserializer {
   STACK_ALLOCATED();
+
+ public:
   Member<Document> document;
 };
 
@@ -249,11 +251,18 @@ void V8ContextSnapshot::EnsureInterfaceTemplates(v8::Isolate* isolate) {
   }
 
   v8::HandleScope handle_scope(isolate);
+  // Update the install functions for V8Window and V8Document to work for their
+  // partial interfaces.
   SnapshotInterface& snapshot_window = g_snapshot_interfaces[0];
   DCHECK(V8Window::wrapperTypeInfo.Equals(snapshot_window.wrapper_type_info));
-  // Update the install function for V8Window to work for partial interfaces.
   snapshot_window.install_function =
       V8Window::install_runtime_enabled_features_on_template_function_;
+
+  SnapshotInterface& snapshot_document = g_snapshot_interfaces[4];
+  DCHECK(
+      V8Document::wrapperTypeInfo.Equals(snapshot_document.wrapper_type_info));
+  snapshot_document.install_function =
+      V8Document::install_runtime_enabled_features_on_template_function_;
 
   EnsureInterfaceTemplatesForWorld(isolate, DOMWrapperWorld::MainWorld());
   // Any world types other than |kMain| are acceptable for this.
@@ -457,8 +466,8 @@ void V8ContextSnapshot::TakeSnapshotForWorld(v8::SnapshotCreator* creator,
     int indices[] = {kV8DOMWrapperObjectIndex, kV8DOMWrapperTypeIndex};
     void* values[] = {nullptr, const_cast<WrapperTypeInfo*>(
                                    &V8HTMLDocument::wrapperTypeInfo)};
-    document_wrapper->SetAlignedPointerInInternalFields(
-        WTF_ARRAY_LENGTH(indices), indices, values);
+    document_wrapper->SetAlignedPointerInInternalFields(base::size(indices),
+                                                        indices, values);
 
     // Set the cached accessor for window.document.
     CHECK(V8PrivateProperty::GetWindowDocumentCachedAccessor(isolate).Set(

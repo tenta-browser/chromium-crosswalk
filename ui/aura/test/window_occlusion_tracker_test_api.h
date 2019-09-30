@@ -15,9 +15,8 @@ class WindowOcclusionTrackerTestApi {
   WindowOcclusionTrackerTestApi();
   ~WindowOcclusionTrackerTestApi();
 
-  // Returns true if WindowOcclusionTracker had to recompute occlusion too many
-  // times before becoming stable since the last call to this.
-  bool WasOcclusionRecomputedTooManyTimes();
+  // Returns the number of times that occlusion was recomputed in this process.
+  int GetNumTimesOcclusionRecomputed() const;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(WindowOcclusionTrackerTestApi);

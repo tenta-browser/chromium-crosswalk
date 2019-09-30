@@ -16,8 +16,10 @@
 <link rel="import" href="../data/size.html">
 <link rel="import" href="margin_control_container.html">
 <link rel="import" href="model.html">
+<link rel="import" href="plugin_proxy.html">
 <link rel="import" href="state.html">
 <link rel="import" href="settings_behavior.html">
+<link rel="import" href="strings.html">
 
 <dom-module id="print-preview-preview-area">
   <template>
@@ -115,25 +117,25 @@
       }
 
     </style>
-    <div class$="preview-area-overlay-layer [[getInvisible_(previewState_)]]"
-        aria-hidden$="[[previewLoaded_]]">
+    <div class$="preview-area-overlay-layer [[getInvisible_(previewState)]]"
+        aria-hidden$="[[getAriaHidden_(previewState)]]">
       <div class="preview-area-messages">
         <div class="preview-area-message">
           <div>
-            <span>[[currentMessage_(previewState_)]]</span>
+            <span>[[currentMessage_(previewState)]]</span>
             <span class$="preview-area-loading-message-jumping-dots
-                          [[getJumpingDots_(previewState_)]]"
-                hidden$="[[!isPreviewLoading_(previewState_)]]">
+                          [[getJumpingDots_(previewState)]]"
+                hidden$="[[!isPreviewLoading_(previewState)]]">
                 <span>.</span><span>.</span><span>.</span>
             </span>
             <a is="action-link" class="learn-more-link"
-                hidden$="[[!shouldShowLearnMoreLink_(previewState_)]]"
+                hidden$="[[!shouldShowLearnMoreLink_(previewState)]]"
                 on-click="onGcpErrorLearnMoreClick_">
               $i18n{learnMore}
             </a>
           </div>
           <div class="preview-area-action-area"
-              hidden$="[[!displaySystemDialogButton_(previewState_)]]">
+              hidden$="[[!displaySystemDialogButton_(previewState)]]">
             <button class="preview-area-open-system-dialog-button">
               $i18n{launchNativeDialog}
             </button>
@@ -152,12 +154,10 @@
     <print-preview-margin-control-container id="marginControlContainer"
         page-size="[[documentInfo.pageSize]]" settings="{{settings}}"
         document-margins="[[documentInfo.margins]]"
-        measurement-system="[[measurementSystem]]"
+        measurement-system="[[measurementSystem]]" state="[[state]]"
         preview-loaded="[[previewLoaded_]]"
         on-margin-drag-changed="onMarginDragChanged_">
     </print-preview-margin-control-container>
   </template>
   <script src="preview_area.js"></script>
-  <script src="../pdf/pdf_scripting_api.js">
-  </script>
 </dom-module>

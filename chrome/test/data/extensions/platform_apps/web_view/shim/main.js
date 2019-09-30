@@ -87,9 +87,11 @@ embedder.test.fail = function() {
   chrome.test.sendMessage('TEST_FAILED');
 };
 
-embedder.test.assertEq = function(a, b) {
+embedder.test.assertEq = function(a, b, message) {
   if (a != b) {
-    console.log('assertion failed: ' + a + ' != ' + b);
+    console.log(
+        'assertion failed: ' + a + ' != ' + b +
+        (message ? (': ' + message) : ''));
     embedder.test.fail();
   }
 };
@@ -363,25 +365,49 @@ function testAutosizeRemoveAttributes() {
 }
 
 function testAPIMethodExistence() {
-  var apiMethodsToCheck = [
+  // See public-facing API functions in web_view_api_methods.js
+  var WEB_VIEW_API_METHODS = [
+    'addContentScripts',
     'back',
     'canGoBack',
     'canGoForward',
+    'captureVisibleRegion',
+    'clearData',
+    'executeScript',
+    'find',
     'forward',
+    'getAudioState',
     'getProcessId',
+    'getUserAgent',
+    'getZoom',
+    'getZoomMode',
     'go',
+    'insertCSS',
+    'isAudioMuted',
+    'isUserAgentOverridden',
+    'loadDataWithBaseUrl',
+    'print',
+    'removeContentScripts',
     'reload',
+    'setAudioMuted',
+    'setUserAgentOverride',
+    'setZoom',
+    'setZoomMode',
     'stop',
+    'stopFinding',
     'terminate'
   ];
+
   var webview = document.createElement('webview');
+
+  for (var methodName of WEB_VIEW_API_METHODS) {
+    embedder.test.assertEq(
+        'function', typeof webview[methodName],
+        methodName + ' should be defined');
+  }
+
   webview.setAttribute('partition', arguments.callee.name);
   webview.addEventListener('loadstop', function(e) {
-    for (var i = 0; i < apiMethodsToCheck.length; ++i) {
-      embedder.test.assertEq('function',
-                           typeof webview[apiMethodsToCheck[i]]);
-    }
-
     // Check contentWindow.
     embedder.test.assertEq('object', typeof webview.contentWindow);
     embedder.test.assertEq('function',
@@ -390,6 +416,32 @@ function testAPIMethodExistence() {
   });
   webview.setAttribute('src', 'data:text/html,webview check api');
   document.body.appendChild(webview);
+}
+
+function testCustomElementCallbacksInaccessible() {
+  var CUSTOM_ELEMENT_CALLBACKS = [
+    // Custom Elements V0
+    // TODO(867831): Once we migrate to V1, we'll no longer need to check
+    // the V0 callbacks.
+    'createdCallback',
+    'attachedCallback',
+    'detachedCallback',
+    'attributeChangedCallback',
+
+    // Custom Elements V1
+    'connectedCallback',
+    'disconnectedCallback',
+    'attributeChangedCallback',
+    'adoptedCallback'
+  ];
+
+  var webview = document.createElement('webview');
+  for (var callbackName of CUSTOM_ELEMENT_CALLBACKS) {
+    embedder.test.assertEq(
+        'undefined', typeof webview[callbackName],
+        callbackName + ' should not be accessible');
+  }
+  embedder.test.succeed();
 }
 
 // This test verifies that the loadstop event fires when loading a webview
@@ -562,6 +614,9 @@ function testWebRequestAPIExistence() {
       embedder.test.assertEq('object', typeof event);
       embedder.test.assertEq('function', typeof event.addListener);
     }
+
+    // Ensure that the "onActionIgnored" event is not supported for webviews.
+    embedder.test.assertFalse('onActionIgnored' in webview.request);
 
     for (var i = 0; i < declarativeEventsToCheck.length; ++i) {
       var eventName = declarativeEventsToCheck[i];
@@ -2880,15 +2935,40 @@ function testPerViewZoomMode() {
   webview2.addEventListener('loadstop', function(e) {
     // Set |webview2| to 'per-view' mode and zoom it. Make sure that the
     // zoom did not affect |webview1|.
-    webview2.setZoomMode('per-view', function() {
-      webview2.getZoomMode(function(zoomMode) {
-        embedder.test.assertEq(zoomMode, 'per-view');
-        webview2.setZoom(0.45, function() {
-          webview1.getZoom(function(zoom) {
-            embedder.test.assertFalse(zoom == 0.45);
-            webview2.getZoom(function(zoom) {
-              embedder.test.assertEq(zoom, 0.45);
-              embedder.test.succeed();
+    // We need to verify that the page actually is zooming by comparing
+    // |window.innerWidth| before and after the zoom to prevent regressions like
+    // https://crbug.com/860511.
+    webview1.executeScript({code: 'window.innerWidth'}, function(result) {
+      var webview1_original_width = result[0];
+      webview2.executeScript({code: 'window.innerWidth'}, function(result) {
+        var webview2_original_width = result[0];
+        webview2.setZoomMode('per-view', function() {
+          webview2.getZoomMode(function(zoomMode) {
+            embedder.test.assertEq(zoomMode, 'per-view');
+            webview2.setZoom(0.45, function() {
+              webview1.getZoom(function(zoom) {
+                embedder.test.assertFalse(zoom == 0.45);
+                webview1.executeScript(
+                    {code: 'window.innerWidth'}, function(result) {
+                      var webview1_new_width = result[0];
+                      // Verify that inner width has not been changed for
+                      // for this WebView.
+                      embedder.test.assertEq(
+                          webview1_new_width, webview1_original_width);
+                      webview2.getZoom(function(zoom) {
+                        embedder.test.assertEq(zoom, 0.45);
+                        webview2.executeScript(
+                            {code: 'window.innerWidth'}, function(result) {
+                              var webview2_new_width = result[0];
+                              // Verify that inner width has been updated for
+                              // the second WebView.
+                              embedder.test.assertTrue(
+                                  webview2_original_width < webview2_new_width);
+                              embedder.test.succeed();
+                            });
+                      });
+                    });
+              });
             });
           });
         });
@@ -3181,6 +3261,8 @@ embedder.test.testList = {
   'testAutosizeRemoveAttributes': testAutosizeRemoveAttributes,
   'testAutosizeWithPartialAttributes': testAutosizeWithPartialAttributes,
   'testAPIMethodExistence': testAPIMethodExistence,
+  'testCustomElementCallbacksInaccessible':
+      testCustomElementCallbacksInaccessible,
   'testChromeExtensionURL': testChromeExtensionURL,
   'testChromeExtensionRelativePath': testChromeExtensionRelativePath,
   'testDisplayNoneWebviewLoad': testDisplayNoneWebviewLoad,

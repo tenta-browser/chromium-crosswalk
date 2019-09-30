@@ -89,6 +89,9 @@ class MEDIA_GPU_EXPORT VaapiWrapper
   // Return true when JPEG encode is supported.
   static bool IsJpegEncodeSupported();
 
+  // Return true when the specified image format is supported.
+  static bool IsImageFormatSupported(const VAImageFormat& format);
+
   // Creates |num_surfaces| backing surfaces in driver for VASurfaces of
   // |va_format|, each of size |size|. Returns true when successful, with the
   // created IDs in |va_surfaces| to be managed and later wrapped in
@@ -122,7 +125,16 @@ class MEDIA_GPU_EXPORT VaapiWrapper
   // Data submitted via this method awaits in the HW codec until
   // ExecuteAndDestroyPendingBuffers() is called to execute or
   // DestroyPendingBuffers() is used to cancel a pending job.
-  bool SubmitBuffer(VABufferType va_buffer_type, size_t size, void* buffer);
+  bool SubmitBuffer(VABufferType va_buffer_type,
+                    size_t size,
+                    const void* buffer);
+
+  // Convenient templatized version of SubmitBuffer() where |size| is deduced to
+  // be the size of the type of |*buffer|.
+  template <typename T>
+  bool SubmitBuffer(VABufferType va_buffer_type, const T* buffer) {
+    return SubmitBuffer(va_buffer_type, sizeof(T), buffer);
+  }
 
   // Submit a VAEncMiscParameterBuffer of given |misc_param_type|, copying its
   // data from |buffer| of size |size|, into HW codec. The data in |buffer| is
@@ -132,7 +144,7 @@ class MEDIA_GPU_EXPORT VaapiWrapper
   // DestroyPendingBuffers() is used to cancel a pending job.
   bool SubmitVAEncMiscParamBuffer(VAEncMiscParameterType misc_param_type,
                                   size_t size,
-                                  void* buffer);
+                                  const void* buffer);
 
   // Cancel and destroy all buffers queued to the HW codec via SubmitBuffer().
   // Useful when a pending job is to be cancelled (on reset or error).

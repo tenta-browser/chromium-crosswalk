@@ -30,6 +30,10 @@
 // Container for the location bar.
 @property(nonatomic, strong, readonly) UIView* locationBarContainer;
 
+// A tappable view overlapping |locationBarContainer| used when the omnibox is
+// hidden by the NTP.
+@property(nonatomic, strong) UIView* fakeOmniboxTarget;
+
 // The height of the container for the location bar.
 @property(nonatomic, strong, readonly) NSLayoutConstraint* locationBarHeight;
 
@@ -42,6 +46,9 @@
 
 // Button to cancel the edit of the location bar.
 @property(nonatomic, strong, readonly) UIButton* cancelButton;
+
+// Button taking the full size of the toolbar. Expands the toolbar when  tapped.
+@property(nonatomic, strong, readonly) UIButton* collapsedToolbarButton;
 
 // Constraints to be activated when the location bar is expanded and positioned
 // relatively to the cancel button.
@@ -59,10 +66,22 @@
 // Constraint for the bottom of the location bar.
 @property(nonatomic, strong, readwrite)
     NSLayoutConstraint* locationBarBottomConstraint;
+// Constraint for extra padding on the bottom of the location bar. This padding
+// is considered as "extra" as it is added to the one defined in
+// |locationBarBottomConstraint|. See comment for -[PrimaryToolbarViewController
+// verticalMarginForLocationBarForFullscreenProgress:] for more explanations.
+@property(nonatomic, strong) NSLayoutConstraint* locationBarExtraBottomPadding;
 
 // Sets all the subviews and constraints of the view. The |topSafeAnchor| needs
 // to be set before calling this.
 - (void)setUp;
+
+// Adds a view overlapping |locationBarContainer| for use when the omnibox is
+// hidden by the NTP.
+- (void)addFakeOmniboxTarget;
+
+// Removes |fakeOmniboxTarget| from the view hierarchy.
+- (void)removeFakeOmniboxTarget;
 
 @end
 

@@ -12,6 +12,7 @@
 #include "base/unguessable_token.h"
 #include "third_party/blink/public/common/feature_policy/feature_policy.h"
 #include "third_party/blink/public/common/frame/sandbox_flags.h"
+#include "third_party/blink/public/mojom/frame/find_in_page.mojom-shared.h"
 #include "third_party/blink/public/platform/modules/fetch/fetch_api_request.mojom-shared.h"
 #include "third_party/blink/public/platform/site_engagement.mojom-shared.h"
 #include "third_party/blink/public/platform/task_type.h"
@@ -21,10 +22,12 @@
 #include "third_party/blink/public/platform/web_url_request.h"
 #include "third_party/blink/public/web/commit_result.mojom-shared.h"
 #include "third_party/blink/public/web/selection_menu_behavior.mojom-shared.h"
+#include "third_party/blink/public/web/web_document_loader.h"
 #include "third_party/blink/public/web/web_frame.h"
 #include "third_party/blink/public/web/web_frame_load_type.h"
 #include "third_party/blink/public/web/web_history_item.h"
 #include "third_party/blink/public/web/web_ime_text_span.h"
+#include "third_party/blink/public/web/web_navigation_params.h"
 #include "third_party/blink/public/web/web_text_direction.h"
 #include "v8/include/v8.h"
 
@@ -36,11 +39,10 @@ class WebAssociatedURLLoader;
 class WebAutofillClient;
 class WebContentSettingsClient;
 class WebData;
-class WebDocumentLoader;
 class WebDocument;
 class WebDoubleSize;
 class WebDOMEvent;
-class WebFrameClient;
+class WebLocalFrameClient;
 class WebFrameWidget;
 class WebInputMethodController;
 class WebPerformance;
@@ -52,14 +54,14 @@ class WebSpellCheckPanelHostClient;
 class WebString;
 class WebTextCheckClient;
 class WebURL;
-class WebURLLoaderFactory;
 class WebView;
 enum class WebTreeScopeType;
 struct WebAssociatedURLLoaderOptions;
 struct WebConsoleMessage;
 struct WebContentSecurityPolicyViolation;
+struct WebNavigationParams;
 struct WebFindOptions;
-struct WebFloatRect;
+struct WebMediaPlayerAction;
 struct WebPrintParams;
 struct WebPrintPresetOptions;
 struct WebScriptSource;
@@ -72,13 +74,13 @@ class WebLocalFrame : public WebFrame {
  public:
   // Creates a main local frame for the WebView. Can only be invoked when no
   // main frame exists yet. Call Close() to release the returned frame.
-  // WebFrameClient may not be null.
+  // WebLocalFrameClient may not be null.
   // TODO(dcheng): The argument order should be more consistent with
   // CreateLocalChild() and CreateRemoteChild() in WebRemoteFrame... but it's so
   // painful...
   BLINK_EXPORT static WebLocalFrame* CreateMainFrame(
       WebView*,
-      WebFrameClient*,
+      WebLocalFrameClient*,
       blink::InterfaceRegistry*,
       WebFrame* opener = nullptr,
       const WebString& name = WebString(),
@@ -102,7 +104,7 @@ class WebLocalFrame : public WebFrame {
   // Otherwise, if the load should not commit, call Detach() to discard the
   // frame.
   BLINK_EXPORT static WebLocalFrame* CreateProvisional(
-      WebFrameClient*,
+      WebLocalFrameClient*,
       blink::InterfaceRegistry*,
       WebRemoteFrame*,
       WebSandboxFlags,
@@ -112,7 +114,7 @@ class WebLocalFrame : public WebFrame {
   // create frames, the returned frame should be freed by calling Close() when
   // it's no longer needed.
   virtual WebLocalFrame* CreateLocalChild(WebTreeScopeType,
-                                          WebFrameClient*,
+                                          WebLocalFrameClient*,
                                           blink::InterfaceRegistry*) = 0;
 
   // Returns the WebFrame associated with the current V8 context. This
@@ -128,6 +130,8 @@ class WebLocalFrame : public WebFrame {
   // Returns the frame inside a given frame or iframe element. Returns 0 if
   // the given element is not a frame, iframe or if the frame is empty.
   BLINK_EXPORT static WebLocalFrame* FromFrameOwnerElement(const WebElement&);
+
+  virtual WebLocalFrameClient* Client() const = 0;
 
   // Initialization ---------------------------------------------------------
 
@@ -196,29 +200,28 @@ class WebLocalFrame : public WebFrame {
   // Note: this may lead to the destruction of the frame.
   virtual bool DispatchBeforeUnloadEvent(bool is_reload) = 0;
 
-  // Returns a WebURLRequest corresponding to the load of the WebHistoryItem.
-  virtual WebURLRequest RequestFromHistoryItem(const WebHistoryItem&,
-                                               mojom::FetchCacheMode) const = 0;
+  // Start reloading the current document.
+  // Note: StartReload() will be deprecated, use StartNavigation() instead.
+  virtual void StartReload(WebFrameLoadType) = 0;
 
-  // Returns a WebURLRequest corresponding to the reload of the current
-  // HistoryItem.
-  virtual WebURLRequest RequestForReload(
-      WebFrameLoadType,
-      const WebURL& override_url = WebURL()) const = 0;
+  // Start navigation to the given URL.
+  virtual void StartNavigation(const WebURLRequest&) = 0;
 
-  // Load the given URL. For history navigations, a valid WebHistoryItem
-  // should be given, as well as a WebHistoryLoadType.
-  virtual void Load(
+  // Commits a cross-document navigation in the frame. For history navigations,
+  // a valid WebHistoryItem should be provided.
+  // TODO(dgozman): return mojom::CommitResult.
+  virtual void CommitNavigation(
       const WebURLRequest&,
       WebFrameLoadType,
       const WebHistoryItem&,
-      WebHistoryLoadType,
       bool is_client_redirect,
-      const base::UnguessableToken& devtools_navigation_token) = 0;
+      const base::UnguessableToken& devtools_navigation_token,
+      std::unique_ptr<WebNavigationParams> navigation_params,
+      std::unique_ptr<WebDocumentLoader::ExtraData> extra_data) = 0;
 
   // Commits a same-document navigation in the frame. For history navigations, a
   // valid WebHistoryItem should be provided. Returns CommitResult::Ok if the
-  // load committed.
+  // navigation has actually committed.
   virtual mojom::CommitResult CommitSameDocumentNavigation(
       const WebURL&,
       WebFrameLoadType,
@@ -228,29 +231,60 @@ class WebLocalFrame : public WebFrame {
   // Loads a JavaScript URL in the frame.
   virtual void LoadJavaScriptURL(const WebURL&) = 0;
 
-  // This method is short-hand for calling LoadData, where mime_type is
-  // "text/html" and text_encoding is "UTF-8".
+  // This method is short-hand for calling CommitDataNavigation, where mime_type
+  // is "text/html" and text_encoding is "UTF-8".
+  // TODO(dgozman): rename to CommitHTMLStringNavigation.
   virtual void LoadHTMLString(const WebData& html,
                               const WebURL& base_url,
                               const WebURL& unreachable_url = WebURL(),
                               bool replace = false) = 0;
 
-  // Loads the given data with specific mime type and optional text
-  // encoding.  For HTML data, baseURL indicates the security origin of
-  // the document and is used to resolve links.  If specified,
-  // unreachableURL is reported via WebDocumentLoader::unreachableURL.  If
-  // replace is false, then this data will be loaded as a normal
+  // Calls CommitDataNavigationWithRequest with a WebURLRequest that is built
+  // either 1) based on the previous, provisional request (if |replace| is true
+  // and |unreachable_url| is present) or 2) constructed from scratch otherwise.
+  //
+  // |base_url| indicates the security origin and is used to resolve links in
+  // the committed document.
+  //
+  // Please see documentation of CommitDataNavigationWithRequest for description
+  // of other parameters.
+  virtual void CommitDataNavigation(
+      const WebData& data,
+      const WebString& mime_type,
+      const WebString& text_encoding,
+      const WebURL& base_url,
+      const WebURL& unreachable_url,
+      bool replace,
+      WebFrameLoadType,
+      const WebHistoryItem&,
+      bool is_client_redirect,
+      std::unique_ptr<WebNavigationParams> navigation_params,
+      std::unique_ptr<WebDocumentLoader::ExtraData> navigation_data) = 0;
+
+  // Navigates to the given |data| with specified |mime_type| and optional
+  // |text_encoding|.
+  //
+  // If specified, |unreachable_url| is reported via
+  // WebDocumentLoader::UnreachableURL.
+  //
+  // If |replace| is false, then this data will be loaded as a normal
   // navigation.  Otherwise, the current history item will be replaced.
-  virtual void LoadData(const WebData&,
-                        const WebString& mime_type,
-                        const WebString& text_encoding,
-                        const WebURL& base_url,
-                        const WebURL& unreachable_url = WebURL(),
-                        bool replace = false,
-                        WebFrameLoadType = WebFrameLoadType::kStandard,
-                        const WebHistoryItem& = WebHistoryItem(),
-                        WebHistoryLoadType = kWebHistoryDifferentDocumentLoad,
-                        bool is_client_redirect = false) = 0;
+  //
+  // This method can be called instead of CommitDataNavigation when a
+  // ResourceRequest has already been precomputed (e.g. when trying to commit an
+  // error page, while mimicking the original failed request).
+  virtual void CommitDataNavigationWithRequest(
+      const WebURLRequest&,
+      const WebData&,
+      const WebString& mime_type,
+      const WebString& text_encoding,
+      const WebURL& unreachable_url,
+      bool replace,
+      WebFrameLoadType,
+      const WebHistoryItem&,
+      bool is_client_redirect,
+      std::unique_ptr<WebNavigationParams> navigation_params,
+      std::unique_ptr<WebDocumentLoader::ExtraData> navigation_data) = 0;
 
   // Returns the document loader that is currently loading.  May be null.
   virtual WebDocumentLoader* GetProvisionalDocumentLoader() const = 0;
@@ -379,17 +413,14 @@ class WebLocalFrame : public WebFrame {
   // worldID must be > 0 (as 0 represents the main world).
   // worldID must be < EmbedderWorldIdLimit, high number used internally.
   virtual void ExecuteScriptInIsolatedWorld(int world_id,
-                                            const WebScriptSource* sources,
-                                            unsigned num_sources) = 0;
+                                            const WebScriptSource&) = 0;
 
   // worldID must be > 0 (as 0 represents the main world).
   // worldID must be < EmbedderWorldIdLimit, high number used internally.
   // DEPRECATED: Use WebLocalFrame::requestExecuteScriptInIsolatedWorld.
-  virtual void ExecuteScriptInIsolatedWorld(
-      int world_id,
-      const WebScriptSource* sources_in,
-      unsigned num_sources,
-      WebVector<v8::Local<v8::Value>>* results) = 0;
+  WARN_UNUSED_RESULT virtual v8::Local<v8::Value>
+  ExecuteScriptInIsolatedWorldAndReturnValue(int world_id,
+                                             const WebScriptSource&) = 0;
 
   // Associates an isolated world (see above for description) with a security
   // origin. XMLHttpRequest instances used in that world will be considered
@@ -610,7 +641,8 @@ class WebLocalFrame : public WebFrame {
 
   virtual void ExtractSmartClipData(WebRect rect_in_viewport,
                                     WebString& clip_text,
-                                    WebString& clip_html) = 0;
+                                    WebString& clip_html,
+                                    WebRect& clip_rect) = 0;
 
   // Spell-checking support -------------------------------------------------
   virtual void SetTextCheckClient(WebTextCheckClient*) = 0;
@@ -647,24 +679,6 @@ class WebLocalFrame : public WebFrame {
 
   // Find-in-page -----------------------------------------------------------
 
-  // Specifies the action to be taken at the end of a find-in-page session.
-  enum StopFindAction {
-    // No selection will be left.
-    kStopFindActionClearSelection,
-
-    // The active match will remain selected.
-    kStopFindActionKeepSelection,
-
-    // The active match selection will be activated.
-    kStopFindActionActivateSelection
-  };
-
-  // Begins a find request, which includes finding the next find match (using
-  // find()) and scoping the frame for find matches if needed.
-  virtual void RequestFind(int identifier,
-                           const WebString& search_text,
-                           const WebFindOptions&) = 0;
-
   // Searches a frame for a given string.
   //
   // If a match is found, this function will select it (scrolling down to
@@ -686,46 +700,13 @@ class WebLocalFrame : public WebFrame {
   // function TextFinder::scopeStringMatches for details) and erase all
   // tick-marks and highlighting from the previous search.  It will also
   // follow the specified StopFindAction.
-  virtual void StopFinding(StopFindAction) = 0;
-
-  // This function is called during the scoping effort to keep a running tally
-  // of the accumulated total match-count in the frame.  After updating the
-  // count it will notify the WebViewClient about the new count.
-  virtual void IncreaseMatchCount(int count, int identifier) = 0;
-
-  // Returns a counter that is incremented when the find-in-page markers are
-  // changed on the frame. Switching the active marker doesn't change the
-  // current version.
-  virtual int FindMatchMarkersVersion() const = 0;
-
-  // Returns the bounding box of the active find-in-page match marker or an
-  // empty rect if no such marker exists. The rect is returned in find-in-page
-  // coordinates.
-  virtual WebFloatRect ActiveFindMatchRect() = 0;
-
-  // Swaps the contents of the provided vector with the bounding boxes of the
-  // find-in-page match markers from the frame. The bounding boxes are
-  // returned in find-in-page coordinates.
-  virtual void FindMatchRects(WebVector<WebFloatRect>&) = 0;
-
-  // Selects the find-in-page match closest to the provided point in
-  // find-in-page coordinates. Returns the ordinal of such match or -1 if none
-  // could be found. If not null, selectionRect is set to the bounding box of
-  // the selected match in window coordinates.
-  virtual int SelectNearestFindMatch(const WebFloatPoint&,
-                                     WebRect* selection_rect) = 0;
-
-  // Returns the distance (squared) to the closest find-in-page match from the
-  // provided point, in find-in-page coordinates.
-  virtual float DistanceToNearestFindMatch(const WebFloatPoint&) = 0;
+  // TODO(rakina): Stop exposing this when possible.
+  virtual void StopFindingForTesting(mojom::StopFindAction) = 0;
 
   // Set the tickmarks for the frame. This will override the default tickmarks
   // generated by find results. If this is called with an empty array, the
   // default behavior will be restored.
   virtual void SetTickmarks(const WebVector<WebRect>&) = 0;
-
-  // Clears the active find match in the frame, if one exists.
-  virtual void ClearActiveFindMatch() = 0;
 
   // Context menu -----------------------------------------------------------
 
@@ -773,10 +754,6 @@ class WebLocalFrame : public WebFrame {
 
   // Loading ------------------------------------------------------------------
 
-  // Creates and returns a new WebURLLoaderFactory. This function can be called
-  // only when this frame is attached to a document.
-  virtual std::unique_ptr<WebURLLoaderFactory> CreateURLLoaderFactory() = 0;
-
   // Returns an AssociatedURLLoader that is associated with this frame.  The
   // loader will, for example, be cancelled when WebFrame::stopLoading is
   // called.
@@ -784,19 +761,6 @@ class WebLocalFrame : public WebFrame {
   // FIXME: stopLoading does not yet cancel an associated loader!!
   virtual WebAssociatedURLLoader* CreateAssociatedURLLoader(
       const WebAssociatedURLLoaderOptions&) = 0;
-
-  // Reload the current document.
-  // Note: reload() and reloadWithOverrideURL() will be deprecated.
-  // Do not use these APIs any more, but use loadRequest() instead.
-  virtual void Reload(WebFrameLoadType) = 0;
-
-  // This is used for situations where we want to reload a different URL because
-  // of a redirect.
-  virtual void ReloadWithOverrideURL(const WebURL& override_url,
-                                     WebFrameLoadType) = 0;
-
-  // Load the given URL.
-  virtual void LoadRequest(const WebURLRequest&) = 0;
 
   // Check whether loading has completed based on subframe state, etc.
   virtual void CheckCompleted() = 0;
@@ -844,7 +808,7 @@ class WebLocalFrame : public WebFrame {
   // Prints one page, and returns the calculated page shrinking factor
   // (usually between 1/1.33 and 1/2).  Returns 0 if the page number is
   // invalid or not in printing mode.
-  virtual float PrintPage(int page_to_print, WebCanvas*) = 0;
+  virtual float PrintPage(int page_to_print, cc::PaintCanvas*) = 0;
 
   // Reformats the WebFrame for screen display.
   virtual void PrintEnd() = 0;
@@ -870,6 +834,16 @@ class WebLocalFrame : public WebFrame {
 
   virtual WebPerformance Performance() const = 0;
 
+  // Ad Tagging ---------------------------------------------------------
+
+  // True if the frame is thought (heuristically) to be created for
+  // advertising purposes.
+  virtual bool IsAdSubframe() const = 0;
+
+  // This setter is available in case the embedder has more information about
+  // whether or not the frame is an ad.
+  virtual void SetIsAdSubframe() = 0;
+
   // Testing ------------------------------------------------------------------
 
   // Dumps the layer tree, used by the accelerated compositor, in
@@ -879,13 +853,18 @@ class WebLocalFrame : public WebFrame {
 
   // Prints the frame into the canvas, with page boundaries drawn as one pixel
   // wide blue lines. This method exists to support layout tests.
-  virtual void PrintPagesForTesting(WebCanvas*, const WebSize&) = 0;
+  virtual void PrintPagesForTesting(cc::PaintCanvas*, const WebSize&) = 0;
 
   // Returns the bounds rect for current selection. If selection is performed
   // on transformed text, the rect will still bound the selection but will
   // not be transformed itself. If no selection is present, the rect will be
   // empty ((0,0), (0,0)).
   virtual WebRect GetSelectionBoundsRectForTesting() const = 0;
+
+  // Performs the specified media player action on the media element at the
+  // given location.
+  virtual void PerformMediaPlayerAction(const WebPoint&,
+                                        const WebMediaPlayerAction&) = 0;
 
  protected:
   explicit WebLocalFrame(WebTreeScopeType scope) : WebFrame(scope) {}

@@ -11,9 +11,7 @@
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
-#include "chrome/browser/browser_shutdown.h"
 #include "chrome/browser/chrome_notification_types.h"
-#include "chrome/browser/chromeos/ash_config.h"
 #include "chrome/browser/chromeos/login/helper.h"
 #include "chrome/browser/chromeos/login/lock/screen_locker.h"
 #include "chrome/browser/chromeos/login/quick_unlock/quick_unlock_factory.h"
@@ -22,7 +20,7 @@
 #include "chrome/browser/chromeos/login/ui/preloaded_web_view.h"
 #include "chrome/browser/chromeos/login/ui/preloaded_web_view_factory.h"
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
-#include "chrome/browser/ui/ash/ash_util.h"
+#include "chrome/browser/lifetime/browser_shutdown.h"
 #include "chrome/browser/ui/ash/session_controller_client.h"
 #include "chrome/browser/ui/webui/chromeos/login/oobe_ui.h"
 #include "chrome/browser/ui/webui/chromeos/login/signin_screen_handler.h"
@@ -43,6 +41,7 @@
 #include "ui/aura/window.h"
 #include "ui/aura/window_event_dispatcher.h"
 #include "ui/base/l10n/l10n_util.h"
+#include "ui/base/ui_base_features.h"
 #include "ui/display/display.h"
 #include "ui/display/screen.h"
 #include "ui/keyboard/keyboard_util.h"
@@ -78,7 +77,7 @@ bool WebUIScreenLocker::ShouldPreloadLockScreen() {
   // Bail for mash because IdleDetector/UserActivityDetector does not work
   // properly there.
   // TODO(xiyuan): Revisit after http://crbug.com/626899.
-  if (ash_util::IsRunningInMash())
+  if (features::IsMultiProcessMash())
     return false;
 
   Profile* profile = ProfileHelper::Get()->GetProfileByUser(
@@ -144,7 +143,7 @@ void WebUIScreenLocker::LockScreen() {
   gfx::Rect bounds = display::Screen::GetScreen()->GetPrimaryDisplay().bounds();
 
   lock_time_ = base::TimeTicks::Now();
-  lock_window_ = new ash::LockWindow(chromeos::GetAshConfig());
+  lock_window_ = new ash::LockWindow();
   lock_window_->AddObserver(this);
 
   Init();
@@ -156,10 +155,10 @@ void WebUIScreenLocker::LockScreen() {
   LoadURL(GURL(kLoginURL));
   OnLockWindowReady();
 
-  signin_screen_controller_.reset(
-      new SignInScreenController(GetOobeUI(), this));
+  signin_screen_controller_.reset(new SignInScreenController(GetOobeUI()));
 
-  login_display_.reset(new LoginDisplayWebUI(this));
+  login_display_.reset(new LoginDisplayWebUI());
+  login_display_->set_delegate(this);
   login_display_->set_parent_window(GetNativeWindow());
   login_display_->Init(screen_locker_->users(), false, true, false);
 
@@ -286,11 +285,6 @@ content::WebContents* WebUIScreenLocker::GetWebContents() {
 
 ////////////////////////////////////////////////////////////////////////////////
 // WebUIScreenLocker, LoginDisplay::Delegate:
-
-void WebUIScreenLocker::CancelPasswordChangedFlow() {
-  NOTREACHED();
-}
-
 base::string16 WebUIScreenLocker::GetConnectedNetworkName() {
   return network_state_helper_->GetCurrentNetworkName();
 }
@@ -307,10 +301,6 @@ void WebUIScreenLocker::Login(const UserContext& user_context,
       user_context, ScreenLocker::AuthenticateCallback());
 }
 
-void WebUIScreenLocker::MigrateUserData(const std::string& old_password) {
-  NOTREACHED();
-}
-
 void WebUIScreenLocker::OnSigninScreenReady() {
   VLOG(2) << "Lock screen signin screen is ready";
 }
@@ -320,10 +310,6 @@ void WebUIScreenLocker::OnStartEnterpriseEnrollment() {
 }
 
 void WebUIScreenLocker::OnStartEnableDebuggingScreen() {
-  NOTREACHED();
-}
-
-void WebUIScreenLocker::OnStartDemoModeSetupScreen() {
   NOTREACHED();
 }
 
@@ -344,10 +330,6 @@ void WebUIScreenLocker::ShowUpdateRequiredScreen() {
 }
 
 void WebUIScreenLocker::ResetAutoLoginTimer() {}
-
-void WebUIScreenLocker::ResyncUserData() {
-  NOTREACHED();
-}
 
 void WebUIScreenLocker::Signout() {
   chromeos::ScreenLocker::default_screen_locker()->Signout();

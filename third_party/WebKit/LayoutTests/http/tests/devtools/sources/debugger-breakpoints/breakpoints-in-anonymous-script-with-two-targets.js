@@ -24,17 +24,17 @@
   TestRunner.evaluateInPageWithTimeout('testFunction()');
   var sourceFrame = await waitForPausedUISourceCode();
   SourcesTestRunner.createNewBreakpoint(sourceFrame, 10, '', true);
-  await SourcesTestRunner.waitJavaScriptSourceFrameBreakpoints(sourceFrame);
-  await SourcesTestRunner.dumpJavaScriptSourceFrameBreakpoints(sourceFrame);
+  await SourcesTestRunner.waitDebuggerPluginBreakpoints(sourceFrame);
+  await SourcesTestRunner.dumpDebuggerPluginBreakpoints(sourceFrame);
   SourcesTestRunner.completeDebuggerTest();
 
   function waitForPausedUISourceCode() {
     return new Promise(resolve => {
-      TestRunner.addSniffer(Sources.JavaScriptSourceFrame.prototype, 'setExecutionLocation', function() {
-        SourcesTestRunner.showUISourceCodePromise(this.uiSourceCode()).then(() => {
-          resolve(this);
-        });
-      });
+      TestRunner.addSniffer(
+          Sources.DebuggerPlugin.prototype, '_executionLineChanged',
+          function() {
+            resolve(UI.panels.sources.visibleView);
+          });
     });
   }
 })();

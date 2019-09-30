@@ -7,7 +7,7 @@
       "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
         {
-          "object": "LayoutBlockFlow (positioned) DIV id='container'",
+          "object": "LayoutInline SPAN id='outer'",
           "rect": [16, 108, 90, 63],
           "reason": "appeared"
         },
@@ -32,64 +32,6 @@
           "reason": "disappeared"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutBlockFlow (anonymous)",
-      "reason": "geometry"
-    },
-    {
-      "object": "RootInlineBox",
-      "reason": "geometry"
-    },
-    {
-      "object": "LayoutInline SPAN id='outer'",
-      "reason": "style change"
-    },
-    {
-      "object": "InlineFlowBox",
-      "reason": "style change"
-    },
-    {
-      "object": "LayoutText #text",
-      "reason": "geometry"
-    },
-    {
-      "object": "InlineTextBox 'CONTENTS'",
-      "reason": "geometry"
-    },
-    {
-      "object": "LayoutBlockFlow (anonymous)",
-      "reason": "geometry"
-    },
-    {
-      "object": "RootInlineBox",
-      "reason": "geometry"
-    },
-    {
-      "object": "LayoutInline SPAN id='outer'",
-      "reason": "style change"
-    },
-    {
-      "object": "InlineFlowBox",
-      "reason": "style change"
-    },
-    {
-      "object": "LayoutText #text",
-      "reason": "geometry"
-    },
-    {
-      "object": "InlineTextBox 'CONTENTS'",
-      "reason": "geometry"
-    },
-    {
-      "object": "LayoutBlockFlow (anonymous)",
-      "reason": "geometry"
-    },
-    {
-      "object": "LayoutInline SPAN id='outer'",
-      "reason": "style change"
     }
   ]
 }

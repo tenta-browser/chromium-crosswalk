@@ -20,12 +20,12 @@
         {
           "object": "LayoutBlockFlow (positioned) DIV class='absolute green'",
           "rect": [93, 234, 142, 143],
-          "reason": "appeared"
+          "reason": "chunk appeared"
         },
         {
           "object": "LayoutBlockFlow (positioned) DIV class='absolute red'",
           "rect": [93, 234, 142, 143],
-          "reason": "paint property change"
+          "reason": "chunk disappeared"
         }
       ],
       "transform": 1
@@ -41,20 +41,6 @@
         [0, -180, 0, 1]
       ],
       "flattenInheritedTransform": false
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutBlockFlow (positioned) DIV id='moveMe' class='fixed clipped'",
-      "reason": "full"
-    },
-    {
-      "object": "LayoutBlockFlow (positioned) DIV class='absolute green'",
-      "reason": "geometry"
-    },
-    {
-      "object": "LayoutBlockFlow (positioned) DIV class='absolute red'",
-      "reason": "geometry"
     }
   ]
 }

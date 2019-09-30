@@ -16,7 +16,6 @@ import android.os.SystemClock;
 
 import org.chromium.android_webview.services.IVariationsSeedServer;
 import org.chromium.android_webview.services.VariationsSeedServer;
-import org.chromium.base.CommandLine;
 import org.chromium.base.ContextUtils;
 import org.chromium.base.Log;
 import org.chromium.base.VisibleForTesting;
@@ -44,17 +43,19 @@ import java.util.concurrent.TimeoutException;
  * by the Runnable.
  *
  * The Runnable and FutureTask together perform these steps:
- * 1. Load the new seed file, if any.
- * 2. If no new seed file, load the old seed file, if any.
- * 3. Make the loaded seed available via get() (or null if there was no seed).
- * 4. If there was a new seed file, replace the old with the new (but only after making the loaded
+ * 1. Pre-load the metrics client ID. This is needed to seed the EntropyProvider. If there is no
+ *    client ID, variations can't be used on this run.
+ * 2. Load the new seed file, if any.
+ * 3. If no new seed file, load the old seed file, if any.
+ * 4. Make the loaded seed available via get() (or null if there was no seed).
+ * 5. If there was a new seed file, replace the old with the new (but only after making the loaded
  *    seed available, as the replace need not block startup).
- * 5. If there was no seed, or the loaded seed was expired, request a new seed (but don't request
+ * 6. If there was no seed, or the loaded seed was expired, request a new seed (but don't request
  *    more often than MAX_REQUEST_PERIOD_MILLIS).
  *
  * VariationsSeedLoader should be used during WebView startup like so:
- * 1. Ensure ContextUtils.getApplicationContext(), AwBrowserProcess.getWebViewPackageName(),
- *    CommandLine, and PathUtils are ready to use.
+ * 1. Ensure ContextUtils.getApplicationContext(), AwBrowserProcess.getWebViewPackageName(), and
+ *    PathUtils are ready to use.
  * 2. As early as possible, call startVariationsInit() to begin the task.
  * 3. Perform any WebView startup tasks which don't require variations to be initialized.
  * 4. Call finishVariationsInit() with the value returned from startVariationsInit(). This will
@@ -76,18 +77,12 @@ public class VariationsSeedLoader {
     // is exceeded, proceed with variations disabled.
     private static final long SEED_LOAD_TIMEOUT_MILLIS = 20;
 
+    private SeedLoadAndUpdateRunnable mRunnable;
+
     private static void recordLoadSeedResult(int result) {
         EnumeratedHistogramSample histogram = new EnumeratedHistogramSample(
                 "Variations.SeedLoadResult", LoadSeedResult.ENUM_SIZE);
         histogram.record(result);
-    }
-
-    // AGSA will notify us to enable variations by touching this file.
-    // TODO(paulmiller): Remove this after completing the experiment.
-    private static boolean checkEnabledByExperiment() {
-        File filesDir = ContextUtils.getApplicationContext().getFilesDir();
-        File experimentFile = new File(new File(filesDir, "webview"), "finch-exp");
-        return experimentFile.exists();
     }
 
     private static boolean isExpired(long seedFileTime) {
@@ -99,8 +94,6 @@ public class VariationsSeedLoader {
     // Loads our local copy of the seed, if any, and then renames our local copy and/or requests a
     // new seed, if necessary.
     private class SeedLoadAndUpdateRunnable implements Runnable {
-        private boolean mEnabledByCmd;
-
         // mLoadTask will set these to indicate what additional work to do after mLoadTask finishes:
         // - mFoundNewSeed: Is a "new" seed file present? (If so, it should be renamed to an "old"
         //   seed, replacing any existing "old" seed.)
@@ -118,8 +111,7 @@ public class VariationsSeedLoader {
         private volatile boolean mEnabledByExperiment;
 
         private FutureTask<SeedInfo> mLoadTask = new FutureTask<>(() -> {
-            mEnabledByExperiment = checkEnabledByExperiment();
-            if (!(mEnabledByCmd || mEnabledByExperiment)) return null;
+            AwMetricsServiceClient.preloadClientId();
 
             File newSeedFile = VariationsUtils.getNewSeedFile();
             File oldSeedFile = VariationsUtils.getSeedFile();
@@ -164,7 +156,7 @@ public class VariationsSeedLoader {
                 try {
                     mCurrentSeedDate = seed.parseDate().getTime();
                 } catch (ParseException e) {
-                    // Should never happen, as date was alread verified by readSeedFile.
+                    // Should never happen, as date was already verified by readSeedFile.
                     assert false;
                     return null;
                 }
@@ -172,10 +164,6 @@ public class VariationsSeedLoader {
 
             return seed;
         });
-
-        public SeedLoadAndUpdateRunnable(boolean enabledByCmd) {
-            mEnabledByCmd = enabledByCmd;
-        }
 
         @Override
         public void run() {
@@ -243,6 +231,7 @@ public class VariationsSeedLoader {
                 Log.e(TAG, "Faild requesting seed", e);
             } finally {
                 ContextUtils.getApplicationContext().unbindService(this);
+                VariationsUtils.closeSafely(mNewSeedFd);
             }
         }
 
@@ -250,7 +239,27 @@ public class VariationsSeedLoader {
         public void onServiceDisconnected(ComponentName name) {}
     }
 
-    private SeedLoadAndUpdateRunnable mRunnable;
+    private SeedInfo getSeedBlockingAndLog() {
+        long start = SystemClock.elapsedRealtime();
+        try {
+            try {
+                return mRunnable.get(SEED_LOAD_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS);
+            } finally {
+                long end = SystemClock.elapsedRealtime();
+                TimesHistogramSample histogram = new TimesHistogramSample(
+                        "Variations.SeedLoadBlockingTime", TimeUnit.MILLISECONDS);
+                histogram.record(end - start);
+            }
+        } catch (TimeoutException e) {
+            recordLoadSeedResult(LoadSeedResult.LOAD_TIMED_OUT);
+        } catch (InterruptedException e) {
+            recordLoadSeedResult(LoadSeedResult.LOAD_INTERRUPTED);
+        } catch (ExecutionException e) {
+            recordLoadSeedResult(LoadSeedResult.LOAD_OTHER_FAILURE);
+        }
+        Log.e(TAG, "Failed loading variations seed. Variations disabled.");
+        return null;
+    }
 
     private SeedInfo getSeedBlockingAndLog() {
         long start = SystemClock.elapsedRealtime();
@@ -286,11 +295,6 @@ public class VariationsSeedLoader {
     protected void onBackgroundWorkFinished() {}
 
     @VisibleForTesting // and non-static for overriding by tests
-    protected boolean isEnabledByCmd() {
-        return CommandLine.getInstance().hasSwitch(AwSwitches.ENABLE_WEBVIEW_VARIATIONS);
-    }
-
-    @VisibleForTesting // and non-static for overriding by tests
     protected Intent getServerIntent() throws NameNotFoundException {
         Context c = ContextUtils.getApplicationContext()
                 .createPackageContext(AwBrowserProcess.getWebViewPackageName(), /*flags=*/0);
@@ -322,7 +326,7 @@ public class VariationsSeedLoader {
     // Begin asynchronously loading the variations seed. ContextUtils.getApplicationContext() and
     // AwBrowserProcess.getWebViewPackageName() must be ready to use before calling this.
     public void startVariationsInit() {
-        mRunnable = new SeedLoadAndUpdateRunnable(isEnabledByCmd());
+        mRunnable = new SeedLoadAndUpdateRunnable();
         (new Thread(mRunnable)).start();
     }
 
@@ -330,15 +334,6 @@ public class VariationsSeedLoader {
     // variations.
     public void finishVariationsInit() {
         SeedInfo seed = getSeedBlockingAndLog();
-
-        // If enabled by experiment but not cmd, then also enable by cmd.
-        // isVariationsEnabled() must not be called before getSeedBlockingAndLog() returns.
-        // TODO(paulmiller): Remove this after completing the experiment.
-        if (mRunnable.isVariationsEnabled() && !isEnabledByCmd()) {
-            CommandLine.getInstance().appendSwitch(AwSwitches.ENABLE_WEBVIEW_VARIATIONS);
-        }
-
-        // TODO(paulmiller): Once we have actual seeds, this would be the place to do:
-        // if (seed != null) { VariationsSeedBridge.setVariationsFirstRunSeed(seed); }
+        if (seed != null) AwVariationsSeedBridge.setSeed(seed);
     }
 }

@@ -35,16 +35,8 @@ MaterialHistoryBrowserTest.prototype = {
       // Wait for the top-level app element to be upgraded.
       return waitForAppUpgrade()
           .then(function() {
-            // <iron-list>#_maxPages controls the default number of "pages" of
-            // "physical" (i.e. DOM) elements to render. Some of these tests
-            // rely on rendering up to 3 "pages" of items, which was previously
-            // the default, changeed to 2 for performance reasons. TODO(dbeam):
-            // maybe trim down the number of items created in the tests? Or
-            // don't touch <iron-list>'s physical items as much?
-            Array.from(document.querySelectorAll('* /deep/ iron-list')).forEach(
-                function(ironList) { ironList._maxPages = 3; });
+            return md_history.ensureLazyLoaded();
           })
-          .then(function() { return md_history.ensureLazyLoaded(); })
           .then(function() {
             $('history-app').queryState_.queryingDisabled = true;
           });
@@ -106,7 +98,7 @@ MaterialHistoryListTest.prototype = {
 
 // Times out on debug builders because the History page can take several seconds
 // to load in a Debug build. See https://crbug.com/669227.
-GEN('#if !defined(NDEBUG)');
+GEN('#if !defined(NDEBUG) || defined(OS_MACOSX) || defined(OS_CHROMEOS)');
 GEN('#define MAYBE_All DISABLED_All');
 GEN('#else');
 GEN('#define MAYBE_All All');
@@ -174,7 +166,7 @@ MaterialHistoryRoutingWithQueryParamTest.prototype = {
     // since there may be a delay as well, the test might check the global var
     // too early as well. In this case the test will have overtaken the
     // callback.
-    registerMessageCallback('queryHistory', this, function (info) {
+    registerMessageCallback('queryHistory', this, function(info) {
       window.historyQueryInfo = info;
     });
 
@@ -188,8 +180,8 @@ MaterialHistoryRoutingWithQueryParamTest.prototype = {
 };
 
 TEST_F('MaterialHistoryRoutingWithQueryParamTest', 'All', function() {
-    md_history.history_routing_test_with_query_param.registerTests();
-    mocha.run();
+  md_history.history_routing_test_with_query_param.registerTests();
+  mocha.run();
 });
 
 function MaterialHistorySyncedTabsTest() {}

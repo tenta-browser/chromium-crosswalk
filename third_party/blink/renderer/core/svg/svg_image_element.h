@@ -42,7 +42,7 @@ class CORE_EXPORT SVGImageElement final
 
  public:
   DECLARE_NODE_FACTORY(SVGImageElement);
-  virtual void Trace(blink::Visitor*);
+  void Trace(blink::Visitor*) override;
 
   bool CurrentFrameHasSingleSecurityOrigin() const;
 
@@ -81,7 +81,7 @@ class CORE_EXPORT SVGImageElement final
   void ParseAttribute(const AttributeModificationParams&) override;
 
   void AttachLayoutTree(AttachContext&) override;
-  InsertionNotificationRequest InsertedInto(ContainerNode*) override;
+  InsertionNotificationRequest InsertedInto(ContainerNode&) override;
 
   LayoutObject* CreateLayoutObject(const ComputedStyle&) override;
 

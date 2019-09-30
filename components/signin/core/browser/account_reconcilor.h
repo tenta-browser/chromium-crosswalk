@@ -12,6 +12,7 @@
 #include "base/compiler_specific.h"
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
+#include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
 #include "base/threading/thread_checker.h"
 #include "base/time/time.h"
@@ -51,6 +52,19 @@ class AccountReconcilor : public KeyedService,
     AccountReconcilor* reconcilor_;
     THREAD_CHECKER(thread_checker_);
     DISALLOW_COPY_AND_ASSIGN(Lock);
+  };
+
+  // Helper class to indicate that synced data is being deleted. The object
+  // must be destroyed when the data deletion is complete.
+  class ScopedSyncedDataDeletion {
+   public:
+    ~ScopedSyncedDataDeletion();
+
+   private:
+    friend class AccountReconcilor;
+    explicit ScopedSyncedDataDeletion(AccountReconcilor* reconcilor);
+    base::WeakPtr<AccountReconcilor> reconcilor_;
+    DISALLOW_COPY_AND_ASSIGN(ScopedSyncedDataDeletion);
   };
 
   class Observer {
@@ -107,8 +121,12 @@ class AccountReconcilor : public KeyedService,
   void AddObserver(Observer* observer);
   void RemoveObserver(Observer* observer);
 
+  // ScopedSyncedDataDeletion can be created when synced data is being removed
+  // and destroyed when the deletion is complete. It prevents the Sync account
+  // from being invalidated during the deletion.
+  std::unique_ptr<ScopedSyncedDataDeletion> GetScopedSyncDataDeletion();
+
  private:
-  friend class Lock;
   friend class AccountReconcilorTest;
   friend class DiceBrowserTestBase;
   FRIEND_TEST_ALL_PREFIXES(AccountReconcilorTest, SigninManagerRegistration);
@@ -133,6 +151,7 @@ class AccountReconcilor : public KeyedService,
                            MigrationClearSecondaryTokens);
   FRIEND_TEST_ALL_PREFIXES(AccountReconcilorTest, MigrationClearAllTokens);
   FRIEND_TEST_ALL_PREFIXES(AccountReconcilorTest, TokensNotLoaded);
+  FRIEND_TEST_ALL_PREFIXES(AccountReconcilorTest, DiceDeleteCookie);
   FRIEND_TEST_ALL_PREFIXES(AccountReconcilorTest,
                            StartReconcileCookiesDisabled);
   FRIEND_TEST_ALL_PREFIXES(AccountReconcilorTest,
@@ -159,7 +178,7 @@ class AccountReconcilor : public KeyedService,
   FRIEND_TEST_ALL_PREFIXES(AccountReconcilorTest, StartReconcileBadPrimary);
   FRIEND_TEST_ALL_PREFIXES(AccountReconcilorTest, StartReconcileOnlyOnce);
   FRIEND_TEST_ALL_PREFIXES(AccountReconcilorTest, Lock);
-  FRIEND_TEST_ALL_PREFIXES(AccountReconcilorTest,
+  FRIEND_TEST_ALL_PREFIXES(AccountReconcilorMethodParamTest,
                            StartReconcileWithSessionInfoExpiredDefault);
   FRIEND_TEST_ALL_PREFIXES(AccountReconcilorTest,
                            AddAccountToCookieCompletedWithBogusAccount);
@@ -170,7 +189,7 @@ class AccountReconcilor : public KeyedService,
   FRIEND_TEST_ALL_PREFIXES(AccountReconcilorTest,
                            DelegateTimeoutIsNotCalledIfTimeoutIsNotReached);
 
-  void set_timer_for_testing(std::unique_ptr<base::Timer> timer);
+  void set_timer_for_testing(std::unique_ptr<base::OneShotTimer> timer);
 
   bool IsRegisteredWithTokenService() const {
     return registered_with_token_service_;
@@ -190,6 +209,8 @@ class AccountReconcilor : public KeyedService,
   // consistency is enabled. Virtual so that they can be overridden in tests.
   virtual void PerformMergeAction(const std::string& account_id);
   virtual void PerformLogoutAllAccountsAction();
+  virtual void PerformSetCookiesAction(
+      const std::vector<std::string>& account_ids);
 
   // Used during periodic reconciliation.
   void StartReconcile();
@@ -215,11 +236,10 @@ class AccountReconcilor : public KeyedService,
   bool IsTokenServiceReady();
 
   // Overriden from content_settings::Observer.
-  void OnContentSettingChanged(
-      const ContentSettingsPattern& primary_pattern,
-      const ContentSettingsPattern& secondary_pattern,
-      ContentSettingsType content_type,
-      std::string resource_identifier) override;
+  void OnContentSettingChanged(const ContentSettingsPattern& primary_pattern,
+                               const ContentSettingsPattern& secondary_pattern,
+                               ContentSettingsType content_type,
+                               const std::string& resource_identifier) override;
 
   // Overriden from GaiaGookieManagerService::Observer.
   void OnAddAccountToCookieCompleted(
@@ -229,6 +249,7 @@ class AccountReconcilor : public KeyedService,
         const std::vector<gaia::ListedAccount>& accounts,
         const std::vector<gaia::ListedAccount>& signed_out_accounts,
         const GoogleServiceAuthError& error) override;
+  void OnGaiaCookieDeletedByUserAction() override;
 
   // Overriden from OAuth2TokenService::Observer.
   void OnEndBatchChanges() override;
@@ -271,8 +292,15 @@ class AccountReconcilor : public KeyedService,
   // True iff this is the first time the reconcilor is executing.
   bool first_execution_;
 
-  // True iff an error occured during the last attempt to reconcile.
-  bool error_during_last_reconcile_;
+  // 'Most severe' error encountered during the last attempt to reconcile. If
+  // the last reconciliation attempt was successful, this will be
+  // |GoogleServiceAuthError::State::NONE|.
+  // Severity of an error is defined on the basis of
+  // |GoogleServiceAuthError::IsPersistentError()| only, i.e. any persistent
+  // error is considered more severe than all non-persistent errors, but
+  // persistent (or non-persistent) errors do not have an internal severity
+  // ordering among themselves.
+  GoogleServiceAuthError error_during_last_reconcile_;
 
   // Used for Dice migration: migration can happen if the accounts are
   // consistent, which is indicated by reconcile being a no-op.
@@ -289,12 +317,24 @@ class AccountReconcilor : public KeyedService,
   // StartReconcile() should be started when the reconcilor is unblocked.
   bool reconcile_on_unblock_;
 
-  base::ObserverList<Observer, true> observer_list_;
+  base::ObserverList<Observer, true>::Unchecked observer_list_;
 
   // A timer to set off reconciliation timeout handlers, if account
-  // reconciliation does not happen in a given timeout duration.
-  std::unique_ptr<base::Timer> timer_;
+  // reconciliation does not happen in a given |timeout_| duration.
+  // Any delegate that wants to use this feature must override
+  // |AccountReconcilorDelegate::GetReconcileTimeout|.
+  // Note: This is intended as a safeguard for delegates that want a 'guarantee'
+  // of reconciliation completing within a finite time. It is technically
+  // possible for account reconciliation to be running/waiting forever in cases
+  // such as a network connection not being present.
+  std::unique_ptr<base::OneShotTimer> timer_;
   base::TimeDelta timeout_;
+
+  // Greater than 0 when synced data is being deleted, and it is important to
+  // not invalidate the primary token while this is happening.
+  int synced_data_deletion_in_progress_count_ = 0;
+
+  base::WeakPtrFactory<AccountReconcilor> weak_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(AccountReconcilor);
 };

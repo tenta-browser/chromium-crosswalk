@@ -42,6 +42,8 @@
   std::unique_ptr<FullscreenControllerObserver> _fullscreenObserver;
 }
 
+// Whether the coordinator is started.
+@property(nonatomic, assign, getter=isStarted) BOOL started;
 // Redefined as PrimaryToolbarViewController.
 @property(nonatomic, strong) PrimaryToolbarViewController* viewController;
 // The coordinator for the location bar in the toolbar.
@@ -55,6 +57,8 @@
 @implementation PrimaryToolbarCoordinator
 
 @dynamic viewController;
+@synthesize started = _started;
+@synthesize commandDispatcher = _commandDispatcher;
 @synthesize delegate = _delegate;
 @synthesize locationBarCoordinator = _locationBarCoordinator;
 @synthesize orchestrator = _orchestrator;
@@ -63,6 +67,13 @@
 #pragma mark - ChromeCoordinator
 
 - (void)start {
+  DCHECK(self.commandDispatcher);
+  if (self.started)
+    return;
+
+  [self.commandDispatcher startDispatchingToTarget:self
+                                       forProtocol:@protocol(FakeboxFocuser)];
+
   self.viewController = [[PrimaryToolbarViewController alloc] init];
   self.viewController.buttonFactory = [self buttonFactoryWithType:PRIMARY];
   self.viewController.dispatcher = self.dispatcher;
@@ -73,29 +84,42 @@
 
   [self setUpLocationBar];
   self.viewController.locationBarView = self.locationBarCoordinator.view;
-  [super start];
+  if ([self.locationBarCoordinator
+          respondsToSelector:@selector(locationBarAnimatee)]) {
+    self.orchestrator.locationBarAnimatee =
+        [self.locationBarCoordinator locationBarAnimatee];
+  }
+
+  if ([self.locationBarCoordinator
+          respondsToSelector:@selector(editViewAnimatee)]) {
+    self.orchestrator.editViewAnimatee =
+        [self.locationBarCoordinator editViewAnimatee];
+  }
 
   _fullscreenObserver =
       std::make_unique<FullscreenUIUpdater>(self.viewController);
   FullscreenControllerFactory::GetInstance()
       ->GetForBrowserState(self.browserState)
       ->AddObserver(_fullscreenObserver.get());
+
+  [super start];
+  self.started = YES;
 }
 
 - (void)stop {
+  if (!self.started)
+    return;
   [super stop];
+  [self.commandDispatcher stopDispatchingToTarget:self];
   [self.locationBarCoordinator stop];
+  FullscreenControllerFactory::GetInstance()
+      ->GetForBrowserState(self.browserState)
+      ->RemoveObserver(_fullscreenObserver.get());
+  _fullscreenObserver = nullptr;
+  self.started = NO;
 }
 
 #pragma mark - PrimaryToolbarCoordinator
-
-- (id<VoiceSearchControllerDelegate>)voiceSearchDelegate {
-  return self.locationBarCoordinator;
-}
-
-- (id<QRScannerResultLoading>)QRScannerResultLoader {
-  return self.locationBarCoordinator;
-}
 
 - (id<ActivityServicePositioner>)activityServicePositioner {
   return self.viewController;
@@ -118,10 +142,15 @@
 }
 
 - (void)transitionToLocationBarFocusedState:(BOOL)focused {
+  if (self.viewController.traitCollection.verticalSizeClass ==
+      UIUserInterfaceSizeClassUnspecified) {
+    return;
+  }
+
   [self.orchestrator
       transitionToStateOmniboxFocused:focused
-                      toolbarExpanded:focused &&
-                                      IsSplitToolbarMode(self.viewController)
+                      toolbarExpanded:focused && !IsRegularXRegularSizeClass(
+                                                     self.viewController)
                              animated:YES];
 }
 
@@ -129,26 +158,33 @@
 
 - (void)viewControllerTraitCollectionDidChange:
     (UITraitCollection*)previousTraitCollection {
-  BOOL omniboxFocused = self.isOmniboxFirstResponder;
+  BOOL omniboxFocused = self.isOmniboxFirstResponder ||
+                        [self.locationBarCoordinator showingOmniboxPopup];
   [self.orchestrator
       transitionToStateOmniboxFocused:omniboxFocused
                       toolbarExpanded:omniboxFocused &&
-                                      IsSplitToolbarMode(self.viewController)
+                                      !IsRegularXRegularSizeClass(
+                                          self.viewController)
                              animated:NO];
+}
+
+- (void)exitFullscreen {
+  FullscreenControllerFactory::GetInstance()
+      ->GetForBrowserState(self.browserState)
+      ->ResetModel();
 }
 
 #pragma mark - FakeboxFocuser
 
-- (void)focusFakebox {
-  [self.locationBarCoordinator focusOmnibox];
+- (void)fakeboxFocused {
+  [self.locationBarCoordinator focusOmniboxFromFakebox];
 }
 
 - (void)onFakeboxBlur {
   // Hide the toolbar if the NTP is currently displayed.
   web::WebState* webState = self.webStateList->GetActiveWebState();
   if (webState && IsVisibleUrlNewTabPage(webState)) {
-    self.viewController.view.hidden =
-        !IsRegularXRegularSizeClass(self.viewController);
+    self.viewController.view.hidden = IsSplitToolbarMode();
   }
 }
 
@@ -163,6 +199,10 @@
 
 - (UIView*)popupParentView {
   return self.viewController.view.superview;
+}
+
+- (UIViewController*)popupParentViewController {
+  return self.viewController.parentViewController;
 }
 
 #pragma mark - Protected override
@@ -200,6 +240,7 @@
   self.locationBarCoordinator.browserState = self.browserState;
   self.locationBarCoordinator.dispatcher =
       base::mac::ObjCCastStrict<CommandDispatcher>(self.dispatcher);
+  self.locationBarCoordinator.commandDispatcher = self.commandDispatcher;
   self.locationBarCoordinator.URLLoader = self.URLLoader;
   self.locationBarCoordinator.delegate = self.delegate;
   self.locationBarCoordinator.webStateList = self.webStateList;

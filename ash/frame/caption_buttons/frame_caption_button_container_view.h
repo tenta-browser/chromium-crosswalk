@@ -8,6 +8,7 @@
 #include <map>
 
 #include "ash/ash_export.h"
+#include "ash/frame/caption_buttons/caption_button_model.h"
 #include "ash/frame/caption_buttons/frame_caption_button.h"
 #include "ash/frame/caption_buttons/frame_size_button_delegate.h"
 #include "base/macros.h"
@@ -26,8 +27,6 @@ class Widget;
 
 namespace ash {
 
-class CaptionButtonModel;
-
 // Container view for the frame caption buttons. It performs the appropriate
 // action when a caption button is clicked.
 class ASH_EXPORT FrameCaptionButtonContainerView
@@ -39,9 +38,9 @@ class ASH_EXPORT FrameCaptionButtonContainerView
   static const char kViewClassName[];
 
   // |frame| is the views::Widget that the caption buttons act on.
-  explicit FrameCaptionButtonContainerView(views::Widget* frame);
-  FrameCaptionButtonContainerView(views::Widget* frame,
-                                  std::unique_ptr<CaptionButtonModel> model);
+  FrameCaptionButtonContainerView(
+      views::Widget* frame,
+      std::unique_ptr<CaptionButtonModel> model = nullptr);
   ~FrameCaptionButtonContainerView() override;
 
   // For testing.
@@ -94,11 +93,6 @@ class ASH_EXPORT FrameCaptionButtonContainerView
   // Tell the window controls to reset themselves to the normal state.
   void ResetWindowControls();
 
-  // Determines the window HT* code for the caption button at |point|. Returns
-  // HTNOWHERE if |point| is not over any of the caption buttons. |point| must
-  // be in the coordinates of the FrameCaptionButtonContainerView.
-  int NonClientHitTest(const gfx::Point& point) const;
-
   // Updates the caption buttons' state based on the caption button model's
   // state. A parent view should relayout to reflect the change in states.
   void UpdateCaptionButtonState(bool animate);
@@ -115,6 +109,7 @@ class ASH_EXPORT FrameCaptionButtonContainerView
   void Layout() override;
   const char* GetClassName() const override;
   void ChildPreferredSizeChanged(View* child) override;
+  void ChildVisibilityChanged(View* child) override;
 
   // gfx::AnimationDelegate:
   void AnimationEnded(const gfx::Animation* animation) override;

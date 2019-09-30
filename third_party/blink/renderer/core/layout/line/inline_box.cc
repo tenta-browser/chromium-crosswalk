@@ -21,6 +21,7 @@
 
 #include "third_party/blink/renderer/core/layout/api/line_layout_api_shim.h"
 #include "third_party/blink/renderer/core/layout/api/line_layout_block_flow.h"
+#include "third_party/blink/renderer/core/layout/api/selection_state.h"
 #include "third_party/blink/renderer/core/layout/hit_test_location.h"
 #include "third_party/blink/renderer/core/layout/layout_block_flow.h"
 #include "third_party/blink/renderer/core/layout/line/inline_flow_box.h"
@@ -84,7 +85,7 @@ void* InlineBox::operator new(size_t sz) {
 }
 
 void InlineBox::operator delete(void* ptr) {
-  WTF::PartitionFree(ptr);
+  base::PartitionFree(ptr);
 }
 
 const char* InlineBox::BoxName() const {
@@ -96,13 +97,11 @@ String InlineBox::DebugName() const {
 }
 
 LayoutRect InlineBox::VisualRect() const {
-  // TODO(wangxianzhu): tighten it.
   return GetLineLayoutItem().VisualRect();
 }
 
-LayoutRect InlineBox::PartialInvalidationRect() const {
-  // TODO(wangxianzhu): tighten it.
-  return GetLineLayoutItem().PartialInvalidationRect();
+LayoutRect InlineBox::PartialInvalidationVisualRect() const {
+  return GetLineLayoutItem().PartialInvalidationVisualRect();
 }
 
 #ifndef NDEBUG
@@ -238,10 +237,10 @@ void InlineBox::Move(const LayoutSize& delta) {
 }
 
 void InlineBox::Paint(const PaintInfo& paint_info,
-                      const LayoutPoint& paint_offset,
-                      LayoutUnit /* lineTop */,
-                      LayoutUnit /* lineBottom */) const {
-  BlockPainter::PaintInlineBox(*this, paint_info, paint_offset);
+                      const LayoutPoint&,
+                      LayoutUnit,
+                      LayoutUnit) const {
+  BlockPainter::PaintInlineBox(*this, paint_info);
 }
 
 bool InlineBox::NodeAtPoint(HitTestResult& result,
@@ -305,8 +304,8 @@ InlineBox* InlineBox::PrevLeafChildIgnoringLineBreak() const {
   return (leaf && leaf->IsLineBreak()) ? nullptr : leaf;
 }
 
-SelectionState InlineBox::GetSelectionState() const {
-  return GetLineLayoutItem().GetSelectionState();
+bool InlineBox::IsSelected() const {
+  return GetLineLayoutItem().GetSelectionState() != SelectionState::kNone;
 }
 
 bool InlineBox::CanAccommodateEllipsis(bool ltr,

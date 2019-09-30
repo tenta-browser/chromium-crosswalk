@@ -17,6 +17,8 @@ class TestLocalDataBrowserProxy extends TestBrowserProxy {
       'removeShownItems',
       'removeItem',
       'getCookieDetails',
+      'getNumCookiesList',
+      'getNumCookiesString',
       'reloadCookies',
       'removeCookie',
     ]);
@@ -30,10 +32,10 @@ class TestLocalDataBrowserProxy extends TestBrowserProxy {
 
   /**
    * Test-only helper.
-   * @param {!CookieList} cookieList
+   * @param {!CookieList} cookieDetails
    */
-  setCookieDetails(cookieList) {
-    this.cookieDetails_ = cookieList;
+  setCookieDetails(cookieDetails) {
+    this.cookieDetails_ = cookieDetails;
   }
 
   /**
@@ -78,6 +80,35 @@ class TestLocalDataBrowserProxy extends TestBrowserProxy {
   getCookieDetails(site) {
     this.methodCalled('getCookieDetails', site);
     return Promise.resolve(this.cookieDetails_ || {id: '', children: []});
+  }
+
+  /** @override */
+  getNumCookiesList(siteList) {
+    this.methodCalled('getNumCookiesList', siteList);
+    const numCookiesMap = new Map();
+    if (this.cookieDetails_) {
+      this.cookieDetails_.children.forEach(cookie => {
+        let numCookies = numCookiesMap.get(cookie.domain);
+        numCookies = numCookies == null ? 1 : ++numCookies;
+        numCookiesMap.set(cookie.domain, numCookies);
+      });
+    }
+
+    const numCookiesList = siteList.map(site => {
+      const numCookies = numCookiesMap.get(site);
+      return {
+        etldPlus1: site,
+        numCookies: numCookies == null ? 0 : numCookies,
+      };
+    });
+    return Promise.resolve(numCookiesList);
+  }
+
+  /** @override */
+  getNumCookiesString(numCookies) {
+    this.methodCalled('getNumCookiesString', numCookies);
+    return Promise.resolve(
+        `${numCookies} ` + (numCookies == 1 ? 'cookie' : 'cookies'));
   }
 
   /** @override */

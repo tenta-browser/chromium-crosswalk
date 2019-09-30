@@ -19,6 +19,10 @@
 
 namespace content {
 
+// See OnScreenReaderHoneyPotQueried, below.
+bool g_screen_reader_honeypot_queried = false;
+bool g_acc_name_called = false;
+
 // static
 BrowserAccessibilityManager* BrowserAccessibilityManager::Create(
     const ui::AXTreeUpdate& initial_tree,
@@ -78,6 +82,30 @@ void BrowserAccessibilityManagerWin::OnIAccessible2Used() {
   // detected later when specific more advanced APIs are accessed.)
   BrowserAccessibilityStateImpl::GetInstance()->AddAccessibilityModeFlags(
       ui::AXMode::kNativeAPIs | ui::AXMode::kWebContents);
+}
+
+void BrowserAccessibilityManagerWin::OnScreenReaderHoneyPotQueried() {
+  // We used to trust this as a signal that a screen reader is running,
+  // but it's been abused. Now only enable accessibility if we also
+  // detect a call to get_accName.
+  if (g_screen_reader_honeypot_queried)
+    return;
+  g_screen_reader_honeypot_queried = true;
+  if (g_acc_name_called) {
+    BrowserAccessibilityStateImpl::GetInstance()->AddAccessibilityModeFlags(
+        ui::AXMode::kNativeAPIs | ui::AXMode::kWebContents);
+  }
+}
+
+void BrowserAccessibilityManagerWin::OnAccNameCalled() {
+  // See OnScreenReaderHoneyPotQueried, above.
+  if (g_acc_name_called)
+    return;
+  g_acc_name_called = true;
+  if (g_screen_reader_honeypot_queried) {
+    BrowserAccessibilityStateImpl::GetInstance()->AddAccessibilityModeFlags(
+        ui::AXMode::kNativeAPIs | ui::AXMode::kWebContents);
+  }
 }
 
 void BrowserAccessibilityManagerWin::UserIsReloading() {
@@ -151,6 +179,17 @@ void BrowserAccessibilityManagerWin::FireGeneratedEvent(
       FireWinAccessibilityEvent(EVENT_OBJECT_REORDER, node);
       break;
     case Event::LIVE_REGION_CHANGED:
+      // This event is redundant with the IA2_EVENT_TEXT_INSERTED events;
+      // however, JAWS 2018 and earlier do not process the text inserted
+      // events when "virtual cursor mode" is turned off (Insert+Z).
+      // Fortunately, firing the redudant event does not cause duplicate
+      // verbalizations in either screen reader.
+      // Future versions of JAWS may process the text inserted event when
+      // in focus mode, and so at some point the live region
+      // changed events may truly become redundant with the text inserted
+      // events. Note: Firefox does not fire this event, but JAWS processes
+      // Firefox live region events differently (utilizes MSAA's
+      // EVENT_OBJECT_SHOW).
       FireWinAccessibilityEvent(EVENT_OBJECT_LIVEREGIONCHANGED, node);
       break;
     case Event::LOAD_COMPLETE:
@@ -166,7 +205,7 @@ void BrowserAccessibilityManagerWin::FireGeneratedEvent(
       // Fire the event on the object where the focus of the selection is.
       int32_t focus_id = GetTreeData().sel_focus_object_id;
       BrowserAccessibility* focus_object = GetFromID(focus_id);
-      if (focus_object)
+      if (focus_object && focus_object->HasVisibleCaretOrSelection())
         FireWinAccessibilityEvent(IA2_EVENT_TEXT_CARET_MOVED, focus_object);
       break;
     }

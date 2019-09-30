@@ -24,20 +24,30 @@ std::string GetSyncUsernameIfSyncingPasswords(
     const syncer::SyncService* sync_service,
     const SigninManagerBase* signin_manager);
 
-// If |form| doesn't match GAIA sign-on realm or enterprise-specified password
-// protection URL, returns false. Otherwise, checks if the username
-// in |form| matches sync account.
-bool IsSyncAccountCredential(const autofill::PasswordForm& form,
-                             const syncer::SyncService* sync_service,
-                             const SigninManagerBase* signin_manager,
-                             PrefService* prefs);
-
 // Returns true if |form| corresponds to the account specified by
 // GetSyncUsernameIfSyncingPasswords. Returns false if
 // GetSyncUsernameIfSyncingPasswords does not specify any account.
-bool IsGoogleSyncAccount(const autofill::PasswordForm& form,
-                         const syncer::SyncService* sync_service,
-                         const SigninManagerBase* signin_manager);
+bool IsSyncAccountCredential(const autofill::PasswordForm& form,
+                             const syncer::SyncService* sync_service,
+                             const SigninManagerBase* signin_manager);
+
+// If |form| doesn't match GAIA sign-on realm or enterprise-specified password
+// protection URL, returns false. Otherwise, return true.
+bool ShouldSavePasswordHash(const autofill::PasswordForm& form,
+                            const SigninManagerBase* signin_manager,
+                            PrefService* prefs);
+
+// If |username| matches sync account.
+bool IsSyncAccountEmail(const std::string& username,
+                        const SigninManagerBase* signin_manager);
+
+// If |signon_realm| matches Gaia signon realm.
+bool IsGaiaCredentialPage(const std::string& signon_realm);
+
+// If |form|'s origin matches enterprise login URL or enterprise change password
+// URL.
+bool ShouldSaveEnterprisePasswordHash(const autofill::PasswordForm& form,
+                                      const PrefService& prefs);
 
 }  // namespace sync_util
 }  // namespace password_manager

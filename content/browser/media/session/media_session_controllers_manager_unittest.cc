@@ -10,7 +10,7 @@
 #include "content/test/test_render_view_host.h"
 #include "content/test/test_web_contents.h"
 #include "media/base/media_content_type.h"
-#include "media/base/media_switches.h"
+#include "services/media_session/public/cpp/switches.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -46,11 +46,11 @@ class MediaSessionControllersManagerTest
 #if !defined(OS_ANDROID)
     if (IsInternalMediaSessionEnabled()) {
       base::CommandLine::ForCurrentProcess()->AppendSwitch(
-          switches::kEnableInternalMediaSession);
+          media_session::switches::kEnableInternalMediaSession);
     }
     if (IsAudioFocusEnabled()) {
       base::CommandLine::ForCurrentProcess()->AppendSwitch(
-          switches::kEnableAudioFocus);
+          media_session::switches::kEnableAudioFocus);
     }
 #endif
 
@@ -90,7 +90,9 @@ class MediaSessionControllersManagerTest
   }
 
  protected:
-  MediaSessionControllersManager::MediaPlayerId media_player_id_;
+  MediaSessionControllersManager::MediaPlayerId media_player_id_ =
+      MediaSessionControllersManager::MediaPlayerId::
+          createMediaPlayerIdForTests();
   std::unique_ptr<StrictMock<MockMediaSessionController>>
       mock_media_session_controller_;
   StrictMock<MockMediaSessionController>* mock_media_session_controller_ptr_ =

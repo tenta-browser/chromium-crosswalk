@@ -36,32 +36,19 @@ GEN('#endif');
 /**
  * Test if the SUID sandbox is enabled.
  */
-TEST_F('SandboxStatusUITest',
-       'MAYBE_testSUIDorNamespaceSandboxEnabled', function() {
-  var namespaceyesstring = 'Namespace Sandbox\tYes';
-  var namespacenostring = 'Namespace Sandbox\tNo';
-  var suidyesstring = 'SUID Sandbox\tYes';
-  var suidnostring = 'SUID Sandbox\tNo';
+TEST_F(
+    'SandboxStatusUITest', 'MAYBE_testSUIDorNamespaceSandboxEnabled',
+    function() {
+      var sandboxnamespacestring = 'Layer 1 Sandbox\tNamespace';
+      var sandboxsuidstring = 'Layer 1 Sandbox\tSUID';
 
-  var suidyes = document.body.innerText.match(suidyesstring);
-  var suidno = document.body.innerText.match(suidnostring);
-  var namespaceyes = document.body.innerText.match(namespaceyesstring);
-  var namespaceno = document.body.innerText.match(namespacenostring);
+      var namespaceyes = document.body.innerText.match(sandboxnamespacestring);
+      var suidyes = document.body.innerText.match(sandboxsuidstring);
 
-  // Exactly one of the namespace or suid sandbox should be enabled.
-  expectTrue(suidyes !== null || namespaceyes !== null);
-  expectFalse(suidyes !== null && namespaceyes !== null);
-
-  if (namespaceyes !== null) {
-    expectEquals(null, namespaceno);
-    expectEquals(namespaceyesstring, namespaceyes[0]);
-  }
-
-  if (suidyes !== null) {
-    expectEquals(null, suidno);
-    expectEquals(suidyesstring, suidyes[0]);
-  }
-});
+      // Exactly one of the namespace or suid sandbox should be enabled.
+      expectTrue(suidyes !== null || namespaceyes !== null);
+      expectFalse(suidyes !== null && namespaceyes !== null);
+    });
 
 // The seccomp-bpf sandbox is also not compatible with ASAN.
 GEN('#if !defined(OS_LINUX)');

@@ -83,7 +83,9 @@ class MEDIA_EXPORT FFmpegDemuxerStream : public DemuxerStream {
   void SetEndOfStream();
 
   // Drops queued buffers and clears end of stream state.
-  void FlushBuffers();
+  // Passing |preserve_packet_position| will prevent replay of already seen
+  // packets.
+  void FlushBuffers(bool preserve_packet_position);
 
   // Empties the queues and ignores any additional calls to Read().
   void Stop();
@@ -118,8 +120,6 @@ class MEDIA_EXPORT FFmpegDemuxerStream : public DemuxerStream {
 
   bool IsEnabled() const;
   void SetEnabled(bool enabled, base::TimeDelta timestamp);
-
-  void SetStreamStatusChangeCB(const StreamStatusChangeCB& cb);
 
   void SetLiveness(Liveness liveness);
 
@@ -190,7 +190,6 @@ class MEDIA_EXPORT FFmpegDemuxerStream : public DemuxerStream {
 
   DecoderBufferQueue buffer_queue_;
   ReadCB read_cb_;
-  StreamStatusChangeCB stream_status_change_cb_;
 
 #if BUILDFLAG(USE_PROPRIETARY_CODECS)
   std::unique_ptr<FFmpegBitstreamConverter> bitstream_converter_;
@@ -201,6 +200,8 @@ class MEDIA_EXPORT FFmpegDemuxerStream : public DemuxerStream {
   bool fixup_chained_ogg_;
 
   int num_discarded_packet_warnings_;
+  int64_t last_packet_pos_;
+  int64_t last_packet_dts_;
 
   DISALLOW_COPY_AND_ASSIGN(FFmpegDemuxerStream);
 };
@@ -211,14 +212,14 @@ class MEDIA_EXPORT FFmpegDemuxer : public Demuxer {
                 DataSource* data_source,
                 const EncryptedMediaInitDataCB& encrypted_media_init_data_cb,
                 const MediaTracksUpdatedCB& media_tracks_updated_cb,
-                MediaLog* media_log);
+                MediaLog* media_log,
+                bool is_local_file);
   ~FFmpegDemuxer() override;
 
   // Demuxer implementation.
   std::string GetDisplayName() const override;
   void Initialize(DemuxerHost* host,
-                  const PipelineStatusCB& status_cb,
-                  bool enable_text_tracks) override;
+                  const PipelineStatusCB& status_cb) override;
   void AbortPendingReads() override;
   void Stop() override;
   void StartWaitingForSeek(base::TimeDelta seek_time) override;
@@ -226,7 +227,6 @@ class MEDIA_EXPORT FFmpegDemuxer : public Demuxer {
   void Seek(base::TimeDelta time, const PipelineStatusCB& cb) override;
   base::Time GetTimelineOffset() const override;
   std::vector<DemuxerStream*> GetAllStreams() override;
-  void SetStreamStatusChangeCB(const StreamStatusChangeCB& cb) override;
   base::TimeDelta GetStartTime() const override;
   int64_t GetMemoryUsage() const override;
 
@@ -244,11 +244,12 @@ class MEDIA_EXPORT FFmpegDemuxer : public Demuxer {
   void NotifyDemuxerError(PipelineStatus error);
 
   void OnEnabledAudioTracksChanged(const std::vector<MediaTrack::Id>& track_ids,
-                                   base::TimeDelta curr_time) override;
-  // |track_id| either contains the selected video track id or is null,
-  // indicating that all video tracks are deselected/disabled.
-  void OnSelectedVideoTrackChanged(base::Optional<MediaTrack::Id> track_id,
-                                   base::TimeDelta curr_time) override;
+                                   base::TimeDelta curr_time,
+                                   TrackChangeCB change_completed_cb) override;
+
+  void OnSelectedVideoTrackChanged(const std::vector<MediaTrack::Id>& track_ids,
+                                   base::TimeDelta curr_time,
+                                   TrackChangeCB change_completed_cb) override;
 
   // The lowest demuxed timestamp.  If negative, DemuxerStreams must use this to
   // adjust packet timestamps such that external clients see a zero-based
@@ -261,12 +262,18 @@ class MEDIA_EXPORT FFmpegDemuxer : public Demuxer {
   }
 
   container_names::MediaContainerName container() const {
-    return glue_->container();
+    return glue_ ? glue_->container() : container_names::CONTAINER_UNKNOWN;
   }
 
  private:
   // To allow tests access to privates.
   friend class FFmpegDemuxerTest;
+
+  // Helper for vide and audio track changing.
+  void FindAndEnableProperTracks(const std::vector<MediaTrack::Id>& track_ids,
+                                 base::TimeDelta curr_time,
+                                 DemuxerStream::Type track_type,
+                                 TrackChangeCB change_completed_cb);
 
   // FFmpeg callbacks during initialization.
   void OnOpenContextDone(const PipelineStatusCB& status_cb, bool result);
@@ -275,7 +282,7 @@ class MEDIA_EXPORT FFmpegDemuxer : public Demuxer {
   void LogMetadata(AVFormatContext* avctx, base::TimeDelta max_duration);
 
   // FFmpeg callbacks during seeking.
-  void OnSeekFrameDone(int result);
+  void OnSeekFrameSuccess();
 
   // FFmpeg callbacks during reading + helper method to initiate reads.
   void ReadFrameIfNeeded();
@@ -304,6 +311,14 @@ class MEDIA_EXPORT FFmpegDemuxer : public Demuxer {
   void AddTextStreams();
 
   void SetLiveness(DemuxerStream::Liveness liveness);
+
+  void SeekInternal(base::TimeDelta time, base::OnceClosure seek_cb);
+  void OnVideoSeekedForTrackChange(DemuxerStream* video_stream,
+                                   base::OnceClosure seek_completed_cb);
+  void SeekOnVideoTrackChange(base::TimeDelta seek_to_time,
+                              TrackChangeCB seek_completed_cb,
+                              DemuxerStream::Type stream_type,
+                              const std::vector<DemuxerStream*>& streams);
 
   DemuxerHost* host_;
 
@@ -367,9 +382,6 @@ class MEDIA_EXPORT FFmpegDemuxer : public Demuxer {
   // time if the file doesn't have an association to Time.
   base::Time timeline_offset_;
 
-  // Whether text streams have been enabled for this demuxer.
-  bool text_enabled_;
-
   // Set if we know duration of the audio stream. Used when processing end of
   // stream -- at this moment we definitely know duration.
   bool duration_known_;
@@ -384,6 +396,8 @@ class MEDIA_EXPORT FFmpegDemuxer : public Demuxer {
   const MediaTracksUpdatedCB media_tracks_updated_cb_;
 
   std::map<MediaTrack::Id, FFmpegDemuxerStream*> track_id_to_demux_stream_map_;
+
+  const bool is_local_file_;
 
   // NOTE: Weak pointers must be invalidated before all other member variables.
   base::WeakPtr<FFmpegDemuxer> weak_this_;

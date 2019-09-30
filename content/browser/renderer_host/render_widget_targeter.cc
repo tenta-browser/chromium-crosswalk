@@ -5,9 +5,11 @@
 #include "content/browser/renderer_host/render_widget_targeter.h"
 
 #include "base/metrics/histogram_functions.h"
+#include "base/metrics/histogram_macros.h"
 #include "content/browser/renderer_host/input/one_shot_timeout_monitor.h"
 #include "content/browser/renderer_host/render_widget_host_impl.h"
 #include "content/browser/renderer_host/render_widget_host_view_base.h"
+#include "content/public/browser/site_isolation_policy.h"
 #include "third_party/blink/public/platform/web_input_event.h"
 #include "ui/events/blink/blink_event_util.h"
 
@@ -52,8 +54,8 @@ class TracingUmaTracker {
         metric_name_(metric_name),
         tracing_category_(tracing_category) {
     TRACE_EVENT_ASYNC_BEGIN0(
-        tracing_category_.c_str(), metric_name_.c_str(),
-        TRACE_ID_WITH_SCOPE(metric_name_.c_str(), TRACE_ID_LOCAL(id_)));
+        tracing_category_, metric_name_,
+        TRACE_ID_WITH_SCOPE(metric_name_, TRACE_ID_LOCAL(id_)));
   }
   ~TracingUmaTracker() = default;
   TracingUmaTracker(TracingUmaTracker&& tracker) = default;
@@ -61,17 +63,19 @@ class TracingUmaTracker {
 
   void Stop() {
     TRACE_EVENT_ASYNC_END0(
-        tracing_category_.c_str(), metric_name_.c_str(),
-        TRACE_ID_WITH_SCOPE(metric_name_.c_str(), TRACE_ID_LOCAL(id_)));
-    UmaHistogramTimes(metric_name_.c_str(),
-                      base::TimeTicks::Now() - start_time_);
+        tracing_category_, metric_name_,
+        TRACE_ID_WITH_SCOPE(metric_name_, TRACE_ID_LOCAL(id_)));
+    UmaHistogramTimes(metric_name_, base::TimeTicks::Now() - start_time_);
   }
 
  private:
   const int id_;
   const base::TimeTicks start_time_;
-  std::string metric_name_;
-  std::string tracing_category_;
+
+  // These variables must be string literals and live for the duration
+  // of the program since tracing stores pointers.
+  const char* metric_name_;
+  const char* tracing_category_;
 
   static int next_id_;
 
@@ -88,10 +92,12 @@ RenderWidgetTargetResult::RenderWidgetTargetResult(
 RenderWidgetTargetResult::RenderWidgetTargetResult(
     RenderWidgetHostViewBase* in_view,
     bool in_should_query_view,
-    base::Optional<gfx::PointF> in_location)
+    base::Optional<gfx::PointF> in_location,
+    bool in_latched_target)
     : view(in_view),
       should_query_view(in_should_query_view),
-      target_location(in_location) {}
+      target_location(in_location),
+      latched_target(in_latched_target) {}
 
 RenderWidgetTargetResult::~RenderWidgetTargetResult() = default;
 
@@ -146,10 +152,8 @@ void RenderWidgetTargeter::FindTargetAndDispatch(
 
   RenderWidgetHostViewBase* target = result.view;
   auto* event_ptr = &event;
-  // TODO(kenrb, wjmaclean): Asynchronous hit tests don't work properly with
-  // GuestViews, so rely on the synchronous result.
-  // See https://crbug.com/802378.
-  if (result.should_query_view && !target->IsRenderWidgetHostViewGuest()) {
+  async_depth_ = 0;
+  if (result.should_query_view) {
     // TODO(kenrb, sadrul): When all event types support asynchronous hit
     // testing, we should be able to have FindTargetSynchronously return the
     // view and location to use for the renderer hit test query.
@@ -159,7 +163,8 @@ void RenderWidgetTargeter::FindTargetAndDispatch(
     QueryClient(root_view, root_view, *event_ptr, latency,
                 ComputeEventLocation(event), nullptr, gfx::PointF());
   } else {
-    FoundTarget(root_view, target, *event_ptr, latency, result.target_location);
+    FoundTarget(root_view, target, *event_ptr, latency, result.target_location,
+                result.latched_target);
   }
 }
 
@@ -177,29 +182,37 @@ void RenderWidgetTargeter::QueryClient(
     const gfx::PointF& last_target_location) {
   DCHECK(!request_in_flight_);
 
-  request_in_flight_ = true;
   auto* target_client = target->host()->input_target_client();
+  // |target_client| may not be set yet for this |target| on Mac, need to
+  // understand why this happens. https://crbug.com/859492
+  if (!target_client) {
+    FoundTarget(root_view, target, event, latency, target_location, false);
+    return;
+  }
+
+  request_in_flight_ = true;
+  async_depth_++;
   TracingUmaTracker tracker("Event.AsyncTargeting.ResponseTime",
                             "input,latency");
-    async_hit_test_timeout_.reset(new OneShotTimeoutMonitor(
-        base::BindOnce(
-            &RenderWidgetTargeter::AsyncHitTestTimedOut,
-            weak_ptr_factory_.GetWeakPtr(), root_view->GetWeakPtr(),
-            target->GetWeakPtr(), target_location,
-            last_request_target ? last_request_target->GetWeakPtr() : nullptr,
-            last_target_location, ui::WebInputEventTraits::Clone(event),
-            latency),
-        async_hit_test_timeout_delay_));
-    target_client->FrameSinkIdAt(
-        gfx::ToCeiledPoint(target_location),
-        base::BindOnce(
-            &RenderWidgetTargeter::FoundFrameSinkId,
-            weak_ptr_factory_.GetWeakPtr(), root_view->GetWeakPtr(),
-            target->GetWeakPtr(), ui::WebInputEventTraits::Clone(event),
-            latency, ++last_request_id_, target_location, std::move(tracker)));
+  async_hit_test_timeout_.reset(new OneShotTimeoutMonitor(
+      base::BindOnce(
+          &RenderWidgetTargeter::AsyncHitTestTimedOut,
+          weak_ptr_factory_.GetWeakPtr(), root_view->GetWeakPtr(),
+          target->GetWeakPtr(), target_location,
+          last_request_target ? last_request_target->GetWeakPtr() : nullptr,
+          last_target_location, ui::WebInputEventTraits::Clone(event), latency),
+      async_hit_test_timeout_delay_));
+  target_client->FrameSinkIdAt(
+      gfx::ToCeiledPoint(target_location),
+      base::BindOnce(&RenderWidgetTargeter::FoundFrameSinkId,
+                     weak_ptr_factory_.GetWeakPtr(), root_view->GetWeakPtr(),
+                     target->GetWeakPtr(),
+                     ui::WebInputEventTraits::Clone(event), latency,
+                     ++last_request_id_, target_location, std::move(tracker)));
 }
 
 void RenderWidgetTargeter::FlushEventQueue() {
+  bool events_being_flushed = false;
   while (!request_in_flight_ && !requests_.empty()) {
     auto request = std::move(requests_.front());
     requests_.pop();
@@ -209,9 +222,16 @@ void RenderWidgetTargeter::FlushEventQueue() {
       continue;
     }
     request.tracker->Stop();
+    // Only notify the delegate once that the current event queue is being
+    // flushed. Once all the events are flushed, notify the delegate again.
+    if (!events_being_flushed) {
+      delegate_->SetEventsBeingFlushed(true);
+      events_being_flushed = true;
+    }
     FindTargetAndDispatch(request.root_view.get(), *request.event,
                           request.latency);
   }
+  delegate_->SetEventsBeingFlushed(false);
 }
 
 void RenderWidgetTargeter::FoundFrameSinkId(
@@ -222,7 +242,8 @@ void RenderWidgetTargeter::FoundFrameSinkId(
     uint32_t request_id,
     const gfx::PointF& target_location,
     TracingUmaTracker tracker,
-    const viz::FrameSinkId& frame_sink_id) {
+    const viz::FrameSinkId& frame_sink_id,
+    const gfx::PointF& transformed_location) {
   tracker.Stop();
   if (request_id != last_request_id_ || !request_in_flight_) {
     // This is a response to a request that already timed out, so the event
@@ -242,12 +263,10 @@ void RenderWidgetTargeter::FoundFrameSinkId(
   // asking the clients until a client claims an event for itself.
   if (view == target.get() ||
       unresponsive_views_.find(view) != unresponsive_views_.end()) {
-    FoundTarget(root_view.get(), view, *event, latency, target_location);
+    FoundTarget(root_view.get(), view, *event, latency, target_location, false);
   } else {
-    gfx::PointF location = target_location;
-    target->TransformPointToCoordSpaceForView(location, view, &location);
-    QueryClient(root_view.get(), view, *event, latency, location, target.get(),
-                target_location);
+    QueryClient(root_view.get(), view, *event, latency, transformed_location,
+                target.get(), target_location);
   }
 }
 
@@ -256,7 +275,13 @@ void RenderWidgetTargeter::FoundTarget(
     RenderWidgetHostViewBase* target,
     const blink::WebInputEvent& event,
     const ui::LatencyInfo& latency,
-    const base::Optional<gfx::PointF>& target_location) {
+    const base::Optional<gfx::PointF>& target_location,
+    bool latched_target) {
+  if (SiteIsolationPolicy::UseDedicatedProcessesForAllSites() &&
+      !latched_target) {
+    UMA_HISTOGRAM_COUNTS_100("Event.AsyncTargeting.AsyncClientDepth",
+                             async_depth_);
+  }
   // RenderWidgetHostViewMac can be deleted asynchronously, in which case the
   // View will be valid but there will no longer be a RenderWidgetHostImpl.
   if (!root_view || !root_view->GetRenderWidgetHost())
@@ -290,10 +315,10 @@ void RenderWidgetTargeter::AsyncHitTestTimedOut(
     // renderer fails to process it.
     FoundTarget(current_request_root_view.get(),
                 current_request_root_view.get(), *event, latency,
-                current_target_location);
+                current_target_location, false);
   } else {
     FoundTarget(current_request_root_view.get(), last_request_target.get(),
-                *event, latency, last_target_location);
+                *event, latency, last_target_location, false);
   }
 }
 

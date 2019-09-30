@@ -115,8 +115,9 @@ static bool RulesApplicableInCurrentTreeScope(
 template <typename RuleDataListType>
 void ElementRuleCollector::CollectMatchingRulesForList(
     const RuleDataListType* rules,
-    CascadeOrder cascade_order,
-    const MatchRequest& match_request) {
+    ShadowV0CascadeOrder cascade_order,
+    const MatchRequest& match_request,
+    PartNames* part_names) {
   if (!rules)
     return;
 
@@ -126,6 +127,7 @@ void ElementRuleCollector::CollectMatchingRulesForList(
   init.element_style = style_.get();
   init.scrollbar = pseudo_style_request_.scrollbar;
   init.scrollbar_part = pseudo_style_request_.scrollbar_part;
+  init.part_names = part_names;
   SelectorChecker checker(init);
   SelectorChecker::SelectorCheckingContext context(
       context_.GetElement(), SelectorChecker::kVisitedMatchEnabled);
@@ -144,8 +146,8 @@ void ElementRuleCollector::CollectMatchingRulesForList(
       continue;
     }
 
-    // FIXME: Exposing the non-standard getMatchedCSSRules API to web is the
-    // only reason this is needed.
+    // Don't return cross-origin rules if we did not explicitly ask for them
+    // through SetSameOriginOnly.
     if (same_origin_only_ && !rule_data.HasDocumentSecurityOrigin())
       continue;
 
@@ -186,7 +188,7 @@ void ElementRuleCollector::CollectMatchingRulesForList(
 DISABLE_CFI_PERF
 void ElementRuleCollector::CollectMatchingRules(
     const MatchRequest& match_request,
-    CascadeOrder cascade_order,
+    ShadowV0CascadeOrder cascade_order,
     bool matching_tree_boundary_rules) {
   DCHECK(match_request.rule_set);
   DCHECK(context_.GetElement());
@@ -242,18 +244,19 @@ void ElementRuleCollector::CollectMatchingRules(
 
 void ElementRuleCollector::CollectMatchingShadowHostRules(
     const MatchRequest& match_request,
-    CascadeOrder cascade_order) {
+    ShadowV0CascadeOrder cascade_order) {
   CollectMatchingRulesForList(match_request.rule_set->ShadowHostRules(),
                               cascade_order, match_request);
 }
 
 void ElementRuleCollector::CollectMatchingPartPseudoRules(
     const MatchRequest& match_request,
-    CascadeOrder cascade_order) {
+    PartNames& part_names,
+    ShadowV0CascadeOrder cascade_order) {
   if (!RuntimeEnabledFeatures::CSSPartPseudoElementEnabled())
     return;
   CollectMatchingRulesForList(match_request.rule_set->PartPseudoRules(),
-                              cascade_order, match_request);
+                              cascade_order, match_request, &part_names);
 }
 
 template <class CSSRuleCollection>
@@ -327,7 +330,7 @@ void ElementRuleCollector::SortAndTransferMatchedRules() {
 void ElementRuleCollector::DidMatchRule(
     const RuleData& rule_data,
     const SelectorChecker::MatchResult& result,
-    CascadeOrder cascade_order,
+    ShadowV0CascadeOrder cascade_order,
     const MatchRequest& match_request) {
   PseudoId dynamic_pseudo = result.dynamic_pseudo;
   // If we're matching normal rules, set a pseudo bit if we really just matched

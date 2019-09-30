@@ -1,5 +1,6 @@
 This is a testharness.js-based test.
-Found 722 tests; 628 PASS, 94 FAIL, 0 TIMEOUT, 0 NOTRUN.
+Found 700 tests; 632 PASS, 68 FAIL, 0 TIMEOUT, 0 NOTRUN.
+PASS Setup
 PASS align-content (type: discrete) has testInterpolation function
 PASS align-content uses discrete animation when animating between "flex-start" and "flex-end" with linear easing
 PASS align-content uses discrete animation when animating between "flex-start" and "flex-end" with effect easing
@@ -223,14 +224,10 @@ PASS column-width (type: discrete) has testInterpolation function
 PASS column-width uses discrete animation when animating between "auto" and "1px" with linear easing
 PASS column-width uses discrete animation when animating between "auto" and "1px" with effect easing
 PASS column-width uses discrete animation when animating between "auto" and "1px" with keyframe easing
-PASS contain (type: discrete) has testInterpolation function
-PASS contain uses discrete animation when animating between "strict" and "none" with linear easing
-PASS contain uses discrete animation when animating between "strict" and "none" with effect easing
-PASS contain uses discrete animation when animating between "strict" and "none" with keyframe easing
 PASS content (type: discrete) has testInterpolation function
-FAIL content uses discrete animation when animating between ""a"" and ""b"" with linear easing assert_equals: expected (string) "::before" but got (undefined) undefined
-FAIL content uses discrete animation when animating between ""a"" and ""b"" with effect easing assert_equals: expected (string) "::before" but got (undefined) undefined
-FAIL content uses discrete animation when animating between ""a"" and ""b"" with keyframe easing assert_equals: expected (string) "::before" but got (undefined) undefined
+PASS content uses discrete animation when animating between ""a"" and ""b"" with linear easing
+PASS content uses discrete animation when animating between ""a"" and ""b"" with effect easing
+PASS content uses discrete animation when animating between ""a"" and ""b"" with keyframe easing
 PASS counter-increment (type: discrete) has testInterpolation function
 PASS counter-increment uses discrete animation when animating between "ident-1 1" and "ident-2 2" with linear easing
 PASS counter-increment uses discrete animation when animating between "ident-1 1" and "ident-2 2" with effect easing
@@ -243,10 +240,6 @@ PASS cursor (type: discrete) has testInterpolation function
 PASS cursor uses discrete animation when animating between "pointer" and "wait" with linear easing
 PASS cursor uses discrete animation when animating between "pointer" and "wait" with effect easing
 PASS cursor uses discrete animation when animating between "pointer" and "wait" with keyframe easing
-PASS direction (type: discrete) has testInterpolation function
-PASS direction uses discrete animation when animating between "ltr" and "rtl" with linear easing
-PASS direction uses discrete animation when animating between "ltr" and "rtl" with effect easing
-PASS direction uses discrete animation when animating between "ltr" and "rtl" with keyframe easing
 PASS dominant-baseline (type: discrete) has testInterpolation function
 PASS dominant-baseline uses discrete animation when animating between "ideographic" and "alphabetic" with linear easing
 PASS dominant-baseline uses discrete animation when animating between "ideographic" and "alphabetic" with effect easing
@@ -307,9 +300,8 @@ PASS flood-color supports animating as color of rgba()
 PASS flood-color supports animating as color of hsla()
 PASS flood-opacity (type: opacity) has testInterpolation function
 PASS flood-opacity supports animating as a [0, 1] number
-PASS font-stretch (type: fontStretch) has testInterpolation function
-FAIL font-stretch supports animating as a font-stretch (adjacent values) assert_equals: The value should be ultra-condensed at 499ms expected "ultra-condensed" but got "50%"
-FAIL font-stretch supports animating as a font-stretch (between value) assert_equals: The value should be extra-condensed at 500ms expected "extra-condensed" but got "75%"
+PASS font-stretch (type: percentage) has testInterpolation function
+FAIL font-stretch supports animating as a percentage assert_equals: The value should be 30% at 500ms expected "30%" but got "50%"
 PASS font-style (type: discrete) has testInterpolation function
 FAIL font-style uses discrete animation when animating between "italic" and "oblique" with linear easing assert_equals: The value should be oblique at 500ms expected "oblique" but got "italic"
 FAIL font-style uses discrete animation when animating between "italic" and "oblique" with effect easing assert_equals: The value should be oblique at 960ms expected "oblique" but got "italic"
@@ -398,13 +390,13 @@ PASS grid-template-rows uses discrete animation when animating between "1px" and
 PASS grid-template-rows uses discrete animation when animating between "1px" and "5px" with effect easing
 PASS grid-template-rows uses discrete animation when animating between "1px" and "5px" with keyframe easing
 PASS hyphens (type: discrete) has testInterpolation function
-FAIL hyphens uses discrete animation when animating between "manual" and "auto" with linear easing assert_equals: The value should be auto at 500ms expected "auto" but got "manual"
-FAIL hyphens uses discrete animation when animating between "manual" and "auto" with effect easing assert_equals: The value should be auto at 960ms expected "auto" but got "manual"
-FAIL hyphens uses discrete animation when animating between "manual" and "auto" with keyframe easing assert_equals: The value should be auto at 960ms expected "auto" but got "manual"
+PASS hyphens uses discrete animation when animating between "manual" and "none" with linear easing
+PASS hyphens uses discrete animation when animating between "manual" and "none" with effect easing
+PASS hyphens uses discrete animation when animating between "manual" and "none" with keyframe easing
 PASS image-orientation (type: discrete) has testInterpolation function
-FAIL image-orientation uses discrete animation when animating between "0deg" and "90deg" with linear easing assert_equals: The value should be 90deg at 500ms expected "90deg" but got "0deg"
-FAIL image-orientation uses discrete animation when animating between "0deg" and "90deg" with effect easing assert_equals: The value should be 90deg at 960ms expected "90deg" but got "0deg"
-FAIL image-orientation uses discrete animation when animating between "0deg" and "90deg" with keyframe easing assert_equals: The value should be 90deg at 960ms expected "90deg" but got "0deg"
+FAIL image-orientation uses discrete animation when animating between "none" and "from-image" with linear easing assert_equals: The value should be none at 0ms expected "none" but got "0deg"
+FAIL image-orientation uses discrete animation when animating between "none" and "from-image" with effect easing assert_equals: The value should be none at 0ms expected "none" but got "0deg"
+FAIL image-orientation uses discrete animation when animating between "none" and "from-image" with keyframe easing assert_equals: The value should be none at 0ms expected "none" but got "0deg"
 PASS isolation (type: discrete) has testInterpolation function
 PASS isolation uses discrete animation when animating between "auto" and "isolate" with linear easing
 PASS isolation uses discrete animation when animating between "auto" and "isolate" with effect easing
@@ -444,21 +436,21 @@ PASS list-style-type uses discrete animation when animating between "circle" and
 PASS list-style-type uses discrete animation when animating between "circle" and "square" with effect easing
 PASS list-style-type uses discrete animation when animating between "circle" and "square" with keyframe easing
 PASS marker-end (type: discrete) has testInterpolation function
-FAIL marker-end uses discrete animation when animating between "url("http://localhost/test-1")" and "url("http://localhost/test-2")" with linear easing assert_equals: The value should be url("http://localhost/test-1") at 0ms expected "url(\"http://localhost/test-1\")" but got "none"
-FAIL marker-end uses discrete animation when animating between "url("http://localhost/test-1")" and "url("http://localhost/test-2")" with effect easing assert_equals: The value should be url("http://localhost/test-1") at 0ms expected "url(\"http://localhost/test-1\")" but got "none"
-FAIL marker-end uses discrete animation when animating between "url("http://localhost/test-1")" and "url("http://localhost/test-2")" with keyframe easing assert_equals: The value should be url("http://localhost/test-1") at 0ms expected "url(\"http://localhost/test-1\")" but got "none"
+PASS marker-end uses discrete animation when animating between "url("http://localhost/test-1")" and "url("http://localhost/test-2")" with linear easing
+PASS marker-end uses discrete animation when animating between "url("http://localhost/test-1")" and "url("http://localhost/test-2")" with effect easing
+PASS marker-end uses discrete animation when animating between "url("http://localhost/test-1")" and "url("http://localhost/test-2")" with keyframe easing
 PASS marker-mid (type: discrete) has testInterpolation function
-FAIL marker-mid uses discrete animation when animating between "url("http://localhost/test-1")" and "url("http://localhost/test-2")" with linear easing assert_equals: The value should be url("http://localhost/test-1") at 0ms expected "url(\"http://localhost/test-1\")" but got "none"
-FAIL marker-mid uses discrete animation when animating between "url("http://localhost/test-1")" and "url("http://localhost/test-2")" with effect easing assert_equals: The value should be url("http://localhost/test-1") at 0ms expected "url(\"http://localhost/test-1\")" but got "none"
-FAIL marker-mid uses discrete animation when animating between "url("http://localhost/test-1")" and "url("http://localhost/test-2")" with keyframe easing assert_equals: The value should be url("http://localhost/test-1") at 0ms expected "url(\"http://localhost/test-1\")" but got "none"
+PASS marker-mid uses discrete animation when animating between "url("http://localhost/test-1")" and "url("http://localhost/test-2")" with linear easing
+PASS marker-mid uses discrete animation when animating between "url("http://localhost/test-1")" and "url("http://localhost/test-2")" with effect easing
+PASS marker-mid uses discrete animation when animating between "url("http://localhost/test-1")" and "url("http://localhost/test-2")" with keyframe easing
 PASS marker-start (type: discrete) has testInterpolation function
-FAIL marker-start uses discrete animation when animating between "url("http://localhost/test-1")" and "url("http://localhost/test-2")" with linear easing assert_equals: The value should be url("http://localhost/test-1") at 0ms expected "url(\"http://localhost/test-1\")" but got "none"
-FAIL marker-start uses discrete animation when animating between "url("http://localhost/test-1")" and "url("http://localhost/test-2")" with effect easing assert_equals: The value should be url("http://localhost/test-1") at 0ms expected "url(\"http://localhost/test-1\")" but got "none"
-FAIL marker-start uses discrete animation when animating between "url("http://localhost/test-1")" and "url("http://localhost/test-2")" with keyframe easing assert_equals: The value should be url("http://localhost/test-1") at 0ms expected "url(\"http://localhost/test-1\")" but got "none"
+PASS marker-start uses discrete animation when animating between "url("http://localhost/test-1")" and "url("http://localhost/test-2")" with linear easing
+PASS marker-start uses discrete animation when animating between "url("http://localhost/test-1")" and "url("http://localhost/test-2")" with effect easing
+PASS marker-start uses discrete animation when animating between "url("http://localhost/test-1")" and "url("http://localhost/test-2")" with keyframe easing
 PASS mask (type: discrete) has testInterpolation function
-FAIL mask uses discrete animation when animating between "url("http://localhost/test-1")" and "url("http://localhost/test-2")" with linear easing assert_equals: The value should be url("http://localhost/test-1") at 0ms expected "url(\"http://localhost/test-1\")" but got "none"
-FAIL mask uses discrete animation when animating between "url("http://localhost/test-1")" and "url("http://localhost/test-2")" with effect easing assert_equals: The value should be url("http://localhost/test-1") at 0ms expected "url(\"http://localhost/test-1\")" but got "none"
-FAIL mask uses discrete animation when animating between "url("http://localhost/test-1")" and "url("http://localhost/test-2")" with keyframe easing assert_equals: The value should be url("http://localhost/test-1") at 0ms expected "url(\"http://localhost/test-1\")" but got "none"
+PASS mask uses discrete animation when animating between "url("http://localhost/test-1")" and "url("http://localhost/test-2")" with linear easing
+PASS mask uses discrete animation when animating between "url("http://localhost/test-1")" and "url("http://localhost/test-2")" with effect easing
+PASS mask uses discrete animation when animating between "url("http://localhost/test-1")" and "url("http://localhost/test-2")" with keyframe easing
 PASS mask-type (type: discrete) has testInterpolation function
 PASS mask-type uses discrete animation when animating between "alpha" and "luminance" with linear easing
 PASS mask-type uses discrete animation when animating between "alpha" and "luminance" with effect easing
@@ -550,9 +542,9 @@ PASS shape-outside uses discrete animation when animating between "url("http://l
 PASS shape-outside uses discrete animation when animating between "url("http://localhost/test-1")" and "url("http://localhost/test-2")" with effect easing
 PASS shape-outside uses discrete animation when animating between "url("http://localhost/test-1")" and "url("http://localhost/test-2")" with keyframe easing
 PASS shape-rendering (type: discrete) has testInterpolation function
-FAIL shape-rendering uses discrete animation when animating between "optimizeSpeed" and "crispEdges" with linear easing assert_equals: The value should be optimizespeed at 0ms expected "optimizespeed" but got "optimizeSpeed"
-FAIL shape-rendering uses discrete animation when animating between "optimizeSpeed" and "crispEdges" with effect easing assert_equals: The value should be optimizespeed at 0ms expected "optimizespeed" but got "optimizeSpeed"
-FAIL shape-rendering uses discrete animation when animating between "optimizeSpeed" and "crispEdges" with keyframe easing assert_equals: The value should be optimizespeed at 0ms expected "optimizespeed" but got "optimizeSpeed"
+PASS shape-rendering uses discrete animation when animating between "optimizeSpeed" and "crispEdges" with linear easing
+PASS shape-rendering uses discrete animation when animating between "optimizeSpeed" and "crispEdges" with effect easing
+PASS shape-rendering uses discrete animation when animating between "optimizeSpeed" and "crispEdges" with keyframe easing
 PASS stop-color (type: color) has testInterpolation function
 PASS stop-color supports animating as color of rgb()
 PASS stop-color supports animating as color of #RGB
@@ -618,18 +610,14 @@ PASS text-decoration-style (type: discrete) has testInterpolation function
 PASS text-decoration-style uses discrete animation when animating between "solid" and "dotted" with linear easing
 PASS text-decoration-style uses discrete animation when animating between "solid" and "dotted" with effect easing
 PASS text-decoration-style uses discrete animation when animating between "solid" and "dotted" with keyframe easing
-PASS text-orientation (type: discrete) has testInterpolation function
-PASS text-orientation uses discrete animation when animating between "upright" and "sideways" with linear easing
-PASS text-orientation uses discrete animation when animating between "upright" and "sideways" with effect easing
-PASS text-orientation uses discrete animation when animating between "upright" and "sideways" with keyframe easing
 PASS text-overflow (type: discrete) has testInterpolation function
 PASS text-overflow uses discrete animation when animating between "clip" and "ellipsis" with linear easing
 PASS text-overflow uses discrete animation when animating between "clip" and "ellipsis" with effect easing
 PASS text-overflow uses discrete animation when animating between "clip" and "ellipsis" with keyframe easing
 PASS text-rendering (type: discrete) has testInterpolation function
-FAIL text-rendering uses discrete animation when animating between "optimizeSpeed" and "optimizeLegibility" with linear easing assert_equals: The value should be optimizespeed at 0ms expected "optimizespeed" but got "optimizeSpeed"
-FAIL text-rendering uses discrete animation when animating between "optimizeSpeed" and "optimizeLegibility" with effect easing assert_equals: The value should be optimizespeed at 0ms expected "optimizespeed" but got "optimizeSpeed"
-FAIL text-rendering uses discrete animation when animating between "optimizeSpeed" and "optimizeLegibility" with keyframe easing assert_equals: The value should be optimizespeed at 0ms expected "optimizespeed" but got "optimizeSpeed"
+PASS text-rendering uses discrete animation when animating between "optimizeSpeed" and "optimizeLegibility" with linear easing
+PASS text-rendering uses discrete animation when animating between "optimizeSpeed" and "optimizeLegibility" with effect easing
+PASS text-rendering uses discrete animation when animating between "optimizeSpeed" and "optimizeLegibility" with keyframe easing
 PASS text-shadow (type: textShadowList) has testInterpolation function
 PASS text-shadow: from none to other
 PASS text-shadow: from other to none
@@ -653,6 +641,8 @@ PASS transform: scale
 PASS transform: skew
 PASS transform: rotate and translate
 PASS transform: translate and rotate
+FAIL transform: extend shorter list (from) assert_approx_equals: expected matrix(-1,0,0,-1,-50,0) but got matrix(1, 0, 0, 1, 50, -3.67394e-14): The value should be matrix(-1,0,0,-1,-50,0) at 500ms but got matrix(1, 0, 0, 1, 50, -3.67394e-14) expected -1 +/- 0.0001 but got 1
+FAIL transform: extend shorter list (to) assert_approx_equals: expected matrix(-1,0,0,-1,-50,0) but got matrix(1, 0, 0, 1, 50, 0): The value should be matrix(-1,0,0,-1,-50,0) at 500ms but got matrix(1, 0, 0, 1, 50, 0) expected -1 +/- 0.0001 but got 1
 FAIL transform: mismatch order of translate and rotate assert_approx_equals: expected matrix(-0.7071067811865475,0.7071067811865476,-0.7071067811865476,-0.7071067811865475,100,50) but got matrix(0.707107, -0.707107, 0.707107, 0.707107, 100, 50): The value should be matrix(-0.7071067811865475,0.7071067811865476,-0.7071067811865476,-0.7071067811865475,100,50) at 500ms but got matrix(0.707107, -0.707107, 0.707107, 0.707107, 100, 50) expected -0.7071067811865475 +/- 0.0001 but got 0.707107
 FAIL transform: matrix assert_approx_equals: expected matrix(-0.7071067811865475,0.7071067811865476,-0.7071067811865476,-0.7071067811865475,100,50) but got matrix(0.707107, -0.707107, 0.707107, 0.707107, 100, 50): The value should be matrix(-0.7071067811865475,0.7071067811865476,-0.7071067811865476,-0.7071067811865475,100,50) at 500ms but got matrix(0.707107, -0.707107, 0.707107, 0.707107, 100, 50) expected -0.7071067811865475 +/- 0.0001 but got 0.707107
 PASS transform: rotate3d
@@ -684,10 +674,6 @@ PASS scale (type: scaleList) has testInterpolation function
 FAIL scale with two unspecified values assert_equals: The value should be 4 at 500ms expected "4" but got "4 1"
 PASS scale with one unspecified value
 PASS scale
-PASS unicode-bidi (type: discrete) has testInterpolation function
-PASS unicode-bidi uses discrete animation when animating between "embed" and "bidi-override" with linear easing
-PASS unicode-bidi uses discrete animation when animating between "embed" and "bidi-override" with effect easing
-PASS unicode-bidi uses discrete animation when animating between "embed" and "bidi-override" with keyframe easing
 PASS vector-effect (type: discrete) has testInterpolation function
 PASS vector-effect uses discrete animation when animating between "none" and "non-scaling-stroke" with linear easing
 PASS vector-effect uses discrete animation when animating between "none" and "non-scaling-stroke" with effect easing
@@ -714,13 +700,5 @@ FAIL word-spacing supports animating as combination units "%" and "em" assert_eq
 PASS word-spacing supports animating as combination units "em" and "rem"
 FAIL word-spacing supports animating as combination units "px" and "calc" assert_equals: The value should be calc(10px + 10%) at 500ms expected "calc(10px + 10%)" but got "5px"
 FAIL word-spacing supports animating as a calc assert_equals: The value should be calc(15px + 15%) at 500ms expected "calc(15px + 15%)" but got "0px"
-PASS will-change (type: discrete) has testInterpolation function
-PASS will-change uses discrete animation when animating between "scroll-position" and "contents" with linear easing
-PASS will-change uses discrete animation when animating between "scroll-position" and "contents" with effect easing
-PASS will-change uses discrete animation when animating between "scroll-position" and "contents" with keyframe easing
-PASS writing-mode (type: discrete) has testInterpolation function
-FAIL writing-mode uses discrete animation when animating between "vertical-rl" and "sideways-rl" with linear easing assert_equals: The value should be sideways-rl at 500ms expected "sideways-rl" but got "horizontal-tb"
-FAIL writing-mode uses discrete animation when animating between "vertical-rl" and "sideways-rl" with effect easing assert_equals: The value should be sideways-rl at 960ms expected "sideways-rl" but got "horizontal-tb"
-FAIL writing-mode uses discrete animation when animating between "vertical-rl" and "sideways-rl" with keyframe easing assert_equals: The value should be sideways-rl at 960ms expected "sideways-rl" but got "horizontal-tb"
 Harness: the test ran to completion.
 

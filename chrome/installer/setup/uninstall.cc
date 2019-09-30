@@ -237,7 +237,7 @@ DeleteResult DeleteEmptyDir(const base::FilePath& path) {
 // Get the user data directory.
 base::FilePath GetUserDataDir(const Product& product) {
   base::FilePath path;
-  if (!PathService::Get(chrome::DIR_USER_DATA, &path))
+  if (!base::PathService::Get(chrome::DIR_USER_DATA, &path))
     return base::FilePath();
   return path;
 }
@@ -300,7 +300,7 @@ bool MoveSetupOutOfInstallFolder(const InstallerState& installer_state,
 
   base::FilePath tmp_dir;
   base::FilePath temp_file;
-  if (!PathService::Get(base::DIR_TEMP, &tmp_dir)) {
+  if (!base::PathService::Get(base::DIR_TEMP, &tmp_dir)) {
     NOTREACHED();
     return false;
   }
@@ -393,7 +393,7 @@ DeleteResult DeleteChromeFilesAndFolders(const InstallerState& installer_state,
 InstallStatus IsChromeActiveOrUserCancelled(
     const InstallerState& installer_state,
     const Product& product) {
-  int32_t exit_code = content::RESULT_CODE_NORMAL_EXIT;
+  int32_t exit_code = service_manager::RESULT_CODE_NORMAL_EXIT;
   base::CommandLine options(base::CommandLine::NO_PROGRAM);
   options.AppendSwitch(installer::switches::kUninstall);
 
@@ -572,12 +572,6 @@ void RemoveBlacklistState() {
                                  install_static::GetRegistryPath().append(
                                      blacklist::kRegistryBeaconKeyName),
                                  0);  // wow64_access
-  // The following key is no longer used (https://crbug.com/631771). This
-  // cleanup is being left in for a time though.
-  InstallUtil::DeleteRegistryKey(
-      HKEY_CURRENT_USER,
-      install_static::GetRegistryPath().append(L"\\BLFinchList"),
-      0);  // wow64_access
 }
 
 // Removes the browser's persistent state in the Windows registry for the
@@ -907,7 +901,9 @@ InstallStatus UninstallProduct(const InstallationState& original_state,
   // there). This is due to a Google Update behaviour where an uninstall and a
   // rapid reinstall might result in stale values from the old ClientState key
   // being picked up on reinstall.
-  product.SetMsiMarker(installer_state.system_install(), false);
+  InstallUtil::DeleteRegistryValue(
+      installer_state.root_key(), install_static::GetClientStateKeyPath(),
+      KEY_WOW64_32KEY, google_update::kRegMSIField);
 
   InstallStatus ret = installer::UNKNOWN_STATUS;
 

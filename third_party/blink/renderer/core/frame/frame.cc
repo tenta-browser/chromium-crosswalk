@@ -32,11 +32,12 @@
 
 #include <memory>
 
-#include "third_party/blink/public/web/web_frame_client.h"
+#include "third_party/blink/public/web/web_local_frame_client.h"
 #include "third_party/blink/public/web/web_remote_frame_client.h"
 #include "third_party/blink/renderer/bindings/core/v8/window_proxy_manager.h"
 #include "third_party/blink/renderer/core/dom/document_type.h"
 #include "third_party/blink/renderer/core/dom/events/event.h"
+#include "third_party/blink/renderer/core/dom/node_computed_style.h"
 #include "third_party/blink/renderer/core/dom/user_gesture_indicator.h"
 #include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/frame/settings.h"
@@ -75,6 +76,7 @@ void Frame::Trace(blink::Visitor* visitor) {
 
 void Frame::Detach(FrameDetachType type) {
   DCHECK(client_);
+  detach_stack_ = base::debug::StackTrace();
   // By the time this method is called, the subclasses should have already
   // advanced to the Detaching state.
   DCHECK_EQ(lifecycle_.GetState(), FrameLifecycle::kDetaching);
@@ -173,28 +175,33 @@ void Frame::DidChangeVisibilityState() {
 }
 
 void Frame::NotifyUserActivationInLocalTree() {
-  user_activation_state_.Activate();
-  for (Frame* parent = Tree().Parent(); parent;
-       parent = parent->Tree().Parent()) {
-    parent->user_activation_state_.Activate();
-  }
+  for (Frame* node = this; node; node = node->Tree().Parent())
+    node->user_activation_state_.Activate();
 }
 
 void Frame::NotifyUserActivation() {
+  ToLocalFrame(this)->Client()->NotifyUserActivation();
   NotifyUserActivationInLocalTree();
-  ToLocalFrame(this)->Client()->SetHasReceivedUserGesture();
 }
 
-bool Frame::ConsumeTransientUserActivation() {
-  for (Frame* parent = Tree().Parent(); parent;
-       parent = parent->Tree().Parent()) {
-    parent->user_activation_state_.ConsumeIfActive();
-  }
-  for (Frame* child = Tree().FirstChild(); child;
-       child = child->Tree().TraverseNext(this)) {
-    child->user_activation_state_.ConsumeIfActive();
-  }
-  return user_activation_state_.ConsumeIfActive();
+bool Frame::ConsumeTransientUserActivationInLocalTree() {
+  bool was_active = user_activation_state_.IsActive();
+
+  // Note that consumption "touches" the whole frame tree, to guarantee that a
+  // malicious subframe can't embed sub-subframes in a way that could allow
+  // multiple consumptions per user activation.
+  Frame& root = Tree().Top();
+  for (Frame* node = &root; node; node = node->Tree().TraverseNext(&root))
+    node->user_activation_state_.ConsumeIfActive();
+
+  return was_active;
+}
+
+bool Frame::ConsumeTransientUserActivation(
+    UserActivationUpdateSource update_source) {
+  if (update_source == UserActivationUpdateSource::kRenderer)
+    ToLocalFrame(this)->Client()->ConsumeUserActivation();
+  return ConsumeTransientUserActivationInLocalTree();
 }
 
 // static
@@ -228,10 +235,12 @@ bool Frame::HasTransientUserActivation(LocalFrame* frame,
 }
 
 // static
-bool Frame::ConsumeTransientUserActivation(LocalFrame* frame,
-                                           bool checkIfMainThread) {
+bool Frame::ConsumeTransientUserActivation(
+    LocalFrame* frame,
+    bool checkIfMainThread,
+    UserActivationUpdateSource update_source) {
   if (RuntimeEnabledFeatures::UserActivationV2Enabled()) {
-    return frame ? frame->ConsumeTransientUserActivation() : false;
+    return frame ? frame->ConsumeTransientUserActivation(update_source) : false;
   }
 
   return checkIfMainThread
@@ -239,26 +248,41 @@ bool Frame::ConsumeTransientUserActivation(LocalFrame* frame,
              : UserGestureIndicator::ConsumeUserGesture();
 }
 
-bool Frame::IsFeatureEnabled(mojom::FeaturePolicyFeature feature) const {
+bool Frame::IsFeatureEnabled(mojom::FeaturePolicyFeature feature,
+                             ReportOptions report_on_failure) const {
   FeaturePolicy* feature_policy = GetSecurityContext()->GetFeaturePolicy();
   // The policy should always be initialized before checking it to ensure we
   // properly inherit the parent policy.
   DCHECK(feature_policy);
 
-  // Otherwise, check policy.
-  return feature_policy->IsFeatureEnabled(feature);
+  if (feature_policy->IsFeatureEnabled(feature))
+    return true;
+  if (report_on_failure == ReportOptions::kReportOnFailure)
+    ReportFeaturePolicyViolation(feature);
+  return false;
 }
 
 void Frame::SetOwner(FrameOwner* owner) {
   owner_ = owner;
   UpdateInertIfPossible();
+  UpdateInheritedEffectiveTouchActionIfPossible();
 }
 
 void Frame::UpdateInertIfPossible() {
   if (owner_ && owner_->IsLocal()) {
-    ToHTMLFrameOwnerElement(owner_)->UpdateDistribution();
+    ToHTMLFrameOwnerElement(owner_)->UpdateDistributionForFlatTreeTraversal();
     if (ToHTMLFrameOwnerElement(owner_)->IsInert())
       SetIsInert(true);
+  }
+}
+
+void Frame::UpdateInheritedEffectiveTouchActionIfPossible() {
+  if (owner_) {
+    Frame* owner_frame = owner_->ContentFrame();
+    if (owner_frame) {
+      SetInheritedEffectiveTouchAction(
+          owner_frame->InheritedEffectiveTouchAction());
+    }
   }
 }
 
@@ -279,7 +303,8 @@ Frame::Frame(FrameClient* client,
       client_(client),
       window_proxy_manager_(window_proxy_manager),
       is_loading_(false),
-      devtools_frame_token_(client->GetDevToolsFrameToken()) {
+      devtools_frame_token_(client->GetDevToolsFrameToken()),
+      create_stack_(base::debug::StackTrace()) {
   InstanceCounters::IncrementCounter(InstanceCounters::kFrameCounter);
 
   if (owner_)
@@ -289,8 +314,9 @@ Frame::Frame(FrameClient* client,
 }
 
 STATIC_ASSERT_ENUM(FrameDetachType::kRemove,
-                   WebFrameClient::DetachType::kRemove);
-STATIC_ASSERT_ENUM(FrameDetachType::kSwap, WebFrameClient::DetachType::kSwap);
+                   WebLocalFrameClient::DetachType::kRemove);
+STATIC_ASSERT_ENUM(FrameDetachType::kSwap,
+                   WebLocalFrameClient::DetachType::kSwap);
 STATIC_ASSERT_ENUM(FrameDetachType::kRemove,
                    WebRemoteFrameClient::DetachType::kRemove);
 STATIC_ASSERT_ENUM(FrameDetachType::kSwap,

@@ -7,30 +7,33 @@
 
 #include <type_traits>
 
-#include "third_party/blink/renderer/core/layout/layout_table_cell.h"
-#include "third_party/blink/renderer/core/layout/ng/inline/ng_inline_node_data.h"
-#include "third_party/blink/renderer/core/layout/ng/ng_constraint_space.h"
-#include "third_party/blink/renderer/core/layout/ng/ng_physical_box_fragment.h"
-#include "third_party/blink/renderer/core/paint/ng/ng_paint_fragment.h"
+#include "third_party/blink/renderer/core/core_export.h"
+#include "third_party/blink/renderer/core/layout/layout_box_model_object.h"
 
 namespace blink {
 
+enum class NGBaselineAlgorithmType;
 class NGBreakToken;
+class NGConstraintSpace;
 class NGLayoutResult;
+class NGPaintFragment;
+class NGPhysicalFragment;
+struct NGBaseline;
+struct NGInlineNodeData;
+struct NGPhysicalOffset;
 
 // This mixin holds code shared between LayoutNG subclasses of
 // LayoutBlockFlow.
 
 template <typename Base>
-class CORE_TEMPLATE_CLASS_EXPORT LayoutNGMixin : public Base {
-  static_assert(
-      std::is_base_of<LayoutBlockFlow, Base>::value,
-      "Base class of LayoutNGMixin must be LayoutBlockFlow or derived class.");
-
+class LayoutNGMixin : public Base {
  public:
-  explicit LayoutNGMixin(Element* element) : Base(element) {}
+  explicit LayoutNGMixin(Element* element);
   ~LayoutNGMixin() override;
 
+  bool IsLayoutNGObject() const override { return true; }
+
+  NGInlineNodeData* TakeNGInlineNodeData() override;
   NGInlineNodeData* GetNGInlineNodeData() const override;
   void ResetNGInlineNodeData() override;
   bool HasNGInlineNodeData() const override {
@@ -42,7 +45,7 @@ class CORE_TEMPLATE_CLASS_EXPORT LayoutNGMixin : public Base {
 
   void InvalidateDisplayItemClients(PaintInvalidationReason) const override;
 
-  void Paint(const PaintInfo&, const LayoutPoint&) const override;
+  void Paint(const PaintInfo&) const override;
 
   bool NodeAtPoint(HitTestResult&,
                    const HitTestLocation& location_in_container,
@@ -67,15 +70,29 @@ class CORE_TEMPLATE_CLASS_EXPORT LayoutNGMixin : public Base {
   NGPaintFragment* PaintFragment() const override {
     return paint_fragment_.get();
   }
-  void SetPaintFragment(scoped_refptr<const NGPhysicalFragment>) override;
-  void ClearPaintFragment() { paint_fragment_ = nullptr; }
-  Vector<NGPaintFragment*> GetPaintFragments(
-      const LayoutObject&) const override;
+  void SetPaintFragment(const NGBreakToken*,
+                        scoped_refptr<const NGPhysicalFragment>,
+                        NGPhysicalOffset) final;
+  void UpdatePaintFragmentFromCachedLayoutResult(
+      const NGBreakToken*,
+      scoped_refptr<const NGPhysicalFragment>,
+      NGPhysicalOffset) final;
 
  protected:
   bool IsOfType(LayoutObject::LayoutObjectType) const override;
 
   void AddOverflowFromChildren() override;
+
+ private:
+  void AddScrollingOverflowFromChildren();
+  void SetPaintFragment(NGPaintFragment* last_paint_fragment,
+                        scoped_refptr<NGPaintFragment>);
+
+ protected:
+  void AddOutlineRects(
+      Vector<LayoutRect>&,
+      const LayoutPoint& additional_offset,
+      LayoutObject::IncludeBlockVisualOverflowOrNot) const override;
 
   const NGPhysicalBoxFragment* CurrentFragment() const override;
 
@@ -84,16 +101,10 @@ class CORE_TEMPLATE_CLASS_EXPORT LayoutNGMixin : public Base {
   std::unique_ptr<NGInlineNodeData> ng_inline_node_data_;
 
   scoped_refptr<NGLayoutResult> cached_result_;
-  scoped_refptr<const NGConstraintSpace> cached_constraint_space_;
-  std::unique_ptr<NGPaintFragment> paint_fragment_;
+  scoped_refptr<NGPaintFragment> paint_fragment_;
 
   friend class NGBaseLayoutAlgorithmTest;
 };
-
-extern template class CORE_EXTERN_TEMPLATE_EXPORT
-    LayoutNGMixin<LayoutTableCell>;
-extern template class CORE_EXTERN_TEMPLATE_EXPORT
-    LayoutNGMixin<LayoutBlockFlow>;
 
 }  // namespace blink
 

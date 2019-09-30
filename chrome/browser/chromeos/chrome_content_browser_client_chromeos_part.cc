@@ -14,6 +14,8 @@
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/render_view_host.h"
+#include "content/public/browser/render_widget_host.h"
+#include "content/public/browser/render_widget_host_view.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/web_preferences.h"
 
@@ -60,6 +62,12 @@ void ChromeContentBrowserClientChromeOsPart::OverrideWebkitPrefs(
   // apps.
   content::WebContents* contents =
       content::WebContents::FromRenderViewHost(rvh);
+
+  // A webcontents may not be the delegate of the render view host such as in
+  // the case of interstitial pages.
+  if (!contents)
+    return;
+
   auto* browser = chrome::FindBrowserWithWebContents(contents);
   if (!browser || browser->is_app())
     return;
@@ -68,10 +76,9 @@ void ChromeContentBrowserClientChromeOsPart::OverrideWebkitPrefs(
   if (ShouldExcludePage(contents))
     return;
 
-  web_prefs->viewport_enabled = true;
-  web_prefs->viewport_meta_enabled = true;
+  web_prefs->double_tap_to_zoom_enabled = true;
+  web_prefs->text_autosizing_enabled = true;
   web_prefs->shrinks_viewport_contents_to_fit = true;
-  web_prefs->viewport_style = content::ViewportStyle::MOBILE;
   web_prefs->main_frame_resizes_are_orientation_changes = true;
   web_prefs->default_minimum_page_scale_factor = 0.25f;
   web_prefs->default_maximum_page_scale_factor = 5.0;

@@ -289,9 +289,10 @@ suite('SiteList', function() {
    *     open the action menu for.
    */
   function openActionMenu(index) {
-    const item = testElement.$.listContainer.children[index];
-    const dots = item.querySelector('#actionMenuButton');
-    MockInteractions.tap(dots);
+    const actionMenuButton =
+        testElement.$.listContainer.querySelectorAll('site-list-entry')[index]
+            .$.actionMenuButton;
+    actionMenuButton.click();
     Polymer.dom.flush();
   }
 
@@ -320,12 +321,8 @@ suite('SiteList', function() {
    * @return {boolean} Whether the entry is incognito only.
    */
   function hasAnIncognito(listContainer) {
-    const descriptions = listContainer.querySelectorAll('#siteDescription');
-    for (let i = 0; i < descriptions.length; ++i) {
-      if (descriptions[i].textContent == 'Current incognito session')
-        return true;
-    }
-    return false;
+    return listContainer.querySelector('iron-list')
+        .items.some(item => item.incognito);
   }
 
   /**
@@ -354,8 +351,8 @@ suite('SiteList', function() {
         .then(function(contentType) {
           // Flush to be sure list container is populated.
           Polymer.dom.flush();
-          const dotsMenu = testElement.$.listContainer.querySelector(
-              '#actionMenuButtonContainer');
+          const dotsMenu = testElement.$$('site-list-entry')
+                               .$$('#actionMenuButtonContainer');
           assertFalse(dotsMenu.hidden);
           testElement.setAttribute('read-only-list', true);
           Polymer.dom.flush();
@@ -518,7 +515,7 @@ suite('SiteList', function() {
     return browserProxy.whenCalled('getExceptionList')
         .then(function(actualContentType) {
           Polymer.dom.flush();
-          assertEquals(1, list.querySelectorAll('.list-item').length);
+          assertEquals(1, list.querySelector('iron-list').items.length);
           assertFalse(hasAnIncognito(list));
           browserProxy.resetResolver('getExceptionList');
           browserProxy.setIncognito(true);
@@ -526,15 +523,19 @@ suite('SiteList', function() {
         })
         .then(function() {
           Polymer.dom.flush();
-          assertEquals(2, list.querySelectorAll('.list-item').length);
+          assertEquals(2, list.querySelector('iron-list').items.length);
           assertTrue(hasAnIncognito(list));
+          assertTrue(Array.from(list.querySelectorAll('site-list-entry'))
+                         .some(
+                             entry => entry.$.siteDescription.textContent ==
+                                 'Current incognito session'));
           browserProxy.resetResolver('getExceptionList');
           browserProxy.setIncognito(false);
           return browserProxy.whenCalled('getExceptionList');
         })
         .then(function() {
           Polymer.dom.flush();
-          assertEquals(1, list.querySelectorAll('.list-item').length);
+          assertEquals(1, list.querySelector('iron-list').items.length);
           assertFalse(hasAnIncognito(list));
           browserProxy.resetResolver('getExceptionList');
           browserProxy.setIncognito(true);
@@ -542,7 +543,7 @@ suite('SiteList', function() {
         })
         .then(function() {
           Polymer.dom.flush();
-          assertEquals(2, list.querySelectorAll('.list-item').length);
+          assertEquals(2, list.querySelector('iron-list').items.length);
           assertTrue(hasAnIncognito(list));
         });
   });
@@ -569,7 +570,7 @@ suite('SiteList', function() {
           // Select 'Remove' from menu.
           const remove = testElement.$.reset;
           assertTrue(!!remove);
-          MockInteractions.tap(remove);
+          remove.click();
           return browserProxy.whenCalled('resetCategoryPermissionForPattern');
         })
         .then(function(args) {
@@ -607,7 +608,7 @@ suite('SiteList', function() {
           openActionMenu(1);
           const remove = testElement.$.reset;
           assertTrue(!!remove);
-          MockInteractions.tap(remove);
+          remove.click();
           return browserProxy.whenCalled('resetCategoryPermissionForPattern');
         })
         .then(function(args) {
@@ -637,19 +638,19 @@ suite('SiteList', function() {
 
           Polymer.dom.flush();
 
-          const item = testElement.$.listContainer.children[0];
+          const item = testElement.$$('site-list-entry');
 
           // Assert action button is hidden.
-          const dots = item.querySelector('#actionMenuButtonContainer');
+          const dots = item.$.actionMenuButtonContainer;
           assertTrue(!!dots);
           assertTrue(dots.hidden);
 
           // Assert reset button is visible.
-          const resetButton = item.querySelector('#resetSiteContainer');
+          const resetButton = item.$.resetSiteContainer;
           assertTrue(!!resetButton);
           assertFalse(resetButton.hidden);
 
-          MockInteractions.tap(resetButton.querySelector('button'));
+          resetButton.querySelector('button').click();
           return browserProxy.whenCalled('resetCategoryPermissionForPattern');
         })
         .then(function(args) {
@@ -673,12 +674,36 @@ suite('SiteList', function() {
       assertTrue(menu.open);
       const edit = testElement.$.edit;
       assertTrue(!!edit);
-      MockInteractions.tap(edit);
+      edit.click();
       Polymer.dom.flush();
       assertFalse(menu.open);
 
       assertTrue(!!testElement.$$('settings-edit-exception-dialog'));
     });
+  });
+
+  test('edit dialog closes when incognito status changes', function() {
+    setUpCategory(
+        settings.ContentSettingsTypes.COOKIES, settings.ContentSetting.BLOCK,
+        prefsSessionOnly);
+
+    return browserProxy.whenCalled('getExceptionList')
+        .then(function() {
+          Polymer.dom.flush();  // Populates action menu.
+
+          openActionMenu(0);
+          testElement.$.edit.click();
+          Polymer.dom.flush();
+
+          const dialog = testElement.$$('settings-edit-exception-dialog');
+          assertTrue(!!dialog);
+          const closeEventPromise = test_util.eventToPromise('close', dialog);
+          browserProxy.setIncognito(true);
+          return closeEventPromise;
+        })
+        .then(() => {
+          assertFalse(!!testElement.$$('settings-edit-exception-dialog'));
+        });
   });
 
   test('list items shown and clickable when data is present', function() {
@@ -702,10 +727,9 @@ suite('SiteList', function() {
           assertFalse(!!testElement.selectedOrigin);
 
           // Validate that the sites are shown in UI and can be selected.
-          const firstItem = testElement.$.listContainer.children[0];
-          const clickable = firstItem.querySelector('.middle');
+          const clickable = testElement.$$('site-list-entry').$$('.middle');
           assertTrue(!!clickable);
-          MockInteractions.tap(clickable);
+          clickable.click();
           assertEquals(
               prefsGeolocation.exceptions[contentType][0].origin,
               settings.getQueryParameters().get('site'));
@@ -797,15 +821,14 @@ suite('SiteList', function() {
           // Required for firstItem to be found below.
           Polymer.dom.flush();
           // Validate that embeddingOrigin sites cannot be edited.
-          const firstItem = testElement.$.listContainer.children[0];
-          assertTrue(
-              firstItem.querySelector('#actionMenuButtonContainer').hidden);
-          assertFalse(firstItem.querySelector('#resetSiteContainer').hidden);
+          const entries = testElement.root.querySelectorAll('site-list-entry');
+          const firstItem = entries[0];
+          assertTrue(firstItem.$.actionMenuButtonContainer.hidden);
+          assertFalse(firstItem.$.resetSiteContainer.hidden);
           // Validate that non-embeddingOrigin sites can be edited.
-          const secondItem = testElement.$.listContainer.children[1];
-          assertFalse(
-              secondItem.querySelector('#actionMenuButtonContainer').hidden);
-          assertTrue(secondItem.querySelector('#resetSiteContainer').hidden);
+          const secondItem = entries[1];
+          assertFalse(secondItem.$.actionMenuButtonContainer.hidden);
+          assertTrue(secondItem.$.resetSiteContainer.hidden);
         });
   });
 
@@ -831,7 +854,7 @@ suite('SiteList', function() {
           openActionMenu(0);
           const allow = testElement.$.allow;
           assertTrue(!!allow);
-          MockInteractions.tap(allow);
+          allow.click();
           return browserProxy.whenCalled('setCategoryPermissionForPattern');
         });
   });
@@ -848,7 +871,7 @@ suite('SiteList', function() {
 
           const allow = testElement.$.allow;
           assertTrue(!!allow);
-          MockInteractions.tap(allow);
+          allow.click();
           return browserProxy.whenCalled('setCategoryPermissionForPattern');
         })
         .then(function(args) {
@@ -858,6 +881,35 @@ suite('SiteList', function() {
           assertEquals(settings.ContentSettingsTypes.JAVASCRIPT, args[2]);
           assertEquals(settings.ContentSetting.ALLOW, args[3]);
         });
+  });
+
+  test('show-tooltip event fires on entry shows common tooltip', function() {
+    setUpCategory(
+        settings.ContentSettingsTypes.GEOLOCATION,
+        settings.ContentSetting.ALLOW, prefsGeolocation);
+    return browserProxy.whenCalled('getExceptionList').then(() => {
+      Polymer.dom.flush();
+      const entry =
+          testElement.$.listContainer.querySelector('site-list-entry');
+      const tooltip = testElement.$.tooltip;
+
+      const testsParams = [
+        ['a', testElement, new MouseEvent('mouseleave')],
+        ['b', testElement, new MouseEvent('tap')],
+        ['c', testElement, new Event('blur')],
+        ['d', tooltip, new MouseEvent('mouseenter')],
+      ];
+      testsParams.forEach(params => {
+        const text = params[0];
+        const eventTarget = params[1];
+        const event = params[2];
+        entry.fire('show-tooltip', {target: testElement, text});
+        assertTrue(tooltip._showing);
+        assertEquals(text, tooltip.innerHTML.trim());
+        eventTarget.dispatchEvent(event);
+        assertFalse(tooltip._showing);
+      });
+    });
   });
 });
 
@@ -894,7 +946,7 @@ suite('EditExceptionDialog', function() {
   });
 
   test('invalid input', function() {
-    const input = dialog.$$('paper-input');
+    const input = dialog.$$('cr-input');
     assertTrue(!!input);
     assertFalse(input.invalid);
 
@@ -923,7 +975,7 @@ suite('EditExceptionDialog', function() {
   });
 
   test('action button calls proxy', function() {
-    const input = dialog.$$('paper-input');
+    const input = dialog.$$('cr-input');
     assertTrue(!!input);
     // Simulate user edit.
     const newValue = input.value + ':1234';
@@ -933,7 +985,7 @@ suite('EditExceptionDialog', function() {
     assertTrue(!!actionButton);
     assertFalse(actionButton.disabled);
 
-    MockInteractions.tap(actionButton);
+    actionButton.click();
     return browserProxy.whenCalled('resetCategoryPermissionForPattern')
         .then(function(args) {
           assertEquals(cookieException.origin, args[0]);
@@ -967,8 +1019,8 @@ suite('AddExceptionDialog', function() {
     dialog = document.createElement('add-site-dialog');
     dialog.category = settings.ContentSettingsTypes.GEOLOCATION;
     dialog.contentSetting = settings.ContentSetting.ALLOW;
+    dialog.hasIncognito = false;
     document.body.appendChild(dialog);
-    dialog.open();
   });
 
   teardown(function() {
@@ -976,22 +1028,20 @@ suite('AddExceptionDialog', function() {
   });
 
   test('incognito', function() {
-    cr.webUIListenerCallback(
-        'onIncognitoStatusChanged',
-        /*hasIncognito=*/true);
+    dialog.set('hasIncognito', true);
+    Polymer.dom.flush();
     assertFalse(dialog.$.incognito.checked);
     dialog.$.incognito.checked = true;
     // Changing the incognito status will reset the checkbox.
-    cr.webUIListenerCallback(
-        'onIncognitoStatusChanged',
-        /*hasIncognito=*/false);
+    dialog.set('hasIncognito', false);
+    Polymer.dom.flush();
     assertFalse(dialog.$.incognito.checked);
   });
 
   test('invalid input', function() {
     // Initially the action button should be disabled, but the error warning
     // should not be shown for an empty input.
-    const input = dialog.$$('paper-input');
+    const input = dialog.$$('cr-input');
     assertTrue(!!input);
     assertFalse(input.invalid);
 

@@ -35,6 +35,10 @@
 #include "third_party/blink/renderer/platform/wtf/alignment.h"
 #include "third_party/blink/renderer/platform/wtf/allocator.h"
 
+namespace gfx {
+class Transform;
+}
+
 namespace blink {
 
 class AffineTransform;
@@ -43,6 +47,7 @@ class LayoutRect;
 class FloatRect;
 class FloatQuad;
 class FloatBox;
+class JSONArray;
 struct Rotation;
 #if defined(ARCH_CPU_X86_64)
 #define TRANSFORMATION_MATRIX_USE_X86_64_SSE2
@@ -456,6 +461,15 @@ class PLATFORM_EXPORT TransformationMatrix {
     return IsIdentityOrTranslation() && matrix_[3][2] == 0;
   }
 
+  bool Is2DProportionalUpscaleAndOr2DTranslation() const {
+    if (matrix_[0][0] < 1 || matrix_[0][0] != matrix_[1][1])
+      return false;
+    return matrix_[0][1] == 0 && matrix_[0][2] == 0 && matrix_[0][3] == 0 &&
+           matrix_[1][0] == 0 && matrix_[1][2] == 0 && matrix_[1][3] == 0 &&
+           matrix_[2][0] == 0 && matrix_[2][1] == 0 && matrix_[2][2] == 1 &&
+           matrix_[2][3] == 0 && matrix_[3][2] == 0 && matrix_[3][3] == 1;
+  }
+
   bool IsIntegerTranslation() const;
 
   // If this transformation is identity or 2D translation, returns the
@@ -466,6 +480,7 @@ class PLATFORM_EXPORT TransformationMatrix {
   void ToColumnMajorFloatArray(FloatMatrix4& result) const;
 
   static SkMatrix44 ToSkMatrix44(const TransformationMatrix&);
+  static gfx::Transform ToTransform(const TransformationMatrix&);
 
   // If |asMatrix|, return the matrix in row-major order. Otherwise, return
   // the transform's decomposition which shows the translation, scale, etc.
@@ -520,6 +535,8 @@ class PLATFORM_EXPORT TransformationMatrix {
 
 PLATFORM_EXPORT std::ostream& operator<<(std::ostream&,
                                          const TransformationMatrix&);
+PLATFORM_EXPORT std::unique_ptr<JSONArray> TransformAsJSONArray(
+    const TransformationMatrix&);
 
 }  // namespace blink
 

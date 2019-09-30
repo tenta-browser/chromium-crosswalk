@@ -18,12 +18,12 @@
       "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
         {
-          "object": "LayoutBlockFlow (positioned) DIV",
+          "object": "LayoutBlockFlow (relative positioned) DIV id='box'",
           "rect": [176, 218, 394, 185],
           "reason": "paint property change"
         },
         {
-          "object": "LayoutBlockFlow (positioned) DIV",
+          "object": "LayoutBlockFlow (relative positioned) DIV id='box'",
           "rect": [176, 218, 388, 203],
           "reason": "paint property change"
         },

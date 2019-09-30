@@ -9,6 +9,7 @@
 #include "base/bind.h"
 #include "base/logging.h"
 #include "base/message_loop/message_loop.h"
+#include "base/run_loop.h"
 #include "build/buildflag.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/ui/browser.h"
@@ -24,11 +25,10 @@ namespace internal {
 
 namespace {
 
-void MoveMouseToNSViewCenterAndPress(
-    NSView* view,
-    ui_controls::MouseButton button,
-    int state,
-    const base::Closure& task) {
+void MoveMouseToNSViewCenterAndPress(NSView* view,
+                                     ui_controls::MouseButton button,
+                                     int button_state,
+                                     const base::RepeatingClosure& task) {
   NSWindow* window = [view window];
   NSScreen* screen = [window screen];
   DCHECK(screen);
@@ -43,7 +43,8 @@ void MoveMouseToNSViewCenterAndPress(
 
   ui_controls::SendMouseMoveNotifyWhenDone(
       center.x, center.y,
-      base::BindOnce(&internal::ClickTask, button, state, task));
+      base::BindOnce(&internal::ClickTask, button, button_state, task,
+                     ui_controls::kNoAccelerator));
 }
 
 }  // namespace
@@ -83,10 +84,8 @@ void ClickOnViewCocoa(const Browser* browser, ViewID vid) {
   NSView* view = view_id_util::GetView(window, vid);
   DCHECK(view);
   MoveMouseToNSViewCenterAndPress(
-      view,
-      ui_controls::LEFT,
-      ui_controls::DOWN | ui_controls::UP,
-      base::MessageLoop::QuitWhenIdleClosure());
+      view, ui_controls::LEFT, ui_controls::DOWN | ui_controls::UP,
+      base::RunLoop::QuitCurrentWhenIdleClosureDeprecated());
   content::RunMessageLoop();
 }
 

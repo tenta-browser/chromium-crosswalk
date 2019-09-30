@@ -9,7 +9,7 @@
 
 #include "base/bind.h"
 #include "base/memory/ref_counted.h"
-#include "base/message_loop/message_loop.h"
+#include "base/message_loop/message_loop_current.h"
 #include "components/subresource_filter/core/common/activation_state.h"
 #include "components/subresource_filter/core/common/load_policy.h"
 #include "components/subresource_filter/core/common/memory_mapped_ruleset.h"
@@ -164,7 +164,7 @@ WebDocumentSubresourceFilterImpl::BuilderImpl::BuilderImpl(
       ruleset_file_(std::move(ruleset_file)),
       first_disallowed_load_callback_(
           std::move(first_disallowed_load_callback)),
-      main_task_runner_(base::MessageLoop::current()->task_runner()),
+      main_task_runner_(base::MessageLoopCurrent::Get()->task_runner()),
       is_associated_with_ad_subframe_(is_associated_with_ad_subframe) {}
 
 WebDocumentSubresourceFilterImpl::BuilderImpl::~BuilderImpl() {}
@@ -173,9 +173,12 @@ std::unique_ptr<blink::WebDocumentSubresourceFilter>
 WebDocumentSubresourceFilterImpl::BuilderImpl::Build() {
   DCHECK(ruleset_file_.IsValid());
   DCHECK(!main_task_runner_->BelongsToCurrentThread());
+  scoped_refptr<MemoryMappedRuleset> ruleset =
+      MemoryMappedRuleset::CreateAndInitialize(std::move(ruleset_file_));
+  if (!ruleset)
+    return nullptr;
   return std::make_unique<WebDocumentSubresourceFilterImpl>(
-      document_origin_, activation_state_,
-      base::MakeRefCounted<MemoryMappedRuleset>(std::move(ruleset_file_)),
+      document_origin_, activation_state_, std::move(ruleset),
       base::BindOnce(&ProxyToTaskRunner, main_task_runner_,
                      std::move(first_disallowed_load_callback_)),
       is_associated_with_ad_subframe_);

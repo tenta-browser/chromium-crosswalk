@@ -49,13 +49,19 @@ class SharedWorkerGlobalScope final : public WorkerGlobalScope {
   SharedWorkerGlobalScope(const String& name,
                           std::unique_ptr<GlobalScopeCreationParams>,
                           SharedWorkerThread*,
-                          double time_origin);
+                          base::TimeTicks time_origin);
   ~SharedWorkerGlobalScope() override;
 
   bool IsSharedWorkerGlobalScope() const override { return true; }
 
   // EventTarget
   const AtomicString& InterfaceName() const override;
+
+  // WorkerGlobalScope
+  void ImportModuleScript(
+      const KURL& module_url_record,
+      FetchClientSettingsObjectSnapshot* outside_settings_object,
+      network::mojom::FetchCredentialsMode) override;
 
   // Setters/Getters for attributes in SharedWorkerGlobalScope.idl
   DEFINE_ATTRIBUTE_EVENT_LISTENER(connect);

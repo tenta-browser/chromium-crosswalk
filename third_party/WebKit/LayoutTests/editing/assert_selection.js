@@ -129,7 +129,7 @@ class FlatTreeTraversal extends Traversal {
    * @param {!Node} node
    * @return {Node}
    */
-  firstChildOf(node) { return window.internals.firstChildInFlatTree(node); }
+  firstChildOf(node) { return internals.firstChildInFlatTree(node); }
 
   /**
    * @param {!Window} window
@@ -144,7 +144,7 @@ class FlatTreeTraversal extends Traversal {
    * @param {!Node} node
    * @return {Node}
    */
-  nextSiblingOf(node) { return window.internals.nextSiblingInFlatTree(node); }
+  nextSiblingOf(node) { return internals.nextSiblingInFlatTree(node); }
 }
 
 /**
@@ -681,11 +681,27 @@ function computeLeft(element) {
  * @param {!HTMLElement} element
  * @return {number}
  */
+function computeRight(element) {
+  return this.computeLeft(element) + element.offsetWidth;
+}
+
+/**
+ * @param {!HTMLElement} element
+ * @return {number}
+ */
 function computeTop(element) {
   let top = kIFrameBorderSize + element.ownerDocument.offsetTop;
   for (let runner = element; runner; runner = runner.offsetParent)
     top += runner.offsetTop;
   return top;
+}
+
+/**
+ * @param {!HTMLElement} element
+ * @return {number}
+ */
+function computeBottom(element) {
+  return this.computeTop(element) + element.offsetHeight;
 }
 
 /**
@@ -735,7 +751,9 @@ class Sample {
     this.selection_.document.offsetTop = this.iframe_.offsetTop;
     this.selection_.setClipboardData = setClipboardData;
     this.selection_.computeLeft = computeLeft;
+    this.selection_.computeRight = computeRight;
     this.selection_.computeTop = computeTop;
+    this.selection_.computeBottom = computeBottom;
     this.load(sampleText);
   }
 

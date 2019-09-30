@@ -15,15 +15,15 @@
 #include "base/time/time.h"
 #include "content/browser/service_worker/service_worker_metrics.h"
 #include "content/common/content_export.h"
-#include "content/common/service_worker/service_worker_event_dispatcher.mojom.h"
-#include "content/common/service_worker/service_worker_status_code.h"
-#include "content/common/service_worker/service_worker_types.h"
+#include "content/common/service_worker/service_worker.mojom.h"
 #include "content/public/common/resource_type.h"
 #include "mojo/public/cpp/system/data_pipe.h"
 #include "net/log/net_log_with_source.h"
 #include "services/network/public/mojom/url_loader.mojom.h"
 #include "services/network/public/mojom/url_loader_factory.mojom.h"
+#include "third_party/blink/public/common/service_worker/service_worker_status_code.h"
 #include "third_party/blink/public/mojom/blob/blob.mojom.h"
+#include "third_party/blink/public/mojom/fetch/fetch_api_response.mojom.h"
 #include "third_party/blink/public/mojom/service_worker/service_worker_event_status.mojom.h"
 
 namespace net {
@@ -47,11 +47,10 @@ class CONTENT_EXPORT ServiceWorkerFetchDispatcher {
   };
 
   using FetchCallback =
-      base::OnceCallback<void(ServiceWorkerStatusCode,
+      base::OnceCallback<void(blink::ServiceWorkerStatusCode,
                               FetchEventResult,
-                              const ServiceWorkerResponse&,
+                              blink::mojom::FetchAPIResponsePtr,
                               blink::mojom::ServiceWorkerStreamHandlePtr,
-                              blink::mojom::BlobPtr,
                               scoped_refptr<ServiceWorkerVersion>)>;
 
   // |request_body_*| and |client_id| are used in non-S13nServiceWorker only.
@@ -80,9 +79,9 @@ class CONTENT_EXPORT ServiceWorkerFetchDispatcher {
       base::OnceClosure on_response);
 
   // Dispatches a fetch event to the |version| given in ctor, and fires
-  // |fetch_callback| (also given in ctor) when finishes. It runs
-  // |prepare_callback| as an intermediate step once the version is activated
-  // and running.
+  // |fetch_callback_| (also given in ctor) once a response is received from the
+  // service worker. It runs |prepare_callback_| as an intermediate step once
+  // the version is activated and running.
   void Run();
 
  private:
@@ -91,22 +90,24 @@ class CONTENT_EXPORT ServiceWorkerFetchDispatcher {
 
   void DidWaitForActivation();
   void StartWorker();
-  void DidStartWorker(ServiceWorkerStatusCode status);
+  void DidStartWorker(blink::ServiceWorkerStatusCode status);
   void DispatchFetchEvent();
   void DidFailToDispatch(std::unique_ptr<ResponseCallback> callback,
-                         ServiceWorkerStatusCode status);
-  void DidFail(ServiceWorkerStatusCode status);
+                         blink::ServiceWorkerStatusCode status);
+  void DidFail(blink::ServiceWorkerStatusCode status);
   void DidFinish(int request_id,
                  FetchEventResult fetch_result,
-                 const ServiceWorkerResponse& response,
-                 blink::mojom::ServiceWorkerStreamHandlePtr body_as_stream,
-                 blink::mojom::BlobPtr body_as_blob);
-  void Complete(ServiceWorkerStatusCode status,
+                 blink::mojom::FetchAPIResponsePtr response,
+                 blink::mojom::ServiceWorkerStreamHandlePtr body_as_stream);
+  void Complete(blink::ServiceWorkerStatusCode status,
                 FetchEventResult fetch_result,
-                const ServiceWorkerResponse& response,
-                blink::mojom::ServiceWorkerStreamHandlePtr body_as_stream,
-                blink::mojom::BlobPtr body_as_blob);
+                blink::mojom::FetchAPIResponsePtr response,
+                blink::mojom::ServiceWorkerStreamHandlePtr body_as_stream);
 
+  // The fetch event stays open until all respondWith() and waitUntil() promises
+  // are settled. This function is called once the renderer signals that
+  // happened. |fetch_callback_| can run before this, once respondWith() is
+  // settled.
   static void OnFetchEventFinished(
       ServiceWorkerVersion* version,
       int event_finish_id,
@@ -137,7 +138,7 @@ class CONTENT_EXPORT ServiceWorkerFetchDispatcher {
   // |preload_handle_| holds the URLLoader and URLLoaderClient for the service
   // worker to receive the navigation preload response. It's passed to the
   // service worker along with the fetch event.
-  mojom::FetchEventPreloadHandlePtr preload_handle_;
+  blink::mojom::FetchEventPreloadHandlePtr preload_handle_;
 
   base::WeakPtrFactory<ServiceWorkerFetchDispatcher> weak_factory_;
 

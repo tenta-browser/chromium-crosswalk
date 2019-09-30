@@ -96,11 +96,9 @@ const int kHostStatusReportDelay = 5 * 60 * 1000;
 void StartUpdateCallback(UpdateScreen* screen,
                          UpdateEngineClient::UpdateCheckResult result) {
   VLOG(1) << "Callback from RequestUpdateCheck, result " << result;
-  if (UpdateScreen::HasInstance(screen)) {
-    if (result == UpdateEngineClient::UPDATE_RESULT_SUCCESS)
-      screen->SetIgnoreIdleStatus(false);
-    else
-      screen->ExitUpdate(UpdateScreen::REASON_UPDATE_INIT_FAILED);
+  if (UpdateScreen::HasInstance(screen) &&
+      result != UpdateEngineClient::UPDATE_RESULT_SUCCESS) {
+    screen->ExitUpdate(UpdateScreen::REASON_UPDATE_INIT_FAILED);
   }
 }
 
@@ -357,10 +355,10 @@ void UpdateScreen::OnPortalDetectionCompleted(
       is_first_detection_notification_) {
     is_first_detection_notification_ = false;
     base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE,
-        base::BindOnce(
-            base::IgnoreResult(&NetworkPortalDetector::StartDetectionIfIdle),
-            base::Unretained(network_portal_detector::GetInstance())));
+        FROM_HERE, base::BindOnce([]() {
+          network_portal_detector::GetInstance()->StartPortalDetection(
+              false /* force */);
+        }));
     return;
   }
   is_first_detection_notification_ = false;

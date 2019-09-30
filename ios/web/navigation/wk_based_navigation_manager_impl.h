@@ -195,7 +195,8 @@ class WKBasedNavigationManagerImpl : public NavigationManagerImpl {
   NavigationItemImpl* GetPendingItemImpl() const override;
   NavigationItemImpl* GetTransientItemImpl() const override;
   void FinishGoToIndex(int index,
-                       NavigationInitiationType initiation_type) override;
+                       NavigationInitiationType initiation_type,
+                       bool has_user_gesture) override;
   void FinishReload() override;
   void FinishLoadURLWithParams() override;
   bool IsPlaceholderUrl(const GURL& url) const override;
@@ -236,6 +237,17 @@ class WKBasedNavigationManagerImpl : public NavigationManagerImpl {
   mutable TimeSmoother time_smoother_;
 
   WKWebViewCache web_view_cache_;
+
+  // Whether this navigation manager is in the process of restoring session
+  // history into WKWebView. It is set in Restore() and unset in the first
+  // OnNavigationItemCommitted() callback.
+  bool is_restore_session_in_progress_ = false;
+
+  // The active navigation entry in the restored session. GetVisibleItem()
+  // returns this item when |is_restore_session_in_progress_| is true so that
+  // clients of this navigation manager gets sane values for visible title and
+  // URL.
+  std::unique_ptr<NavigationItem> restored_visible_item_;
 
   DISALLOW_COPY_AND_ASSIGN(WKBasedNavigationManagerImpl);
 };

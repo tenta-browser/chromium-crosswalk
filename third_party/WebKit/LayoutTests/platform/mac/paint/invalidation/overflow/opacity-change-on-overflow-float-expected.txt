@@ -18,31 +18,36 @@
       "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
         {
+          "object": "LayoutBlockFlow HTML",
+          "rect": [8, 8, 779, 54],
+          "reason": "chunk appeared"
+        },
+        {
+          "object": "LayoutBlockFlow HTML",
+          "rect": [8, 8, 779, 54],
+          "reason": "chunk disappeared"
+        },
+        {
           "object": "LayoutBlockFlow (floating) DIV class='green'",
           "rect": [8, 78, 100, 100],
-          "reason": "disappeared"
+          "reason": "chunk disappeared"
         },
         {
           "object": "LayoutBlockFlow (floating) DIV class='red'",
           "rect": [8, 78, 100, 100],
-          "reason": "appeared"
+          "reason": "chunk appeared"
         },
         {
-          "object": "LayoutBlockFlow (floating) DIV class='red'",
+          "object": "LayoutBlockFlow HTML",
           "rect": [8, 78, 100, 100],
-          "reason": "disappeared"
+          "reason": "chunk appeared"
+        },
+        {
+          "object": "LayoutBlockFlow HTML",
+          "rect": [8, 78, 100, 100],
+          "reason": "chunk disappeared"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutBlockFlow (floating) DIV class='red'",
-      "reason": "background"
-    },
-    {
-      "object": "LayoutBlockFlow (floating) DIV class='green'",
-      "reason": "style change"
     }
   ]
 }

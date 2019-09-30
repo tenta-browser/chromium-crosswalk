@@ -34,6 +34,10 @@ public final class EventConstants {
      */
     public static final String PULL_TO_REFRESH = "pull_to_refresh";
 
+    /** The contextual suggestions button was shown to the user. */
+    public static final String CONTEXTUAL_SUGGESTIONS_BUTTON_SHOWN =
+            "contextual_suggestions_button_shown";
+
     /**
      * The contextual suggestions bottom sheet was explicitly dismissed via a tap on its close
      * button.
@@ -127,6 +131,24 @@ public final class EventConstants {
      */
     public static final String CONTEXTUAL_SEARCH_TRIGGERED_BY_LONGPRESS =
             "contextual_search_triggered_by_longpress";
+
+    /**
+     * The partner homepage was pressed.
+     */
+    public static final String PARTNER_HOME_PAGE_BUTTON_PRESSED =
+            "partner_home_page_button_pressed";
+
+    /** The user used a button in the bottom toolbar. */
+    public static final String CHROME_DUET_USED_BOTTOM_TOOLBAR = "chrome_duet_used_bottom_toolbar";
+
+    /** The homepage button in the toolbar was clicked. */
+    public static final String HOMEPAGE_BUTTON_CLICKED = "homepage_button_clicked";
+
+    /** The clear tab button in the toolbar was clicked. */
+    public static final String CLEAR_TAB_BUTTON_CLICKED = "clear_tab_button_clicked";
+
+    /** The pinned homepage tile in MV tiles was clicked. */
+    public static final String HOMEPAGE_TILE_CLICKED = "homepage_tile_clicked";
 
     /**
      * Do not instantiate.

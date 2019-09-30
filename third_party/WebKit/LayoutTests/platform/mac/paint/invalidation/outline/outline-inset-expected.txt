@@ -24,16 +24,6 @@
         },
         {
           "object": "LayoutBlockFlow DIV",
-          "rect": [19, 189, 200, 60],
-          "reason": "geometry"
-        },
-        {
-          "object": "LayoutBlockFlow DIV",
-          "rect": [19, 29, 200, 60],
-          "reason": "geometry"
-        },
-        {
-          "object": "LayoutBlockFlow DIV",
           "rect": [19, 29, 200, 60],
           "reason": "geometry"
         },
@@ -48,24 +38,6 @@
           "reason": "incremental"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutBlockFlow DIV",
-      "reason": "geometry"
-    },
-    {
-      "object": "LayoutBlockFlow DIV id='a'",
-      "reason": "incremental"
-    },
-    {
-      "object": "LayoutBlockFlow DIV",
-      "reason": "geometry"
-    },
-    {
-      "object": "LayoutBlockFlow DIV id='b'",
-      "reason": "incremental"
     }
   ]
 }

@@ -12,7 +12,6 @@
 #include "ash/resources/vector_icons/vector_icons.h"
 #include "ash/shelf/shelf.h"
 #include "ash/shell.h"
-#include "ash/shell_delegate.h"
 #include "ash/system/tray/tray_constants.h"
 #include "ash/system/tray/tray_container.h"
 #include "base/logging.h"
@@ -20,6 +19,7 @@
 #include "mash/public/mojom/launchable.mojom.h"
 #include "services/service_manager/public/cpp/connector.h"
 #include "ui/accessibility/ax_node_data.h"
+#include "ui/base/ui_base_features.h"
 #include "ui/gfx/color_palette.h"
 #include "ui/gfx/geometry/size.h"
 #include "ui/gfx/paint_vector_icon.h"
@@ -37,10 +37,7 @@ FlagWarningTray::FlagWarningTray(Shelf* shelf) : shelf_(shelf) {
   DCHECK(shelf_);
   SetLayoutManager(std::make_unique<views::FillLayout>());
 
-  // Flag warning tray is not currently used in non-MASH environments, because
-  // mus will roll out via experiment/Finch trial and showing the tray would
-  // reveal the experiment state to users.
-  DCHECK_EQ(Shell::GetAshConfig(), Config::MASH);
+  DCHECK(::features::IsMultiProcessMash());
   container_ = new TrayContainer(shelf);
   AddChildView(container_);
 
@@ -71,8 +68,8 @@ void FlagWarningTray::ButtonPressed(views::Button* sender,
 
   // Open the quick launch mojo mini-app to demonstrate that mini-apps work.
   mash::mojom::LaunchablePtr launchable;
-  Shell::Get()->shell_delegate()->GetShellConnector()->BindInterface(
-      quick_launch::mojom::kServiceName, &launchable);
+  Shell::Get()->connector()->BindInterface(quick_launch::mojom::kServiceName,
+                                           &launchable);
   launchable->Launch(mash::mojom::kWindow, mash::mojom::LaunchMode::DEFAULT);
 }
 

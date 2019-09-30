@@ -24,14 +24,13 @@
  */
 
 #include <algorithm>
-#include "third_party/blink/renderer/bindings/core/v8/exception_messages.h"
-#include "third_party/blink/renderer/bindings/core/v8/exception_state.h"
-#include "third_party/blink/renderer/core/dom/exception_code.h"
+
 #include "third_party/blink/renderer/modules/webaudio/audio_node_output.h"
 #include "third_party/blink/renderer/modules/webaudio/oscillator_node.h"
 #include "third_party/blink/renderer/modules/webaudio/periodic_wave.h"
 #include "third_party/blink/renderer/platform/audio/audio_utilities.h"
 #include "third_party/blink/renderer/platform/audio/vector_math.h"
+#include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/wtf/math_extras.h"
 #include "third_party/blink/renderer/platform/wtf/std_lib_extras.h"
 
@@ -119,7 +118,7 @@ void OscillatorHandler::SetType(const String& type,
   } else if (type == "triangle") {
     SetType(TRIANGLE);
   } else if (type == "custom") {
-    exception_state.ThrowDOMException(kInvalidStateError,
+    exception_state.ThrowDOMException(DOMExceptionCode::kInvalidStateError,
                                       "'type' cannot be set directly to "
                                       "'custom'.  Use setPeriodicWave() to "
                                       "create a custom Oscillator type.");
@@ -361,8 +360,9 @@ void OscillatorHandler::Process(size_t frames_to_process) {
   size_t non_silent_frames_to_process;
   double start_frame_offset;
 
-  UpdateSchedulingInfo(frames_to_process, output_bus, quantum_frame_offset,
-                       non_silent_frames_to_process, start_frame_offset);
+  std::tie(quantum_frame_offset, non_silent_frames_to_process,
+           start_frame_offset) =
+      UpdateSchedulingInfo(frames_to_process, output_bus);
 
   if (!non_silent_frames_to_process) {
     output_bus->Zero();
@@ -470,17 +470,21 @@ OscillatorNode::OscillatorNode(BaseAudioContext& context,
                                PeriodicWave* wave_table)
     : AudioScheduledSourceNode(context),
       // Use musical pitch standard A440 as a default.
-      frequency_(AudioParam::Create(context,
-                                    kParamTypeOscillatorFrequency,
-                                    "Oscillator.frequency",
-                                    440,
-                                    -context.sampleRate() / 2,
-                                    context.sampleRate() / 2)),
+      frequency_(
+          AudioParam::Create(context,
+                             kParamTypeOscillatorFrequency,
+                             440,
+                             AudioParamHandler::AutomationRate::kAudio,
+                             AudioParamHandler::AutomationRateMode::kVariable,
+                             -context.sampleRate() / 2,
+                             context.sampleRate() / 2)),
       // Default to no detuning.
-      detune_(AudioParam::Create(context,
-                                 kParamTypeOscillatorDetune,
-                                 "Oscillator.detune",
-                                 0)) {
+      detune_(AudioParam::Create(
+          context,
+          kParamTypeOscillatorDetune,
+          0,
+          AudioParamHandler::AutomationRate::kAudio,
+          AudioParamHandler::AutomationRateMode::kVariable)) {
   SetHandler(OscillatorHandler::Create(
       *this, context.sampleRate(), oscillator_type, wave_table,
       frequency_->Handler(), detune_->Handler()));
@@ -505,7 +509,7 @@ OscillatorNode* OscillatorNode::Create(BaseAudioContext* context,
                                        ExceptionState& exception_state) {
   if (options.type() == "custom" && !options.hasPeriodicWave()) {
     exception_state.ThrowDOMException(
-        kInvalidStateError,
+        DOMExceptionCode::kInvalidStateError,
         "A PeriodicWave must be specified if the type is set to \"custom\"");
     return nullptr;
   }

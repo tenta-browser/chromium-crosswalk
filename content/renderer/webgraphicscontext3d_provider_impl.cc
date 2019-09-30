@@ -4,18 +4,17 @@
 
 #include "content/renderer/webgraphicscontext3d_provider_impl.h"
 
+#include "cc/paint/paint_image.h"
 #include "cc/tiles/gpu_image_decode_cache.h"
 #include "components/viz/common/gl_helper.h"
 #include "gpu/command_buffer/client/context_support.h"
-#include "services/ui/public/cpp/gpu/context_provider_command_buffer.h"
+#include "services/ws/public/cpp/gpu/context_provider_command_buffer.h"
 
 namespace content {
 
 WebGraphicsContext3DProviderImpl::WebGraphicsContext3DProviderImpl(
-    scoped_refptr<ui::ContextProviderCommandBuffer> provider,
-    bool software_rendering)
-    : provider_(std::move(provider)), software_rendering_(software_rendering) {
-}
+    scoped_refptr<ws::ContextProviderCommandBuffer> provider)
+    : provider_(std::move(provider)) {}
 
 WebGraphicsContext3DProviderImpl::~WebGraphicsContext3DProviderImpl() {
   provider_->RemoveObserver(this);
@@ -32,6 +31,11 @@ bool WebGraphicsContext3DProviderImpl::BindToCurrentThread() {
 
 gpu::gles2::GLES2Interface* WebGraphicsContext3DProviderImpl::ContextGL() {
   return provider_->ContextGL();
+}
+
+gpu::webgpu::WebGPUInterface*
+WebGraphicsContext3DProviderImpl::WebGPUInterface() {
+  return provider_->WebGPUInterface();
 }
 
 GrContext* WebGraphicsContext3DProviderImpl::GetGrContext() {
@@ -56,10 +60,6 @@ viz::GLHelper* WebGraphicsContext3DProviderImpl::GetGLHelper() {
   return gl_helper_.get();
 }
 
-bool WebGraphicsContext3DProviderImpl::IsSoftwareRendering() const {
-  return software_rendering_;
-}
-
 void WebGraphicsContext3DProviderImpl::SetLostContextCallback(
     base::RepeatingClosure c) {
   context_lost_callback_ = std::move(c);
@@ -68,11 +68,6 @@ void WebGraphicsContext3DProviderImpl::SetLostContextCallback(
 void WebGraphicsContext3DProviderImpl::SetErrorMessageCallback(
     base::RepeatingCallback<void(const char*, int32_t)> c) {
   provider_->ContextSupport()->SetErrorMessageCallback(std::move(c));
-}
-
-void WebGraphicsContext3DProviderImpl::SignalQuery(uint32_t query,
-                                                   base::OnceClosure callback) {
-  provider_->ContextSupport()->SignalQuery(query, std::move(callback));
 }
 
 void WebGraphicsContext3DProviderImpl::OnContextLost() {
@@ -94,7 +89,8 @@ cc::ImageDecodeCache* WebGraphicsContext3DProviderImpl::ImageDecodeCache() {
 
   image_decode_cache_ = std::make_unique<cc::GpuImageDecodeCache>(
       provider_.get(), use_transfer_cache, kN32_SkColorType,
-      kMaxWorkingSetBytes, provider_->ContextCapabilities().max_texture_size);
+      kMaxWorkingSetBytes, provider_->ContextCapabilities().max_texture_size,
+      cc::PaintImage::kDefaultGeneratorClientId);
   return image_decode_cache_.get();
 }
 

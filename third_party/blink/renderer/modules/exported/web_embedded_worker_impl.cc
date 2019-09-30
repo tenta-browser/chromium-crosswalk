@@ -31,12 +31,13 @@
 #include "third_party/blink/renderer/modules/exported/web_embedded_worker_impl.h"
 
 #include <memory>
-#include "third_party/blink/public/platform/modules/serviceworker/web_service_worker_network_provider.h"
-#include "third_party/blink/public/platform/modules/serviceworker/web_service_worker_provider.h"
+#include "services/network/public/cpp/shared_url_loader_factory.h"
+#include "third_party/blink/public/platform/modules/service_worker/web_service_worker_network_provider.h"
+#include "third_party/blink/public/platform/modules/service_worker/web_service_worker_provider.h"
 #include "third_party/blink/public/platform/task_type.h"
 #include "third_party/blink/public/platform/web_url_request.h"
 #include "third_party/blink/public/platform/web_worker_fetch_context.h"
-#include "third_party/blink/public/web/modules/serviceworker/web_service_worker_context_client.h"
+#include "third_party/blink/public/web/modules/service_worker/web_service_worker_context_client.h"
 #include "third_party/blink/public/web/web_console_message.h"
 #include "third_party/blink/public/web/web_settings.h"
 #include "third_party/blink/renderer/bindings/core/v8/source_location.h"
@@ -44,9 +45,9 @@
 #include "third_party/blink/renderer/core/frame/csp/content_security_policy.h"
 #include "third_party/blink/renderer/core/inspector/console_message.h"
 #include "third_party/blink/renderer/core/loader/frame_load_request.h"
-#include "third_party/blink/renderer/core/loader/threadable_loading_context.h"
 #include "third_party/blink/renderer/core/loader/worker_fetch_context.h"
 #include "third_party/blink/renderer/core/probe/core_probes.h"
+#include "third_party/blink/renderer/core/script/script.h"
 #include "third_party/blink/renderer/core/workers/parent_execution_context_task_runners.h"
 #include "third_party/blink/renderer/core/workers/worker_backing_thread_startup_data.h"
 #include "third_party/blink/renderer/core/workers/worker_classic_script_loader.h"
@@ -54,18 +55,20 @@
 #include "third_party/blink/renderer/core/workers/worker_global_scope.h"
 #include "third_party/blink/renderer/core/workers/worker_inspector_proxy.h"
 #include "third_party/blink/renderer/modules/indexeddb/indexed_db_client.h"
-#include "third_party/blink/renderer/modules/serviceworkers/service_worker_container_client.h"
-#include "third_party/blink/renderer/modules/serviceworkers/service_worker_global_scope_client.h"
-#include "third_party/blink/renderer/modules/serviceworkers/service_worker_global_scope_proxy.h"
-#include "third_party/blink/renderer/modules/serviceworkers/service_worker_installed_scripts_manager.h"
-#include "third_party/blink/renderer/modules/serviceworkers/service_worker_thread.h"
+#include "third_party/blink/renderer/modules/service_worker/service_worker_container_client.h"
+#include "third_party/blink/renderer/modules/service_worker/service_worker_global_scope_client.h"
+#include "third_party/blink/renderer/modules/service_worker/service_worker_global_scope_proxy.h"
+#include "third_party/blink/renderer/modules/service_worker/service_worker_installed_scripts_manager.h"
+#include "third_party/blink/renderer/modules/service_worker/service_worker_thread.h"
 #include "third_party/blink/renderer/platform/heap/handle.h"
 #include "third_party/blink/renderer/platform/instrumentation/tracing/trace_event.h"
 #include "third_party/blink/renderer/platform/loader/fetch/substitute_data.h"
 #include "third_party/blink/renderer/platform/network/network_utils.h"
 #include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "third_party/blink/renderer/platform/shared_buffer.h"
+#include "third_party/blink/renderer/platform/weborigin/referrer_policy.h"
 #include "third_party/blink/renderer/platform/weborigin/security_origin.h"
+#include "third_party/blink/renderer/platform/weborigin/security_policy.h"
 #include "third_party/blink/renderer/platform/wtf/functional.h"
 
 namespace blink {
@@ -75,13 +78,17 @@ std::unique_ptr<WebEmbeddedWorker> WebEmbeddedWorker::Create(
     std::unique_ptr<WebServiceWorkerInstalledScriptsManager>
         installed_scripts_manager,
     mojo::ScopedMessagePipeHandle content_settings_handle,
+    mojo::ScopedMessagePipeHandle cache_storage,
     mojo::ScopedMessagePipeHandle interface_provider) {
   return std::make_unique<WebEmbeddedWorkerImpl>(
       std::move(client), std::move(installed_scripts_manager),
       std::make_unique<ServiceWorkerContentSettingsProxy>(
           // Chrome doesn't use interface versioning.
+          // TODO(falken): Is that comment about versioning correct?
           mojom::blink::WorkerContentSettingsProxyPtrInfo(
               std::move(content_settings_handle), 0u)),
+      mojom::blink::CacheStoragePtrInfo(std::move(cache_storage),
+                                        mojom::blink::CacheStorage::Version_),
       service_manager::mojom::blink::InterfaceProviderPtrInfo(
           std::move(interface_provider),
           service_manager::mojom::blink::InterfaceProvider::Version_));
@@ -92,6 +99,7 @@ WebEmbeddedWorkerImpl::WebEmbeddedWorkerImpl(
     std::unique_ptr<WebServiceWorkerInstalledScriptsManager>
         installed_scripts_manager,
     std::unique_ptr<ServiceWorkerContentSettingsProxy> content_settings_client,
+    mojom::blink::CacheStoragePtrInfo cache_storage_info,
     service_manager::mojom::blink::InterfaceProviderPtrInfo
         interface_provider_info)
     : worker_context_client_(std::move(client)),
@@ -99,6 +107,7 @@ WebEmbeddedWorkerImpl::WebEmbeddedWorkerImpl(
       worker_inspector_proxy_(WorkerInspectorProxy::Create()),
       pause_after_download_state_(kDontPauseAfterDownload),
       waiting_for_debugger_state_(kNotWaitingForDebugger),
+      cache_storage_info_(std::move(cache_storage_info)),
       interface_provider_info_(std::move(interface_provider_info)) {
   if (installed_scripts_manager) {
     installed_scripts_manager_ =
@@ -139,7 +148,14 @@ void WebEmbeddedWorkerImpl::StartWorkerContext(
     pause_after_download_state_ = kDoPauseAfterDownload;
 
   devtools_worker_token_ = data.devtools_worker_token;
-  shadow_page_ = std::make_unique<WorkerShadowPage>(this);
+  // |loader_factory| is null since all loads for new scripts go through
+  // ServiceWorkerNetworkProvider::script_loader_factory() rather than the
+  // shadow page's loader. This is different to shared workers, which use the
+  // script loader factory for the main script only, and the shadow page loader
+  // for importScripts().
+  shadow_page_ = std::make_unique<WorkerShadowPage>(
+      this, nullptr /* loader_factory */,
+      std::move(worker_start_data_.privacy_preferences));
   WebSettings* settings = shadow_page_->GetSettings();
 
   // Currently we block all mixed-content requests from a ServiceWorker.
@@ -233,14 +249,6 @@ void WebEmbeddedWorkerImpl::PostMessageToPageInspector(int session_id,
   worker_inspector_proxy_->DispatchMessageFromWorker(session_id, message);
 }
 
-void WebEmbeddedWorkerImpl::SetContentSecurityPolicyAndReferrerPolicy(
-    ContentSecurityPolicy* content_security_policy,
-    String referrer_policy) {
-  DCHECK(IsMainThread());
-  shadow_page_->SetContentSecurityPolicyAndReferrerPolicy(
-      content_security_policy, std::move(referrer_policy));
-}
-
 std::unique_ptr<WebApplicationCacheHost>
 WebEmbeddedWorkerImpl::CreateApplicationCacheHost(
     WebApplicationCacheHostClient*) {
@@ -266,9 +274,11 @@ void WebEmbeddedWorkerImpl::OnShadowPageInitialized() {
     return;
   }
 
+  // Note: We only get here if this is a new (i.e., not installed) service
+  // worker.
   DCHECK(!main_script_loader_);
   main_script_loader_ = WorkerClassicScriptLoader::Create();
-  main_script_loader_->LoadAsynchronously(
+  main_script_loader_->LoadTopLevelScriptAsynchronously(
       *shadow_page_->GetDocument(), worker_start_data_.script_url,
       WebURLRequest::kRequestContextServiceWorker,
       network::mojom::FetchRequestMode::kSameOrigin,
@@ -276,7 +286,7 @@ void WebEmbeddedWorkerImpl::OnShadowPageInitialized() {
       worker_start_data_.address_space, base::OnceClosure(),
       Bind(&WebEmbeddedWorkerImpl::OnScriptLoaderFinished,
            WTF::Unretained(this)));
-  // Do nothing here since onScriptLoaderFinished() might have been already
+  // Do nothing here since OnScriptLoaderFinished() might have been already
   // invoked and |this| might have been deleted at this point.
 }
 
@@ -319,6 +329,7 @@ void WebEmbeddedWorkerImpl::StartWorkerThread() {
   // (crbug.com/254993)
   const SecurityOrigin* starter_origin = document->GetSecurityOrigin();
   bool starter_secure_context = document->IsSecureContext();
+  const HttpsState starter_https_state = document->GetHttpsState();
 
   WorkerClients* worker_clients = WorkerClients::Create();
   ProvideIndexedDBClientToWorker(worker_clients,
@@ -333,7 +344,8 @@ void WebEmbeddedWorkerImpl::StartWorkerThread() {
       worker_clients, worker_context_client_->CreateServiceWorkerProvider());
 
   std::unique_ptr<WebWorkerFetchContext> web_worker_fetch_context =
-      worker_context_client_->CreateServiceWorkerFetchContext();
+      worker_context_client_->CreateServiceWorkerFetchContext(
+          shadow_page_->DocumentLoader()->GetServiceWorkerNetworkProvider());
   // |web_worker_fetch_context| is null in some unit tests.
   if (web_worker_fetch_context) {
     ProvideWorkerFetchContextToWorker(worker_clients,
@@ -347,42 +359,50 @@ void WebEmbeddedWorkerImpl::StartWorkerThread() {
   String source_code;
   std::unique_ptr<Vector<char>> cached_meta_data;
 
-  // TODO(nhiroki); Set the coordinator for module fetch.
-  // (https://crbug.com/680046)
-  WorkerOrWorkletModuleFetchCoordinator* module_fetch_coordinator = nullptr;
+  // TODO(nhiroki); Set |script_type| to ScriptType::kModule for module fetch.
+  // (https://crbug.com/824647)
+  ScriptType script_type = ScriptType::kClassic;
 
   // |main_script_loader_| isn't created if the InstalledScriptsManager had the
   // script.
   if (main_script_loader_) {
-    // We need to set the CSP to both the shadow page's document and the
-    // ServiceWorkerGlobalScope.
-    SetContentSecurityPolicyAndReferrerPolicy(
-        main_script_loader_->ReleaseContentSecurityPolicy(),
-        main_script_loader_->GetReferrerPolicy());
+    ContentSecurityPolicy* content_security_policy =
+        main_script_loader_->GetContentSecurityPolicy();
+    ReferrerPolicy referrer_policy = kReferrerPolicyDefault;
+    if (!main_script_loader_->GetReferrerPolicy().IsNull()) {
+      SecurityPolicy::ReferrerPolicyFromHeaderValue(
+          main_script_loader_->GetReferrerPolicy(),
+          kDoNotSupportReferrerPolicyLegacyKeywords, &referrer_policy);
+    }
     global_scope_creation_params = std::make_unique<GlobalScopeCreationParams>(
-        worker_start_data_.script_url, worker_start_data_.user_agent,
-        document->GetContentSecurityPolicy()->Headers().get(),
-        document->GetReferrerPolicy(), starter_origin, starter_secure_context,
-        worker_clients, main_script_loader_->ResponseAddressSpace(),
+        worker_start_data_.script_url, script_type,
+        worker_start_data_.user_agent,
+        content_security_policy ? content_security_policy->Headers()
+                                : Vector<CSPHeaderAndType>(),
+        referrer_policy, starter_origin, starter_secure_context,
+        starter_https_state, worker_clients,
+        main_script_loader_->ResponseAddressSpace(),
         main_script_loader_->OriginTrialTokens(), devtools_worker_token_,
         std::move(worker_settings),
         static_cast<V8CacheOptions>(worker_start_data_.v8_cache_options),
-        module_fetch_coordinator, std::move(interface_provider_info_));
+        nullptr /* worklet_module_respones_map */,
+        std::move(interface_provider_info_));
     source_code = main_script_loader_->SourceText();
     cached_meta_data = main_script_loader_->ReleaseCachedMetadata();
     main_script_loader_ = nullptr;
   } else {
-    // ContentSecurityPolicy and ReferrerPolicy are applied to |document| at
-    // SetContentSecurityPolicyAndReferrerPolicy() before evaluating the main
-    // script.
+    // We don't have to set ContentSecurityPolicy and ReferrerPolicy. They're
+    // served by the installed scripts manager on the worker thread.
     global_scope_creation_params = std::make_unique<GlobalScopeCreationParams>(
-        worker_start_data_.script_url, worker_start_data_.user_agent,
-        nullptr /* ContentSecurityPolicy */, kReferrerPolicyDefault,
-        starter_origin, starter_secure_context, worker_clients,
-        worker_start_data_.address_space, nullptr /* OriginTrialTokens */,
-        devtools_worker_token_, std::move(worker_settings),
+        worker_start_data_.script_url, script_type,
+        worker_start_data_.user_agent, Vector<CSPHeaderAndType>(),
+        kReferrerPolicyDefault, starter_origin, starter_secure_context,
+        starter_https_state, worker_clients, worker_start_data_.address_space,
+        nullptr /* OriginTrialTokens */, devtools_worker_token_,
+        std::move(worker_settings),
         static_cast<V8CacheOptions>(worker_start_data_.v8_cache_options),
-        module_fetch_coordinator, std::move(interface_provider_info_));
+        nullptr /* worklet_module_respones_map */,
+        std::move(interface_provider_info_));
   }
 
   if (RuntimeEnabledFeatures::ServiceWorkerScriptFullCodeCacheEnabled()) {
@@ -391,9 +411,8 @@ void WebEmbeddedWorkerImpl::StartWorkerThread() {
   }
 
   worker_thread_ = std::make_unique<ServiceWorkerThread>(
-      ThreadableLoadingContext::Create(*document),
       ServiceWorkerGlobalScopeProxy::Create(*this, *worker_context_client_),
-      std::move(installed_scripts_manager_));
+      std::move(installed_scripts_manager_), std::move(cache_storage_info_));
 
   // We have a dummy document here for loading but it doesn't really represent
   // the document/frame of associated document(s) for this worker. Here we
@@ -408,6 +427,9 @@ void WebEmbeddedWorkerImpl::StartWorkerThread() {
                                                worker_start_data_.script_url);
 
   // TODO(nhiroki): Support module workers (https://crbug.com/680046).
+  // Note that this doesn't really start the script evaluation until
+  // ReadyToEvaluateScript() is called on the WebServiceWorkerContextProxy
+  // on the worker thread.
   worker_thread_->EvaluateClassicScript(
       worker_start_data_.script_url, source_code, std::move(cached_meta_data),
       v8_inspector::V8StackTraceId());

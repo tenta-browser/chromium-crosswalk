@@ -24,6 +24,14 @@ const char kNigoriTag[] = "google_chrome_nigori";
 // assign the same name to a particular triplet.
 const char kNigoriKeyName[] = "nigori-key";
 
+KeyParams::KeyParams(KeyDerivationParams derivation_params,
+                     const std::string& password)
+    : derivation_params(derivation_params), password(password) {}
+
+KeyParams::KeyParams(const KeyParams& other) = default;
+KeyParams::KeyParams(KeyParams&& other) = default;
+KeyParams::~KeyParams() = default;
+
 Cryptographer::Cryptographer(Encryptor* encryptor) : encryptor_(encryptor) {
   DCHECK(encryptor);
 }
@@ -35,9 +43,9 @@ Cryptographer::Cryptographer(const Cryptographer& other)
        it != other.nigoris_.end(); ++it) {
     std::string user_key, encryption_key, mac_key;
     it->second->ExportKeys(&user_key, &encryption_key, &mac_key);
-    linked_ptr<Nigori> nigori_copy(new Nigori());
+    auto nigori_copy = std::make_unique<Nigori>();
     nigori_copy->InitByImport(user_key, encryption_key, mac_key);
-    nigoris_.insert(std::make_pair(it->first, nigori_copy));
+    nigoris_.emplace(it->first, std::move(nigori_copy));
   }
 
   if (other.pending_keys_) {
@@ -144,11 +152,10 @@ bool Cryptographer::GetKeys(sync_pb::EncryptedData* encrypted) const {
 
   // Create a bag of all the Nigori parameters we know about.
   sync_pb::NigoriKeyBag bag;
-  for (NigoriMap::const_iterator it = nigoris_.begin(); it != nigoris_.end();
-       ++it) {
-    const Nigori& nigori = *it->second;
+  for (const auto& key_name_and_nigori : nigoris_) {
+    const Nigori& nigori = *key_name_and_nigori.second;
     sync_pb::NigoriKey* key = bag.add_key();
-    key->set_name(it->first);
+    key->set_name(key_name_and_nigori.first);
     nigori.ExportKeys(key->mutable_user_key(), key->mutable_encryption_key(),
                       key->mutable_mac_key());
   }
@@ -160,8 +167,7 @@ bool Cryptographer::GetKeys(sync_pb::EncryptedData* encrypted) const {
 bool Cryptographer::AddKey(const KeyParams& params) {
   // Create the new Nigori and make it the default encryptor.
   std::unique_ptr<Nigori> nigori(new Nigori);
-  if (!nigori->InitByDerivation(params.hostname, params.username,
-                                params.password)) {
+  if (!nigori->InitByDerivation(params.derivation_params, params.password)) {
     NOTREACHED();  // Invalid username or password.
     return false;
   }
@@ -172,8 +178,7 @@ bool Cryptographer::AddNonDefaultKey(const KeyParams& params) {
   DCHECK(is_initialized());
   // Create the new Nigori and add it to the keybag.
   std::unique_ptr<Nigori> nigori(new Nigori);
-  if (!nigori->InitByDerivation(params.hostname, params.username,
-                                params.password)) {
+  if (!nigori->InitByDerivation(params.derivation_params, params.password)) {
     NOTREACHED();  // Invalid username or password.
     return false;
   }
@@ -196,7 +201,7 @@ bool Cryptographer::AddKeyImpl(std::unique_ptr<Nigori> initialized_nigori,
     return false;
   }
 
-  nigoris_[name] = make_linked_ptr(initialized_nigori.release());
+  nigoris_[name] = std::move(initialized_nigori);
 
   // Check if the key we just added can decrypt the pending keys and add them
   // too if so.
@@ -241,8 +246,7 @@ const sync_pb::EncryptedData& Cryptographer::GetPendingKeys() const {
 
 bool Cryptographer::DecryptPendingKeys(const KeyParams& params) {
   Nigori nigori;
-  if (!nigori.InitByDerivation(params.hostname, params.username,
-                               params.password)) {
+  if (!nigori.InitByDerivation(params.derivation_params, params.password)) {
     NOTREACHED();
     return false;
   }
@@ -310,7 +314,7 @@ void Cryptographer::InstallKeyBag(const sync_pb::NigoriKeyBag& bag) {
         NOTREACHED();
         continue;
       }
-      nigoris_[key.name()] = make_linked_ptr(new_nigori.release());
+      nigoris_[key.name()] = std::move(new_nigori);
     }
   }
 }

@@ -110,8 +110,6 @@ class TabCloser : public content::WebContentsUserData<TabCloser> {
 
 }  // namespace
 
-DEFINE_WEB_CONTENTS_USER_DATA_KEY(TabCloser);
-
 const content::InterstitialPageDelegate::TypeID
     SupervisedUserInterstitial::kTypeForTesting =
         &SupervisedUserInterstitial::kTypeForTesting;
@@ -186,7 +184,7 @@ void SupervisedUserInterstitial::Init() {
     DCHECK(details.is_navigation_to_different_page());
     const content::NavigationController& controller =
         web_contents_->GetController();
-    details.entry = controller.GetActiveEntry();
+    details.entry = controller.GetVisibleEntry();
     if (controller.GetLastCommittedEntry()) {
       details.previous_entry_index = controller.GetLastCommittedEntryIndex();
       details.previous_url = controller.GetLastCommittedEntry()->GetURL();
@@ -221,9 +219,7 @@ std::string SupervisedUserInterstitial::GetHTMLContents(
     supervised_user_error_page::FilteringBehaviorReason reason) {
   bool is_child_account = profile->IsChild();
 
-  bool is_deprecated =
-      !is_child_account &&
-      !base::FeatureList::IsEnabled(features::kSupervisedUserCreation);
+  bool is_deprecated = !is_child_account;
 
   SupervisedUserService* supervised_user_service =
       SupervisedUserServiceFactory::GetForProfile(profile);
@@ -354,8 +350,10 @@ void SupervisedUserInterstitial::OnAccessRequestAdded(bool success) {
           << (success ? " successfully" : " unsuccessfully");
   std::string jsFunc =
       base::StringPrintf("setRequestStatus(%s);", success ? "true" : "false");
-  interstitial_page_->GetMainFrame()->ExecuteJavaScript(
-      base::ASCIIToUTF16(jsFunc));
+  if (interstitial_page_->GetMainFrame()) {
+    interstitial_page_->GetMainFrame()->ExecuteJavaScript(
+        base::ASCIIToUTF16(jsFunc));
+  }
 }
 
 bool SupervisedUserInterstitial::ShouldProceed() {

@@ -214,7 +214,7 @@ void SigninManager::DoSignOut(
     return;
   }
 
-  if (prohibit_signout_) {
+  if (IsSignoutProhibited()) {
     DVLOG(1) << "Ignoring attempt to sign out while signout is prohibited";
     return;
   }
@@ -232,7 +232,7 @@ void SigninManager::DoSignOut(
   client_->GetPrefs()->ClearPref(prefs::kGoogleServicesAccountId);
   client_->GetPrefs()->ClearPref(prefs::kGoogleServicesUserAccountId);
   client_->GetPrefs()->ClearPref(prefs::kSignedInTime);
-  client_->SignOut();
+  client_->OnSignedOut();
 
   // Determine the duration the user was logged in and log that to UMA.
   if (!signin_time.is_null()) {
@@ -283,10 +283,17 @@ void SigninManager::Initialize(PrefService* local_state) {
   std::string user = account_id.empty() ? std::string() :
       account_tracker_service()->GetAccountInfo(account_id).email;
   if ((!account_id.empty() && !IsAllowedUsername(user)) || !IsSigninAllowed()) {
-    // User is signed in, but the username is invalid - the administrator must
-    // have changed the policy since the last signin, so sign out the user.
-    SignOut(signin_metrics::SIGNIN_PREF_CHANGED_DURING_SIGNIN,
-            signin_metrics::SignoutDelete::IGNORE_METRIC);
+    // User is signed in, but the username is invalid or signin is no longer
+    // allowed, so the user must be sign out.
+    //
+    // This may happen in the following cases:
+    //   a. The user has toggled off signin allowed in settings.
+    //   b. The administrator changed the policy since the last signin.
+    //
+    // Note: The token service has not yet loaded its credentials, so accounts
+    // cannot be revoked here.
+    SignOutAndKeepAllAccounts(signin_metrics::SIGNIN_PREF_CHANGED_DURING_SIGNIN,
+                              signin_metrics::SignoutDelete::IGNORE_METRIC);
   }
 
   if (account_tracker_service()->GetMigrationState() ==
@@ -380,6 +387,10 @@ const std::string& SigninManager::GetAccountIdForAuthInProgress() const {
   return possibly_invalid_account_id_;
 }
 
+const std::string& SigninManager::GetGaiaIdForAuthInProgress() const {
+  return possibly_invalid_gaia_id_;
+}
+
 const std::string& SigninManager::GetUsernameForAuthInProgress() const {
   return possibly_invalid_email_;
 }
@@ -389,7 +400,7 @@ void SigninManager::DisableOneClickSignIn(PrefService* prefs) {
 }
 
 void SigninManager::MergeSigninCredentialIntoCookieJar() {
-  if (!client_->ShouldMergeSigninCredentialsIntoCookieJar())
+  if (account_consistency_ == signin::AccountConsistencyMethod::kMirror)
     return;
 
   if (!IsAuthenticated())

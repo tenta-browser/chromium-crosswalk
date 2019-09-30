@@ -145,6 +145,10 @@ Cronet_RESULT Cronet_EngineImpl::StartWithParams(
   context_config_builder.experimental_options = params->experimental_options;
   context_config_builder.bypass_public_key_pinning_for_local_trust_anchors =
       params->enable_public_key_pinning_bypass_for_local_trust_anchors;
+  if (!isnan(params->network_thread_priority)) {
+    context_config_builder.network_thread_priority =
+        params->network_thread_priority;
+  }
 
   std::unique_ptr<URLRequestContextConfig> config =
       context_config_builder.Build();
@@ -265,9 +269,6 @@ class Cronet_EngineImpl::Callback : public CronetURLRequestContext::Callback {
   // CronetURLRequestContext::Callback implementation:
   void OnInitNetworkThread() override;
   void OnDestroyNetworkThread() override;
-  void OnInitCertVerifierData(net::CertVerifier* cert_verifier,
-                              const std::string& cert_verifier_data) override;
-  void OnSaveCertVerifierData(net::CertVerifier* cert_verifier) override;
   void OnEffectiveConnectionTypeChanged(
       net::EffectiveConnectionType effective_connection_type) override;
   void OnRTTOrThroughputEstimatesComputed(
@@ -312,13 +313,6 @@ void Cronet_EngineImpl::Callback::OnInitNetworkThread() {
 void Cronet_EngineImpl::Callback::OnDestroyNetworkThread() {
   DCHECK_CALLED_ON_VALID_THREAD(network_thread_checker_);
 }
-
-void Cronet_EngineImpl::Callback::OnInitCertVerifierData(
-    net::CertVerifier* cert_verifier,
-    const std::string& cert_verifier_data) {}
-
-void Cronet_EngineImpl::Callback::OnSaveCertVerifierData(
-    net::CertVerifier* cert_verifier) {}
 
 void Cronet_EngineImpl::Callback::OnEffectiveConnectionTypeChanged(
     net::EffectiveConnectionType effective_connection_type) {

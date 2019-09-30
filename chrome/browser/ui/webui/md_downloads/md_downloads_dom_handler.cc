@@ -11,7 +11,7 @@
 #include "base/bind_helpers.h"
 #include "base/i18n/rtl.h"
 #include "base/logging.h"
-#include "base/message_loop/message_loop.h"
+#include "base/message_loop/message_loop_current.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_piece.h"
@@ -37,6 +37,9 @@
 #include "components/safe_browsing/common/safe_browsing_prefs.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/download_manager.h"
+#include "content/public/browser/render_process_host.h"
+#include "content/public/browser/render_view_host.h"
+#include "content/public/browser/storage_partition.h"
 #include "content/public/browser/url_data_source.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_ui.h"
@@ -61,6 +64,7 @@ enum DownloadsDOMEvent {
   DOWNLOADS_DOM_EVENT_CLEAR_ALL = 9,
   DOWNLOADS_DOM_EVENT_OPEN_FOLDER = 10,
   DOWNLOADS_DOM_EVENT_RESUME = 11,
+  DOWNLOADS_DOM_EVENT_RETRY_DOWNLOAD = 12,
   DOWNLOADS_DOM_EVENT_MAX
 };
 
@@ -103,6 +107,10 @@ void MdDownloadsDOMHandler::RegisterMessages() {
   web_ui()->RegisterMessageCallback(
       "saveDangerousRequiringGesture",
       base::BindRepeating(&MdDownloadsDOMHandler::HandleSaveDangerous,
+                          weak_ptr_factory_.GetWeakPtr()));
+  web_ui()->RegisterMessageCallback(
+      "retryDownload",
+      base::BindRepeating(&MdDownloadsDOMHandler::HandleRetryDownload,
                           weak_ptr_factory_.GetWeakPtr()));
   web_ui()->RegisterMessageCallback(
       "discardDangerous",
@@ -189,8 +197,7 @@ void MdDownloadsDOMHandler::HandleDrag(const base::ListValue* args) {
   gfx::NativeView view = web_contents->GetNativeView();
   {
     // Enable nested tasks during DnD, while |DragDownload()| blocks.
-    base::MessageLoop::ScopedNestableTaskAllower allow(
-        base::MessageLoop::current());
+    base::MessageLoopCurrent::ScopedNestableTaskAllower allow;
     DragDownloadItem(file, icon, view);
   }
 }
@@ -200,6 +207,11 @@ void MdDownloadsDOMHandler::HandleSaveDangerous(const base::ListValue* args) {
   download::DownloadItem* file = GetDownloadByValue(args);
   if (file)
     ShowDangerPrompt(file);
+}
+
+void MdDownloadsDOMHandler::HandleRetryDownload(const base::ListValue* args) {
+  CountDownloadsDOMEvents(DOWNLOADS_DOM_EVENT_RETRY_DOWNLOAD);
+  RetryDownload(args);
 }
 
 void MdDownloadsDOMHandler::HandleDiscardDangerous(
@@ -438,4 +450,50 @@ void MdDownloadsDOMHandler::RemoveDownloadInArgs(const base::ListValue* args) {
   DownloadVector downloads;
   downloads.push_back(file);
   RemoveDownloads(downloads);
+}
+
+void MdDownloadsDOMHandler::RetryDownload(const base::ListValue* args) {
+  download::DownloadItem* file = GetDownloadByValue(args);
+  if (!file)
+    return;
+  content::WebContents* web_contents = GetWebUIWebContents();
+  content::RenderFrameHost* render_frame_host = web_contents->GetMainFrame();
+  const GURL url = file->GetURL();
+
+  content::StoragePartition* storage_partition =
+      content::BrowserContext::GetStoragePartition(
+          web_contents->GetBrowserContext(),
+          render_frame_host->GetSiteInstance());
+
+  net::NetworkTrafficAnnotationTag traffic_annotation =
+      net::DefineNetworkTrafficAnnotation("md_downloads_dom_handler", R"(
+        semantics {
+          sender: "The downloads page."
+          description: "Retrying a download."
+          trigger:
+            "The user selects the 'Retry' button for a cancelled download on "
+            "the downloads page."
+          data: "None."
+          destination: WEBSITE
+        }
+        policy {
+          cookies_allowed: YES
+          cookies_store: "user"
+          setting:
+            "This feature cannot be disabled by settings, but it's only "
+            "triggered by user request."
+          policy_exception_justification: "Not implemented."
+        })");
+
+  auto dl_params = std::make_unique<download::DownloadUrlParameters>(
+      url, render_frame_host->GetProcess()->GetID(),
+      render_frame_host->GetRenderViewHost()->GetRoutingID(),
+      render_frame_host->GetRoutingID(),
+      storage_partition->GetURLRequestContext(), traffic_annotation);
+  dl_params->set_content_initiated(true);
+  dl_params->set_initiator(url::Origin::Create(GURL("chrome://downloads")));
+  dl_params->set_download_source(download::DownloadSource::FROM_RENDERER);
+
+  content::BrowserContext::GetDownloadManager(web_contents->GetBrowserContext())
+      ->DownloadUrl(std::move(dl_params));
 }

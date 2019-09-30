@@ -15,10 +15,10 @@
 #include "base/memory/ref_counted.h"
 #include "base/time/time.h"
 #include "chrome/browser/ui/webui/constrained_web_dialog_ui.h"
-#include "printing/buildflags/buildflags.h"
 
 class PrintPreviewHandler;
-struct PrintHostMsg_DidGetPreviewPageCount_Params;
+struct PrintHostMsg_DidStartPreview_Params;
+struct PrintHostMsg_PreviewIds;
 struct PrintHostMsg_RequestPrintPreview_Params;
 struct PrintHostMsg_SetOptionsFromDocument_Params;
 
@@ -58,9 +58,6 @@ class PrintPreviewUI : public ConstrainedWebDialogUI {
   // Clear the existing print preview data.
   void ClearAllPreviewData();
 
-  // Returns the available draft page count.
-  virtual int GetAvailableDraftPageCount() const;
-
   // Setters
   void SetInitiatorTitle(const base::string16& initiator_title);
 
@@ -77,12 +74,10 @@ class PrintPreviewUI : public ConstrainedWebDialogUI {
       content::WebContents* print_preview_dialog,
       const PrintHostMsg_RequestPrintPreview_Params& params);
 
-  // Determines whether to cancel a print preview request based on
-  // |preview_ui_id| and |request_id|.
+  // Determines whether to cancel a print preview request based on the request
+  // and UI ids in |ids|.
   // Can be called from any thread.
-  static void GetCurrentPrintPreviewStatus(int32_t preview_ui_id,
-                                           int request_id,
-                                           bool* cancel);
+  static bool ShouldCancelRequest(const PrintHostMsg_PreviewIds& ids);
 
   // Returns an id to uniquely identify this PrintPreviewUI.
   int32_t GetIDForPrintPreviewUI() const;
@@ -90,15 +85,16 @@ class PrintPreviewUI : public ConstrainedWebDialogUI {
   // Notifies the Web UI of a print preview request with |request_id|.
   virtual void OnPrintPreviewRequest(int request_id);
 
-  // Notifies the Web UI about the page count of the request preview.
-  void OnDidGetPreviewPageCount(
-      const PrintHostMsg_DidGetPreviewPageCount_Params& params);
+  // Notifies the Web UI about the properties of the request preview.
+  void OnDidStartPreview(const PrintHostMsg_DidStartPreview_Params& params,
+                         int request_id);
 
   // Notifies the Web UI of the default page layout according to the currently
   // selected printer and page size.
   void OnDidGetDefaultPageLayout(const printing::PageSizeMargins& page_layout,
                                  const gfx::Rect& printable_area,
-                                 bool has_custom_page_size_style);
+                                 bool has_custom_page_size_style,
+                                 int request_id);
 
   // Notifies the Web UI that the 0-based page |page_number| has been rendered.
   // |preview_request_id| indicates wich request resulted in this response.
@@ -110,23 +106,25 @@ class PrintPreviewUI : public ConstrainedWebDialogUI {
   void OnPreviewDataIsAvailable(int expected_pages_count,
                                 int preview_request_id);
 
-  // Notifies the Web UI that the print preview failed to render.
-  void OnPrintPreviewFailed();
+  // Notifies the Web UI that the print preview failed to render for the request
+  // with id = |request_id|.
+  void OnPrintPreviewFailed(int request_id);
 
   // Notified the Web UI that this print preview dialog's RenderProcess has been
   // closed, which may occur for several reasons, e.g. tab closure or crash.
   void OnPrintPreviewDialogClosed();
 
-  // Notifies the Web UI that the preview request was cancelled.
-  void OnPrintPreviewCancelled();
+  // Notifies the Web UI that the preview request identified by |request_id|
+  // was cancelled.
+  void OnPrintPreviewCancelled(int request_id);
 
   // Notifies the Web UI that initiator is closed, so we can disable all the
   // controls that need the initiator for generating the preview data.
   void OnInitiatorClosed();
 
   // Notifies the Web UI that the printer is unavailable or its settings are
-  // invalid.
-  void OnInvalidPrinterSettings();
+  // invalid. |request_id| is the preview request id with the invalid printer.
+  void OnInvalidPrinterSettings(int request_id);
 
   // Notifies the Web UI to cancel the pending preview request.
   virtual void OnCancelPendingPreviewRequest();
@@ -139,7 +137,8 @@ class PrintPreviewUI : public ConstrainedWebDialogUI {
 
   // Notifies the WebUI to set print preset options from source PDF.
   void OnSetOptionsFromDocument(
-      const PrintHostMsg_SetOptionsFromDocument_Params& params);
+      const PrintHostMsg_SetOptionsFromDocument_Params& params,
+      int request_id);
 
   // Allows tests to wait until the print preview dialog is loaded.
   class TestingDelegate {
@@ -182,23 +181,23 @@ class PrintPreviewUI : public ConstrainedWebDialogUI {
   const int32_t id_;
 
   // Weak pointer to the WebUI handler.
-  PrintPreviewHandler* handler_;
+  PrintPreviewHandler* const handler_;
 
   // Indicates whether the source document can be modified.
-  bool source_is_modifiable_;
+  bool source_is_modifiable_ = true;
 
   // Indicates whether the source document has selection.
-  bool source_has_selection_;
+  bool source_has_selection_ = false;
 
   // Indicates whether only the selection should be printed.
-  bool print_selection_only_;
+  bool print_selection_only_ = false;
+
+  // Keeps track of whether OnClosePrintPreviewDialog() has been called or not.
+  bool dialog_closed_ = false;
 
   // Store the initiator title, used for populating the print preview dialog
   // title.
   base::string16 initiator_title_;
-
-  // Keeps track of whether OnClosePrintPreviewDialog() has been called or not.
-  bool dialog_closed_;
 
   DISALLOW_COPY_AND_ASSIGN(PrintPreviewUI);
 };

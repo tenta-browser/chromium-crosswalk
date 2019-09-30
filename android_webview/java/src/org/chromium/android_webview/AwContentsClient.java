@@ -29,8 +29,6 @@ import java.util.HashMap;
 
 /**
  * Base-class that an AwContents embedder derives from to receive callbacks.
- * This extends ContentViewClient, as in many cases we want to pass-thru ContentViewCore
- * callbacks right to our embedder, and this setup facilities that.
  * For any other callbacks we need to make transformations of (e.g. adapt parameters
  * or perform filtering) we can provide final overrides for methods here, and then introduce
  * new abstract methods that the our own client must implement.
@@ -66,7 +64,10 @@ public abstract class AwContentsClient {
 
     // Alllow injection of the callback thread, for testing.
     public AwContentsClient(Looper looper) {
-        mCallbackHelper = new AwContentsClientCallbackHelper(looper, this);
+        try (ScopedSysTraceEvent e =
+                        ScopedSysTraceEvent.scoped("AwContentsClient.constructorOneArg")) {
+            mCallbackHelper = new AwContentsClientCallbackHelper(looper, this);
+        }
     }
 
     final AwContentsClientCallbackHelper getCallbackHelper() {

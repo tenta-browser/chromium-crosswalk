@@ -31,6 +31,21 @@ cr.exportPath('print_preview_new');
 print_preview_new.SerializedSettings;
 
 /**
+ * @typedef {{
+ *  value: *,
+ *  managed: boolean
+ * }}
+ */
+print_preview_new.PolicyEntry;
+
+/**
+ * @typedef {{
+ *   headerFooter: print_preview_new.PolicyEntry
+ * }}
+ */
+print_preview_new.PolicySettings;
+
+/**
  * Constant values matching printing::DuplexMode enum.
  * @enum {number}
  */
@@ -96,6 +111,7 @@ Polymer({
             unavailableValue: [],
             valid: true,
             available: true,
+            setByPolicy: false,
             key: '',
           },
           copies: {
@@ -103,6 +119,7 @@ Polymer({
             unavailableValue: '1',
             valid: true,
             available: true,
+            setByPolicy: false,
             key: '',
           },
           collate: {
@@ -110,6 +127,7 @@ Polymer({
             unavailableValue: false,
             valid: true,
             available: true,
+            setByPolicy: false,
             key: 'isCollateEnabled',
           },
           layout: {
@@ -117,6 +135,7 @@ Polymer({
             unavailableValue: false,
             valid: true,
             available: true,
+            setByPolicy: false,
             key: 'isLandscapeEnabled',
           },
           color: {
@@ -124,6 +143,7 @@ Polymer({
             unavailableValue: false,
             valid: true,
             available: true,
+            setByPolicy: false,
             key: 'isColorEnabled',
           },
           mediaSize: {
@@ -134,6 +154,7 @@ Polymer({
             unavailableValue: {},
             valid: true,
             available: true,
+            setByPolicy: false,
             key: 'mediaSize',
           },
           margins: {
@@ -142,18 +163,15 @@ Polymer({
                 print_preview.ticket_items.MarginsTypeValue.DEFAULT,
             valid: true,
             available: true,
+            setByPolicy: false,
             key: 'marginsType',
           },
           customMargins: {
-            value: {
-              marginTop: 0,
-              marginRight: 0,
-              marginBottom: 0,
-              marginLeft: 0,
-            },
+            value: {},
             unavailableValue: {},
             valid: true,
             available: true,
+            setByPolicy: false,
             key: 'customMargins',
           },
           dpi: {
@@ -161,6 +179,7 @@ Polymer({
             unavailableValue: {},
             valid: true,
             available: true,
+            setByPolicy: false,
             key: 'dpi',
           },
           fitToPage: {
@@ -168,6 +187,7 @@ Polymer({
             unavailableValue: false,
             valid: true,
             available: true,
+            setByPolicy: false,
             key: 'isFitToPageEnabled',
           },
           scaling: {
@@ -175,6 +195,7 @@ Polymer({
             unavailableValue: '100',
             valid: true,
             available: true,
+            setByPolicy: false,
             key: 'scaling',
           },
           duplex: {
@@ -182,6 +203,7 @@ Polymer({
             unavailableValue: false,
             valid: true,
             available: true,
+            setByPolicy: false,
             key: 'isDuplexEnabled',
           },
           cssBackground: {
@@ -189,6 +211,7 @@ Polymer({
             unavailableValue: false,
             valid: true,
             available: true,
+            setByPolicy: false,
             key: 'isCssBackgroundEnabled',
           },
           selectionOnly: {
@@ -196,6 +219,7 @@ Polymer({
             unavailableValue: false,
             valid: true,
             available: true,
+            setByPolicy: false,
             key: '',
           },
           headerFooter: {
@@ -203,6 +227,7 @@ Polymer({
             unavailableValue: false,
             valid: true,
             available: true,
+            setByPolicy: false,
             key: 'isHeaderFooterEnabled',
           },
           rasterize: {
@@ -210,6 +235,7 @@ Polymer({
             unavailableValue: false,
             valid: true,
             available: true,
+            setByPolicy: false,
             key: '',
           },
           vendorItems: {
@@ -217,7 +243,16 @@ Polymer({
             unavailableValue: {},
             valid: true,
             available: true,
+            setByPolicy: false,
             key: 'vendorOptions',
+          },
+          pagesPerSheet: {
+            value: 1,
+            unavailableValue: 1,
+            valid: true,
+            available: true,
+            setByPolicy: false,
+            key: '',
           },
           // This does not represent a real setting value, and is used only to
           // expose the availability of the other options settings section.
@@ -226,6 +261,7 @@ Polymer({
             unavailableValue: null,
             valid: true,
             available: true,
+            setByPolicy: false,
             key: '',
           },
           // This does not represent a real settings value, but is used to
@@ -235,6 +271,7 @@ Polymer({
             unavailableValue: [],
             valid: true,
             available: true,
+            setByPolicy: false,
             key: '',
           },
         };
@@ -264,14 +301,13 @@ Polymer({
   },
 
   observers: [
-    'updateSettings_(' +
-        'destination.id, destination.capabilities, ' +
+    'updateSettingsFromDestination_(destination.capabilities)',
+    'updateSettingsAvailabilityFromDocumentInfo_(' +
         'documentInfo.isModifiable, documentInfo.hasCssMediaStyles,' +
         'documentInfo.hasSelection)',
     'updateHeaderFooterAvailable_(' +
-        'documentInfo.isModifiable, documentInfo.margins, ' +
-        'settings.margins.value, settings.customMargins.value, ' +
-        'settings.mediaSize.value)',
+        'documentInfo.margins, settings.margins.value, ' +
+        'settings.customMargins.value, settings.mediaSize.value)',
     'updateRecentDestinations_(destination, destination.capabilities)',
     'stickySettingsChanged_(' +
         'settings.collate.value, settings.layout.value, settings.color.value,' +
@@ -288,27 +324,34 @@ Polymer({
   /** @private {?print_preview_new.SerializedSettings} */
   stickySettings_: null,
 
+  /** @private {?print_preview_new.PolicySettings} */
+  policySettings_: null,
+
   /** @private {?print_preview.Cdd} */
   lastDestinationCapabilities_: null,
 
   /**
    * Updates the availability of the settings sections and values of dpi and
-   *     media size settings.
+   *     media size settings based on the destination capabilities.
    * @private
    */
-  updateSettings_: function() {
-    const caps = (!!this.destination && !!this.destination.capabilities) ?
-        this.destination.capabilities.printer :
-        null;
-    this.updateSettingsAvailability_(caps);
-
-    if (!caps)
+  updateSettingsFromDestination_: function() {
+    if (!this.destination)
       return;
 
     if (this.destination.capabilities == this.lastDestinationCapabilities_)
       return;
 
     this.lastDestinationCapabilities_ = this.destination.capabilities;
+
+    const caps = !!this.destination.capabilities ?
+        this.destination.capabilities.printer :
+        null;
+    this.updateSettingsAvailabilityFromDestination_(caps);
+
+    if (!caps)
+      return;
+
     this.updateSettingsValues_(caps);
   },
 
@@ -316,31 +359,64 @@ Polymer({
    * @param {?print_preview.CddCapabilities} caps The printer capabilities.
    * @private
    */
-  updateSettingsAvailability_: function(caps) {
-    const isSaveToPdf = this.destination.id ==
-        print_preview.Destination.GooglePromotedId.SAVE_AS_PDF;
-    const knownSizeToSaveAsPdf = isSaveToPdf &&
-        (!this.documentInfo.isModifiable ||
-         this.documentInfo.hasCssMediaStyles);
+  updateSettingsAvailabilityFromDestination_: function(caps) {
     this.set('settings.copies.available', !!caps && !!(caps.copies));
     this.set('settings.collate.available', !!caps && !!(caps.collate));
     this.set('settings.layout.available', this.isLayoutAvailable_(caps));
     this.set('settings.color.available', this.destination.hasColorCapability);
-    this.set('settings.margins.available', this.documentInfo.isModifiable);
-    this.set(
-        'settings.customMargins.available', this.documentInfo.isModifiable);
-    this.set(
-        'settings.mediaSize.available',
-        !!caps && !!caps.media_size && !knownSizeToSaveAsPdf);
+    if (this.destination.isColorManaged) {
+      // |this.setSetting| does nothing if policy is present.
+      // We want to set the value nevertheless so we call |this.set| directly.
+      this.set('settings.color.value', this.destination.colorPolicyValue);
+    }
+
+    this.set('settings.color.setByPolicy', this.destination.isColorManaged);
+
     this.set(
         'settings.dpi.available',
         !!caps && !!caps.dpi && !!caps.dpi.option &&
             caps.dpi.option.length > 1);
+    this.set('settings.duplex.available', !!caps && !!caps.duplex);
+    this.set(
+        'settings.vendorItems.available', !!caps && !!caps.vendor_capability);
+
+    if (this.documentInfo)
+      this.updateSettingsAvailabilityFromDestinationAndDocumentInfo_();
+  },
+
+  /** @private */
+  updateSettingsAvailabilityFromDestinationAndDocumentInfo_: function() {
+    const isSaveAsPDF = this.destination.id ==
+        print_preview.Destination.GooglePromotedId.SAVE_AS_PDF;
+    const knownSizeToSaveAsPdf = isSaveAsPDF &&
+        (!this.documentInfo.isModifiable ||
+         this.documentInfo.hasCssMediaStyles);
+    this.set('settings.fitToPage.unavailableValue', !isSaveAsPDF);
     this.set(
         'settings.fitToPage.available',
-        !this.documentInfo.isModifiable && !isSaveToPdf);
+        !knownSizeToSaveAsPdf && !this.documentInfo.isModifiable);
     this.set('settings.scaling.available', !knownSizeToSaveAsPdf);
-    this.set('settings.duplex.available', !!caps && !!caps.duplex);
+    const caps = (!!this.destination && !!this.destination.capabilities) ?
+        this.destination.capabilities.printer :
+        null;
+    this.set(
+        'settings.mediaSize.available',
+        !!caps && !!caps.media_size && !knownSizeToSaveAsPdf);
+    this.set('settings.layout.available', this.isLayoutAvailable_(caps));
+    this.set(
+        'settings.otherOptions.available',
+        this.settings.duplex.available ||
+            this.settings.cssBackground.available ||
+            this.settings.selectionOnly.available ||
+            this.settings.headerFooter.available ||
+            this.settings.rasterize.available);
+  },
+
+  /** @private */
+  updateSettingsAvailabilityFromDocumentInfo_: function() {
+    this.set('settings.margins.available', this.documentInfo.isModifiable);
+    this.set(
+        'settings.customMargins.available', this.documentInfo.isModifiable);
     this.set(
         'settings.cssBackground.available', this.documentInfo.isModifiable);
     this.set(
@@ -351,19 +427,16 @@ Polymer({
     this.set(
         'settings.rasterize.available',
         !this.documentInfo.isModifiable && !cr.isWindows && !cr.isMac);
-    this.set(
-        'settings.otherOptions.available',
-        this.settings.duplex.available ||
-            this.settings.cssBackground.available ||
-            this.settings.selectionOnly.available ||
-            this.settings.headerFooter.available ||
-            this.settings.rasterize.available);
-    this.set(
-        'settings.vendorItems.available', !!caps && !!caps.vendor_capability);
+
+    if (this.destination)
+      this.updateSettingsAvailabilityFromDestinationAndDocumentInfo_();
   },
 
   /** @private */
   updateHeaderFooterAvailable_: function() {
+    if (this.documentInfo === undefined)
+      return;
+
     this.set(
         'settings.headerFooter.available', this.isHeaderFooterAvailable_());
   },
@@ -439,14 +512,34 @@ Polymer({
   updateSettingsValues_: function(caps) {
     if (this.settings.mediaSize.available) {
       const defaultOption = caps.media_size.option.find(o => !!o.is_default);
-      this.set('settings.mediaSize.value', defaultOption);
+      this.setSetting('mediaSize', defaultOption);
     }
+
     if (this.settings.dpi.available) {
       const defaultOption = caps.dpi.option.find(o => !!o.is_default);
-      this.set('settings.dpi.value', defaultOption);
+      this.setSetting('dpi', defaultOption);
     } else if (
         caps && caps.dpi && caps.dpi.option && caps.dpi.option.length > 0) {
       this.set('settings.dpi.unavailableValue', caps.dpi.option[0]);
+    }
+
+    if (this.settings.color.available) {
+      const defaultOption = this.destination.defaultColorOption;
+      if (defaultOption) {
+        this.setSetting(
+            'color',
+            !['STANDARD_MONOCHROME', 'CUSTOM_MONOCHROME'].includes(
+                defaultOption.type));
+      }
+    } else if (
+        caps && caps.color && caps.color.option &&
+        caps.color.option.length > 0) {
+      this.set(
+          'settings.color.unavailableValue',
+          !['STANDARD_MONOCHROME', 'CUSTOM_MONOCHROME'].includes(
+              caps.color.option[0].type));
+    } else {  // if no color capability is reported, assume black and white.
+      this.set('settings.color.unavailableValue', false);
     }
 
     if (this.settings.vendorItems.available) {
@@ -468,7 +561,7 @@ Polymer({
         if (defaultValue != null)
           vendorSettings[item.id] = defaultValue;
       }
-      this.set('settings.vendorItems.value', vendorSettings);
+      this.setSetting('vendorItems', vendorSettings);
     }
   },
 
@@ -541,14 +634,40 @@ Polymer({
     this.stickySettings_ = savedSettings;
   },
 
+  /**
+   * Sets settings in accordance to policies from native code, and prevents
+   * those settings from being changed via other means.
+   * @param {boolean|undefined} headerFooter Value of
+   *     printing.print_header_footer, if set in prefs (or undefined, if not).
+   * @param {boolean} isHeaderFooterManaged true if the header/footer UI state
+   *     is managed by a policy.
+   */
+  setPolicySettings: function(headerFooter, isHeaderFooterManaged) {
+    this.policySettings_ = {
+      headerFooter: {
+        value: headerFooter,
+        managed: isHeaderFooterManaged,
+      },
+    };
+  },
+
   applyStickySettings: function() {
     if (this.stickySettings_) {
       STICKY_SETTING_NAMES.forEach(settingName => {
         const setting = this.get(settingName, this.settings);
         const value = this.stickySettings_[setting.key];
         if (value != undefined)
-          this.set(`settings.${settingName}.value`, value);
+          this.setSetting(settingName, value);
       });
+    }
+    if (this.policySettings_) {
+      for (const [settingName, policy] of Object.entries(
+               this.policySettings_)) {
+        if (policy.value !== undefined)
+          this.setSetting(settingName, policy.value);
+        if (policy.managed)
+          this.set(`settings.${settingName}.setByPolicy`, true);
+      }
     }
     this.initialized_ = true;
     this.stickySettings_ = null;
@@ -615,8 +734,10 @@ Polymer({
       printWithExtension: destination.isExtension,
       rasterizePDF: this.getSettingValue('rasterize'),
       scaleFactor: parseInt(this.getSettingValue('scaling'), 10),
+      pagesPerSheet: this.getSettingValue('pagesPerSheet'),
       dpiHorizontal: (dpi && 'horizontal_dpi' in dpi) ? dpi.horizontal_dpi : 0,
       dpiVertical: (dpi && 'vertical_dpi' in dpi) ? dpi.vertical_dpi : 0,
+      dpiDefault: (dpi && 'is_default' in dpi) ? dpi.is_default : false,
       deviceName: destination.id,
       fitToPageEnabled: this.getSettingValue('fitToPage'),
       pageWidth: this.documentInfo.pageSize.width,
@@ -690,7 +811,7 @@ Polymer({
       }
     }
     if (this.settings.copies.available)
-      cjt.print.copies = {copies: this.settings.copies.value};
+      cjt.print.copies = {copies: parseInt(this.getSettingValue('copies'), 10)};
     if (this.settings.duplex.available) {
       cjt.print.duplex = {
         type: this.settings.duplex.value ? 'LONG_EDGE' : 'NO_DUPLEX'
@@ -718,7 +839,7 @@ Polymer({
       }
     } else {
       cjt.print.page_orientation = {
-        type: this.settings.layout ? 'LANDSCAPE' : 'PORTRAIT'
+        type: this.settings.layout.value ? 'LANDSCAPE' : 'PORTRAIT'
       };
     }
     if (this.settings.dpi.available) {

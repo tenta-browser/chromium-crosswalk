@@ -4,11 +4,11 @@
 
 #import "ios/chrome/app/application_delegate/metrics_mediator.h"
 
-#include "base/mac/bind_objc_block.h"
+#include "base/bind.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/metrics/user_metrics_action.h"
 #include "base/strings/sys_string_conversions.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "components/crash/core/common/crash_keys.h"
 #include "components/metrics/metrics_pref_names.h"
 #include "components/metrics/metrics_service.h"
@@ -237,7 +237,7 @@ using metrics_mediator::kAppEnteredBackgroundDateKey;
       std::string log(static_cast<const char*>([log_content bytes]),
                       static_cast<size_t>([log_content length]));
       web::WebThread::PostTask(
-          web::WebThread::UI, FROM_HERE, base::BindBlockArc(^{
+          web::WebThread::UI, FROM_HERE, base::BindOnce(^{
             GetApplicationContext()->GetMetricsService()->PushExternalLog(log);
           }));
     };
@@ -247,7 +247,7 @@ using metrics_mediator::kAppEnteredBackgroundDateKey;
 
   app_group::main_app::RecordWidgetUsage();
   base::PostTaskWithTraits(
-      FROM_HERE, {base::MayBlock(), base::TaskPriority::BACKGROUND},
+      FROM_HERE, {base::MayBlock(), base::TaskPriority::BEST_EFFORT},
       base::Bind(&app_group::main_app::ProcessPendingLogs, callback));
 }
 

@@ -18,17 +18,7 @@
       "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
         {
-          "object": "NGPaintFragment",
-          "rect": [8, 20, 772, 14],
-          "reason": "appeared"
-        },
-        {
-          "object": "NGPaintFragment",
-          "rect": [8, 20, 772, 14],
-          "reason": "disappeared"
-        },
-        {
-          "object": "NGPaintFragment",
+          "object": "NGPhysicalBoxFragment LayoutNGBlockFlow div id='contentBox'",
           "rect": [8, 72, 402, 402],
           "reason": "appeared"
         },
@@ -43,47 +33,11 @@
           "reason": "incremental"
         },
         {
-          "object": "NGPaintFragment",
-          "rect": [8, 40, 209, 14],
-          "reason": "appeared"
-        },
-        {
-          "object": "NGPaintFragment",
-          "rect": [8, 40, 209, 14],
-          "reason": "disappeared"
-        },
-        {
-          "object": "NGPaintFragment",
+          "object": "NGPhysicalBoxFragment LayoutNGBlockFlow div id='contentBox'",
           "rect": [8, 72, 102, 402],
           "reason": "disappeared"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "NGPaintFragment",
-      "reason": "subtree"
-    },
-    {
-      "object": "NGPaintFragment",
-      "reason": "subtree"
-    },
-    {
-      "object": "NGPaintFragment",
-      "reason": "subtree"
-    },
-    {
-      "object": "NGPaintFragment",
-      "reason": "subtree"
-    },
-    {
-      "object": "LayoutSVGRoot svg",
-      "reason": "subtree"
-    },
-    {
-      "object": "LayoutSVGRect rect id='targetRect'",
-      "reason": "subtree"
     }
   ]
 }

@@ -41,7 +41,7 @@ SkColor NativeThemeDarkAura::GetSystemColor(ColorId color_id) const {
     case kColorId_ButtonEnabledColor:
       return kButtonEnabledColor;
     case kColorId_ProminentButtonColor:
-      return gfx::kGoogleBlue300;
+      return gfx::kGoogleBlue600;
 
     // Label
     case kColorId_LabelEnabledColor:
@@ -112,6 +112,8 @@ SkColor NativeThemeDarkAura::GetSystemColor(ColorId color_id) const {
     case kColorId_DisabledMenuItemForegroundColor:
     case kColorId_SelectedMenuItemForegroundColor:
     case kColorId_FocusedMenuItemBackgroundColor:
+    case kColorId_TouchableMenuItemLabelColor:
+    case kColorId_ActionableSubmenuVerticalSeparatorColor:
     case kColorId_MenuItemMinorTextColor:
     case kColorId_MenuSeparatorColor:
     case kColorId_MenuBackgroundColor:

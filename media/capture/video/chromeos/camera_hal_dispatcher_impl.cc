@@ -14,15 +14,14 @@
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/posix/eintr_wrapper.h"
+#include "base/rand_util.h"
 #include "base/single_thread_task_runner.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/synchronization/waitable_event.h"
-#include "mojo/edk/embedder/embedder.h"
-#include "mojo/edk/embedder/named_platform_handle.h"
-#include "mojo/edk/embedder/named_platform_handle_utils.h"
-#include "mojo/edk/embedder/outgoing_broker_client_invitation.h"
-#include "mojo/edk/embedder/platform_channel_pair.h"
-#include "mojo/edk/embedder/platform_channel_utils_posix.h"
-#include "mojo/edk/embedder/scoped_platform_handle.h"
+#include "mojo/public/cpp/platform/named_platform_channel.h"
+#include "mojo/public/cpp/platform/platform_channel.h"
+#include "mojo/public/cpp/platform/socket_utils_posix.h"
+#include "mojo/public/cpp/system/invitation.h"
 
 namespace media {
 
@@ -31,6 +30,12 @@ namespace {
 const base::FilePath::CharType kArcCamera3SocketPath[] =
     "/var/run/camera/camera3.sock";
 const char kArcCameraGroup[] = "arc-camera";
+
+std::string GenerateRandomToken() {
+  char random_bytes[16];
+  base::RandBytes(random_bytes, 16);
+  return base::HexEncode(random_bytes, 16);
+}
 
 // Creates a pipe. Returns true on success, otherwise false.
 // On success, |read_fd| will be set to the fd of the read side, and
@@ -116,6 +121,7 @@ bool CameraHalDispatcherImpl::StartThreads() {
 bool CameraHalDispatcherImpl::Start(
     MojoJpegDecodeAcceleratorFactoryCB jda_factory,
     MojoJpegEncodeAcceleratorFactoryCB jea_factory) {
+  DCHECK(!IsStarted());
   if (!StartThreads()) {
     return false;
   }
@@ -125,8 +131,8 @@ bool CameraHalDispatcherImpl::Start(
                               base::WaitableEvent::InitialState::NOT_SIGNALED);
   blocking_io_task_runner_->PostTask(
       FROM_HERE,
-      base::Bind(&CameraHalDispatcherImpl::CreateSocket, base::Unretained(this),
-                 base::Unretained(&started)));
+      base::BindOnce(&CameraHalDispatcherImpl::CreateSocket,
+                     base::Unretained(this), base::Unretained(&started)));
   started.Wait();
   return IsStarted();
 }
@@ -155,8 +161,8 @@ CameraHalDispatcherImpl::~CameraHalDispatcherImpl() {
   VLOG(1) << "Stopping CameraHalDispatcherImpl...";
   if (proxy_thread_.IsRunning()) {
     proxy_thread_.task_runner()->PostTask(
-        FROM_HERE, base::Bind(&CameraHalDispatcherImpl::StopOnProxyThread,
-                              base::Unretained(this)));
+        FROM_HERE, base::BindOnce(&CameraHalDispatcherImpl::StopOnProxyThread,
+                                  base::Unretained(this)));
     proxy_thread_.Stop();
   }
   blocking_io_thread_.Stop();
@@ -172,8 +178,8 @@ void CameraHalDispatcherImpl::RegisterServer(
     return;
   }
   camera_hal_server.set_connection_error_handler(
-      base::Bind(&CameraHalDispatcherImpl::OnCameraHalServerConnectionError,
-                 base::Unretained(this)));
+      base::BindOnce(&CameraHalDispatcherImpl::OnCameraHalServerConnectionError,
+                     base::Unretained(this)));
   camera_hal_server_ = std::move(camera_hal_server);
   VLOG(1) << "Camera HAL server registered";
 
@@ -189,7 +195,7 @@ void CameraHalDispatcherImpl::RegisterClient(
   DCHECK(proxy_task_runner_->BelongsToCurrentThread());
   auto client_observer =
       std::make_unique<MojoCameraClientObserver>(std::move(client));
-  client_observer->client().set_connection_error_handler(base::Bind(
+  client_observer->client().set_connection_error_handler(base::BindOnce(
       &CameraHalDispatcherImpl::OnCameraHalClientConnectionError,
       base::Unretained(this), base::Unretained(client_observer.get())));
   AddClientObserver(std::move(client_observer));
@@ -210,9 +216,10 @@ void CameraHalDispatcherImpl::CreateSocket(base::WaitableEvent* started) {
   DCHECK(blocking_io_task_runner_->BelongsToCurrentThread());
 
   base::FilePath socket_path(kArcCamera3SocketPath);
-  mojo::edk::ScopedPlatformHandle socket_fd = mojo::edk::CreateServerHandle(
-      mojo::edk::NamedPlatformHandle(socket_path.value()));
-  if (!socket_fd.is_valid()) {
+  mojo::NamedPlatformChannel::Options options;
+  options.server_name = socket_path.value();
+  mojo::NamedPlatformChannel channel(options);
+  if (!channel.server_endpoint().is_valid()) {
     LOG(ERROR) << "Failed to create the socket file: " << kArcCamera3SocketPath;
     started->Signal();
     return;
@@ -249,14 +256,15 @@ void CameraHalDispatcherImpl::CreateSocket(base::WaitableEvent* started) {
   }
 
   blocking_io_task_runner_->PostTask(
-      FROM_HERE, base::Bind(&CameraHalDispatcherImpl::StartServiceLoop,
-                            base::Unretained(this), base::Passed(&socket_fd),
-                            base::Unretained(started)));
+      FROM_HERE,
+      base::BindOnce(&CameraHalDispatcherImpl::StartServiceLoop,
+                     base::Unretained(this),
+                     channel.TakeServerEndpoint().TakePlatformHandle().TakeFD(),
+                     base::Unretained(started)));
 }
 
-void CameraHalDispatcherImpl::StartServiceLoop(
-    mojo::edk::ScopedPlatformHandle socket_fd,
-    base::WaitableEvent* started) {
+void CameraHalDispatcherImpl::StartServiceLoop(base::ScopedFD socket_fd,
+                                               base::WaitableEvent* started) {
   DCHECK(blocking_io_task_runner_->BelongsToCurrentThread());
   DCHECK(!proxy_fd_.is_valid());
   DCHECK(!cancel_pipe_.is_valid());
@@ -274,40 +282,42 @@ void CameraHalDispatcherImpl::StartServiceLoop(
   VLOG(1) << "CameraHalDispatcherImpl started; waiting for incoming connection";
 
   while (true) {
-    if (!WaitForSocketReadable(proxy_fd_.get().handle, cancel_fd.get())) {
+    if (!WaitForSocketReadable(proxy_fd_.get(), cancel_fd.get())) {
       VLOG(1) << "Quit CameraHalDispatcherImpl IO thread";
       return;
     }
 
-    mojo::edk::ScopedPlatformHandle accepted_fd;
-    if (mojo::edk::ServerAcceptConnection(proxy_fd_, &accepted_fd, false) &&
+    base::ScopedFD accepted_fd;
+    if (mojo::AcceptSocketConnection(proxy_fd_.get(), &accepted_fd, false) &&
         accepted_fd.is_valid()) {
       VLOG(1) << "Accepted a connection";
       // Hardcode pid 0 since it is unused in mojo.
       const base::ProcessHandle kUnusedChildProcessHandle = 0;
-      mojo::edk::PlatformChannelPair channel_pair;
-      mojo::edk::OutgoingBrokerClientInvitation invitation;
+      mojo::PlatformChannel channel;
+      mojo::OutgoingInvitation invitation;
 
-      std::string token = mojo::edk::GenerateRandomToken();
+      // Generate an arbitrary 32-byte string, as we use this length as a
+      // protocol version identifier.
+      std::string token = GenerateRandomToken();
       mojo::ScopedMessagePipeHandle pipe = invitation.AttachMessagePipe(token);
+      mojo::OutgoingInvitation::Send(std::move(invitation),
+                                     kUnusedChildProcessHandle,
+                                     channel.TakeLocalEndpoint());
 
-      invitation.Send(
-          kUnusedChildProcessHandle,
-          mojo::edk::ConnectionParams(mojo::edk::TransportProtocol::kLegacy,
-                                      channel_pair.PassServerHandle()));
-
-      std::vector<mojo::edk::ScopedPlatformHandle> handles;
-      handles.emplace_back(channel_pair.PassClientHandle());
+      auto remote_endpoint = channel.TakeRemoteEndpoint();
+      std::vector<base::ScopedFD> fds;
+      fds.emplace_back(remote_endpoint.TakePlatformHandle().TakeFD());
 
       struct iovec iov = {const_cast<char*>(token.c_str()), token.length()};
-      ssize_t result = mojo::edk::PlatformChannelSendmsgWithHandles(
-          accepted_fd, &iov, 1, handles);
+      ssize_t result =
+          mojo::SendmsgWithHandles(accepted_fd.get(), &iov, 1, fds);
       if (result == -1) {
         PLOG(ERROR) << "sendmsg()";
       } else {
         proxy_task_runner_->PostTask(
-            FROM_HERE, base::Bind(&CameraHalDispatcherImpl::OnPeerConnected,
-                                  base::Unretained(this), base::Passed(&pipe)));
+            FROM_HERE,
+            base::BindOnce(&CameraHalDispatcherImpl::OnPeerConnected,
+                           base::Unretained(this), base::Passed(&pipe)));
       }
     }
   }

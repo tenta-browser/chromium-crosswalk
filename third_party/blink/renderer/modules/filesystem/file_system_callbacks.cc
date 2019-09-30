@@ -34,6 +34,8 @@
 
 #include "base/memory/ptr_util.h"
 #include "third_party/blink/public/platform/web_file_writer.h"
+#include "third_party/blink/renderer/bindings/core/v8/script_promise_resolver.h"
+#include "third_party/blink/renderer/core/dom/dom_exception.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
 #include "third_party/blink/renderer/core/fileapi/file.h"
 #include "third_party/blink/renderer/core/fileapi/file_error.h"
@@ -44,9 +46,11 @@
 #include "third_party/blink/renderer/modules/filesystem/dom_file_system_base.h"
 #include "third_party/blink/renderer/modules/filesystem/entry.h"
 #include "third_party/blink/renderer/modules/filesystem/file_entry.h"
+#include "third_party/blink/renderer/modules/filesystem/file_system_base_handle.h"
 #include "third_party/blink/renderer/modules/filesystem/file_writer.h"
 #include "third_party/blink/renderer/modules/filesystem/metadata.h"
 #include "third_party/blink/renderer/platform/file_metadata.h"
+#include "third_party/blink/renderer/platform/wtf/functional.h"
 
 namespace blink {
 
@@ -126,6 +130,20 @@ void ScriptErrorCallback::Invoke(FileError::ErrorCode error) {
 ScriptErrorCallback::ScriptErrorCallback(V8ErrorCallback* callback)
     : callback_(ToV8PersistentCallbackInterface(callback)) {}
 
+// PromiseErrorCallback -------------------------------------------------------
+
+PromiseErrorCallback::PromiseErrorCallback(ScriptPromiseResolver* resolver)
+    : resolver_(resolver) {}
+
+void PromiseErrorCallback::Trace(Visitor* visitor) {
+  ErrorCallbackBase::Trace(visitor);
+  visitor->Trace(resolver_);
+}
+
+void PromiseErrorCallback::Invoke(FileError::ErrorCode error) {
+  resolver_->Reject(FileError::CreateDOMException(error));
+}
+
 // EntryCallbacks -------------------------------------------------------------
 
 void EntryCallbacks::OnDidGetEntryV8Impl::Trace(blink::Visitor* visitor) {
@@ -135,6 +153,19 @@ void EntryCallbacks::OnDidGetEntryV8Impl::Trace(blink::Visitor* visitor) {
 
 void EntryCallbacks::OnDidGetEntryV8Impl::OnSuccess(Entry* entry) {
   callback_->InvokeAndReportException(nullptr, entry);
+}
+
+EntryCallbacks::OnDidGetEntryPromiseImpl::OnDidGetEntryPromiseImpl(
+    ScriptPromiseResolver* resolver)
+    : resolver_(resolver) {}
+
+void EntryCallbacks::OnDidGetEntryPromiseImpl::Trace(Visitor* visitor) {
+  OnDidGetEntryCallback::Trace(visitor);
+  visitor->Trace(resolver_);
+}
+
+void EntryCallbacks::OnDidGetEntryPromiseImpl::OnSuccess(Entry* entry) {
+  resolver_->Resolve(entry->asFileSystemHandle());
 }
 
 std::unique_ptr<AsyncFileSystemCallbacks> EntryCallbacks::Create(
@@ -194,7 +225,8 @@ EntriesCallbacks::EntriesCallbacks(OnDidGetEntriesCallback* success_callback,
                               context),
       success_callback_(success_callback),
       directory_reader_(directory_reader),
-      base_path_(base_path) {
+      base_path_(base_path),
+      entries_(new HeapVector<Member<Entry>>()) {
   DCHECK(directory_reader_);
 }
 
@@ -206,12 +238,12 @@ void EntriesCallbacks::DidReadDirectoryEntry(const String& name,
       is_directory
           ? static_cast<Entry*>(DirectoryEntry::Create(filesystem, path))
           : static_cast<Entry*>(FileEntry::Create(filesystem, path));
-  entries_.push_back(entry);
+  entries_->push_back(entry);
 }
 
 void EntriesCallbacks::DidReadDirectoryEntries(bool has_more) {
   directory_reader_->SetHasMoreEntries(has_more);
-  EntryHeapVector* entries = new EntryHeapVector(std::move(entries_));
+  EntryHeapVector* entries = new EntryHeapVector(std::move(*entries_));
 
   if (!success_callback_)
     return;
@@ -237,7 +269,7 @@ std::unique_ptr<AsyncFileSystemCallbacks> FileSystemCallbacks::Create(
     OnDidOpenFileSystemCallback* success_callback,
     ErrorCallbackBase* error_callback,
     ExecutionContext* context,
-    FileSystemType type) {
+    mojom::blink::FileSystemType type) {
   return base::WrapUnique(
       new FileSystemCallbacks(success_callback, error_callback, context, type));
 }
@@ -246,7 +278,7 @@ FileSystemCallbacks::FileSystemCallbacks(
     OnDidOpenFileSystemCallback* success_callback,
     ErrorCallbackBase* error_callback,
     ExecutionContext* context,
-    FileSystemType type)
+    mojom::blink::FileSystemType type)
     : FileSystemCallbacksBase(error_callback, nullptr, context),
       success_callback_(success_callback),
       type_(type) {}
@@ -282,7 +314,7 @@ ResolveURICallbacks::ResolveURICallbacks(
 
 void ResolveURICallbacks::DidResolveURL(const String& name,
                                         const KURL& root_url,
-                                        FileSystemType type,
+                                        mojom::blink::FileSystemType type,
                                         const String& file_path,
                                         bool is_directory) {
   DOMFileSystem* filesystem =

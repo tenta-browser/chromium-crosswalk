@@ -55,6 +55,9 @@ constexpr const char* kCustomPatternsWithContext[] = {
 
     // Serial numbers
     "(?i-s)(serial\\s*(?:number)?\\s*[:=]\\s*)([0-9a-zA-Z\\-\"]+)()",
+
+    // usbguard-daemon
+    "(?-s)(usbguard-daemon.* serial \")(.*)(\" name \")",
 };
 
 // Helper macro: Non capturing group
@@ -77,7 +80,7 @@ constexpr const char* kCustomPatternsWithContext[] = {
 
 #define PCT_ENCODED "%" HEXDIG HEXDIG
 
-#define DEC_OCTET NCG("[0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-9]")
+#define DEC_OCTET NCG("1[0-9][0-9]|2[0-4][0-9]|25[0-5]|[1-9][0-9]|[0-9]")
 
 #define IPV4ADDRESS DEC_OCTET "\\." DEC_OCTET "\\." DEC_OCTET "\\." DEC_OCTET
 

@@ -6,8 +6,8 @@
 
 #include "base/i18n/rtl.h"
 #include "mojo/public/cpp/base/string16_mojom_traits.h"
-#include "mojo/public/cpp/base/text_direction_mojom_traits.h"
 #include "mojo/public/cpp/base/time_mojom_traits.h"
+#include "ui/gfx/geometry/mojo/geometry_struct_traits.h"
 #include "url/mojom/origin_mojom_traits.h"
 #include "url/mojom/url_gurl_mojom_traits.h"
 
@@ -285,13 +285,10 @@ EnumTraits<autofill::mojom::PasswordFormSubmissionIndicatorEvent,
       return autofill::mojom::PasswordFormSubmissionIndicatorEvent::
           PROVISIONALLY_SAVED_FORM_ON_START_PROVISIONAL_LOAD;
     case autofill::PasswordForm::SubmissionIndicatorEvent::
-        FILLED_FORM_ON_START_PROVISIONAL_LOAD:
-      return autofill::mojom::PasswordFormSubmissionIndicatorEvent::
-          FILLED_FORM_ON_START_PROVISIONAL_LOAD;
+        DEPRECATED_FILLED_FORM_ON_START_PROVISIONAL_LOAD:
     case autofill::PasswordForm::SubmissionIndicatorEvent::
-        FILLED_INPUT_ELEMENTS_ON_START_PROVISIONAL_LOAD:
-      return autofill::mojom::PasswordFormSubmissionIndicatorEvent::
-          FILLED_INPUT_ELEMENTS_ON_START_PROVISIONAL_LOAD;
+        DEPRECATED_FILLED_INPUT_ELEMENTS_ON_START_PROVISIONAL_LOAD:
+      break;
     case autofill::PasswordForm::SubmissionIndicatorEvent::
         SUBMISSION_INDICATOR_EVENT_COUNT:
       return autofill::mojom::PasswordFormSubmissionIndicatorEvent::
@@ -340,16 +337,6 @@ bool EnumTraits<autofill::mojom::PasswordFormSubmissionIndicatorEvent,
         PROVISIONALLY_SAVED_FORM_ON_START_PROVISIONAL_LOAD:
       *output = autofill::PasswordForm::SubmissionIndicatorEvent::
           PROVISIONALLY_SAVED_FORM_ON_START_PROVISIONAL_LOAD;
-      return true;
-    case autofill::mojom::PasswordFormSubmissionIndicatorEvent::
-        FILLED_FORM_ON_START_PROVISIONAL_LOAD:
-      *output = autofill::PasswordForm::SubmissionIndicatorEvent::
-          FILLED_FORM_ON_START_PROVISIONAL_LOAD;
-      return true;
-    case autofill::mojom::PasswordFormSubmissionIndicatorEvent::
-        FILLED_INPUT_ELEMENTS_ON_START_PROVISIONAL_LOAD:
-      *output = autofill::PasswordForm::SubmissionIndicatorEvent::
-          FILLED_INPUT_ELEMENTS_ON_START_PROVISIONAL_LOAD;
       return true;
     case autofill::mojom::PasswordFormSubmissionIndicatorEvent::
         SUBMISSION_INDICATOR_EVENT_COUNT:
@@ -546,6 +533,41 @@ bool EnumTraits<autofill::mojom::LabelSource,
 }
 
 // static
+autofill::mojom::FillingStatus
+EnumTraits<autofill::mojom::FillingStatus, autofill::FillingStatus>::ToMojom(
+    autofill::FillingStatus input) {
+  switch (input) {
+    case autofill::FillingStatus::SUCCESS:
+      return autofill::mojom::FillingStatus::SUCCESS;
+    case autofill::FillingStatus::ERROR_NO_VALID_FIELD:
+      return autofill::mojom::FillingStatus::ERROR_NO_VALID_FIELD;
+    case autofill::FillingStatus::ERROR_NOT_ALLOWED:
+      return autofill::mojom::FillingStatus::ERROR_NOT_ALLOWED;
+  }
+  NOTREACHED();
+  return autofill::mojom::FillingStatus::SUCCESS;
+}
+
+// static
+bool EnumTraits<autofill::mojom::FillingStatus, autofill::FillingStatus>::
+    FromMojom(autofill::mojom::FillingStatus input,
+              autofill::FillingStatus* output) {
+  switch (input) {
+    case autofill::mojom::FillingStatus::SUCCESS:
+      *output = autofill::FillingStatus::SUCCESS;
+      return true;
+    case autofill::mojom::FillingStatus::ERROR_NO_VALID_FIELD:
+      *output = autofill::FillingStatus::ERROR_NO_VALID_FIELD;
+      return true;
+    case autofill::mojom::FillingStatus::ERROR_NOT_ALLOWED:
+      *output = autofill::FillingStatus::ERROR_NOT_ALLOWED;
+      return true;
+  }
+  NOTREACHED();
+  return false;
+}
+
+// static
 bool StructTraits<
     autofill::mojom::FormFieldDataDataView,
     autofill::FormFieldData>::Read(autofill::mojom::FormFieldDataDataView data,
@@ -570,8 +592,11 @@ bool StructTraits<
   if (!data.ReadCssClasses(&out->css_classes))
     return false;
 
-  out->properties_mask = data.properties_mask();
+  if (!data.ReadSection(&out->section))
+    return false;
 
+  out->properties_mask = data.properties_mask();
+  out->unique_renderer_id = data.unique_renderer_id();
   out->max_length = data.max_length();
   out->is_autofilled = data.is_autofilled();
 
@@ -585,6 +610,11 @@ bool StructTraits<
     return false;
 
   if (!data.ReadTextDirection(&out->text_direction))
+    return false;
+
+  out->is_enabled = data.is_enabled();
+  out->is_readonly = data.is_readonly();
+  if (!data.ReadValue(&out->typed_value))
     return false;
 
   if (!data.ReadOptionValues(&out->option_values))
@@ -613,8 +643,12 @@ bool StructTraits<autofill::mojom::FormDataDataView, autofill::FormData>::Read(
 
   out->is_form_tag = data.is_form_tag();
   out->is_formless_checkout = data.is_formless_checkout();
+  out->unique_renderer_id = data.unique_renderer_id();
 
   if (!data.ReadFields(&out->fields))
+    return false;
+
+  if (!data.ReadUsernamePredictions(&out->username_predictions))
     return false;
 
   return true;
@@ -636,6 +670,8 @@ bool StructTraits<autofill::mojom::FormFieldDataPredictionsDataView,
   if (!data.ReadOverallType(&out->overall_type))
     return false;
   if (!data.ReadParseableName(&out->parseable_name))
+    return false;
+  if (!data.ReadSection(&out->section))
     return false;
 
   return true;
@@ -674,17 +710,18 @@ bool StructTraits<autofill::mojom::PasswordFormFillDataDataView,
                   autofill::PasswordFormFillData>::
     Read(autofill::mojom::PasswordFormFillDataDataView data,
          autofill::PasswordFormFillData* out) {
-  if (!data.ReadName(&out->name) || !data.ReadOrigin(&out->origin) ||
-      !data.ReadAction(&out->action) ||
+  if (!data.ReadOrigin(&out->origin) || !data.ReadAction(&out->action) ||
       !data.ReadUsernameField(&out->username_field) ||
       !data.ReadPasswordField(&out->password_field) ||
       !data.ReadPreferredRealm(&out->preferred_realm) ||
       !data.ReadAdditionalLogins(&out->additional_logins))
     return false;
 
+  out->form_renderer_id = data.form_renderer_id();
   out->wait_for_username = data.wait_for_username();
-  out->is_possible_change_password_form =
-      data.is_possible_change_password_form();
+  out->has_renderer_ids = data.has_renderer_ids();
+  out->username_may_use_prefilled_placeholder =
+      data.username_may_use_prefilled_placeholder();
 
   return true;
 }
@@ -702,6 +739,24 @@ bool StructTraits<autofill::mojom::PasswordFormGenerationDataDataView,
   } else {
     DCHECK(!out->confirmation_field_signature);
   }
+  return true;
+}
+
+// static
+bool StructTraits<autofill::mojom::PasswordGenerationUIDataDataView,
+                  autofill::password_generation::PasswordGenerationUIData>::
+    Read(autofill::mojom::PasswordGenerationUIDataDataView data,
+         autofill::password_generation::PasswordGenerationUIData* out) {
+  if (!data.ReadBounds(&out->bounds))
+    return false;
+
+  out->max_length = data.max_length();
+
+  if (!data.ReadGenerationElement(&out->generation_element) ||
+      !data.ReadTextDirection(&out->text_direction) ||
+      !data.ReadPasswordForm(&out->password_form))
+    return false;
+
   return true;
 }
 
@@ -730,13 +785,11 @@ bool StructTraits<
     return false;
 
   out->form_has_autofilled_value = data.form_has_autofilled_value();
-  out->password_value_is_default = data.password_value_is_default();
 
   if (!data.ReadNewPasswordElement(&out->new_password_element) ||
       !data.ReadNewPasswordValue(&out->new_password_value))
     return false;
 
-  out->new_password_value_is_default = data.new_password_value_is_default();
   out->new_password_marked_by_site = data.new_password_marked_by_site();
 
   if (!data.ReadConfirmationPasswordElement(
@@ -772,8 +825,9 @@ bool StructTraits<
       data.was_parsed_using_autofill_predictions();
   out->is_public_suffix_match = data.is_public_suffix_match();
   out->is_affiliation_based_match = data.is_affiliation_based_match();
-  out->does_look_like_signup_form = data.does_look_like_signup_form();
   out->only_for_fallback_saving = data.only_for_fallback_saving();
+  out->is_gaia_with_skip_save_password_form =
+      data.is_gaia_with_skip_save_password_form();
 
   return true;
 }

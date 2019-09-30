@@ -29,7 +29,7 @@
 #import "third_party/blink/public/platform/platform.h"
 #import "third_party/blink/renderer/platform/fonts/font.h"
 #import "third_party/blink/renderer/platform/fonts/opentype/font_settings.h"
-#import "third_party/blink/renderer/platform/fonts/shaping/harf_buzz_face.h"
+#import "third_party/blink/renderer/platform/fonts/shaping/harfbuzz_face.h"
 #import "third_party/blink/renderer/platform/graphics/skia/skia_utils.h"
 #import "third_party/blink/renderer/platform/layout_test_support.h"
 #import "third_party/blink/renderer/platform/wtf/retain_ptr.h"
@@ -57,16 +57,15 @@ static CTFontDescriptorRef CascadeToLastResortFontDescriptor() {
       kAdoptCF, CTFontDescriptorCreateWithNameAndSize(CFSTR("LastResort"), 0));
   const void* descriptors[] = {last_resort.Get()};
   RetainPtr<CFArrayRef> values_array(
-      kAdoptCF,
-      CFArrayCreate(kCFAllocatorDefault, descriptors,
-                    WTF_ARRAY_LENGTH(descriptors), &kCFTypeArrayCallBacks));
+      kAdoptCF, CFArrayCreate(kCFAllocatorDefault, descriptors,
+                              arraysize(descriptors), &kCFTypeArrayCallBacks));
 
   const void* keys[] = {kCTFontCascadeListAttribute};
   const void* values[] = {values_array.Get()};
   RetainPtr<CFDictionaryRef> attributes(
       kAdoptCF,
-      CFDictionaryCreate(kCFAllocatorDefault, keys, values,
-                         WTF_ARRAY_LENGTH(keys), &kCFTypeDictionaryKeyCallBacks,
+      CFDictionaryCreate(kCFAllocatorDefault, keys, values, arraysize(keys),
+                         &kCFTypeDictionaryKeyCallBacks,
                          &kCFTypeDictionaryValueCallBacks));
 
   descriptor = CTFontDescriptorCreateWithAttributes(attributes.Get());

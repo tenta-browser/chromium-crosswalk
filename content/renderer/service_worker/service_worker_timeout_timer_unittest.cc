@@ -10,9 +10,9 @@
 #include "base/test/scoped_feature_list.h"
 #include "base/test/test_mock_time_task_runner.h"
 #include "base/time/tick_clock.h"
-#include "content/common/service_worker/service_worker_utils.h"
 #include "services/network/public/cpp/features.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/blink/public/common/service_worker/service_worker_utils.h"
 
 namespace content {
 
@@ -47,6 +47,28 @@ base::RepeatingClosure CreateReceiverWithCalledFlag(bool* out_is_called) {
                              out_is_called);
 }
 
+base::OnceClosure CreateDispatchingEventTask(
+    ServiceWorkerTimeoutTimer* timer,
+    std::string tag,
+    std::vector<std::string>* out_tags) {
+  return base::BindOnce(
+      [](ServiceWorkerTimeoutTimer* timer, std::string tag,
+         std::vector<std::string>* out_tags) {
+        // Event dispatched inside of pending task should run successfully.
+        MockEvent event;
+        const int event_id = timer->StartEvent(event.CreateAbortCallback());
+        event.set_event_id(event_id);
+        EXPECT_FALSE(timer->did_idle_timeout());
+        EXPECT_FALSE(event.has_aborted());
+
+        out_tags->emplace_back(std::move(tag));
+
+        timer->EndEvent(event_id);
+        EXPECT_FALSE(event.has_aborted());
+      },
+      timer, std::move(tag), out_tags);
+}
+
 }  // namespace
 
 class ServiceWorkerTimeoutTimerTest : public testing::Test {
@@ -59,7 +81,7 @@ class ServiceWorkerTimeoutTimerTest : public testing::Test {
 
   void EnableServicification() {
     feature_list_.InitWithFeatures({network::features::kNetworkService}, {});
-    ASSERT_TRUE(ServiceWorkerUtils::IsServicificationEnabled());
+    ASSERT_TRUE(blink::ServiceWorkerUtils::IsServicificationEnabled());
   }
 
   base::TestMockTimeTaskRunner* task_runner() { return task_runner_.get(); }
@@ -224,6 +246,31 @@ TEST_F(ServiceWorkerTimeoutTimerTest, PushPendingTask) {
   EXPECT_TRUE(did_task_run);
 }
 
+// Test that pending tasks are run when StartEvent() is called while there the
+// idle timer delay is zero. Regression test for https://crbug.com/878608.
+TEST_F(ServiceWorkerTimeoutTimerTest, RunPendingTasksWithZeroIdleTimerDelay) {
+  EnableServicification();
+  ServiceWorkerTimeoutTimer timer(base::DoNothing(),
+                                  task_runner()->GetMockTickClock());
+  timer.SetIdleTimerDelayToZero();
+  EXPECT_TRUE(timer.did_idle_timeout());
+
+  std::vector<std::string> handled_tasks;
+  timer.PushPendingTask(
+      CreateDispatchingEventTask(&timer, "1", &handled_tasks));
+  timer.PushPendingTask(
+      CreateDispatchingEventTask(&timer, "2", &handled_tasks));
+
+  // Start a new event. StartEvent() should run the pending tasks.
+  MockEvent event;
+  const int event_id = timer.StartEvent(event.CreateAbortCallback());
+  event.set_event_id(event_id);
+  EXPECT_FALSE(timer.did_idle_timeout());
+  ASSERT_EQ(2u, handled_tasks.size());
+  EXPECT_EQ("1", handled_tasks[0]);
+  EXPECT_EQ("2", handled_tasks[1]);
+}
+
 TEST_F(ServiceWorkerTimeoutTimerTest, SetIdleTimerDelayToZero) {
   EnableServicification();
   {
@@ -273,7 +320,8 @@ TEST_F(ServiceWorkerTimeoutTimerTest, SetIdleTimerDelayToZero) {
 }
 
 TEST_F(ServiceWorkerTimeoutTimerTest, NonS13nServiceWorker) {
-  ASSERT_FALSE(ServiceWorkerUtils::IsServicificationEnabled());
+  if (blink::ServiceWorkerUtils::IsServicificationEnabled())
+    return;
 
   MockEvent event;
   {

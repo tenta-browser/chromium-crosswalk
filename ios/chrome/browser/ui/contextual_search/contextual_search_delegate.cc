@@ -13,7 +13,7 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
-#include "components/google/core/browser/google_util.h"
+#include "components/google/core/common/google_util.h"
 #include "components/search_engines/template_url_service.h"
 #include "components/search_engines/util.h"
 #include "components/variations/net/variations_http_headers.h"
@@ -176,13 +176,11 @@ void ContextualSearchDelegate::RequestServerSearchTerm() {
 
   // Add Chrome experiment state to the request headers.
   net::HttpRequestHeaders headers;
-  // Note: It's OK to pass SignedIn::kNo if it's unknown, as it does not affect
-  // transmission of experiments coming from the variations server.
-  variations::AppendVariationHeaders(search_term_fetcher_->GetOriginalURL(),
-                                     browser_state_->IsOffTheRecord()
-                                         ? variations::InIncognito::kYes
-                                         : variations::InIncognito::kNo,
-                                     variations::SignedIn::kNo, &headers);
+  variations::AppendVariationHeadersUnknownSignedIn(
+      search_term_fetcher_->GetOriginalURL(),
+      browser_state_->IsOffTheRecord() ? variations::InIncognito::kYes
+                                       : variations::InIncognito::kNo,
+      &headers);
   search_term_fetcher_->SetExtraRequestHeaders(headers.ToString());
 
   SetDiscourseContextAndAddToHeader(*context_);
@@ -275,7 +273,7 @@ std::string ContextualSearchDelegate::GetSearchTermResolutionUrlString(
 
   TemplateURLRef::SearchTermsArgs::ContextualSearchParams params(
       kContextualSearchRequestVersion, kContextualCardsNoIntegration,
-      std::string());
+      std::string(), 0L, 0);
 
   search_terms_args.contextual_search_params = params;
 

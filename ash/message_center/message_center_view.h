@@ -34,6 +34,7 @@ class MessageView;
 
 namespace ash {
 
+class ArcNotificationContentViewTest;
 class MessageCenterButtonBar;
 class NotifierSettingsView;
 
@@ -47,15 +48,11 @@ class ASH_EXPORT MessageCenterView
       public SessionObserver,
       public MessageListView::Observer,
       public gfx::AnimationDelegate,
-      public views::FocusChangeListener,
       public views::ViewObserver {
  public:
   MessageCenterView(message_center::MessageCenter* message_center,
-                    int max_height,
-                    bool initially_settings_visible);
+                    int max_height);
   ~MessageCenterView() override;
-
-  void Init();
 
   void SetNotifications(
       const message_center::NotificationList::Notifications& notifications);
@@ -71,10 +68,6 @@ class ASH_EXPORT MessageCenterView
   void SetIsClosing(bool is_closing);
 
   void SetMaxHeight(int max_height) { max_height_ = max_height; }
-
-  // Overridden from views::FocusChangeListener
-  void OnWillChangeFocus(views::View* before, views::View* now) override {}
-  void OnDidChangeFocus(views::View* before, views::View* now) override;
 
   void UpdateScrollerShadowVisibility();
 
@@ -113,7 +106,7 @@ class ASH_EXPORT MessageCenterView
   void OnViewPreferredSizeChanged(views::View* observed_view) override;
 
  private:
-  friend class arc::ArcNotificationContentViewTest;
+  friend class ArcNotificationContentViewTest;
   friend class MessageCenterViewTest;
 
   // NOTIFICATIONS: Normal notification list (MessageListView) is shown.
@@ -184,8 +177,6 @@ class ASH_EXPORT MessageCenterView
 
   // Current view mode. During animation, it is the target mode.
   Mode mode_ = Mode::NO_NOTIFICATIONS;
-
-  views::FocusManager* focus_manager_ = nullptr;
 
   ScopedSessionObserver session_observer_{this};
 

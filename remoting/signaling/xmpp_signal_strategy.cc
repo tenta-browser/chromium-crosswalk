@@ -143,7 +143,7 @@ class XmppSignalStrategy::Core : public XmppLoginHandler::Delegate {
 
   Error error_ = OK;
 
-  base::ObserverList<Listener, true> listeners_;
+  base::ObserverList<Listener, true>::Unchecked listeners_;
 
   base::RepeatingTimer keep_alive_timer_;
 
@@ -184,10 +184,9 @@ void XmppSignalStrategy::Core::Connect() {
   if (!proxy_resolving_socket_factory_) {
     proxy_resolving_socket_factory_ =
         std::make_unique<network::ProxyResolvingClientSocketFactory>(
-            socket_factory_, request_context_getter_->GetURLRequestContext());
+            request_context_getter_->GetURLRequestContext());
   }
   socket_ = proxy_resolving_socket_factory_->CreateSocket(
-      net::SSLConfig(),
       GURL("https://" +
            net::HostPortPair(xmpp_server_config_.host, xmpp_server_config_.port)
                .ToString()),
@@ -344,7 +343,7 @@ void XmppSignalStrategy::Core::StartTls() {
   cert_verifier_ = net::CertVerifier::CreateDefault();
   transport_security_state_.reset(new net::TransportSecurityState());
   cert_transparency_verifier_.reset(new net::MultiLogCTVerifier());
-  ct_policy_enforcer_.reset(new net::CTPolicyEnforcer());
+  ct_policy_enforcer_.reset(new net::DefaultCTPolicyEnforcer());
   net::SSLClientSocketContext context;
   context.cert_verifier = cert_verifier_.get();
   context.transport_security_state = transport_security_state_.get();

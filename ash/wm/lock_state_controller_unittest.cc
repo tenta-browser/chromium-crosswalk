@@ -27,7 +27,7 @@
 #include "base/time/time.h"
 #include "chromeos/dbus/fake_power_manager_client.h"
 #include "chromeos/dbus/fake_session_manager_client.h"
-#include "ui/display/manager/chromeos/display_configurator.h"
+#include "ui/display/manager/display_configurator.h"
 #include "ui/display/manager/fake_display_snapshot.h"
 #include "ui/display/types/display_constants.h"
 #include "ui/gfx/geometry/size.h"
@@ -343,7 +343,7 @@ TEST_F(LockStateControllerTest, LegacyLockAndShutDown) {
   // Make sure a mouse move event won't show the cursor.
   GenerateMouseMoveEvent();
   // TODO: CursorManager not created in mash. http://crbug.com/631103.
-  if (Shell::GetAshConfig() != Config::MASH)
+  if (Shell::GetAshConfig() != Config::MASH_DEPRECATED)
     EXPECT_FALSE(cursor_visible());
 
   ShutdownSoundPlayed();
@@ -534,7 +534,7 @@ TEST_F(LockStateControllerTest, ShutdownWithoutButton) {
       SessionStateAnimator::ANIMATION_HIDE_IMMEDIATELY));
   GenerateMouseMoveEvent();
   // TODO: CursorManager not created in mash. http://crbug.com/631103.
-  if (Shell::GetAshConfig() != Config::MASH)
+  if (Shell::GetAshConfig() != Config::MASH_DEPRECATED)
     EXPECT_FALSE(cursor_visible());
 }
 
@@ -551,7 +551,7 @@ TEST_F(LockStateControllerTest, RequestShutdownFromLoginScreen) {
 
   GenerateMouseMoveEvent();
   // TODO: CursorManager not created in mash. http://crbug.com/631103.
-  if (Shell::GetAshConfig() != Config::MASH)
+  if (Shell::GetAshConfig() != Config::MASH_DEPRECATED)
     EXPECT_FALSE(cursor_visible());
 
   EXPECT_EQ(0, NumShutdownRequests());
@@ -577,7 +577,7 @@ TEST_F(LockStateControllerTest, RequestShutdownFromLockScreen) {
 
   GenerateMouseMoveEvent();
   // TODO: CursorManager not created in mash. http://crbug.com/631103.
-  if (Shell::GetAshConfig() != Config::MASH)
+  if (Shell::GetAshConfig() != Config::MASH_DEPRECATED)
     EXPECT_FALSE(cursor_visible());
 
   EXPECT_EQ(0, NumShutdownRequests());

@@ -6,6 +6,7 @@
 
 #include "base/logging.h"
 #include "base/strings/string_piece.h"
+#include "base/values.h"
 #include "build/build_config.h"
 #include "content/public/common/origin_util.h"
 #include "content/public/common/user_agent.h"
@@ -102,7 +103,11 @@ std::string ContentClient::GetProcessTypeNameInEnglish(int type) {
   return std::string();
 }
 
-OriginTrialPolicy* ContentClient::GetOriginTrialPolicy() {
+base::DictionaryValue ContentClient::GetNetLogConstants() const {
+  return base::DictionaryValue();
+}
+
+blink::OriginTrialPolicy* ContentClient::GetOriginTrialPolicy() {
   return nullptr;
 }
 

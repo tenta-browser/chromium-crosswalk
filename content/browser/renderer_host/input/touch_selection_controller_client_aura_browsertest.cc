@@ -19,6 +19,7 @@
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/content_browser_test.h"
 #include "content/public/test/content_browser_test_utils.h"
+#include "content/public/test/hit_test_region_observer.h"
 #include "content/public/test/scoped_overscroll_modes.h"
 #include "content/public/test/test_navigation_observer.h"
 #include "content/public/test/test_utils.h"
@@ -422,7 +423,7 @@ IN_PROC_BROWSER_TEST_P(TouchSelectionControllerClientAuraSiteIsolationTest,
   // The child will change with the cross-site navigation. It shouldn't change
   // after this.
   child = root->child_at(0);
-  WaitForChildFrameSurfaceReady(child->current_frame_host());
+  WaitForHitTestDataOrChildSurfaceReady(child->current_frame_host());
 
   RenderWidgetHostViewChildFrame* child_view =
       static_cast<RenderWidgetHostViewChildFrame*>(
@@ -529,7 +530,7 @@ IN_PROC_BROWSER_TEST_P(TouchSelectionControllerClientAuraSiteIsolationTest,
   // The child will change with the cross-site navigation. It shouldn't change
   // after this.
   child = root->child_at(0);
-  WaitForChildFrameSurfaceReady(child->current_frame_host());
+  WaitForHitTestDataOrChildSurfaceReady(child->current_frame_host());
 
   RenderWidgetHostViewChildFrame* child_view =
       static_cast<RenderWidgetHostViewChildFrame*>(
@@ -549,8 +550,8 @@ IN_PROC_BROWSER_TEST_P(TouchSelectionControllerClientAuraSiteIsolationTest,
   ui::TouchSelectionControllerTestApi selection_controller_test_api(
       selection_controller);
 
-  scoped_refptr<UpdateResizeParamsMessageFilter> filter =
-      new UpdateResizeParamsMessageFilter();
+  scoped_refptr<SynchronizeVisualPropertiesMessageFilter> filter =
+      new SynchronizeVisualPropertiesMessageFilter();
   root->current_frame_host()->GetProcess()->AddFilter(filter.get());
 
   // Find the location of some text to select.
@@ -681,8 +682,6 @@ IN_PROC_BROWSER_TEST_F(TouchSelectionControllerClientAuraTest,
             rwhva->selection_controller()->active_status());
   EXPECT_FALSE(ui::TouchSelectionMenuRunner::GetInstance()->IsRunning());
 
-  ui::test::EventGeneratorDelegate* generator_delegate =
-      ui::test::EventGenerator::default_delegate;
   gfx::NativeView native_view = rwhva->GetNativeView();
   ui::test::EventGenerator generator(native_view->GetRootWindow());
 
@@ -693,7 +692,7 @@ IN_PROC_BROWSER_TEST_F(TouchSelectionControllerClientAuraTest,
   gfx::PointF point_f;
   ASSERT_TRUE(GetPointInsideTextfield(&point_f));
   gfx::Point point = gfx::ToRoundedPoint(point_f);
-  generator_delegate->ConvertPointFromTarget(native_view, &point);
+  generator.delegate()->ConvertPointFromTarget(native_view, &point);
   generator.GestureTapAt(point);
 
   selection_controller_client()->Wait();
@@ -706,7 +705,7 @@ IN_PROC_BROWSER_TEST_F(TouchSelectionControllerClientAuraTest,
   // Tap on the insertion handle; the quick menu should appear.
   gfx::Point handle_center = gfx::ToRoundedPoint(
       rwhva->selection_controller()->GetStartHandleRect().CenterPoint());
-  generator_delegate->ConvertPointFromTarget(native_view, &handle_center);
+  generator.delegate()->ConvertPointFromTarget(native_view, &handle_center);
   generator.GestureTapAt(handle_center);
   EXPECT_TRUE(ui::TouchSelectionMenuRunner::GetInstance()->IsRunning());
 
@@ -1049,6 +1048,13 @@ IN_PROC_BROWSER_TEST_F(TouchSelectionControllerClientAuraScaleFactorTest,
 
   gfx::PointF point;
   ASSERT_TRUE(GetPointInsideTextfield(&point));
+
+  ui::GestureEventDetails gesture_tap_down_details(ui::ET_GESTURE_TAP_DOWN);
+  gesture_tap_down_details.set_device_type(
+      ui::GestureDeviceType::DEVICE_TOUCHSCREEN);
+  ui::GestureEvent gesture_tap_down(2, 2, 0, ui::EventTimeForNow(),
+                                    gesture_tap_down_details);
+  rwhva->OnGestureEvent(&gesture_tap_down);
   ui::GestureEventDetails tap_details(ui::ET_GESTURE_TAP);
   tap_details.set_device_type(ui::GestureDeviceType::DEVICE_TOUCHSCREEN);
   tap_details.set_tap_count(1);

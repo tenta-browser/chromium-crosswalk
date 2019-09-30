@@ -18,12 +18,13 @@
 #import "ios/chrome/browser/metrics/new_tab_page_uma.h"
 #include "ios/chrome/browser/sessions/tab_restore_service_delegate_impl_ios.h"
 #include "ios/chrome/browser/sessions/tab_restore_service_delegate_impl_ios_factory.h"
-#include "ios/chrome/browser/sync/ios_chrome_profile_sync_service_factory.h"
+#include "ios/chrome/browser/sync/profile_sync_service_factory.h"
 #import "ios/chrome/browser/ui/authentication/signin_promo_view.h"
 #import "ios/chrome/browser/ui/authentication/signin_promo_view_configurator.h"
 #import "ios/chrome/browser/ui/authentication/signin_promo_view_consumer.h"
 #import "ios/chrome/browser/ui/authentication/signin_promo_view_mediator.h"
 #include "ios/chrome/browser/ui/commands/application_commands.h"
+#import "ios/chrome/browser/ui/commands/open_new_tab_command.h"
 #import "ios/chrome/browser/ui/commands/show_signin_command.h"
 #import "ios/chrome/browser/ui/context_menu/context_menu_coordinator.h"
 #import "ios/chrome/browser/ui/ntp/recent_tabs/legacy_recent_tabs_table_view_controller_delegate.h"
@@ -43,10 +44,11 @@
 #import "ios/chrome/browser/ui/signin_interaction/public/signin_presenter.h"
 #include "ios/chrome/browser/ui/ui_util.h"
 #import "ios/chrome/browser/ui/url_loader.h"
-#import "ios/chrome/browser/ui/util/constraints_ui_util.h"
 #import "ios/chrome/browser/ui/util/top_view_controller.h"
+#import "ios/chrome/common/ui_util/constraints_ui_util.h"
 #include "ios/chrome/grit/ios_chromium_strings.h"
 #include "ios/chrome/grit/ios_strings.h"
+#import "ios/web/public/navigation_manager.h"
 #include "ios/web/public/referrer.h"
 #import "ios/web/public/web_state/context_menu_params.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -333,13 +335,13 @@ enum CellType {
 #pragma mark - Helpers to open tabs, or show the full history view.
 
 - (void)dismissRecentTabsModal {
-  [self.handsetCommandHandler dismissRecentTabsWithCompletion:nil];
+  [self.handsetCommandHandler dismissRecentTabs];
 }
 
 - (void)openTabWithContentOfDistantTab:
     (synced_sessions::DistantTab const*)distantTab {
   sync_sessions::OpenTabsUIDelegate* openTabs =
-      IOSChromeProfileSyncServiceFactory::GetForBrowserState(_browserState)
+      ProfileSyncServiceFactory::GetForBrowserState(_browserState)
           ->GetOpenTabsUIDelegate();
   const sessions::SessionTab* toLoad = nullptr;
   [self dismissRecentTabsModal];
@@ -376,20 +378,16 @@ enum CellType {
 - (void)openTabWithURL:(const GURL&)url {
   if (url.is_valid()) {
     [self dismissRecentTabsModal];
-    [_loader loadURL:url
-                 referrer:web::Referrer()
-               transition:ui::PAGE_TRANSITION_TYPED
-        rendererInitiated:NO];
+
+    web::NavigationManager::WebLoadParams params(url);
+    params.transition_type = ui::PAGE_TRANSITION_TYPED;
+    [_loader loadURLWithParams:params];
   }
 }
 
 - (void)showFullHistory {
-  __weak LegacyRecentTabsTableViewController* weakSelf = self;
-  ProceduralBlock openHistory = ^{
-    [weakSelf.dispatcher showHistory];
-  };
-  DCHECK(self.handsetCommandHandler);
-  [self.handsetCommandHandler dismissRecentTabsWithCompletion:openHistory];
+  // Dismisses recent tabs before presenting history.
+  [self.handsetCommandHandler showHistoryFromRecentTabs];
 }
 
 #pragma mark - Handling of the collapsed sections.
@@ -507,7 +505,7 @@ enum CellType {
   [self.tableView deleteSections:indexesToBeDeleted
                 withRowAnimation:UITableViewRowAnimationFade];
   syncer::SyncService* syncService =
-      IOSChromeProfileSyncServiceFactory::GetForBrowserState(_browserState);
+      ProfileSyncServiceFactory::GetForBrowserState(_browserState);
   _syncedSessions.reset(new synced_sessions::SyncedSessions(syncService));
   _sessionState = newSessionState;
 
@@ -642,10 +640,13 @@ enum CellType {
       [self sessionAtIndexPath:indexPath];
   [self dismissRecentTabsModal];
   for (auto const& tab : session->tabs) {
-    [_loader webPageOrderedOpen:tab->virtual_url
-                       referrer:web::Referrer()
-                   inBackground:YES
-                       appendTo:kLastTab];
+    OpenNewTabCommand* command =
+        [[OpenNewTabCommand alloc] initWithURL:tab->virtual_url
+                                      referrer:web::Referrer()
+                                   inIncognito:NO
+                                  inBackground:YES
+                                      appendTo:kLastTab];
+    [_loader webPageOrderedOpen:command];
   }
 }
 
@@ -655,7 +656,7 @@ enum CellType {
       [self sessionAtIndexPath:indexPath];
   std::string sessionTagCopy = session->tag;
   syncer::SyncService* syncService =
-      IOSChromeProfileSyncServiceFactory::GetForBrowserState(_browserState);
+      ProfileSyncServiceFactory::GetForBrowserState(_browserState);
   sync_sessions::OpenTabsUIDelegate* openTabs =
       syncService->GetOpenTabsUIDelegate();
   _syncedSessions->EraseSession([self indexOfSessionAtIndexPath:indexPath]);
@@ -795,7 +796,8 @@ enum CellType {
       }
       contentViewTopMargin = kSigninPromoViewTopMargin;
       SigninPromoView* signinPromoView =
-          [[SigninPromoView alloc] initWithFrame:CGRectZero];
+          [[SigninPromoView alloc] initWithFrame:CGRectZero
+                                           style:SigninPromoViewUILegacy];
       signinPromoView.delegate = _signinPromoViewMediator;
       signinPromoView.textLabel.text =
           l10n_util::GetNSString(IDS_IOS_SIGNIN_PROMO_RECENT_TABS);

@@ -34,16 +34,8 @@ def EnsureEmptyDir(path):
 def BuildForArch(arch):
   build_dir = 'out/release-' + arch
   Run('scripts/fx', 'set', arch,
-      '--packages=garnet/packages/sdk/base',
+      '--packages=topaz/packages/sdk/topaz',
       '--args=is_debug=false', build_dir)
-  Run('scripts/fx', 'full-build')
-
-  # Also build the deprecated bootfs-based image.
-  # TODO(crbug.com/805057): Remove this once bootfs is turned down.
-  build_dir_bootfs = 'out/release-' + arch + '-bootfs'
-  Run('scripts/fx', 'set', arch,
-      '--packages=garnet/packages/sdk/bootfs', '--args=is_debug=false',
-      '--args=bootfs_packages=true', build_dir_bootfs)
   Run('scripts/fx', 'full-build')
 
 
@@ -64,7 +56,7 @@ def main(args):
 
   tempdir = tempfile.mkdtemp()
   sdk_tar = os.path.join(tempdir, 'fuchsia-sdk.tgz')
-  Run('go', 'run', 'scripts/makesdk.go', '-output', sdk_tar, '.')
+  Run('go', 'run', 'scripts/sdk/foundation/makesdk.go', '-output', sdk_tar, '.')
 
   # Nuke the SDK from DEPS, put our just-built one there, and set a fake .hash
   # file. This means that on next gclient runhooks, we'll restore to the

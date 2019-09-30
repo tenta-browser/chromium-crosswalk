@@ -48,7 +48,7 @@ void GridPainter::PaintChildren(const PaintInfo& paint_info,
                                 const LayoutPoint& paint_offset) {
   DCHECK(!layout_grid_.NeedsLayout());
 
-  LayoutRect local_visual_rect = LayoutRect(paint_info.GetCullRect().rect_);
+  LayoutRect local_visual_rect = LayoutRect(paint_info.GetCullRect().Rect());
   local_visual_rect.MoveBy(-paint_offset);
 
   Vector<LayoutUnit> column_positions = layout_grid_.ColumnPositions();
@@ -80,6 +80,9 @@ void GridPainter::PaintChildren(const PaintInfo& paint_info,
 
   Vector<std::pair<LayoutBox*, size_t>> grid_items_to_be_painted;
 
+  // TODO(svillar): This way of retrieving cells is extremelly
+  // inefficient for the list-based grid implementation. We must
+  // replace the loop by something else.
   for (const auto& row : dirtied_rows) {
     for (const auto& column : dirtied_columns) {
       const Vector<LayoutBox*, 1>& children =
@@ -111,7 +114,7 @@ void GridPainter::PaintChildren(const PaintInfo& paint_info,
       continue;
 
     BlockPainter(layout_grid_)
-        .PaintAllChildPhasesAtomically(*current, paint_info, paint_offset);
+        .PaintAllChildPhasesAtomically(*current, paint_info);
     previous = current;
   }
 }

@@ -32,7 +32,7 @@ VideoCaptureDeviceChromeOSHalv3::VideoCaptureDeviceChromeOSHalv3(
       capture_task_runner_(base::ThreadTaskRunnerHandle::Get()),
       camera_device_ipc_thread_(std::string("CameraDeviceIpcThread") +
                                 device_descriptor.device_id),
-      screen_observer_delegate_(new ScreenObserverDelegate(
+      screen_observer_delegate_(ScreenObserverDelegate::Create(
           this,
           std::move(task_runner_for_screen_observer))),
       lens_facing_(device_descriptor.facing),
@@ -65,7 +65,9 @@ void VideoCaptureDeviceChromeOSHalv3::AllocateAndStart(
   if (!camera_device_ipc_thread_.Start()) {
     std::string error_msg = "Failed to start device thread";
     LOG(ERROR) << error_msg;
-    client->OnError(FROM_HERE, error_msg);
+    client->OnError(
+        media::VideoCaptureError::kCrosHalV3FailedToStartDeviceThread,
+        FROM_HERE, error_msg);
     return;
   }
   capture_params_ = params;
@@ -82,7 +84,7 @@ void VideoCaptureDeviceChromeOSHalv3::StopAndDeAllocate() {
   if (!camera_device_delegate_) {
     return;
   }
-  CloseDevice(base::Closure());
+  CloseDevice(base::OnceClosure());
   camera_device_ipc_thread_.Stop();
   camera_device_delegate_.reset();
   device_context_.reset();
@@ -154,7 +156,7 @@ void VideoCaptureDeviceChromeOSHalv3::OpenDevice() {
                             camera_device_delegate_->GetWeakPtr(), rotation_));
 }
 
-void VideoCaptureDeviceChromeOSHalv3::CloseDevice(base::Closure callback) {
+void VideoCaptureDeviceChromeOSHalv3::CloseDevice(base::OnceClosure callback) {
   DCHECK(capture_task_runner_->BelongsToCurrentThread());
 
   if (!camera_device_delegate_) {

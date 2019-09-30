@@ -37,11 +37,19 @@ class MockDeviceFactory : public video_capture::mojom::DeviceFactory {
     DoGetDeviceInfos(callback);
   }
 
-  void AddVirtualDevice(const media::VideoCaptureDeviceInfo& device_info,
-                        video_capture::mojom::ProducerPtr producer,
-                        video_capture::mojom::VirtualDeviceRequest
-                            virtual_device_request) override {
-    DoAddVirtualDevice(device_info, producer.get(), &virtual_device_request);
+  void AddSharedMemoryVirtualDevice(
+      const media::VideoCaptureDeviceInfo& device_info,
+      video_capture::mojom::ProducerPtr producer,
+      bool send_buffer_handles_to_producer_as_raw_file_descriptors,
+      video_capture::mojom::SharedMemoryVirtualDeviceRequest virtual_device)
+      override {
+    DoAddVirtualDevice(device_info, producer.get(), &virtual_device);
+  }
+
+  void AddTextureVirtualDevice(const media::VideoCaptureDeviceInfo& device_info,
+                               video_capture::mojom::TextureVirtualDeviceRequest
+                                   virtual_device) override {
+    NOTIMPLEMENTED();
   }
 
   MOCK_METHOD1(DoGetDeviceInfos, void(GetDeviceInfosCallback& callback));
@@ -49,11 +57,11 @@ class MockDeviceFactory : public video_capture::mojom::DeviceFactory {
                void(const std::string& device_id,
                     video_capture::mojom::DeviceRequest* device_request,
                     CreateDeviceCallback& callback));
-  MOCK_METHOD3(
-      DoAddVirtualDevice,
-      void(const media::VideoCaptureDeviceInfo& device_info,
-           video_capture::mojom::ProducerProxy* producer,
-           video_capture::mojom::VirtualDeviceRequest* virtual_device_request));
+  MOCK_METHOD3(DoAddVirtualDevice,
+               void(const media::VideoCaptureDeviceInfo& device_info,
+                    video_capture::mojom::ProducerProxy* producer,
+                    video_capture::mojom::SharedMemoryVirtualDeviceRequest*
+                        virtual_device_request));
 };
 
 class MockVideoCaptureDeviceLauncherCallbacks
@@ -66,7 +74,7 @@ class MockVideoCaptureDeviceLauncherCallbacks
 
   MOCK_METHOD1(DoOnDeviceLaunched,
                void(std::unique_ptr<LaunchedVideoCaptureDevice>* device));
-  MOCK_METHOD0(OnDeviceLaunchFailed, void());
+  MOCK_METHOD1(OnDeviceLaunchFailed, void(media::VideoCaptureError error));
   MOCK_METHOD0(OnDeviceLaunchAborted, void());
 };
 
@@ -149,7 +157,7 @@ TEST_F(ServiceVideoCaptureDeviceLauncherTest, LaunchingDeviceSucceeds) {
 
   EXPECT_CALL(mock_callbacks_, DoOnDeviceLaunched(_)).Times(1);
   EXPECT_CALL(mock_callbacks_, OnDeviceLaunchAborted()).Times(0);
-  EXPECT_CALL(mock_callbacks_, OnDeviceLaunchFailed()).Times(0);
+  EXPECT_CALL(mock_callbacks_, OnDeviceLaunchFailed(_)).Times(0);
   EXPECT_CALL(connection_lost_cb_, Run()).Times(0);
   base::RunLoop wait_for_done_cb;
   EXPECT_CALL(done_cb_, Run())
@@ -216,7 +224,7 @@ void ServiceVideoCaptureDeviceLauncherTest::RunLaunchingDeviceIsAbortedTest(
           }));
   EXPECT_CALL(mock_callbacks_, DoOnDeviceLaunched(_)).Times(0);
   EXPECT_CALL(mock_callbacks_, OnDeviceLaunchAborted()).Times(1);
-  EXPECT_CALL(mock_callbacks_, OnDeviceLaunchFailed()).Times(0);
+  EXPECT_CALL(mock_callbacks_, OnDeviceLaunchFailed(_)).Times(0);
   EXPECT_CALL(connection_lost_cb_, Run()).Times(0);
   EXPECT_CALL(done_cb_, Run()).WillOnce(InvokeWithoutArgs([&step_2_run_loop]() {
     step_2_run_loop.Quit();
@@ -264,7 +272,11 @@ TEST_F(ServiceVideoCaptureDeviceLauncherTest,
           }));
   EXPECT_CALL(mock_callbacks_, DoOnDeviceLaunched(_)).Times(0);
   EXPECT_CALL(mock_callbacks_, OnDeviceLaunchAborted()).Times(0);
-  EXPECT_CALL(mock_callbacks_, OnDeviceLaunchFailed()).Times(1);
+  EXPECT_CALL(mock_callbacks_,
+              OnDeviceLaunchFailed(
+                  media::VideoCaptureError::
+                      kServiceDeviceLauncherServiceRespondedWithDeviceNotFound))
+      .Times(1);
   EXPECT_CALL(connection_lost_cb_, Run()).Times(0);
   EXPECT_CALL(done_cb_, Run()).WillOnce(InvokeWithoutArgs([&run_loop]() {
     run_loop.Quit();
@@ -284,7 +296,7 @@ TEST_F(ServiceVideoCaptureDeviceLauncherTest,
 
   EXPECT_CALL(mock_callbacks_, DoOnDeviceLaunched(_)).Times(0);
   EXPECT_CALL(mock_callbacks_, OnDeviceLaunchAborted()).Times(0);
-  EXPECT_CALL(mock_callbacks_, OnDeviceLaunchFailed()).Times(1);
+  EXPECT_CALL(mock_callbacks_, OnDeviceLaunchFailed(_)).Times(1);
   EXPECT_CALL(connection_lost_cb_, Run()).Times(0);
   EXPECT_CALL(done_cb_, Run()).WillOnce(InvokeWithoutArgs([&run_loop]() {
     run_loop.Quit();
@@ -319,7 +331,7 @@ TEST_F(ServiceVideoCaptureDeviceLauncherTest,
           }));
   EXPECT_CALL(mock_callbacks_, DoOnDeviceLaunched(_)).Times(0);
   EXPECT_CALL(mock_callbacks_, OnDeviceLaunchAborted()).Times(0);
-  EXPECT_CALL(mock_callbacks_, OnDeviceLaunchFailed()).Times(1);
+  EXPECT_CALL(mock_callbacks_, OnDeviceLaunchFailed(_)).Times(1);
   // Note: |connection_lost_cb_| is only meant to be called when the connection
   // to a successfully-launched device is lost, which is not the case here.
   EXPECT_CALL(connection_lost_cb_, Run()).Times(0);

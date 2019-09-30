@@ -5,9 +5,9 @@
 #include "third_party/blink/renderer/core/layout/ng/ng_container_fragment_builder.h"
 
 #include "third_party/blink/renderer/core/layout/ng/exclusions/ng_exclusion_space.h"
+#include "third_party/blink/renderer/core/layout/ng/ng_block_break_token.h"
 #include "third_party/blink/renderer/core/layout/ng/ng_layout_result.h"
 #include "third_party/blink/renderer/core/layout/ng/ng_physical_fragment.h"
-#include "third_party/blink/renderer/core/layout/ng/ng_unpositioned_float.h"
 #include "third_party/blink/renderer/core/style/computed_style.h"
 
 namespace blink {
@@ -27,12 +27,6 @@ NGContainerFragmentBuilder& NGContainerFragmentBuilder::SetInlineSize(
   return *this;
 }
 
-NGContainerFragmentBuilder& NGContainerFragmentBuilder::SetBfcOffset(
-    const NGBfcOffset& bfc_offset) {
-  bfc_offset_ = bfc_offset;
-  return *this;
-}
-
 NGContainerFragmentBuilder& NGContainerFragmentBuilder::SetEndMarginStrut(
     const NGMarginStrut& end_margin_strut) {
   end_margin_strut_ = end_margin_strut;
@@ -42,12 +36,6 @@ NGContainerFragmentBuilder& NGContainerFragmentBuilder::SetEndMarginStrut(
 NGContainerFragmentBuilder& NGContainerFragmentBuilder::SetExclusionSpace(
     std::unique_ptr<const NGExclusionSpace> exclusion_space) {
   exclusion_space_ = std::move(exclusion_space);
-  return *this;
-}
-
-NGContainerFragmentBuilder& NGContainerFragmentBuilder::SwapUnpositionedFloats(
-    Vector<scoped_refptr<NGUnpositionedFloat>>* unpositioned_floats) {
-  unpositioned_floats_.swap(*unpositioned_floats);
   return *this;
 }
 
@@ -107,7 +95,7 @@ NGContainerFragmentBuilder& NGContainerFragmentBuilder::AddChild(
 }
 
 NGContainerFragmentBuilder& NGContainerFragmentBuilder::AddChild(
-    scoped_refptr<NGPhysicalFragment> child,
+    scoped_refptr<const NGPhysicalFragment> child,
     const NGLogicalOffset& child_offset) {
   if (!has_last_resort_break_) {
     if (const auto* token = child->BreakToken()) {
@@ -116,7 +104,7 @@ NGContainerFragmentBuilder& NGContainerFragmentBuilder::AddChild(
         has_last_resort_break_ = true;
     }
   }
-  children_.push_back(std::move(child));
+  children_.emplace_back(std::move(child), NGPhysicalOffset());
   offsets_.push_back(child_offset);
   return *this;
 }
@@ -209,11 +197,23 @@ void NGContainerFragmentBuilder::GetAndClearOutOfFlowDescendantCandidates(
   oof_positioned_candidates_.clear();
 }
 
+void NGContainerFragmentBuilder::MoveOutOfFlowDescendantCandidatesToDescendants(
+    const LayoutObject* inline_container) {
+  GetAndClearOutOfFlowDescendantCandidates(&oof_positioned_descendants_,
+                                           nullptr);
+  if (inline_container) {
+    for (auto& descendant : oof_positioned_descendants_) {
+      if (!descendant.inline_container)
+        descendant.inline_container = inline_container;
+    }
+  }
+}
+
 #ifndef NDEBUG
 
 String NGContainerFragmentBuilder::ToString() const {
   StringBuilder builder;
-  builder.Append(String::Format("ContainerFragment %.2fx%.2f, Children %zu\n",
+  builder.Append(String::Format("ContainerFragment %.2fx%.2f, Children %u\n",
                                 InlineSize().ToFloat(), BlockSize().ToFloat(),
                                 children_.size()));
   for (auto& child : children_) {

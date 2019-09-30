@@ -64,7 +64,7 @@ void ServiceWorkerContextWatcher::GetStoredRegistrationsOnIOThread() {
 }
 
 void ServiceWorkerContextWatcher::OnStoredRegistrationsOnIOThread(
-    ServiceWorkerStatusCode status,
+    blink::ServiceWorkerStatusCode status,
     const std::vector<ServiceWorkerRegistrationInfo>& stored_registrations) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   if (is_stopped_)
@@ -248,6 +248,7 @@ void ServiceWorkerContextWatcher::OnRunningStateChanged(
 
 void ServiceWorkerContextWatcher::OnVersionStateChanged(
     int64_t version_id,
+    const GURL& scope,
     content::ServiceWorkerVersion::Status status) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   auto it = version_info_map_.find(version_id);
@@ -297,8 +298,6 @@ void ServiceWorkerContextWatcher::OnMainScriptHttpResponseInfoSet(
 }
 
 void ServiceWorkerContextWatcher::OnErrorReported(int64_t version_id,
-                                                  int process_id,
-                                                  int thread_id,
                                                   const ErrorInfo& info) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   int64_t registration_id = blink::mojom::kInvalidServiceWorkerRegistrationId;
@@ -314,8 +313,6 @@ void ServiceWorkerContextWatcher::OnErrorReported(int64_t version_id,
 
 void ServiceWorkerContextWatcher::OnReportConsoleMessage(
     int64_t version_id,
-    int process_id,
-    int thread_id,
     const ConsoleMessage& message) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   if (message.message_level != CONSOLE_MESSAGE_LEVEL_ERROR)
@@ -336,22 +333,20 @@ void ServiceWorkerContextWatcher::OnReportConsoleMessage(
 
 void ServiceWorkerContextWatcher::OnControlleeAdded(
     int64_t version_id,
+    const GURL& scope,
     const std::string& uuid,
-    int process_id,
-    int route_id,
-    const base::Callback<WebContents*(void)>& web_contents_getter,
-    blink::mojom::ServiceWorkerProviderType type) {
+    const ServiceWorkerClientInfo& info) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   auto it = version_info_map_.find(version_id);
   if (it == version_info_map_.end())
     return;
   ServiceWorkerVersionInfo* version = it->second.get();
-  version->clients[uuid] = ServiceWorkerVersionInfo::ClientInfo(
-      process_id, route_id, web_contents_getter, type);
+  version->clients[uuid] = info;
   SendVersionInfo(*version);
 }
 
 void ServiceWorkerContextWatcher::OnControlleeRemoved(int64_t version_id,
+                                                      const GURL& scope,
                                                       const std::string& uuid) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   auto it = version_info_map_.find(version_id);
@@ -362,8 +357,9 @@ void ServiceWorkerContextWatcher::OnControlleeRemoved(int64_t version_id,
   SendVersionInfo(*version);
 }
 
-void ServiceWorkerContextWatcher::OnRegistrationStored(int64_t registration_id,
-                                                       const GURL& pattern) {
+void ServiceWorkerContextWatcher::OnRegistrationCompleted(
+    int64_t registration_id,
+    const GURL& pattern) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   SendRegistrationInfo(registration_id, pattern,
                        ServiceWorkerRegistrationInfo::IS_NOT_DELETED);

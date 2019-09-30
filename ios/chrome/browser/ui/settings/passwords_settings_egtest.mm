@@ -11,6 +11,7 @@
 #include "base/memory/ref_counted.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
+#import "base/test/ios/wait_util.h"
 #include "base/time/time.h"
 #include "components/autofill/core/common/password_form.h"
 #include "components/keyed_service/core/service_access_type.h"
@@ -34,10 +35,10 @@
 #import "ios/chrome/test/earl_grey/chrome_earl_grey_ui.h"
 #import "ios/chrome/test/earl_grey/chrome_matchers.h"
 #import "ios/chrome/test/earl_grey/chrome_test_case.h"
-#import "ios/testing/wait_util.h"
 #import "ios/third_party/material_components_ios/src/components/Snackbar/src/MaterialSnackbar.h"
 #include "ios/web/public/test/earl_grey/web_view_actions.h"
 #include "ios/web/public/test/earl_grey/web_view_matchers.h"
+#include "ios/web/public/test/element_selector.h"
 #include "ios/web/public/test/http_server/http_server.h"
 #include "ios/web/public/test/http_server/http_server_util.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -60,6 +61,7 @@ using chrome_test_util::SettingsDoneButton;
 using chrome_test_util::SettingsMenuBackButton;
 using chrome_test_util::SetUpAndReturnMockReauthenticationModule;
 using chrome_test_util::SetUpAndReturnMockReauthenticationModuleForExport;
+using web::test::ElementSelector;
 
 namespace {
 
@@ -275,13 +277,13 @@ class TestStoreConsumer : public password_manager::PasswordStoreConsumer {
     results_.clear();
     ResetObtained();
     GetPasswordStore()->GetAutofillableLogins(this);
-    bool responded = testing::WaitUntilConditionOrTimeout(1.0, ^bool {
+    bool responded = base::test::ios::WaitUntilConditionOrTimeout(1.0, ^bool {
       return !AreObtainedReset();
     });
     GREYAssert(responded, @"Obtaining fillable items took too long.");
     AppendObtainedToResults();
     GetPasswordStore()->GetBlacklistLogins(this);
-    responded = testing::WaitUntilConditionOrTimeout(1.0, ^bool {
+    responded = base::test::ios::WaitUntilConditionOrTimeout(1.0, ^bool {
       return !AreObtainedReset();
     });
     GREYAssert(responded, @"Obtaining blacklisted items took too long.");
@@ -784,78 +786,6 @@ PasswordForm CreateSampleFormWithIndex(int index) {
       performAction:grey_tap()];
 }
 
-// Checks that deleting a duplicated blacklisted form from password details view
-// goes back to the list-of-passwords view which doesn't display that form
-// anymore.
-- (void)testDuplicatedBlacklistedFormDeletionInDetailView {
-  // Save blacklisted form to be deleted later.
-  PasswordForm blacklisted;
-  blacklisted.origin = GURL("https://blacklisted.com");
-  blacklisted.signon_realm = blacklisted.origin.spec();
-  blacklisted.blacklisted_by_user = true;
-  SaveToPasswordStore(blacklisted);
-  // Save duplicate of the previously saved form to be deleted at the same time.
-  // This entry is considered duplicated because it maps to the same sort key
-  // as the previous one.
-  PasswordForm blacklistedDuplicate;
-  blacklistedDuplicate.origin = GURL("https://blacklisted.com/blacklisted");
-  blacklistedDuplicate.signon_realm = blacklisted.origin.spec();
-  blacklistedDuplicate.blacklisted_by_user = true;
-  SaveToPasswordStore(blacklistedDuplicate);
-
-  OpenPasswordSettings();
-
-  [GetInteractionForPasswordEntry(@"blacklisted.com") performAction:grey_tap()];
-
-  [GetInteractionForPasswordDetailItem(DeleteButton())
-      performAction:grey_tap()];
-
-  // Tap the alert's Delete button to confirm. Check accessibilityTrait to
-  // differentiate against the above DeleteButton()-matching element, which is
-  // has UIAccessibilityTraitSelected.
-  // TODO(crbug.com/751311): Revisit and check if there is a better solution to
-  // match the Delete button.
-  id<GREYMatcher> deleteConfirmationButton = grey_allOf(
-      ButtonWithAccessibilityLabel(
-          l10n_util::GetNSString(IDS_IOS_CONFIRM_PASSWORD_DELETION)),
-      grey_not(grey_accessibilityTrait(UIAccessibilityTraitSelected)), nil);
-  [[EarlGrey selectElementWithMatcher:deleteConfirmationButton]
-      performAction:grey_tap()];
-
-  // Wait until the alert and the detail view are dismissed.
-  [[GREYUIThreadExecutor sharedInstance] drainUntilIdle];
-
-  // Check that the current view is now the list view, by locating the header
-  // of the list of passwords.
-  [[EarlGrey selectElementWithMatcher:
-                 grey_allOf(grey_accessibilityLabel(l10n_util::GetNSString(
-                                IDS_IOS_SETTINGS_PASSWORDS_EXCEPTIONS_HEADING)),
-                            grey_accessibilityTrait(UIAccessibilityTraitHeader),
-                            nullptr)] assertWithMatcher:grey_notNil()];
-
-  // Verify that the deletion was propagated to the PasswordStore.
-  TestStoreConsumer consumer;
-  GREYAssert(consumer.GetStoreResults().empty(),
-             @"Stored password was not removed from PasswordStore.");
-
-  // Also verify that the removed password is no longer in the list.
-  [GetInteractionForPasswordEntry(@"secret.com")
-      assertWithMatcher:grey_not(grey_sufficientlyVisible())];
-
-  // Finally, verify that the Edit button is visible and disabled, because there
-  // are no other password entries left for deletion via the "Edit" mode.
-  [[EarlGrey
-      selectElementWithMatcher:chrome_test_util::ButtonWithAccessibilityLabelId(
-                                   IDS_IOS_NAVIGATION_BAR_EDIT_BUTTON)]
-      assertWithMatcher:grey_allOf(grey_sufficientlyVisible(),
-                                   grey_not(grey_enabled()), nil)];
-
-  [[EarlGrey selectElementWithMatcher:SettingsMenuBackButton()]
-      performAction:grey_tap()];
-  [[EarlGrey selectElementWithMatcher:SettingsDoneButton()]
-      performAction:grey_tap()];
-}
-
 // Checks that deleting a password from password details can be cancelled.
 - (void)testCancelDeletionInDetailView {
   // Save form to be deleted later.
@@ -912,11 +842,9 @@ PasswordForm CreateSampleFormWithIndex(int index) {
 
   TapEdit();
 
-  // Check that the "Save Passwords" switch is disabled. Disabled switches are
-  // toggled off.
-  [[EarlGrey
-      selectElementWithMatcher:chrome_test_util::CollectionViewSwitchCell(
-                                   @"savePasswordsItem_switch", NO, NO)]
+  // Check that the "Save Passwords" switch is disabled.
+  [[EarlGrey selectElementWithMatcher:chrome_test_util::SettingsSwitchCell(
+                                          @"savePasswordsItem_switch", YES, NO)]
       assertWithMatcher:grey_notNil()];
 
   [GetInteractionForPasswordEntry(@"example.com, concrete username")
@@ -1016,8 +944,8 @@ PasswordForm CreateSampleFormWithIndex(int index) {
       performAction:grey_tap()];
 
   // Tap the password cell to display the context menu.
-  [GetInteractionForPasswordDetailItem(
-      grey_accessibilityLabel(@"●●●●●●●●●●●●●●●●●")) performAction:grey_tap()];
+  [GetInteractionForPasswordDetailItem(grey_text(@"•••••••••••••••••"))
+      performAction:grey_tap()];
 
   // Make sure to capture the reauthentication module in a variable until the
   // end of the test, otherwise it might get deleted too soon and break the
@@ -1059,8 +987,8 @@ PasswordForm CreateSampleFormWithIndex(int index) {
       performAction:grey_tap()];
 
   // Tap the password cell to display the context menu.
-  [GetInteractionForPasswordDetailItem(
-      grey_accessibilityLabel(@"●●●●●●●●●●●●●●●●●")) performAction:grey_tap()];
+  [GetInteractionForPasswordDetailItem(grey_text(@"•••••••••••••••••"))
+      performAction:grey_tap()];
 
   // Make sure to capture the reauthentication module in a variable until the
   // end of the test, otherwise it might get deleted too soon and break the
@@ -1087,8 +1015,8 @@ PasswordForm CreateSampleFormWithIndex(int index) {
       performAction:grey_tap()];
 
   // Check that the password is masked again.
-  [GetInteractionForPasswordDetailItem(grey_accessibilityLabel(
-      @"●●●●●●●●●●●●●●●●●")) assertWithMatcher:grey_notNil()];
+  [GetInteractionForPasswordDetailItem(grey_text(@"•••••••••••••••••"))
+      assertWithMatcher:grey_notNil()];
 
   [[EarlGrey selectElementWithMatcher:SettingsMenuBackButton()]
       performAction:grey_tap()];
@@ -1167,7 +1095,8 @@ PasswordForm CreateSampleFormWithIndex(int index) {
 
   [GetInteractionForPasswordDetailItem(PasswordHeader())
       assertWithMatcher:grey_layout(@[ Below() ], CopyUsernameButton())];
-  id<GREYMatcher> passwordCell = grey_accessibilityLabel(@"●●●●●●●●●●●●●●●●●");
+  id<GREYMatcher> passwordCell = grey_accessibilityLabel(
+      l10n_util::GetNSString(IDS_IOS_SETTINGS_PASSWORD_HIDDEN_LABEL));
   [GetInteractionForPasswordDetailItem(passwordCell)
       assertWithMatcher:grey_layout(@[ Below() ], PasswordHeader())];
   [GetInteractionForPasswordDetailItem(CopyPasswordButton())
@@ -1308,11 +1237,10 @@ PasswordForm CreateSampleFormWithIndex(int index) {
   for (BOOL expected_state : kExpectedState) {
     // Toggle the switch. It is located near the top, so if not interactable,
     // try scrolling up.
-    [GetInteractionForListItem(chrome_test_util::CollectionViewSwitchCell(
+    [GetInteractionForListItem(chrome_test_util::SettingsSwitchCell(
                                    @"savePasswordsItem_switch", expected_state),
                                kGREYDirectionUp)
-        performAction:chrome_test_util::TurnCollectionViewSwitchOn(
-                          !expected_state)];
+        performAction:chrome_test_util::TurnSettingsSwitchOn(!expected_state)];
     // Check the stored items. Scroll down if needed.
     [GetInteractionForPasswordEntry(@"example.com, concrete username")
         assertWithMatcher:grey_notNil()];
@@ -1335,11 +1263,10 @@ PasswordForm CreateSampleFormWithIndex(int index) {
   // preferences.
   constexpr BOOL kExpectedState[] = {YES, NO};
   for (BOOL expected_initial_state : kExpectedState) {
-    [[EarlGrey
-        selectElementWithMatcher:chrome_test_util::CollectionViewSwitchCell(
-                                     @"savePasswordsItem_switch",
-                                     expected_initial_state)]
-        performAction:chrome_test_util::TurnCollectionViewSwitchOn(
+    [[EarlGrey selectElementWithMatcher:chrome_test_util::SettingsSwitchCell(
+                                            @"savePasswordsItem_switch",
+                                            expected_initial_state)]
+        performAction:chrome_test_util::TurnSettingsSwitchOn(
                           !expected_initial_state)];
     ios::ChromeBrowserState* browserState =
         chrome_test_util::GetOriginalBrowserState();
@@ -1560,7 +1487,8 @@ PasswordForm CreateSampleFormWithIndex(int index) {
       selectElementWithMatcher:web::WebViewInWebState(
                                    chrome_test_util::GetCurrentWebState())]
       performAction:web::WebViewTapElement(
-                        chrome_test_util::GetCurrentWebState(), "password")];
+                        chrome_test_util::GetCurrentWebState(),
+                        ElementSelector::ElementSelectorId("password"))];
 
   // Wait until the keyboard shows up before tapping.
   id<GREYMatcher> showAll = grey_allOf(
@@ -1574,8 +1502,9 @@ PasswordForm CreateSampleFormWithIndex(int index) {
                                                    error:&error];
                                    return (error == nil);
                                  }];
-  GREYAssert([condition waitWithTimeout:testing::kWaitForUIElementTimeout],
-             @"No keyboard with 'Show All' button showed up.");
+  GREYAssert(
+      [condition waitWithTimeout:base::test::ios::kWaitForUIElementTimeout],
+      @"No keyboard with 'Show All' button showed up.");
   [[EarlGrey selectElementWithMatcher:showAll] performAction:grey_tap()];
 
   [[EarlGrey selectElementWithMatcher:ButtonWithAccessibilityLabel(

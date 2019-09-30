@@ -6,11 +6,12 @@
 
 #include <stddef.h>
 #include <memory>
+#include <utility>
 
 #include "base/feature_list.h"
 #include "base/macros.h"
 #include "base/strings/stringprintf.h"
-#include "base/test/histogram_tester.h"
+#include "base/test/metrics/histogram_tester.h"
 #include "base/version.h"
 #include "build/build_config.h"
 #include "components/prefs/testing_pref_service.h"
@@ -20,11 +21,13 @@
 #include "components/variations/service/safe_seed_manager.h"
 #include "components/variations/service/variations_service.h"
 #include "components/variations/service/variations_service_client.h"
+#include "services/network/public/cpp/shared_url_loader_factory.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 #if defined(OS_ANDROID)
 #include "components/variations/android/variations_seed_bridge.h"
+#include "components/variations/seed_response.h"
 #endif  // OS_ANDROID
 
 using testing::_;
@@ -157,7 +160,8 @@ class TestVariationsServiceClient : public VariationsServiceClient {
       override {
     return base::Callback<base::Version(void)>();
   }
-  net::URLRequestContextGetter* GetURLRequestContext() override {
+  scoped_refptr<network::SharedURLLoaderFactory> GetURLLoaderFactory()
+      override {
     return nullptr;
   }
   network_time::NetworkTimeTracker* GetNetworkTimeTracker() override {
@@ -185,7 +189,7 @@ class TestVariationsServiceClient : public VariationsServiceClient {
 
 class TestVariationsSeedStore : public VariationsSeedStore {
  public:
-  TestVariationsSeedStore(PrefService* local_state)
+  explicit TestVariationsSeedStore(PrefService* local_state)
       : VariationsSeedStore(local_state), local_state_(local_state) {}
   ~TestVariationsSeedStore() override = default;
 
@@ -453,15 +457,12 @@ TEST_F(FieldTrialCreatorTest, SetupFieldTrials_LoadsCountryOnFirstRun) {
   // Simulate having received a seed in Java during First Run.
   const base::Time one_day_ago =
       base::Time::Now() - base::TimeDelta::FromDays(1);
-  const std::string test_seed_data =
-      SerializeSeed(CreateTestSeedWithCountryFilter());
-  const std::string test_seed_signature = kTestSeedSignature;
-  const std::string test_seed_country = kTestSeedCountry;
-  const std::string test_response_date = ToUTCString(one_day_ago);
-  const bool test_is_gzip_compressed = false;
-  android::SetJavaFirstRunPrefsForTesting(test_seed_data, test_seed_signature,
-                                          test_seed_country, test_response_date,
-                                          test_is_gzip_compressed);
+  auto initial_seed = std::make_unique<SeedResponse>();
+  initial_seed->data = SerializeSeed(CreateTestSeedWithCountryFilter());
+  initial_seed->signature = kTestSeedSignature;
+  initial_seed->country = kTestSeedCountry;
+  initial_seed->date = ToUTCString(one_day_ago);
+  initial_seed->is_gzip_compressed = false;
 
   TestVariationsServiceClient variations_service_client;
   TestPlatformFieldTrials platform_field_trials;
@@ -472,11 +473,12 @@ TEST_F(FieldTrialCreatorTest, SetupFieldTrials_LoadsCountryOnFirstRun) {
   // Note: Unlike other tests, this test does not mock out the seed store, since
   // the interaction between these two classes is what's being tested.
   VariationsFieldTrialCreator field_trial_creator(
-      &prefs_, &variations_service_client, UIStringOverrider());
+      &prefs_, &variations_service_client, UIStringOverrider(),
+      std::move(initial_seed));
 
   // Check that field trials are created from the seed. The test seed contains a
-  // single study with an experiment targeting 100% of users in India. Since the
-  // First Run prefs included the country code for India, this study should be
+  // single study with an experiment targeting 100% of users in India. Since
+  // |initial_seed| included the country code for India, this study should be
   // active.
   EXPECT_TRUE(field_trial_creator.SetupFieldTrials(
       "", "", "", std::set<std::string>(), std::vector<std::string>(), nullptr,

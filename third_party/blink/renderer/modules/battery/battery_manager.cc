@@ -74,13 +74,13 @@ void BatteryManager::DidUpdateData() {
     return;
 
   if (battery_status_.Charging() != old_status.Charging())
-    DispatchEvent(Event::Create(EventTypeNames::chargingchange));
+    DispatchEvent(*Event::Create(EventTypeNames::chargingchange));
   if (battery_status_.charging_time() != old_status.charging_time())
-    DispatchEvent(Event::Create(EventTypeNames::chargingtimechange));
+    DispatchEvent(*Event::Create(EventTypeNames::chargingtimechange));
   if (battery_status_.discharging_time() != old_status.discharging_time())
-    DispatchEvent(Event::Create(EventTypeNames::dischargingtimechange));
+    DispatchEvent(*Event::Create(EventTypeNames::dischargingtimechange));
   if (battery_status_.Level() != old_status.Level())
-    DispatchEvent(Event::Create(EventTypeNames::levelchange));
+    DispatchEvent(*Event::Create(EventTypeNames::levelchange));
 }
 
 void BatteryManager::RegisterWithDispatcher() {
@@ -113,8 +113,10 @@ void BatteryManager::ContextDestroyed(ExecutionContext*) {
 
 bool BatteryManager::HasPendingActivity() const {
   // Prevent V8 from garbage collecting the wrapper object if there are
-  // event listeners attached to it.
-  return GetExecutionContext() && HasEventListeners();
+  // event listeners or pending promises attached to it.
+  return HasEventListeners() ||
+         (battery_property_ &&
+          battery_property_->GetState() == ScriptPromisePropertyBase::kPending);
 }
 
 void BatteryManager::Trace(blink::Visitor* visitor) {

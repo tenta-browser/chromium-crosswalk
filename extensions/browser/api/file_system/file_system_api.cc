@@ -23,7 +23,7 @@
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "base/value_conversions.h"
 #include "base/values.h"
 #include "build/build_config.h"
@@ -226,8 +226,9 @@ base::FilePath GetLastChooseEntryDirectory(const ExtensionPrefs* prefs,
 void SetLastChooseEntryDirectory(ExtensionPrefs* prefs,
                                  const std::string& extension_id,
                                  const base::FilePath& path) {
-  prefs->UpdateExtensionPref(extension_id, kLastChooseEntryDirectory,
-                             base::CreateFilePathValue(path));
+  prefs->UpdateExtensionPref(
+      extension_id, kLastChooseEntryDirectory,
+      base::Value::ToUniquePtrValue(base::CreateFilePathValue(path)));
 }
 
 }  // namespace file_system_api
@@ -336,7 +337,7 @@ ExtensionFunction::ResponseAction FileSystemGetWritableEntryFunction::Run() {
   }
 
   base::PostTaskWithTraitsAndReply(
-      FROM_HERE, {base::MayBlock(), base::TaskPriority::BACKGROUND},
+      FROM_HERE, {base::MayBlock(), base::TaskPriority::BEST_EFFORT},
       base::BindOnce(&FileSystemGetWritableEntryFunction::SetIsDirectoryAsync,
                      this),
       base::BindOnce(
@@ -521,7 +522,7 @@ void FileSystemChooseEntryFunction::FilesSelected(
 #endif
 
     base::PostTaskWithTraits(
-        FROM_HERE, {base::MayBlock(), base::TaskPriority::BACKGROUND},
+        FROM_HERE, {base::MayBlock(), base::TaskPriority::BEST_EFFORT},
         base::BindOnce(
             &FileSystemChooseEntryFunction::ConfirmDirectoryAccessAsync, this,
             non_native_path, paths, web_contents));
@@ -551,7 +552,7 @@ void FileSystemChooseEntryFunction::ConfirmDirectoryAccessAsync(
 
   for (size_t i = 0; i < arraysize(kGraylistedPaths); i++) {
     base::FilePath graylisted_path;
-    if (!PathService::Get(kGraylistedPaths[i], &graylisted_path))
+    if (!base::PathService::Get(kGraylistedPaths[i], &graylisted_path))
       continue;
     if (check_path != graylisted_path && !check_path.IsParent(graylisted_path))
       continue;
@@ -770,7 +771,7 @@ ExtensionFunction::ResponseAction FileSystemChooseEntryFunction::Run() {
   }
 #endif
   base::PostTaskWithTraitsAndReplyWithResult(
-      FROM_HERE, {base::MayBlock(), base::TaskPriority::BACKGROUND},
+      FROM_HERE, {base::MayBlock(), base::TaskPriority::BEST_EFFORT},
       base::Bind(&base::DirectoryExists, previous_path),
       set_initial_path_callback);
 
@@ -824,12 +825,14 @@ ExtensionFunction::ResponseAction FileSystemRetainEntryFunction::Run() {
             ->CreateVirtualRootPath(filesystem_id)
             .Append(base::FilePath::FromUTF8Unsafe(filesystem_path)));
 
+    // It is safe to use base::Unretained() for operation_runner(), since it
+    // is owned by |context| which will delete it on the IO thread.
     content::BrowserThread::PostTask(
         content::BrowserThread::IO, FROM_HERE,
         base::BindOnce(
             base::IgnoreResult(
                 &storage::FileSystemOperationRunner::GetMetadata),
-            context->operation_runner()->AsWeakPtr(), url,
+            base::Unretained(context->operation_runner()), url,
             storage::FileSystemOperation::GET_METADATA_FIELD_IS_DIRECTORY,
             base::Bind(
                 &PassFileInfoToUIThread,
@@ -956,8 +959,9 @@ ExtensionFunction::ResponseAction FileSystemRequestFileSystemFunction::Run() {
   DCHECK(delegate);
   // Only kiosk apps in kiosk sessions can use this API.
   // Additionally it is enabled for whitelisted component extensions and apps.
-  if (!delegate->IsGrantable(browser_context(), render_frame_host(),
-                             *extension())) {
+  if (delegate->GetGrantVolumesMode(browser_context(), render_frame_host(),
+                                    *extension()) ==
+      FileSystemDelegate::kGrantNone) {
     return RespondNow(Error(kNotSupportedOnNonKioskSessionError));
   }
 
@@ -993,13 +997,14 @@ ExtensionFunction::ResponseAction FileSystemGetVolumeListFunction::Run() {
   DCHECK(delegate);
   // Only kiosk apps in kiosk sessions can use this API.
   // Additionally it is enabled for whitelisted component extensions and apps.
-  if (!delegate->IsGrantable(browser_context(), render_frame_host(),
-                             *extension())) {
+  if (delegate->GetGrantVolumesMode(browser_context(), render_frame_host(),
+                                    *extension()) ==
+      FileSystemDelegate::kGrantNone) {
     return RespondNow(Error(kNotSupportedOnNonKioskSessionError));
   }
 
   delegate->GetVolumeList(
-      browser_context(),
+      browser_context(), *extension(),
       base::Bind(&FileSystemGetVolumeListFunction::OnGotVolumeList, this),
       base::Bind(&FileSystemGetVolumeListFunction::OnError, this));
 

@@ -45,6 +45,7 @@
 #include "chrome/installer/setup/setup_constants.h"
 #include "chrome/installer/setup/user_hive_visitor.h"
 #include "chrome/installer/util/app_registration_data.h"
+#include "chrome/installer/util/browser_distribution.h"
 #include "chrome/installer/util/google_update_constants.h"
 #include "chrome/installer/util/google_update_settings.h"
 #include "chrome/installer/util/install_util.h"
@@ -674,27 +675,6 @@ void DeleteRegistryKeyPartial(
   }
 }
 
-base::string16 GuidToSquid(const base::string16& guid) {
-  base::string16 squid;
-  squid.reserve(32);
-  auto input = guid.begin();
-  auto output = std::back_inserter(squid);
-
-  // Reverse-copy relevant characters, skipping separators.
-  std::reverse_copy(input + 0, input + 8, output);
-  std::reverse_copy(input + 9, input + 13, output);
-  std::reverse_copy(input + 14, input + 18, output);
-  std::reverse_copy(input + 19, input + 21, output);
-  std::reverse_copy(input + 21, input + 23, output);
-  std::reverse_copy(input + 24, input + 26, output);
-  std::reverse_copy(input + 26, input + 28, output);
-  std::reverse_copy(input + 28, input + 30, output);
-  std::reverse_copy(input + 30, input + 32, output);
-  std::reverse_copy(input + 32, input + 34, output);
-  std::reverse_copy(input + 34, input + 36, output);
-  return squid;
-}
-
 bool IsDowngradeAllowed(const MasterPreferences& prefs) {
   bool allow_downgrade = false;
   return prefs.GetBool(master_preferences::kAllowDowngrade, &allow_downgrade) &&
@@ -874,12 +854,6 @@ base::Time GetConsoleSessionStartTime() {
   return base::Time::FromFileTime(filetime);
 }
 
-bool OsSupportsDarkTextTiles() {
-  auto windows_version = base::win::GetVersion();
-  return windows_version == base::win::VERSION_WIN8_1 ||
-         windows_version >= base::win::VERSION_WIN10_RS1;
-}
-
 base::Optional<std::string> DecodeDMTokenSwitchValue(
     const base::string16& encoded_token) {
   if (encoded_token.empty()) {
@@ -933,6 +907,12 @@ bool StoreDMToken(const std::string& token) {
   VLOG(1) << "Successfully stored specified DMToken in the registry.";
 
   return true;
+}
+
+base::FilePath GetNotificationHelperPath(const base::FilePath& target_path,
+                                         const base::Version& version) {
+  return target_path.AppendASCII(version.GetString())
+      .Append(kNotificationHelperExe);
 }
 
 }  // namespace installer

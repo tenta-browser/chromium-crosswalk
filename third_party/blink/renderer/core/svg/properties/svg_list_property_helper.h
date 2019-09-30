@@ -31,11 +31,10 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_SVG_PROPERTIES_SVG_LIST_PROPERTY_HELPER_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_SVG_PROPERTIES_SVG_LIST_PROPERTY_HELPER_H_
 
-#include "third_party/blink/renderer/bindings/core/v8/exception_messages.h"
-#include "third_party/blink/renderer/bindings/core/v8/exception_state.h"
-#include "third_party/blink/renderer/core/dom/exception_code.h"
 #include "third_party/blink/renderer/core/svg/properties/svg_property_helper.h"
 #include "third_party/blink/renderer/core/svg/svg_animation_element.h"
+#include "third_party/blink/renderer/platform/bindings/exception_messages.h"
+#include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/wtf/allocator.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
 
@@ -50,7 +49,7 @@ class SVGListPropertyHelper : public SVGPropertyHelper<Derived> {
 
   SVGListPropertyHelper() = default;
 
-  ~SVGListPropertyHelper() = default;
+  ~SVGListPropertyHelper() override = default;
 
   // used from Blink C++ code:
 
@@ -125,7 +124,7 @@ class SVGListPropertyHelper : public SVGPropertyHelper<Derived> {
   ItemPropertyType* AppendItem(ItemPropertyType*);
   ItemPropertyType* ReplaceItem(ItemPropertyType*, size_t, ExceptionState&);
 
-  virtual void Trace(blink::Visitor* visitor) {
+  void Trace(blink::Visitor* visitor) override {
     visitor->Trace(values_);
     SVGPropertyHelper<Derived>::Trace(visitor);
   }
@@ -137,6 +136,8 @@ class SVGListPropertyHelper : public SVGPropertyHelper<Derived> {
                               Derived* to_list,
                               float percentage,
                               AnimationMode);
+
+  String SerializeList() const;
 
   virtual ItemPropertyType* CreatePaddingItem() const {
     return ItemPropertyType::Create();
@@ -225,17 +226,6 @@ ItemProperty* SVGListPropertyHelper<Derived, ItemProperty>::ReplaceItem(
   if (!CheckIndexBound(index, exception_state))
     return nullptr;
 
-  if (values_.IsEmpty()) {
-    // 'newItem' already lived in our list, we removed it, and now we're empty,
-    // which means there's nothing to replace.
-    // TODO(fs): This should not cause us to throw an exception.
-    exception_state.ThrowDOMException(
-        kIndexSizeError,
-        String::Format("Failed to replace the provided item at index %zu.",
-                       index));
-    return nullptr;
-  }
-
   // Update the value at the desired position 'index'.
   Member<ItemPropertyType>& position = values_[index];
   DCHECK_EQ(position->OwnerList(), this);
@@ -251,8 +241,9 @@ bool SVGListPropertyHelper<Derived, ItemProperty>::CheckIndexBound(
     ExceptionState& exception_state) {
   if (index >= values_.size()) {
     exception_state.ThrowDOMException(
-        kIndexSizeError, ExceptionMessages::IndexExceedsMaximumBound(
-                             "index", index, values_.size()));
+        DOMExceptionCode::kIndexSizeError,
+        ExceptionMessages::IndexExceedsMaximumBound(
+            "index", index, static_cast<size_t>(values_.size())));
     return false;
   }
   return true;
@@ -294,6 +285,24 @@ bool SVGListPropertyHelper<Derived, ItemProperty>::AdjustFromToListValues(
     Append(CreatePaddingItem());
 
   return true;
+}
+
+template <typename Derived, typename ItemProperty>
+String SVGListPropertyHelper<Derived, ItemProperty>::SerializeList() const {
+  if (values_.IsEmpty())
+    return String();
+
+  StringBuilder builder;
+
+  auto it = values_.begin();
+  auto it_end = values_.end();
+  while (it != it_end) {
+    builder.Append((*it)->ValueAsString());
+    ++it;
+    if (it != it_end)
+      builder.Append(' ');
+  }
+  return builder.ToString();
 }
 
 }  // namespace blink

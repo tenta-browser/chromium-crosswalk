@@ -7,18 +7,8 @@
       "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
         {
-          "object": "LayoutImage IMG id='box'",
-          "rect": [0, 28, 266, 278],
-          "reason": "paint property change"
-        },
-        {
-          "object": "LayoutImage IMG id='box'",
-          "rect": [0, 28, 266, 278],
-          "reason": "paint property change"
-        },
-        {
           "object": "LayoutImage IMG id='box' class='smaller'",
-          "rect": [9, 28, 138, 139],
+          "rect": [0, 28, 266, 278],
           "reason": "paint property change"
         },
         {

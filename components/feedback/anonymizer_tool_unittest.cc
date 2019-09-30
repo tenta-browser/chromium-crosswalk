@@ -165,6 +165,25 @@ TEST_F(AnonymizerToolTest, AnonymizeCustomPatterns) {
   // Test that "Android:" is not considered a schema with empty hier part.
   EXPECT_EQ("The following applies to Android:",
             AnonymizeCustomPatterns("The following applies to Android:"));
+
+  EXPECT_EQ(
+      "2000-01-01T01:00:00.123456-00:00 NOTICE usbguard-daemon[5000]: uid=0 "
+      "pid=5000 result='SUCCESS' device.rule='block id 13fe:5500 serial "
+      "\"1\" name \"Patriot Memory\" hash "
+      "\"nrP2FU5Q0KDHJvqT4OFjvpA4Mu/ITEF+fMCMuXsTBs4=\" parent-hash "
+      "\"++ZNvxSmqWP6SLayt9yJSIHqUn0PKkvTNT/TVw0OKDE=\" via-port \"2-5\" "
+      "with-interface 08:06:50' target.old='block' "
+      "device.system_name='/devices/pci0000:00/0000:00:15.0/usb2/2-5' "
+      "target.new='block' type='Policy.Device.Update'",
+      AnonymizeCustomPatterns(
+          "2000-01-01T01:00:00.123456-00:00 NOTICE usbguard-daemon[5000]: "
+          "uid=0 pid=5000 result='SUCCESS' device.rule='block id 13fe:5500 "
+          "serial \"0609911A1Z199991\" name \"Patriot Memory\" hash "
+          "\"nrP2FU5Q0KDHJvqT4OFjvpA4Mu/ITEF+fMCMuXsTBs4=\" parent-hash "
+          "\"++ZNvxSmqWP6SLayt9yJSIHqUn0PKkvTNT/TVw0OKDE=\" via-port \"2-5\" "
+          "with-interface 08:06:50' target.old='block' "
+          "device.system_name='/devices/pci0000:00/0000:00:15.0/usb2/2-5' "
+          "target.new='block' type='Policy.Device.Update'"));
 }
 
 TEST_F(AnonymizerToolTest, AnonymizeCustomPatternWithContext) {
@@ -208,7 +227,10 @@ TEST_F(AnonymizerToolTest, AnonymizeChunk) {
       "aaaaaaaahttp://tets.comaaaaaaa\n"  // URL.
       "aaaaaemail@example.comaaa\n"       // Email address.
       "example@@1234\n"           // No PII, it is not valid email address.
+      "255.255.155.2\n"           // IP address.
       "255.255.155.255\n"         // IP address.
+      "255.255.259.255\n"         // Not an IP address.
+      "255.300.255.255\n"         // Not an IP address.
       "aaaa123.123.45.4aaa\n"     // IP address.
       "11:11;11::11\n"            // IP address.
       "11::11\n"                  // IP address.
@@ -219,8 +241,11 @@ TEST_F(AnonymizerToolTest, AnonymizeChunk) {
       "aaaaaaaa<URL: 1>\n"
       "<email: 1>\n"
       "example@@1234\n"
-      "<IPv4: 1>55\n"
-      "aaaa<IPv4: 2>aaa\n"
+      "<IPv4: 1>\n"
+      "<IPv4: 2>\n"
+      "255.255.259.255\n"
+      "255.300.255.255\n"
+      "aaaa<IPv4: 3>aaa\n"
       "11:11;<IPv6: 1>\n"
       "<IPv6: 1>\n"
       "11:11:abcdef:0:0:0:0:0\n"

@@ -44,11 +44,12 @@ DecodingImageGenerator::CreateAsSkImageGenerator(sk_sp<SkData> data) {
   scoped_refptr<SegmentReader> segment_reader =
       SegmentReader::CreateFromSkData(std::move(data));
   // We just need the size of the image, so we have to temporarily create an
-  // ImageDecoder. Since we only need the size, the premul and gamma settings
-  // don't really matter.
+  // ImageDecoder. Since we only need the size, the premul, high bit depth and
+  // gamma settings don't really matter.
+  const bool data_complete = true;
   std::unique_ptr<ImageDecoder> decoder = ImageDecoder::Create(
-      segment_reader, true, ImageDecoder::kAlphaPremultiplied,
-      ColorBehavior::TransformToSRGB());
+      segment_reader, data_complete, ImageDecoder::kAlphaPremultiplied,
+      ImageDecoder::kDefaultBitDepth, ColorBehavior::Ignore());
   if (!decoder || !decoder->IsSizeAvailable())
     return nullptr;
 
@@ -68,7 +69,8 @@ DecodingImageGenerator::CreateAsSkImageGenerator(sk_sp<SkData> data) {
       std::move(frame), info, std::move(segment_reader), std::move(frames),
       PaintImage::GetNextContentId(), true);
   return std::make_unique<SkiaPaintImageGenerator>(
-      std::move(generator), PaintImage::kDefaultFrameIndex);
+      std::move(generator), PaintImage::kDefaultFrameIndex,
+      PaintImage::kDefaultGeneratorClientId);
 }
 
 // static
@@ -114,9 +116,10 @@ bool DecodingImageGenerator::GetPixels(const SkImageInfo& dst_info,
                                        void* pixels,
                                        size_t row_bytes,
                                        size_t frame_index,
+                                       PaintImage::GeneratorClientId client_id,
                                        uint32_t lazy_pixel_ref) {
-  TRACE_EVENT1("blink", "DecodingImageGenerator::getPixels", "frame index",
-               static_cast<int>(frame_index));
+  TRACE_EVENT2("blink", "DecodingImageGenerator::getPixels", "frame index",
+               static_cast<int>(frame_index), "client_id", client_id);
 
   // Implementation only supports decoding to a supported size.
   if (dst_info.dimensions() != GetSupportedDecodeSize(dst_info.dimensions())) {
@@ -152,17 +155,14 @@ bool DecodingImageGenerator::GetPixels(const SkImageInfo& dst_info,
   PlatformInstrumentation::WillDecodeLazyPixelRef(lazy_pixel_ref);
   const bool decoded = frame_generator_->DecodeAndScale(
       data_.get(), all_data_received_, frame_index, decode_info, pixels,
-      row_bytes, alpha_option);
+      row_bytes, alpha_option, client_id);
   PlatformInstrumentation::DidDecodeLazyPixelRef();
 
   if (decoded && needs_color_xform) {
     TRACE_EVENT0("blink", "DecodingImageGenerator::getPixels - apply xform");
     SkPixmap src(decode_info, pixels, row_bytes);
 
-    // kIgnore ensures that we perform the premultiply (if necessary) in the dst
-    // space.
-    const bool converted = src.readPixels(dst_info, pixels, row_bytes, 0, 0,
-                                          SkTransferFunctionBehavior::kIgnore);
+    const bool converted = src.readPixels(dst_info, pixels, row_bytes);
     DCHECK(converted);
   }
 

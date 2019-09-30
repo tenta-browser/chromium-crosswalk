@@ -36,7 +36,6 @@
 
 namespace blink {
 
-class WebSecurityOrigin;
 class WebString;
 class WebURL;
 
@@ -65,38 +64,26 @@ class WebSecurityPolicy {
   BLINK_EXPORT static void RegisterURLSchemeAsFirstPartyWhenTopLevel(
       const WebString&);
 
-  // Support for whitelisting access to origins beyond the same-origin policy.
-  BLINK_EXPORT static void AddOriginAccessWhitelistEntry(
+  // Support for managing allow/block access lists to origins beyond the
+  // same-origin policy. The block list takes priority over the allow list.
+  BLINK_EXPORT static void AddOriginAccessAllowListEntry(
       const WebURL& source_origin,
       const WebString& destination_protocol,
       const WebString& destination_host,
       bool allow_destination_subdomains);
-  BLINK_EXPORT static void RemoveOriginAccessWhitelistEntry(
-      const WebURL& source_origin,
-      const WebString& destination_protocol,
-      const WebString& destination_host,
-      bool allow_destination_subdomains);
-  BLINK_EXPORT static void ResetOriginAccessWhitelists();
-
-  // Support for restricting the whitelists, in order to allow for broad
-  // whitelist access (e.g., "chromium.org") while protecting a subset of hosts
-  // (e.g., "secure.chromium.org"). If an origin is in both the whitelist and
-  // the blacklist, it is disallowed access.
-  BLINK_EXPORT static void AddOriginAccessBlacklistEntry(
+  BLINK_EXPORT static void ClearOriginAccessAllowListForOrigin(
+      const WebURL& source_origin);
+  BLINK_EXPORT static void ClearOriginAccessAllowList();
+  BLINK_EXPORT static void AddOriginAccessBlockListEntry(
       const WebURL& source_origin,
       const WebString& destination_protocol,
       const WebString& destination_host,
       bool disallow_destination_subdomains);
-  BLINK_EXPORT static void RemoveOriginAccessBlacklistEntry(
-      const WebURL& source_origin,
-      const WebString& destination_protocol,
-      const WebString& destination_host,
-      bool allow_destination_subdomains);
-  BLINK_EXPORT static void ResetOriginAccessBlacklists();
 
-  // Support for whitelisting origins to treat them as trustworthy.
-  BLINK_EXPORT static void AddOriginTrustworthyWhiteList(
-      const WebSecurityOrigin&);
+  // Support for whitelisting origins or hostname patterns to treat them as
+  // trustworthy. This method does not do any canonicalization; the caller is
+  // responsible for canonicalizing them before calling this.
+  BLINK_EXPORT static void AddOriginTrustworthyWhiteList(const WebString&);
 
   // Support for whitelisting schemes as bypassing secure context checks.
   BLINK_EXPORT static void AddSchemeToBypassSecureContextWhitelist(

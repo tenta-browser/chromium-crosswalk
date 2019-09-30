@@ -61,7 +61,7 @@ class MHTMLArchiveTest : public testing::Test {
   MHTMLArchiveTest() {
     file_path_ = test::CoreTestDataPath("frameserializer/css/");
     mhtml_date_ = WTF::Time::FromJsTime(1520551829000);
-    mhtml_date_header_ = String::FromUTF8("Fri, 8 Mar 2018 23:30:29 -0000");
+    mhtml_date_header_ = String::FromUTF8("Thu, 8 Mar 2018 23:30:29 -0000");
   }
 
  protected:
@@ -378,6 +378,23 @@ TEST_F(MHTMLArchiveTest, EmptyArchive) {
       SharedBuffer::Create(buf, static_cast<size_t>(0u));
   KURL http_url = ToKURL("http://www.example.com");
   MHTMLArchive* archive = MHTMLArchive::Create(http_url, data.get());
+  EXPECT_EQ(nullptr, archive);
+}
+
+TEST_F(MHTMLArchiveTest, NoMainResource) {
+  const char kURL[] = "http://www.example.com";
+  // Only add a resource to a CSS file, so no main resource is valid for
+  // rendering.
+  AddResource("http://www.example.com/link_styles.css", "text/css",
+              "link_styles.css");
+  Serialize(ToKURL(kURL), "Test Serialization", "text/html",
+            MHTMLArchive::kUseDefaultEncoding);
+
+  scoped_refptr<SharedBuffer> data =
+      SharedBuffer::Create(mhtml_data().data(), mhtml_data().size());
+  KURL http_url = ToKURL("http://www.example.com");
+  MHTMLArchive* archive = MHTMLArchive::Create(http_url, data.get());
+
   EXPECT_EQ(nullptr, archive);
 }
 

@@ -32,11 +32,11 @@
 
 #include "third_party/blink/renderer/bindings/core/v8/array_value.h"
 #include "third_party/blink/renderer/bindings/core/v8/dictionary.h"
-#include "third_party/blink/renderer/bindings/core/v8/exception_state.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
 #include "third_party/blink/renderer/core/frame/use_counter.h"
 #include "third_party/blink/renderer/core/inspector/console_message.h"
 #include "third_party/blink/renderer/modules/mediastream/media_track_constraints.h"
+#include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "third_party/blink/renderer/platform/wtf/assertions.h"
 #include "third_party/blink/renderer/platform/wtf/hash_map.h"
@@ -231,12 +231,12 @@ static bool Parse(const Dictionary& constraints_dictionary,
     if (!ok || optional_constraints.IsUndefinedOrNull())
       return false;
 
-    size_t number_of_constraints;
+    uint32_t number_of_constraints;
     ok = optional_constraints.length(number_of_constraints);
     if (!ok)
       return false;
 
-    for (size_t i = 0; i < number_of_constraints; ++i) {
+    for (uint32_t i = 0; i < number_of_constraints; ++i) {
       Dictionary constraint;
       ok = optional_constraints.Get(i, constraint);
       if (!ok || constraint.IsUndefinedOrNull())
@@ -340,10 +340,6 @@ static void ParseOldStyleNames(
     } else if (constraint.name_.Equals(kGoogExperimentalNoiseSuppression)) {
       result.goog_experimental_noise_suppression.SetExact(
           ToBoolean(constraint.value_));
-    } else if (constraint.name_.Equals(kGoogBeamforming)) {
-      result.goog_beamforming.SetExact(ToBoolean(constraint.value_));
-    } else if (constraint.name_.Equals(kGoogArrayGeometry)) {
-      result.goog_array_geometry.SetExact(constraint.value_);
     } else if (constraint.name_.Equals(kGoogHighpassFilter)) {
       result.goog_highpass_filter.SetExact(ToBoolean(constraint.value_));
     } else if (constraint.name_.Equals(kGoogTypingNoiseDetection)) {
@@ -435,7 +431,11 @@ static void ParseOldStyleNames(
     } else if (constraint.name_.Equals(kPowerLineFrequency)) {
       result.goog_power_line_frequency.SetExact(
           atoi(constraint.value_.Utf8().c_str()));
-    } else if (constraint.name_.Equals(kGoogLeakyBucket)) {
+    } else if (constraint.name_.Equals(kGoogLeakyBucket) ||
+               constraint.name_.Equals(kGoogBeamforming) ||
+               constraint.name_.Equals(kGoogArrayGeometry)) {
+      // TODO(crbug.com/856176): Remove the kGoogBeamforming and
+      // kGoogArrayGeometry special cases.
       context->AddConsoleMessage(ConsoleMessage::Create(
           kDeprecationMessageSource, kWarningMessageLevel,
           "Obsolete constraint named " + String(constraint.name_) +
@@ -464,6 +464,7 @@ static void ParseOldStyleNames(
             kDeprecationMessageSource, kWarningMessageLevel,
             "Unknown constraint named " + String(constraint.name_) +
                 " rejected"));
+        // TODO(crbug.com/856176): Don't throw an error.
         error_state.ThrowConstraintError("Unknown name of constraint detected",
                                          constraint.name_);
       }
@@ -677,6 +678,10 @@ void CopyConstraintSet(const MediaTrackConstraintSet& constraints_in,
     CopyBooleanConstraint(constraints_in.echoCancellation(), naked_treatment,
                           constraint_buffer.echo_cancellation);
   }
+  if (constraints_in.hasEchoCancellationType()) {
+    CopyStringConstraint(constraints_in.echoCancellationType(), naked_treatment,
+                         constraint_buffer.echo_cancellation_type);
+  }
   if (constraints_in.hasAutoGainControl()) {
     CopyBooleanConstraint(constraints_in.autoGainControl(), naked_treatment,
                           constraint_buffer.goog_auto_gain_control);
@@ -822,7 +827,7 @@ LongOrConstrainLongRange ConvertLong(const LongConstraint& input,
                                      NakedValueDisposition naked_treatment) {
   LongOrConstrainLongRange output_union;
   if (UseNakedNumeric(input, naked_treatment)) {
-    output_union.SetLong(GetNakedValue<long>(input, naked_treatment));
+    output_union.SetLong(GetNakedValue<uint32_t>(input, naked_treatment));
   } else if (!input.IsEmpty()) {
     ConstrainLongRange output;
     if (input.HasExact())

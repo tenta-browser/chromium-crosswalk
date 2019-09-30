@@ -11,7 +11,6 @@
 #include "base/bind.h"
 #include "base/json/json_writer.h"
 #include "base/lazy_instance.h"
-#include "base/message_loop/message_loop.h"
 #include "base/time/clock.h"
 #include "base/time/default_clock.h"
 #include "base/time/time.h"
@@ -97,8 +96,8 @@ std::unique_ptr<base::ListValue> AlarmsToValue(
   for (size_t i = 0; i < alarms.size(); ++i) {
     std::unique_ptr<base::DictionaryValue> alarm =
         alarms[i]->js_alarm->ToValue();
-    alarm->Set(kAlarmGranularity,
-               base::CreateTimeDeltaValue(alarms[i]->granularity));
+    alarm->SetKey(kAlarmGranularity,
+                  base::CreateTimeDeltaValue(alarms[i]->granularity));
     list->Append(std::move(alarm));
   }
   return list;

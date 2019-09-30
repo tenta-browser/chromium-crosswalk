@@ -11,7 +11,7 @@
 
 #include "base/logging.h"
 #include "base/strings/string_util.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "content/child/child_thread_impl.h"
 #include "content/public/common/service_names.mojom.h"
 #include "content/renderer/loader/request_extra_data.h"
@@ -24,11 +24,13 @@
 #include "services/network/public/mojom/request_context_frame_type.mojom.h"
 #include "services/service_manager/public/cpp/connector.h"
 #include "services/service_manager/public/cpp/interface_provider.h"
-#include "third_party/blink/public/mojom/blob/blob.mojom.h"
+#include "third_party/blink/public/mojom/blob/blob_registry.mojom.h"
 #include "third_party/blink/public/platform/file_path_conversion.h"
+#include "third_party/blink/public/platform/interface_provider.h"
 #include "third_party/blink/public/platform/modules/fetch/fetch_api_request.mojom-shared.h"
 #include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/public/platform/web_data.h"
+#include "third_party/blink/public/platform/web_http_body.h"
 #include "third_party/blink/public/platform/web_http_header_visitor.h"
 #include "third_party/blink/public/platform/web_mixed_content.h"
 #include "third_party/blink/public/platform/web_string.h"
@@ -290,16 +292,25 @@ int GetLoadFlagsForWebURLRequest(const WebURLRequest& request) {
     if (extra_data->is_for_no_state_prefetch())
       load_flags |= net::LOAD_PREFETCH;
   }
+  if (request.SupportsAsyncRevalidation())
+    load_flags |= net::LOAD_SUPPORT_ASYNC_REVALIDATION;
 
   return load_flags;
 }
 
 WebHTTPBody GetWebHTTPBodyForRequestBody(
     const network::ResourceRequestBody& input) {
+  return GetWebHTTPBodyForRequestBodyWithBlobPtrs(input, {});
+}
+
+WebHTTPBody GetWebHTTPBodyForRequestBodyWithBlobPtrs(
+    const network::ResourceRequestBody& input,
+    std::vector<blink::mojom::BlobPtrInfo> blob_ptrs) {
   WebHTTPBody http_body;
   http_body.Initialize();
   http_body.SetIdentifier(input.identifier());
   http_body.SetContainsPasswordData(input.contains_sensitive_info());
+  auto blob_ptr_iter = blob_ptrs.begin();
   for (auto& element : *input.elements()) {
     switch (element.type()) {
       case network::DataElement::TYPE_BYTES:
@@ -314,12 +325,16 @@ WebHTTPBody GetWebHTTPBodyForRequestBody(
             element.expected_modification_time().ToDoubleT());
         break;
       case network::DataElement::TYPE_BLOB:
-        http_body.AppendBlob(WebString::FromASCII(element.blob_uuid()));
+        if (blob_ptrs.empty()) {
+          http_body.AppendBlob(WebString::FromASCII(element.blob_uuid()));
+        } else {
+          DCHECK(blob_ptr_iter != blob_ptrs.end());
+          blink::mojom::BlobPtrInfo& blob = *blob_ptr_iter++;
+          http_body.AppendBlob(WebString::FromASCII(element.blob_uuid()),
+                               element.length(), blob.PassHandle());
+        }
         break;
       case network::DataElement::TYPE_DATA_PIPE: {
-        // Append the cloned data pipe to the |http_body|. This might not be
-        // needed for all callsites today but it respects the constness of
-        // |input|, as opposed to moving the data pipe out of |input|.
         http_body.AppendDataPipe(
             element.CloneDataPipeGetter().PassInterface().PassHandle());
         break;
@@ -332,6 +347,25 @@ WebHTTPBody GetWebHTTPBodyForRequestBody(
     }
   }
   return http_body;
+}
+
+std::vector<blink::mojom::BlobPtrInfo> GetBlobPtrsForRequestBody(
+    const network::ResourceRequestBody& input) {
+  std::vector<blink::mojom::BlobPtrInfo> blob_ptrs;
+  blink::mojom::BlobRegistryPtr blob_registry;
+  for (auto& element : *input.elements()) {
+    if (element.type() == network::DataElement::TYPE_BLOB) {
+      blink::mojom::BlobPtrInfo blob_ptr;
+      if (!blob_registry) {
+        blink::Platform::Current()->GetInterfaceProvider()->GetInterface(
+            mojo::MakeRequest(&blob_registry));
+      }
+      blob_registry->GetBlobFromUUID(mojo::MakeRequest(&blob_ptr),
+                                     element.blob_uuid());
+      blob_ptrs.push_back(std::move(blob_ptr));
+    }
+  }
+  return blob_ptrs;
 }
 
 scoped_refptr<network::ResourceRequestBody> GetRequestBodyForWebURLRequest(
@@ -358,12 +392,7 @@ scoped_refptr<network::ResourceRequestBody> GetRequestBodyForWebHTTPBody(
   while (httpBody.ElementAt(i++, element)) {
     switch (element.type) {
       case WebHTTPBody::Element::kTypeData:
-        element.data.ForEachSegment([&request_body](const char* segment,
-                                                    size_t segment_size,
-                                                    size_t segment_offset) {
-          request_body->AppendBytes(segment, static_cast<int>(segment_size));
-          return true;
-        });
+        request_body->AppendBytes(element.data.Copy().ReleaseVector());
         break;
       case WebHTTPBody::Element::kTypeFile:
         if (element.file_length == -1) {
@@ -390,7 +419,8 @@ scoped_refptr<network::ResourceRequestBody> GetRequestBodyForWebHTTPBody(
 
           request_body->AppendDataPipe(std::move(data_pipe_getter_ptr));
         } else {
-          request_body->AppendBlob(element.blob_uuid.Utf8());
+          request_body->AppendBlob(element.blob_uuid.Utf8(),
+                                   element.blob_length);
         }
         break;
       }

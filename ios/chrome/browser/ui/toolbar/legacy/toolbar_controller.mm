@@ -18,9 +18,6 @@
 #import "ios/chrome/browser/ui/commands/application_commands.h"
 #import "ios/chrome/browser/ui/commands/browser_commands.h"
 #import "ios/chrome/browser/ui/fullscreen/fullscreen_animator.h"
-#import "ios/chrome/browser/ui/fullscreen/fullscreen_foreground_animator.h"
-#import "ios/chrome/browser/ui/fullscreen/fullscreen_scroll_end_animator.h"
-#import "ios/chrome/browser/ui/fullscreen/fullscreen_scroll_to_top_animator.h"
 #import "ios/chrome/browser/ui/image_util/image_util.h"
 #import "ios/chrome/browser/ui/reversed_animation.h"
 #include "ios/chrome/browser/ui/rtl_geometry.h"
@@ -31,8 +28,8 @@
 #include "ios/chrome/browser/ui/toolbar/toolbar_resource_macros.h"
 #import "ios/chrome/browser/ui/tools_menu/tools_menu_configuration.h"
 #import "ios/chrome/browser/ui/uikit_ui_util.h"
-#import "ios/chrome/browser/ui/util/constraints_ui_util.h"
 #import "ios/chrome/common/material_timing.h"
+#import "ios/chrome/common/ui_util/constraints_ui_util.h"
 #include "ios/chrome/grit/ios_strings.h"
 #include "ios/chrome/grit/ios_theme_resources.h"
 #import "ios/third_party/material_components_ios/src/components/Typography/src/MaterialTypography.h"
@@ -712,18 +709,15 @@ using ios::material::TimingFunction;
     [self updateForFullscreenProgress:1.0];
 }
 
-- (void)finishFullscreenScrollWithAnimator:
-    (FullscreenScrollEndAnimator*)animator {
+- (void)finishFullscreenScrollWithAnimator:(FullscreenAnimator*)animator {
   [self addFullscreenAnimationsToAnimator:animator];
 }
 
-- (void)scrollFullscreenToTopWithAnimator:
-    (FullscreenScrollToTopAnimator*)animator {
+- (void)scrollFullscreenToTopWithAnimator:(FullscreenAnimator*)animator {
   [self addFullscreenAnimationsToAnimator:animator];
 }
 
-- (void)showToolbarForForgroundWithAnimator:
-    (FullscreenForegroundAnimator*)animator {
+- (void)showToolbarWithAnimator:(FullscreenAnimator*)animator {
   [self addFullscreenAnimationsToAnimator:animator];
 }
 
@@ -731,7 +725,7 @@ using ios::material::TimingFunction;
 
 - (void)addFullscreenAnimationsToAnimator:(FullscreenAnimator*)animator {
   CGFloat finalProgress = animator.finalProgress;
-  [animator addAnimations:^() {
+  [animator addAnimations:^{
     [self updateForFullscreenProgress:finalProgress];
   }];
 }

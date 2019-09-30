@@ -15,7 +15,7 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "base/sys_info.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "base/time/time.h"
 #include "chrome/browser/media/webrtc/webrtc_log_uploader.h"
 #include "chrome/common/channel_info.h"
@@ -203,7 +203,7 @@ bool WebRtcTextLogHandler::StartLogging(WebRtcLogUploader* log_uploader,
     meta_data_.reset(new MetaDataMap());
 
   base::PostTaskWithTraitsAndReplyWithResult(
-      FROM_HERE, {base::MayBlock(), base::TaskPriority::BACKGROUND},
+      FROM_HERE, {base::MayBlock(), base::TaskPriority::BEST_EFFORT},
       base::BindOnce(&GetNetworkInterfaceList),
       base::BindOnce(&WebRtcTextLogHandler::LogInitialInfoOnIOThread, this,
                      callback));
@@ -434,13 +434,14 @@ void WebRtcTextLogHandler::LogInitialInfoOnIOThread(
 
   // GPU
   gpu::GPUInfo gpu_info = content::GpuDataManager::GetInstance()->GetGPUInfo();
+  const gpu::GPUInfo::GPUDevice& active_gpu = gpu_info.active_gpu();
   LogToCircularBuffer(
       "Gpu: machine-model-name=" + gpu_info.machine_model_name +
       ", machine-model-version=" + gpu_info.machine_model_version +
-      ", vendor-id=" + base::UintToString(gpu_info.gpu.vendor_id) +
-      ", device-id=" + base::UintToString(gpu_info.gpu.device_id) +
-      ", driver-vendor=" + gpu_info.driver_vendor + ", driver-version=" +
-      gpu_info.driver_version);
+      ", vendor-id=" + base::UintToString(active_gpu.vendor_id) +
+      ", device-id=" + base::UintToString(active_gpu.device_id) +
+      ", driver-vendor=" + active_gpu.driver_vendor +
+      ", driver-version=" + active_gpu.driver_version);
   LogToCircularBuffer("OpenGL: gl-vendor=" + gpu_info.gl_vendor +
                       ", gl-renderer=" + gpu_info.gl_renderer +
                       ", gl-version=" + gpu_info.gl_version);
@@ -448,9 +449,12 @@ void WebRtcTextLogHandler::LogInitialInfoOnIOThread(
   // Audio manager
   // On some platforms, this can vary depending on build flags and failure
   // fallbacks. On Linux for example, we fallback on ALSA if PulseAudio fails to
-  // initialize.
+  // initialize. TODO(http://crbug/843202): access AudioManager name via Audio
+  // service interface.
+  media::AudioManager* audio_manager = media::AudioManager::Get();
   LogToCircularBuffer(base::StringPrintf(
-      "Audio manager: %s", media::AudioManager::Get()->GetName()));
+      "Audio manager: %s",
+      audio_manager ? audio_manager->GetName() : "Out of process"));
 
   // Network interfaces
   LogToCircularBuffer("Discovered " +

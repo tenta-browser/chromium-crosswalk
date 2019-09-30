@@ -281,7 +281,7 @@ void TypedURLSyncBridge::GetData(StorageKeyList storage_keys,
       continue;
     std::unique_ptr<syncer::EntityData> entity_data =
         CreateEntityData(url_row, visits_vector);
-    if (!entity_data.get()) {
+    if (!entity_data) {
       // Cannot create EntityData, ex. no TYPED visits.
       continue;
     }
@@ -292,7 +292,7 @@ void TypedURLSyncBridge::GetData(StorageKeyList storage_keys,
   std::move(callback).Run(std::move(batch));
 }
 
-void TypedURLSyncBridge::GetAllData(DataCallback callback) {
+void TypedURLSyncBridge::GetAllDataForDebugging(DataCallback callback) {
   DCHECK(sequence_checker_.CalledOnValidSequence());
 
   URLRows typed_urls;
@@ -311,7 +311,7 @@ void TypedURLSyncBridge::GetAllData(DataCallback callback) {
       continue;
     std::unique_ptr<syncer::EntityData> entity_data =
         CreateEntityData(url, visits_vector);
-    if (!entity_data.get()) {
+    if (!entity_data) {
       // Cannot create EntityData, ex. no TYPED visits.
       continue;
     }
@@ -410,8 +410,23 @@ void TypedURLSyncBridge::OnURLsDeleted(HistoryBackend* history_backend,
   // client with a bad clock setting won't go on an expiration rampage and
   // delete all history from every client). The server will gracefully age out
   // the sync DB entries when they've been idle for long enough.
-  if (expired)
+  if (expired) {
+    // Delete metadata from the DB and ask the processor to untrack the entries.
+    for (const URLRow& row : deleted_rows) {
+      std::string storage_key = GetStorageKeyFromURLRow(row);
+      // The following functions need to tolerate if there exists no metadata
+      // for |storage_key|. The reason is we have no way to tell if there is any
+      // metadata for this row. We cannot distinguish a URL that has never been
+      // typed from a URL that has been typed before but its typed visit has
+      // expired earlier than the URL itself (because there were non-typed
+      // visits afterwards). On top of that, this bridge is not very robust in
+      // syncing up every typed URL.
+      sync_metadata_database_->ClearSyncMetadata(syncer::TYPED_URLS,
+                                                 storage_key);
+      change_processor()->UntrackEntityForStorageKey(storage_key);
+    }
     return;
+  }
 
   std::unique_ptr<MetadataChangeList> metadata_change_list =
       CreateMetadataChangeList();
@@ -431,7 +446,7 @@ void TypedURLSyncBridge::OnURLsDeleted(HistoryBackend* history_backend,
     }
   } else {
     // Delete rows.
-    for (const auto& row : deleted_rows) {
+    for (const URLRow& row : deleted_rows) {
       std::string storage_key = GetStorageKeyFromURLRow(row);
       change_processor()->Delete(storage_key, metadata_change_list.get());
     }
@@ -648,8 +663,10 @@ TypedURLSyncBridge::MergeResult TypedURLSyncBridge::MergeUrls(
              new_visit->first > visit_ix->visit_time) {
         ++visit_ix;
       }
-      visit_ix = visits->insert(visit_ix, VisitRow(url.id(), new_visit->first,
-                                                   0, new_visit->second, 0));
+      visit_ix = visits->insert(
+          visit_ix,
+          VisitRow(url.id(), new_visit->first, 0, new_visit->second, 0,
+                   HistoryBackend::IsTypedIncrement(new_visit->second)));
       ++visit_ix;
     }
   }
@@ -740,7 +757,7 @@ void TypedURLSyncBridge::LoadMetadata() {
                                      "TypedURLSyncMetadataDatabase."});
     return;
   }
-  change_processor()->ModelReadyToSync(this, std::move(batch));
+  change_processor()->ModelReadyToSync(std::move(batch));
 }
 
 void TypedURLSyncBridge::ClearErrorStats() {
@@ -1096,7 +1113,7 @@ bool TypedURLSyncBridge::FixupURLAndGetVisits(URLRow* url,
     }
 
     VisitRow visit(url->id(), url->last_visit(), 0, ui::PAGE_TRANSITION_TYPED,
-                   0);
+                   0, true);
     visits->push_back(visit);
   }
 
@@ -1200,7 +1217,7 @@ void TypedURLSyncBridge::SendTypedURLToProcessor(
 
   std::unique_ptr<syncer::EntityData> entity_data =
       CreateEntityData(row, visits);
-  if (!entity_data.get()) {
+  if (!entity_data) {
     // Cannot create EntityData, ex. no TYPED visits.
     return;
   }

@@ -11,7 +11,6 @@
 
 #include "base/i18n/encoding_detection.h"
 #include "base/i18n/icu_string_conversions.h"
-#include "base/json/json_writer.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
@@ -198,7 +197,7 @@ std::unique_ptr<NetworkUIData> GetUIDataFromValue(
     return std::unique_ptr<NetworkUIData>();
   if (ui_data_str.empty())
     return std::make_unique<NetworkUIData>();
-  std::unique_ptr<base::DictionaryValue> ui_data_dict(
+  std::unique_ptr<base::Value> ui_data_dict(
       chromeos::onc::ReadDictionaryFromJson(ui_data_str));
   if (!ui_data_dict)
     return std::unique_ptr<NetworkUIData>();
@@ -222,11 +221,8 @@ std::unique_ptr<NetworkUIData> GetUIDataFromProperties(
 
 void SetUIData(const NetworkUIData& ui_data,
                base::DictionaryValue* shill_dictionary) {
-  base::DictionaryValue ui_data_dict;
-  ui_data.FillDictionary(&ui_data_dict);
-  std::string ui_data_blob;
-  base::JSONWriter::Write(ui_data_dict, &ui_data_blob);
-  shill_dictionary->SetKey(shill::kUIDataProperty, base::Value(ui_data_blob));
+  shill_dictionary->SetKey(shill::kUIDataProperty,
+                           base::Value(ui_data.GetAsJson()));
 }
 
 bool CopyIdentifyingProperties(const base::DictionaryValue& service_properties,

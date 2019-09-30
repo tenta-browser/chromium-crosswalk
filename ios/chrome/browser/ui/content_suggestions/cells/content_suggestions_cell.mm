@@ -5,10 +5,10 @@
 #import "ios/chrome/browser/ui/content_suggestions/cells/content_suggestions_cell.h"
 
 #import "ios/chrome/browser/ui/colors/MDCPalette+CrAdditions.h"
-#import "ios/chrome/browser/ui/favicon/favicon_view.h"
 #include "ios/chrome/browser/ui/ui_util.h"
-#import "ios/chrome/browser/ui/util/constraints_ui_util.h"
 #import "ios/chrome/browser/ui/util/i18n_string.h"
+#import "ios/chrome/common/favicon/favicon_view.h"
+#import "ios/chrome/common/ui_util/constraints_ui_util.h"
 #import "ios/third_party/material_components_ios/src/components/Palettes/src/MaterialPalettes.h"
 #import "ios/third_party/material_components_ios/src/components/Typography/src/MaterialTypography.h"
 
@@ -122,7 +122,7 @@ const CGFloat kAnimationDuration = 0.3;
     _faviconView.font = [[MDCTypography fontLoader] mediumFontOfSize:10];
     if (IsUIRefreshPhase1Enabled()) {
       _additionalInformationLabel.textColor =
-          [UIColor colorWithWhite:0 alpha:0.4];
+          [UIColor colorWithWhite:0 alpha:0.54];
     } else {
       _additionalInformationLabel.textColor =
           [[MDCPalette greyPalette] tint700];
@@ -131,6 +131,12 @@ const CGFloat kAnimationDuration = 0.3;
     [self applyConstraints];
   }
   return self;
+}
+
+- (void)setHighlighted:(BOOL)highlighted {
+  [super setHighlighted:highlighted];
+  self.contentView.backgroundColor =
+      highlighted ? [UIColor colorWithWhite:0 alpha:0.05] : nil;
 }
 
 - (void)setContentImage:(UIImage*)image animated:(BOOL)animated {
@@ -178,9 +184,6 @@ const CGFloat kAnimationDuration = 0.3;
                     title:(NSString*)title
             publisherName:(NSString*)publisherName
           publicationDate:(NSString*)publicationDate {
-  if (IsUIRefreshPhase1Enabled()) {
-    return [[self class] imageSize] + [[self class] standardSpacing];
-  } else {
     UILabel* titleLabel = [[UILabel alloc] init];
     [self configureTitleLabel:titleLabel];
     titleLabel.text = title;
@@ -193,15 +196,27 @@ const CGFloat kAnimationDuration = 0.3;
     CGSize sizeForLabels =
         CGSizeMake(width - [self labelMarginWithImage:hasImage], 500);
 
-    CGFloat labelHeight = 3 * [[self class] standardSpacing];
-    labelHeight += [titleLabel sizeThatFits:sizeForLabels].height;
-    CGFloat additionalInfoHeight =
-        [additionalInfoLabel sizeThatFits:sizeForLabels].height;
-    labelHeight += MAX(additionalInfoHeight, kFaviconSize);
+    if (IsUIRefreshPhase1Enabled()) {
+      CGFloat minimalHeight =
+          [[self class] imageSize] + [[self class] standardSpacing];
 
-    CGFloat minimalHeight = hasImage ? [[self class] imageSize] : 0;
-    minimalHeight += 2 * [[self class] standardSpacing];
-    return MAX(minimalHeight, labelHeight);
+      CGFloat labelHeight = [[self class] standardSpacing];
+      labelHeight += [titleLabel sizeThatFits:sizeForLabels].height;
+      labelHeight += [[self class] smallSpacing];
+      CGFloat additionalInfoHeight =
+          [additionalInfoLabel sizeThatFits:sizeForLabels].height;
+      labelHeight += MAX(additionalInfoHeight, kFaviconSize);
+      return MAX(minimalHeight, labelHeight);
+    } else {
+      CGFloat labelHeight = 3 * [[self class] standardSpacing];
+      labelHeight += [titleLabel sizeThatFits:sizeForLabels].height;
+      CGFloat additionalInfoHeight =
+          [additionalInfoLabel sizeThatFits:sizeForLabels].height;
+      labelHeight += MAX(additionalInfoHeight, kFaviconSize);
+
+      CGFloat minimalHeight = hasImage ? [[self class] imageSize] : 0;
+      minimalHeight += 2 * [[self class] standardSpacing];
+      return MAX(minimalHeight, labelHeight);
   }
 }
 
@@ -214,6 +229,16 @@ const CGFloat kAnimationDuration = 0.3;
 }
 
 #pragma mark - UIView
+
+- (void)traitCollectionDidChange:(UITraitCollection*)previousTraitCollection {
+  [super traitCollectionDidChange:previousTraitCollection];
+  if (IsUIRefreshPhase1Enabled() &&
+      self.traitCollection.preferredContentSizeCategory !=
+          previousTraitCollection.preferredContentSizeCategory) {
+    [[self class] configureTitleLabel:_titleLabel];
+    _additionalInformationLabel.font = [[self class] additionalInformationFont];
+  }
+}
 
 // Implements -layoutSubviews as per instructions in documentation for
 // +[MDCCollectionViewCell cr_preferredHeightForWidth:forItem:].
@@ -247,9 +272,10 @@ const CGFloat kAnimationDuration = 0.3;
   if (IsUIRefreshPhase1Enabled()) {
     [NSLayoutConstraint activateConstraints:@[
       [_imageContainer.bottomAnchor
-          constraintLessThanOrEqualToAnchor:self.contentView.bottomAnchor],
-      [_faviconView.bottomAnchor
-          constraintEqualToAnchor:_imageContainer.bottomAnchor],
+          constraintLessThanOrEqualToAnchor:_faviconView.bottomAnchor],
+      [_faviconView.topAnchor
+          constraintGreaterThanOrEqualToAnchor:self.titleLabel.bottomAnchor
+                                      constant:[[self class] smallSpacing]]
     ]];
   } else {
     [NSLayoutConstraint activateConstraints:@[

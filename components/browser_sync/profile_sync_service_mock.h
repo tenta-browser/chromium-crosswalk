@@ -32,7 +32,7 @@ class ProfileSyncServiceMock : public ProfileSyncService {
   // code.
   explicit ProfileSyncServiceMock(InitParams* init_params);
 
-  virtual ~ProfileSyncServiceMock();
+  ~ProfileSyncServiceMock() override;
 
   MOCK_METHOD5(
       OnEngineInitialized,
@@ -64,37 +64,31 @@ class ProfileSyncServiceMock : public ProfileSyncService {
   MOCK_CONST_METHOD0(IsEncryptEverythingEnabled, bool());
   MOCK_METHOD0(EnableEncryptEverything, void());
 
-  MOCK_METHOD1(ChangePreferredDataTypes,
-               void(syncer::ModelTypeSet preferred_types));
   MOCK_CONST_METHOD0(GetActiveDataTypes, syncer::ModelTypeSet());
   MOCK_CONST_METHOD0(GetPreferredDataTypes, syncer::ModelTypeSet());
   MOCK_CONST_METHOD0(GetRegisteredDataTypes, syncer::ModelTypeSet());
   MOCK_CONST_METHOD0(GetLastCycleSnapshot, syncer::SyncCycleSnapshot());
 
-  MOCK_METHOD1(QueryDetailedSyncStatus,
-               bool(syncer::SyncEngine::Status* result));
+  MOCK_CONST_METHOD0(GetDisableReasons, int());
+  MOCK_CONST_METHOD0(GetTransportState, TransportState());
+  MOCK_CONST_METHOD1(QueryDetailedSyncStatus,
+                     bool(syncer::SyncEngine::Status* result));
   MOCK_CONST_METHOD0(GetAuthError, const GoogleServiceAuthError&());
-  MOCK_CONST_METHOD0(IsFirstSetupInProgress, bool());
+  MOCK_CONST_METHOD0(IsSetupInProgress, bool());
   MOCK_CONST_METHOD0(GetLastSyncedTime, base::Time());
-  MOCK_CONST_METHOD0(HasUnrecoverableError, bool());
-  MOCK_CONST_METHOD0(IsSyncActive, bool());
-  MOCK_CONST_METHOD0(IsEngineInitialized, bool());
-  MOCK_CONST_METHOD0(IsSyncRequested, bool());
   MOCK_CONST_METHOD0(IsSyncConfirmationNeeded, bool());
-  MOCK_CONST_METHOD0(waiting_for_auth, bool());
   MOCK_METHOD1(OnActionableError, void(const syncer::SyncProtocolError&));
   MOCK_CONST_METHOD1(IsDataTypeControllerRunning, bool(syncer::ModelType));
 
   MOCK_METHOD0(GetOpenTabsUIDelegateMock, sync_sessions::OpenTabsUIDelegate*());
   sync_sessions::OpenTabsUIDelegate* GetOpenTabsUIDelegate() override;
 
+  MOCK_METHOD0(StartUpSlowEngineComponents, void());
+
   // DataTypeManagerObserver mocks.
   MOCK_METHOD1(OnConfigureDone,
                void(const syncer::DataTypeManager::ConfigureResult&));
   MOCK_METHOD0(OnConfigureStart, void());
-
-  MOCK_CONST_METHOD0(CanSyncStart, bool());
-  MOCK_CONST_METHOD0(IsManaged, bool());
 
   MOCK_CONST_METHOD0(IsPassphraseRequired, bool());
   MOCK_CONST_METHOD0(IsPassphraseRequiredForDecryption, bool());
@@ -107,6 +101,11 @@ class ProfileSyncServiceMock : public ProfileSyncService {
                void(const std::string& passphrase, PassphraseType type));
 
   MOCK_METHOD0(OnSetupInProgressHandleDestroyed, void());
+
+  // TODO(crbug.com/871221): Remove this override. This is overridden here to
+  // return true by default, as a workaround for tests not setting up an
+  // authenticated account and IsSyncFeatureEnabled() therefore returning false.
+  bool IsAuthenticatedAccountPrimary() const override;
 
   // Gives access to the real implementation of ProfileSyncService methods:
   std::unique_ptr<syncer::SyncSetupInProgressHandle>

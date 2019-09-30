@@ -1,40 +1,27 @@
-CONSOLE ERROR: Failed to load ftp://127.0.0.1/: Cross origin requests are only supported for protocol schemes: http, data, chrome, https.
-CONSOLE ERROR: line 1: Failed to load ftp://127.0.0.1/: Cross origin requests are only supported for protocol schemes: http, data, chrome, https.
-CONSOLE ERROR: Failed to load ftp://127.0.0.1/: Cross origin requests are only supported for protocol schemes: http, data, chrome, https.
-CONSOLE ERROR: line 1: Failed to load ftp://127.0.0.1/: Cross origin requests are only supported for protocol schemes: http, data, chrome, https.
-CONSOLE ERROR: Failed to load localhost:8080/: Cross origin requests are only supported for protocol schemes: http, data, chrome, https.
-CONSOLE ERROR: line 1: Failed to load localhost:8080/: Cross origin requests are only supported for protocol schemes: http, data, chrome, https.
-CONSOLE ERROR: Failed to load localhost:8080/: Cross origin requests are only supported for protocol schemes: http, data, chrome, https.
-CONSOLE ERROR: line 1: Failed to load localhost:8080/: Cross origin requests are only supported for protocol schemes: http, data, chrome, https.
-CONSOLE ERROR: Failed to load tel:1234: Cross origin requests are only supported for protocol schemes: http, data, chrome, https.
-CONSOLE ERROR: line 1: Failed to load tel:1234: Cross origin requests are only supported for protocol schemes: http, data, chrome, https.
-CONSOLE ERROR: Failed to load tel:1234: Cross origin requests are only supported for protocol schemes: http, data, chrome, https.
-CONSOLE ERROR: line 1: Failed to load tel:1234: Cross origin requests are only supported for protocol schemes: http, data, chrome, https.
-[Worker] Test cross-origin XHRs to CORS-unsupported protocol schemes in the URL.
-
-On success, you will see a series of "PASS" messages, followed by "TEST COMPLETE".
-
-
-Starting worker: ../resources/cross-origin-unsupported-url.js
-PASS [Worker] errorEvent.name is "NetworkError"
-PASS [Worker] errorEvent.type is "error"
-PASS [Worker] xhr.send() did not throw exception.
-PASS [Worker] errorEvent.name is "NetworkError"
-PASS [Worker] errorEvent.type is "error"
-PASS [Worker] xhr.send() did not throw exception.
-PASS [Worker] errorEvent.name is "NetworkError"
-PASS [Worker] errorEvent.type is "error"
-PASS [Worker] xhr.send() did not throw exception.
-PASS [Worker] errorEvent.name is "NetworkError"
-PASS [Worker] errorEvent.type is "error"
-PASS [Worker] xhr.send() did not throw exception.
-PASS [Worker] errorEvent.name is "NetworkError"
-PASS [Worker] errorEvent.type is "error"
-PASS [Worker] xhr.send() did not throw exception.
-PASS [Worker] errorEvent.name is "NetworkError"
-PASS [Worker] errorEvent.type is "error"
-PASS [Worker] xhr.send() did not throw exception.
-PASS successfullyParsed is true
-
-TEST COMPLETE
+CONSOLE ERROR: line 13: Access to XMLHttpRequest at 'mailto:foo@bar.com' from origin 'http://127.0.0.1:8000' has been blocked by CORS policy: Cross origin requests are only supported for protocol schemes: http, data, chrome, https.
+CONSOLE ERROR: line 13: Access to XMLHttpRequest at 'mailto:foo@bar.com' from origin 'http://127.0.0.1:8000' has been blocked by CORS policy: Cross origin requests are only supported for protocol schemes: http, data, chrome, https.
+CONSOLE ERROR: line 13: Access to XMLHttpRequest at 'localhost:8080/' from origin 'http://127.0.0.1:8000' has been blocked by CORS policy: Cross origin requests are only supported for protocol schemes: http, data, chrome, https.
+CONSOLE ERROR: line 13: Access to XMLHttpRequest at 'localhost:8080/' from origin 'http://127.0.0.1:8000' has been blocked by CORS policy: Cross origin requests are only supported for protocol schemes: http, data, chrome, https.
+CONSOLE ERROR: line 13: Access to XMLHttpRequest at 'tel:1234' from origin 'http://127.0.0.1:8000' has been blocked by CORS policy: Cross origin requests are only supported for protocol schemes: http, data, chrome, https.
+CONSOLE ERROR: line 13: Access to XMLHttpRequest at 'tel:1234' from origin 'http://127.0.0.1:8000' has been blocked by CORS policy: Cross origin requests are only supported for protocol schemes: http, data, chrome, https.
+CONSOLE ERROR: line 29: Access to XMLHttpRequest at 'mailto:foo@bar.com' from origin 'http://127.0.0.1:8000' has been blocked by CORS policy: Cross origin requests are only supported for protocol schemes: http, data, chrome, https.
+CONSOLE ERROR: line 29: Access to XMLHttpRequest at 'mailto:foo@bar.com' from origin 'http://127.0.0.1:8000' has been blocked by CORS policy: Cross origin requests are only supported for protocol schemes: http, data, chrome, https.
+CONSOLE ERROR: line 29: Access to XMLHttpRequest at 'localhost:8080/' from origin 'http://127.0.0.1:8000' has been blocked by CORS policy: Cross origin requests are only supported for protocol schemes: http, data, chrome, https.
+CONSOLE ERROR: line 29: Access to XMLHttpRequest at 'localhost:8080/' from origin 'http://127.0.0.1:8000' has been blocked by CORS policy: Cross origin requests are only supported for protocol schemes: http, data, chrome, https.
+CONSOLE ERROR: line 29: Access to XMLHttpRequest at 'tel:1234' from origin 'http://127.0.0.1:8000' has been blocked by CORS policy: Cross origin requests are only supported for protocol schemes: http, data, chrome, https.
+CONSOLE ERROR: line 29: Access to XMLHttpRequest at 'tel:1234' from origin 'http://127.0.0.1:8000' has been blocked by CORS policy: Cross origin requests are only supported for protocol schemes: http, data, chrome, https.
+This is a testharness.js-based test.
+PASS sync test for url=mailto:foo@bar.com, contentType=undefined
+PASS sync test for url=mailto:foo@bar.com, contentType=application/json
+PASS async test for url=mailto:foo@bar.com, contentType=undefined
+PASS async test for url=mailto:foo@bar.com, contentType=application/json
+PASS sync test for url=localhost:8080/, contentType=undefined
+PASS sync test for url=localhost:8080/, contentType=application/json
+PASS async test for url=localhost:8080/, contentType=undefined
+PASS async test for url=localhost:8080/, contentType=application/json
+PASS sync test for url=tel:1234, contentType=undefined
+PASS sync test for url=tel:1234, contentType=application/json
+PASS async test for url=tel:1234, contentType=undefined
+PASS async test for url=tel:1234, contentType=application/json
+Harness: the test ran to completion.
 

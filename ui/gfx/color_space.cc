@@ -5,6 +5,7 @@
 #include "ui/gfx/color_space.h"
 
 #include <iomanip>
+#include <limits>
 #include <map>
 #include <sstream>
 
@@ -44,6 +45,9 @@ static bool IsAlmostZero(float value) {
 
 }  // namespace
 
+// static
+int ColorSpace::kInvalidId = -1;
+
 ColorSpace::ColorSpace() {}
 
 ColorSpace::ColorSpace(PrimaryID primaries,
@@ -68,6 +72,62 @@ ColorSpace::ColorSpace(PrimaryID primaries,
                        RangeID range)
     : primaries_(primaries), matrix_(matrix), range_(range) {
   SetCustomTransferFunction(fn);
+}
+
+ColorSpace::ColorSpace(const SkColorSpace& sk_color_space)
+    : ColorSpace(PrimaryID::INVALID,
+                 TransferID::INVALID,
+                 MatrixID::RGB,
+                 RangeID::FULL) {
+  switch (sk_color_space.gammaNamed()) {
+    case kLinear_SkGammaNamed:
+      transfer_ = TransferID::LINEAR;
+      break;
+    case kSRGB_SkGammaNamed:
+      transfer_ = TransferID::IEC61966_2_1;
+      break;
+    default: {
+      SkColorSpaceTransferFn transfer_fn;
+      if (sk_color_space.isNumericalTransferFn(&transfer_fn)) {
+        transfer_ = TransferID::CUSTOM;
+        SetCustomTransferFunction(transfer_fn);
+      } else {
+        // Construct an invalid result: Unable to determine transfer function.
+        return;
+      }
+      break;
+    }
+  }
+
+  // As of this writing, Skia doesn't provide a property accessor for its named
+  // gamuts. Therefore, the following attempts to detect by "guess and check"
+  // for the commonly-used primaries.
+  primaries_ = PrimaryID::BT709;
+  if (SkColorSpace::Equals(&sk_color_space, ToSkColorSpace().get())) {
+    return;
+  }
+  primaries_ = PrimaryID::ADOBE_RGB;
+  if (SkColorSpace::Equals(&sk_color_space, ToSkColorSpace().get())) {
+    return;
+  }
+  primaries_ = PrimaryID::SMPTEST432_1;
+  if (SkColorSpace::Equals(&sk_color_space, ToSkColorSpace().get())) {
+    return;
+  }
+  primaries_ = PrimaryID::BT2020;
+  if (SkColorSpace::Equals(&sk_color_space, ToSkColorSpace().get())) {
+    return;
+  }
+
+  // Use custom primaries, if they are representable as a "to XYZD50" matrix.
+  if (const auto* to_XYZD50 = sk_color_space.toXYZD50()) {
+    primaries_ = PrimaryID::CUSTOM;
+    SetCustomPrimaries(*to_XYZD50);
+    return;
+  }
+
+  // If this point is reached, there is no way to represent the primaries.
+  primaries_ = PrimaryID::INVALID;
 }
 
 ColorSpace::ColorSpace(const ColorSpace& other)
@@ -227,6 +287,10 @@ bool ColorSpace::FullRangeEncodedValues() const {
          transfer_ == TransferID::IEC61966_2_1_HDR ||
          transfer_ == TransferID::BT1361_ECG ||
          transfer_ == TransferID::IEC61966_2_4;
+}
+
+bool ColorSpace::IsParametricAccurate() const {
+  return icc_profile_id_ == 0;
 }
 
 ColorSpace ColorSpace::GetParametricApproximation() const {
@@ -416,6 +480,26 @@ ColorSpace ColorSpace::GetAsFullRangeRGB() const {
     return result;
   result.matrix_ = MatrixID::RGB;
   result.range_ = RangeID::FULL;
+  return result;
+}
+
+ColorSpace ColorSpace::GetAsRGB() const {
+  ColorSpace result(*this);
+  if (IsValid())
+    result.matrix_ = MatrixID::RGB;
+  return result;
+}
+
+ColorSpace ColorSpace::GetScaledColorSpace(float factor) const {
+  ColorSpace result(*this);
+  SkMatrix44 to_XYZD50;
+  GetPrimaryMatrix(&to_XYZD50);
+  for (int row = 0; row < 3; ++row) {
+    for (int col = 0; col < 3; ++col) {
+      to_XYZD50.set(row, col, to_XYZD50.get(row, col) * factor);
+    }
+  }
+  result.SetCustomPrimaries(to_XYZD50);
   return result;
 }
 
@@ -927,7 +1011,7 @@ void ColorSpace::GetRangeAdjustMatrix(SkMatrix44* matrix) const {
   }
 }
 
-bool ColorSpace::ToSkYUVColorSpace(SkYUVColorSpace* out) {
+bool ColorSpace::ToSkYUVColorSpace(SkYUVColorSpace* out) const {
   if (range_ == RangeID::FULL) {
     *out = kJPEG_SkYUVColorSpace;
     return true;

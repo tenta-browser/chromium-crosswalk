@@ -98,6 +98,13 @@ void SelectedKeywordView::SetKeyword(const base::string16& keyword) {
   SetLabel(full_name);
 }
 
+int SelectedKeywordView::GetExtraInternalSpacing() const {
+  // MD Refresh needs more space to align the label text with suggestion text.
+  return ui::MaterialDesignController::IsRefreshUi()
+             ? 11
+             : GetWidthBetweenIconAndSeparator();
+}
+
 const char* SelectedKeywordView::GetClassName() const {
   return "SelectedKeywordView";
 }

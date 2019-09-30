@@ -245,11 +245,18 @@ IN_PROC_BROWSER_TEST_F(CompositorEventAckBrowserTest,
                        MAYBE_TouchStartDuringFling) {
   LoadURL(kBlockingTouchStartDataURL);
 
+  // Send a TouchStart so that we can set allowed touch action to Auto.
+  SyntheticWebTouchEvent touch_event;
+  touch_event.PressPoint(50, 50);
+  touch_event.SetTimeStamp(ui::EventTimeForNow());
+  GetWidgetHost()->ForwardTouchEventWithLatencyInfo(touch_event,
+                                                    ui::LatencyInfo());
+  GetWidgetHost()->input_router()->OnSetTouchAction(cc::kTouchActionAuto);
+
   // Send GSB to start scrolling sequence.
   blink::WebGestureEvent gesture_scroll_begin(
       blink::WebGestureEvent::kGestureScrollBegin,
-      blink::WebInputEvent::kNoModifiers,
-      ui::EventTimeStampToSeconds(ui::EventTimeForNow()));
+      blink::WebInputEvent::kNoModifiers, ui::EventTimeForNow());
   gesture_scroll_begin.SetSourceDevice(blink::kWebGestureDeviceTouchscreen);
   gesture_scroll_begin.data.scroll_begin.delta_hint_units =
       blink::WebGestureEvent::ScrollUnits::kPrecisePixels;
@@ -261,8 +268,7 @@ IN_PROC_BROWSER_TEST_F(CompositorEventAckBrowserTest,
   //  has started.
   blink::WebGestureEvent gesture_fling_start(
       blink::WebGestureEvent::kGestureFlingStart,
-      blink::WebInputEvent::kNoModifiers,
-      ui::EventTimeStampToSeconds(ui::EventTimeForNow()));
+      blink::WebInputEvent::kNoModifiers, ui::EventTimeForNow());
   gesture_fling_start.SetSourceDevice(blink::kWebGestureDeviceTouchscreen);
   gesture_fling_start.data.fling_start.velocity_x = 0.f;
   gesture_fling_start.data.fling_start.velocity_y = -2000.f;
@@ -275,16 +281,19 @@ IN_PROC_BROWSER_TEST_F(CompositorEventAckBrowserTest,
              .y() <= 0)
     observer.WaitForMetadataChange();
 
+  touch_event.ReleasePoint(0);
+  GetWidgetHost()->ForwardTouchEventWithLatencyInfo(touch_event,
+                                                    ui::LatencyInfo());
+  touch_event.ResetPoints();
+
   // Send a touch start event and wait for its ack. The touch start must be
   // uncancelable since there is an on-going fling with touchscreen source. The
   // test will timeout if the touch start event is cancelable since there is a
   // busy loop in the blocking touch start event listener.
   InputEventAckWaiter touch_start_ack_observer(GetWidgetHost(),
                                                WebInputEvent::kTouchStart);
-  SyntheticWebTouchEvent touch_event;
   touch_event.PressPoint(50, 50);
-  touch_event.SetTimeStampSeconds(
-      ui::EventTimeStampToSeconds(ui::EventTimeForNow()));
+  touch_event.SetTimeStamp(ui::EventTimeForNow());
   GetWidgetHost()->ForwardTouchEventWithLatencyInfo(touch_event,
                                                     ui::LatencyInfo());
   touch_start_ack_observer.Wait();

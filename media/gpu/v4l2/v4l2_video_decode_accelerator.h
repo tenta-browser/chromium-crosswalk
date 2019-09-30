@@ -25,9 +25,9 @@
 #include "media/base/limits.h"
 #include "media/base/video_decoder_config.h"
 #include "media/gpu/gpu_video_decode_accelerator_helpers.h"
+#include "media/gpu/image_processor.h"
 #include "media/gpu/media_gpu_export.h"
 #include "media/gpu/v4l2/v4l2_device.h"
-#include "media/gpu/v4l2/v4l2_image_processor.h"
 #include "media/video/picture.h"
 #include "media/video/video_decode_accelerator.h"
 #include "ui/gfx/geometry/size.h"
@@ -199,8 +199,8 @@ class MEDIA_GPU_EXPORT V4L2VideoDecodeAccelerator
                             // from. See TextureManager for details.
     // Input fds of the processor. Exported from the decoder.
     std::vector<base::ScopedFD> processor_input_fds;
-    // Output fds of the processor. Used only when OutputMode is IMPORT.
-    std::vector<base::ScopedFD> processor_output_fds;
+    // Output fds. Used only when OutputMode is IMPORT.
+    std::vector<base::ScopedFD> output_fds;
   };
 
   //
@@ -300,6 +300,8 @@ class MEDIA_GPU_EXPORT V4L2VideoDecodeAccelerator
   // called any time a relevant queue could potentially be emptied: see
   // function definition.
   void NotifyFlushDoneIfNeeded();
+  // Notify the client of a flush completion.
+  void NofityFlushDone();
   // Returns true if VIDIOC_DECODER_CMD is supported.
   bool IsDecoderCmdSupported();
   // Send V4L2_DEC_CMD_START to the driver. Return true if success.
@@ -403,9 +405,12 @@ class MEDIA_GPU_EXPORT V4L2VideoDecodeAccelerator
   // Callback that indicates a picture has been cleared.
   void PictureCleared();
 
-  // Image processor returns a processed frame. Its id is |bitstream_buffer_id|
-  // and stored in |output_buffer_index| buffer of image processor.
-  void FrameProcessed(int32_t bitstream_buffer_id, int output_buffer_index);
+  // Image processor returns a processed |frame|. Its id is
+  // |bitstream_buffer_id| and stored in |output_buffer_index| buffer of
+  // image processor.
+  void FrameProcessed(int32_t bitstream_buffer_id,
+                      int output_buffer_index,
+                      scoped_refptr<VideoFrame> frame);
 
   // Image processor notifies an error.
   void ImageProcessorError();
@@ -563,7 +568,7 @@ class MEDIA_GPU_EXPORT V4L2VideoDecodeAccelerator
   // Image processor device, if one is in use.
   scoped_refptr<V4L2Device> image_processor_device_;
   // Image processor. Accessed on |decoder_thread_|.
-  std::unique_ptr<V4L2ImageProcessor> image_processor_;
+  std::unique_ptr<ImageProcessor> image_processor_;
 
   // The V4L2Device EGLImage is created from.
   scoped_refptr<V4L2Device> egl_image_device_;

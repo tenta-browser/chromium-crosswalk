@@ -9,9 +9,39 @@
 Polymer({
   is: 'settings-add-smb-share-dialog',
 
+  behaviors: [WebUIListenerBehavior],
+
   properties: {
     /** @private {string} */
-    mountUrl_: String,
+    mountUrl_: {
+      type: String,
+      value: '',
+    },
+
+    /** @private {string} */
+    mountName_: {
+      type: String,
+      value: '',
+    },
+
+    /** @private {string} */
+    username_: {
+      type: String,
+      value: '',
+    },
+
+    /** @private {string} */
+    password_: {
+      type: String,
+      value: '',
+    },
+    /** @private {!Array<string>}*/
+    discoveredShares_: {
+      type: Array,
+      value: function() {
+        return [];
+      },
+    },
   },
 
   /** @private {?settings.SmbBrowserProxy} */
@@ -24,7 +54,10 @@ Polymer({
 
   /** @override */
   attached: function() {
+    this.browserProxy_.startDiscovery();
     this.$.dialog.showModal();
+
+    this.addWebUIListener('on-shares-found', this.onSharesFound_.bind(this));
   },
 
   /** @private */
@@ -34,7 +67,8 @@ Polymer({
 
   /** @private */
   onAddButtonTap_: function() {
-    this.browserProxy_.smbMount(this.mountUrl_);
+    this.browserProxy_.smbMount(
+        this.mountUrl_, this.mountName_.trim(), this.username_, this.password_);
     this.$.dialog.close();
   },
 
@@ -45,4 +79,13 @@ Polymer({
   canAddShare_: function() {
     return !!this.mountUrl_;
   },
+
+  /**
+   * @param {!Array<string>} shares
+   * @private
+   */
+  onSharesFound_: function(shares) {
+    this.discoveredShares_ = this.discoveredShares_.concat(shares);
+  },
+
 });

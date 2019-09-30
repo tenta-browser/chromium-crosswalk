@@ -38,12 +38,16 @@ struct CONTENT_EXPORT RenderWidgetTargetResult {
   RenderWidgetTargetResult(const RenderWidgetTargetResult&);
   RenderWidgetTargetResult(RenderWidgetHostViewBase* view,
                            bool should_query_view,
-                           base::Optional<gfx::PointF> location);
+                           base::Optional<gfx::PointF> location,
+                           bool latched_target);
   ~RenderWidgetTargetResult();
 
   RenderWidgetHostViewBase* view = nullptr;
   bool should_query_view = false;
   base::Optional<gfx::PointF> target_location = base::nullopt;
+  // When |latched_target| is false, we explicitly hit-tested events instead of
+  // using a known target.
+  bool latched_target = false;
 };
 
 class TracingUmaTracker;
@@ -65,6 +69,8 @@ class RenderWidgetTargeter {
         const blink::WebInputEvent& event,
         const ui::LatencyInfo& latency,
         const base::Optional<gfx::PointF>& target_location) = 0;
+
+    virtual void SetEventsBeingFlushed(bool events_being_flushed) = 0;
 
     virtual RenderWidgetHostViewBase* FindViewFromFrameSinkId(
         const viz::FrameSinkId& frame_sink_id) const = 0;
@@ -111,6 +117,11 @@ class RenderWidgetTargeter {
 
   // |event| is in the coordinate space of |root_view|. |target_location|, if
   // set, is the location in |target|'s coordinate space.
+  // |target| is the current target that will be queried using its
+  // InputTargetClient interface.
+  // |frame_sink_id| is returned from the InputTargetClient to indicate where
+  // the event should be routed, and |transformed_location| is the point in
+  // that new target's coordinate space.
   void FoundFrameSinkId(base::WeakPtr<RenderWidgetHostViewBase> root_view,
                         base::WeakPtr<RenderWidgetHostViewBase> target,
                         ui::WebScopedInputEvent event,
@@ -118,15 +129,19 @@ class RenderWidgetTargeter {
                         uint32_t request_id,
                         const gfx::PointF& target_location,
                         TracingUmaTracker tracker,
-                        const viz::FrameSinkId& frame_sink_id);
+                        const viz::FrameSinkId& frame_sink_id,
+                        const gfx::PointF& transformed_location);
 
   // |event| is in the coordinate space of |root_view|. |target_location|, if
-  // set, is the location in |target|'s coordinate space.
+  // set, is the location in |target|'s coordinate space. If |latched_target| is
+  // false, we explicitly did hit-testing for this event, instead of using a
+  // known target.
   void FoundTarget(RenderWidgetHostViewBase* root_view,
                    RenderWidgetHostViewBase* target,
                    const blink::WebInputEvent& event,
                    const ui::LatencyInfo& latency,
-                   const base::Optional<gfx::PointF>& target_location);
+                   const base::Optional<gfx::PointF>& target_location,
+                   bool latched_target);
 
   // Callback when the hit testing timer fires, to resume event processing
   // without further waiting for a response to the last targeting request.
@@ -160,6 +175,10 @@ class RenderWidgetTargeter {
   std::queue<TargetingRequest> requests_;
 
   std::unordered_set<RenderWidgetHostViewBase*> unresponsive_views_;
+
+  // This value keeps track of the number of clients we have asked in order to
+  // do async hit-testing.
+  uint32_t async_depth_ = 0;
 
   // This value limits how long to wait for a response from the renderer
   // process before giving up and resuming event processing.

@@ -8,7 +8,7 @@
 
 #include "base/base64url.h"
 #include "base/strings/string_piece.h"
-#include "crypto/sha2.h"
+#include "device/fido/fido_parsing_utils.h"
 
 namespace device {
 

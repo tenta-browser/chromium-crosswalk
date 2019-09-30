@@ -72,28 +72,18 @@ class CORE_EXPORT WebDocumentLoaderImpl final : public DocumentLoader,
   bool ReplacesCurrentHistoryItem() const override;
   WebNavigationType GetNavigationType() const override;
   ExtraData* GetExtraData() const override;
-  void SetExtraData(ExtraData*) override;
-  void SetNavigationStartTime(base::TimeTicks) override;
-  void UpdateNavigation(base::TimeTicks redirect_start_time,
-                        base::TimeTicks redirect_end_time,
-                        base::TimeTicks fetch_start_time,
-                        bool has_redirect) override;
+  void SetExtraData(std::unique_ptr<ExtraData>) override;
   void SetSubresourceFilter(WebDocumentSubresourceFilter*) override;
   void SetServiceWorkerNetworkProvider(
       std::unique_ptr<WebServiceWorkerNetworkProvider>) override;
   WebServiceWorkerNetworkProvider* GetServiceWorkerNetworkProvider() override;
-  void SetSourceLocation(const WebSourceLocation&) override;
   void ResetSourceLocation() override;
-  void SetUserActivated() override;
-  bool GetIsAdSubframe() const override;
   void BlockParser() override;
   void ResumeParser() override;
   bool IsArchive() const override;
   WebArchiveInfo GetArchiveInfo() const override;
 
-  static WebNavigationType ToWebNavigationType(NavigationType);
-
-  virtual void Trace(blink::Visitor*);
+  void Trace(blink::Visitor*) override;
 
  private:
   WebDocumentLoaderImpl(

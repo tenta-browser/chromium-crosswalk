@@ -9,7 +9,6 @@
 #include <memory>
 
 #include "base/bind.h"
-#import "base/mac/bind_objc_block.h"
 #include "base/mac/foundation_util.h"
 #include "base/strings/sys_string_conversions.h"
 #include "components/browsing_data/core/pref_names.h"
@@ -36,7 +35,6 @@
 #import "ios/chrome/test/earl_grey/chrome_earl_grey_ui.h"
 #import "ios/chrome/test/earl_grey/chrome_matchers.h"
 #import "ios/chrome/test/earl_grey/chrome_test_case.h"
-#import "ios/testing/wait_util.h"
 #import "ios/web/public/test/http_server/http_server.h"
 #include "ios/web/public/test/http_server/http_server_util.h"
 #import "ios/web/public/test/web_view_interaction_test_util.h"
@@ -87,10 +85,6 @@ enum MetricsServiceType {
 id<GREYMatcher> ClearBrowsingDataButton() {
   return ButtonWithAccessibilityLabelId(IDS_IOS_CLEAR_BUTTON);
 }
-// Matcher for the clear browsing data action sheet item.
-id<GREYMatcher> ConfirmClearBrowsingDataButton() {
-  return ButtonWithAccessibilityLabelId(IDS_IOS_CONFIRM_CLEAR_BUTTON);
-}
 // Matcher for the Send Usage Data cell on the Privacy screen.
 id<GREYMatcher> SendUsageDataButton() {
   return ButtonWithAccessibilityLabelId(IDS_IOS_OPTIONS_SEND_USAGE_DATA);
@@ -103,9 +97,13 @@ id<GREYMatcher> ClearBrowsingDataCell() {
 id<GREYMatcher> SearchEngineButton() {
   return ButtonWithAccessibilityLabelId(IDS_IOS_SEARCH_ENGINE_SETTING_TITLE);
 }
-// Matcher for the Autofill Forms cell on the main Settings screen.
-id<GREYMatcher> AutofillButton() {
-  return ButtonWithAccessibilityLabelId(IDS_IOS_AUTOFILL);
+// Matcher for the payment methods cell on the main Settings screen.
+id<GREYMatcher> PaymentMethodsButton() {
+  return ButtonWithAccessibilityLabelId(IDS_AUTOFILL_PAYMENT_METHODS);
+}
+// Matcher for the addresses cell on the main Settings screen.
+id<GREYMatcher> AddressesButton() {
+  return ButtonWithAccessibilityLabelId(IDS_AUTOFILL_ADDRESSES_SETTINGS_TITLE);
 }
 // Matcher for the Google Chrome cell on the main Settings screen.
 id<GREYMatcher> GoogleChromeButton() {
@@ -160,7 +158,7 @@ void SetCertificate() {
   scoped_refptr<net::URLRequestContextGetter> getter =
       browserState->GetRequestContext();
   web::WebThread::PostTask(
-      web::WebThread::IO, FROM_HERE, base::BindBlockArc(^{
+      web::WebThread::IO, FROM_HERE, base::BindOnce(^{
         net::ChannelIDService* channel_id_service =
             getter->GetURLRequestContext()->channel_id_service();
         net::ChannelIDStore* channel_id_store =
@@ -195,7 +193,7 @@ bool IsCertificateCleared() {
   scoped_refptr<net::URLRequestContextGetter> getter =
       browserState->GetRequestContext();
   web::WebThread::PostTask(
-      web::WebThread::IO, FROM_HERE, base::BindBlockArc(^{
+      web::WebThread::IO, FROM_HERE, base::BindOnce(^{
         net::ChannelIDService* channel_id_service =
             getter->GetURLRequestContext()->channel_id_service();
         std::unique_ptr<crypto::ECPrivateKey> dummy_key;
@@ -253,7 +251,8 @@ bool IsCertificateCleared() {
 // scheduled for removal.
 - (void)clearBrowsingData {
   [ChromeEarlGreyUI tapClearBrowsingDataMenuButton:ClearBrowsingDataButton()];
-  [[EarlGrey selectElementWithMatcher:ConfirmClearBrowsingDataButton()]
+  [[EarlGrey selectElementWithMatcher:chrome_test_util::
+                                          ConfirmClearBrowsingDataButton()]
       performAction:grey_tap()];
 
   // Before returning, make sure that the top of the Clear Browsing Data
@@ -714,10 +713,18 @@ bool IsCertificateCleared() {
   [self closeSubSettingsMenu];
 }
 
-// Verifies the UI elements are accessible on the Autofill Forms page.
-- (void)testAccessibilityOnAutofillForms {
+// Verifies the UI elements are accessible on the payment methods page.
+- (void)testAccessibilityOnPaymentMethods {
   [ChromeEarlGreyUI openSettingsMenu];
-  [ChromeEarlGreyUI tapSettingsMenuButton:AutofillButton()];
+  [ChromeEarlGreyUI tapSettingsMenuButton:PaymentMethodsButton()];
+  chrome_test_util::VerifyAccessibilityForCurrentScreen();
+  [self closeSubSettingsMenu];
+}
+
+// Verifies the UI elements are accessible on the addresses page.
+- (void)testAccessibilityOnAddresses {
+  [ChromeEarlGreyUI openSettingsMenu];
+  [ChromeEarlGreyUI tapSettingsMenuButton:AddressesButton()];
   chrome_test_util::VerifyAccessibilityForCurrentScreen();
   [self closeSubSettingsMenu];
 }

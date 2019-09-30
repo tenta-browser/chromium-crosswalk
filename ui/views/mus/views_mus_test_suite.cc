@@ -15,14 +15,14 @@
 #include "base/synchronization/waitable_event.h"
 #include "base/threading/simple_thread.h"
 #include "base/threading/thread.h"
-#include "mojo/edk/embedder/embedder.h"
-#include "mojo/edk/embedder/scoped_ipc_support.h"
+#include "mojo/core/embedder/embedder.h"
+#include "mojo/core/embedder/scoped_ipc_support.h"
 #include "services/catalog/catalog.h"
 #include "services/service_manager/background/background_service_manager.h"
 #include "services/service_manager/public/cpp/connector.h"
 #include "services/service_manager/public/cpp/service.h"
 #include "services/service_manager/public/cpp/service_context.h"
-#include "services/ui/common/switches.h"
+#include "services/ws/common/switches.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/aura/env.h"
 #include "ui/aura/mus/window_tree_host_mus.h"
@@ -34,7 +34,6 @@
 #include "ui/gl/gl_switches.h"
 #include "ui/views/mus/desktop_window_tree_host_mus.h"
 #include "ui/views/mus/mus_client.h"
-#include "ui/views/mus/test_utils.h"
 #include "ui/views/test/platform_test_helper.h"
 #include "ui/views/test/views_test_helper_aura.h"
 #include "ui/views/views_delegate.h"
@@ -73,12 +72,12 @@ class ServiceManagerConnection {
         ipc_thread_("IPC thread") {
     catalog::Catalog::LoadDefaultCatalogManifest(
         base::FilePath(kCatalogFilename));
-    mojo::edk::Init();
+    mojo::core::Init();
     ipc_thread_.StartWithOptions(
         base::Thread::Options(base::MessageLoop::TYPE_IO, 0));
-    ipc_support_ = std::make_unique<mojo::edk::ScopedIPCSupport>(
+    ipc_support_ = std::make_unique<mojo::core::ScopedIPCSupport>(
         ipc_thread_.task_runner(),
-        mojo::edk::ScopedIPCSupport::ShutdownPolicy::CLEAN);
+        mojo::core::ScopedIPCSupport::ShutdownPolicy::CLEAN);
 
     base::WaitableEvent wait(base::WaitableEvent::ResetPolicy::AUTOMATIC,
                              base::WaitableEvent::InitialState::NOT_SIGNALED);
@@ -101,8 +100,10 @@ class ServiceManagerConnection {
   }
 
   std::unique_ptr<MusClient> CreateMusClient() {
-    return test::MusClientTestApi::Create(GetConnector(),
-                                          service_manager_identity_);
+    MusClient::InitParams params;
+    params.connector = GetConnector();
+    params.identity = service_manager_identity_;
+    return std::make_unique<MusClient>(params);
   }
 
  private:
@@ -134,11 +135,7 @@ class ServiceManagerConnection {
         service_manager::Identity(
             GetTestName(), service_manager::mojom::kRootUserID),
         std::move(service), nullptr);
-
-    // ui/views/mus requires a WindowManager running, so launch test_wm.
-    service_manager::Connector* connector = context_->connector();
-    connector->StartService("test_wm");
-    service_manager_connector_ = connector->Clone();
+    service_manager_connector_ = context_->connector()->Clone();
     service_manager_identity_ = context_->identity();
     wait->Signal();
   }
@@ -148,19 +145,18 @@ class ServiceManagerConnection {
     wait->Signal();
   }
 
-  // Returns the name of the test executable, e.g.
-  // "views_mus_unittests".
+  // Returns the name of the test executable, e.g. "views_mus_unittests".
   std::string GetTestName() {
     base::FilePath executable = base::CommandLine::ForCurrentProcess()
                                     ->GetProgram()
                                     .BaseName()
                                     .RemoveExtension();
-    return std::string("") + executable.MaybeAsASCII();
+    return executable.MaybeAsASCII();
   }
 
   base::Thread thread_;
   base::Thread ipc_thread_;
-  std::unique_ptr<mojo::edk::ScopedIPCSupport> ipc_support_;
+  std::unique_ptr<mojo::core::ScopedIPCSupport> ipc_support_;
   std::unique_ptr<service_manager::BackgroundServiceManager>
       background_service_manager_;
   std::unique_ptr<service_manager::ServiceContext> context_;
@@ -239,7 +235,7 @@ void ViewsMusTestSuite::Initialize() {
   // Let other services know that we're running in tests. Do this with a
   // command line flag to avoid making blocking calls to other processes for
   // setup for tests (e.g. to unlock the screen in the window manager).
-  EnsureCommandLineSwitch(ui::switches::kUseTestConfig);
+  EnsureCommandLineSwitch(ws::switches::kUseTestConfig);
 
   EnsureCommandLineSwitch(switches::kOverrideUseSoftwareGLForTests);
 

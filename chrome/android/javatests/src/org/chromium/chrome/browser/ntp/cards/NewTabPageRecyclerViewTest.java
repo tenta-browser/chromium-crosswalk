@@ -27,6 +27,7 @@ import org.chromium.base.test.params.ParameterizedRunner;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.DisabledTest;
 import org.chromium.base.test.util.Feature;
+import org.chromium.base.test.util.FlakyTest;
 import org.chromium.base.test.util.Restriction;
 import org.chromium.base.test.util.RetryOnFailure;
 import org.chromium.chrome.R;
@@ -140,6 +141,17 @@ public class NewTabPageRecyclerViewTest {
 
         assertTrue(mTab.getNativePage() instanceof NewTabPage);
         mNtp = (NewTabPage) mTab.getNativePage();
+
+        // When scrolling to a View, we wait until the View is no longer updating - when it is no
+        // longer dirty. If scroll to load is triggered, the animated progress spinner will keep
+        // the RecyclerView dirty as it is constantly updating.
+        //
+        // We do not want to disable the Scroll to Load feature entirely because its presence
+        // effects other elements of the UI - it moves the Learn More link into the Context Menu.
+        // Removing the ScrollToLoad listener from the RecyclerView allows us to prevent scroll to
+        // load triggering while maintaining the UI otherwise.
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> mNtp.getNewTabPageView().getRecyclerView().clearScrollToLoadListener());
     }
 
     @After
@@ -151,6 +163,7 @@ public class NewTabPageRecyclerViewTest {
     @Test
     @MediumTest
     @Feature({"NewTabPage"})
+    @FlakyTest(message = "crbug.com/875544")
     public void testClickSuggestion() throws InterruptedException {
         setSuggestionsAndWaitForUpdate(10);
         List<SnippetArticle> suggestions = mSource.getSuggestionsForCategory(TEST_CATEGORY);
@@ -215,7 +228,7 @@ public class NewTabPageRecyclerViewTest {
         View suggestionView = getViewHolderAtPosition(suggestionPosition).itemView;
 
         // Dismiss the suggestion using the context menu.
-        invokeContextMenu(suggestionView, ContextMenuManager.ID_REMOVE);
+        invokeContextMenu(suggestionView, ContextMenuManager.ContextMenuItemId.REMOVE);
         RecyclerViewTestUtils.waitForViewToDetach(getRecyclerView(), suggestionView);
 
         suggestions = mSource.getSuggestionsForCategory(TEST_CATEGORY);
@@ -230,13 +243,13 @@ public class NewTabPageRecyclerViewTest {
         assertArrayEquals(new int[] {TEST_CATEGORY}, mSource.getCategories());
 
         // Scroll the status card into view.
-        int cardPosition = getAdapter().getFirstCardPosition();
+        int cardPosition = getAdapter().getFirstPositionForType(ItemViewType.STATUS);
         assertEquals(ItemViewType.STATUS, getAdapter().getItemViewType(cardPosition));
 
         View statusCardView = getViewHolderAtPosition(cardPosition).itemView;
 
         // Dismiss the status card using the context menu.
-        invokeContextMenu(statusCardView, ContextMenuManager.ID_REMOVE);
+        invokeContextMenu(statusCardView, ContextMenuManager.ContextMenuItemId.REMOVE);
         RecyclerViewTestUtils.waitForViewToDetach(getRecyclerView(), statusCardView);
 
         assertArrayEquals(new int[0], mSource.getCategories());
@@ -250,12 +263,12 @@ public class NewTabPageRecyclerViewTest {
         assertArrayEquals(new int[] {TEST_CATEGORY}, mSource.getCategories());
 
         // Scroll the action item into view.
-        int actionItemPosition = getAdapter().getFirstCardPosition() + 1;
+        int actionItemPosition = getAdapter().getFirstPositionForType(ItemViewType.ACTION);
         assertEquals(ItemViewType.ACTION, getAdapter().getItemViewType(actionItemPosition));
         View actionItemView = getViewHolderAtPosition(actionItemPosition).itemView;
 
         // Dismiss the action item using the context menu.
-        invokeContextMenu(actionItemView, ContextMenuManager.ID_REMOVE);
+        invokeContextMenu(actionItemView, ContextMenuManager.ContextMenuItemId.REMOVE);
         RecyclerViewTestUtils.waitForViewToDetach(getRecyclerView(), actionItemView);
 
         assertArrayEquals(new int[0], mSource.getCategories());
@@ -333,8 +346,7 @@ public class NewTabPageRecyclerViewTest {
 
     private int getSnapPosition(int scrollPosition) {
         NewTabPageView ntpView = getNtpView();
-        return getRecyclerView().calculateSnapPosition(
-                scrollPosition, ntpView.findViewById(R.id.search_box), ntpView.getHeight());
+        return ntpView.getSnapScrollHelper().calculateSnapPosition(scrollPosition);
     }
 
     private NewTabPageView getNtpView() {

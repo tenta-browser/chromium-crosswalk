@@ -26,7 +26,7 @@
 
 #include "third_party/blink/renderer/core/page/focus_controller.h"
 
-#include "third_party/blink/renderer/core/dom/ax_object_cache.h"
+#include "third_party/blink/renderer/core/accessibility/ax_object_cache.h"
 #include "third_party/blink/renderer/core/dom/container_node.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/element.h"
@@ -310,7 +310,9 @@ ScopedFocusNavigation ScopedFocusNavigation::OwnedByIFrame(
     FocusController::OwnerMap& owner_map) {
   DCHECK(frame.ContentFrame());
   DCHECK(frame.ContentFrame()->IsLocalFrame());
-  ToLocalFrame(frame.ContentFrame())->GetDocument()->UpdateDistribution();
+  ToLocalFrame(frame.ContentFrame())
+      ->GetDocument()
+      ->UpdateDistributionForLegacyDistributedNodes();
   return ScopedFocusNavigation(
       *ToLocalFrame(frame.ContentFrame())->GetDocument(), nullptr, owner_map);
 }
@@ -397,9 +399,10 @@ inline void DispatchEventsOnWindowAndFocusedElement(Document* document,
     DispatchBlurEvent(*document, *focused_element);
   }
 
-  if (LocalDOMWindow* window = document->domWindow())
+  if (LocalDOMWindow* window = document->domWindow()) {
     window->DispatchEvent(
-        Event::Create(focused ? EventTypeNames::focus : EventTypeNames::blur));
+        *Event::Create(focused ? EventTypeNames::focus : EventTypeNames::blur));
+  }
   if (focused && document->FocusedElement()) {
     Element* focused_element(document->FocusedElement());
     // Use focus_type kWebFocusTypePage, same as used in DispatchFocusEvent.
@@ -787,12 +790,13 @@ void FocusController::SetFocusedFrame(Frame* frame, bool notify_embedder) {
   // states of both frames.
   if (old_frame && old_frame->View()) {
     old_frame->Selection().SetFrameIsFocused(false);
-    old_frame->DomWindow()->DispatchEvent(Event::Create(EventTypeNames::blur));
+    old_frame->DomWindow()->DispatchEvent(*Event::Create(EventTypeNames::blur));
   }
 
   if (new_frame && new_frame->View() && IsFocused()) {
     new_frame->Selection().SetFrameIsFocused(true);
-    new_frame->DomWindow()->DispatchEvent(Event::Create(EventTypeNames::focus));
+    new_frame->DomWindow()->DispatchEvent(
+        *Event::Create(EventTypeNames::focus));
   }
 
   is_changing_focused_frame_ = false;
@@ -989,7 +993,7 @@ bool FocusController::AdvanceFocusInDocumentOrder(
     InputDeviceCapabilities* source_capabilities) {
   DCHECK(frame);
   Document* document = frame->GetDocument();
-  document->UpdateDistribution();
+  document->UpdateDistributionForLegacyDistributedNodes();
   OwnerMap owner_map;
 
   Element* current = start;
@@ -1290,15 +1294,15 @@ static void UpdateFocusCandidateIfNeeded(WebFocusType direction,
              ->MainFrame()
              ->IsLocalFrame())
       return;
+    HitTestLocation location(IntPoint(x.ToInt(), y.ToInt()));
     HitTestResult result =
         candidate.visible_node->GetDocument()
             .GetPage()
             ->DeprecatedLocalMainFrame()
             ->GetEventHandler()
-            .HitTestResultAtPoint(IntPoint(x.ToInt(), y.ToInt()),
-                                  HitTestRequest::kReadOnly |
-                                      HitTestRequest::kActive |
-                                      HitTestRequest::kIgnoreClipping);
+            .HitTestResultAtLocation(
+                location, HitTestRequest::kReadOnly | HitTestRequest::kActive |
+                              HitTestRequest::kIgnoreClipping);
     if (candidate.visible_node->contains(result.InnerNode())) {
       closest = candidate;
       return;

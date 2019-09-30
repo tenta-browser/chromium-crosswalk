@@ -27,18 +27,17 @@
 #include "third_party/blink/renderer/core/dom/shadow_root.h"
 
 #include "third_party/blink/public/platform/platform.h"
-#include "third_party/blink/renderer/bindings/core/v8/exception_state.h"
 #include "third_party/blink/renderer/bindings/core/v8/string_or_trusted_html.h"
 #include "third_party/blink/renderer/core/css/resolver/style_resolver.h"
 #include "third_party/blink/renderer/core/css/style_change_reason.h"
 #include "third_party/blink/renderer/core/css/style_engine.h"
 #include "third_party/blink/renderer/core/css/style_sheet_list.h"
 #include "third_party/blink/renderer/core/dom/element_traversal.h"
-#include "third_party/blink/renderer/core/dom/ng/slot_assignment_engine.h"
+#include "third_party/blink/renderer/core/dom/events/event_dispatch_forbidden_scope.h"
 #include "third_party/blink/renderer/core/dom/shadow_root_v0.h"
 #include "third_party/blink/renderer/core/dom/slot_assignment.h"
+#include "third_party/blink/renderer/core/dom/slot_assignment_engine.h"
 #include "third_party/blink/renderer/core/dom/text.h"
-#include "third_party/blink/renderer/core/dom/trustedtypes/trusted_html.h"
 #include "third_party/blink/renderer/core/dom/v0_insertion_point.h"
 #include "third_party/blink/renderer/core/dom/whitespace_attacher.h"
 #include "third_party/blink/renderer/core/editing/serializers/serialization.h"
@@ -46,7 +45,8 @@
 #include "third_party/blink/renderer/core/html/html_shadow_element.h"
 #include "third_party/blink/renderer/core/html/html_slot_element.h"
 #include "third_party/blink/renderer/core/layout/layout_object.h"
-#include "third_party/blink/renderer/platform/event_dispatch_forbidden_scope.h"
+#include "third_party/blink/renderer/core/trustedtypes/trusted_html.h"
+#include "third_party/blink/renderer/platform/bindings/exception_state.h"
 
 namespace blink {
 
@@ -74,6 +74,7 @@ ShadowRoot::ShadowRoot(Document& document, ShadowRootType type)
       type_(static_cast<unsigned short>(type)),
       registered_with_parent_shadow_root_(false),
       delegates_focus_(false),
+      slotting_(static_cast<unsigned short>(ShadowRootSlotting::kAuto)),
       needs_distribution_recalc_(false),
       unused_(0) {
   if (IsV0())
@@ -111,6 +112,10 @@ Node* ShadowRoot::Clone(Document&, CloneChildrenFlag) const {
   return nullptr;
 }
 
+void ShadowRoot::SetSlotting(ShadowRootSlotting slotting) {
+  slotting_ = static_cast<unsigned short>(slotting);
+}
+
 String ShadowRoot::InnerHTMLAsString() const {
   return CreateMarkup(this, kChildrenOnly);
 }
@@ -129,20 +134,11 @@ void ShadowRoot::SetInnerHTMLFromString(const String& markup,
 
 void ShadowRoot::setInnerHTML(const StringOrTrustedHTML& stringOrHtml,
                               ExceptionState& exception_state) {
-  DCHECK(stringOrHtml.IsString() ||
-         RuntimeEnabledFeatures::TrustedDOMTypesEnabled());
-
-  if (stringOrHtml.IsString() && GetDocument().RequireTrustedTypes()) {
-    exception_state.ThrowTypeError(
-        "This document requires `TrustedHTML` assignment.");
-    return;
+  String html =
+      TrustedHTML::GetString(stringOrHtml, &GetDocument(), exception_state);
+  if (!exception_state.HadException()) {
+    SetInnerHTMLFromString(html, exception_state);
   }
-
-  String html = stringOrHtml.IsString()
-                    ? stringOrHtml.GetAsString()
-                    : stringOrHtml.GetAsTrustedHTML()->toString();
-
-  SetInnerHTMLFromString(html, exception_state);
 }
 
 void ShadowRoot::RecalcStyle(StyleRecalcChange change) {
@@ -150,23 +146,18 @@ void ShadowRoot::RecalcStyle(StyleRecalcChange change) {
   DCHECK(!HasCustomStyleCallbacks());
 
   if (GetStyleChangeType() >= kSubtreeStyleChange) {
-    change = kForce;
-    if (NeedsAttach())
+    if (change < kForce)
+      change = kForce;
+    if (NeedsAttach() || change == kReattach)
       SetNeedsReattachLayoutTree();
   }
-
-  // There's no style to update so just calling recalcStyle means we're updated.
-  ClearNeedsStyleRecalc();
+  // There's no style to update so just calling RecalcStyle means we're updated.
+  if (change != kReattach)
+    ClearNeedsStyleRecalc();
 
   if (change >= kUpdatePseudoElements || ChildNeedsStyleRecalc())
     RecalcDescendantStyles(change);
   ClearChildNeedsStyleRecalc();
-}
-
-void ShadowRoot::RecalcStylesForReattach() {
-  // ShadowRoot doesn't support custom callbacks.
-  DCHECK(!HasCustomStyleCallbacks());
-  RecalcDescendantStylesForReattach();
 }
 
 void ShadowRoot::RebuildLayoutTree(WhitespaceAttacher& whitespace_attacher) {
@@ -183,15 +174,18 @@ void ShadowRoot::AttachLayoutTree(AttachContext& context) {
 void ShadowRoot::DetachLayoutTree(const AttachContext& context) {
   Node::AttachContext children_context(context);
   children_context.clear_invalidation = true;
-  GetDocument().GetStyleEngine().GetStyleInvalidator().ClearInvalidation(*this);
+  GetDocument()
+      .GetStyleEngine()
+      .GetPendingNodeInvalidations()
+      .ClearInvalidation(*this);
   DocumentFragment::DetachLayoutTree(children_context);
 }
 
 Node::InsertionNotificationRequest ShadowRoot::InsertedInto(
-    ContainerNode* insertion_point) {
+    ContainerNode& insertion_point) {
   DocumentFragment::InsertedInto(insertion_point);
 
-  if (!insertion_point->isConnected())
+  if (!insertion_point.isConnected())
     return kInsertionDone;
 
   if (RuntimeEnabledFeatures::IncrementalShadowDOMEnabled())
@@ -213,22 +207,24 @@ Node::InsertionNotificationRequest ShadowRoot::InsertedInto(
   return kInsertionDone;
 }
 
-void ShadowRoot::RemovedFrom(ContainerNode* insertion_point) {
-  if (insertion_point->isConnected()) {
+void ShadowRoot::RemovedFrom(ContainerNode& insertion_point) {
+  if (insertion_point.isConnected()) {
     if (NeedsSlotAssignmentRecalc())
       GetDocument().GetSlotAssignmentEngine().Disconnected(*this);
     GetDocument().GetStyleEngine().ShadowRootRemovedFromDocument(this);
     if (registered_with_parent_shadow_root_) {
       ShadowRoot* root = host().ContainingShadowRoot();
       if (!root)
-        root = insertion_point->ContainingShadowRoot();
+        root = insertion_point.ContainingShadowRoot();
       if (root)
         root->RemoveChildShadowRoot();
       registered_with_parent_shadow_root_ = false;
     }
     if (NeedsStyleInvalidation()) {
-      GetDocument().GetStyleEngine().GetStyleInvalidator().ClearInvalidation(
-          *this);
+      GetDocument()
+          .GetStyleEngine()
+          .GetPendingNodeInvalidations()
+          .ClearInvalidation(*this);
     }
   }
 
@@ -292,11 +288,6 @@ void ShadowRoot::Trace(blink::Visitor* visitor) {
   visitor->Trace(shadow_root_v0_);
   TreeScope::Trace(visitor);
   DocumentFragment::Trace(visitor);
-}
-
-void ShadowRoot::TraceWrappers(const ScriptWrappableVisitor* visitor) const {
-  visitor->TraceWrappers(style_sheet_list_);
-  DocumentFragment::TraceWrappers(visitor);
 }
 
 std::ostream& operator<<(std::ostream& ostream, const ShadowRootType& type) {

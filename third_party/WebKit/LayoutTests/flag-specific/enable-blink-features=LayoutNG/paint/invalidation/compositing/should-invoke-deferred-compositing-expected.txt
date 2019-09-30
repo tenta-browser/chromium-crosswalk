@@ -29,19 +29,9 @@
         {
           "object": "LayoutHTMLCanvas (positioned) CANVAS",
           "rect": [0, 0, 200, 200],
-          "reason": "full"
+          "reason": "full layer"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "NGPaintFragment",
-      "reason": "subtree"
-    },
-    {
-      "object": "LayoutHTMLCanvas (positioned) CANVAS",
-      "reason": "appeared"
     }
   ]
 }

@@ -9,6 +9,7 @@
 #include "base/threading/thread.h"
 #include "build/build_config.h"
 #include "device/vr/public/mojom/vr_service.mojom.h"
+#include "device/vr/vr_device.h"
 #include "mojo/public/cpp/bindings/binding.h"
 #include "mojo/public/cpp/system/platform_handle.h"
 #include "third_party/libovr/src/Include/OVR_CAPI.h"
@@ -22,20 +23,27 @@ namespace device {
 
 const int kMaxOculusRenderLoopInputId = (ovrControllerType_Remote + 1);
 
-class OculusRenderLoop : public base::Thread, mojom::VRPresentationProvider {
+class OculusRenderLoop : public base::Thread,
+                         mojom::XRPresentationProvider,
+                         mojom::XRFrameDataProvider,
+                         mojom::IsolatedXRGamepadProvider {
  public:
-  OculusRenderLoop(ovrSession session, ovrGraphicsLuid luid);
+  using RequestSessionCallback =
+      base::OnceCallback<void(bool result, mojom::XRSessionPtr)>;
+
+  OculusRenderLoop(base::RepeatingCallback<void()> on_presentation_ended);
   ~OculusRenderLoop() override;
 
-  void RequestPresent(
-      mojom::VRSubmitFrameClientPtrInfo submit_client_info,
-      mojom::VRPresentationProviderRequest request,
-      device::mojom::VRRequestPresentOptionsPtr present_options,
-      device::mojom::VRDisplayHost::RequestPresentCallback callback);
+  void RequestSession(mojom::XRRuntimeSessionOptionsPtr options,
+                      RequestSessionCallback callback);
   void ExitPresent();
   base::WeakPtr<OculusRenderLoop> GetWeakPtr();
 
-  // VRPresentationProvider overrides:
+  // IsolatedXRGamepadProvider
+  void RequestUpdate(mojom::IsolatedXRGamepadProvider::RequestUpdateCallback
+                         callback) override;
+
+  // XRPresentationProvider overrides:
   void SubmitFrameMissing(int16_t frame_index, const gpu::SyncToken&) override;
   void SubmitFrame(int16_t frame_index,
                    const gpu::MailboxHolder& mailbox,
@@ -49,12 +57,25 @@ class OculusRenderLoop : public base::Thread, mojom::VRPresentationProvider {
                          const gfx::RectF& left_bounds,
                          const gfx::RectF& right_bounds,
                          const gfx::Size& source_size) override;
-  void GetVSync(GetVSyncCallback callback) override;
+  void GetFrameData(
+      mojom::XRFrameDataProvider::GetFrameDataCallback callback) override;
+
+  // Bind a gamepad provider on the render loop thread, so we can provide
+  // updates with the latest poses used for rendering.
+  void RequestGamepadProvider(mojom::IsolatedXRGamepadProviderRequest request);
 
  private:
   // base::Thread overrides:
   void Init() override;
   void CleanUp() override;
+
+  void ClearPendingFrame();
+  void StartOvrSession();
+  void StopOvrSession();
+  void CreateOvrSwapChain();
+  void DestroyOvrSwapChain();
+
+  void UpdateControllerState();
 
   mojom::VRPosePtr GetPose();
 
@@ -71,6 +92,11 @@ class OculusRenderLoop : public base::Thread, mojom::VRPresentationProvider {
   D3D11TextureHelper texture_helper_;
 #endif
 
+  base::OnceCallback<void()> delayed_get_frame_data_callback_;
+  bool has_outstanding_frame_ = false;
+
+  mojom::IsolatedXRGamepadProvider::RequestUpdateCallback gamepad_callback_;
+
   long long ovr_frame_index_ = 0;
   int16_t next_frame_id_ = 0;
   bool is_presenting_ = false;
@@ -78,15 +104,18 @@ class OculusRenderLoop : public base::Thread, mojom::VRPresentationProvider {
   gfx::RectF right_bounds_;
   gfx::Size source_size_;
   scoped_refptr<base::SingleThreadTaskRunner> main_thread_task_runner_;
-  mojom::VRSubmitFrameClientPtr submit_client_;
-  ovrSession session_;
-  ovrGraphicsLuid luid_;
+  mojom::XRPresentationClientPtr submit_client_;
+  ovrSession session_ = nullptr;
+  ovrGraphicsLuid luid_ = {};
   ovrPosef last_render_pose_;
   ovrTextureSwapChain texture_swap_chain_ = 0;
   double sensor_time_;
-  mojo::Binding<mojom::VRPresentationProvider> binding_;
-  bool report_webxr_input_ = false;
+  mojo::Binding<mojom::XRPresentationProvider> presentation_binding_;
+  mojo::Binding<mojom::XRFrameDataProvider> frame_data_binding_;
   bool primary_input_pressed[kMaxOculusRenderLoopInputId];
+  base::RepeatingCallback<void()> on_presentation_ended_;
+
+  mojo::Binding<mojom::IsolatedXRGamepadProvider> gamepad_provider_;
 
   base::WeakPtrFactory<OculusRenderLoop> weak_ptr_factory_;
 

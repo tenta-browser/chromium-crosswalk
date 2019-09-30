@@ -26,7 +26,7 @@ class CORE_EXPORT SourceListDirective final : public CSPDirective {
   SourceListDirective(const String& name,
                       const String& value,
                       ContentSecurityPolicy*);
-  void Trace(blink::Visitor*);
+  void Trace(blink::Visitor*) override;
 
   void Parse(const UChar* begin, const UChar* end);
 
@@ -43,7 +43,7 @@ class CORE_EXPORT SourceListDirective final : public CSPDirective {
   bool AllowDynamic() const;
   bool AllowNonce(const String& nonce) const;
   bool AllowHash(const CSPHashValue&) const;
-  bool AllowHashedAttributes() const;
+  bool AllowUnsafeHashes() const;
   bool AllowReportSample() const;
   bool IsNone() const;
   bool IsHashOrNoncePresent() const;
@@ -97,11 +97,12 @@ class CORE_EXPORT SourceListDirective final : public CSPDirective {
 
   void AddSourceSelf();
   void AddSourceStar();
+  void AddSourceUnsafeAllowRedirects();
   void AddSourceUnsafeInline();
   void AddSourceUnsafeEval();
   void AddSourceWasmEval();
   void AddSourceStrictDynamic();
-  void AddSourceUnsafeHashedAttributes();
+  void AddSourceUnsafeHashes();
   void AddReportSample();
   void AddSourceNonce(const String& nonce);
   void AddSourceHash(const ContentSecurityPolicyHashAlgorithm&,
@@ -131,7 +132,8 @@ class CORE_EXPORT SourceListDirective final : public CSPDirective {
   bool allow_eval_;
   bool allow_wasm_eval_;
   bool allow_dynamic_;
-  bool allow_hashed_attributes_;
+  bool allow_unsafe_hashes_;
+  bool allow_redirects_;
   bool report_sample_;
   HashSet<String> nonces_;
   HashSet<CSPHashValue> hashes_;

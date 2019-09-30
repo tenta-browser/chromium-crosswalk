@@ -10,8 +10,8 @@
 #include "base/logging.h"
 #include "build/build_config.h"
 #include "chrome/browser/infobars/infobar_service.h"
+#include "chrome/browser/ui/views/chrome_layout_provider.h"
 #include "chrome/browser/ui/views/elevation_icon_setter.h"
-#include "chrome/browser/ui/views/harmony/chrome_layout_provider.h"
 #include "chrome/browser/ui/views_mode_controller.h"
 #include "ui/base/material_design/material_design_controller.h"
 #include "ui/base/window_open_disposition.h"
@@ -39,6 +39,7 @@ ConfirmInfoBar::ConfirmInfoBar(std::unique_ptr<ConfirmInfoBarDelegate> delegate)
     : InfoBarView(std::move(delegate)) {
   auto* delegate_ptr = GetDelegate();
   label_ = CreateLabel(delegate_ptr->GetMessageText());
+  label_->SetElideBehavior(delegate_ptr->GetMessageElideBehavior());
   AddChildView(label_);
 
   const auto buttons = delegate_ptr->GetButtons();

@@ -11,7 +11,7 @@
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
-#include "base/test/histogram_tester.h"
+#include "base/test/metrics/histogram_tester.h"
 #include "base/test/simple_test_clock.h"
 #include "base/values.h"
 #include "chrome/browser/content_settings/host_content_settings_map_factory.h"
@@ -64,10 +64,11 @@ class SiteEngagementChangeWaiter : public content_settings::Observer {
   }
 
   // Overridden from content_settings::Observer:
-  void OnContentSettingChanged(const ContentSettingsPattern& primary_pattern,
-                               const ContentSettingsPattern& secondary_pattern,
-                               ContentSettingsType content_type,
-                               std::string resource_identifier) override {
+  void OnContentSettingChanged(
+      const ContentSettingsPattern& primary_pattern,
+      const ContentSettingsPattern& secondary_pattern,
+      ContentSettingsType content_type,
+      const std::string& resource_identifier) override {
     if (content_type == CONTENT_SETTINGS_TYPE_SITE_ENGAGEMENT)
       Proceed();
   }
@@ -1134,6 +1135,7 @@ TEST_F(SiteEngagementServiceTest, CleanupOriginsOnHistoryDeletion) {
   AssertInRange(5.0, service_->GetScore(origin2));
   AssertInRange(5.0, service_->GetScore(origin3));
   AssertInRange(5.0, service_->GetScore(origin4));
+  EXPECT_EQ(4U, service_->GetAllDetails().size());
 
   {
     SiteEngagementChangeWaiter waiter(profile());
@@ -1154,6 +1156,7 @@ TEST_F(SiteEngagementServiceTest, CleanupOriginsOnHistoryDeletion) {
     AssertInRange(5.0, service_->GetScore(origin3));
     AssertInRange(2.5, service_->GetScore(origin4));
     AssertInRange(9.5, service_->GetTotalEngagementPoints());
+    EXPECT_EQ(3U, service_->GetAllDetails().size());
   }
 
   {
@@ -1177,6 +1180,7 @@ TEST_F(SiteEngagementServiceTest, CleanupOriginsOnHistoryDeletion) {
     AssertInRange(5.0, service_->GetScore(origin3));
     AssertInRange(2.5, service_->GetScore(origin4));
     AssertInRange(8.5, service_->GetTotalEngagementPoints());
+    EXPECT_EQ(3U, service_->GetAllDetails().size());
   }
 
   {
@@ -1199,6 +1203,7 @@ TEST_F(SiteEngagementServiceTest, CleanupOriginsOnHistoryDeletion) {
     AssertInRange(5.0, service_->GetScore(origin3));
     AssertInRange(2.5, service_->GetScore(origin4));
     AssertInRange(7.5, service_->GetTotalEngagementPoints());
+    EXPECT_EQ(2U, service_->GetAllDetails().size());
   }
 }
 

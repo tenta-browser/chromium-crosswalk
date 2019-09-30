@@ -6,13 +6,13 @@
 
 #include <stddef.h>
 
+#include <utility>
 #include <vector>
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/lazy_instance.h"
 #include "base/memory/ref_counted_memory.h"
-#include "base/message_loop/message_loop.h"
 #include "base/strings/string_util.h"
 #include "base/synchronization/lock.h"
 #include "content/browser/resource_context_impl.h"
@@ -129,9 +129,10 @@ void URLDataManager::DeleteDataSource(const URLDataSourceImpl* data_source) {
 
 // static
 void URLDataManager::AddDataSource(BrowserContext* browser_context,
-                                   URLDataSource* source) {
-  GetFromBrowserContext(browser_context)->
-      AddDataSource(new URLDataSourceImpl(source->GetSource(), source));
+                                   std::unique_ptr<URLDataSource> source) {
+  std::string name = source->GetSource();
+  GetFromBrowserContext(browser_context)
+      ->AddDataSource(new URLDataSourceImpl(name, std::move(source)));
 }
 
 // static

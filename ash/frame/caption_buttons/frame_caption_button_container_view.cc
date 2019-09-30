@@ -10,6 +10,7 @@
 #include "ash/frame/caption_buttons/caption_button_model.h"
 #include "ash/frame/caption_buttons/frame_caption_button.h"
 #include "ash/frame/caption_buttons/frame_size_button.h"
+#include "ash/public/cpp/window_properties.h"
 #include "ash/shell.h"
 #include "ash/touch/touch_uma.h"
 #include "ash/wm/tablet_mode/tablet_mode_controller.h"
@@ -93,15 +94,6 @@ float HidePositionStartValue() {
          static_cast<float>(kHidePositionDelayMs) / kHideAnimationDurationMs;
 }
 
-// Converts |point| from |src| to |dst| and hittests against |dst|.
-bool ConvertPointToViewAndHitTest(const views::View* src,
-                                  const views::View* dst,
-                                  const gfx::Point& point) {
-  gfx::Point converted(point);
-  views::View::ConvertPointToTarget(src, dst, &converted);
-  return dst->HitTestPoint(converted);
-}
-
 // Bounds animation values to the range 0.0 - 1.0. Allows for mapping of offset
 // animations to the expected range so that gfx::Tween::CalculateValue() can be
 // used.
@@ -132,8 +124,13 @@ class DefaultCaptionButtonModel : public CaptionButtonModel {
         return frame_->widget_delegate()->CanResize();
       case CAPTION_BUTTON_ICON_CLOSE:
         return true;
-      // No back or menu button by default.
+
       case CAPTION_BUTTON_ICON_BACK:
+        return frame_->GetNativeWindow()->GetProperty(
+                   ash::kFrameBackButtonStateKey) !=
+               ash::FrameBackButtonState::kNone;
+
+      // No menu button by default.
       case CAPTION_BUTTON_ICON_MENU:
       case CAPTION_BUTTON_ICON_ZOOM:
         return false;
@@ -145,7 +142,15 @@ class DefaultCaptionButtonModel : public CaptionButtonModel {
     NOTREACHED();
     return false;
   }
-  bool IsEnabled(CaptionButtonIcon type) const override { return true; }
+  bool IsEnabled(CaptionButtonIcon type) const override {
+    if (type == CAPTION_BUTTON_ICON_BACK) {
+      return frame_->GetNativeWindow()->GetProperty(
+                 ash::kFrameBackButtonStateKey) ==
+             ash::FrameBackButtonState::kEnabled;
+    }
+
+    return true;
+  }
   bool InZoomMode() const override { return false; }
 
  private:
@@ -158,10 +163,6 @@ class DefaultCaptionButtonModel : public CaptionButtonModel {
 // static
 const char FrameCaptionButtonContainerView::kViewClassName[] =
     "FrameCaptionButtonContainerView";
-
-FrameCaptionButtonContainerView::FrameCaptionButtonContainerView(
-    views::Widget* frame)
-    : FrameCaptionButtonContainerView(frame, nullptr) {}
 
 FrameCaptionButtonContainerView::FrameCaptionButtonContainerView(
     views::Widget* frame,
@@ -177,6 +178,7 @@ FrameCaptionButtonContainerView::FrameCaptionButtonContainerView(
           : 0);
   layout->set_cross_axis_alignment(
       views::BoxLayout::CROSS_AXIS_ALIGNMENT_CENTER);
+  layout->set_main_axis_alignment(views::BoxLayout::MAIN_AXIS_ALIGNMENT_END);
   SetLayoutManager(std::move(layout));
   tablet_mode_animation_.reset(new gfx::SlideAnimation(this));
   tablet_mode_animation_->SetTweenType(gfx::Tween::LINEAR);
@@ -188,12 +190,13 @@ FrameCaptionButtonContainerView::FrameCaptionButtonContainerView(
   }
 
   // Insert the buttons left to right.
-  menu_button_ = new FrameCaptionButton(this, CAPTION_BUTTON_ICON_MENU);
+  menu_button_ = new FrameCaptionButton(this, CAPTION_BUTTON_ICON_MENU, HTMENU);
   menu_button_->SetAccessibleName(
       l10n_util::GetStringUTF16(IDS_APP_ACCNAME_MENU));
   AddChildView(menu_button_);
 
-  minimize_button_ = new FrameCaptionButton(this, CAPTION_BUTTON_ICON_MINIMIZE);
+  minimize_button_ =
+      new FrameCaptionButton(this, CAPTION_BUTTON_ICON_MINIMIZE, HTMINBUTTON);
   minimize_button_->SetAccessibleName(
       l10n_util::GetStringUTF16(IDS_APP_ACCNAME_MINIMIZE));
   AddChildView(minimize_button_);
@@ -203,7 +206,8 @@ FrameCaptionButtonContainerView::FrameCaptionButtonContainerView(
       l10n_util::GetStringUTF16(IDS_APP_ACCNAME_MAXIMIZE));
   AddChildView(size_button_);
 
-  close_button_ = new FrameCaptionButton(this, CAPTION_BUTTON_ICON_CLOSE);
+  close_button_ =
+      new FrameCaptionButton(this, CAPTION_BUTTON_ICON_CLOSE, HTCLOSE);
   close_button_->SetAccessibleName(
       l10n_util::GetStringUTF16(IDS_APP_ACCNAME_CLOSE));
   AddChildView(close_button_);
@@ -240,40 +244,22 @@ void FrameCaptionButtonContainerView::SetPaintAsActive(bool paint_as_active) {
 
 void FrameCaptionButtonContainerView::SetColorMode(
     FrameCaptionButton::ColorMode color_mode) {
-  menu_button_->set_color_mode(color_mode);
-  minimize_button_->set_color_mode(color_mode);
-  size_button_->set_color_mode(color_mode);
-  close_button_->set_color_mode(color_mode);
+  menu_button_->SetColorMode(color_mode);
+  minimize_button_->SetColorMode(color_mode);
+  size_button_->SetColorMode(color_mode);
+  close_button_->SetColorMode(color_mode);
 }
 
 void FrameCaptionButtonContainerView::SetBackgroundColor(
     SkColor background_color) {
-  menu_button_->set_background_color(background_color);
-  minimize_button_->set_background_color(background_color);
-  size_button_->set_background_color(background_color);
-  close_button_->set_background_color(background_color);
+  menu_button_->SetBackgroundColor(background_color);
+  minimize_button_->SetBackgroundColor(background_color);
+  size_button_->SetBackgroundColor(background_color);
+  close_button_->SetBackgroundColor(background_color);
 }
 
 void FrameCaptionButtonContainerView::ResetWindowControls() {
   SetButtonsToNormal(ANIMATE_NO);
-}
-
-int FrameCaptionButtonContainerView::NonClientHitTest(
-    const gfx::Point& point) const {
-  if (close_button_->visible() &&
-      ConvertPointToViewAndHitTest(this, close_button_, point)) {
-    return HTCLOSE;
-  } else if (size_button_->visible() &&
-             ConvertPointToViewAndHitTest(this, size_button_, point)) {
-    return HTMAXBUTTON;
-  } else if (minimize_button_->visible() &&
-             ConvertPointToViewAndHitTest(this, minimize_button_, point)) {
-    return HTMINBUTTON;
-  } else if (menu_button_->visible() &&
-             ConvertPointToViewAndHitTest(this, menu_button_, point)) {
-    return HTMENU;
-  }
-  return HTNOWHERE;
 }
 
 void FrameCaptionButtonContainerView::UpdateCaptionButtonState(bool animate) {
@@ -322,6 +308,11 @@ void FrameCaptionButtonContainerView::Layout() {
   // pushes the buttons to the left of the size button into the center.
   if (tablet_mode_animation_->is_animating())
     AnimationProgressed(tablet_mode_animation_.get());
+
+  // The top right corner must be occupied by the close button for easy mouse
+  // access. This check is agnostic to RTL layout.
+  DCHECK_EQ(close_button_->y(), 0);
+  DCHECK_EQ(close_button_->bounds().right(), width());
 }
 
 const char* FrameCaptionButtonContainerView::GetClassName() const {
@@ -332,16 +323,18 @@ void FrameCaptionButtonContainerView::ChildPreferredSizeChanged(View* child) {
   PreferredSizeChanged();
 }
 
+void FrameCaptionButtonContainerView::ChildVisibilityChanged(View* child) {
+  PreferredSizeChanged();
+}
+
 void FrameCaptionButtonContainerView::AnimationEnded(
     const gfx::Animation* animation) {
   // Ensure that position is calculated at least once.
   AnimationProgressed(animation);
 
   double current_value = tablet_mode_animation_->GetCurrentValue();
-  if (current_value == 0.0) {
+  if (current_value == 0.0)
     size_button_->SetVisible(false);
-    PreferredSizeChanged();
-  }
 }
 
 void FrameCaptionButtonContainerView::AnimationProgressed(

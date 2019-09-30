@@ -35,7 +35,6 @@
 namespace blink {
 
 class ExceptionState;
-class MediaStreamTrack;
 class WebRTCDTMFSenderHandler;
 
 class RTCDTMFSender final : public EventTargetWithInlineData,
@@ -51,11 +50,7 @@ class RTCDTMFSender final : public EventTargetWithInlineData,
   ~RTCDTMFSender() override;
 
   bool canInsertDTMF() const;
-  MediaStreamTrack* track() const;
-  void SetTrack(MediaStreamTrack*);
   String toneBuffer() const;
-  int duration() const { return duration_; }
-  int interToneGap() const { return inter_tone_gap_; }
 
   void insertDTMF(const String& tones, ExceptionState&);
   void insertDTMF(const String& tones, int duration, ExceptionState&);
@@ -73,7 +68,7 @@ class RTCDTMFSender final : public EventTargetWithInlineData,
   // ContextLifecycleObserver
   void ContextDestroyed(ExecutionContext*) override;
 
-  virtual void Trace(blink::Visitor*);
+  void Trace(blink::Visitor*) override;
 
  private:
   RTCDTMFSender(ExecutionContext*,
@@ -85,10 +80,6 @@ class RTCDTMFSender final : public EventTargetWithInlineData,
 
   // WebRTCDTMFSenderHandlerClient
   void DidPlayTone(const WebString&) override;
-
-  Member<MediaStreamTrack> track_;
-  int duration_;
-  int inter_tone_gap_;
 
   std::unique_ptr<WebRTCDTMFSenderHandler> handler_;
 

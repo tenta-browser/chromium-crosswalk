@@ -37,7 +37,9 @@
 #include "third_party/blink/renderer/core/animation/invalidatable_interpolation.h"
 #include "third_party/blink/renderer/core/animation/string_keyframe.h"
 #include "third_party/blink/renderer/core/css/css_primitive_value.h"
+#include "third_party/blink/renderer/core/css/resolver/style_resolver.h"
 #include "third_party/blink/renderer/core/dom/element.h"
+#include "third_party/blink/renderer/core/style/computed_style.h"
 #include "third_party/blink/renderer/core/testing/page_test_base.h"
 
 namespace blink {
@@ -50,13 +52,13 @@ class AnimationKeyframeEffectModel : public PageTestBase {
   }
 
   void ExpectLengthValue(double expected_value,
-                         scoped_refptr<Interpolation> interpolation_value) {
+                         Interpolation* interpolation_value) {
     ActiveInterpolations interpolations;
     interpolations.push_back(interpolation_value);
     EnsureInterpolatedValueCached(interpolations, GetDocument(), element);
 
     const TypedInterpolationValue* typed_value =
-        ToInvalidatableInterpolation(interpolation_value.get())
+        ToInvalidatableInterpolation(interpolation_value)
             ->GetCachedValueForTesting();
     // Length values are stored as a list of values; here we assume pixels.
     EXPECT_TRUE(typed_value->GetInterpolableValue().IsList());
@@ -66,15 +68,14 @@ class AnimationKeyframeEffectModel : public PageTestBase {
                     ToInterpolableNumber(list->Get(0))->Value());
   }
 
-  void ExpectNonInterpolableValue(
-      const String& expected_value,
-      scoped_refptr<Interpolation> interpolation_value) {
+  void ExpectNonInterpolableValue(const String& expected_value,
+                                  Interpolation* interpolation_value) {
     ActiveInterpolations interpolations;
     interpolations.push_back(interpolation_value);
     EnsureInterpolatedValueCached(interpolations, GetDocument(), element);
 
     const TypedInterpolationValue* typed_value =
-        ToInvalidatableInterpolation(interpolation_value.get())
+        ToInvalidatableInterpolation(interpolation_value)
             ->GetCachedValueForTesting();
     const NonInterpolableValue* non_interpolable_value =
         typed_value->GetNonInterpolableValue();
@@ -106,22 +107,22 @@ StringKeyframeVector KeyframesAtZeroAndOne(CSSPropertyID property,
 }
 
 void ExpectProperty(CSSPropertyID property,
-                    scoped_refptr<Interpolation> interpolation_value) {
+                    Interpolation* interpolation_value) {
   InvalidatableInterpolation* interpolation =
-      ToInvalidatableInterpolation(interpolation_value.get());
+      ToInvalidatableInterpolation(interpolation_value);
   const PropertyHandle& property_handle = interpolation->GetProperty();
   ASSERT_TRUE(property_handle.IsCSSProperty());
   ASSERT_EQ(property, property_handle.GetCSSProperty().PropertyID());
 }
 
-Interpolation* FindValue(Vector<scoped_refptr<Interpolation>>& values,
+Interpolation* FindValue(HeapVector<Member<Interpolation>>& values,
                          CSSPropertyID id) {
   for (auto& value : values) {
     const PropertyHandle& property =
-        ToInvalidatableInterpolation(value.get())->GetProperty();
+        ToInvalidatableInterpolation(value)->GetProperty();
     if (property.IsCSSProperty() &&
         property.GetCSSProperty().PropertyID() == id)
-      return value.get();
+      return value;
   }
   return nullptr;
 }
@@ -131,7 +132,7 @@ TEST_F(AnimationKeyframeEffectModel, BasicOperation) {
       KeyframesAtZeroAndOne(CSSPropertyFontFamily, "serif", "cursive");
   StringKeyframeEffectModel* effect =
       StringKeyframeEffectModel::Create(keyframes);
-  Vector<scoped_refptr<Interpolation>> values;
+  HeapVector<Member<Interpolation>> values;
   effect->Sample(0, 0.6, kDuration, values);
   ASSERT_EQ(1UL, values.size());
   ExpectProperty(CSSPropertyFontFamily, values.at(0));
@@ -145,7 +146,7 @@ TEST_F(AnimationKeyframeEffectModel, CompositeReplaceNonInterpolable) {
   keyframes[1]->SetComposite(EffectModel::kCompositeReplace);
   StringKeyframeEffectModel* effect =
       StringKeyframeEffectModel::Create(keyframes);
-  Vector<scoped_refptr<Interpolation>> values;
+  HeapVector<Member<Interpolation>> values;
   effect->Sample(0, 0.6, kDuration, values);
   ExpectNonInterpolableValue("cursive", values.at(0));
 }
@@ -157,7 +158,7 @@ TEST_F(AnimationKeyframeEffectModel, CompositeReplace) {
   keyframes[1]->SetComposite(EffectModel::kCompositeReplace);
   StringKeyframeEffectModel* effect =
       StringKeyframeEffectModel::Create(keyframes);
-  Vector<scoped_refptr<Interpolation>> values;
+  HeapVector<Member<Interpolation>> values;
   effect->Sample(0, 0.6, kDuration, values);
   ExpectLengthValue(3.0 * 0.4 + 5.0 * 0.6, values.at(0));
 }
@@ -170,7 +171,7 @@ TEST_F(AnimationKeyframeEffectModel, DISABLED_CompositeAdd) {
   keyframes[1]->SetComposite(EffectModel::kCompositeAdd);
   StringKeyframeEffectModel* effect =
       StringKeyframeEffectModel::Create(keyframes);
-  Vector<scoped_refptr<Interpolation>> values;
+  HeapVector<Member<Interpolation>> values;
   effect->Sample(0, 0.6, kDuration, values);
   ExpectLengthValue((7.0 + 3.0) * 0.4 + (7.0 + 5.0) * 0.6, values.at(0));
 }
@@ -184,7 +185,7 @@ TEST_F(AnimationKeyframeEffectModel, CompositeEaseIn) {
   keyframes[1]->SetComposite(EffectModel::kCompositeReplace);
   StringKeyframeEffectModel* effect =
       StringKeyframeEffectModel::Create(keyframes);
-  Vector<scoped_refptr<Interpolation>> values;
+  HeapVector<Member<Interpolation>> values;
   effect->Sample(0, 0.6, kDuration, values);
   ExpectLengthValue(3.8579516, values.at(0));
   effect->Sample(0, 0.6, kDuration * 100, values);
@@ -199,7 +200,7 @@ TEST_F(AnimationKeyframeEffectModel, CompositeCubicBezier) {
   keyframes[1]->SetComposite(EffectModel::kCompositeReplace);
   StringKeyframeEffectModel* effect =
       StringKeyframeEffectModel::Create(keyframes);
-  Vector<scoped_refptr<Interpolation>> values;
+  HeapVector<Member<Interpolation>> values;
   effect->Sample(0, 0.6, kDuration, values);
   ExpectLengthValue(4.3363357, values.at(0));
   effect->Sample(0, 0.6, kDuration * 1000, values);
@@ -213,7 +214,7 @@ TEST_F(AnimationKeyframeEffectModel, ExtrapolateReplaceNonInterpolable) {
   keyframes[1]->SetComposite(EffectModel::kCompositeReplace);
   StringKeyframeEffectModel* effect =
       StringKeyframeEffectModel::Create(keyframes);
-  Vector<scoped_refptr<Interpolation>> values;
+  HeapVector<Member<Interpolation>> values;
   effect->Sample(0, 1.6, kDuration, values);
   ExpectNonInterpolableValue("cursive", values.at(0));
 }
@@ -225,7 +226,7 @@ TEST_F(AnimationKeyframeEffectModel, ExtrapolateReplace) {
       StringKeyframeEffectModel::Create(keyframes);
   keyframes[0]->SetComposite(EffectModel::kCompositeReplace);
   keyframes[1]->SetComposite(EffectModel::kCompositeReplace);
-  Vector<scoped_refptr<Interpolation>> values;
+  HeapVector<Member<Interpolation>> values;
   effect->Sample(0, 1.6, kDuration, values);
   ExpectLengthValue(3.0 * -0.6 + 5.0 * 1.6, values.at(0));
 }
@@ -238,7 +239,7 @@ TEST_F(AnimationKeyframeEffectModel, DISABLED_ExtrapolateAdd) {
   keyframes[1]->SetComposite(EffectModel::kCompositeAdd);
   StringKeyframeEffectModel* effect =
       StringKeyframeEffectModel::Create(keyframes);
-  Vector<scoped_refptr<Interpolation>> values;
+  HeapVector<Member<Interpolation>> values;
   effect->Sample(0, 1.6, kDuration, values);
   ExpectLengthValue((7.0 + 3.0) * -0.6 + (7.0 + 5.0) * 1.6, values.at(0));
 }
@@ -246,7 +247,7 @@ TEST_F(AnimationKeyframeEffectModel, DISABLED_ExtrapolateAdd) {
 TEST_F(AnimationKeyframeEffectModel, ZeroKeyframes) {
   StringKeyframeEffectModel* effect =
       StringKeyframeEffectModel::Create(StringKeyframeVector());
-  Vector<scoped_refptr<Interpolation>> values;
+  HeapVector<Member<Interpolation>> values;
   effect->Sample(0, 0.5, kDuration, values);
   EXPECT_TRUE(values.IsEmpty());
 }
@@ -262,7 +263,7 @@ TEST_F(AnimationKeyframeEffectModel, DISABLED_SingleKeyframeAtOffsetZero) {
 
   StringKeyframeEffectModel* effect =
       StringKeyframeEffectModel::Create(keyframes);
-  Vector<scoped_refptr<Interpolation>> values;
+  HeapVector<Member<Interpolation>> values;
   effect->Sample(0, 0.6, kDuration, values);
   ExpectNonInterpolableValue("serif", values.at(0));
 }
@@ -277,7 +278,7 @@ TEST_F(AnimationKeyframeEffectModel, DISABLED_SingleKeyframeAtOffsetOne) {
 
   StringKeyframeEffectModel* effect =
       StringKeyframeEffectModel::Create(keyframes);
-  Vector<scoped_refptr<Interpolation>> values;
+  HeapVector<Member<Interpolation>> values;
   effect->Sample(0, 0.6, kDuration, values);
   ExpectLengthValue(7.0 * 0.4 + 5.0 * 0.6, values.at(0));
 }
@@ -302,7 +303,7 @@ TEST_F(AnimationKeyframeEffectModel, MoreThanTwoKeyframes) {
 
   StringKeyframeEffectModel* effect =
       StringKeyframeEffectModel::Create(keyframes);
-  Vector<scoped_refptr<Interpolation>> values;
+  HeapVector<Member<Interpolation>> values;
   effect->Sample(0, 0.3, kDuration, values);
   ExpectNonInterpolableValue("sans-serif", values.at(0));
   effect->Sample(0, 0.8, kDuration, values);
@@ -327,7 +328,7 @@ TEST_F(AnimationKeyframeEffectModel, EndKeyframeOffsetsUnspecified) {
 
   StringKeyframeEffectModel* effect =
       StringKeyframeEffectModel::Create(keyframes);
-  Vector<scoped_refptr<Interpolation>> values;
+  HeapVector<Member<Interpolation>> values;
   effect->Sample(0, 0.1, kDuration, values);
   ExpectNonInterpolableValue("serif", values.at(0));
   effect->Sample(0, 0.6, kDuration, values);
@@ -356,7 +357,7 @@ TEST_F(AnimationKeyframeEffectModel, SampleOnKeyframe) {
 
   StringKeyframeEffectModel* effect =
       StringKeyframeEffectModel::Create(keyframes);
-  Vector<scoped_refptr<Interpolation>> values;
+  HeapVector<Member<Interpolation>> values;
   effect->Sample(0, 0.0, kDuration, values);
   ExpectNonInterpolableValue("serif", values.at(0));
   effect->Sample(0, 0.5, kDuration, values);
@@ -415,7 +416,7 @@ TEST_F(AnimationKeyframeEffectModel, MultipleKeyframesWithSameOffset) {
 
   StringKeyframeEffectModel* effect =
       StringKeyframeEffectModel::Create(keyframes);
-  Vector<scoped_refptr<Interpolation>> values;
+  HeapVector<Member<Interpolation>> values;
   effect->Sample(0, 0.0, kDuration, values);
   ExpectNonInterpolableValue("serif", values.at(0));
   effect->Sample(0, 0.2, kDuration, values);
@@ -447,7 +448,7 @@ TEST_F(AnimationKeyframeEffectModel, DISABLED_PerKeyframeComposite) {
 
   StringKeyframeEffectModel* effect =
       StringKeyframeEffectModel::Create(keyframes);
-  Vector<scoped_refptr<Interpolation>> values;
+  HeapVector<Member<Interpolation>> values;
   effect->Sample(0, 0.6, kDuration, values);
   ExpectLengthValue(3.0 * 0.4 + (7.0 + 5.0) * 0.6, values.at(0));
 }
@@ -473,7 +474,7 @@ TEST_F(AnimationKeyframeEffectModel, MultipleProperties) {
 
   StringKeyframeEffectModel* effect =
       StringKeyframeEffectModel::Create(keyframes);
-  Vector<scoped_refptr<Interpolation>> values;
+  HeapVector<Member<Interpolation>> values;
   effect->Sample(0, 0.6, kDuration, values);
   EXPECT_EQ(2UL, values.size());
   Interpolation* left_value = FindValue(values, CSSPropertyFontFamily);
@@ -492,7 +493,7 @@ TEST_F(AnimationKeyframeEffectModel, DISABLED_RecompositeCompositableValue) {
   keyframes[1]->SetComposite(EffectModel::kCompositeAdd);
   StringKeyframeEffectModel* effect =
       StringKeyframeEffectModel::Create(keyframes);
-  Vector<scoped_refptr<Interpolation>> values;
+  HeapVector<Member<Interpolation>> values;
   effect->Sample(0, 0.6, kDuration, values);
   ExpectLengthValue((7.0 + 3.0) * 0.4 + (7.0 + 5.0) * 0.6, values.at(0));
   ExpectLengthValue((9.0 + 3.0) * 0.4 + (9.0 + 5.0) * 0.6, values.at(1));
@@ -503,7 +504,7 @@ TEST_F(AnimationKeyframeEffectModel, MultipleIterations) {
       KeyframesAtZeroAndOne(CSSPropertyLeft, "1px", "3px");
   StringKeyframeEffectModel* effect =
       StringKeyframeEffectModel::Create(keyframes);
-  Vector<scoped_refptr<Interpolation>> values;
+  HeapVector<Member<Interpolation>> values;
   effect->Sample(0, 0.5, kDuration, values);
   ExpectLengthValue(2.0, values.at(0));
   effect->Sample(1, 0.5, kDuration, values);
@@ -531,7 +532,7 @@ TEST_F(AnimationKeyframeEffectModel, DISABLED_DependsOnUnderlyingValue) {
 
   StringKeyframeEffectModel* effect =
       StringKeyframeEffectModel::Create(keyframes);
-  Vector<scoped_refptr<Interpolation>> values;
+  HeapVector<Member<Interpolation>> values;
   effect->Sample(0, 0, kDuration, values);
   EXPECT_TRUE(values.at(0));
   effect->Sample(0, 0.1, kDuration, values);
@@ -577,6 +578,78 @@ TEST_F(AnimationKeyframeEffectModel, ToKeyframeEffectModel) {
 
   EffectModel* base_effect = effect;
   EXPECT_TRUE(ToStringKeyframeEffectModel(base_effect));
+}
+
+TEST_F(AnimationKeyframeEffectModel, CompositorSnapshotUpdateBasic) {
+  StringKeyframeVector keyframes =
+      KeyframesAtZeroAndOne(CSSPropertyOpacity, "0", "1");
+  StringKeyframeEffectModel* effect =
+      StringKeyframeEffectModel::Create(keyframes);
+
+  auto style = GetDocument().EnsureStyleResolver().StyleForElement(element);
+
+  const AnimatableValue* value;
+
+  // Animatable value should be empty before snapshot
+  value = effect
+              ->GetPropertySpecificKeyframes(
+                  PropertyHandle(GetCSSPropertyOpacity()))[0]
+              ->GetAnimatableValue();
+  EXPECT_FALSE(value);
+
+  // Snapshot should update first time after construction
+  EXPECT_TRUE(effect->SnapshotAllCompositorKeyframesIfNecessary(
+      *element, *style, nullptr));
+  // Snapshot should not update on second call
+  EXPECT_FALSE(effect->SnapshotAllCompositorKeyframesIfNecessary(
+      *element, *style, nullptr));
+  // Snapshot should update after an explicit invalidation
+  effect->InvalidateCompositorKeyframesSnapshot();
+  EXPECT_TRUE(effect->SnapshotAllCompositorKeyframesIfNecessary(
+      *element, *style, nullptr));
+
+  // Animatable value should be available after snapshot
+  value = effect
+              ->GetPropertySpecificKeyframes(
+                  PropertyHandle(GetCSSPropertyOpacity()))[0]
+              ->GetAnimatableValue();
+  EXPECT_TRUE(value);
+  EXPECT_TRUE(value->IsDouble());
+}
+
+TEST_F(AnimationKeyframeEffectModel,
+       CompositorSnapshotUpdateAfterKeyframeChange) {
+  StringKeyframeVector opacity_keyframes =
+      KeyframesAtZeroAndOne(CSSPropertyOpacity, "0", "1");
+  StringKeyframeEffectModel* effect =
+      StringKeyframeEffectModel::Create(opacity_keyframes);
+
+  auto style = GetDocument().EnsureStyleResolver().StyleForElement(element);
+
+  EXPECT_TRUE(effect->SnapshotAllCompositorKeyframesIfNecessary(
+      *element, *style, nullptr));
+
+  const AnimatableValue* value;
+  value = effect
+              ->GetPropertySpecificKeyframes(
+                  PropertyHandle(GetCSSPropertyOpacity()))[0]
+              ->GetAnimatableValue();
+  EXPECT_TRUE(value);
+  EXPECT_TRUE(value->IsDouble());
+
+  StringKeyframeVector filter_keyframes =
+      KeyframesAtZeroAndOne(CSSPropertyFilter, "blur(1px)", "blur(10px)");
+  effect->SetFrames(filter_keyframes);
+
+  // Snapshot should update after changing keyframes
+  EXPECT_TRUE(effect->SnapshotAllCompositorKeyframesIfNecessary(
+      *element, *style, nullptr));
+  value = effect
+              ->GetPropertySpecificKeyframes(
+                  PropertyHandle(GetCSSPropertyFilter()))[0]
+              ->GetAnimatableValue();
+  EXPECT_TRUE(value);
+  EXPECT_TRUE(value->IsFilterOperations());
 }
 
 }  // namespace blink

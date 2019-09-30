@@ -9,6 +9,7 @@
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
 #include "base/strings/stringprintf.h"
+#include "media/base/bind_to_current_loop.h"
 #include "media/base/video_codecs.h"
 #include "mojo/public/cpp/bindings/strong_binding.h"
 #include "services/metrics/public/cpp/ukm_builders.h"
@@ -111,7 +112,7 @@ void VideoDecodePerfHistory::AssessStats(
   // this will be janky.
 
   // No stats? Lets be optimistic.
-  if (!stats) {
+  if (!stats || stats->frames_decoded == 0) {
     *is_power_efficient = true;
     *is_smooth = true;
     return;
@@ -144,7 +145,7 @@ void VideoDecodePerfHistory::OnGotStatsForRequest(
 
   AssessStats(stats.get(), &is_smooth, &is_power_efficient);
 
-  if (stats) {
+  if (stats && stats->frames_decoded) {
     DCHECK(database_success);
     percent_dropped =
         static_cast<double>(stats->frames_dropped) / stats->frames_decoded;
@@ -169,13 +170,17 @@ void VideoDecodePerfHistory::OnGotStatsForRequest(
   std::move(got_info_cb).Run(is_smooth, is_power_efficient);
 }
 
-void VideoDecodePerfHistory::SavePerfRecord(
-    const url::Origin& untrusted_top_frame_origin,
-    bool is_top_frame,
-    mojom::PredictionFeatures features,
-    mojom::PredictionTargets targets,
-    uint64_t player_id,
-    base::OnceClosure save_done_cb) {
+VideoDecodePerfHistory::SaveCallback VideoDecodePerfHistory::GetSaveCallback() {
+  return base::BindRepeating(&VideoDecodePerfHistory::SavePerfRecord,
+                             weak_ptr_factory_.GetWeakPtr());
+}
+
+void VideoDecodePerfHistory::SavePerfRecord(ukm::SourceId source_id,
+                                            bool is_top_frame,
+                                            mojom::PredictionFeatures features,
+                                            mojom::PredictionTargets targets,
+                                            uint64_t player_id,
+                                            base::OnceClosure save_done_cb) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DVLOG(3) << __func__
            << base::StringPrintf(
@@ -194,8 +199,8 @@ void VideoDecodePerfHistory::SavePerfRecord(
   if (db_init_status_ != COMPLETE) {
     init_deferred_api_calls_.push_back(base::BindOnce(
         &VideoDecodePerfHistory::SavePerfRecord, weak_ptr_factory_.GetWeakPtr(),
-        untrusted_top_frame_origin, is_top_frame, std::move(features),
-        std::move(targets), player_id, std::move(save_done_cb)));
+        source_id, is_top_frame, std::move(features), std::move(targets),
+        player_id, std::move(save_done_cb)));
     InitDatabase();
     return;
   }
@@ -211,13 +216,12 @@ void VideoDecodePerfHistory::SavePerfRecord(
   db_->GetDecodeStats(
       video_key,
       base::BindOnce(&VideoDecodePerfHistory::OnGotStatsForSave,
-                     weak_ptr_factory_.GetWeakPtr(), untrusted_top_frame_origin,
-                     is_top_frame, player_id, video_key, new_stats,
-                     std::move(save_done_cb)));
+                     weak_ptr_factory_.GetWeakPtr(), source_id, is_top_frame,
+                     player_id, video_key, new_stats, std::move(save_done_cb)));
 }
 
 void VideoDecodePerfHistory::OnGotStatsForSave(
-    const url::Origin& untrusted_top_frame_origin,
+    ukm::SourceId source_id,
     bool is_top_frame,
     uint64_t player_id,
     const VideoDecodeStatsDB::VideoDescKey& video_key,
@@ -234,8 +238,8 @@ void VideoDecodePerfHistory::OnGotStatsForSave(
     return;
   }
 
-  ReportUkmMetrics(untrusted_top_frame_origin, is_top_frame, player_id,
-                   video_key, new_stats, past_stats.get());
+  ReportUkmMetrics(source_id, is_top_frame, player_id, video_key, new_stats,
+                   past_stats.get());
 
   // TODO(dalecurtis): Abort stats recording if db_ is in read-only mode.
 
@@ -261,7 +265,7 @@ void VideoDecodePerfHistory::OnSaveDone(base::OnceClosure save_done_cb,
 }
 
 void VideoDecodePerfHistory::ReportUkmMetrics(
-    const url::Origin& untrusted_top_frame_origin,
+    ukm::SourceId source_id,
     bool is_top_frame,
     uint64_t player_id,
     const VideoDecodeStatsDB::VideoDescKey& video_key,
@@ -276,11 +280,7 @@ void VideoDecodePerfHistory::ReportUkmMetrics(
   if (!ukm_recorder)
     return;
 
-  const int32_t source_id = ukm_recorder->GetNewSourceID();
   ukm::builders::Media_VideoDecodePerfRecord builder(source_id);
-
-  // TODO(crbug.com/787209): Stop getting origin from the renderer.
-  ukm_recorder->UpdateSourceURL(source_id, untrusted_top_frame_origin.GetURL());
   builder.SetVideo_InTopFrame(is_top_frame);
   builder.SetVideo_PlayerID(player_id);
 
@@ -360,6 +360,29 @@ void VideoDecodePerfHistory::OnClearedHistory(base::OnceClosure clear_done_cb) {
   InitDatabase();
 
   std::move(clear_done_cb).Run();
+}
+
+void VideoDecodePerfHistory::GetVideoDecodeStatsDB(GetCB get_db_cb) {
+  DVLOG(3) << __func__;
+  DCHECK(get_db_cb);
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+
+  if (db_init_status_ == FAILED) {
+    std::move(get_db_cb).Run(nullptr);
+    return;
+  }
+
+  // Defer this request until the DB is initialized.
+  if (db_init_status_ != COMPLETE) {
+    init_deferred_api_calls_.push_back(
+        base::BindOnce(&VideoDecodePerfHistory::GetVideoDecodeStatsDB,
+                       weak_ptr_factory_.GetWeakPtr(), std::move(get_db_cb)));
+    InitDatabase();
+    return;
+  }
+
+  // DB is already initialized. BindToCurrentLoop to avoid reentrancy.
+  std::move(BindToCurrentLoop(std::move(get_db_cb))).Run(db_.get());
 }
 
 }  // namespace media

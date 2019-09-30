@@ -192,9 +192,9 @@ AudioInputDelegateImpl::AudioInputDelegateImpl(
   const std::string& device_id = device->id;
 
   if (WebContentsMediaCaptureId::Parse(device_id, nullptr)) {
-    // For MEDIA_DESKTOP_AUDIO_CAPTURE, the source is selected from picker
-    // window, we do not mute the source audio.
-    // For MEDIA_TAB_AUDIO_CAPTURE, the probable use case is Cast, we mute
+    // For MEDIA_GUM_DESKTOP_AUDIO_CAPTURE, the source is selected from
+    // picker window, we do not mute the source audio. For
+    // MEDIA_GUM_TAB_AUDIO_CAPTURE, the probable use case is Cast, we mute
     // the source audio.
     // TODO(qiangchen): Analyze audio constraints to make a duplicating or
     // diverting decision. It would give web developer more flexibility.
@@ -206,7 +206,7 @@ AudioInputDelegateImpl::AudioInputDelegateImpl(
         writer_.get(), user_input_monitor);
     DCHECK(controller_);
     // Only count for captures from desktop media picker dialog.
-    if (device->type == MEDIA_DESKTOP_AUDIO_CAPTURE)
+    if (device->type == MEDIA_GUM_DESKTOP_AUDIO_CAPTURE)
       IncrementDesktopCaptureCounter(TAB_AUDIO_CAPTURER_CREATED);
   } else {
     controller_ = media::AudioInputController::Create(
@@ -216,7 +216,7 @@ AudioInputDelegateImpl::AudioInputDelegateImpl(
 
     // Only count for captures from desktop media picker dialog and system loop
     // back audio.
-    if (device->type == MEDIA_DESKTOP_AUDIO_CAPTURE &&
+    if (device->type == MEDIA_GUM_DESKTOP_AUDIO_CAPTURE &&
         (media::AudioDeviceDescription::IsLoopbackDevice(device_id))) {
       IncrementDesktopCaptureCounter(SYSTEM_LOOPBACK_AUDIO_CAPTURER_CREATED);
     }
@@ -265,10 +265,17 @@ void AudioInputDelegateImpl::OnSetVolume(double volume) {
   audio_log_->OnSetVolume(volume);
 }
 
+void AudioInputDelegateImpl::OnSetOutputDeviceForAec(
+    const std::string& raw_output_device_id) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  controller_->SetOutputDeviceForAec(raw_output_device_id);
+  audio_log_->OnLogMessage("SetOutputDeviceForAec");
+}
+
 void AudioInputDelegateImpl::SendCreatedNotification(bool initially_muted) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(foreign_socket_);
-  subscriber_->OnStreamCreated(stream_id_, writer_->shared_memory(),
+  subscriber_->OnStreamCreated(stream_id_, writer_->TakeSharedMemoryRegion(),
                                std::move(foreign_socket_), initially_muted);
 }
 

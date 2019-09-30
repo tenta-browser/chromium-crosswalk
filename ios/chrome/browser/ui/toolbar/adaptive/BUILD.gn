@@ -27,7 +27,6 @@ source_set("adaptive") {
     "//ios/chrome/browser/ui/commands",
     "//ios/chrome/browser/ui/coordinators:chrome_coordinators",
     "//ios/chrome/browser/ui/fullscreen",
-    "//ios/chrome/browser/ui/history_popup/requirements",
     "//ios/chrome/browser/ui/location_bar",
     "//ios/chrome/browser/ui/ntp",
     "//ios/chrome/browser/ui/ntp:util",
@@ -35,6 +34,7 @@ source_set("adaptive") {
     "//ios/chrome/browser/ui/omnibox:omnibox_internal",
     "//ios/chrome/browser/ui/omnibox/popup",
     "//ios/chrome/browser/ui/orchestrator",
+    "//ios/chrome/browser/ui/popup_menu/public",
     "//ios/chrome/browser/ui/toolbar",
     "//ios/chrome/browser/ui/toolbar/buttons",
     "//ios/chrome/browser/ui/toolbar/clean:toolbar",
@@ -71,16 +71,16 @@ source_set("adaptive_ui") {
     "//ios/chrome/browser/ui/activity_services/requirements",
     "//ios/chrome/browser/ui/commands",
     "//ios/chrome/browser/ui/fullscreen:ui",
-    "//ios/chrome/browser/ui/history_popup/requirements",
     "//ios/chrome/browser/ui/ntp:ntp",
     "//ios/chrome/browser/ui/orchestrator",
-    "//ios/chrome/browser/ui/popup_menu:flags",
+    "//ios/chrome/browser/ui/popup_menu/public",
     "//ios/chrome/browser/ui/toolbar/buttons",
     "//ios/chrome/browser/ui/toolbar/clean:toolbar_ui",
     "//ios/chrome/browser/ui/toolbar/public",
-    "//ios/chrome/browser/ui/toolbar/public:toolbar_base_feature",
+    "//ios/chrome/browser/ui/toolbar/public:feature_flags",
     "//ios/chrome/browser/ui/util",
-    "//ios/chrome/browser/ui/util:constraints_ui",
+    "//ios/chrome/common:timing",
+    "//ios/chrome/common/ui_util",
     "//ios/third_party/material_components_ios",
   ]
   configs += [ "//build/config/compiler:enable_arc" ]
@@ -101,8 +101,10 @@ source_set("eg_tests") {
     "//ios/chrome/browser/infobars",
     "//ios/chrome/browser/ui:ui_util",
     "//ios/chrome/browser/ui/infobars:test_support",
+    "//ios/chrome/browser/ui/tab_grid:egtest_support",
     "//ios/chrome/browser/ui/toolbar/buttons",
     "//ios/chrome/browser/ui/toolbar/public",
+    "//ios/chrome/browser/ui/tools_menu/public",
     "//ios/chrome/browser/ui/util",
     "//ios/chrome/test/app:test_support",
     "//ios/chrome/test/earl_grey:test_support",
@@ -111,6 +113,25 @@ source_set("eg_tests") {
     "//ui/base",
   ]
   libs = [ "XCTest.framework" ]
+}
+
+source_set("unit_tests") {
+  configs += [ "//build/config/compiler:enable_arc" ]
+  testonly = true
+  sources = [
+    "adaptive_toolbar_view_controller_unittest.mm",
+  ]
+  deps = [
+    ":adaptive_ui",
+    "//base",
+    "//base/test:test_support",
+    "//ios/chrome/browser/ui:ui_util",
+    "//ios/chrome/browser/ui/commands",
+    "//ios/chrome/browser/ui/popup_menu/public",
+    "//ios/chrome/browser/ui/toolbar/buttons",
+    "//testing/gtest",
+    "//third_party/ocmock",
+  ]
 }
 
 source_set("hooks") {

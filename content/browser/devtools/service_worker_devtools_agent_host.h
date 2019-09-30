@@ -47,10 +47,9 @@ class ServiceWorkerDevToolsAgentHost : public DevToolsAgentHostImpl {
   bool Close() override;
 
   // DevToolsAgentHostImpl overrides.
-  bool AttachSession(DevToolsSession* session) override;
+  bool AttachSession(DevToolsSession* session,
+                     TargetRegistry* registry) override;
   void DetachSession(DevToolsSession* session) override;
-  void DispatchProtocolMessage(DevToolsSession* session,
-                               const std::string& message) override;
 
   void WorkerRestarted(int worker_process_id, int worker_route_id);
   void WorkerReadyForInspection(
@@ -71,6 +70,8 @@ class ServiceWorkerDevToolsAgentHost : public DevToolsAgentHostImpl {
 
   // Returns the time when the ServiceWorker was doomed.
   base::Time version_doomed_time() const { return version_doomed_time_; }
+
+  int64_t version_id() const { return version_id_; }
 
   bool Matches(const ServiceWorkerContextCore* context, int64_t version_id);
 

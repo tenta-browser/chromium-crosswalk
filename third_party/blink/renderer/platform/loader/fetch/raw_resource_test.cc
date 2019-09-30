@@ -40,7 +40,7 @@
 #include "third_party/blink/renderer/platform/loader/fetch/memory_cache.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_fetcher.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_timing_info.h"
-#include "third_party/blink/renderer/platform/scheduler/child/web_scheduler.h"
+#include "third_party/blink/renderer/platform/scheduler/public/thread_scheduler.h"
 #include "third_party/blink/renderer/platform/shared_buffer.h"
 #include "third_party/blink/renderer/platform/testing/testing_platform_support_with_mock_scheduler.h"
 #include "third_party/blink/renderer/platform/testing/unit_test_helpers.h"
@@ -66,7 +66,7 @@ TEST_F(RawResourceTest, DontIgnoreAcceptForCacheReuse) {
   jpeg_request.SetHTTPAccept("image/jpeg");
 
   scoped_refptr<const SecurityOrigin> source_origin =
-      SecurityOrigin::CreateUnique();
+      SecurityOrigin::CreateUniqueOpaque();
 
   RawResource* jpeg_resource(
       RawResource::CreateForTest(jpeg_request, Resource::kRaw));
@@ -74,9 +74,9 @@ TEST_F(RawResourceTest, DontIgnoreAcceptForCacheReuse) {
 
   ResourceRequest png_request;
   png_request.SetHTTPAccept("image/png");
-
-  EXPECT_FALSE(
-      jpeg_resource->CanReuse(FetchParameters(png_request), source_origin));
+  EXPECT_NE(
+      jpeg_resource->CanReuse(FetchParameters(png_request), source_origin),
+      Resource::MatchStatus::kOk);
 }
 
 class DummyClient final : public GarbageCollectedFinalized<DummyClient>,
@@ -212,19 +212,6 @@ TEST_F(RawResourceTest, RemoveClientDuringCallback) {
                  Platform::Current()->CurrentThread()->GetTaskRunner().get());
   platform_->RunUntilIdle();
   EXPECT_FALSE(raw->IsAlive());
-}
-
-TEST_F(RawResourceTest,
-       CanReuseDevToolsEmulateNetworkConditionsClientIdHeader) {
-  scoped_refptr<const SecurityOrigin> source_origin =
-      SecurityOrigin::CreateUnique();
-  ResourceRequest request("data:text/html,");
-  request.SetHTTPHeaderField(
-      HTTPNames::X_DevTools_Emulate_Network_Conditions_Client_Id, "Foo");
-  Resource* raw = RawResource::CreateForTest(request, Resource::kRaw);
-  raw->SetSourceOrigin(source_origin);
-  EXPECT_TRUE(raw->CanReuse(FetchParameters(ResourceRequest("data:text/html,")),
-                            source_origin));
 }
 
 }  // namespace blink

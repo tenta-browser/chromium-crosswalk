@@ -85,7 +85,7 @@ void LayoutSVGContainer::AddChild(LayoutObject* child,
   SVGResourcesCache::ClientWasAddedToTree(*child, child->StyleRef());
 
   bool should_isolate_descendants =
-      (child->IsBlendingAllowed() && child->Style()->HasBlendMode()) ||
+      (child->IsBlendingAllowed() && child->StyleRef().HasBlendMode()) ||
       child->HasNonIsolatedBlendingDescendants();
   if (should_isolate_descendants)
     DescendantIsolationRequirementsChanged(kDescendantIsolationRequired);
@@ -96,7 +96,7 @@ void LayoutSVGContainer::RemoveChild(LayoutObject* child) {
   LayoutSVGModelObject::RemoveChild(child);
 
   bool had_non_isolated_descendants =
-      (child->IsBlendingAllowed() && child->Style()->HasBlendMode()) ||
+      (child->IsBlendingAllowed() && child->StyleRef().HasBlendMode()) ||
       child->HasNonIsolatedBlendingDescendants();
   if (had_non_isolated_descendants)
     DescendantIsolationRequirementsChanged(kDescendantIsolationNeedsUpdate);
@@ -162,16 +162,8 @@ void LayoutSVGContainer::DescendantIsolationRequirementsChanged(
     Parent()->DescendantIsolationRequirementsChanged(state);
 }
 
-void LayoutSVGContainer::Paint(const PaintInfo& paint_info,
-                               const LayoutPoint&) const {
+void LayoutSVGContainer::Paint(const PaintInfo& paint_info) const {
   SVGContainerPainter(*this).Paint(paint_info);
-}
-
-void LayoutSVGContainer::AddOutlineRects(
-    Vector<LayoutRect>& rects,
-    const LayoutPoint&,
-    IncludeBlockVisualOverflowOrNot) const {
-  rects.push_back(LayoutRect(VisualRectInLocalSVGCoordinates()));
 }
 
 void LayoutSVGContainer::UpdateCachedBoundaries() {
@@ -194,23 +186,25 @@ bool LayoutSVGContainer::NodeAtFloatPoint(HitTestResult& result,
     if (child->NodeAtFloatPoint(result, local_point, hit_test_action)) {
       const LayoutPoint& local_layout_point = LayoutPoint(local_point);
       UpdateHitTestResult(result, local_layout_point);
-      if (result.AddNodeToListBasedTestResult(
-              child->GetNode(), local_layout_point) == kStopHitTesting)
+      HitTestLocation location(local_layout_point);
+      if (result.AddNodeToListBasedTestResult(child->GetNode(), location) ==
+          kStopHitTesting)
         return true;
     }
   }
 
   // pointer-events: bounding-box makes it possible for containers to be direct
   // targets.
-  if (Style()->PointerEvents() == EPointerEvents::kBoundingBox) {
+  if (StyleRef().PointerEvents() == EPointerEvents::kBoundingBox) {
     // Check for a valid bounding box because it will be invalid for empty
     // containers.
     if (IsObjectBoundingBoxValid() &&
         ObjectBoundingBox().Contains(local_point)) {
       const LayoutPoint& local_layout_point = LayoutPoint(local_point);
       UpdateHitTestResult(result, local_layout_point);
-      if (result.AddNodeToListBasedTestResult(
-              GetElement(), local_layout_point) == kStopHitTesting)
+      HitTestLocation location(local_layout_point);
+      if (result.AddNodeToListBasedTestResult(GetElement(), location) ==
+          kStopHitTesting)
         return true;
     }
   }

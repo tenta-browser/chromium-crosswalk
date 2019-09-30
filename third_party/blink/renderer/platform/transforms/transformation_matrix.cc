@@ -35,12 +35,14 @@
 #include "third_party/blink/renderer/platform/geometry/float_rect.h"
 #include "third_party/blink/renderer/platform/geometry/int_rect.h"
 #include "third_party/blink/renderer/platform/geometry/layout_rect.h"
+#include "third_party/blink/renderer/platform/json/json_values.h"
 #include "third_party/blink/renderer/platform/transforms/affine_transform.h"
 #include "third_party/blink/renderer/platform/transforms/rotation.h"
 #include "third_party/blink/renderer/platform/wtf/assertions.h"
 #include "third_party/blink/renderer/platform/wtf/cpu.h"
 #include "third_party/blink/renderer/platform/wtf/math_extras.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
+#include "ui/gfx/transform.h"
 
 #if defined(ARCH_CPU_X86_64)
 #include <emmintrin.h>
@@ -75,8 +77,6 @@ namespace blink {
 
 typedef double Vector4[4];
 typedef double Vector3[3];
-
-const double kSmallNumber = 1.e-8;
 
 // inverse(original_matrix, inverse_matrix)
 //
@@ -223,7 +223,7 @@ static bool Inverse(const TransformationMatrix::Matrix4& matrix,
   // then the inverse matrix is not unique.
   double det = Determinant4x4(matrix);
 
-  if (fabs(det) < kSmallNumber)
+  if (det == 0)
     return false;
 
 #if defined(ARCH_CPU_ARM64)
@@ -1649,15 +1649,7 @@ void TransformationMatrix::MultVecMatrix(double x,
 }
 
 bool TransformationMatrix::IsInvertible() const {
-  if (IsIdentityOrTranslation())
-    return true;
-
-  double det = blink::Determinant4x4(matrix_);
-
-  if (fabs(det) < kSmallNumber)
-    return false;
-
-  return true;
+  return IsIdentityOrTranslation() || blink::Determinant4x4(matrix_) != 0;
 }
 
 TransformationMatrix TransformationMatrix::Inverse() const {
@@ -1881,6 +1873,11 @@ SkMatrix44 TransformationMatrix::ToSkMatrix44(
   return ret;
 }
 
+gfx::Transform TransformationMatrix::ToTransform(
+    const TransformationMatrix& matrix) {
+  return gfx::Transform(TransformationMatrix::ToSkMatrix44(matrix));
+}
+
 String TransformationMatrix::ToString(bool as_matrix) const {
   if (as_matrix) {
     // Return as a matrix in row-major order.
@@ -1919,6 +1916,47 @@ String TransformationMatrix::ToString(bool as_matrix) const {
 std::ostream& operator<<(std::ostream& ostream,
                          const TransformationMatrix& transform) {
   return ostream << transform.ToString();
+}
+
+static double RoundCloseToZero(double number) {
+  return std::abs(number) < 1e-7 ? 0 : number;
+}
+
+std::unique_ptr<JSONArray> TransformAsJSONArray(const TransformationMatrix& t) {
+  std::unique_ptr<JSONArray> array = JSONArray::Create();
+  {
+    std::unique_ptr<JSONArray> row = JSONArray::Create();
+    row->PushDouble(RoundCloseToZero(t.M11()));
+    row->PushDouble(RoundCloseToZero(t.M12()));
+    row->PushDouble(RoundCloseToZero(t.M13()));
+    row->PushDouble(RoundCloseToZero(t.M14()));
+    array->PushArray(std::move(row));
+  }
+  {
+    std::unique_ptr<JSONArray> row = JSONArray::Create();
+    row->PushDouble(RoundCloseToZero(t.M21()));
+    row->PushDouble(RoundCloseToZero(t.M22()));
+    row->PushDouble(RoundCloseToZero(t.M23()));
+    row->PushDouble(RoundCloseToZero(t.M24()));
+    array->PushArray(std::move(row));
+  }
+  {
+    std::unique_ptr<JSONArray> row = JSONArray::Create();
+    row->PushDouble(RoundCloseToZero(t.M31()));
+    row->PushDouble(RoundCloseToZero(t.M32()));
+    row->PushDouble(RoundCloseToZero(t.M33()));
+    row->PushDouble(RoundCloseToZero(t.M34()));
+    array->PushArray(std::move(row));
+  }
+  {
+    std::unique_ptr<JSONArray> row = JSONArray::Create();
+    row->PushDouble(RoundCloseToZero(t.M41()));
+    row->PushDouble(RoundCloseToZero(t.M42()));
+    row->PushDouble(RoundCloseToZero(t.M43()));
+    row->PushDouble(RoundCloseToZero(t.M44()));
+    array->PushArray(std::move(row));
+  }
+  return array;
 }
 
 }  // namespace blink

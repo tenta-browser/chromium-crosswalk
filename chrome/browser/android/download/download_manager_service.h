@@ -16,7 +16,12 @@
 #include "chrome/browser/android/download/download_controller.h"
 #include "chrome/browser/download/download_history.h"
 #include "components/download/content/public/all_download_item_notifier.h"
+#include "components/download/public/common/in_progress_download_manager.h"
 #include "content/public/browser/download_manager.h"
+#include "content/public/browser/notification_observer.h"
+#include "content/public/browser/notification_registrar.h"
+#include "services/service_manager/public/cpp/connector.h"
+#include "services/service_manager/public/cpp/service.h"
 
 using base::android::JavaParamRef;
 
@@ -28,7 +33,8 @@ class DownloadItem;
 // Java object.
 class DownloadManagerService
     : public download::AllDownloadItemNotifier::Observer,
-      public DownloadHistory::Observer {
+      public DownloadHistory::Observer,
+      public content::NotificationObserver {
  public:
   static void OnDownloadCanceled(
       download::DownloadItem* download,
@@ -43,8 +49,31 @@ class DownloadManagerService
   DownloadManagerService();
   ~DownloadManagerService() override;
 
+  std::unique_ptr<service_manager::Service>
+  CreateServiceManagerServiceInstance();
+
+  void NotifyServiceStarted(
+      std::unique_ptr<service_manager::Connector> connector);
+
   // Called to Initialize this object.
   void Init(JNIEnv* env, jobject obj);
+
+  // Called when full browser process starts.
+  void OnFullBrowserStarted(JNIEnv* env, jobject obj);
+
+  // Called to show the download manager, with a choice to focus on prefetched
+  // content instead of regular downloads.
+  void ShowDownloadManager(bool show_prefetched_content);
+
+  // Called to open a given download item.
+  void OpenDownload(download::DownloadItem* download, int source);
+
+  // Called to open a download item whose GUID is equal to |jdownload_guid|.
+  void OpenDownload(JNIEnv* env,
+                    jobject obj,
+                    const JavaParamRef<jstring>& jdownload_guid,
+                    bool is_off_the_record,
+                    jint source);
 
   // Called to resume downloading the item that has GUID equal to
   // |jdownload_guid|..
@@ -107,6 +136,15 @@ class DownloadManagerService
                          download::DownloadItem* item) override;
   void OnDownloadRemoved(content::DownloadManager* manager,
                          download::DownloadItem* item) override;
+
+  // content::NotificationObserver methods.
+  void Observe(int type,
+               const content::NotificationSource& source,
+               const content::NotificationDetails& details) override;
+
+  // Retrives the in-progress manager and give up the ownership.
+  download::InProgressDownloadManager* RetriveInProgressDownloadManager(
+      content::BrowserContext* context);
 
  protected:
   // Called to get the content::DownloadManager instance.
@@ -172,6 +210,9 @@ class DownloadManagerService
                              DownloadAction action);
 
   ResumeCallback resume_callback_for_testing_;
+
+  // The Registrar used to register for notifications.
+  content::NotificationRegistrar registrar_;
 
   std::unique_ptr<download::AllDownloadItemNotifier> original_notifier_;
   std::unique_ptr<download::AllDownloadItemNotifier> off_the_record_notifier_;

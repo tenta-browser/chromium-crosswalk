@@ -4,13 +4,21 @@
 
 #include "third_party/blink/renderer/core/animation/scroll_timeline.h"
 
-#include "third_party/blink/renderer/core/dom/exception_code.h"
 #include "third_party/blink/renderer/core/layout/layout_box.h"
+#include "third_party/blink/renderer/core/layout/layout_view.h"
+#include "third_party/blink/renderer/core/paint/compositing/paint_layer_compositor.h"
+#include "third_party/blink/renderer/core/paint/paint_layer.h"
 #include "third_party/blink/renderer/core/paint/paint_layer_scrollable_area.h"
 
 namespace blink {
 
 namespace {
+using ActiveScrollTimelineSet = PersistentHeapHashCountedSet<WeakMember<Node>>;
+ActiveScrollTimelineSet& GetActiveScrollTimelineSet() {
+  DEFINE_STATIC_LOCAL(ActiveScrollTimelineSet, set, ());
+  return set;
+}
+
 bool StringToScrollDirection(String scroll_direction,
                              ScrollTimeline::ScrollDirection& result) {
   // TODO(smcgruer): Support 'auto' value.
@@ -34,7 +42,7 @@ ScrollTimeline* ScrollTimeline::Create(Document& document,
 
   ScrollDirection orientation;
   if (!StringToScrollDirection(options.orientation(), orientation)) {
-    exception_state.ThrowDOMException(kNotSupportedError,
+    exception_state.ThrowDOMException(DOMExceptionCode::kNotSupportedError,
                                       "Invalid orientation");
     return nullptr;
   }
@@ -42,27 +50,28 @@ ScrollTimeline* ScrollTimeline::Create(Document& document,
   // TODO(smcgruer): Support 'auto' value.
   if (options.timeRange().IsScrollTimelineAutoKeyword()) {
     exception_state.ThrowDOMException(
-        kNotSupportedError, "'auto' value for timeRange not yet supported");
+        DOMExceptionCode::kNotSupportedError,
+        "'auto' value for timeRange not yet supported");
     return nullptr;
   }
 
-  return new ScrollTimeline(document, scroll_source, orientation,
+  return new ScrollTimeline(scroll_source, orientation,
                             options.timeRange().GetAsDouble());
 }
 
-ScrollTimeline::ScrollTimeline(const Document& document,
-                               Element* scroll_source,
+ScrollTimeline::ScrollTimeline(Element* scroll_source,
                                ScrollDirection orientation,
                                double time_range)
     : scroll_source_(scroll_source),
       orientation_(orientation),
       time_range_(time_range) {
+  DCHECK(scroll_source_);
 }
 
 double ScrollTimeline::currentTime(bool& is_null) {
   // 1. If scrollSource does not currently have a CSS layout box, or if its
   // layout box is not a scroll container, return an unresolved time value.
-  LayoutBox* layout_box = scroll_source_->GetLayoutBox();
+  LayoutBox* layout_box = ResolvedScrollSource()->GetLayoutBox();
   if (!layout_box || !layout_box->HasOverflowClip()) {
     is_null = false;
     return std::numeric_limits<double>::quiet_NaN();
@@ -140,9 +149,57 @@ void ScrollTimeline::timeRange(DoubleOrScrollTimelineAutoKeyword& result) {
   result.SetDouble(time_range_);
 }
 
+Node* ScrollTimeline::ResolvedScrollSource() const {
+  // When in quirks mode we need the style to be clean, so we don't use
+  // |ScrollingElementNoLayout|.
+  if (scroll_source_ == scroll_source_->GetDocument().scrollingElement())
+    return &scroll_source_->GetDocument();
+  return scroll_source_;
+}
+
+void ScrollTimeline::AttachAnimation() {
+  Node* resolved_scroll_source = ResolvedScrollSource();
+  GetActiveScrollTimelineSet().insert(resolved_scroll_source);
+  if (resolved_scroll_source->IsElementNode())
+    ToElement(resolved_scroll_source)->SetNeedsCompositingUpdate();
+  resolved_scroll_source->GetDocument()
+      .GetLayoutView()
+      ->Compositor()
+      ->SetNeedsCompositingUpdate(kCompositingUpdateRebuildTree);
+  LayoutBoxModelObject* object = scroll_source_->GetLayoutBoxModelObject();
+  if (object && object->HasLayer())
+    object->Layer()->SetNeedsCompositingInputsUpdate();
+  if (object)
+    object->SetNeedsPaintPropertyUpdate();
+}
+
+void ScrollTimeline::DetachAnimation() {
+  Node* resolved_scroll_source = ResolvedScrollSource();
+  GetActiveScrollTimelineSet().erase(resolved_scroll_source);
+  if (resolved_scroll_source->IsElementNode())
+    ToElement(resolved_scroll_source)->SetNeedsCompositingUpdate();
+  auto* layout_view = resolved_scroll_source->GetDocument().GetLayoutView();
+  if (layout_view && layout_view->Compositor()) {
+    layout_view->Compositor()->SetNeedsCompositingUpdate(
+        kCompositingUpdateRebuildTree);
+
+    LayoutBoxModelObject* object = scroll_source_->GetLayoutBoxModelObject();
+    if (object && object->HasLayer())
+      object->Layer()->SetNeedsCompositingInputsUpdate();
+    if (object)
+      object->SetNeedsPaintPropertyUpdate();
+  }
+}
+
 void ScrollTimeline::Trace(blink::Visitor* visitor) {
   visitor->Trace(scroll_source_);
   AnimationTimeline::Trace(visitor);
+}
+
+bool ScrollTimeline::HasActiveScrollTimeline(Node* node) {
+  ActiveScrollTimelineSet& set = GetActiveScrollTimelineSet();
+  auto it = set.find(node);
+  return it != set.end() && it->value > 0;
 }
 
 }  // namespace blink

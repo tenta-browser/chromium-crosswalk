@@ -7,7 +7,7 @@
 #include "base/files/file_util.h"
 #include "base/path_service.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/task_scheduler/task_scheduler.h"
+#include "base/task/task_scheduler/task_scheduler.h"
 #include "base/test/test_reg_util_win.h"
 #include "base/threading/thread_restrictions.h"
 #include "base/version.h"
@@ -34,7 +34,7 @@ class UserDataDowngradeBrowserTestBase : public InProcessBrowserTest {
 
   // InProcessBrowserTest:
   bool SetUpUserDataDirectory() override {
-    if (!PathService::Get(chrome::DIR_USER_DATA, &user_data_dir_))
+    if (!base::PathService::Get(chrome::DIR_USER_DATA, &user_data_dir_))
       return false;
     if (!CreateTemporaryFileInDir(user_data_dir_, &other_file_))
       return false;

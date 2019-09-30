@@ -13,8 +13,6 @@
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/inspector/console_message.h"
 #include "third_party/blink/renderer/core/loader/document_loader.h"
-#include "third_party/blink/renderer/core/workers/worker_or_worklet_global_scope.h"
-#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "third_party/blink/renderer/platform/weborigin/kurl.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_builder.h"
 
@@ -69,12 +67,6 @@ bool SubresourceFilter::AllowLoad(
 }
 
 bool SubresourceFilter::AllowWebSocketConnection(const KURL& url) {
-  // WebSocket is handled via document on the main thread unless the
-  // experimental off-main-thread WebSocket flag is enabled. See
-  // https://crbug.com/825740 for the details of the off-main-thread WebSocket.
-  DCHECK(execution_context_->IsDocument() ||
-         RuntimeEnabledFeatures::OffMainThreadWebSocketEnabled());
-
   WebDocumentSubresourceFilter::LoadPolicy load_policy =
       subresource_filter_->GetLoadPolicyForWebSocketConnect(url);
 
@@ -91,13 +83,12 @@ bool SubresourceFilter::AllowWebSocketConnection(const KURL& url) {
   return load_policy != WebDocumentSubresourceFilter::kDisallow;
 }
 
-bool SubresourceFilter::GetIsAssociatedWithAdSubframe() {
-  return subresource_filter_->GetIsAssociatedWithAdSubframe();
-}
-
 bool SubresourceFilter::IsAdResource(
     const KURL& resource_url,
     WebURLRequest::RequestContext request_context) {
+  if (subresource_filter_->GetIsAssociatedWithAdSubframe())
+    return true;
+
   WebDocumentSubresourceFilter::LoadPolicy load_policy;
   if (last_resource_check_result_.first ==
       std::make_pair(resource_url, request_context)) {
@@ -107,10 +98,7 @@ bool SubresourceFilter::IsAdResource(
         subresource_filter_->GetLoadPolicy(resource_url, request_context);
   }
 
-  // If the subresource cannot be identified as an ad via load_policy, check if
-  // its frame is identified as an ad.
-  return load_policy != WebDocumentSubresourceFilter::kAllow ||
-         subresource_filter_->GetIsAssociatedWithAdSubframe();
+  return load_policy != WebDocumentSubresourceFilter::kAllow;
 }
 
 void SubresourceFilter::ReportLoad(

@@ -19,6 +19,7 @@
 #include "net/base/ip_address.h"
 #include "net/base/ip_endpoint.h"
 #include "net/base/net_errors.h"
+#include "net/base/network_interfaces.h"
 #include "net/base/test_completion_callback.h"
 #include "net/log/net_log_event_type.h"
 #include "net/log/net_log_source.h"
@@ -29,7 +30,7 @@
 #include "net/socket/udp_client_socket.h"
 #include "net/socket/udp_server_socket.h"
 #include "net/test/gtest_util.h"
-#include "net/test/net_test_suite.h"
+#include "net/test/test_with_scoped_task_environment.h"
 #include "net/traffic_annotation/network_traffic_annotation_test_helper.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -53,9 +54,9 @@ namespace net {
 
 namespace {
 
-class UDPSocketTest : public PlatformTest {
+class UDPSocketTest : public PlatformTest, public WithScopedTaskEnvironment {
  public:
-  UDPSocketTest() : buffer_(new IOBufferWithSize(kMaxRead)) {}
+  UDPSocketTest() : buffer_(base::MakeRefCounted<IOBufferWithSize>(kMaxRead)) {}
 
   // Blocks until data is read from the socket.
   std::string RecvFromSocket(UDPServerSocket* socket) {
@@ -80,7 +81,8 @@ class UDPSocketTest : public PlatformTest {
   int SendToSocket(UDPServerSocket* socket,
                    std::string msg,
                    const IPEndPoint& address) {
-    scoped_refptr<StringIOBuffer> io_buffer = new StringIOBuffer(msg);
+    scoped_refptr<StringIOBuffer> io_buffer =
+        base::MakeRefCounted<StringIOBuffer>(msg);
     TestCompletionCallback callback;
     int rv = socket->SendTo(io_buffer.get(), io_buffer->size(), address,
                             callback.callback());
@@ -99,7 +101,8 @@ class UDPSocketTest : public PlatformTest {
 
   // Writes specified message to the socket.
   int WriteSocket(UDPClientSocket* socket, const std::string& msg) {
-    scoped_refptr<StringIOBuffer> io_buffer(new StringIOBuffer(msg));
+    scoped_refptr<StringIOBuffer> io_buffer =
+        base::MakeRefCounted<StringIOBuffer>(msg);
     TestCompletionCallback callback;
     int rv = socket->Write(io_buffer.get(), io_buffer->size(),
                            callback.callback(), TRAFFIC_ANNOTATION_FOR_TESTS);
@@ -131,6 +134,8 @@ class UDPSocketTest : public PlatformTest {
   scoped_refptr<IOBufferWithSize> buffer_;
   IPEndPoint recv_from_address_;
 };
+
+const int UDPSocketTest::kMaxRead;
 
 void ReadCompleteCallback(int* result_out, base::Closure callback, int result) {
   *result_out = result;
@@ -271,7 +276,8 @@ TEST_F(UDPSocketTest, PartialRecv) {
   // Read just 2 bytes. Read() is expected to return the first 2 bytes from the
   // packet and discard the rest.
   const int kPartialReadSize = 2;
-  scoped_refptr<IOBuffer> buffer = new IOBuffer(kPartialReadSize);
+  scoped_refptr<IOBuffer> buffer =
+      base::MakeRefCounted<IOBuffer>(kPartialReadSize);
   int rv =
       server_socket.RecvFrom(buffer.get(), kPartialReadSize,
                              &recv_from_address_, recv_callback.callback());
@@ -289,12 +295,15 @@ TEST_F(UDPSocketTest, PartialRecv) {
   EXPECT_EQ(second_packet, received);
 }
 
-#if defined(OS_MACOSX) || defined(OS_ANDROID) || defined(OS_FUCHSIA)
+#if defined(OS_MACOSX) || defined(OS_ANDROID) || defined(OS_FUCHSIA) || \
+    defined(OS_CHROMEOS)
 // - MacOS: requires root permissions on OSX 10.7+.
 // - Android: devices attached to testbots don't have default network, so
 // broadcasting to 255.255.255.255 returns error -109 (Address not reachable).
 // crbug.com/139144.
 // - Fuchsia: TODO(fuchsia): broadcast support is not implemented yet.
+// - ChromeOS: QEMU's user-mode networking doesn't handle broadcasts.
+//   https://crbug.com/852590
 #define MAYBE_LocalBroadcast DISABLED_LocalBroadcast
 #else
 #define MAYBE_LocalBroadcast LocalBroadcast
@@ -348,14 +357,7 @@ TEST_F(UDPSocketTest, MAYBE_LocalBroadcast) {
 // random, but they are enough to protect from most common non-random port
 // allocation strategies (e.g. counter, pool of available ports, etc.) False
 // positive result is theoretically possible, but its probability is negligible.
-//
-// Sometimes times outs on Fuchsia on bots. https://crbug.com/826952
-#if defined(OS_FUCHSIA)
-#define MAYBE_ConnectRandomBind DISABLED_ConnectRandomBind
-#else
-#define MAYBE_ConnectRandomBind ConnectRandomBind
-#endif
-TEST_F(UDPSocketTest, MAYBE_ConnectRandomBind) {
+TEST_F(UDPSocketTest, ConnectRandomBind) {
   const int kIterations = 1000;
 
   std::vector<int> used_ports;
@@ -642,7 +644,11 @@ TEST_F(UDPSocketTest, MAYBE_JoinMulticastGroup) {
   // Fuchsia currently doesn't support automatic interface selection for
   // multicast, so interface index needs to be set explicitly.
   // See https://fuchsia.atlassian.net/browse/NET-195 .
-  EXPECT_THAT(socket.SetMulticastInterface(1), IsOk());
+  NetworkInterfaceList interfaces;
+  ASSERT_TRUE(GetNetworkList(&interfaces, 0));
+  ASSERT_FALSE(interfaces.empty());
+  EXPECT_THAT(socket.SetMulticastInterface(interfaces[0].interface_index),
+              IsOk());
 #endif  // defined(OS_FUCHSIA)
 
   EXPECT_THAT(socket.Bind(bind_address), IsOk());

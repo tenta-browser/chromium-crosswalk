@@ -20,7 +20,7 @@
         {
           "object": "LayoutBlockFlow (positioned) DIV class='absolute green'",
           "rect": [100, 1150, 100, 100],
-          "reason": "appeared"
+          "reason": "chunk appeared"
         }
       ],
       "transform": 1
@@ -36,16 +36,6 @@
         [0, -1000, 0, 1]
       ],
       "flattenInheritedTransform": false
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutBlockFlow (positioned) DIV id='moveMe' class='fixed clipped'",
-      "reason": "style change"
-    },
-    {
-      "object": "LayoutBlockFlow (positioned) DIV class='absolute green'",
-      "reason": "style change"
     }
   ]
 }

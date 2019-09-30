@@ -10,7 +10,7 @@
 #include "base/feature_list.h"
 #include "base/logging.h"
 #include "ios/chrome/app/tests_hook.h"
-#import "ios/chrome/browser/ui/toolbar/public/toolbar_controller_base_feature.h"
+#import "ios/chrome/browser/ui/toolbar/public/features.h"
 #import "ios/chrome/browser/ui/ui_feature_flags.h"
 #import "ios/chrome/browser/ui/uikit_ui_util.h"
 #include "ui/base/device_form_factor.h"
@@ -53,12 +53,24 @@ CGFloat CurrentScreenWidth() {
 
 bool IsIPhoneX() {
   UIUserInterfaceIdiom idiom = [[UIDevice currentDevice] userInterfaceIdiom];
+  CGFloat height = CGRectGetHeight([[UIScreen mainScreen] nativeBounds]);
   return (idiom == UIUserInterfaceIdiomPhone &&
-          CGRectGetHeight([[UIScreen mainScreen] nativeBounds]) == 2436);
+          (height == 2436 || height == 2688 || height == 1792));
+}
+
+bool IsRefreshInfobarEnabled() {
+  return base::FeatureList::IsEnabled(kUIRefreshPhase1);
+}
+
+// TODO(crbug.com/893314) : Remove this flag.
+bool IsClosingLastIncognitoTabEnabled() {
+  return base::FeatureList::IsEnabled(kClosingLastIncognitoTab);
 }
 
 bool IsRefreshLocationBarEnabled() {
-  return base::FeatureList::IsEnabled(kUIRefreshLocationBar);
+  // Refresh location bar requires UIRefreshPhase1 as well.
+  return base::FeatureList::IsEnabled(kUIRefreshLocationBar) &&
+         IsUIRefreshPhase1Enabled();
 }
 
 bool IsRefreshPopupPresentationEnabled() {
@@ -91,6 +103,10 @@ CGFloat StatusBarHeight() {
                              .keyWindow.traitCollection.verticalSizeClass ==
                          UIUserInterfaceSizeClassCompact;
   return isCompactHeight ? 0 : 20;
+}
+
+CGFloat DeviceCornerRadius() {
+  return IsIPhoneX() ? 40.0 : 0.0;
 }
 
 CGFloat AlignValueToPixel(CGFloat value) {

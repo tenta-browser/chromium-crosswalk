@@ -34,8 +34,8 @@ class VIEWS_EXPORT DesktopWindowTreeHostPlatform
   void Close() override;
   void CloseNow() override;
   aura::WindowTreeHost* AsWindowTreeHost() override;
-  void ShowWindowWithState(ui::WindowShowState show_state) override;
-  void ShowMaximizedWithBounds(const gfx::Rect& restored_bounds) override;
+  void Show(ui::WindowShowState show_state,
+            const gfx::Rect& restore_bounds) override;
   bool IsVisible() const override;
   void SetSize(const gfx::Size& size) override;
   void StackAbove(aura::Window* window) override;
@@ -77,6 +77,7 @@ class VIEWS_EXPORT DesktopWindowTreeHostPlatform
   void SetFullscreen(bool fullscreen) override;
   bool IsFullscreen() const override;
   void SetOpacity(float opacity) override;
+  void SetAspectRatio(const gfx::SizeF& aspect_ratio) override {}
   void SetWindowIcons(const gfx::ImageSkia& window_icon,
                       const gfx::ImageSkia& app_icon) override;
   void InitModalType(ui::ModalType modal_type) override;
@@ -90,11 +91,17 @@ class VIEWS_EXPORT DesktopWindowTreeHostPlatform
 
   // WindowTreeHostPlatform:
   void OnClosed() override;
+  void OnWindowStateChanged(ui::PlatformWindowState new_state) override;
   void OnCloseRequest() override;
   void OnActivationChanged(bool active) override;
 
  private:
+  void Relayout();
+
   Widget* GetWidget();
+
+  gfx::Rect ToDIPRect(const gfx::Rect& rect_in_pixels) const;
+  gfx::Rect ToPixelRect(const gfx::Rect& rect_in_dip) const;
 
   internal::NativeWidgetDelegate* const native_widget_delegate_;
   DesktopNativeWidgetAura* const desktop_native_widget_aura_;

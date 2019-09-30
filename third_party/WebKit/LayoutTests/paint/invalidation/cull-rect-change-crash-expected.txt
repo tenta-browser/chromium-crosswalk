@@ -20,15 +20,9 @@
         {
           "object": "LayoutSVGForeignObject foreignObject",
           "rect": [0, 8, 1, 1],
-          "reason": "disappeared"
+          "reason": "paint property change"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutSVGContainer g id='g'",
-      "reason": "full"
     }
   ]
 }

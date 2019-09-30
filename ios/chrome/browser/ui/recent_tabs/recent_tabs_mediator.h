@@ -10,6 +10,7 @@
 #import "ios/chrome/browser/sync/synced_sessions_bridge.h"
 #import "ios/chrome/browser/ui/ntp/recent_tabs/closed_tabs_observer_bridge.h"
 #import "ios/chrome/browser/ui/ntp/recent_tabs/legacy_recent_tabs_table_view_controller_delegate.h"
+#import "ios/chrome/browser/ui/recent_tabs/recent_tabs_image_data_source.h"
 
 namespace ios {
 class ChromeBrowserState;
@@ -25,14 +26,8 @@ class ChromeBrowserState;
 // accordingly.
 @interface RecentTabsMediator
     : NSObject<ClosedTabsObserving,
-               SyncedSessionsObserver,
-               LegacyRecentTabsTableViewControllerDelegate>
-
-// Starts observing the he user's signed-in and chrome-sync states.
-- (void)initObservers;
-
-// Disconnects the mediator from all observers.
-- (void)disconnect;
+               LegacyRecentTabsTableViewControllerDelegate,
+               RecentTabsImageDataSource>
 
 // The consumer for this object. This can change during the lifetime of this
 // object and may be nil.
@@ -40,6 +35,17 @@ class ChromeBrowserState;
 
 // The coordinator's BrowserState.
 @property(nonatomic, assign) ios::ChromeBrowserState* browserState;
+
+// Starts observing the he user's signed-in and chrome-sync states.
+- (void)initObservers;
+
+// Disconnects the mediator from all observers.
+- (void)disconnect;
+
+// Configures the consumer with current data. Intended to be called immediately
+// after initialization.
+- (void)configureConsumer;
+
 @end
 
 #endif  // IOS_CHROME_BROWSER_UI_RECENT_TABS_RECENT_TABS_MEDIATOR_H_

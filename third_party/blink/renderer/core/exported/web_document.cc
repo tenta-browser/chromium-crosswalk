@@ -37,7 +37,6 @@
 #include "third_party/blink/public/web/web_element.h"
 #include "third_party/blink/public/web/web_element_collection.h"
 #include "third_party/blink/public/web/web_form_element.h"
-#include "third_party/blink/renderer/bindings/core/v8/exception_state.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_value.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_element_registration_options.h"
 #include "third_party/blink/renderer/core/css/css_selector_watch.h"
@@ -48,6 +47,8 @@
 #include "third_party/blink/renderer/core/dom/document_type.h"
 #include "third_party/blink/renderer/core/dom/element.h"
 #include "third_party/blink/renderer/core/dom/events/event.h"
+#include "third_party/blink/renderer/core/editing/ephemeral_range.h"
+#include "third_party/blink/renderer/core/editing/iterators/text_iterator.h"
 #include "third_party/blink/renderer/core/frame/web_local_frame_impl.h"
 #include "third_party/blink/renderer/core/html/forms/html_form_element.h"
 #include "third_party/blink/renderer/core/html/html_all_collection.h"
@@ -59,6 +60,7 @@
 #include "third_party/blink/renderer/core/layout/layout_object.h"
 #include "third_party/blink/renderer/core/layout/layout_view.h"
 #include "third_party/blink/renderer/core/loader/document_loader.h"
+#include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/bindings/script_state.h"
 #include "third_party/blink/renderer/platform/weborigin/security_origin.h"
 #include "v8/include/v8.h"
@@ -106,7 +108,7 @@ WebString WebDocument::GetReferrer() const {
   return ConstUnwrap<Document>()->referrer();
 }
 
-WebColor WebDocument::ThemeColor() const {
+SkColor WebDocument::ThemeColor() const {
   return ConstUnwrap<Document>()->ThemeColor().Rgb();
 }
 
@@ -156,9 +158,17 @@ WebString WebDocument::Title() const {
 }
 
 WebString WebDocument::ContentAsTextForTesting() const {
-  if (Element* document_element = ConstUnwrap<Document>()->documentElement())
-    return WebString(document_element->innerText());
-  return WebString();
+  Element* document_element = ConstUnwrap<Document>()->documentElement();
+  if (!document_element)
+    return WebString();
+  // TODO(editing-dev): We should use |Element::innerText()|.
+  const_cast<Document*>(ConstUnwrap<Document>())
+      ->UpdateStyleAndLayoutIgnorePendingStylesheetsForNode(document_element);
+  if (!document_element->GetLayoutObject())
+    return document_element->textContent(true);
+  return WebString(
+      PlainText(EphemeralRange::RangeOfContents(*document_element),
+                TextIteratorBehavior::Builder().SetForInnerText(true).Build()));
 }
 
 WebElementCollection WebDocument::All() {

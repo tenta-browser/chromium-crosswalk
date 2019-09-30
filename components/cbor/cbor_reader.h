@@ -69,25 +69,6 @@ class CBOR_EXPORT CBORReader {
     UNKNOWN_ERROR,
   };
 
-  // Encapsulates information extracted from the header of a CBOR data item,
-  // which consists of the initial byte, and a variable-length-encoded integer
-  // (if any).
-  //
-  // TODO(crbug.com/811717): This is an CBORReader internal detail which should
-  // not be exposed outside. We should switch to an event-based interface
-  // before adding another customer.
-  struct CBOR_EXPORT DataItemHeader {
-    // The major type decoded from the initial byte.
-    CBORValue::Type type;
-
-    // The raw 5-bit additional information from the initial byte.
-    uint8_t additional_info;
-
-    // The integer |value| decoded from the |additional_info| and the
-    // variable-length-encoded integer, if any.
-    uint64_t value;
-  };
-
   // CBOR nested depth sufficient for most use cases.
   static const int kCBORMaxDepth = 16;
 
@@ -112,23 +93,27 @@ class CBOR_EXPORT CBORReader {
                                         DecoderError* error_code_out = nullptr,
                                         int max_nesting_level = kCBORMaxDepth);
 
-  // Reads and parses the header of CBOR data item from |input_data|. Optional
-  // |error_code_out| can be provided by the caller to obtain additional
-  // information about decoding failures, which is always available if an empty
-  // value is returned. Never fails with EXTRANEOUS_DATA, but informs the
-  // caller of how many bytes were consumed through |num_bytes_consumed|, which
-  // is set to zero on error.
-  static base::Optional<DataItemHeader> ReadDataItemHeader(
-      base::span<const uint8_t> input_data,
-      size_t* num_bytes_consumed = nullptr,
-      DecoderError* error_code_out = nullptr);
-
   // Translates errors to human-readable error messages.
   static const char* ErrorCodeToString(DecoderError error_code);
 
  private:
-  CBORReader(base::span<const uint8_t>::const_iterator it,
-             const base::span<const uint8_t>::const_iterator end);
+  explicit CBORReader(base::span<const uint8_t> data);
+
+  // Encapsulates information extracted from the header of a CBOR data item,
+  // which consists of the initial byte, and a variable-length-encoded integer
+  // (if any).
+  struct DataItemHeader {
+    // The major type decoded from the initial byte.
+    CBORValue::Type type;
+
+    // The raw 5-bit additional information from the initial byte.
+    uint8_t additional_info;
+
+    // The integer |value| decoded from the |additional_info| and the
+    // variable-length-encoded integer, if any.
+    uint64_t value;
+  };
+
   base::Optional<DataItemHeader> DecodeDataItemHeader();
   base::Optional<CBORValue> DecodeCompleteDataItem(int max_nesting_level);
   base::Optional<CBORValue> DecodeValueToNegative(uint64_t value);
@@ -141,18 +126,17 @@ class CBOR_EXPORT CBORReader {
                                              int max_nesting_level);
   base::Optional<CBORValue> ReadMapContent(const DataItemHeader& header,
                                            int max_nesting_level);
-  bool CanConsume(uint64_t bytes);
+  base::Optional<uint8_t> ReadByte();
+  base::Optional<base::span<const uint8_t>> ReadBytes(uint64_t num_bytes);
   bool HasValidUTF8Format(const std::string& string_data);
   bool CheckOutOfOrderKey(const CBORValue& new_key, CBORValue::MapValue* map);
   bool CheckMinimalEncoding(uint8_t additional_bytes, uint64_t uint_data);
 
   DecoderError GetErrorCode();
 
-  size_t num_bytes_consumed() const { return it_ - begin_; }
+  size_t num_bytes_remaining() const { return rest_.size(); }
 
-  const base::span<const uint8_t>::const_iterator begin_;
-  base::span<const uint8_t>::const_iterator it_;
-  const base::span<const uint8_t>::const_iterator end_;
+  base::span<const uint8_t> rest_;
   DecoderError error_code_;
 
   DISALLOW_COPY_AND_ASSIGN(CBORReader);

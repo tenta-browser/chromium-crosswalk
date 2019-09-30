@@ -24,23 +24,17 @@ const int kBlankCharactersThreshold = 200;
 
 }  // namespace
 
+constexpr TimeDelta FirstMeaningfulPaintDetector::kNetwork2QuietWindowTimeout;
+constexpr TimeDelta FirstMeaningfulPaintDetector::kNetwork0QuietWindowTimeout;
+
 FirstMeaningfulPaintDetector& FirstMeaningfulPaintDetector::From(
     Document& document) {
   return PaintTiming::From(document).GetFirstMeaningfulPaintDetector();
 }
 
 FirstMeaningfulPaintDetector::FirstMeaningfulPaintDetector(
-    PaintTiming* paint_timing,
-    Document& document)
-    : paint_timing_(paint_timing),
-      network0_quiet_timer_(
-          document.GetTaskRunner(TaskType::kUnspecedTimer),
-          this,
-          &FirstMeaningfulPaintDetector::Network0QuietTimerFired),
-      network2_quiet_timer_(
-          document.GetTaskRunner(TaskType::kUnspecedTimer),
-          this,
-          &FirstMeaningfulPaintDetector::Network2QuietTimerFired) {}
+    PaintTiming* paint_timing)
+    : paint_timing_(paint_timing) {}
 
 Document* FirstMeaningfulPaintDetector::GetDocument() {
   return paint_timing_->GetSupplementable();
@@ -113,42 +107,10 @@ void FirstMeaningfulPaintDetector::NotifyInputEvent() {
   had_user_input_ = kHadUserInput;
 }
 
-int FirstMeaningfulPaintDetector::ActiveConnections() {
-  DCHECK(GetDocument());
-  ResourceFetcher* fetcher = GetDocument()->Fetcher();
-  return fetcher->BlockingRequestCount() + fetcher->NonblockingRequestCount();
-}
-
-// This function is called when the number of active connections is decreased.
-void FirstMeaningfulPaintDetector::CheckNetworkStable() {
-  DCHECK(GetDocument());
-  if (!GetDocument()->HasFinishedParsing())
-    return;
-
-  SetNetworkQuietTimers(ActiveConnections());
-}
-
-void FirstMeaningfulPaintDetector::SetNetworkQuietTimers(
-    int active_connections) {
-  if (!network2_quiet_reached_ && active_connections <= 2) {
-    // If activeConnections < 2 and the timer is already running, current
-    // 2-quiet window continues; the timer shouldn't be restarted.
-    if (active_connections == 2 || !network2_quiet_timer_.IsActive()) {
-      network2_quiet_timer_.StartOneShot(kNetwork2QuietWindowSeconds,
-                                         FROM_HERE);
-    }
-  }
-  if (!network0_quiet_reached_ && active_connections == 0) {
-    // This restarts 0-quiet timer if it's already running.
-    network0_quiet_timer_.StartOneShot(kNetwork0QuietWindowSeconds, FROM_HERE);
-  }
-}
-
-void FirstMeaningfulPaintDetector::Network0QuietTimerFired(TimerBase*) {
-  if (!GetDocument() || network0_quiet_reached_ || ActiveConnections() > 0 ||
-      paint_timing_->FirstContentfulPaintRendered().is_null())
-    return;
+void FirstMeaningfulPaintDetector::OnNetwork0Quiet() {
   network0_quiet_reached_ = true;
+  if (!GetDocument() || paint_timing_->FirstContentfulPaintRendered().is_null())
+    return;
 
   if (!provisional_first_meaningful_paint_.is_null()) {
     // Enforce FirstContentfulPaint <= FirstMeaningfulPaint.
@@ -159,8 +121,8 @@ void FirstMeaningfulPaintDetector::Network0QuietTimerFired(TimerBase*) {
   ReportHistograms();
 }
 
-void FirstMeaningfulPaintDetector::Network2QuietTimerFired(TimerBase*) {
-  if (!GetDocument() || network2_quiet_reached_ || ActiveConnections() > 2 ||
+void FirstMeaningfulPaintDetector::OnNetwork2Quiet() {
+  if (!GetDocument() || network2_quiet_reached_ ||
       paint_timing_->FirstContentfulPaintRendered().is_null())
     return;
   network2_quiet_reached_ = true;
@@ -254,7 +216,7 @@ void FirstMeaningfulPaintDetector::RegisterNotifySwapTime(PaintEvent event) {
 void FirstMeaningfulPaintDetector::ReportSwapTime(
     PaintEvent event,
     WebLayerTreeView::SwapResult result,
-    double timestamp) {
+    base::TimeTicks timestamp) {
   DCHECK(event == PaintEvent::kProvisionalFirstMeaningfulPaint);
   DCHECK_GT(outstanding_swap_promise_count_, 0U);
   --outstanding_swap_promise_count_;
@@ -272,9 +234,10 @@ void FirstMeaningfulPaintDetector::ReportSwapTime(
   // TODO(crbug.com/738235): Consider not reporting any timestamp when failing
   // for reasons other than kDidNotSwapSwapFails.
   paint_timing_->ReportSwapResultHistogram(result);
-  provisional_first_meaningful_paint_swap_ = TimeTicksFromSeconds(timestamp);
+  provisional_first_meaningful_paint_swap_ = timestamp;
 
-  probe::paintTiming(GetDocument(), "firstMeaningfulPaintCandidate", timestamp);
+  probe::paintTiming(GetDocument(), "firstMeaningfulPaintCandidate",
+                     TimeTicksInSeconds(timestamp));
 
   // Ignore the first meaningful paint candidate as this generally is the first
   // contentful paint itself.
@@ -304,7 +267,6 @@ void FirstMeaningfulPaintDetector::SetFirstMeaningfulPaint(
     TimeTicks stamp,
     TimeTicks swap_stamp) {
   DCHECK(paint_timing_->FirstMeaningfulPaint().is_null());
-  DCHECK_GE(swap_stamp, stamp);
   DCHECK(!swap_stamp.is_null());
   DCHECK(network2_quiet_reached_);
 

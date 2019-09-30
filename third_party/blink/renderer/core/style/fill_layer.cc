@@ -364,16 +364,6 @@ bool FillLayer::ClipOccludesNextLayers() const {
   return Clip() == ThisOrNextLayersClipMax();
 }
 
-bool FillLayer::ContainsImage(StyleImage* s) const {
-  if (!s)
-    return false;
-  if (image_ && *s == *image_)
-    return true;
-  if (next_)
-    return next_->ContainsImage(s);
-  return false;
-}
-
 bool FillLayer::ImagesAreLoaded() const {
   const FillLayer* curr;
   for (curr = this; curr; curr = curr->Next()) {
@@ -386,9 +376,8 @@ bool FillLayer::ImagesAreLoaded() const {
 
 bool FillLayer::ImageIsOpaque(const Document& document,
                               const ComputedStyle& style) const {
-  // Returns true if we have an image that will cover the content below it when
-  // m_composite == CompositeSourceOver && m_blendMode == WebBlendModeNormal.
-  // Otherwise false.
+  // Returns whether we have an image that will cover the content below it when
+  // composite_ == CompositeSourceOver && blend_mode_ == BlendMode::kNormal.
   return image_->KnownToBeOpaque(document, style) &&
          !image_->ImageSize(document, style.EffectiveZoom(), LayoutSize())
               .IsEmpty();
@@ -417,7 +406,7 @@ bool FillLayer::ImageOccludesNextLayers(const Document& document,
     case kCompositeCopy:
       return ImageTilesLayer();
     case kCompositeSourceOver:
-      return (blend_mode_ == static_cast<unsigned>(WebBlendMode::kNormal)) &&
+      return (blend_mode_ == static_cast<unsigned>(BlendMode::kNormal)) &&
              ImageTilesLayer() && ImageIsOpaque(document, style);
     default: {}
   }

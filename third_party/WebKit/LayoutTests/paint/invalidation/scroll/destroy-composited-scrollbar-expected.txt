@@ -27,24 +27,14 @@
         {
           "object": "LayoutBlockFlow (positioned) DIV",
           "rect": [0, 0, 200, 200],
-          "reason": "full"
+          "reason": "full layer"
         },
         {
           "object": "LayoutBlockFlow (positioned) DIV",
           "rect": [0, 0, 200, 200],
-          "reason": "full"
+          "reason": "full layer"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutBlockFlow (positioned) DIV",
-      "reason": "compositing update"
-    },
-    {
-      "object": "LayoutBlockFlow DIV id='content'",
-      "reason": "compositing update"
     }
   ]
 }

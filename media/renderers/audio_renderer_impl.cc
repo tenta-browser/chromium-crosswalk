@@ -294,8 +294,8 @@ void AudioRendererImpl::DoFlush_Locked() {
   DCHECK_EQ(state_, kFlushed);
 
   ended_timestamp_ = kInfiniteDuration;
-  audio_buffer_stream_->Reset(base::Bind(&AudioRendererImpl::ResetDecoderDone,
-                                         weak_factory_.GetWeakPtr()));
+  audio_buffer_stream_->Reset(base::BindOnce(
+      &AudioRendererImpl::ResetDecoderDone, weak_factory_.GetWeakPtr()));
 }
 
 void AudioRendererImpl::ResetDecoderDone() {
@@ -375,7 +375,14 @@ void AudioRendererImpl::Initialize(DemuxerStream* stream,
   current_decoder_config_ = stream->audio_decoder_config();
   DCHECK(current_decoder_config_.IsValidConfig());
 
+  auto output_device_info = sink_->GetOutputDeviceInfo();
+  const AudioParameters& hw_params = output_device_info.output_params();
+  ChannelLayout hw_channel_layout =
+      hw_params.IsValid() ? hw_params.channel_layout() : CHANNEL_LAYOUT_NONE;
+
   audio_buffer_stream_ = std::make_unique<AudioBufferStream>(
+      std::make_unique<AudioBufferStream::StreamTraits>(media_log_,
+                                                        hw_channel_layout),
       task_runner_, create_audio_decoders_cb_, media_log_);
 
   audio_buffer_stream_->set_config_change_observer(base::Bind(
@@ -385,8 +392,6 @@ void AudioRendererImpl::Initialize(DemuxerStream* stream,
   // failed.
   init_cb_ = BindToCurrentLoop(init_cb);
 
-  auto output_device_info = sink_->GetOutputDeviceInfo();
-  const AudioParameters& hw_params = output_device_info.output_params();
   AudioCodec codec = stream->audio_decoder_config().codec();
   if (auto* mc = GetMediaClient())
     is_passthrough_ = mc->IsSupportedBitstreamAudioCodec(codec);
@@ -438,14 +443,12 @@ void AudioRendererImpl::Initialize(DemuxerStream* stream,
 
     audio_parameters_.Reset(
         format, stream->audio_decoder_config().channel_layout(),
-        stream->audio_decoder_config().samples_per_second(),
-        stream->audio_decoder_config().bits_per_channel(), buffer_size);
+        stream->audio_decoder_config().samples_per_second(), buffer_size);
     buffer_converter_.reset();
   } else if (use_stream_params) {
     audio_parameters_.Reset(AudioParameters::AUDIO_PCM_LOW_LATENCY,
                             stream->audio_decoder_config().channel_layout(),
                             stream->audio_decoder_config().samples_per_second(),
-                            stream->audio_decoder_config().bits_per_channel(),
                             preferred_buffer_size);
     audio_parameters_.set_channels_for_discrete(
         stream->audio_decoder_config().channels());
@@ -509,10 +512,13 @@ void AudioRendererImpl::Initialize(DemuxerStream* stream,
             : stream->audio_decoder_config().channel_layout();
 
     audio_parameters_.Reset(hw_params.format(), renderer_channel_layout,
-                            sample_rate, hw_params.bits_per_sample(),
+                            sample_rate,
                             media::AudioLatency::GetHighLatencyBufferSize(
                                 sample_rate, preferred_buffer_size));
   }
+
+  audio_parameters_.set_effects(audio_parameters_.effects() |
+                                ::media::AudioParameters::MULTIZONE);
 
   audio_parameters_.set_latency_tag(AudioLatency::LATENCY_PLAYBACK);
 
@@ -527,12 +533,14 @@ void AudioRendererImpl::Initialize(DemuxerStream* stream,
       new AudioClock(base::TimeDelta(), audio_parameters_.sample_rate()));
 
   audio_buffer_stream_->Initialize(
-      stream, base::Bind(&AudioRendererImpl::OnAudioBufferStreamInitialized,
-                         weak_factory_.GetWeakPtr()),
-      cdm_context, base::Bind(&AudioRendererImpl::OnStatisticsUpdate,
-                              weak_factory_.GetWeakPtr()),
-      base::Bind(&AudioRendererImpl::OnWaitingForDecryptionKey,
-                 weak_factory_.GetWeakPtr()));
+      stream,
+      base::BindOnce(&AudioRendererImpl::OnAudioBufferStreamInitialized,
+                     weak_factory_.GetWeakPtr()),
+      cdm_context,
+      base::BindRepeating(&AudioRendererImpl::OnStatisticsUpdate,
+                          weak_factory_.GetWeakPtr()),
+      base::BindRepeating(&AudioRendererImpl::OnWaitingForDecryptionKey,
+                          weak_factory_.GetWeakPtr()));
 }
 
 void AudioRendererImpl::OnAudioBufferStreamInitialized(bool success) {
@@ -755,9 +763,13 @@ bool AudioRendererImpl::HandleDecodedBuffer_Locked(
       // Trim off any additional time before the start timestamp.
       const base::TimeDelta trim_time = start_timestamp_ - buffer->timestamp();
       if (trim_time > base::TimeDelta()) {
-        buffer->TrimStart(buffer->frame_count() *
-                          (static_cast<double>(trim_time.InMicroseconds()) /
-                           buffer->duration().InMicroseconds()));
+        const int frames_to_trim = AudioTimestampHelper::TimeToFrames(
+            trim_time, buffer->sample_rate());
+        DVLOG(1) << __func__ << ": Trimming first audio buffer by "
+                 << frames_to_trim << " frames so it starts at "
+                 << start_timestamp_;
+
+        buffer->TrimStart(frames_to_trim);
         buffer->set_timestamp(start_timestamp_);
       }
       // If the entire buffer was trimmed, request a new one.
@@ -817,8 +829,8 @@ void AudioRendererImpl::AttemptRead_Locked() {
     return;
 
   pending_read_ = true;
-  audio_buffer_stream_->Read(base::Bind(&AudioRendererImpl::DecodedAudioReady,
-                                        weak_factory_.GetWeakPtr()));
+  audio_buffer_stream_->Read(base::BindOnce(
+      &AudioRendererImpl::DecodedAudioReady, weak_factory_.GetWeakPtr()));
 }
 
 bool AudioRendererImpl::CanRead_Locked() {

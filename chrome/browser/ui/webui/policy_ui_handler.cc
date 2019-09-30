@@ -18,8 +18,8 @@
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/strings/string16.h"
-#include "base/task_scheduler/post_task.h"
-#include "base/task_scheduler/task_traits.h"
+#include "base/task/post_task.h"
+#include "base/task/task_traits.h"
 #include "base/time/time.h"
 #include "base/values.h"
 #include "build/build_config.h"
@@ -143,6 +143,8 @@ void GetStatusFromCore(const policy::CloudPolicyCore* core,
     dict->SetString("location", policy->annotated_location());
   if (policy && policy->has_directory_api_id())
     dict->SetString("directoryApiId", policy->directory_api_id());
+  if (policy && policy->has_gaia_id())
+    dict->SetString("gaiaId", policy->gaia_id());
 
   base::TimeDelta refresh_interval =
       base::TimeDelta::FromMilliseconds(refresh_scheduler ?
@@ -733,12 +735,11 @@ void PolicyUIHandler::SendPolicyNames() const {
 }
 
 void PolicyUIHandler::SendPolicyValues() const {
-  std::unique_ptr<base::DictionaryValue> all_policies =
-      policy::GetAllPolicyValuesAsDictionary(
-          web_ui()->GetWebContents()->GetBrowserContext(),
-          true /* with_user_policies */, true /* convert_values */);
+  base::Value all_policies = policy::GetAllPolicyValuesAsDictionary(
+      web_ui()->GetWebContents()->GetBrowserContext(),
+      true /* with_user_policies */, true /* convert_values */);
   web_ui()->CallJavascriptFunctionUnsafe("policy.Page.setPolicyValues",
-                                         *all_policies);
+                                         all_policies);
 }
 
 void PolicyUIHandler::SendStatus() const {
@@ -771,20 +772,26 @@ void PolicyUIHandler::HandleInitialized(const base::ListValue* args) {
 
 void PolicyUIHandler::HandleReloadPolicies(const base::ListValue* args) {
 #if defined(OS_CHROMEOS)
-  // Allow user to manually fetch remote commands, in case invalidation
-  // service is not working properly.
-  // TODO(binjin): evaluate and possibly remove this after invalidation
-  // service is landed and tested. http://crbug.com/480982
-  policy::CloudPolicyManager* manager =
+  // Allow user to manually fetch remote commands. Useful for testing or when
+  // the invalidation service is not working properly.
+  policy::CloudPolicyManager* const device_manager =
       g_browser_process->platform_part()
           ->browser_policy_connector_chromeos()
           ->GetDeviceCloudPolicyManager();
-  // Active Directory management has no CloudPolicyManager.
-  if (manager) {
-    policy::RemoteCommandsService* remote_commands_service =
-        manager->core()->remote_commands_service();
-    if (remote_commands_service)
-      remote_commands_service->FetchRemoteCommands();
+  Profile* const profile = Profile::FromWebUI(web_ui());
+  policy::CloudPolicyManager* const user_manager =
+      policy::UserPolicyManagerFactoryChromeOS::GetCloudPolicyManagerForProfile(
+          profile);
+
+  // Fetch both device and user remote commands.
+  for (policy::CloudPolicyManager* manager : {device_manager, user_manager}) {
+    // Active Directory management has no CloudPolicyManager.
+    if (manager) {
+      policy::RemoteCommandsService* const remote_commands_service =
+          manager->core()->remote_commands_service();
+      if (remote_commands_service)
+        remote_commands_service->FetchRemoteCommands();
+    }
   }
 #endif
   GetPolicyService()->RefreshPolicies(base::Bind(
@@ -800,11 +807,11 @@ void PolicyUIHandler::WritePoliciesToJSONFile(
     const base::FilePath& path) const {
   std::string json_policies = policy::GetAllPolicyValuesAsJSON(
       web_ui()->GetWebContents()->GetBrowserContext(),
-      true /* with_user_policies */);
+      true /* with_user_policies */, false /* with device identity */);
 
   base::PostTaskWithTraits(
       FROM_HERE,
-      {base::MayBlock(), base::TaskPriority::BACKGROUND,
+      {base::MayBlock(), base::TaskPriority::BEST_EFFORT,
        base::TaskShutdownBehavior::BLOCK_SHUTDOWN},
       base::BindOnce(&DoWritePoliciesToJSONFile, path, json_policies));
 }

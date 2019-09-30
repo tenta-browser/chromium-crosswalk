@@ -4,16 +4,19 @@
 
 #include "components/feed/core/feed_networking_host.h"
 
+#include <utility>
+
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
-#include "base/test/histogram_tester.h"
+#include "base/test/bind_test_util.h"
+#include "base/test/metrics/histogram_tester.h"
 #include "base/test/test_mock_time_task_runner.h"
 #include "net/http/http_response_headers.h"
 #include "net/http/http_status_code.h"
 #include "net/traffic_annotation/network_traffic_annotation_test_helper.h"
 #include "services/identity/public/cpp/identity_test_environment.h"
-#include "services/network/public/cpp/shared_url_loader_factory.h"
 #include "services/network/public/cpp/url_loader_completion_status.h"
+#include "services/network/public/cpp/weak_wrapper_shared_url_loader_factory.h"
 #include "services/network/test/test_url_loader_factory.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -43,62 +46,6 @@ class MockResponseDoneCallback {
   std::vector<uint8_t> response_bytes;
 };
 
-// Class that wraps a TestURLLoaderFactory and implements the interface of
-// SharedURLLoaderFactory, allowing one to produce SharedURLLoaderFactory
-// instances that can be mocked.
-class TestSharedURLLoaderFactory : public SharedURLLoaderFactory {
- public:
-  void CreateLoaderAndStart(network::mojom::URLLoaderRequest request,
-                            int32_t routing_id,
-                            int32_t request_id,
-                            uint32_t options,
-                            const network::ResourceRequest& url_request,
-                            network::mojom::URLLoaderClientPtr client,
-                            const net::MutableNetworkTrafficAnnotationTag&
-                                traffic_annotation) override {
-    test_factory_.CreateLoaderAndStart(std::move(request), routing_id,
-                                       request_id, options, url_request,
-                                       std::move(client), traffic_annotation);
-  }
-
-  std::unique_ptr<SharedURLLoaderFactoryInfo> Clone() override {
-    NOTREACHED();
-    return nullptr;
-  }
-
-  TestURLLoaderFactory* test_factory() { return &test_factory_; }
-
- protected:
-  ~TestSharedURLLoaderFactory() override = default;
-
- private:
-  TestURLLoaderFactory test_factory_;
-};
-
-// Class that produces a TestSharedURLLoaderFactory instance when asked to
-// create a SharedURLLoaderFactory.
-class TestURLLoaderFactoryInfo : public network::SharedURLLoaderFactoryInfo {
- public:
-  TestURLLoaderFactoryInfo() {
-    loader_factory_ = base::MakeRefCounted<TestSharedURLLoaderFactory>();
-  }
-  ~TestURLLoaderFactoryInfo() override = default;
-
-  TestURLLoaderFactory* GetTestFactory() {
-    return loader_factory_->test_factory();
-  }
-
- protected:
-  // SharedURLLoaderFactoryInfo implementation.
-  scoped_refptr<SharedURLLoaderFactory> CreateFactory() override {
-    return loader_factory_;
-  }
-
- private:
-  scoped_refptr<TestSharedURLLoaderFactory> loader_factory_;
-  DISALLOW_COPY_AND_ASSIGN(TestURLLoaderFactoryInfo);
-};
-
 }  // namespace
 
 class FeedNetworkingHostTest : public testing::Test {
@@ -113,12 +60,12 @@ class FeedNetworkingHostTest : public testing::Test {
   ~FeedNetworkingHostTest() override {}
 
   void SetUp() override {
+    shared_url_loader_factory_ =
+        base::MakeRefCounted<network::WeakWrapperSharedURLLoaderFactory>(
+            &test_factory_);
     net_service_ = std::make_unique<FeedNetworkingHost>(
-        identity_test_env_.identity_manager(), "dummy_api_key");
-  }
-
-  std::unique_ptr<TestURLLoaderFactoryInfo> MakeFactoryInfo() {
-    return std::make_unique<TestURLLoaderFactoryInfo>();
+        identity_test_env_.identity_manager(), "dummy_api_key",
+        shared_url_loader_factory_);
   }
 
   FeedNetworkingHost* service() { return net_service_.get(); }
@@ -129,8 +76,7 @@ class FeedNetworkingHostTest : public testing::Test {
 
   void RunUntilEmpty() { mock_task_runner_->FastForwardUntilNoTasksRemain(); }
 
-  void Respond(TestURLLoaderFactory* loader_factory,
-               const GURL& url,
+  void Respond(const GURL& url,
                const std::string& response_string,
                net::HttpStatusCode code = net::HTTP_OK,
                network::URLLoaderCompletionStatus status =
@@ -142,7 +88,7 @@ class FeedNetworkingHostTest : public testing::Test {
       status.decoded_body_length = response_string.length();
     }
 
-    loader_factory->AddResponse(url, head, response_string, status);
+    test_factory_.AddResponse(url, head, response_string, status);
 
     RunUntilEmpty();
   }
@@ -157,15 +103,11 @@ class FeedNetworkingHostTest : public testing::Test {
     GURL req_url(url_string);
     std::vector<uint8_t> request_body(request_string.begin(),
                                       request_string.end());
-
-    std::unique_ptr<TestURLLoaderFactoryInfo> factory_info = MakeFactoryInfo();
-    TestURLLoaderFactory* test_factory = factory_info->GetTestFactory();
-    service()->Send(std::move(factory_info), req_url, request_type,
-                    request_body,
+    service()->Send(req_url, request_type, request_body,
                     base::BindOnce(&MockResponseDoneCallback::Done,
                                    base::Unretained(done_callback)));
 
-    Respond(test_factory, req_url, response_string, code, status);
+    Respond(req_url, response_string, code, status);
   }
 
   void SendRequestAndValidateResponse(
@@ -186,10 +128,16 @@ class FeedNetworkingHostTest : public testing::Test {
               response_string);
   }
 
+  network::TestURLLoaderFactory* test_factory() {
+    return &test_factory_;
+  }
+
  private:
   scoped_refptr<base::TestMockTimeTaskRunner> mock_task_runner_;
   identity::IdentityTestEnvironment identity_test_env_;
   std::unique_ptr<FeedNetworkingHost> net_service_;
+  network::TestURLLoaderFactory test_factory_;
+  scoped_refptr<network::SharedURLLoaderFactory> shared_url_loader_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(FeedNetworkingHostTest);
 };
@@ -279,8 +227,30 @@ TEST_F(FeedNetworkingHostTest, ShouldReportNonProtocolErrorCodes) {
   }
 }
 
-// TODO(pnoland): Add a test that verifies request headers
-// specify gzip.
+TEST_F(FeedNetworkingHostTest, ShouldSetHeadersCorrectly) {
+  MockResponseDoneCallback done_callback;
+  net::HttpRequestHeaders headers;
+  base::RunLoop interceptor_run_loop;
+  base::HistogramTester histogram_tester;
+
+  test_factory()->SetInterceptor(
+      base::BindLambdaForTesting([&](const network::ResourceRequest& request) {
+        headers = request.headers;
+        interceptor_run_loop.Quit();
+      }));
+
+  SendRequestAndRespond("http://foobar.com/feed", "POST", "", "",
+                      net::HTTP_OK, network::URLLoaderCompletionStatus(),
+                      &done_callback);
+
+  std::string content_encoding;
+  std::string authorization;
+  EXPECT_TRUE(headers.GetHeader("content-encoding", &content_encoding));
+  EXPECT_TRUE(headers.GetHeader("Authorization", &authorization));
+
+  EXPECT_EQ(content_encoding, "gzip");
+  EXPECT_EQ(authorization, "Bearer access_token");
+}
 
 TEST_F(FeedNetworkingHostTest, ShouldReportSizeHistograms) {
   std::string uncompressed_request_string(2048, 'a');
@@ -306,14 +276,12 @@ TEST_F(FeedNetworkingHostTest, CancellationIsSafe) {
   MockResponseDoneCallback done_callback2;
   std::vector<uint8_t> request_body;
 
-  service()->Send(MakeFactoryInfo(), GURL("http://foobar.com/feed"), "POST",
-                  request_body,
+  service()->Send(GURL("http://foobar.com/feed"), "POST", request_body,
                   base::BindOnce(&MockResponseDoneCallback::Done,
                                  base::Unretained(&done_callback)));
 
   identity_env()->SetAutomaticIssueOfAccessTokens(false);
-  service()->Send(MakeFactoryInfo(), GURL("http://foobar.com/feed2"), "POST",
-                  request_body,
+  service()->Send(GURL("http://foobar.com/feed2"), "POST", request_body,
                   base::BindOnce(&MockResponseDoneCallback::Done,
                                  base::Unretained(&done_callback2)));
   RunUntilEmpty();
@@ -325,17 +293,15 @@ TEST_F(FeedNetworkingHostTest, ShouldIncludeAPIKeyForAuthError) {
   MockResponseDoneCallback done_callback;
   base::HistogramTester histogram_tester;
 
-  auto factory_info = MakeFactoryInfo();
-  TestURLLoaderFactory* test_factory = factory_info->GetTestFactory();
-  service()->Send(std::move(factory_info), GURL("http://foobar.com/feed"),
-                  "POST", std::vector<uint8_t>(),
+  service()->Send(GURL("http://foobar.com/feed"), "POST",
+                  std::vector<uint8_t>(),
                   base::BindOnce(&MockResponseDoneCallback::Done,
                                  base::Unretained(&done_callback)));
-  identity_env()->WaitForAccessTokenRequestAndRespondWithError(
+  identity_env()->WaitForAccessTokenRequestIfNecessaryAndRespondWithError(
       GoogleServiceAuthError(
           GoogleServiceAuthError::State::INVALID_GAIA_CREDENTIALS));
 
-  Respond(test_factory, GURL("http://foobar.com/feed?key=dummy_api_key"), "");
+  Respond(GURL("http://foobar.com/feed?key=dummy_api_key"), "");
   EXPECT_TRUE(done_callback.has_run);
 
   EXPECT_THAT(
@@ -353,14 +319,12 @@ TEST_F(FeedNetworkingHostTest, ShouldIncludeAPIKeyForNoSignedInUser) {
   identity_env()->ClearPrimaryAccount();
   MockResponseDoneCallback done_callback;
 
-  auto factory_info = MakeFactoryInfo();
-  TestURLLoaderFactory* test_factory = factory_info->GetTestFactory();
-  service()->Send(std::move(factory_info), GURL("http://foobar.com/feed"),
-                  "POST", std::vector<uint8_t>(),
+  service()->Send(GURL("http://foobar.com/feed"), "POST",
+                  std::vector<uint8_t>(),
                   base::BindOnce(&MockResponseDoneCallback::Done,
                                  base::Unretained(&done_callback)));
 
-  Respond(test_factory, GURL("http://foobar.com/feed?key=dummy_api_key"), "");
+  Respond(GURL("http://foobar.com/feed?key=dummy_api_key"), "");
   EXPECT_TRUE(done_callback.has_run);
 }
 #endif

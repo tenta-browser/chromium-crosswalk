@@ -79,6 +79,7 @@ class CONTENT_EXPORT IndexedDBFactory
       const url::Origin& origin) const = 0;
 
   virtual void ForceClose(const url::Origin& origin) = 0;
+  virtual void ForceSchemaDowngrade(const url::Origin& origin) = 0;
 
   // Called by the IndexedDBContext destructor so the factory can do cleanup.
   virtual void ContextDestroyed() = 0;
@@ -95,6 +96,10 @@ class CONTENT_EXPORT IndexedDBFactory
   virtual void BlobFilesCleaned(const url::Origin& origin) = 0;
 
   virtual size_t GetConnectionCount(const url::Origin& origin) const = 0;
+
+  virtual int64_t GetInMemoryDBSize(const url::Origin& origin) const = 0;
+
+  virtual base::Time GetLastModified(const url::Origin& origin) const = 0;
 
   virtual void NotifyIndexedDBContentChanged(
       const url::Origin& origin,

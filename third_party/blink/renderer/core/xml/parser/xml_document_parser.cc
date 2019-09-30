@@ -28,10 +28,15 @@
 
 #include <libxml/parser.h>
 #include <libxml/parserInternals.h>
+#include <libxml/xmlversion.h>
+#if defined(LIBXML_CATALOG_ENABLED)
+#include <libxml/catalog.h>
+#endif
 #include <libxslt/xslt.h>
 
 #include <memory>
 
+#include "base/auto_reset.h"
 #include "third_party/blink/renderer/core/css/style_engine.h"
 #include "third_party/blink/renderer/core/dom/cdata_section.h"
 #include "third_party/blink/renderer/core/dom/comment.h"
@@ -68,7 +73,6 @@
 #include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "third_party/blink/renderer/platform/shared_buffer.h"
 #include "third_party/blink/renderer/platform/weborigin/security_origin.h"
-#include "third_party/blink/renderer/platform/wtf/auto_reset.h"
 #include "third_party/blink/renderer/platform/wtf/text/utf8.h"
 #include "third_party/blink/renderer/platform/wtf/threading.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
@@ -596,6 +600,8 @@ static void* OpenFunc(const char* uri) {
     ResourceLoaderOptions options;
     options.initiator_info.name = FetchInitiatorTypeNames::xml;
     FetchParameters params(ResourceRequest(url), options);
+    params.MutableResourceRequest().SetFetchRequestMode(
+        network::mojom::FetchRequestMode::kSameOrigin);
     Resource* resource =
         RawResource::FetchSynchronously(params, document->Fetcher());
     if (!resource->ErrorOccurred()) {
@@ -646,6 +652,9 @@ static void InitializeLibXMLIfNecessary() {
   if (did_init)
     return;
 
+#if defined(LIBXML_CATALOG_ENABLED)
+  xmlCatalogSetDefaults(XML_CATA_ALLOW_NONE);
+#endif
   xmlInitParser();
   xmlRegisterInputCallbacks(MatchFunc, OpenFunc, ReadFunc, CloseFunc);
   xmlRegisterOutputCallbacks(MatchFunc, OpenFunc, WriteFunc, CloseFunc);
@@ -815,8 +824,8 @@ void XMLDocumentParser::DoWrite(const String& parse_string) {
   // string.
   if (parse_string.length()) {
     XMLDocumentParserScope scope(GetDocument());
-    AutoReset<bool> encoding_scope(&is_currently_parsing8_bit_chunk_,
-                                   parse_string.Is8Bit());
+    base::AutoReset<bool> encoding_scope(&is_currently_parsing8_bit_chunk_,
+                                         parse_string.Is8Bit());
     ParseChunk(context->Context(), parse_string);
 
     // JavaScript (which may be run under the parseChunk callstack) may

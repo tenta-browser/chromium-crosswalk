@@ -5,6 +5,8 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_PAINT_NG_NG_PAINT_FRAGMENT_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_PAINT_NG_NG_PAINT_FRAGMENT_H_
 
+#include <iterator>
+
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/layout/ng/ng_physical_fragment.h"
 #include "third_party/blink/renderer/core/loader/resource/image_resource_observer.h"
@@ -14,6 +16,7 @@
 namespace blink {
 
 class LayoutInline;
+struct LayoutSelectionStatus;
 struct PaintInfo;
 
 // The NGPaintFragment contains a NGPhysicalFragment and geometry in the paint
@@ -31,24 +34,46 @@ struct PaintInfo;
 //   (See https://drafts.csswg.org/css-backgrounds-3/#the-background-image)
 // - image (<img>, svg <image>) or video (<video>) elements that are
 //   placeholders for displaying them.
-class CORE_EXPORT NGPaintFragment : public DisplayItemClient,
+class CORE_EXPORT NGPaintFragment : public RefCounted<NGPaintFragment>,
+                                    public DisplayItemClient,
                                     public ImageResourceObserver {
  public:
-  NGPaintFragment(scoped_refptr<const NGPhysicalFragment>, NGPaintFragment*);
-  static std::unique_ptr<NGPaintFragment> Create(
-      scoped_refptr<const NGPhysicalFragment>);
+  NGPaintFragment(scoped_refptr<const NGPhysicalFragment>,
+                  NGPhysicalOffset offset,
+                  NGPaintFragment*);
+  ~NGPaintFragment() override;
+
+  static scoped_refptr<NGPaintFragment> Create(
+      scoped_refptr<const NGPhysicalFragment>,
+      NGPhysicalOffset offset);
 
   const NGPhysicalFragment& PhysicalFragment() const {
     return *physical_fragment_;
   }
 
+  void UpdatePhysicalFragmentFromCachedLayoutResult(
+      scoped_refptr<const NGPhysicalFragment>);
+
+  // Next/last fragment for  when this is fragmented.
+  NGPaintFragment* Next() { return next_fragmented_.get(); }
+  void SetNext(scoped_refptr<NGPaintFragment>);
+  NGPaintFragment* Last();
+  NGPaintFragment* Last(const NGBreakToken&);
+
   // The parent NGPaintFragment. This is nullptr for a root; i.e., when parent
   // is not for NGPaint. In the first phase, this means that this is a root of
   // an inline formatting context.
   NGPaintFragment* Parent() const { return parent_; }
-  const Vector<std::unique_ptr<NGPaintFragment>>& Children() const {
+  const Vector<scoped_refptr<NGPaintFragment>>& Children() const {
     return children_;
   }
+  // Note, as the name implies, |IsDescendantOfNotSelf| returns false for the
+  // same object. This is different from |LayoutObject::IsDescendant| but is
+  // same as |Node::IsDescendant|.
+  bool IsDescendantOfNotSelf(const NGPaintFragment&) const;
+
+  // Returns the first line box for a block-level container.
+  NGPaintFragment* FirstLineBox() const;
 
   // Returns the container line box for inline fragments.
   const NGPaintFragment* ContainerLineBox() const;
@@ -70,15 +95,32 @@ class CORE_EXPORT NGPaintFragment : public DisplayItemClient,
   bool HasOverflowClip() const;
   bool ShouldClipOverflow() const;
   bool HasSelfPaintingLayer() const;
+  // This is equivalent to LayoutObject::VisualRect
   LayoutRect VisualRect() const override { return visual_rect_; }
   void SetVisualRect(const LayoutRect& rect) { visual_rect_ = rect; }
-  LayoutRect VisualOverflowRect() const;
-  LayoutRect OverflowClipRect(const LayoutPoint& location,
-                              OverlayScrollbarClipBehavior) const {
-    return {location, VisualRect().Size()};
+
+  LayoutRect SelectionVisualRect() const { return selection_visual_rect_; }
+  void SetSelectionVisualRect(const LayoutRect& rect) {
+    selection_visual_rect_ = rect;
   }
 
-  LayoutRect PartialInvalidationRect() const override;
+  // CSS ink overflow https://www.w3.org/TR/css-overflow-3/#ink
+  // Encloses all pixels painted by self + children.
+  LayoutRect SelfInkOverflow() const;
+  // Union of children's ink overflows.
+  LayoutRect ChildrenInkOverflow() const;
+
+  NGPhysicalOffsetRect ComputeLocalSelectionRectForText(
+      const LayoutSelectionStatus&) const;
+  NGPhysicalOffsetRect ComputeLocalSelectionRectForReplaced() const;
+
+  // Set ShouldDoFullPaintInvalidation flag in the corresponding LayoutObject
+  // recursively.
+  void SetShouldDoFullPaintInvalidationRecursively();
+
+  // Set ShouldDoFullPaintInvalidation flag to all objects in the first line of
+  // this block-level fragment.
+  void SetShouldDoFullPaintInvalidationForFirstLine();
 
   // Paint all descendant inline box fragments that belong to the specified
   // LayoutObject.
@@ -88,7 +130,7 @@ class CORE_EXPORT NGPaintFragment : public DisplayItemClient,
                                     NGPhysicalOffset = {}) const;
 
   // DisplayItemClient methods.
-  String DebugName() const override { return "NGPaintFragment"; }
+  String DebugName() const override;
 
   // Commonly used functions for NGPhysicalFragment.
   Node* GetNode() const { return PhysicalFragment().GetNode(); }
@@ -96,11 +138,27 @@ class CORE_EXPORT NGPaintFragment : public DisplayItemClient,
     return PhysicalFragment().GetLayoutObject();
   }
   const ComputedStyle& Style() const { return PhysicalFragment().Style(); }
-  NGPhysicalOffset Offset() const { return PhysicalFragment().Offset(); }
+  NGPhysicalOffset Offset() const { return offset_; }
   NGPhysicalSize Size() const { return PhysicalFragment().Size(); }
 
+  // Converts the given point, relative to the fragment itself, into a position
+  // in DOM tree.
+  PositionWithAffinity PositionForPoint(const NGPhysicalOffset&) const;
+
+  // The node to return when hit-testing on this fragment. This can be different
+  // from GetNode() when this fragment is content of a pseudo node.
+  Node* NodeForHitTest() const;
+
+  // Utility functions for caret painting. Note that carets are painted as part
+  // of the containing block's foreground.
+  bool ShouldPaintCursorCaret() const;
+  bool ShouldPaintDragCaret() const;
+  bool ShouldPaintCarets() const {
+    return ShouldPaintCursorCaret() || ShouldPaintDragCaret();
+  }
+
   // A range of fragments for |FragmentsFor()|.
-  class FragmentRange {
+  class CORE_EXPORT FragmentRange {
    public:
     explicit FragmentRange(
         NGPaintFragment* first,
@@ -115,15 +173,17 @@ class CORE_EXPORT NGPaintFragment : public DisplayItemClient,
 
     bool IsEmpty() const { return !first_; }
 
-    class iterator {
+    class iterator final
+        : public std::iterator<std::forward_iterator_tag, NGPaintFragment*> {
      public:
       explicit iterator(NGPaintFragment* first) : current_(first) {}
 
       NGPaintFragment* operator*() const { return current_; }
       NGPaintFragment* operator->() const { return current_; }
-      void operator++() {
+      iterator& operator++() {
         CHECK(current_);
-        current_ = current_->next_fragment_;
+        current_ = current_->next_for_same_layout_object_.get();
+        return *this;
       }
       bool operator==(const iterator& other) const {
         return current_ == other.current_;
@@ -138,6 +198,20 @@ class CORE_EXPORT NGPaintFragment : public DisplayItemClient,
 
     iterator begin() const { return iterator(first_); }
     iterator end() const { return iterator(nullptr); }
+
+    // Returns the first |NGPaintFragment| in |FragmentRange| as STL container.
+    // It is error to call |front()| for empty range.
+    NGPaintFragment& front() const;
+
+    // Returns the last |NGPaintFragment| in |FragmentRange| as STL container.
+    // It is error to call |back()| for empty range.
+    // Note: The complexity of |back()| is O(n) where n is number of elements
+    // in this |FragmentRange|.
+    NGPaintFragment& back() const;
+
+    // Returns number of fragments in this range. The complexity is O(n) where n
+    // is number of elements.
+    wtf_size_t size() const;
 
    private:
     NGPaintFragment* first_;
@@ -156,6 +230,10 @@ class CORE_EXPORT NGPaintFragment : public DisplayItemClient,
   // for a LayoutObject.
   static FragmentRange InlineFragmentsFor(const LayoutObject*);
 
+  // Reset a range of NGPaintFragment in an inline formatting context that are
+  // for a LayoutObject.
+  static void ResetInlineFragmentsFor(const LayoutObject*);
+
   // Computes LocalVisualRect for an inline LayoutObject in the
   // LayoutObject::LocalVisualRect semantics; i.e., physical coordinates with
   // flipped block-flow direction. See layout/README.md for the coordinate
@@ -167,38 +245,40 @@ class CORE_EXPORT NGPaintFragment : public DisplayItemClient,
  private:
   void PopulateDescendants(
       const NGPhysicalOffset inline_offset_to_container_box,
-      HashMap<const LayoutObject*, NGPaintFragment*>* first_fragment_map,
       HashMap<const LayoutObject*, NGPaintFragment*>* last_fragment_map);
+  void AssociateWithLayoutObject(
+      LayoutObject*,
+      HashMap<const LayoutObject*, NGPaintFragment*>* last_fragment_map);
+
+  // Helps for PositionForPoint() when |this| falls in different categories.
+  PositionWithAffinity PositionForPointInText(const NGPhysicalOffset&) const;
+  PositionWithAffinity PositionForPointInInlineFormattingContext(
+      const NGPhysicalOffset&) const;
+  PositionWithAffinity PositionForPointInInlineLevelBox(
+      const NGPhysicalOffset&) const;
 
   //
   // Following fields are computed in the layout phase.
   //
 
   scoped_refptr<const NGPhysicalFragment> physical_fragment_;
+  NGPhysicalOffset offset_;
 
   NGPaintFragment* parent_;
-  Vector<std::unique_ptr<NGPaintFragment>> children_;
+  Vector<scoped_refptr<NGPaintFragment>> children_;
 
-  NGPaintFragment* next_fragment_ = nullptr;
+  // The next fragment for when this is fragmented.
+  scoped_refptr<NGPaintFragment> next_fragmented_;
+
+  scoped_refptr<NGPaintFragment> next_for_same_layout_object_;
   NGPhysicalOffset inline_offset_to_container_box_;
-
-  // Maps LayoutObject to NGPaintFragment for the root of an inline formatting
-  // context.
-  // TODO(kojii): This is to be stored in fields of LayoutObject where they are
-  // no longer used in NGPaint, specifically:
-  //   LayoutText::first_text_box_
-  //   LayoutInline::line_boxes_
-  //   LayotuBox::inline_box_wrapper_
-  // but doing so is likely to have some impacts on the performance.
-  // Alternatively we can keep in the root NGPaintFragment. Having this in all
-  // NGPaintFragment is tentative.
-  HashMap<const LayoutObject*, NGPaintFragment*> first_fragment_map_;
 
   //
   // Following fields are computed in the pre-paint phase.
   //
 
   LayoutRect visual_rect_;
+  LayoutRect selection_visual_rect_;
 };
 
 }  // namespace blink

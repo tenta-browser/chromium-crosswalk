@@ -1,34 +1,12 @@
 <!DOCTYPE html>
 <script src="../resources/testharness.js"></script>
 <script src="../resources/testharnessreport.js"></script>
+<script src="../resources/gesture-util.js"></script>
 <script>
   // This test verifies the rootScroller behavior while the document is in
   // fullscreen. We expect that the effective rootScroller of all documents on
   // a page revert to the document itself. On exiting fullscreen, the
   // designated document.rootScroller should take effect again.
-
-  // Helper async function to block execution for n number of rAFs.
-  async function nFrames(n) {
-    return new Promise(resolve => {
-      let remainingFrames = n;
-      let func = function() {
-        --remainingFrames;
-        if (remainingFrames === 0)
-          resolve();
-        else {
-          requestAnimationFrame(func);
-        }
-      };
-
-      if (n === 0) {
-        resolve();
-      } else {
-        requestAnimationFrame(() => {
-          func(resolve);
-        });
-      }
-    });
-  }
 
   const test = async_test("Fullscreen rootScroller Test");
   let iframe;
@@ -37,30 +15,30 @@
 
   async function fullscreenChanged() {
     if (document.webkitIsFullScreen) {
-      await nFrames(2);
+      await waitForCompositorCommit();
       test.step(() => {
         assert_equals(
-            window.internals.effectiveRootScroller(document),
+            internals.effectiveRootScroller(document),
             document,
             "Entering fullscreen should reset root document's effective " +
             "root scroller");
         assert_equals(
-            window.internals.effectiveRootScroller(childDocument),
+            internals.effectiveRootScroller(childDocument),
             childDocument,
             "Entering fullscreen should reset iframe's effective root " +
             "scroller");
       });
       document.webkitExitFullscreen();
     } else {
-      await nFrames(2);
+      await waitForCompositorCommit();
       test.step(() => {
         assert_equals(
-            window.internals.effectiveRootScroller(document),
+            internals.effectiveRootScroller(document),
             iframe,
             "Exiting fullscreen should set the iframe back as the root " +
             "document's effective root scroller.");
         assert_equals(
-            window.internals.effectiveRootScroller(childDocument),
+            internals.effectiveRootScroller(childDocument),
             scroller,
             "Exiting fullscreen should set the scroller div back as the " +
             "iframe's effective root scroller.");
@@ -86,16 +64,19 @@
     document.rootScroller = iframe;
     childDocument.rootScroller = scroller;
 
-    await nFrames(1);
+    // Root Scroller selection happens in a lifecycle update. However, rAF is
+    // executed before the lifecycle in a BeginMainFrame so we need to wait for
+    // a second rAF before the we can check the effective root scrollers.
+    await waitForCompositorCommit();
 
     test.step(() => {
       assert_equals(
-          window.internals.effectiveRootScroller(document),
+          internals.effectiveRootScroller(document),
           iframe,
           "Root document should initially have iframe as effective root " +
           "scroller");
       assert_equals(
-          window.internals.effectiveRootScroller(childDocument),
+          internals.effectiveRootScroller(childDocument),
           scroller,
           "Iframe should initially have scroller div as effective root " +
           "scroller");

@@ -8,9 +8,9 @@
 #include <vector>
 
 #include "base/bind.h"
+#include "base/json/json_reader.h"
 #include "base/json/json_writer.h"
 #include "base/lazy_instance.h"
-#include "base/message_loop/message_loop.h"
 #include "base/observer_list.h"
 #include "content/browser/devtools/devtools_manager.h"
 #include "content/browser/devtools/devtools_session.h"
@@ -35,8 +35,8 @@ typedef std::map<std::string, DevToolsAgentHostImpl*> DevToolsMap;
 base::LazyInstance<DevToolsMap>::Leaky g_devtools_instances =
     LAZY_INSTANCE_INITIALIZER;
 
-base::LazyInstance<base::ObserverList<DevToolsAgentHostObserver>>::Leaky
-    g_devtools_observers = LAZY_INSTANCE_INITIALIZER;
+base::LazyInstance<base::ObserverList<DevToolsAgentHostObserver>::Unchecked>::
+    Leaky g_devtools_observers = LAZY_INSTANCE_INITIALIZER;
 
 // Returns a list of all active hosts on browser targets.
 DevToolsAgentHost::List GetBrowserAgentHosts() {
@@ -177,12 +177,13 @@ DevToolsSession* DevToolsAgentHostImpl::SessionByClient(
 }
 
 bool DevToolsAgentHostImpl::InnerAttachClient(DevToolsAgentHostClient* client,
+                                              TargetRegistry* registry,
                                               bool restricted) {
   scoped_refptr<DevToolsAgentHostImpl> protect(this);
   DevToolsSession* session = new DevToolsSession(this, client, restricted);
   sessions_.insert(session);
   session_by_client_[client].reset(session);
-  if (!AttachSession(session)) {
+  if (!AttachSession(session, registry)) {
     sessions_.erase(session);
     session_by_client_.erase(client);
     return false;
@@ -199,24 +200,22 @@ bool DevToolsAgentHostImpl::InnerAttachClient(DevToolsAgentHostClient* client,
 void DevToolsAgentHostImpl::AttachClient(DevToolsAgentHostClient* client) {
   if (SessionByClient(client))
     return;
-  InnerAttachClient(client, false /* restricted */);
+  InnerAttachClient(client, nullptr, false /* restricted */);
+}
+
+void DevToolsAgentHostImpl::AttachSubtargetClient(
+    DevToolsAgentHostClient* client,
+    TargetRegistry* registry) {
+  if (SessionByClient(client))
+    return;
+  InnerAttachClient(client, registry, false /* restricted */);
 }
 
 bool DevToolsAgentHostImpl::AttachRestrictedClient(
     DevToolsAgentHostClient* client) {
   if (SessionByClient(client))
     return false;
-  return InnerAttachClient(client, true /* restricted */);
-}
-
-void DevToolsAgentHostImpl::ForceAttachClient(DevToolsAgentHostClient* client) {
-  if (SessionByClient(client))
-    return;
-  scoped_refptr<DevToolsAgentHostImpl> protect(this);
-  if (!sessions_.empty())
-    ForceDetachAllSessions();
-  DCHECK(sessions_.empty());
-  InnerAttachClient(client, false /* restricted */);
+  return InnerAttachClient(client, nullptr, true /* restricted */);
 }
 
 bool DevToolsAgentHostImpl::DetachClient(DevToolsAgentHostClient* client) {
@@ -231,16 +230,27 @@ bool DevToolsAgentHostImpl::DetachClient(DevToolsAgentHostClient* client) {
 bool DevToolsAgentHostImpl::DispatchProtocolMessage(
     DevToolsAgentHostClient* client,
     const std::string& message) {
+  std::unique_ptr<base::Value> value = base::JSONReader::Read(message);
+  return DispatchProtocolMessage(client, message,
+                                 base::DictionaryValue::From(std::move(value)));
+}
+
+bool DevToolsAgentHostImpl::DispatchProtocolMessage(
+    DevToolsAgentHostClient* client,
+    const std::string& message,
+    std::unique_ptr<base::DictionaryValue> parsed_message) {
   DevToolsSession* session = SessionByClient(client);
   if (!session)
     return false;
-  DispatchProtocolMessage(session, message);
+  session->DispatchProtocolMessage(message, std::move(parsed_message));
   return true;
 }
 
 void DevToolsAgentHostImpl::InnerDetachClient(DevToolsAgentHostClient* client) {
   std::unique_ptr<DevToolsSession> session =
       std::move(session_by_client_[client]);
+  // Make sure we dispose session prior to reporting it to the host.
+  session->Dispose();
   sessions_.erase(session.get());
   session_by_client_.erase(client);
   DetachSession(session.get());
@@ -321,31 +331,23 @@ void DevToolsAgentHostImpl::ForceDetachAllSessions() {
   }
 }
 
-void DevToolsAgentHostImpl::ForceDetachRestrictedSessions() {
-  if (sessions_.empty())
-    return;
+void DevToolsAgentHostImpl::ForceDetachRestrictedSessions(
+    const std::vector<DevToolsSession*>& restricted_sessions) {
   scoped_refptr<DevToolsAgentHostImpl> protect(this);
-  std::vector<DevToolsSession*> restricted;
-  for (DevToolsSession* session : sessions_) {
-    if (session->restricted())
-      restricted.push_back(session);
-  }
-  for (DevToolsSession* session : restricted) {
+
+  for (DevToolsSession* session : restricted_sessions) {
     DevToolsAgentHostClient* client = session->client();
     DetachClient(client);
     client->AgentHostClosed(this);
   }
 }
 
-bool DevToolsAgentHostImpl::AttachSession(DevToolsSession* session) {
+bool DevToolsAgentHostImpl::AttachSession(DevToolsSession* session,
+                                          TargetRegistry* registry) {
   return false;
 }
 
 void DevToolsAgentHostImpl::DetachSession(DevToolsSession* session) {}
-
-void DevToolsAgentHostImpl::DispatchProtocolMessage(
-    DevToolsSession* session,
-    const std::string& message) {}
 
 // static
 void DevToolsAgentHost::DetachAllClients() {
@@ -354,11 +356,14 @@ void DevToolsAgentHost::DetachAllClients() {
 
   // Make a copy, since detaching may lead to agent destruction, which
   // removes it from the instances.
-  DevToolsMap copy = g_devtools_instances.Get();
-  for (DevToolsMap::iterator it(copy.begin()); it != copy.end(); ++it) {
-    DevToolsAgentHostImpl* agent_host = it->second;
-    agent_host->ForceDetachAllSessions();
-  }
+  std::vector<scoped_refptr<DevToolsAgentHostImpl>> copy;
+  for (DevToolsMap::iterator it(g_devtools_instances.Get().begin());
+       it != g_devtools_instances.Get().end(); ++it)
+    copy.push_back(it->second);
+  for (std::vector<scoped_refptr<DevToolsAgentHostImpl>>::iterator it(
+           copy.begin());
+       it != copy.end(); ++it)
+    it->get()->ForceDetachAllSessions();
 }
 
 // static
@@ -409,6 +414,11 @@ void DevToolsAgentHostImpl::NotifyAttached() {
 void DevToolsAgentHostImpl::NotifyDetached() {
   for (auto& observer : g_devtools_observers.Get())
     observer.DevToolsAgentHostDetached(this);
+}
+
+void DevToolsAgentHostImpl::NotifyCrashed(base::TerminationStatus status) {
+  for (auto& observer : g_devtools_observers.Get())
+    observer.DevToolsAgentHostCrashed(this, status);
 }
 
 void DevToolsAgentHostImpl::NotifyDestroyed() {

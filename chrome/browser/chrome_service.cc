@@ -5,6 +5,7 @@
 #include "chrome/browser/chrome_service.h"
 
 #include "base/no_destructor.h"
+#include "base/single_thread_task_runner.h"
 #include "chrome/browser/chrome_browser_main_extra_parts.h"
 #include "chrome/common/constants.mojom.h"
 #include "components/spellcheck/spellcheck_buildflags.h"
@@ -21,7 +22,7 @@
 #if defined(OS_CHROMEOS)
 #include "chrome/browser/chromeos/launchable.h"
 #if defined(USE_OZONE)
-#include "services/ui/public/cpp/input_devices/input_device_controller.h"
+#include "services/ws/public/cpp/input_devices/input_device_controller.h"
 #endif
 #endif
 #if BUILDFLAG(ENABLE_SPELLCHECK)
@@ -110,7 +111,7 @@ class ChromeService::IOThreadContext : public service_manager::Service {
 #if defined(OS_CHROMEOS)
   chromeos::Launchable launchable_;
 #if defined(USE_OZONE)
-  ui::InputDeviceController input_device_controller_;
+  ws::InputDeviceController input_device_controller_;
 #endif
 #endif
 

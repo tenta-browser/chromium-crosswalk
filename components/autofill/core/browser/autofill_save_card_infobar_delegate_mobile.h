@@ -32,11 +32,13 @@ class AutofillSaveCardInfoBarDelegateMobile : public ConfirmInfoBarDelegate {
       bool upload,
       const CreditCard& card,
       std::unique_ptr<base::DictionaryValue> legal_message,
-      const base::Closure& save_card_callback,
+      base::OnceCallback<void(const base::string16&)> upload_save_card_callback,
+      base::Closure local_save_card_callback,
       PrefService* pref_service);
 
   ~AutofillSaveCardInfoBarDelegateMobile() override;
 
+  bool upload() const { return upload_; }
   int issuer_icon_id() const { return issuer_icon_id_; }
   const base::string16& card_label() const { return card_label_; }
   const base::string16& card_sub_label() const { return card_sub_label_; }
@@ -53,21 +55,18 @@ class AutofillSaveCardInfoBarDelegateMobile : public ConfirmInfoBarDelegate {
   // to Google.
   bool IsGooglePayBrandingEnabled() const;
 
-  // All following changes are with respect to Google Pay branding.
-  base::string16 GetTitleText() const;
+  // Description text to be shown above the card information in the infobar.
   base::string16 GetDescriptionText() const;
 
   // ConfirmInfoBarDelegate:
   int GetIconId() const override;
   base::string16 GetMessageText() const override;
-  base::string16 GetLinkText() const override;
   infobars::InfoBarDelegate::InfoBarIdentifier GetIdentifier() const override;
   bool ShouldExpire(const NavigationDetails& details) const override;
   void InfoBarDismissed() override;
+  int GetButtons() const override;
   base::string16 GetButtonLabel(InfoBarButton button) const override;
   bool Accept() override;
-  bool Cancel() override;
-  GURL GetLinkURL() const override;
 
  private:
   void LogUserAction(AutofillMetrics::InfoBarMetric user_action);
@@ -75,8 +74,13 @@ class AutofillSaveCardInfoBarDelegateMobile : public ConfirmInfoBarDelegate {
   // Whether the action is an upload or a local save.
   bool upload_;
 
-  // The callback to save credit card if the user accepts the infobar.
-  base::Closure save_card_callback_;
+  // The callback to save the credit card to Google Payments if |upload_| is
+  // true and the user accepts the infobar.
+  base::OnceCallback<void(const base::string16&)> upload_save_card_callback_;
+
+  // The callback to save the credit card locally to the device if |upload_| is
+  // false and the user accepts the infobar.
+  base::Closure local_save_card_callback_;
 
   // Weak reference to read & write |kAutofillAcceptSaveCreditCardPromptState|,
   PrefService* pref_service_;

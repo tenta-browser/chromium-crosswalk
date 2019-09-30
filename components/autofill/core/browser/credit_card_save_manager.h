@@ -24,7 +24,7 @@ namespace autofill {
 // Manages logic for determining whether upload credit card save to Google
 // Payments is available as well as actioning both local and upload credit card
 // save logic.  Owned by FormDataImporter.
-class CreditCardSaveManager : public payments::PaymentsClientSaveDelegate {
+class CreditCardSaveManager {
  public:
   // Possible fields and values detected during credit card form submission, to
   // be sent to Google Payments to better determine if upload credit card save
@@ -54,6 +54,16 @@ class CreditCardSaveManager : public payments::PaymentsClientSaveDelegate {
     COUNTRY_CODE = 1 << 7,
     // Set if the user is already syncing data from a Google Payments account.
     HAS_GOOGLE_PAYMENTS_ACCOUNT = 1 << 8,
+    // Card expiration month (not currently used).
+    CARD_EXPIRATION_MONTH = 1 << 9,
+    // Card expiration year (not currently used).
+    CARD_EXPIRATION_YEAR = 1 << 10,
+    // Phone number was found on any address (not currently used).
+    PHONE_NUMBER = 1 << 11,
+    // Set if cardholder name was explicitly requested in the offer-to-save
+    // dialog.  In general, this should happen when name is conflicting/missing
+    // and the user does not have a Google Payments account.
+    USER_PROVIDED_NAME = 1 << 12,
   };
 
   // An observer class used by browsertests that gets notified whenever
@@ -62,7 +72,6 @@ class CreditCardSaveManager : public payments::PaymentsClientSaveDelegate {
    public:
     virtual void OnOfferLocalSave() = 0;
     virtual void OnDecideToRequestUploadSave() = 0;
-    virtual void OnDecideToNotRequestUploadSave() = 0;
     virtual void OnReceivedGetUploadDetailsResponse() = 0;
     virtual void OnSentUploadCardRequest() = 0;
   };
@@ -87,30 +96,42 @@ class CreditCardSaveManager : public payments::PaymentsClientSaveDelegate {
   // are satisfied.
   virtual bool IsCreditCardUploadEnabled();
 
+  // Returns true if the given |network| is allowed for upload to Google
+  // Payments, false otherwise. Mainly used for blacklisting upload of certain
+  // networks.
+  bool IsUploadEnabledForNetwork(const std::string& network);
+
   // For testing.
   void SetAppLocale(std::string app_locale) { app_locale_ = app_locale; }
 
  protected:
-  // payments::PaymentsClientSaveDelegate:
-  // Exposed for testing.
-  void OnDidUploadCard(AutofillClient::PaymentsRpcResult result,
-                       const std::string& server_id) override;
+  // Returns the result of an upload request. If |result| ==
+  // |AutofillClient::SUCCESS|, |server_id| may, optionally, contain the opaque
+  // identifier for the card on the server. Exposed for testing.
+  virtual void OnDidUploadCard(AutofillClient::PaymentsRpcResult result,
+                               const std::string& server_id);
 
  private:
+  friend class CreditCardSaveManagerTest;
+  friend class CreditCardSaveManagerTestObserverBridge;
   friend class SaveCardBubbleViewsBrowserTestBase;
 
-  // payments::PaymentsClientSaveDelegate:
+  // Returns the legal message retrieved from Payments. On failure or not
+  // meeting Payments's conditions for upload, |legal_message| will contain
+  // nullptr.
   void OnDidGetUploadDetails(
       AutofillClient::PaymentsRpcResult result,
       const base::string16& context_token,
-      std::unique_ptr<base::DictionaryValue> legal_message) override;
+      std::unique_ptr<base::DictionaryValue> legal_message);
 
   // Examines |card| and the stored profiles and if a candidate set of profiles
   // is found that matches the client-side validation rules, assigns the values
   // to |upload_request.profiles|. If any problems are found when determining
   // the candidate set of profiles, sets |upload_decision_metrics_| with the
   // failure reasons. Appends any experiments that were triggered to
-  // |upload_request.active_experiments|.
+  // |upload_request.active_experiments|. Note that if the relevant feature is
+  // enabled, the addresses being assigned to |upload_request.profiles| may only
+  // contain countries.
   void SetProfilesForCreditCardUpload(
       const CreditCard& card,
       payments::PaymentsClient::UploadRequestDetails* upload_request);
@@ -121,8 +142,9 @@ class CreditCardSaveManager : public payments::PaymentsClientSaveDelegate {
   int GetDetectedValues() const;
 
   // Sets |user_did_accept_upload_prompt_| and calls SendUploadCardRequest if
-  // the risk data is available.
-  void OnUserDidAcceptUpload();
+  // the risk data is available. Sets the cardholder name on the upload request
+  // if |cardholder_name| is set.
+  void OnUserDidAcceptUpload(const base::string16& cardholder_name);
 
   // Saves risk data in |uploading_risk_data_| and calls SendUploadCardRequest
   // if the user has accepted the prompt.
@@ -177,9 +199,10 @@ class CreditCardSaveManager : public payments::PaymentsClientSaveDelegate {
   // |true| if the user has opted to upload save their credit card to Google.
   bool user_did_accept_upload_prompt_ = false;
 
-  // |should_cvc_be_requested_| is |true| if we should request CVC from the user
-  // in the card upload dialog.
-  bool should_cvc_be_requested_ = false;
+  // |should_request_name_from_user_| is |true| if the upload save dialog should
+  // request cardholder name from the user (prefilled with Google Account name).
+  bool should_request_name_from_user_ = false;
+
   // |found_cvc_field_| is |true| if there exists a field that is determined to
   // be a CVC field via heuristics.
   bool found_cvc_field_ = false;
@@ -198,6 +221,10 @@ class CreditCardSaveManager : public payments::PaymentsClientSaveDelegate {
   ObserverForTest* observer_for_testing_ = nullptr;
 
   base::WeakPtrFactory<CreditCardSaveManager> weak_ptr_factory_;
+
+  FRIEND_TEST_ALL_PREFIXES(
+      CreditCardSaveManagerTest,
+      UploadCreditCard_ShouldRequestCardholderName_ResetBetweenConsecutiveSaves);
 
   DISALLOW_COPY_AND_ASSIGN(CreditCardSaveManager);
 };

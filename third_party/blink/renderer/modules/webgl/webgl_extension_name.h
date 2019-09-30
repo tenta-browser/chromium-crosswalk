@@ -28,7 +28,6 @@ enum WebGLExtensionName {
   kOESVertexArrayObjectName,
   kWebGLColorBufferFloatName,
   kWebGLCompressedTextureASTCName,
-  kWebGLCompressedTextureATCName,
   kWebGLCompressedTextureETCName,
   kWebGLCompressedTextureETC1Name,
   kWebGLCompressedTexturePVRTCName,
@@ -40,6 +39,7 @@ enum WebGLExtensionName {
   kWebGLDrawBuffersName,
   kWebGLGetBufferSubDataAsyncName,
   kWebGLLoseContextName,
+  kWebGLMultiviewName,
   kWebGLExtensionNameCount,  // Must be the last entry
 };
 }  // namespace blink

@@ -6,14 +6,17 @@
 
 #import <UIKit/UIKit.h>
 
-#include "base/mac/bind_objc_block.h"
+#include "base/bind.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/test/ios/wait_util.h"
+#import "base/test/ios/wait_util.h"
 #include "base/values.h"
-#import "ios/testing/wait_util.h"
+#import "ios/web/navigation/wk_navigation_util.h"
+#import "ios/web/public/crw_navigation_item_storage.h"
+#import "ios/web/public/crw_session_storage.h"
 #import "ios/web/public/navigation_manager.h"
 #import "ios/web/public/test/fakes/test_web_state_delegate.h"
 #import "ios/web/public/test/web_test_with_web_state.h"
+#import "ios/web/public/web_client.h"
 #include "ui/gfx/image/image.h"
 #include "ui/gfx/image/image_unittest_util.h"
 
@@ -21,8 +24,9 @@
 #error "This file requires ARC support."
 #endif
 
-using testing::WaitUntilConditionOrTimeout;
-using testing::kWaitForJSCompletionTimeout;
+using base::test::ios::WaitUntilConditionOrTimeout;
+using base::test::ios::kWaitForJSCompletionTimeout;
+using base::test::ios::kWaitForPageLoadTimeout;
 
 namespace web {
 
@@ -39,12 +43,11 @@ TEST_F(WebStateTest, ScriptExecution) {
   // Execute script with callback.
   __block std::unique_ptr<base::Value> execution_result;
   __block bool execution_complete = false;
-  web_state()->ExecuteJavaScript(
-      base::UTF8ToUTF16("window.foo"),
-      base::BindBlockArc(^(const base::Value* value) {
-        execution_result = value->CreateDeepCopy();
-        execution_complete = true;
-      }));
+  web_state()->ExecuteJavaScript(base::UTF8ToUTF16("window.foo"),
+                                 base::BindOnce(^(const base::Value* value) {
+                                   execution_result = value->CreateDeepCopy();
+                                   execution_complete = true;
+                                 }));
   WaitForCondition(^{
     return execution_complete;
   });
@@ -88,8 +91,9 @@ TEST_F(WebStateTest, LoadingProgress) {
 TEST_F(WebStateTest, OverridingWebKitObject) {
   // Add a script command handler.
   __block bool message_received = false;
-  const web::WebState::ScriptCommandCallback callback = base::BindBlockArc(
-      ^bool(const base::DictionaryValue&, const GURL&, bool) {
+  const web::WebState::ScriptCommandCallback callback =
+      base::BindRepeating(^bool(const base::DictionaryValue&, const GURL&,
+                                /*interacted*/ bool, /*is_main_frame*/ bool) {
         message_received = true;
         return true;
       });
@@ -154,7 +158,7 @@ TEST_F(WebStateTest, Snapshot) {
   base::test::ios::SpinRunLoopWithMinDelay(base::TimeDelta::FromSecondsD(0.2));
   CGSize target_size = CGSizeMake(100.0f, 100.0f);
   web_state()->TakeSnapshot(
-      base::BindBlockArc(^(const gfx::Image& snapshot) {
+      base::BindOnce(^(gfx::Image snapshot) {
         ASSERT_FALSE(snapshot.IsEmpty());
         EXPECT_EQ(snapshot.Width(), target_size.width);
         EXPECT_EQ(snapshot.Height(), target_size.height);
@@ -174,11 +178,123 @@ TEST_F(WebStateTest, Snapshot) {
   });
 }
 
+// Tests that message sent from main frame triggers the ScriptCommandCallback
+// with |is_main_frame| = true.
+TEST_F(WebStateTest, MessageFromMainFrame) {
+  // Add a script command handler.
+  __block bool message_received = false;
+  __block bool message_from_main_frame = false;
+  __block base::Value message_value;
+  const web::WebState::ScriptCommandCallback callback =
+      base::BindRepeating(^bool(const base::DictionaryValue& value, const GURL&,
+                                bool user_interacted, bool is_main_frame) {
+        message_received = true;
+        message_from_main_frame = is_main_frame;
+        message_value = value.Clone();
+        return true;
+      });
+  web_state()->AddScriptCommandCallback(callback, "test");
+
+  ASSERT_TRUE(LoadHtml(
+      "<script>"
+      "  __gCrWeb.message.invokeOnHost({'command': 'test.from-main-frame'});"
+      "</script>"));
+
+  WaitForCondition(^{
+    return message_received;
+  });
+  web_state()->RemoveScriptCommandCallback("test");
+  EXPECT_TRUE(message_from_main_frame);
+  EXPECT_TRUE(message_value.is_dict());
+  EXPECT_EQ(message_value.DictSize(), size_t(1));
+  base::Value* command = message_value.FindKey("command");
+  EXPECT_NE(command, nullptr);
+  EXPECT_TRUE(command->is_string());
+  EXPECT_EQ(command->GetString(), "test.from-main-frame");
+}
+
+// Tests that message sent from main frame triggers the ScriptCommandCallback
+// with |is_main_frame| = false.
+// TODO(crbug.com/857129): Re-enable this test.
+TEST_F(WebStateTest, DISABLED_MessageFromIFrame) {
+  // Add a script command handler.
+  __block bool message_received = false;
+  __block bool message_from_main_frame = false;
+  __block base::Value message_value;
+  const web::WebState::ScriptCommandCallback callback =
+      base::BindRepeating(^bool(const base::DictionaryValue& value, const GURL&,
+                                bool user_interacted, bool is_main_frame) {
+        message_received = true;
+        message_from_main_frame = is_main_frame;
+        message_value = value.Clone();
+        return true;
+      });
+  web_state()->AddScriptCommandCallback(callback, "test");
+
+  ASSERT_TRUE(LoadHtml(
+      "<iframe srcdoc='"
+      "<script>"
+      "  __gCrWeb.message.invokeOnHost({\"command\": \"test.from-iframe\"});"
+      "</script>"
+      "'/>"));
+
+  WaitForCondition(^{
+    return message_received;
+  });
+  web_state()->RemoveScriptCommandCallback("test");
+  EXPECT_FALSE(message_from_main_frame);
+  EXPECT_TRUE(message_value.is_dict());
+  EXPECT_EQ(message_value.DictSize(), size_t(1));
+  base::Value* command = message_value.FindKey("command");
+  EXPECT_NE(command, nullptr);
+  EXPECT_TRUE(command->is_string());
+  EXPECT_EQ(command->GetString(), "test.from-iframe");
+}
+
 // Tests that the web state has an opener after calling SetHasOpener().
 TEST_F(WebStateTest, SetHasOpener) {
   ASSERT_FALSE(web_state()->HasOpener());
   web_state()->SetHasOpener(true);
   EXPECT_TRUE(web_state()->HasOpener());
+}
+
+// Verifies that large session can be restored. SlimNavigationManagder has max
+// session size limit of |wk_navigation_util::kMaxSessionSize|.
+TEST_F(WebStateTest, RestoreLargeSession) {
+  // Create session storage with large number of items.
+  const int kItemCount = 100;
+  NSMutableArray<CRWNavigationItemStorage*>* item_storages =
+      [NSMutableArray arrayWithCapacity:kItemCount];
+  for (unsigned int i = 0; i < kItemCount; i++) {
+    CRWNavigationItemStorage* item = [[CRWNavigationItemStorage alloc] init];
+    item.virtualURL = GURL(base::StringPrintf("http://www.%u.com", i));
+    item.title = base::ASCIIToUTF16(base::StringPrintf("Test%u", i));
+    [item_storages addObject:item];
+  }
+
+  // Restore the session.
+  WebState::CreateParams params(GetBrowserState());
+  CRWSessionStorage* session_storage = [[CRWSessionStorage alloc] init];
+  session_storage.itemStorages = item_storages;
+  auto web_state = WebState::CreateWithStorageSession(params, session_storage);
+  NavigationManager* navigation_manager = web_state->GetNavigationManager();
+  // TODO(crbug.com/873729): The session will not be restored until
+  // LoadIfNecessary call. Fix the bug and remove extra call.
+  navigation_manager->LoadIfNecessary();
+
+  // Verify that session was fully restored.
+  int kExpectedItemCount = web::GetWebClient()->IsSlimNavigationManagerEnabled()
+                               ? wk_navigation_util::kMaxSessionSize
+                               : kItemCount;
+  EXPECT_TRUE(WaitUntilConditionOrTimeout(kWaitForPageLoadTimeout, ^{
+    bool restored = navigation_manager->GetItemCount() == kExpectedItemCount;
+    if (!restored) {
+      EXPECT_FALSE(navigation_manager->CanGoBack());
+      EXPECT_FALSE(navigation_manager->CanGoForward());
+    }
+    return restored;
+  }));
+  EXPECT_EQ(kExpectedItemCount, navigation_manager->GetItemCount());
 }
 
 }  // namespace web

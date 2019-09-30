@@ -166,7 +166,7 @@ void PeerConnectionDependencyFactory::CreatePeerConnectionFactory() {
   webrtc::DisableRtcUseH264();
 #endif  // BUILDFLAG(RTC_USE_H264) && BUILDFLAG(ENABLE_FFMPEG_VIDEO_DECODERS)
 
-  base::MessageLoop::current()->AddDestructionObserver(this);
+  base::MessageLoopCurrent::Get()->AddDestructionObserver(this);
   // To allow sending to the signaling/worker threads.
   jingle_glue::JingleThreadWrapper::EnsureForCurrentMessageLoop();
   jingle_glue::JingleThreadWrapper::current()->set_send_allowed(true);
@@ -347,6 +347,19 @@ PeerConnectionDependencyFactory::CreatePeerConnection(
   if (!GetPcFactory().get())
     return nullptr;
 
+  std::unique_ptr<P2PPortAllocator> port_allocator =
+      CreatePortAllocator(web_frame);
+  return GetPcFactory()
+      ->CreatePeerConnection(config, std::move(port_allocator), nullptr,
+                             observer)
+      .get();
+}
+
+std::unique_ptr<P2PPortAllocator>
+PeerConnectionDependencyFactory::CreatePortAllocator(
+    blink::WebLocalFrame* web_frame) {
+  DCHECK(web_frame);
+
   // Copy the flag from Preference associated with this WebLocalFrame.
   P2PPortAllocator::Config port_config;
   uint16_t min_port = 0;
@@ -451,16 +464,13 @@ PeerConnectionDependencyFactory::CreatePeerConnection(
   } else {
     network_manager.reset(new EmptyNetworkManager(network_manager_));
   }
-  std::unique_ptr<P2PPortAllocator> port_allocator(new P2PPortAllocator(
+  auto port_allocator = std::make_unique<P2PPortAllocator>(
       p2p_socket_dispatcher_, std::move(network_manager), socket_factory_.get(),
-      port_config, requesting_origin));
+      port_config, requesting_origin);
   if (IsValidPortRange(min_port, max_port))
     port_allocator->SetPortRange(min_port, max_port);
 
-  return GetPcFactory()
-      ->CreatePeerConnection(config, std::move(port_allocator),
-                             nullptr, observer)
-      .get();
+  return port_allocator;
 }
 
 scoped_refptr<webrtc::MediaStreamInterface>
@@ -527,22 +537,6 @@ void PeerConnectionDependencyFactory::TryScheduleStunProbeTrial() {
   if (!cmd_line->HasSwitch(switches::kWebRtcStunProbeTrialParameter))
     return;
 
-  // The underneath IPC channel has to be connected before sending any IPC
-  // message.
-  if (!p2p_socket_dispatcher_->connected()) {
-    base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
-        FROM_HERE,
-        base::BindOnce(
-            &PeerConnectionDependencyFactory::TryScheduleStunProbeTrial,
-            base::Unretained(this)),
-        base::TimeDelta::FromSeconds(1));
-    return;
-  }
-
-  // GetPcFactory could trigger an IPC message. If done before
-  // |p2p_socket_dispatcher_| is connected, that'll put the
-  // |p2p_socket_dispatcher_| in a bad state such that no other IPC message can
-  // be processed.
   GetPcFactory();
 
   const std::string params =
@@ -611,6 +605,12 @@ PeerConnectionDependencyFactory::GetWebRtcWorkerThread() const {
                                            : nullptr;
 }
 
+rtc::Thread* PeerConnectionDependencyFactory::GetWebRtcWorkerThreadRtcThread()
+    const {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  return chrome_worker_thread_.IsRunning() ? worker_thread_ : nullptr;
+}
+
 scoped_refptr<base::SingleThreadTaskRunner>
 PeerConnectionDependencyFactory::GetWebRtcSignalingThread() const {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
@@ -625,6 +625,32 @@ void PeerConnectionDependencyFactory::EnsureWebRtcAudioDeviceImpl() {
     return;
 
   audio_device_ = new rtc::RefCountedObject<WebRtcAudioDeviceImpl>();
+}
+
+std::unique_ptr<webrtc::RtpCapabilities>
+PeerConnectionDependencyFactory::GetSenderCapabilities(
+    const std::string& kind) {
+  if (kind == "audio") {
+    return std::make_unique<webrtc::RtpCapabilities>(
+        GetPcFactory()->GetRtpSenderCapabilities(cricket::MEDIA_TYPE_AUDIO));
+  } else if (kind == "video") {
+    return std::make_unique<webrtc::RtpCapabilities>(
+        GetPcFactory()->GetRtpSenderCapabilities(cricket::MEDIA_TYPE_VIDEO));
+  }
+  return nullptr;
+}
+
+std::unique_ptr<webrtc::RtpCapabilities>
+PeerConnectionDependencyFactory::GetReceiverCapabilities(
+    const std::string& kind) {
+  if (kind == "audio") {
+    return std::make_unique<webrtc::RtpCapabilities>(
+        GetPcFactory()->GetRtpReceiverCapabilities(cricket::MEDIA_TYPE_AUDIO));
+  } else if (kind == "video") {
+    return std::make_unique<webrtc::RtpCapabilities>(
+        GetPcFactory()->GetRtpReceiverCapabilities(cricket::MEDIA_TYPE_VIDEO));
+  }
+  return nullptr;
 }
 
 }  // namespace content

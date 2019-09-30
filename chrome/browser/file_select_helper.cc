@@ -15,7 +15,7 @@
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/platform_util.h"
@@ -27,9 +27,6 @@
 #include "chrome/browser/ui/chrome_select_file_policy.h"
 #include "chrome/grit/generated_resources.h"
 #include "content/public/browser/browser_thread.h"
-#include "content/public/browser/notification_details.h"
-#include "content/public/browser/notification_source.h"
-#include "content/public/browser/notification_types.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/render_view_host.h"
@@ -103,6 +100,7 @@ bool IsDownloadAllowedBySafeBrowsing(
     // failed safe browsing ping.
     case Result::UNKNOWN:
     case Result::SAFE:
+    case Result::WHITELISTED_BY_POLICY:
       return true;
 
     case Result::DANGEROUS:
@@ -128,7 +126,6 @@ struct FileSelectHelper::ActiveDirectoryEnumeration {
   explicit ActiveDirectoryEnumeration(const base::FilePath& path)
       : rvh_(NULL), path_(path) {}
 
-  std::unique_ptr<DirectoryListerDispatchDelegate> delegate_;
   std::unique_ptr<net::DirectoryLister> lister_;
   RenderViewHost* rvh_;
   const base::FilePath path_;
@@ -142,32 +139,14 @@ FileSelectHelper::FileSelectHelper(Profile* profile)
       select_file_dialog_(),
       select_file_types_(),
       dialog_type_(ui::SelectFileDialog::SELECT_OPEN_FILE),
-      dialog_mode_(FileChooserParams::Open) {}
+      dialog_mode_(FileChooserParams::Open),
+      observer_(this) {}
 
 FileSelectHelper::~FileSelectHelper() {
   // There may be pending file dialogs, we need to tell them that we've gone
   // away so they don't try and call back to us.
   if (select_file_dialog_.get())
     select_file_dialog_->ListenerDestroyed();
-
-  // Stop any pending directory enumeration, prevent a callback, and free
-  // allocated memory.
-  std::map<int, ActiveDirectoryEnumeration*>::iterator iter;
-  for (iter = directory_enumerations_.begin();
-       iter != directory_enumerations_.end();
-       ++iter) {
-    iter->second->lister_.reset();
-    delete iter->second;
-  }
-}
-
-void FileSelectHelper::DirectoryListerDispatchDelegate::OnListFile(
-    const net::DirectoryLister::DirectoryListerData& data) {
-  parent_->OnListFile(id_, data);
-}
-
-void FileSelectHelper::DirectoryListerDispatchDelegate::OnListDone(int error) {
-  parent_->OnListDone(id_, error);
 }
 
 void FileSelectHelper::FileSelected(const base::FilePath& path,
@@ -246,25 +225,22 @@ void FileSelectHelper::FileSelectionCanceled(void* params) {
 void FileSelectHelper::StartNewEnumeration(const base::FilePath& path,
                                            int request_id,
                                            RenderViewHost* render_view_host) {
+  request_id_ = request_id;
   auto entry = std::make_unique<ActiveDirectoryEnumeration>(path);
   entry->rvh_ = render_view_host;
-  entry->delegate_.reset(new DirectoryListerDispatchDelegate(this, request_id));
   entry->lister_.reset(new net::DirectoryLister(
-      path, net::DirectoryLister::NO_SORT_RECURSIVE, entry->delegate_.get()));
+      path, net::DirectoryLister::NO_SORT_RECURSIVE, this));
   entry->lister_->Start();
-  directory_enumerations_[request_id] = entry.release();
+  directory_enumeration_ = std::move(entry);
 }
 
 void FileSelectHelper::OnListFile(
-    int id,
     const net::DirectoryLister::DirectoryListerData& data) {
-  ActiveDirectoryEnumeration* entry = directory_enumerations_[id];
-
   // Directory upload only cares about files.
   if (data.info.IsDirectory())
     return;
 
-  entry->results_.push_back(data.path);
+  directory_enumeration_->results_.push_back(data.path);
 }
 
 void FileSelectHelper::LaunchConfirmationDialog(
@@ -276,11 +252,10 @@ void FileSelectHelper::LaunchConfirmationDialog(
       std::move(selected_files), web_contents_);
 }
 
-void FileSelectHelper::OnListDone(int id, int error) {
+void FileSelectHelper::OnListDone(int error) {
   // This entry needs to be cleaned up when this function is done.
-  std::unique_ptr<ActiveDirectoryEnumeration> entry(
-      directory_enumerations_[id]);
-  directory_enumerations_.erase(id);
+  std::unique_ptr<ActiveDirectoryEnumeration> entry =
+      std::move(directory_enumeration_);
   if (!entry->rvh_)
     return;
   if (error) {
@@ -291,10 +266,10 @@ void FileSelectHelper::OnListDone(int id, int error) {
   std::vector<ui::SelectedFileInfo> selected_files =
       FilePathListToSelectedFileInfoList(entry->results_);
 
-  if (id == kFileSelectEnumerationId) {
+  if (request_id_ == kFileSelectEnumerationId) {
     LaunchConfirmationDialog(entry->path_, std::move(selected_files));
   } else {
-    entry->rvh_->DirectoryEnumerationFinished(id, entry->results_);
+    entry->rvh_->DirectoryEnumerationFinished(request_id_, entry->results_);
     EnumerateDirectoryEnd();
   }
 }
@@ -351,7 +326,7 @@ void FileSelectHelper::NotifyRenderFrameHostAndEndAfterConversion(
 void FileSelectHelper::DeleteTemporaryFiles() {
   base::PostTaskWithTraits(
       FROM_HERE,
-      {base::MayBlock(), base::TaskPriority::BACKGROUND,
+      {base::MayBlock(), base::TaskPriority::BEST_EFFORT,
        base::TaskShutdownBehavior::BLOCK_SHUTDOWN},
       base::BindOnce(&DeleteFiles, std::move(temporary_files_)));
 }
@@ -481,12 +456,9 @@ void FileSelectHelper::RunFileChooser(
 
   render_frame_host_ = render_frame_host;
   web_contents_ = WebContents::FromRenderFrameHost(render_frame_host);
-  notification_registrar_.RemoveAll();
+  observer_.RemoveAll();
   content::WebContentsObserver::Observe(web_contents_);
-  notification_registrar_.Add(
-      this, content::NOTIFICATION_RENDER_WIDGET_HOST_DESTROYED,
-      content::Source<RenderWidgetHost>(
-          render_frame_host_->GetRenderViewHost()->GetWidget()));
+  observer_.Add(render_frame_host_->GetRenderViewHost()->GetWidget());
 
   base::PostTaskWithTraits(
       FROM_HERE, {base::MayBlock()},
@@ -669,11 +641,10 @@ void FileSelectHelper::EnumerateDirectoryEnd() {
   Release();
 }
 
-void FileSelectHelper::Observe(int type,
-                               const content::NotificationSource& source,
-                               const content::NotificationDetails& details) {
-  DCHECK_EQ(content::NOTIFICATION_RENDER_WIDGET_HOST_DESTROYED, type);
+void FileSelectHelper::RenderWidgetHostDestroyed(
+    content::RenderWidgetHost* widget_host) {
   render_frame_host_ = nullptr;
+  observer_.Remove(widget_host);
 }
 
 void FileSelectHelper::RenderFrameHostChanged(

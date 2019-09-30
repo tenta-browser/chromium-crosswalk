@@ -4,6 +4,7 @@
 
 #include "base/memory/platform_shared_memory_region.h"
 
+#include "base/memory/shared_memory.h"
 #include "base/memory/shared_memory_mapping.h"
 #include "base/process/process_metrics.h"
 #include "base/sys_info.h"
@@ -21,30 +22,14 @@ namespace subtle {
 
 const size_t kRegionSize = 1024;
 
-class PlatformSharedMemoryRegionTest : public ::testing::Test {
- public:
-  SharedMemoryMapping MapAt(PlatformSharedMemoryRegion* region,
-                            off_t offset,
-                            size_t bytes) {
-    void* memory = nullptr;
-    size_t mapped_size = 0;
-    if (!region->MapAt(offset, bytes, &memory, &mapped_size))
-      return {};
-
-    return SharedMemoryMapping(memory, bytes, mapped_size, region->GetGUID());
-  }
-
-  void* GetMemory(SharedMemoryMapping* mapping) {
-    return mapping->raw_memory_ptr();
-  }
-};
+class PlatformSharedMemoryRegionTest : public ::testing::Test {};
 
 // Tests that a default constructed region is invalid and produces invalid
 // mappings.
 TEST_F(PlatformSharedMemoryRegionTest, DefaultConstructedRegionIsInvalid) {
   PlatformSharedMemoryRegion region;
   EXPECT_FALSE(region.IsValid());
-  SharedMemoryMapping mapping = MapAt(&region, 0, kRegionSize);
+  WritableSharedMemoryMapping mapping = MapForTesting(&region);
   EXPECT_FALSE(mapping.IsValid());
   PlatformSharedMemoryRegion duplicate = region.Duplicate();
   EXPECT_FALSE(duplicate.IsValid());
@@ -89,6 +74,26 @@ TEST_F(PlatformSharedMemoryRegionTest, ReportedSizeIsRequestedSize) {
     region.ConvertToReadOnly();
     EXPECT_EQ(region.GetSize(), size);
   }
+}
+
+// Tests that a writable region can be converted to read-only.
+TEST_F(PlatformSharedMemoryRegionTest, ConvertWritableToReadOnly) {
+  PlatformSharedMemoryRegion region =
+      PlatformSharedMemoryRegion::CreateWritable(kRegionSize);
+  ASSERT_TRUE(region.IsValid());
+  EXPECT_EQ(region.GetMode(), PlatformSharedMemoryRegion::Mode::kWritable);
+  ASSERT_TRUE(region.ConvertToReadOnly());
+  EXPECT_EQ(region.GetMode(), PlatformSharedMemoryRegion::Mode::kReadOnly);
+}
+
+// Tests that a writable region can be converted to unsafe.
+TEST_F(PlatformSharedMemoryRegionTest, ConvertWritableToUnsafe) {
+  PlatformSharedMemoryRegion region =
+      PlatformSharedMemoryRegion::CreateWritable(kRegionSize);
+  ASSERT_TRUE(region.IsValid());
+  EXPECT_EQ(region.GetMode(), PlatformSharedMemoryRegion::Mode::kWritable);
+  ASSERT_TRUE(region.ConvertToUnsafe());
+  EXPECT_EQ(region.GetMode(), PlatformSharedMemoryRegion::Mode::kUnsafe);
 }
 
 // Tests that the platform-specific handle converted to read-only cannot be used
@@ -151,7 +156,8 @@ TEST_F(PlatformSharedMemoryRegionTest, MapAtOutOfTheRegionLimitsTest) {
   PlatformSharedMemoryRegion region =
       PlatformSharedMemoryRegion::CreateWritable(kRegionSize);
   ASSERT_TRUE(region.IsValid());
-  SharedMemoryMapping mapping = MapAt(&region, 0, region.GetSize() + 1);
+  WritableSharedMemoryMapping mapping =
+      MapAtForTesting(&region, 0, region.GetSize() + 1);
   EXPECT_FALSE(mapping.IsValid());
 }
 
@@ -166,12 +172,11 @@ TEST_F(PlatformSharedMemoryRegionTest, MapAtWithOverflowTest) {
   // |size| + |offset| should be below the region size due to overflow but
   // mapping a region with these parameters should be invalid.
   EXPECT_LT(size + offset, region.GetSize());
-  SharedMemoryMapping mapping = MapAt(&region, offset, size);
+  WritableSharedMemoryMapping mapping = MapAtForTesting(&region, offset, size);
   EXPECT_FALSE(mapping.IsValid());
 }
 
-#if defined(OS_POSIX) && !defined(OS_ANDROID) && !defined(OS_FUCHSIA) && \
-    !defined(OS_MACOSX)
+#if defined(OS_POSIX) && !defined(OS_ANDROID) && !defined(OS_MACOSX)
 // Tests that the second handle is closed after a conversion to read-only on
 // POSIX.
 TEST_F(PlatformSharedMemoryRegionTest,
@@ -180,6 +185,17 @@ TEST_F(PlatformSharedMemoryRegionTest,
       PlatformSharedMemoryRegion::CreateWritable(kRegionSize);
   ASSERT_TRUE(region.IsValid());
   ASSERT_TRUE(region.ConvertToReadOnly());
+  FDPair fds = region.GetPlatformHandle();
+  EXPECT_LT(fds.readonly_fd, 0);
+}
+
+// Tests that the second handle is closed after a conversion to unsafe on
+// POSIX.
+TEST_F(PlatformSharedMemoryRegionTest, ConvertToUnsafeInvalidatesSecondHandle) {
+  PlatformSharedMemoryRegion region =
+      PlatformSharedMemoryRegion::CreateWritable(kRegionSize);
+  ASSERT_TRUE(region.IsValid());
+  ASSERT_TRUE(region.ConvertToUnsafe());
   FDPair fds = region.GetPlatformHandle();
   EXPECT_LT(fds.readonly_fd, 0);
 }
@@ -192,12 +208,12 @@ TEST_F(PlatformSharedMemoryRegionTest, MapCurrentAndMaxProtectionSetCorrectly) {
       PlatformSharedMemoryRegion::CreateWritable(kRegionSize);
   ASSERT_TRUE(region.IsValid());
   ASSERT_TRUE(region.ConvertToReadOnly());
-  SharedMemoryMapping ro_mapping = MapAt(&region, 0, kRegionSize);
+  WritableSharedMemoryMapping ro_mapping = MapForTesting(&region);
   ASSERT_TRUE(ro_mapping.IsValid());
 
   vm_region_basic_info_64 basic_info;
   mach_vm_size_t dummy_size = 0;
-  void* temp_addr = GetMemory(&ro_mapping);
+  void* temp_addr = ro_mapping.memory();
   MachVMRegionResult result = GetBasicInfo(
       mach_task_self(), &dummy_size,
       reinterpret_cast<mach_vm_address_t*>(&temp_addr), &basic_info);
@@ -223,19 +239,20 @@ TEST_F(PlatformSharedMemoryRegionTest,
       PlatformSharedMemoryRegion::CreateWritable(kRegionSize);
   ASSERT_TRUE(region.IsValid());
   EXPECT_TRUE(check(region, Mode::kWritable));
+  EXPECT_FALSE(check(region, Mode::kReadOnly));
 
   // Check kReadOnly region.
   ASSERT_TRUE(region.ConvertToReadOnly());
   EXPECT_TRUE(check(region, Mode::kReadOnly));
+  EXPECT_FALSE(check(region, Mode::kWritable));
+  EXPECT_FALSE(check(region, Mode::kUnsafe));
 
   // Check kUnsafe region.
   PlatformSharedMemoryRegion region2 =
       PlatformSharedMemoryRegion::CreateUnsafe(kRegionSize);
   ASSERT_TRUE(region2.IsValid());
   EXPECT_TRUE(check(region2, Mode::kUnsafe));
-
-  // TODO(https://crbug.com/825177): add negative expectations once all
-  // platforms implement this check.
+  EXPECT_FALSE(check(region2, Mode::kReadOnly));
 }
 
 // Tests that it's impossible to create read-only platform shared memory region.
@@ -296,6 +313,96 @@ TEST_F(PlatformSharedMemoryRegionTest,
   ASSERT_TRUE(region.IsValid());
   EXPECT_TRUE(region.ConvertToReadOnly());
   EXPECT_DEATH_IF_SUPPORTED(region.ConvertToReadOnly(), kErrorRegex);
+}
+
+// Tests that it's prohibited to convert a read-only region to unsafe.
+TEST_F(PlatformSharedMemoryRegionTest, ReadOnlyRegionConvertToUnsafeDeathTest) {
+#ifdef OFFICIAL_BUILD
+  const char kErrorRegex[] = "";
+#else
+  const char kErrorRegex[] =
+      "Only writable shared memory region can be converted to unsafe";
+#endif
+  PlatformSharedMemoryRegion region =
+      PlatformSharedMemoryRegion::CreateWritable(kRegionSize);
+  ASSERT_TRUE(region.IsValid());
+  ASSERT_TRUE(region.ConvertToReadOnly());
+  EXPECT_DEATH_IF_SUPPORTED(region.ConvertToUnsafe(), kErrorRegex);
+}
+
+// Tests that it's prohibited to convert an unsafe region to unsafe.
+TEST_F(PlatformSharedMemoryRegionTest, UnsafeRegionConvertToUnsafeDeathTest) {
+#ifdef OFFICIAL_BUILD
+  const char kErrorRegex[] = "";
+#else
+  const char kErrorRegex[] =
+      "Only writable shared memory region can be converted to unsafe";
+#endif
+  PlatformSharedMemoryRegion region =
+      PlatformSharedMemoryRegion::CreateUnsafe(kRegionSize);
+  ASSERT_TRUE(region.IsValid());
+  EXPECT_DEATH_IF_SUPPORTED(region.ConvertToUnsafe(), kErrorRegex);
+}
+
+// Check that taking from a SharedMemoryHandle works.
+TEST_F(PlatformSharedMemoryRegionTest, TakeFromSharedMemoryHandle) {
+  SharedMemory shm;
+  auto region = PlatformSharedMemoryRegion::TakeFromSharedMemoryHandle(
+      shm.TakeHandle(), PlatformSharedMemoryRegion::Mode::kUnsafe);
+  ASSERT_FALSE(region.IsValid());
+
+  shm.CreateAndMapAnonymous(10);
+  region = PlatformSharedMemoryRegion::TakeFromSharedMemoryHandle(
+      shm.TakeHandle(), PlatformSharedMemoryRegion::Mode::kUnsafe);
+  ASSERT_TRUE(region.IsValid());
+
+#if !(defined(OS_MACOSX) && !defined(OS_IOS))
+  // Note that it's not possible on all platforms for TakeFromSharedMemoryHandle
+  // to conveniently check if the SharedMemoryHandle is readonly or
+  // not. Therefore it is actually possible to get an kUnsafe
+  // PlatformSharedMemoryRegion from a readonly handle on some platforms.
+  SharedMemoryCreateOptions options;
+  options.size = 10;
+  options.share_read_only = true;
+  shm.Create(options);
+  EXPECT_DEATH_IF_SUPPORTED(
+      PlatformSharedMemoryRegion::TakeFromSharedMemoryHandle(
+          shm.GetReadOnlyHandle(), PlatformSharedMemoryRegion::Mode::kUnsafe),
+      "");
+#endif  // !(defined(OS_MACOSX) && !defined(OS_IOS))
+}
+
+// Check that taking from a readonly SharedMemoryHandle works.
+TEST_F(PlatformSharedMemoryRegionTest, TakeFromReadOnlySharedMemoryHandle) {
+  SharedMemory shm;
+  // Note that getting a read-only handle from an unmapped SharedMemory will
+  // fail, so the invalid region case cannot be tested.
+  SharedMemoryCreateOptions options;
+  options.size = 10;
+  options.share_read_only = true;
+  shm.Create(options);
+  auto readonly_handle = shm.GetReadOnlyHandle();
+#if defined(OS_ANDROID)
+  readonly_handle.SetRegionReadOnly();
+#endif
+  auto region = PlatformSharedMemoryRegion::TakeFromSharedMemoryHandle(
+      readonly_handle, PlatformSharedMemoryRegion::Mode::kReadOnly);
+  ASSERT_TRUE(region.IsValid());
+}
+
+// Check that taking from a SharedMemoryHandle in writable mode fails.
+TEST_F(PlatformSharedMemoryRegionTest, WritableTakeFromSharedMemoryHandle) {
+  SharedMemory shm;
+  EXPECT_DEATH_IF_SUPPORTED(
+      PlatformSharedMemoryRegion::TakeFromSharedMemoryHandle(
+          shm.TakeHandle(), PlatformSharedMemoryRegion::Mode::kWritable),
+      "");
+
+  shm.CreateAndMapAnonymous(10);
+  EXPECT_DEATH_IF_SUPPORTED(
+      PlatformSharedMemoryRegion::TakeFromSharedMemoryHandle(
+          shm.TakeHandle(), PlatformSharedMemoryRegion::Mode::kWritable),
+      "");
 }
 
 }  // namespace subtle

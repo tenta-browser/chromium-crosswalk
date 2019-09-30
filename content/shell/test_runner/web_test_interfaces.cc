@@ -6,7 +6,6 @@
 
 #include <utility>
 
-#include "content/shell/test_runner/mock_web_audio_device.h"
 #include "content/shell/test_runner/mock_web_midi_accessor.h"
 #include "content/shell/test_runner/test_interfaces.h"
 #include "content/shell/test_runner/test_runner.h"
@@ -69,12 +68,6 @@ std::unique_ptr<WebMIDIAccessor> WebTestInterfaces::CreateMIDIAccessor(
   return std::make_unique<MockWebMIDIAccessor>(client, interfaces_.get());
 }
 
-std::unique_ptr<WebAudioDevice> WebTestInterfaces::CreateAudioDevice(
-    double sample_rate,
-    int frames_per_buffer) {
-  return std::make_unique<MockWebAudioDevice>(sample_rate, frames_per_buffer);
-}
-
 std::unique_ptr<WebFrameTestClient> WebTestInterfaces::CreateWebFrameTestClient(
     WebViewTestProxyBase* web_view_test_proxy_base,
     WebFrameTestProxyBase* web_frame_test_proxy_base) {
@@ -86,8 +79,10 @@ std::unique_ptr<WebFrameTestClient> WebTestInterfaces::CreateWebFrameTestClient(
 }
 
 std::unique_ptr<WebViewTestClient> WebTestInterfaces::CreateWebViewTestClient(
-    WebViewTestProxyBase* web_view_test_proxy_base) {
-  return std::make_unique<WebViewTestClient>(web_view_test_proxy_base);
+    WebViewTestProxyBase* web_view_test_proxy_base,
+    std::unique_ptr<WebWidgetTestClient> web_widget_test_client) {
+  return std::make_unique<WebViewTestClient>(web_view_test_proxy_base,
+                                             std::move(web_widget_test_client));
 }
 
 std::unique_ptr<WebWidgetTestClient>

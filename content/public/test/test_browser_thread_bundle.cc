@@ -5,10 +5,12 @@
 #include "content/public/test/test_browser_thread_bundle.h"
 
 #include "base/logging.h"
-#include "base/message_loop/message_loop.h"
+#include "base/message_loop/message_loop_current.h"
 #include "base/run_loop.h"
 #include "base/test/scoped_task_environment.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "content/browser/after_startup_task_utils.h"
+#include "content/browser/browser_thread_impl.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/test/test_browser_thread.h"
 #include "content/public/test/test_utils.h"
@@ -55,13 +57,15 @@ TestBrowserThreadBundle::~TestBrowserThreadBundle() {
     // blocked upon it could make a test flaky whereas by flushing we guarantee
     // it will blow up).
     RunAllTasksUntilIdle();
-    CHECK(base::MessageLoop::current()->IsIdleForTesting());
+    CHECK(!scoped_task_environment_->MainThreadHasPendingTask());
   }
 
   // |scoped_task_environment_| needs to explicitly go away before fake threads
   // in order for DestructionObservers hooked to the main MessageLoop to be able
   // to invoke BrowserThread::CurrentlyOn() -- ref. ~TestBrowserThread().
   scoped_task_environment_.reset();
+
+  BrowserThreadImpl::ResetTaskExecutorForTesting();
 
 #if defined(OS_WIN)
   com_initializer_.reset();
@@ -86,23 +90,25 @@ void TestBrowserThreadBundle::Init() {
   CHECK(com_initializer_->Succeeded());
 #endif
 
+  BrowserThreadImpl::CreateTaskExecutor();
+
   // Create the ScopedTaskEnvironment if it doesn't already exist. A
   // ScopedTaskEnvironment may already exist if this TestBrowserThreadBundle is
   // instantiated in a test whose parent fixture provides a
   // ScopedTaskEnvironment.
-  if (!base::MessageLoop::current()) {
+  if (!base::MessageLoopCurrent::IsSet()) {
     scoped_task_environment_ =
         std::make_unique<base::test::ScopedTaskEnvironment>(
             options_ & IO_MAINLOOP
                 ? base::test::ScopedTaskEnvironment::MainThreadType::IO
                 : base::test::ScopedTaskEnvironment::MainThreadType::UI);
   }
-  CHECK(options_ & IO_MAINLOOP ? base::MessageLoopForIO::IsCurrent()
-                               : base::MessageLoopForUI::IsCurrent());
+  CHECK(options_ & IO_MAINLOOP ? base::MessageLoopCurrentForIO::IsSet()
+                               : base::MessageLoopCurrentForUI::IsSet());
 
   // Set the current thread as the UI thread.
   ui_thread_ = std::make_unique<TestBrowserThread>(
-      BrowserThread::UI, base::MessageLoop::current());
+      BrowserThread::UI, base::ThreadTaskRunnerHandle::Get());
 
   if (!(options_ & DONT_CREATE_BROWSER_THREADS))
     CreateBrowserThreads();
@@ -116,7 +122,7 @@ void TestBrowserThreadBundle::CreateBrowserThreads() {
     io_thread_->StartIOThread();
   } else {
     io_thread_ = std::make_unique<TestBrowserThread>(
-        BrowserThread::IO, base::MessageLoop::current());
+        BrowserThread::IO, base::ThreadTaskRunnerHandle::Get());
   }
 
   threads_created_ = true;

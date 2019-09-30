@@ -108,7 +108,7 @@ bool UserScriptSet::UpdateUserScripts(base::SharedMemoryHandle shared_memory,
   if (!shared_memory_->Map(sizeof(base::Pickle::Header)))
     return false;
   base::Pickle::Header* pickle_header =
-      reinterpret_cast<base::Pickle::Header*>(shared_memory_->memory());
+      static_cast<base::Pickle::Header*>(shared_memory_->memory());
 
   // Now map in the rest of the block.
   int pickle_size = sizeof(base::Pickle::Header) + pickle_header->payload_size;
@@ -118,7 +118,7 @@ bool UserScriptSet::UpdateUserScripts(base::SharedMemoryHandle shared_memory,
 
   // Unpickle scripts.
   uint32_t num_scripts = 0;
-  base::Pickle pickle(reinterpret_cast<char*>(shared_memory_->memory()),
+  base::Pickle pickle(static_cast<char*>(shared_memory_->memory()),
                       pickle_size);
   base::PickleIterator iter(pickle);
   base::debug::Alias(&pickle_size);
@@ -160,8 +160,8 @@ bool UserScriptSet::UpdateUserScripts(base::SharedMemoryHandle shared_memory,
     const Extension* extension =
         RendererExtensionRegistry::Get()->GetByID(script->extension_id());
     if (whitelisted_only &&
-        (!extension ||
-         !PermissionsData::CanExecuteScriptEverywhere(extension))) {
+        (!extension || !PermissionsData::CanExecuteScriptEverywhere(
+                           extension->id(), extension->location()))) {
       continue;
     }
 
@@ -224,11 +224,8 @@ std::unique_ptr<ScriptInjection> UserScriptSet::GetInjectionForScript(
   std::unique_ptr<ScriptInjector> injector(
       new UserScriptInjector(script, this, is_declarative));
 
-  if (injector->CanExecuteOnFrame(
-          injection_host.get(),
-          web_frame,
-          tab_id) ==
-      PermissionsData::ACCESS_DENIED) {
+  if (injector->CanExecuteOnFrame(injection_host.get(), web_frame, tab_id) ==
+      PermissionsData::PageAccess::kDenied) {
     return injection;
   }
 

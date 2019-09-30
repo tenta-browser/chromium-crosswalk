@@ -25,7 +25,6 @@
 
 #include "third_party/blink/renderer/core/html/forms/date_time_edit_element.h"
 
-#include "third_party/blink/renderer/bindings/core/v8/exception_state.h"
 #include "third_party/blink/renderer/core/css/style_change_reason.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/text.h"
@@ -35,6 +34,7 @@
 #include "third_party/blink/renderer/core/html/shadow/shadow_element_names.h"
 #include "third_party/blink/renderer/core/html_names.h"
 #include "third_party/blink/renderer/core/style/computed_style.h"
+#include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/fonts/font_cache.h"
 #include "third_party/blink/renderer/platform/text/date_time_format.h"
 #include "third_party/blink/renderer/platform/text/platform_locale.h"
@@ -747,8 +747,8 @@ void DateTimeEditElement::GetLayout(const LayoutParameters& layout_parameters,
         break;
       }
     }
-    if (DateTimeFieldElement* field =
-            FieldAt(std::min(focused_field_index, fields_.size() - 1)))
+    if (DateTimeFieldElement* field = FieldAt(std::min(
+            focused_field_index, static_cast<size_t>(fields_.size()) - 1)))
       field->focus();
   }
 
@@ -785,12 +785,12 @@ void DateTimeEditElement::ResetFields() {
   fields_.Shrink(0);
 }
 
-void DateTimeEditElement::DefaultEventHandler(Event* event) {
+void DateTimeEditElement::DefaultEventHandler(Event& event) {
   // In case of control owner forward event to control, e.g. DOM
   // dispatchEvent method.
   if (DateTimeFieldElement* field = FocusedField()) {
     field->DefaultEventHandler(event);
-    if (event->DefaultHandled())
+    if (event.DefaultHandled())
       return;
   }
 

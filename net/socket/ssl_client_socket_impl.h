@@ -17,7 +17,6 @@
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
-#include "build/build_config.h"
 #include "net/base/completion_callback.h"
 #include "net/base/io_buffer.h"
 #include "net/cert/cert_verifier.h"
@@ -31,13 +30,12 @@
 #include "net/ssl/channel_id_service.h"
 #include "net/ssl/openssl_ssl_util.h"
 #include "net/ssl/ssl_client_cert_type.h"
-#include "net/ssl/ssl_config_service.h"
+#include "net/ssl/ssl_config.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
 #include "third_party/boringssl/src/include/openssl/base.h"
 #include "third_party/boringssl/src/include/openssl/ssl.h"
 
 namespace base {
-class FilePath;
 namespace trace_event {
 class ProcessMemoryDump;
 }
@@ -53,6 +51,7 @@ class CertVerifier;
 class CTVerifier;
 class SSLCertRequestInfo;
 class SSLInfo;
+class SSLKeyLogger;
 
 using TokenBindingSignatureMap =
     base::MRUCache<std::pair<TokenBindingType, std::string>,
@@ -76,19 +75,9 @@ class SSLClientSocketImpl : public SSLClientSocket,
     return ssl_session_cache_shard_;
   }
 
-#if !defined(OS_NACL)
-  // Log SSL key material to |path|. Must be called before any SSLClientSockets
-  // are created.
-  static void SetSSLKeyLogFile(const base::FilePath& path);
-#endif
-
-  // SSLClientSocket implementation.
-  void GetSSLCertRequestInfo(SSLCertRequestInfo* cert_request_info) override;
-  ChannelIDService* GetChannelIDService() const override;
-  Error GetTokenBindingSignature(crypto::ECPrivateKey* key,
-                                 TokenBindingType tb_type,
-                                 std::vector<uint8_t>* out) override;
-  crypto::ECPrivateKey* GetChannelIDKey() const override;
+  // Log SSL key material to |logger|. Must be called before any
+  // SSLClientSockets are created.
+  static void SetSSLKeyLogger(std::unique_ptr<SSLKeyLogger> logger);
 
   // SSLSocket implementation.
   int ExportKeyingMaterial(const base::StringPiece& label,
@@ -98,15 +87,14 @@ class SSLClientSocketImpl : public SSLClientSocket,
                            unsigned int outlen) override;
 
   // StreamSocket implementation.
-  int Connect(const CompletionCallback& callback) override;
+  int Connect(CompletionOnceCallback callback) override;
   void Disconnect() override;
+  int ConfirmHandshake(CompletionOnceCallback callback) override;
   bool IsConnected() const override;
   bool IsConnectedAndIdle() const override;
   int GetPeerAddress(IPEndPoint* address) const override;
   int GetLocalAddress(IPEndPoint* address) const override;
   const NetLogWithSource& NetLog() const override;
-  void SetSubresourceSpeculation() override;
-  void SetOmniboxSpeculation() override;
   bool WasEverUsed() const override;
   bool WasAlpnNegotiated() const override;
   NextProto GetNegotiatedProtocol() const override;
@@ -116,6 +104,14 @@ class SSLClientSocketImpl : public SSLClientSocket,
   void AddConnectionAttempts(const ConnectionAttempts& attempts) override {}
   int64_t GetTotalReceivedBytes() const override;
   void DumpMemoryStats(SocketMemoryStats* stats) const override;
+  void GetSSLCertRequestInfo(
+      SSLCertRequestInfo* cert_request_info) const override;
+  ChannelIDService* GetChannelIDService() const override;
+  Error GetTokenBindingSignature(crypto::ECPrivateKey* key,
+                                 TokenBindingType tb_type,
+                                 std::vector<uint8_t>* out) override;
+  crypto::ECPrivateKey* GetChannelIDKey() const override;
+
   void ApplySocketTag(const SocketTag& tag) override;
 
   // Dumps memory allocation stats. |pmd| is the browser process memory dump.
@@ -125,13 +121,14 @@ class SSLClientSocketImpl : public SSLClientSocket,
   // Socket implementation.
   int Read(IOBuffer* buf,
            int buf_len,
-           const CompletionCallback& callback) override;
+           CompletionOnceCallback callback) override;
   int ReadIfReady(IOBuffer* buf,
                   int buf_len,
-                  const CompletionCallback& callback) override;
+                  CompletionOnceCallback callback) override;
+  int CancelReadIfReady() override;
   int Write(IOBuffer* buf,
             int buf_len,
-            const CompletionCallback& callback,
+            CompletionOnceCallback callback,
             const NetworkTrafficAnnotationTag& traffic_annotation) override;
   int SetReceiveBufferSize(int32_t size) override;
   int SetSendBufferSize(int32_t size) override;
@@ -213,6 +210,9 @@ class SSLClientSocketImpl : public SSLClientSocket,
 
   void OnPrivateKeyComplete(Error error, const std::vector<uint8_t>& signature);
 
+  // Called from the BoringSSL info callback. (See |SSL_CTX_set_info_callback|.)
+  void InfoCallback(int type, int value);
+
   // Called whenever BoringSSL processes a protocol message.
   void MessageCallback(int is_write,
                        int content_type,
@@ -241,9 +241,9 @@ class SSLClientSocketImpl : public SSLClientSocket,
                           const crypto::OpenSSLErrStackTracer& tracer,
                           OpenSSLErrorInfo* info);
 
-  CompletionCallback user_connect_callback_;
-  CompletionCallback user_read_callback_;
-  CompletionCallback user_write_callback_;
+  CompletionOnceCallback user_connect_callback_;
+  CompletionOnceCallback user_read_callback_;
+  CompletionOnceCallback user_write_callback_;
 
   // Used by Read function.
   scoped_refptr<IOBuffer> user_read_buf_;
@@ -311,6 +311,9 @@ class SSLClientSocketImpl : public SSLClientSocket,
     STATE_VERIFY_CERT_COMPLETE,
   };
   State next_handshake_state_;
+
+  // True if we are currently confirming the handshake.
+  bool in_confirm_handshake_;
 
   // True if the socket has been disconnected.
   bool disconnected_;

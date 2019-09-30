@@ -380,7 +380,8 @@ void GetNonWindowClients(
       AddNonWindowClient(controllee.second, std::move(options), clients.get());
   } else if (controller->context()) {
     GURL origin = controller->script_url().GetOrigin();
-    for (auto it = controller->context()->GetClientProviderHostIterator(origin);
+    for (auto it = controller->context()->GetClientProviderHostIterator(
+             origin, false /* include_reserved_clients */);
          !it->IsAtEnd(); it->Advance()) {
       AddNonWindowClient(it->GetProviderHost(), std::move(options),
                          clients.get());
@@ -418,7 +419,8 @@ void GetWindowClients(const base::WeakPtr<ServiceWorkerVersion>& controller,
       AddWindowClient(controllee.second, &clients_info);
   } else if (controller->context()) {
     GURL origin = controller->script_url().GetOrigin();
-    for (auto it = controller->context()->GetClientProviderHostIterator(origin);
+    for (auto it = controller->context()->GetClientProviderHostIterator(
+             origin, false /* include_reserved_clients */);
          !it->IsAtEnd(); it->Advance()) {
       AddWindowClient(it->GetProviderHost(), &clients_info);
     }
@@ -547,20 +549,21 @@ void DidNavigate(const base::WeakPtr<ServiceWorkerContextCore>& context,
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
 
   if (!context) {
-    std::move(callback).Run(SERVICE_WORKER_ERROR_ABORT,
+    std::move(callback).Run(blink::ServiceWorkerStatusCode::kErrorAbort,
                             nullptr /* client_info */);
     return;
   }
 
   if (render_process_id == ChildProcessHost::kInvalidUniqueID &&
       render_frame_id == MSG_ROUTING_NONE) {
-    std::move(callback).Run(SERVICE_WORKER_ERROR_FAILED,
+    std::move(callback).Run(blink::ServiceWorkerStatusCode::kErrorFailed,
                             nullptr /* client_info */);
     return;
   }
 
   for (std::unique_ptr<ServiceWorkerContextCore::ProviderHostIterator> it =
-           context->GetClientProviderHostIterator(origin);
+           context->GetClientProviderHostIterator(
+               origin, false /* include_reserved_clients */);
        !it->IsAtEnd(); it->Advance()) {
     ServiceWorkerProviderHost* provider_host = it->GetProviderHost();
     if (provider_host->process_id() != render_process_id ||
@@ -572,13 +575,15 @@ void DidNavigate(const base::WeakPtr<ServiceWorkerContextCore>& context,
         base::BindOnce(&GetWindowClientInfoOnUI, provider_host->process_id(),
                        provider_host->route_id(), provider_host->create_time(),
                        provider_host->client_uuid()),
-        base::BindOnce(std::move(callback), SERVICE_WORKER_OK));
+        base::BindOnce(std::move(callback),
+                       blink::ServiceWorkerStatusCode::kOk));
     return;
   }
 
   // If here, it means that no provider_host was found, in which case, the
   // renderer should still be informed that the window was opened.
-  std::move(callback).Run(SERVICE_WORKER_OK, nullptr /* client_info */);
+  std::move(callback).Run(blink::ServiceWorkerStatusCode::kOk,
+                          nullptr /* client_info */);
 }
 
 }  // namespace service_worker_client_utils

@@ -8,7 +8,6 @@
 #import <UIKit/UIKit.h>
 
 #import "ios/chrome/browser/ui/commands/application_commands.h"
-#import "ios/chrome/browser/ui/commands/browser_commands.h"
 #include "ios/chrome/browser/ui/tab_switcher/tab_switcher_transition_context.h"
 #include "ui/base/page_transition_types.h"
 #include "url/gurl.h"
@@ -28,7 +27,8 @@
 // Informs the delegate the stack controller should be dismissed with the given
 // active model.
 - (void)tabSwitcher:(id<TabSwitcher>)tabSwitcher
-    shouldFinishWithActiveModel:(TabModel*)tabModel;
+    shouldFinishWithActiveModel:(TabModel*)tabModel
+                   focusOmnibox:(BOOL)focusOmnibox;
 
 // Informs the delegate that the stack controller is done and should be
 // dismissed.
@@ -64,7 +64,7 @@
 
 // Dispatcher for anything that acts in a "browser" role.
 @property(nonatomic, readonly)
-    id<ApplicationCommands, BrowserCommands, OmniboxFocuser, ToolbarCommands>
+    id<ApplicationCommands, OmniboxFocuser, ToolbarCommands>
         dispatcher;
 
 // Restores the internal state of the tab switcher with the given tab models,

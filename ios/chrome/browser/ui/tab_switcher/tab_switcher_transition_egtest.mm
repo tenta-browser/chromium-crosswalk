@@ -8,6 +8,7 @@
 
 #include "base/strings/stringprintf.h"
 #include "base/strings/sys_string_conversions.h"
+#import "base/test/ios/wait_util.h"
 #import "ios/chrome/app/main_controller.h"
 #import "ios/chrome/browser/tabs/tab_model.h"
 #import "ios/chrome/browser/ui/tab_grid/tab_grid_egtest_util.h"
@@ -472,9 +473,28 @@ std::unique_ptr<net::test_server::HttpResponse> HandleQueryTitle(
 
   ShowTabSwitcher();
   switch (GetTabSwitcherMode()) {
-    case TabSwitcherMode::STACK:
+    case TabSwitcherMode::STACK: {
       // In the stack view, get to the normal card stack by swiping right on the
       // current incognito card.
+
+      // Make sure the incognito card is interactable before swiping it.
+      ConditionBlock condition = ^{
+        NSError* error = nil;
+        [[EarlGrey
+            selectElementWithMatcher:grey_allOf(
+                                         grey_accessibilityLabel(
+                                             incognito_title),
+                                         grey_accessibilityTrait(
+                                             UIAccessibilityTraitStaticText),
+                                         grey_interactable(), nil)]
+            assertWithMatcher:grey_sufficientlyVisible()
+                        error:&error];
+        return error == nil;
+      };
+
+      GREYAssertTrue(base::test::ios::WaitUntilConditionOrTimeout(
+                         base::test::ios::kWaitForUIElementTimeout, condition),
+                     @"Incognito card wasn't interactable.");
       [[EarlGrey
           selectElementWithMatcher:grey_allOf(
                                        grey_accessibilityLabel(incognito_title),
@@ -483,6 +503,7 @@ std::unique_ptr<net::test_server::HttpResponse> HandleQueryTitle(
                                        nil)]
           performAction:grey_swipeFastInDirection(kGREYDirectionRight)];
       break;
+    }
     case TabSwitcherMode::TABLET_SWITCHER:
       // In the tablet tab switcher, switch to the normal panel and select the
       // one tab that is there.
@@ -535,6 +556,16 @@ std::unique_ptr<net::test_server::HttpResponse> HandleQueryTitle(
   // Opening a new tab from the menu will force a change in BVC.
   [ChromeEarlGreyUI openNewIncognitoTab];
   [ChromeEarlGreyUI openNewTab];
+}
+
+// Tests switching back and forth between the normal and incognito BVCs many
+// times.  This is a regression test for https://crbug.com/851954.
+- (void)testSwappingBVCModesManyTimesWithoutEnteringSwitcher {
+  for (int ii = 0; ii < 10; ++ii) {
+    // Opening a new tab from the menu will force a change in BVC.
+    [ChromeEarlGreyUI openNewIncognitoTab];
+    [ChromeEarlGreyUI openNewTab];
+  }
 }
 
 // Tests rotating the device while the switcher is not active.  This is a

@@ -11,7 +11,7 @@
 #include "base/files/file_util.h"
 #include "base/metrics/user_metrics.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chromeos/note_taking_helper.h"
@@ -333,15 +333,14 @@ void DownloadItemNotification::Update() {
   auto download_state = item_->GetState();
 
   // When the download is just completed, interrupted or transitions to
-  // dangerous, increase the priority over its previous value to make sure it
-  // pops up again.
-  bool popup =
+  // dangerous, make sure it pops up again.
+  bool pop_up =
       ((item_->IsDangerous() && !previous_dangerous_state_) ||
        (download_state == download::DownloadItem::COMPLETE &&
         previous_download_state_ != download::DownloadItem::COMPLETE) ||
        (download_state == download::DownloadItem::INTERRUPTED &&
         previous_download_state_ != download::DownloadItem::INTERRUPTED));
-  UpdateNotificationData(!closed_ || show_next_ || popup, popup);
+  UpdateNotificationData(!closed_ || show_next_ || pop_up, pop_up);
 
   show_next_ = false;
   previous_download_state_ = item_->GetState();
@@ -349,7 +348,7 @@ void DownloadItemNotification::Update() {
 }
 
 void DownloadItemNotification::UpdateNotificationData(bool display,
-                                                      bool bump_priority) {
+                                                      bool force_pop_up) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
 
   if (item_->GetState() == download::DownloadItem::CANCELLED) {
@@ -427,12 +426,10 @@ void DownloadItemNotification::UpdateNotificationData(bool display,
   }
   notification_->set_buttons(notification_actions);
 
+  notification_->set_renotify(force_pop_up);
+
   if (display) {
     closed_ = false;
-    if (bump_priority &&
-        notification_->priority() < message_center::HIGH_PRIORITY) {
-      notification_->set_priority(notification_->priority() + 1);
-    }
     NotificationDisplayServiceFactory::GetForProfile(profile())->Display(
         NotificationHandler::Type::TRANSIENT, *notification_);
   }
@@ -450,7 +447,7 @@ void DownloadItemNotification::UpdateNotificationData(bool display,
     if (model.HasSupportedImageMimeType()) {
       base::FilePath file_path = item_->GetFullPath();
       base::PostTaskWithTraitsAndReplyWithResult(
-          FROM_HERE, {base::MayBlock(), base::TaskPriority::BACKGROUND},
+          FROM_HERE, {base::MayBlock(), base::TaskPriority::BEST_EFFORT},
           base::Bind(&ReadNotificationImage, file_path),
           base::Bind(&DownloadItemNotification::OnImageLoaded,
                      weak_factory_.GetWeakPtr()));
@@ -502,7 +499,7 @@ void DownloadItemNotification::OnImageDecoded(const SkBitmap& decoded_bitmap) {
   }
 
   base::PostTaskWithTraitsAndReplyWithResult(
-      FROM_HERE, {base::MayBlock(), base::TaskPriority::BACKGROUND},
+      FROM_HERE, {base::MayBlock(), base::TaskPriority::BEST_EFFORT},
       base::Bind(&CropImage, decoded_bitmap),
       base::Bind(&DownloadItemNotification::OnImageCropped,
                  weak_factory_.GetWeakPtr()));
@@ -694,6 +691,7 @@ base::string16 DownloadItemNotification::GetWarningStatusString() const {
     case download::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS:
     case download::DOWNLOAD_DANGER_TYPE_MAYBE_DANGEROUS_CONTENT:
     case download::DOWNLOAD_DANGER_TYPE_USER_VALIDATED:
+    case download::DOWNLOAD_DANGER_TYPE_WHITELISTED_BY_POLICY:
     case download::DOWNLOAD_DANGER_TYPE_MAX: {
       break;
     }

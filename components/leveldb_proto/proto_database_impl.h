@@ -14,7 +14,6 @@
 #include "base/files/file_path.h"
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
-#include "base/message_loop/message_loop.h"
 #include "base/sequenced_task_runner.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
@@ -51,7 +50,20 @@ class ProtoDatabaseImpl : public ProtoDatabase<T> {
           entries_to_save,
       std::unique_ptr<KeyVector> keys_to_remove,
       typename ProtoDatabase<T>::UpdateCallback callback) override;
+  void UpdateEntriesWithRemoveFilter(
+      std::unique_ptr<typename ProtoDatabase<T>::KeyEntryVector>
+          entries_to_save,
+      const LevelDB::KeyFilter& delete_key_filter,
+      typename ProtoDatabase<T>::UpdateCallback callback) override;
   void LoadEntries(typename ProtoDatabase<T>::LoadCallback callback) override;
+  void LoadEntriesWithFilter(
+      const LevelDB::KeyFilter& filter,
+      typename ProtoDatabase<T>::LoadCallback callback) override;
+  void LoadEntriesWithFilter(
+      const LevelDB::KeyFilter& filter,
+      const leveldb::ReadOptions& options,
+      const std::string& target_prefix,
+      typename ProtoDatabase<T>::LoadCallback callback) override;
   void LoadKeys(typename ProtoDatabase<T>::LoadKeysCallback callback) override;
   void GetEntry(const std::string& key,
                 typename ProtoDatabase<T>::GetCallback callback) override;
@@ -62,6 +74,8 @@ class ProtoDatabaseImpl : public ProtoDatabase<T> {
                         const base::FilePath& database_dir,
                         const leveldb_env::Options& options,
                         typename ProtoDatabase<T>::InitCallback callback);
+
+  bool GetApproximateMemoryUse(uint64_t* approx_mem);
 
  private:
   base::ThreadChecker thread_checker_;
@@ -152,7 +166,28 @@ void UpdateEntriesFromTaskRunner(
 }
 
 template <typename T>
+void UpdateEntriesWithRemoveFilterFromTaskRunner(
+    LevelDB* database,
+    std::unique_ptr<typename ProtoDatabase<T>::KeyEntryVector> entries_to_save,
+    const LevelDB::KeyFilter& delete_key_filter,
+    bool* success) {
+  DCHECK(success);
+
+  // Serialize the values from Proto to string before passing on to database.
+  KeyValueVector pairs_to_save;
+  for (const auto& pair : *entries_to_save) {
+    pairs_to_save.push_back(
+        std::make_pair(pair.first, pair.second.SerializeAsString()));
+  }
+
+  *success = database->UpdateWithRemoveFilter(pairs_to_save, delete_key_filter);
+}
+
+template <typename T>
 void LoadEntriesFromTaskRunner(LevelDB* database,
+                               const LevelDB::KeyFilter& filter,
+                               const leveldb::ReadOptions& options,
+                               const std::string& target_prefix,
                                std::vector<T>* entries,
                                bool* success) {
   DCHECK(success);
@@ -161,7 +196,8 @@ void LoadEntriesFromTaskRunner(LevelDB* database,
   entries->clear();
 
   std::vector<std::string> loaded_entries;
-  *success = database->Load(&loaded_entries);
+  *success =
+      database->LoadWithFilter(filter, &loaded_entries, options, target_prefix);
 
   for (const auto& serialized_entry : loaded_entries) {
     T entry;
@@ -262,8 +298,8 @@ void ProtoDatabaseImpl<T>::InitWithDatabase(
   bool* success = new bool(false);
   task_runner_->PostTaskAndReply(
       FROM_HERE,
-      base::Bind(InitFromTaskRunner, base::Unretained(db_.get()), database_dir,
-                 options, success),
+      base::BindOnce(InitFromTaskRunner, base::Unretained(db_.get()),
+                     database_dir, options, success),
       base::BindOnce(RunInitCallback<T>, std::move(callback),
                      base::Owned(success)));
 }
@@ -285,7 +321,41 @@ void ProtoDatabaseImpl<T>::UpdateEntries(
 }
 
 template <typename T>
+void ProtoDatabaseImpl<T>::UpdateEntriesWithRemoveFilter(
+    std::unique_ptr<typename ProtoDatabase<T>::KeyEntryVector> entries_to_save,
+    const LevelDB::KeyFilter& delete_key_filter,
+    typename ProtoDatabase<T>::UpdateCallback callback) {
+  DCHECK(thread_checker_.CalledOnValidThread());
+  bool* success = new bool(false);
+
+  task_runner_->PostTaskAndReply(
+      FROM_HERE,
+      base::BindOnce(UpdateEntriesWithRemoveFilterFromTaskRunner<T>,
+                     base::Unretained(db_.get()), std::move(entries_to_save),
+                     delete_key_filter, success),
+      base::BindOnce(RunUpdateCallback<T>, std::move(callback),
+                     base::Owned(success)));
+}
+
+template <typename T>
 void ProtoDatabaseImpl<T>::LoadEntries(
+    typename ProtoDatabase<T>::LoadCallback callback) {
+  LoadEntriesWithFilter(LevelDB::KeyFilter(), std::move(callback));
+}
+
+template <typename T>
+void ProtoDatabaseImpl<T>::LoadEntriesWithFilter(
+    const LevelDB::KeyFilter& key_filter,
+    typename ProtoDatabase<T>::LoadCallback callback) {
+  LoadEntriesWithFilter(key_filter, leveldb::ReadOptions(), std::string(),
+                        std::move(callback));
+}
+
+template <typename T>
+void ProtoDatabaseImpl<T>::LoadEntriesWithFilter(
+    const LevelDB::KeyFilter& key_filter,
+    const leveldb::ReadOptions& options,
+    const std::string& target_prefix,
     typename ProtoDatabase<T>::LoadCallback callback) {
   DCHECK(thread_checker_.CalledOnValidThread());
   bool* success = new bool(false);
@@ -297,7 +367,7 @@ void ProtoDatabaseImpl<T>::LoadEntries(
   task_runner_->PostTaskAndReply(
       FROM_HERE,
       base::BindOnce(LoadEntriesFromTaskRunner<T>, base::Unretained(db_.get()),
-                     entries_ptr, success),
+                     key_filter, options, target_prefix, entries_ptr, success),
       base::BindOnce(RunLoadCallback<T>, std::move(callback),
                      base::Owned(success), std::move(entries)));
 }
@@ -336,6 +406,11 @@ void ProtoDatabaseImpl<T>::GetEntry(
       base::BindOnce(RunGetCallback<T>, std::move(callback),
                      base::Owned(success), base::Owned(found),
                      std::move(entry)));
+}
+
+template <typename T>
+bool ProtoDatabaseImpl<T>::GetApproximateMemoryUse(uint64_t* approx_mem) {
+  return db_->GetApproximateMemoryUse(approx_mem);
 }
 
 }  // namespace leveldb_proto

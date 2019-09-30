@@ -12,12 +12,13 @@
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
-#include "content/browser/loader/global_routing_id.h"
 #include "content/browser/renderer_host/overscroll_controller_delegate.h"
 #include "content/browser/renderer_host/render_view_host_delegate_view.h"
 #include "content/browser/web_contents/web_contents_view.h"
 #include "content/common/buildflags.h"
 #include "content/common/content_export.h"
+#include "content/public/browser/global_routing_id.h"
+#include "content/public/browser/visibility.h"
 #include "ui/aura/client/drag_drop_delegate.h"
 #include "ui/aura/window.h"
 #include "ui/aura/window_delegate.h"
@@ -97,6 +98,12 @@ class CONTENT_EXPORT WebContentsViewAura
   // Called from CreateView() to create |window_|.
   void CreateAuraWindow(aura::Window* context);
 
+  // Computes the view's visibility updates the WebContents accordingly.
+  void UpdateWebContentsVisibility();
+
+  // Computes the view's visibility.
+  Visibility GetVisibility() const;
+
   // Overridden from WebContentsView:
   gfx::NativeView GetNativeView() const override;
   gfx::NativeView GetContentNativeView() const override;
@@ -119,7 +126,9 @@ class CONTENT_EXPORT WebContentsViewAura
       RenderWidgetHost* render_widget_host) override;
   void SetPageTitle(const base::string16& title) override;
   void RenderViewCreated(RenderViewHost* host) override;
-  void RenderViewSwappedIn(RenderViewHost* host) override;
+  void RenderViewReady() override;
+  void RenderViewHostChanged(RenderViewHost* old_host,
+                             RenderViewHost* new_host) override;
   void SetOverscrollControllerEnabled(bool enabled) override;
 
   // Overridden from RenderViewHostDelegateView:

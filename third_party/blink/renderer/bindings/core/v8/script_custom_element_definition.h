@@ -41,9 +41,9 @@ class CORE_EXPORT ScriptCustomElementDefinition final
       HashSet<AtomicString>&& observed_attributes,
       CSSStyleSheet*);
 
-  virtual ~ScriptCustomElementDefinition() = default;
+  ~ScriptCustomElementDefinition() override = default;
 
-  virtual void TraceWrappers(const ScriptWrappableVisitor*) const;
+  void Trace(Visitor*) override;
 
   v8::Local<v8::Object> Constructor() const;
 
@@ -93,7 +93,7 @@ class CORE_EXPORT ScriptCustomElementDefinition final
                                                 v8::Isolate*,
                                                 ExceptionState&);
 
-  scoped_refptr<ScriptState> script_state_;
+  Member<ScriptState> script_state_;
   TraceWrapperV8Reference<v8::Object> constructor_;
   TraceWrapperV8Reference<v8::Function> connected_callback_;
   TraceWrapperV8Reference<v8::Function> disconnected_callback_;

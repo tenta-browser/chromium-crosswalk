@@ -326,6 +326,7 @@ TestRunner.textContentWithoutStyles = function(node) {
  * @param {!SDK.Target} target
  */
 TestRunner._setupTestHelpers = function(target) {
+  TestRunner.BrowserAgent = target.browserAgent();
   TestRunner.CSSAgent = target.cssAgent();
   TestRunner.DeviceOrientationAgent = target.deviceOrientationAgent();
   TestRunner.DOMAgent = target.domAgent();
@@ -1221,7 +1222,7 @@ TestRunner.dumpLoadedModules = function(relativeTo) {
  * @return {boolean}
  */
 TestRunner.isDedicatedWorker = function(target) {
-  return target && !target.hasBrowserCapability() && target.hasJSCapability() && !target.hasTargetCapability();
+  return target && !target.hasBrowserCapability() && target.hasJSCapability() && target.hasLogCapability();
 };
 
 /**

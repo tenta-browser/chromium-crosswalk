@@ -154,7 +154,7 @@ ServerConnectionManager::MakeActiveConnection() {
 }
 
 bool ServerConnectionManager::SetAuthToken(const std::string& auth_token) {
-  DCHECK(thread_checker_.CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   if (!auth_token.empty() && (previously_invalidated_token != auth_token)) {
     auth_token_.assign(auth_token);
@@ -176,7 +176,7 @@ bool ServerConnectionManager::SetAuthToken(const std::string& auth_token) {
 }
 
 void ServerConnectionManager::InvalidateAndClearAuthToken() {
-  DCHECK(thread_checker_.CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   // Copy over the token to previous invalid token.
   if (!auth_token_.empty()) {
     previously_invalidated_token.assign(auth_token_);
@@ -197,14 +197,14 @@ void ServerConnectionManager::SetServerStatus(
 }
 
 void ServerConnectionManager::NotifyStatusChanged() {
-  DCHECK(thread_checker_.CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   for (auto& observer : listeners_)
     observer.OnServerConnectionEvent(ServerConnectionEvent(server_status_));
 }
 
 bool ServerConnectionManager::PostBufferWithCachedAuth(
     PostBufferParams* params) {
-  DCHECK(thread_checker_.CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   string path =
       MakeSyncServerPath(proto_sync_path(), MakeSyncQueryString(client_id_));
   bool result = PostBufferToPath(params, path, auth_token());
@@ -215,13 +215,9 @@ bool ServerConnectionManager::PostBufferWithCachedAuth(
 bool ServerConnectionManager::PostBufferToPath(PostBufferParams* params,
                                                const string& path,
                                                const string& auth_token) {
-  DCHECK(thread_checker_.CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
-  // TODO(pavely): crbug.com/273096. Check for "credentials_lost" is added as
-  // workaround for M29 blocker to avoid sending RPC to sync with known invalid
-  // token but instead to trigger refreshing token in ProfileSyncService. Need
-  // to clean it.
-  if (auth_token.empty() || auth_token == "credentials_lost") {
+  if (auth_token.empty()) {
     params->response.server_status = HttpResponse::SYNC_AUTH_ERROR;
     // Print a log to distinguish this "known failure" from others.
     DVLOG(1) << "ServerConnectionManager forcing SYNC_AUTH_ERROR due to missing"
@@ -230,7 +226,7 @@ bool ServerConnectionManager::PostBufferToPath(PostBufferParams* params,
   }
 
   std::unique_ptr<Connection> connection = MakeActiveConnection();
-  if (!connection.get()) {
+  if (!connection) {
     params->response.server_status = HttpResponse::CONNECTION_UNAVAILABLE;
     return false;
   }
@@ -257,13 +253,13 @@ bool ServerConnectionManager::PostBufferToPath(PostBufferParams* params,
 
 void ServerConnectionManager::AddListener(
     ServerConnectionEventListener* listener) {
-  DCHECK(thread_checker_.CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   listeners_.AddObserver(listener);
 }
 
 void ServerConnectionManager::RemoveListener(
     ServerConnectionEventListener* listener) {
-  DCHECK(thread_checker_.CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   listeners_.RemoveObserver(listener);
 }
 

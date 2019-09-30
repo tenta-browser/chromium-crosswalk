@@ -31,7 +31,7 @@ class XRWebGLLayer final : public XRLayer,
   DEFINE_WRAPPERTYPEINFO();
 
  public:
-  virtual ~XRWebGLLayer();
+  ~XRWebGLLayer() override;
 
   static XRWebGLLayer* Create(
       XRSession*,
@@ -60,13 +60,18 @@ class XRWebGLLayer final : public XRLayer,
   XRViewport* getViewport(XRView*);
   void requestViewportScaling(double scale_factor);
 
-  XRViewport* GetViewportForEye(XRView::Eye);
+  static double getNativeFramebufferScaleFactor(XRSession* session);
+
+  XRViewport* GetViewportForEye(XRView::XREye);
 
   void UpdateViewports();
 
   void OnFrameStart(const base::Optional<gpu::MailboxHolder>&) override;
   void OnFrameEnd() override;
   void OnResize() override;
+
+  void OverwriteColorBufferFromMailboxTexture(const gpu::MailboxHolder&,
+                                              const IntSize& size);
 
   scoped_refptr<StaticBitmapImage> TransferToStaticBitmapImage(
       std::unique_ptr<viz::SingleReleaseCallback>* out_release_callback);
@@ -76,8 +81,7 @@ class XRWebGLLayer final : public XRLayer,
       scoped_refptr<StaticBitmapImage>,
       std::unique_ptr<viz::SingleReleaseCallback>) override;
 
-  virtual void Trace(blink::Visitor*);
-  virtual void TraceWrappers(const ScriptWrappableVisitor*) const;
+  void Trace(blink::Visitor*) override;
 
  private:
   XRWebGLLayer(XRSession*,

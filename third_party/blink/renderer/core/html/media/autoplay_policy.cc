@@ -4,6 +4,7 @@
 
 #include "third_party/blink/renderer/core/html/media/autoplay_policy.h"
 
+#include "build/build_config.h"
 #include "third_party/blink/public/mojom/feature_policy/feature_policy.mojom-blink.h"
 #include "third_party/blink/public/platform/autoplay.mojom-blink.h"
 #include "third_party/blink/public/platform/web_media_player.h"
@@ -85,6 +86,12 @@ AutoplayPolicy::Type AutoplayPolicy::GetAutoplayPolicyForDocument(
   if (IsDocumentWhitelisted(document))
     return Type::kNoUserGestureRequired;
 
+  if (DocumentHasUserExceptionFlag(document))
+    return Type::kNoUserGestureRequired;
+
+  if (document.GetSettings()->GetPresentationReceiver())
+    return Type::kNoUserGestureRequired;
+
   return document.GetSettings()->GetAutoplayPolicy();
 }
 
@@ -109,8 +116,7 @@ bool AutoplayPolicy::IsDocumentAllowedToPlay(const Document& document) {
       return true;
     }
 
-    if (!RuntimeEnabledFeatures::FeaturePolicyAutoplayFeatureEnabled() ||
-        !frame->IsFeatureEnabled(mojom::FeaturePolicyFeature::kAutoplay)) {
+    if (!frame->IsFeatureEnabled(mojom::FeaturePolicyFeature::kAutoplay)) {
       return false;
     }
   }
@@ -132,6 +138,21 @@ bool AutoplayPolicy::DocumentHasForceAllowFlag(const Document& document) {
     return false;
   return document.GetPage()->AutoplayFlags() &
          mojom::blink::kAutoplayFlagForceAllow;
+}
+
+// static
+bool AutoplayPolicy::DocumentHasUserExceptionFlag(const Document& document) {
+  if (!document.GetPage())
+    return false;
+  return document.GetPage()->AutoplayFlags() &
+         mojom::blink::kAutoplayFlagUserException;
+}
+
+// static
+bool AutoplayPolicy::DocumentShouldAutoplayMutedVideos(
+    const Document& document) {
+  return GetAutoplayPolicyForDocument(document) !=
+         AutoplayPolicy::Type::kNoUserGestureRequired;
 }
 
 AutoplayPolicy::AutoplayPolicy(HTMLMediaElement* element)
@@ -169,7 +190,7 @@ void AutoplayPolicy::DidMoveToNewDocument(Document& old_document) {
 
 bool AutoplayPolicy::IsEligibleForAutoplayMuted() const {
   return element_->IsHTMLVideoElement() && element_->muted() &&
-         RuntimeEnabledFeatures::AutoplayMutedVideosEnabled();
+         DocumentShouldAutoplayMutedVideos(element_->GetDocument());
 }
 
 void AutoplayPolicy::StartAutoplayMutedWhenVisible() {
@@ -251,13 +272,13 @@ bool AutoplayPolicy::RequestAutoplayByAttribute() {
   return false;
 }
 
-Optional<ExceptionCode> AutoplayPolicy::RequestPlay() {
+base::Optional<DOMExceptionCode> AutoplayPolicy::RequestPlay() {
   if (!Frame::HasTransientUserActivation(element_->GetDocument().GetFrame())) {
     autoplay_uma_helper_->OnAutoplayInitiated(AutoplaySource::kMethod);
     if (IsGestureNeededForPlayback()) {
       autoplay_uma_helper_->RecordCrossOriginAutoplayResult(
           CrossOriginAutoplayResult::kAutoplayBlocked);
-      return kNotAllowedError;
+      return DOMExceptionCode::kNotAllowedError;
     }
 
     if (IsGestureNeededForPlaybackIfCrossOriginExperimentEnabled()) {
@@ -275,11 +296,7 @@ Optional<ExceptionCode> AutoplayPolicy::RequestPlay() {
 
   MaybeSetAutoplayInitiated();
 
-  return WTF::nullopt;
-}
-
-bool AutoplayPolicy::IsAutoplayingMuted() const {
-  return IsAutoplayingMutedInternal(element_->muted());
+  return base::nullopt;
 }
 
 bool AutoplayPolicy::IsAutoplayingMutedInternal(bool muted) const {
@@ -292,7 +309,7 @@ bool AutoplayPolicy::IsOrWillBeAutoplayingMuted() const {
 
 bool AutoplayPolicy::IsOrWillBeAutoplayingMutedInternal(bool muted) const {
   if (!element_->IsHTMLVideoElement() ||
-      !RuntimeEnabledFeatures::AutoplayMutedVideosEnabled()) {
+      !DocumentShouldAutoplayMutedVideos(element_->GetDocument())) {
     return false;
   }
 
@@ -336,6 +353,12 @@ bool AutoplayPolicy::WasAutoplayInitiated() const {
   return *autoplay_initiated_;
 }
 
+void AutoplayPolicy::EnsureAutoplayInitiatedSet() {
+  if (autoplay_initiated_)
+    return;
+  autoplay_initiated_ = false;
+}
+
 bool AutoplayPolicy::IsGestureNeededForPlaybackIfPendingUserGestureIsLocked()
     const {
   if (element_->GetLoadType() == WebMediaPlayer::kLoadTypeMediaStream)
@@ -347,9 +370,12 @@ bool AutoplayPolicy::IsGestureNeededForPlaybackIfPendingUserGestureIsLocked()
   // - Preload was not disabled (low end devices);
   // - Autoplay is enabled in settings;
   if (element_->IsHTMLVideoElement() && element_->muted() &&
-      RuntimeEnabledFeatures::AutoplayMutedVideosEnabled() &&
+      DocumentShouldAutoplayMutedVideos(element_->GetDocument()) &&
       !(element_->GetDocument().GetSettings() &&
-        GetNetworkStateNotifier().SaveDataEnabled()) &&
+        GetNetworkStateNotifier().SaveDataEnabled() &&
+        !element_->GetDocument()
+             .GetSettings()
+             ->GetDataSaverHoldbackMediaApi()) &&
       !(element_->GetDocument().GetSettings() &&
         element_->GetDocument()
             .GetSettings()

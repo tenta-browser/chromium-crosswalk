@@ -29,8 +29,9 @@
 #import "ios/chrome/browser/ui/collection_view/cells/collection_view_item.h"
 #import "ios/chrome/browser/ui/collection_view/cells/collection_view_text_item.h"
 #import "ios/chrome/browser/ui/collection_view/collection_view_model.h"
+#import "ios/chrome/browser/ui/commands/open_new_tab_command.h"
 #import "ios/chrome/browser/ui/context_menu/context_menu_coordinator.h"
-#import "ios/chrome/browser/ui/history/history_base_feature.h"
+#import "ios/chrome/browser/ui/history/features.h"
 #import "ios/chrome/browser/ui/history/history_entries_status_item_delegate.h"
 #include "ios/chrome/browser/ui/history/history_entry_inserter.h"
 #import "ios/chrome/browser/ui/history/history_entry_item_delegate.h"
@@ -44,6 +45,7 @@
 #import "ios/third_party/material_components_ios/src/components/ActivityIndicator/src/MDCActivityIndicator.h"
 #import "ios/third_party/material_components_ios/src/components/Collections/src/MaterialCollections.h"
 #import "ios/third_party/material_components_ios/src/components/Palettes/src/MaterialPalettes.h"
+#import "ios/web/public/navigation_manager.h"
 #import "ios/web/public/referrer.h"
 #import "ios/web/public/web_state/context_menu_params.h"
 #import "net/base/mac/url_conversions.h"
@@ -870,40 +872,39 @@ initWithLoader:(id<UrlLoader>)loader
 }
 
 - (void)openURL:(const GURL&)URL {
-  GURL copiedURL(URL);
   new_tab_page_uma::RecordAction(_browserState,
                                  new_tab_page_uma::ACTION_OPENED_HISTORY_ENTRY);
+  web::NavigationManager::WebLoadParams params(URL);
+  params.transition_type = ui::PAGE_TRANSITION_AUTO_BOOKMARK;
   [self.delegate historyCollectionViewController:self
                        shouldCloseWithCompletion:^{
-                         [self.URLLoader
-                                       loadURL:copiedURL
-                                      referrer:web::Referrer()
-                                    transition:ui::PAGE_TRANSITION_AUTO_BOOKMARK
-                             rendererInitiated:NO];
+                         [self.URLLoader loadURLWithParams:params];
                        }];
 }
 
 - (void)openURLInNewTab:(const GURL&)URL {
-  GURL copiedURL(URL);
+  OpenNewTabCommand* command =
+      [[OpenNewTabCommand alloc] initWithURL:URL
+                                    referrer:web::Referrer()
+                                 inIncognito:NO
+                                inBackground:NO
+                                    appendTo:kLastTab];
   [self.delegate historyCollectionViewController:self
                        shouldCloseWithCompletion:^{
-                         [self.URLLoader webPageOrderedOpen:copiedURL
-                                                   referrer:web::Referrer()
-                                                inIncognito:NO
-                                               inBackground:NO
-                                                   appendTo:kLastTab];
+                         [self.URLLoader webPageOrderedOpen:command];
                        }];
 }
 
 - (void)openURLInNewIncognitoTab:(const GURL&)URL {
-  GURL copiedURL(URL);
+  OpenNewTabCommand* command =
+      [[OpenNewTabCommand alloc] initWithURL:URL
+                                    referrer:web::Referrer()
+                                 inIncognito:YES
+                                inBackground:NO
+                                    appendTo:kLastTab];
   [self.delegate historyCollectionViewController:self
                        shouldCloseWithCompletion:^{
-                         [self.URLLoader webPageOrderedOpen:copiedURL
-                                                   referrer:web::Referrer()
-                                                inIncognito:YES
-                                               inBackground:NO
-                                                   appendTo:kLastTab];
+                         [self.URLLoader webPageOrderedOpen:command];
                        }];
 }
 

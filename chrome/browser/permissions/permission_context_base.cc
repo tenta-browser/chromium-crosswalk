@@ -27,6 +27,7 @@
 #include "chrome/common/chrome_features.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/common/url_constants.h"
+#include "components/content_settings/core/browser/content_settings_registry.h"
 #include "components/content_settings/core/browser/host_content_settings_map.h"
 #include "components/prefs/pref_service.h"
 #include "components/variations/variations_associated_data.h"
@@ -252,6 +253,10 @@ PermissionResult PermissionContextBase::UpdatePermissionStatusWithDeviceStatus(
 
 void PermissionContextBase::ResetPermission(const GURL& requesting_origin,
                                             const GURL& embedding_origin) {
+  if (!content_settings::ContentSettingsRegistry::GetInstance()->Get(
+          content_settings_type_)) {
+    return;
+  }
   HostContentSettingsMapFactory::GetForProfile(profile_)
       ->SetContentSettingDefaultScope(requesting_origin, embedding_origin,
                                       content_settings_type_, std::string(),
@@ -386,12 +391,6 @@ void PermissionContextBase::UpdateContentSetting(
 
 bool PermissionContextBase::PermissionAllowedByFeaturePolicy(
     content::RenderFrameHost* rfh) const {
-  if (!base::FeatureList::IsEnabled(
-          features::kUseFeaturePolicyForPermissions)) {
-    // Default to ignoring the feature policy.
-    return true;
-  }
-
   // Some features don't have an associated feature policy yet. Allow those.
   if (feature_policy_feature_ == blink::mojom::FeaturePolicyFeature::kNotFound)
     return true;

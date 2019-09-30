@@ -17,7 +17,7 @@
 #include "chrome/browser/android/contextualsearch/contextual_search_field_trial.h"
 #include "chrome/browser/android/contextualsearch/resolved_search_term.h"
 #include "chrome/browser/android/proto/client_discourse_context.pb.h"
-#include "chrome/browser/language/language_model_factory.h"
+#include "chrome/browser/language/language_model_manager_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/sync/profile_sync_service_factory.h"
@@ -25,8 +25,11 @@
 #include "chrome/common/pref_names.h"
 #include "components/browser_sync/profile_sync_service.h"
 #include "components/language/core/browser/language_model.h"
+#include "components/language/core/browser/language_model_manager.h"
 #include "components/prefs/pref_service.h"
 #include "components/search_engines/template_url_service.h"
+#include "components/signin/core/browser/profile_management_switches.h"
+#include "components/unified_consent/url_keyed_data_collection_consent_helper.h"
 #include "components/variations/net/variations_http_headers.h"
 #include "components/variations/variations_associated_data.h"
 #include "content/public/browser/render_frame_host.h"
@@ -37,6 +40,7 @@
 #include "url/gurl.h"
 
 using content::RenderFrameHost;
+using unified_consent::UrlKeyedDataCollectionConsentHelper;
 
 namespace {
 
@@ -153,16 +157,17 @@ void ContextualSearchDelegate::ResolveSearchTermFromContext() {
 
   // Add Chrome experiment state to the request headers.
   net::HttpRequestHeaders headers;
-  // Note: It's OK to pass SignedIn::kNo if it's unknown, as it does not affect
-  // transmission of experiments coming from the variations server.
-  variations::AppendVariationHeaders(
+  variations::AppendVariationHeadersUnknownSignedIn(
       search_term_fetcher_->GetOriginalURL(),
       variations::InIncognito::kNo,  // Impossible to be incognito at this
                                      // point.
-      variations::SignedIn::kNo, &headers);
+      &headers);
   search_term_fetcher_->SetExtraRequestHeaders(headers.ToString());
 
   SetDiscourseContextAndAddToHeader(*context_);
+
+  // Disable cookies for this request.
+  search_term_fetcher_->SetAllowCredentials(false);
 
   search_term_fetcher_->Start();
 }
@@ -256,7 +261,8 @@ std::string ContextualSearchDelegate::BuildRequestUrl(
   }
 
   TemplateURLRef::SearchTermsArgs::ContextualSearchParams params(
-      kContextualSearchRequestVersion, contextual_cards_version, home_country);
+      kContextualSearchRequestVersion, contextual_cards_version, home_country,
+      0L, 0);
 
   search_terms_args.contextual_search_params = params;
 
@@ -288,7 +294,7 @@ void ContextualSearchDelegate::OnTextSurroundingSelectionAvailable(
     return;
 
   // Sometimes the surroundings are 0, 0, '', so run the callback with empty
-  // data in that case. See crbug.com/393100.
+  // data in that case. See https://crbug.com/393100.
   if (start_offset == 0 && end_offset == 0 && surrounding_text.length() == 0) {
     surrounding_text_callback_.Run(std::string(), base::string16(), 0, 0);
     return;
@@ -374,19 +380,21 @@ bool ContextualSearchDelegate::CanSendPageURL(
       (current_page_url.scheme() != url::kHttpsScheme))
     return false;
 
-  // Check that the user has sync enabled, is logged in, and syncs their Chrome
-  // History.
-  browser_sync::ProfileSyncService* service =
-      ProfileSyncServiceFactory::GetInstance()->GetForProfile(profile);
-  syncer::SyncPrefs sync_prefs(profile->GetPrefs());
-  if (service == NULL || !service->CanSyncStart() ||
-      !sync_prefs.GetPreferredDataTypes(syncer::UserTypes())
-           .Has(syncer::PROXY_TABS) ||
-      !service->GetActiveDataTypes().Has(syncer::HISTORY_DELETE_DIRECTIVES)) {
+  syncer::SyncService* sync_service =
+      ProfileSyncServiceFactory::GetSyncServiceForBrowserContext(profile);
+  if (!sync_service)
     return false;
-  }
 
-  return true;
+  // Check whether the user has enabled anonymous URL-keyed data collection
+  // from the unified consent service.
+  std::unique_ptr<UrlKeyedDataCollectionConsentHelper>
+      anonymized_unified_consent_url_helper =
+          UrlKeyedDataCollectionConsentHelper::
+              NewAnonymizedDataCollectionConsentHelper(
+                  ProfileManager::GetActiveUserProfile()->GetPrefs(),
+                  sync_service);
+  // If they have, then allow sending of the URL.
+  return anonymized_unified_consent_url_helper->IsEnabled();
 }
 
 // Gets the target language from the translate service using the user's profile.
@@ -394,7 +402,8 @@ std::string ContextualSearchDelegate::GetTargetLanguage() {
   Profile* profile = ProfileManager::GetActiveUserProfile();
   PrefService* pref_service = profile->GetPrefs();
   language::LanguageModel* language_model =
-      LanguageModelFactory::GetForBrowserContext(profile);
+      LanguageModelManagerFactory::GetForBrowserContext(profile)
+          ->GetPrimaryModel();
   std::string result =
       TranslateService::GetTargetLanguage(pref_service, language_model);
   DCHECK(!result.empty());

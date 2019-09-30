@@ -43,8 +43,7 @@
 
 #if defined(OS_CHROMEOS)
 #include "chrome/browser/chromeos/login/users/scoped_test_user_manager.h"
-#include "chrome/browser/chromeos/settings/cros_settings.h"
-#include "chrome/browser/chromeos/settings/device_settings_service.h"
+#include "chrome/browser/chromeos/settings/scoped_cros_settings_test_helper.h"
 #endif
 
 using base::ASCIIToUTF16;
@@ -371,8 +370,7 @@ class MediaGalleriesPreferencesTest : public testing::Test {
   EnsureMediaDirectoriesExists mock_gallery_locations_;
 
 #if defined(OS_CHROMEOS)
-  chromeos::ScopedTestDeviceSettingsService test_device_settings_service_;
-  chromeos::ScopedTestCrosSettings test_cros_settings_;
+  chromeos::ScopedCrosSettingsTestHelper cros_settings_test_helper_;
   chromeos::ScopedTestUserManager test_user_manager_;
 #endif
 
@@ -1185,6 +1183,9 @@ TEST_F(MediaGalleriesPreferencesTest, ScanResults) {
 }
 
 TEST(MediaGalleriesPrefInfoTest, NameGeneration) {
+  base::test::ScopedTaskEnvironment scoped_task_environment(
+      base::test::ScopedTaskEnvironment::MainThreadType::UI);
+
   ASSERT_TRUE(TestStorageMonitor::CreateAndInstall());
 
   MediaGalleryPrefInfo info;
@@ -1240,11 +1241,12 @@ TEST_F(MediaGalleriesPreferencesTest, SetsDefaultGalleryTypeField) {
   base::FilePath music_path;
   base::FilePath pictures_path;
   base::FilePath videos_path;
-  bool got_music_path = PathService::Get(chrome::DIR_USER_MUSIC, &music_path);
+  bool got_music_path =
+      base::PathService::Get(chrome::DIR_USER_MUSIC, &music_path);
   bool got_pictures_path =
-      PathService::Get(chrome::DIR_USER_PICTURES, &pictures_path);
+      base::PathService::Get(chrome::DIR_USER_PICTURES, &pictures_path);
   bool got_videos_path =
-      PathService::Get(chrome::DIR_USER_VIDEOS, &videos_path);
+      base::PathService::Get(chrome::DIR_USER_VIDEOS, &videos_path);
 
   int num_default_galleries = 0;
 
@@ -1296,11 +1298,11 @@ TEST_F(MediaGalleriesPreferencesTest, UpdatesDefaultGalleryType) {
   base::FilePath old_pictures_path;
   base::FilePath old_videos_path;
   bool got_old_music_path =
-      PathService::Get(chrome::DIR_USER_MUSIC, &old_music_path);
+      base::PathService::Get(chrome::DIR_USER_MUSIC, &old_music_path);
   bool got_old_pictures_path =
-      PathService::Get(chrome::DIR_USER_PICTURES, &old_pictures_path);
+      base::PathService::Get(chrome::DIR_USER_PICTURES, &old_pictures_path);
   bool got_old_videos_path =
-      PathService::Get(chrome::DIR_USER_VIDEOS, &old_videos_path);
+      base::PathService::Get(chrome::DIR_USER_VIDEOS, &old_videos_path);
 
   bool found_music = false;
   bool found_pictures = false;
@@ -1347,11 +1349,11 @@ TEST_F(MediaGalleriesPreferencesTest, UpdatesDefaultGalleryType) {
   base::FilePath new_pictures_path;
   base::FilePath new_videos_path;
   bool got_new_music_path =
-      PathService::Get(chrome::DIR_USER_MUSIC, &new_music_path);
+      base::PathService::Get(chrome::DIR_USER_MUSIC, &new_music_path);
   bool got_new_pictures_path =
-      PathService::Get(chrome::DIR_USER_PICTURES, &new_pictures_path);
+      base::PathService::Get(chrome::DIR_USER_PICTURES, &new_pictures_path);
   bool got_new_videos_path =
-      PathService::Get(chrome::DIR_USER_VIDEOS, &new_videos_path);
+      base::PathService::Get(chrome::DIR_USER_VIDEOS, &new_videos_path);
 
   EXPECT_NE(new_music_path, old_music_path);
   EXPECT_NE(new_pictures_path, old_pictures_path);
@@ -1421,11 +1423,12 @@ TEST_F(MediaGalleriesPreferencesTest, UpdateAddsDefaultGalleryTypeIfMissing) {
   base::FilePath music_path;
   base::FilePath pictures_path;
   base::FilePath videos_path;
-  bool got_music_path = PathService::Get(chrome::DIR_USER_MUSIC, &music_path);
+  bool got_music_path =
+      base::PathService::Get(chrome::DIR_USER_MUSIC, &music_path);
   bool got_pictures_path =
-      PathService::Get(chrome::DIR_USER_PICTURES, &pictures_path);
+      base::PathService::Get(chrome::DIR_USER_PICTURES, &pictures_path);
   bool got_videos_path =
-      PathService::Get(chrome::DIR_USER_VIDEOS, &videos_path);
+      base::PathService::Get(chrome::DIR_USER_VIDEOS, &videos_path);
 
   bool found_music = false;
   bool found_pictures = false;

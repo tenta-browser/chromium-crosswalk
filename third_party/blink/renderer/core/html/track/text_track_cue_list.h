@@ -56,8 +56,7 @@ class TextTrackCueList final : public ScriptWrappable {
   }
   void ValidateCueIndexes();
 
-  void Trace(blink::Visitor*);
-  virtual void TraceWrappers(const ScriptWrappableVisitor*) const;
+  void Trace(blink::Visitor*) override;
 
  private:
   TextTrackCueList();

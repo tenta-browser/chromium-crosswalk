@@ -42,7 +42,7 @@ static const size_t kDataSize = 1024;
 // Common routine used with Posix file descriptors. Check that shared memory
 // file descriptor |fd| does not allow writable mappings. Return true on
 // success, false otherwise.
-#if defined(OS_POSIX) && !defined(OS_FUCHSIA)
+#if defined(OS_POSIX)
 static bool CheckReadOnlySharedMemoryFdPosix(int fd) {
 // Note that the error on Android is EPERM, unlike other platforms where
 // it will be EACCES.
@@ -76,7 +76,7 @@ bool CheckReadOnlySharedMemoryFuchsiaHandle(zx_handle_t handle) {
   uintptr_t addr;
   const zx_handle_t root = zx_vmar_root_self();
   const zx_status_t status =
-      zx_vmar_map(root, 0, handle, 0U, kDataSize, flags, &addr);
+      zx_vmar_map_old(root, 0, handle, 0U, kDataSize, flags, &addr);
   if (status == ZX_OK) {
     LOG(ERROR) << "zx_vmar_map() should have failed!";
     zx_vmar_unmap(root, addr, kDataSize);
@@ -158,5 +158,30 @@ bool CheckReadOnlyPlatformSharedMemoryRegionForTesting(
 }
 
 #endif  // !OS_NACL
+
+WritableSharedMemoryMapping MapForTesting(
+    subtle::PlatformSharedMemoryRegion* region) {
+  return MapAtForTesting(region, 0, region->GetSize());
+}
+
+WritableSharedMemoryMapping MapAtForTesting(
+    subtle::PlatformSharedMemoryRegion* region,
+    off_t offset,
+    size_t size) {
+  void* memory = nullptr;
+  size_t mapped_size = 0;
+  if (!region->MapAt(offset, size, &memory, &mapped_size))
+    return {};
+
+  return WritableSharedMemoryMapping(memory, size, mapped_size,
+                                     region->GetGUID());
+}
+
+template <>
+std::pair<ReadOnlySharedMemoryRegion, WritableSharedMemoryMapping>
+CreateMappedRegion(size_t size) {
+  MappedReadOnlyRegion mapped_region = ReadOnlySharedMemoryRegion::Create(size);
+  return {std::move(mapped_region.region), std::move(mapped_region.mapping)};
+}
 
 }  // namespace base

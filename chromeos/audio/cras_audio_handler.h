@@ -274,6 +274,11 @@ class CHROMEOS_EXPORT CrasAudioHandler : public CrasAudioClient::Observer,
   // the use case. It should be called from a user initiated action.
   void SwitchToFrontOrRearMic();
 
+  // All Chrome OS boards support this feature. Web applications will need
+  // to opt into original trial to use experimental native echo cancellation.
+  // Check crbug.com/853196 for usage.
+  bool system_aec_supported() const { return true; };
+
  protected:
   explicit CrasAudioHandler(
       scoped_refptr<AudioDevicesPrefHandler> audio_pref_handler);
@@ -479,7 +484,7 @@ class CHROMEOS_EXPORT CrasAudioHandler : public CrasAudioClient::Observer,
   void OnVideoCaptureStoppedOnMainThread(media::VideoFacingMode facing);
 
   scoped_refptr<AudioDevicesPrefHandler> audio_pref_handler_;
-  base::ObserverList<AudioObserver> observers_;
+  base::ObserverList<AudioObserver>::Unchecked observers_;
 
   // Audio data and state.
   AudioDeviceMap audio_devices_;

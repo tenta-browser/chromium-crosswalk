@@ -49,6 +49,8 @@ function test() {
     tryPostMessage(winLocalhost, "http://user:pass@localhost:8000/foo?bar#baz", true);
     tryPostMessage(winLocalhost, "*", true);
     tryPostMessage(win127, "/", true);
+    tryPostMessage(win127, undefined, true);
+    tryPostMessage(win127, null, true);
 
     // Should fail:
     tryPostMessage(winLocalhost, "/", false);
@@ -59,8 +61,6 @@ function test() {
     tryPostMessage(winLocalhost, "http://www.example.com", false);
 
     // Should throw syntax error:
-    tryPostMessage(winLocalhost, null, false);
-    tryPostMessage(winLocalhost, undefined, false);
     tryPostMessage(win127, "//", false);
 }
 

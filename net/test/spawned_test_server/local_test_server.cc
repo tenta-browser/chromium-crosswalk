@@ -77,7 +77,7 @@ LocalTestServer::~LocalTestServer() {
 
 bool LocalTestServer::GetTestServerPath(base::FilePath* testserver_path) const {
   base::FilePath testserver_dir;
-  if (!PathService::Get(base::DIR_SOURCE_ROOT, &testserver_dir)) {
+  if (!base::PathService::Get(base::DIR_SOURCE_ROOT, &testserver_dir)) {
     LOG(ERROR) << "Failed to get DIR_SOURCE_ROOT";
     return false;
   }
@@ -91,7 +91,7 @@ bool LocalTestServer::GetTestServerPath(base::FilePath* testserver_path) const {
 bool LocalTestServer::StartInBackground() {
   DCHECK(!started());
 
-  base::ThreadRestrictions::ScopedAllowIO allow_io_from_test_code;
+  base::ScopedAllowBlockingForTesting allow_blocking;
 
   // Get path to Python server script.
   base::FilePath testserver_path;
@@ -148,7 +148,7 @@ bool LocalTestServer::Init(const base::FilePath& document_root) {
   DCHECK(!GetPort());
 
   base::FilePath src_dir;
-  if (!PathService::Get(base::DIR_SOURCE_ROOT, &src_dir))
+  if (!base::PathService::Get(base::DIR_SOURCE_ROOT, &src_dir))
     return false;
   SetResourcePath(src_dir.Append(document_root),
                   src_dir.AppendASCII("net")
@@ -162,7 +162,7 @@ bool LocalTestServer::SetPythonPath() const {
   ClearPythonPath();
 
   base::FilePath third_party_dir;
-  if (!PathService::Get(base::DIR_SOURCE_ROOT, &third_party_dir)) {
+  if (!base::PathService::Get(base::DIR_SOURCE_ROOT, &third_party_dir)) {
     LOG(ERROR) << "Failed to get DIR_SOURCE_ROOT";
     return false;
   }
@@ -233,6 +233,9 @@ bool LocalTestServer::AddCommandLineArguments(
       break;
     case TYPE_BASIC_AUTH_PROXY:
       command_line->AppendArg("--basic-auth-proxy");
+      break;
+    case TYPE_PROXY:
+      command_line->AppendArg("--proxy");
       break;
     default:
       NOTREACHED();

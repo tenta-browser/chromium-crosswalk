@@ -25,23 +25,9 @@
         {
           "object": "LayoutBlockFlow HTML",
           "rect": [8, 8, 800, 2000],
-          "reason": "appeared"
+          "reason": "chunk appeared"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "Scrolling Contents Layer",
-      "reason": "background on scrolling contents layer"
-    },
-    {
-      "object": "LayoutView #document",
-      "reason": "style change"
-    },
-    {
-      "object": "LayoutBlockFlow BODY",
-      "reason": "style change"
     }
   ]
 }

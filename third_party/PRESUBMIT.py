@@ -4,6 +4,7 @@
 
 ANDROID_WHITELISTED_LICENSES = [
   'A(pple )?PSL 2(\.0)?',
+  'Android Software Development Kit License',
   'Apache( Version)? 2(\.0)?',
   '(New )?([23]-Clause )?BSD( [23]-Clause)?( with advertising clause)?',
   'L?GPL ?v?2(\.[01])?( or later)?',
@@ -50,7 +51,13 @@ def _CheckThirdPartyReadmesUpdated(input_api, output_api):
         not local_path.startswith('third_party' + input_api.os_path.sep +
                                   'mojo' + input_api.os_path.sep) and
         not local_path.startswith('third_party' + input_api.os_path.sep +
-                                  'boringssl' + input_api.os_path.sep)):
+                                  'boringssl' + input_api.os_path.sep) and
+        not local_path.startswith('third_party' + input_api.os_path.sep +
+                                  'closure_compiler' + input_api.os_path.sep +
+                                  'externs' + input_api.os_path.sep) and
+        not local_path.startswith('third_party' + input_api.os_path.sep +
+                                  'closure_compiler' + input_api.os_path.sep +
+                                  'interfaces' + input_api.os_path.sep)):
       files.append(f)
       if local_path.endswith("README.chromium"):
         readmes.append(f)

@@ -32,10 +32,10 @@
 
 #include "third_party/blink/public/platform/web_file_writer.h"
 #include "third_party/blink/public/platform/web_url.h"
-#include "third_party/blink/renderer/bindings/core/v8/exception_state.h"
 #include "third_party/blink/renderer/core/events/progress_event.h"
 #include "third_party/blink/renderer/core/fileapi/blob.h"
 #include "third_party/blink/renderer/core/probe/core_probes.h"
+#include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/wtf/time.h"
 
 namespace blink {
@@ -293,7 +293,7 @@ void FileWriter::FireEvent(const AtomicString& type) {
   probe::AsyncTask async_task(GetExecutionContext(), this);
   ++recursion_depth_;
   DispatchEvent(
-      ProgressEvent::Create(type, true, bytes_written_, bytes_to_write_));
+      *ProgressEvent::Create(type, true, bytes_written_, bytes_to_write_));
   --recursion_depth_;
   DCHECK_GE(recursion_depth_, 0);
 }

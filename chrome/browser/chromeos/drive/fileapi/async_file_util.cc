@@ -10,7 +10,7 @@
 #include "base/files/file_path.h"
 #include "base/logging.h"
 #include "base/single_thread_task_runner.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/chromeos/drive/drive_integration_service.h"
 #include "chrome/browser/chromeos/drive/file_system_util.h"
@@ -110,11 +110,9 @@ void RunCreateSnapshotFileCallback(
 
 }  // namespace
 
-AsyncFileUtil::AsyncFileUtil() {
-}
+AsyncFileUtil::AsyncFileUtil() = default;
 
-AsyncFileUtil::~AsyncFileUtil() {
-}
+AsyncFileUtil::~AsyncFileUtil() = default;
 
 void AsyncFileUtil::CreateOrOpen(
     std::unique_ptr<storage::FileSystemOperationContext> context,

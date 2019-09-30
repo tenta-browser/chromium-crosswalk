@@ -18,17 +18,7 @@
       "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
         {
-          "object": "NGPaintFragment",
-          "rect": [8, 20, 676, 14],
-          "reason": "appeared"
-        },
-        {
-          "object": "NGPaintFragment",
-          "rect": [8, 20, 676, 14],
-          "reason": "disappeared"
-        },
-        {
-          "object": "NGPaintFragment",
+          "object": "NGPhysicalBoxFragment LayoutNGBlockFlow div id='contentBox'",
           "rect": [8, 52, 402, 402],
           "reason": "appeared"
         },
@@ -38,7 +28,7 @@
           "reason": "paint property change"
         },
         {
-          "object": "NGPaintFragment",
+          "object": "NGPhysicalBoxFragment LayoutNGBlockFlow div id='contentBox'",
           "rect": [8, 52, 102, 402],
           "reason": "disappeared"
         },
@@ -48,36 +38,6 @@
           "reason": "paint property change"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "NGPaintFragment",
-      "reason": "subtree"
-    },
-    {
-      "object": "NGPaintFragment",
-      "reason": "subtree"
-    },
-    {
-      "object": "NGPaintFragment",
-      "reason": "subtree"
-    },
-    {
-      "object": "LayoutSVGRoot svg",
-      "reason": "subtree"
-    },
-    {
-      "object": "LayoutSVGContainer use",
-      "reason": "subtree"
-    },
-    {
-      "object": "LayoutSVGViewportContainer svg id='gamesBorder'",
-      "reason": "subtree"
-    },
-    {
-      "object": "LayoutSVGPath path",
-      "reason": "subtree"
     }
   ]
 }

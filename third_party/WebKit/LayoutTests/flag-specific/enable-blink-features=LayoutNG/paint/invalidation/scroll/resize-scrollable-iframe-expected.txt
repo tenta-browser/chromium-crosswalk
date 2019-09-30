@@ -18,39 +18,9 @@
       "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
         {
-          "object": "NGPaintFragment",
-          "rect": [8, 12, 762, 14],
-          "reason": "appeared"
-        },
-        {
-          "object": "NGPaintFragment",
-          "rect": [8, 12, 762, 14],
-          "reason": "disappeared"
-        },
-        {
-          "object": "NGPaintFragment",
-          "rect": [8, 32, 543, 14],
-          "reason": "appeared"
-        },
-        {
-          "object": "NGPaintFragment",
-          "rect": [8, 32, 543, 14],
-          "reason": "disappeared"
-        },
-        {
-          "object": "NGPaintFragment",
-          "rect": [8, 52, 327, 14],
-          "reason": "appeared"
-        },
-        {
-          "object": "NGPaintFragment",
-          "rect": [8, 52, 327, 14],
-          "reason": "disappeared"
-        },
-        {
           "object": "LayoutView #document",
           "rect": [8, 108, 300, 300],
-          "reason": "geometry"
+          "reason": "subtree"
         },
         {
           "object": "HorizontalScrollbar",
@@ -73,64 +43,6 @@
           "reason": "scroll control"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "NGPaintFragment",
-      "reason": "subtree"
-    },
-    {
-      "object": "NGPaintFragment",
-      "reason": "subtree"
-    },
-    {
-      "object": "NGPaintFragment",
-      "reason": "subtree"
-    },
-    {
-      "object": "NGPaintFragment",
-      "reason": "subtree"
-    },
-    {
-      "object": "NGPaintFragment",
-      "reason": "subtree"
-    },
-    {
-      "object": "LayoutIFrame IFRAME id='iframe'",
-      "reason": "subtree"
-    },
-    {
-      "object": "LayoutView #document",
-      "reason": "subtree"
-    },
-    {
-      "object": "LayoutView #document",
-      "reason": "geometry"
-    },
-    {
-      "object": "HorizontalScrollbar",
-      "reason": "scroll control"
-    },
-    {
-      "object": "LayoutView #document",
-      "reason": "geometry"
-    },
-    {
-      "object": "VerticalScrollbar",
-      "reason": "scroll control"
-    },
-    {
-      "object": "LayoutNGBlockFlow HTML",
-      "reason": "subtree"
-    },
-    {
-      "object": "LayoutNGBlockFlow BODY",
-      "reason": "subtree"
-    },
-    {
-      "object": "LayoutNGBlockFlow DIV",
-      "reason": "subtree"
     }
   ]
 }

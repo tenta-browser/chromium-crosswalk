@@ -20,38 +20,24 @@
         {
           "object": "LayoutSVGRect rect",
           "rect": [0, 100, 800, 100],
-          "reason": "appeared"
+          "reason": "chunk appeared"
         },
         {
           "object": "LayoutSVGRect rect",
           "rect": [0, 100, 800, 100],
-          "reason": "appeared"
+          "reason": "chunk appeared"
         },
         {
           "object": "LayoutSVGRoot svg id='svg-root'",
           "rect": [0, 100, 800, 100],
-          "reason": "appeared"
+          "reason": "chunk appeared"
         },
         {
           "object": "LayoutSVGRoot svg id='svg-root'",
           "rect": [0, 100, 800, 100],
-          "reason": "disappeared"
+          "reason": "chunk disappeared"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutSVGContainer g id='content'",
-      "reason": "appeared"
-    },
-    {
-      "object": "LayoutSVGRect rect",
-      "reason": "appeared"
-    },
-    {
-      "object": "LayoutSVGRect rect",
-      "reason": "full"
     }
   ]
 }

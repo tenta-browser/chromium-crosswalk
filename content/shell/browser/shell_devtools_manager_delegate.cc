@@ -180,13 +180,17 @@ ShellDevToolsManagerDelegate::ShellDevToolsManagerDelegate(
 ShellDevToolsManagerDelegate::~ShellDevToolsManagerDelegate() {
 }
 
+BrowserContext* ShellDevToolsManagerDelegate::GetDefaultBrowserContext() {
+  return browser_context_;
+}
+
 scoped_refptr<DevToolsAgentHost>
 ShellDevToolsManagerDelegate::CreateNewTarget(const GURL& url) {
   Shell* shell = Shell::CreateNewWindow(browser_context_,
                                         url,
                                         nullptr,
                                         gfx::Size());
-  if (switches::IsRunLayoutTestSwitchPresent())
+  if (switches::IsRunWebTestsSwitchPresent())
     SecondaryTestWindowObserver::CreateForWebContents(shell->web_contents());
   return DevToolsAgentHost::GetOrCreateFor(shell->web_contents());
 }

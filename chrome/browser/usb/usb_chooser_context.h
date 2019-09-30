@@ -6,6 +6,7 @@
 #define CHROME_BROWSER_USB_USB_CHOOSER_CONTEXT_H_
 
 #include <map>
+#include <memory>
 #include <set>
 #include <string>
 #include <utility>
@@ -18,6 +19,10 @@
 
 namespace device {
 class UsbDevice;
+
+namespace mojom {
+class UsbDeviceInfo;
+}
 }
 
 class UsbChooserContext : public ChooserContextBase,
@@ -47,6 +52,10 @@ class UsbChooserContext : public ChooserContextBase,
   // access to a device with |device_info|.
   bool HasDevicePermission(const GURL& requesting_origin,
                            const GURL& embedding_origin,
+                           const device::mojom::UsbDeviceInfo& device_info);
+
+  bool HasDevicePermission(const GURL& requesting_origin,
+                           const GURL& embedding_origin,
                            scoped_refptr<const device::UsbDevice> device);
 
   base::WeakPtr<UsbChooserContext> AsWeakPtr();
@@ -54,6 +63,7 @@ class UsbChooserContext : public ChooserContextBase,
  private:
   // ChooserContextBase implementation.
   bool IsValidObject(const base::DictionaryValue& object) override;
+  std::string GetObjectName(const base::DictionaryValue& object) override;
 
   // device::UsbService::Observer implementation.
   void OnDeviceRemovedCleanup(scoped_refptr<device::UsbDevice> device) override;

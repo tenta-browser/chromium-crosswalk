@@ -43,6 +43,9 @@ extern const base::Feature kRegionalLocalesAsDisplayUI;
 // target language option.
 extern const base::Feature kTranslateRecentTarget;
 
+// Enable or disable the Translate popup altogether.
+extern const base::Feature kTranslateUI;
+
 // Minimum number of times the user must accept a translation before we show
 // a shortcut to the "Always Translate" functionality.
 #if defined(OS_ANDROID) || defined(OS_IOS)
@@ -120,6 +123,7 @@ struct TranslateLanguageInfo {
 class TranslatePrefs {
  public:
   static const char kPrefLanguageProfile[];
+  static const char kPrefForceTriggerTranslateCount[];
   static const char kPrefTranslateSiteBlacklist[];
   static const char kPrefTranslateWhitelists[];
   static const char kPrefTranslateDeniedCount[];
@@ -132,6 +136,7 @@ class TranslatePrefs {
 #if defined(OS_ANDROID)
   static const char kPrefTranslateAutoAlwaysCount[];
   static const char kPrefTranslateAutoNeverCount[];
+  static const char kPrefExplicitLanguageAskShown[];
 #endif
 
   // This parameter specifies how the language should be moved within the list.
@@ -257,6 +262,11 @@ class TranslatePrefs {
   int GetTranslationAutoNeverCount(const std::string& language) const;
   void IncrementTranslationAutoNeverCount(const std::string& language);
   void ResetTranslationAutoNeverCount(const std::string& language);
+
+  // These methods are used to determine whether the explicit language ask
+  // prompt was displayed to the user already.
+  bool GetExplicitLanguageAskPromptShown() const;
+  void SetExplicitLanguageAskPromptShown(bool shown);
 #endif
 
   // Update the last time on closing the Translate UI without translation.
@@ -281,6 +291,21 @@ class TranslatePrefs {
   void SetRecentTargetLanguage(const std::string& target_language);
   std::string GetRecentTargetLanguage() const;
 
+  // Gets the value for the pref that represents how often the
+  // kOverrideTranslateTriggerInIndia experiment made translate trigger on an
+  // English page when it otherwise wouldn't have. This pref is used to
+  // determine whether the experiment should be suppressed for a particular user
+  int GetForceTriggerOnEnglishPagesCount() const;
+  // Increments the pref that represents how often the
+  // kOverrideTranslateTriggerInIndia experiment made translate trigger on an
+  // English page when it otherwise wouldn't have.
+  void ReportForceTriggerOnEnglishPages();
+  // Sets to -1 the pref that represents how often the
+  // kOverrideTranslateTriggerInIndia experiment made translate trigger on an
+  // English page when it otherwise wouldn't have. This is a special value that
+  // signals that the backoff should not happen for that user.
+  void ReportAcceptedAfterForceTriggerOnEnglishPages();
+
   static void RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry);
   static void MigrateUserPrefs(PrefService* user_prefs,
                                const char* accept_languages_pref);
@@ -293,6 +318,8 @@ class TranslatePrefs {
   FRIEND_TEST_ALL_PREFIXES(TranslatePrefsTest, UnblockLanguage);
   FRIEND_TEST_ALL_PREFIXES(TranslatePrefsTest, AddToLanguageList);
   FRIEND_TEST_ALL_PREFIXES(TranslatePrefsTest, RemoveFromLanguageList);
+  FRIEND_TEST_ALL_PREFIXES(TranslatePrefsTest,
+                           RemoveFromLanguageListClearsRecentLanguage);
   FRIEND_TEST_ALL_PREFIXES(TranslatePrefsTest, AddToLanguageListFeatureEnabled);
   FRIEND_TEST_ALL_PREFIXES(TranslatePrefsTest,
                            RemoveFromLanguageListFeatureEnabled);

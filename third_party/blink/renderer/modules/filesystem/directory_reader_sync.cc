@@ -30,12 +30,12 @@
 
 #include "third_party/blink/renderer/modules/filesystem/directory_reader_sync.h"
 
-#include "third_party/blink/renderer/bindings/core/v8/exception_state.h"
 #include "third_party/blink/renderer/modules/filesystem/directory_entry.h"
 #include "third_party/blink/renderer/modules/filesystem/directory_entry_sync.h"
 #include "third_party/blink/renderer/modules/filesystem/entry_sync.h"
 #include "third_party/blink/renderer/modules/filesystem/file_entry_sync.h"
 #include "third_party/blink/renderer/modules/filesystem/file_system_callbacks.h"
+#include "third_party/blink/renderer/platform/bindings/exception_state.h"
 
 namespace blink {
 
@@ -100,10 +100,7 @@ EntrySyncHeapVector DirectoryReaderSync::readEntries(
         ErrorCallbackHelper::Create(this), DOMFileSystemBase::kSynchronous);
   }
 
-  if (error_code_ == FileError::kOK && has_more_entries_ &&
-      entries_.IsEmpty()) {
-    CHECK(Filesystem()->WaitForAdditionalResult(callbacks_id_));
-  }
+  DCHECK(!has_more_entries_);
 
   if (error_code_ != FileError::kOK) {
     FileError::ThrowDOMException(exception_state, error_code_);

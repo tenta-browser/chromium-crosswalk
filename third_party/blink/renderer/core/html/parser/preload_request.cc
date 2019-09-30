@@ -13,16 +13,10 @@
 #include "third_party/blink/renderer/platform/loader/fetch/fetch_parameters.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_fetcher.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_loader_options.h"
+#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "third_party/blink/renderer/platform/weborigin/security_policy.h"
 
 namespace blink {
-
-bool PreloadRequest::IsSafeToSendToAnotherThread() const {
-  return initiator_name_.IsSafeToSendToAnotherThread() &&
-         charset_.IsSafeToSendToAnotherThread() &&
-         resource_url_.IsSafeToSendToAnotherThread() &&
-         base_url_.IsSafeToSendToAnotherThread();
-}
 
 KURL PreloadRequest::CompleteURL(Document* document) {
   if (!base_url_.IsEmpty())
@@ -30,8 +24,7 @@ KURL PreloadRequest::CompleteURL(Document* document) {
   return document->CompleteURL(resource_url_);
 }
 
-Resource* PreloadRequest::Start(Document* document,
-                                CSSPreloaderResourceClient* client) {
+Resource* PreloadRequest::Start(Document* document) {
   DCHECK(IsMainThread());
 
   FetchInitiatorInfo initiator_info;
@@ -43,13 +36,14 @@ Resource* PreloadRequest::Start(Document* document,
   DCHECK(!url.ProtocolIsData());
 
   ResourceRequest resource_request(url);
-  resource_request.SetHTTPReferrer(SecurityPolicy::GenerateReferrer(
-      referrer_policy_, url,
-      referrer_source_ == kBaseUrlIsReferrer
-          ? base_url_.StrippedForUseAsReferrer()
-          : document->OutgoingReferrer()));
+  resource_request.SetReferrerPolicy(referrer_policy_);
+  if (referrer_source_ == kBaseUrlIsReferrer)
+    resource_request.SetReferrerString(base_url_.StrippedForUseAsReferrer());
+
   resource_request.SetRequestContext(ResourceFetcher::DetermineRequestContext(
       resource_type_, is_image_set_, false));
+
+  resource_request.SetFetchImportanceMode(importance_);
 
   ResourceLoaderOptions options;
   options.initiator_info = initiator_info;
@@ -98,7 +92,7 @@ Resource* PreloadRequest::Start(Document* document,
     speculative_preload_type =
         FetchParameters::SpeculativePreloadType::kInserted;
   }
-  params.SetSpeculativePreloadType(speculative_preload_type, discovery_time_);
+  params.SetSpeculativePreloadType(speculative_preload_type);
 
   if (resource_type_ == Resource::kScript) {
     MaybeDisallowFetchForDocWrittenScript(params, *document);
@@ -106,7 +100,7 @@ Resource* PreloadRequest::Start(Document* document,
     // the async request to the blocked script here.
   }
 
-  return document->Loader()->StartPreload(resource_type_, params, client);
+  return document->Loader()->StartPreload(resource_type_, params);
 }
 
 }  // namespace blink

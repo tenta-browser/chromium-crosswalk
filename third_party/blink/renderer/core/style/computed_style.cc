@@ -28,7 +28,7 @@
 #include <utility>
 
 #include "build/build_config.h"
-#include "third_party/blink/public/platform/web_overscroll_behavior.h"
+#include "cc/input/overscroll_behavior.h"
 #include "third_party/blink/renderer/core/animation/css/css_animation_data.h"
 #include "third_party/blink/renderer/core/animation/css/css_transition_data.h"
 #include "third_party/blink/renderer/core/css/css_paint_value.h"
@@ -52,6 +52,7 @@
 #include "third_party/blink/renderer/core/style/quotes_data.h"
 #include "third_party/blink/renderer/core/style/shadow_list.h"
 #include "third_party/blink/renderer/core/style/style_difference.h"
+#include "third_party/blink/renderer/core/style/style_fetched_image.h"
 #include "third_party/blink/renderer/core/style/style_image.h"
 #include "third_party/blink/renderer/core/style/style_inherited_variables.h"
 #include "third_party/blink/renderer/core/style/style_non_inherited_variables.h"
@@ -60,7 +61,10 @@
 #include "third_party/blink/renderer/platform/fonts/font_selector.h"
 #include "third_party/blink/renderer/platform/geometry/float_rounded_rect.h"
 #include "third_party/blink/renderer/platform/graphics/graphics_context.h"
+#include "third_party/blink/renderer/platform/graphics/path.h"
 #include "third_party/blink/renderer/platform/length_functions.h"
+#include "third_party/blink/renderer/platform/text/capitalize.h"
+#include "third_party/blink/renderer/platform/text/character.h"
 #include "third_party/blink/renderer/platform/transforms/rotate_transform_operation.h"
 #include "third_party/blink/renderer/platform/transforms/scale_transform_operation.h"
 #include "third_party/blink/renderer/platform/transforms/translate_transform_operation.h"
@@ -407,19 +411,6 @@ bool ComputedStyle::IsStyleAvailable() const {
   return this != StyleResolver::StyleNotYetAvailable();
 }
 
-bool ComputedStyle::HasUniquePseudoStyle() const {
-  if (!cached_pseudo_styles_ || StyleType() != kPseudoIdNone)
-    return false;
-
-  for (size_t i = 0; i < cached_pseudo_styles_->size(); ++i) {
-    const ComputedStyle& pseudo_style = *cached_pseudo_styles_->at(i);
-    if (pseudo_style.Unique())
-      return true;
-  }
-
-  return false;
-}
-
 ComputedStyle* ComputedStyle::GetCachedPseudoStyle(PseudoId pid) const {
   if (!cached_pseudo_styles_ || !cached_pseudo_styles_->size())
     return nullptr;
@@ -438,9 +429,7 @@ ComputedStyle* ComputedStyle::GetCachedPseudoStyle(PseudoId pid) const {
 
 ComputedStyle* ComputedStyle::AddCachedPseudoStyle(
     scoped_refptr<ComputedStyle> pseudo) {
-  if (!pseudo)
-    return nullptr;
-
+  DCHECK(pseudo);
   DCHECK_GT(pseudo->StyleType(), kPseudoIdNone);
 
   ComputedStyle* result = pseudo.get();
@@ -827,11 +816,17 @@ void ComputedStyle::UpdatePropertySpecificDifferences(
     diff.SetTextDecorationOrColorChanged();
   }
 
+  if (ComputedStyleBase::UpdatePropertySpecificDifferencesMask(*this, other))
+    diff.SetMaskChanged();
+
   bool has_clip = HasOutOfFlowPosition() && !HasAutoClip();
   bool other_has_clip = other.HasOutOfFlowPosition() && !other.HasAutoClip();
   if (has_clip != other_has_clip ||
       (has_clip && Clip() != other.Clip()))
     diff.SetCSSClipChanged();
+
+  if (GetBlendMode() != other.GetBlendMode())
+    diff.SetBlendModeChanged();
 
   if (HasCurrentTransformAnimation() != other.HasCurrentTransformAnimation() ||
       HasCurrentOpacityAnimation() != other.HasCurrentOpacityAnimation() ||
@@ -841,7 +836,9 @@ void ComputedStyle::UpdatePropertySpecificDifferences(
       HasInlineTransform() != other.HasInlineTransform() ||
       BackfaceVisibility() != other.BackfaceVisibility() ||
       HasWillChangeCompositingHint() != other.HasWillChangeCompositingHint() ||
-      UsedTransformStyle3D() != other.UsedTransformStyle3D()) {
+      UsedTransformStyle3D() != other.UsedTransformStyle3D() ||
+      ContainsPaint() != other.ContainsPaint() ||
+      IsOverflowVisible() != other.IsOverflowVisible()) {
     diff.SetCompositingReasonsChanged();
   }
 }
@@ -922,13 +919,13 @@ void ComputedStyle::UpdateIsStackingContext(bool is_document_element,
   // which requires flattening. See ComputedStyle::UsedTransformStyle3D() and
   // ComputedStyle::HasGroupingProperty().
   // This is legacy behavior that is left ambiguous in the official specs.
-  // See crbug.com/663650 for more details."
+  // See https://crbug.com/663650 for more details."
   if (TransformStyle3D() == ETransformStyle3D::kPreserve3d) {
     SetIsStackingContext(true);
     return;
   }
 
-  if (is_document_element || is_in_top_layer ||
+  if (is_document_element || is_in_top_layer || is_svg_stacking ||
       StyleType() == kPseudoIdBackdrop || HasOpacity() ||
       HasTransformRelatedProperty() || HasMask() || ClipPath() ||
       BoxReflect() || HasFilterInducingProperty() || HasBackdropFilter() ||
@@ -938,9 +935,6 @@ void ComputedStyle::UpdateIsStackingContext(bool is_document_element,
       ContainsPaint()) {
     SetIsStackingContext(true);
   }
-
-  if (RuntimeEnabledFeatures::SlimmingPaintV175Enabled() && is_svg_stacking)
-    SetIsStackingContext(true);
 }
 
 void ComputedStyle::AddCallbackSelector(const String& selector) {
@@ -1025,6 +1019,18 @@ InterpolationQuality ComputedStyle::GetInterpolationQuality() const {
     return kInterpolationLow;
 
   return kInterpolationDefault;
+}
+
+void ComputedStyle::LoadDeferredImages(Document& document) const {
+  if (HasBackgroundImage()) {
+    for (const FillLayer* background_layer = &BackgroundLayers();
+         background_layer; background_layer = background_layer->Next()) {
+      if (StyleImage* image = background_layer->GetImage()) {
+        if (image->IsImageResource() && image->IsLazyloadPossiblyDeferred())
+          ToStyleFetchedImage(image)->LoadDeferredImage(document);
+      }
+    }
+  }
 }
 
 void ComputedStyle::ApplyTransform(
@@ -1412,6 +1418,52 @@ bool ComputedStyle::ShouldUseTextIndent(bool is_first_line,
                                                         : !should_use;
 }
 
+// Unicode 11 introduced Georgian capital letters (U+1C90 - U+1CBA,
+// U+1CB[D-F]), but virtually no font covers them. For now map them back
+// to their lowercase counterparts (U+10D0 - U+10FA, U+10F[D-F]).
+// https://www.unicode.org/charts/PDF/U10A0.pdf
+// https://www.unicode.org/charts/PDF/U1C90.pdf
+// See https://crbug.com/865427 .
+// TODO(jshin): Make this platform-dependent. For instance, turn this
+// off when CrOS gets new Georgian fonts covering capital letters.
+// ( https://crbug.com/880144 ).
+static String DisableNewGeorgianCapitalLetters(const String& text) {
+  if (text.IsNull() || text.Is8Bit())
+    return text;
+  unsigned length = text.length();
+  const StringImpl& input = *(text.Impl());
+  StringBuilder result;
+  result.ReserveCapacity(length);
+  // |input| must be well-formed UTF-16 so that there's no worry
+  // about surrogate handling.
+  for (unsigned i = 0; i < length; ++i) {
+    UChar character = input[i];
+    if (Character::IsModernGeorgianUppercase(character))
+      result.Append(Character::LowercaseModernGeorgianUppercase(character));
+    else
+      result.Append(character);
+  }
+  return result.ToString();
+}
+
+void ComputedStyle::ApplyTextTransform(String* text,
+                                       UChar previous_character) const {
+  switch (TextTransform()) {
+    case ETextTransform::kNone:
+      return;
+    case ETextTransform::kCapitalize:
+      *text = Capitalize(*text, previous_character);
+      return;
+    case ETextTransform::kUppercase:
+      *text = DisableNewGeorgianCapitalLetters(text->UpperUnicode(Locale()));
+      return;
+    case ETextTransform::kLowercase:
+      *text = text->LowerUnicode(Locale());
+      return;
+  }
+  NOTREACHED();
+}
+
 const AtomicString& ComputedStyle::TextEmphasisMarkString() const {
   switch (GetTextEmphasisMark()) {
     case TextEmphasisMark::kNone:
@@ -1533,6 +1585,16 @@ FontSelectionValue ComputedStyle::GetFontWeight() const {
 }
 FontSelectionValue ComputedStyle::GetFontStretch() const {
   return GetFontDescription().Stretch();
+}
+
+FontBaseline ComputedStyle::GetFontBaseline() const {
+  // TODO(kojii): Incorporate 'dominant-baseline' when we support it.
+  // https://www.w3.org/TR/css-inline-3/#dominant-baseline-property
+
+  // Vertical flow (except 'text-orientation: sideways') uses ideographic
+  // baseline. https://drafts.csswg.org/css-writing-modes-3/#intro-baselines
+  return !GetFontDescription().IsVerticalAnyUpright() ? kAlphabeticBaseline
+                                                      : kIdeographicBaseline;
 }
 
 TextDecoration ComputedStyle::TextDecorationsInEffect() const {
@@ -1734,9 +1796,9 @@ Length ComputedStyle::LineHeight() const {
   // too, though this involves messily poking into CalcExpressionLength.
   if (lh.IsFixed()) {
     float multiplier = TextAutosizingMultiplier();
-    return Length(
-        TextAutosizer::ComputeAutosizedFontSize(lh.Value(), multiplier),
-        kFixed);
+    return Length(TextAutosizer::ComputeAutosizedFontSize(
+                      lh.Value(), multiplier, EffectiveZoom()),
+                  kFixed);
   }
 
   return lh;
@@ -1802,12 +1864,12 @@ void ComputedStyle::SetTextAutosizingMultiplier(float multiplier) {
   FontSelector* current_font_selector = GetFont().GetFontSelector();
   FontDescription desc(GetFontDescription());
   desc.SetSpecifiedSize(size);
-  desc.SetComputedSize(size);
 
-  float autosized_font_size =
-      TextAutosizer::ComputeAutosizedFontSize(size, multiplier);
-  float computed_size = autosized_font_size * EffectiveZoom();
-  desc.SetComputedSize(std::min(kMaximumAllowedFontSize, computed_size));
+  float computed_size = size * EffectiveZoom();
+
+  float autosized_font_size = TextAutosizer::ComputeAutosizedFontSize(
+      computed_size, multiplier, EffectiveZoom());
+  desc.SetComputedSize(std::min(kMaximumAllowedFontSize, autosized_font_size));
 
   SetFontDescription(desc);
   GetFont().Update(current_font_selector);
@@ -2135,11 +2197,11 @@ bool ComputedStyle::ShadowListHasCurrentColor(const ShadowList* shadow_list) {
   return false;
 }
 
-STATIC_ASSERT_ENUM(WebOverscrollBehavior::kOverscrollBehaviorTypeAuto,
+STATIC_ASSERT_ENUM(cc::OverscrollBehavior::kOverscrollBehaviorTypeAuto,
                    EOverscrollBehavior::kAuto);
-STATIC_ASSERT_ENUM(WebOverscrollBehavior::kOverscrollBehaviorTypeContain,
+STATIC_ASSERT_ENUM(cc::OverscrollBehavior::kOverscrollBehaviorTypeContain,
                    EOverscrollBehavior::kContain);
-STATIC_ASSERT_ENUM(WebOverscrollBehavior::kOverscrollBehaviorTypeNone,
+STATIC_ASSERT_ENUM(cc::OverscrollBehavior::kOverscrollBehaviorTypeNone,
                    EOverscrollBehavior::kNone);
 
 }  // namespace blink

@@ -68,7 +68,7 @@ void SimRequest::Finish() {
                      total_encoded_data_length_, total_encoded_data_length_);
   } else {
     // TODO(esprehn): Is claiming a request time of 0 okay for tests?
-    client_->DidFinishLoading(0, total_encoded_data_length_,
+    client_->DidFinishLoading(TimeTicks(), total_encoded_data_length_,
                               total_encoded_data_length_,
                               total_encoded_data_length_, false);
   }
@@ -92,6 +92,8 @@ void SimRequest::Complete(const Vector<char>& data) {
 void SimRequest::Reset() {
   is_ready_ = false;
   client_ = nullptr;
+  Platform::Current()->GetURLLoaderMockFactory()->UnregisterURL(KURL(url_));
+
   SimNetwork::Current().RemoveRequest(*this);
 }
 

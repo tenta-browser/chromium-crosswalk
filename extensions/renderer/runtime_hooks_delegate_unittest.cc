@@ -104,15 +104,10 @@ TEST_F(RuntimeHooksDelegateTest, RuntimeId) {
   v8::Local<v8::Context> context = MainContext();
 
   {
-    DictionaryBuilder connectable;
-    connectable.Set("matches",
-                    ListBuilder().Append("*://example.com/*").Build());
     scoped_refptr<Extension> connectable_extension =
         ExtensionBuilder("connectable")
-            .MergeManifest(
-                DictionaryBuilder()
-                    .Set("externally_connectable", connectable.Build())
-                    .Build())
+            .SetManifestPath({"externally_connectable", "matches"},
+                             ListBuilder().Append("*://example.com/*").Build())
             .Build();
     RegisterExtension(connectable_extension);
   }
@@ -125,7 +120,7 @@ TEST_F(RuntimeHooksDelegateTest, RuntimeId) {
 
   {
     v8::Local<v8::Value> id = get_id(context);
-    EXPECT_EQ(extension()->id(), gin::V8ToString(id));
+    EXPECT_EQ(extension()->id(), gin::V8ToString(isolate(), id));
   }
 
   {
@@ -168,7 +163,7 @@ TEST_F(RuntimeHooksDelegateTest, GetURL) {
     v8::Local<v8::Value> url = RunFunction(get_url, context, 0, nullptr);
     ASSERT_FALSE(url.IsEmpty());
     ASSERT_TRUE(url->IsString());
-    EXPECT_EQ(expected_url.spec(), gin::V8ToString(url));
+    EXPECT_EQ(expected_url.spec(), gin::V8ToString(isolate(), url));
   };
 
   get_url("''", extension()->url());

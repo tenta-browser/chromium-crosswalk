@@ -7,8 +7,10 @@
 #include <algorithm>
 
 #include "third_party/blink/public/platform/task_type.h"
+#include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/events/event.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
+#include "third_party/blink/renderer/core/frame/settings.h"
 #include "third_party/blink/renderer/modules/event_target_modules.h"
 #include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
@@ -16,6 +18,26 @@
 namespace blink {
 
 namespace {
+
+Settings* GetSettings(ExecutionContext* execution_context) {
+  if (!execution_context)
+    return nullptr;
+
+  if (!execution_context->IsDocument())
+    return nullptr;
+
+  Document* document = ToDocument(execution_context);
+  // |document| is guaranteed to be non-null since |execution_context| is
+  // non-null.
+  return document->GetSettings();
+}
+
+bool IsInDataSaverHoldbackWebApi(ExecutionContext* execution_context) {
+  Settings* settings = GetSettings(execution_context);
+  if (!settings)
+    return false;
+  return settings->GetDataSaverHoldbackWebApi();
+}
 
 String ConnectionTypeToString(WebConnectionType type) {
   switch (type) {
@@ -104,17 +126,19 @@ double NetworkInformation::downlink() const {
 }
 
 bool NetworkInformation::saveData() const {
-  return IsObserving() ? save_data_
-                       : GetNetworkStateNotifier().SaveDataEnabled();
+  return IsObserving()
+             ? save_data_
+             : GetNetworkStateNotifier().SaveDataEnabled() &&
+                   !IsInDataSaverHoldbackWebApi(GetExecutionContext());
 }
 
 void NetworkInformation::ConnectionChange(
     WebConnectionType type,
     double downlink_max_mbps,
     WebEffectiveConnectionType effective_type,
-    const Optional<TimeDelta>& http_rtt,
-    const Optional<TimeDelta>& transport_rtt,
-    const Optional<double>& downlink_mbps,
+    const base::Optional<TimeDelta>& http_rtt,
+    const base::Optional<TimeDelta>& transport_rtt,
+    const base::Optional<double>& downlink_mbps,
     bool save_data) {
   DCHECK(GetExecutionContext()->IsContextThread());
 
@@ -153,8 +177,8 @@ void NetworkInformation::ConnectionChange(
   save_data_ = save_data;
 
   if (type_changed)
-    DispatchEvent(Event::Create(EventTypeNames::typechange));
-  DispatchEvent(Event::Create(EventTypeNames::change));
+    DispatchEvent(*Event::Create(EventTypeNames::typechange));
+  DispatchEvent(*Event::Create(EventTypeNames::change));
 }
 
 const AtomicString& NetworkInformation::InterfaceName() const {
@@ -228,7 +252,8 @@ NetworkInformation::NetworkInformation(ExecutionContext* context)
       downlink_mbps_(GetNetworkStateNotifier().RoundMbps(
           Host(),
           GetNetworkStateNotifier().DownlinkThroughputMbps())),
-      save_data_(GetNetworkStateNotifier().SaveDataEnabled()),
+      save_data_(GetNetworkStateNotifier().SaveDataEnabled() &&
+                 !IsInDataSaverHoldbackWebApi(GetExecutionContext())),
       context_stopped_(false) {
   DCHECK_LE(1u, GetNetworkStateNotifier().RandomizationSalt());
   DCHECK_GE(20u, GetNetworkStateNotifier().RandomizationSalt());

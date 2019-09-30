@@ -43,6 +43,12 @@ group("raster") {
   }
 }
 
+group("webgpu") {
+  public_deps = [
+    ":webgpu_sources",
+  ]
+}
+
 source_set("common_sources") {
   visibility = [ "//gpu/*" ]
 
@@ -79,8 +85,10 @@ source_set("common_sources") {
     "mailbox_holder.h",
     "scheduling_priority.cc",
     "scheduling_priority.h",
+    "shared_image_usage.h",
     "swap_buffers_complete_params.cc",
     "swap_buffers_complete_params.h",
+    "swap_buffers_flags.h",
     "sync_token.cc",
     "sync_token.h",
     "texture_in_use_response.h",
@@ -136,6 +144,8 @@ source_set("raster_sources") {
     "raster_cmd_format_autogen.h",
     "raster_cmd_ids.h",
     "raster_cmd_ids_autogen.h",
+    "skia_utils.cc",
+    "skia_utils.h",
   ]
 
   configs += [ "//gpu:raster_implementation" ]
@@ -143,10 +153,34 @@ source_set("raster_sources") {
   deps = [
     ":gles2_utils",
     "//base",
+    "//skia",
+    "//ui/gl:gl",
   ]
   public_deps = [
     ":common",
     "//components/viz/common:resource_format",
+  ]
+}
+
+source_set("webgpu_sources") {
+  visibility = [ "//gpu/*" ]
+
+  sources = [
+    "webgpu_cmd_format.cc",
+    "webgpu_cmd_format.h",
+    "webgpu_cmd_format_autogen.h",
+    "webgpu_cmd_ids.h",
+    "webgpu_cmd_ids_autogen.h",
+  ]
+
+  configs += [ "//gpu:webgpu_implementation" ]
+
+  deps = [
+    ":gles2_utils",
+    "//base",
+  ]
+  public_deps = [
+    ":common",
   ]
 }
 

@@ -23,6 +23,7 @@ FetchParameters ScriptFetchOptions::CreateFetchParameters(
   ResourceLoaderOptions resource_loader_options;
   resource_loader_options.initiator_info.name = "script";
   FetchParameters params(resource_request, resource_loader_options);
+  params.SetRequestContext(WebURLRequest::kRequestContextScript);
 
   // Step 1. ... and CORS setting. [spec text]
   //
@@ -52,8 +53,11 @@ FetchParameters ScriptFetchOptions::CreateFetchParameters(
   params.MutableResourceRequest().SetFetchIntegrity(
       GetIntegrityAttributeValue());
 
-  // and its parser metadata to options's parser metadata. [spec text]
+  // its parser metadata to options's parser metadata, [spec text]
   params.SetParserDisposition(ParserState());
+
+  // its referrer policy to options's referrer policy. [spec text]
+  params.MutableResourceRequest().SetReferrerPolicy(referrer_policy_);
 
   params.SetCharset(encoding);
 

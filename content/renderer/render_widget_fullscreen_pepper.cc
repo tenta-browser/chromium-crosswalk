@@ -9,20 +9,18 @@
 #include "base/bind.h"
 #include "base/command_line.h"
 #include "base/macros.h"
-#include "base/message_loop/message_loop.h"
 #include "build/build_config.h"
+#include "cc/paint/paint_canvas.h"
 #include "content/common/view_messages.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/common/use_zoom_for_dsf_policy.h"
-#include "content/renderer/gpu/render_widget_compositor.h"
+#include "content/renderer/gpu/layer_tree_view.h"
 #include "content/renderer/pepper/pepper_plugin_instance_impl.h"
 #include "content/renderer/render_thread_impl.h"
 #include "gpu/ipc/client/gpu_channel_host.h"
 #include "skia/ext/platform_canvas.h"
-#include "third_party/blink/public/platform/web_canvas.h"
 #include "third_party/blink/public/platform/web_cursor_info.h"
 #include "third_party/blink/public/platform/web_gesture_event.h"
-#include "third_party/blink/public/platform/web_layer.h"
 #include "third_party/blink/public/platform/web_mouse_wheel_event.h"
 #include "third_party/blink/public/platform/web_size.h"
 #include "third_party/blink/public/web/web_widget.h"
@@ -30,7 +28,6 @@
 #include "ui/gfx/geometry/size_conversions.h"
 #include "ui/gl/gpu_preference.h"
 
-using blink::WebCanvas;
 using blink::WebCoalescedInputEvent;
 using blink::WebImeTextSpan;
 using blink::WebCursorInfo;
@@ -98,7 +95,7 @@ WebMouseEvent WebMouseEventFromGestureEvent(const WebGestureEvent& gesture) {
 
   WebMouseEvent mouse(type,
                       gesture.GetModifiers() | WebInputEvent::kLeftButtonDown,
-                      gesture.TimeStampSeconds());
+                      gesture.TimeStamp());
   mouse.button = WebMouseEvent::Button::kLeft;
   mouse.click_count = (mouse.GetType() == WebInputEvent::kMouseDown ||
                        mouse.GetType() == WebInputEvent::kMouseUp);
@@ -178,7 +175,7 @@ class PepperWidget : public WebWidget {
         case WebInputEvent::kGestureTap: {
           WebMouseEvent mouse(WebInputEvent::kMouseMove,
                               gesture_event->GetModifiers(),
-                              gesture_event->TimeStampSeconds());
+                              gesture_event->TimeStamp());
           mouse.SetPositionInWidget(gesture_event->PositionInWidget().x,
                                     gesture_event->PositionInWidget().y);
           mouse.SetPositionInScreen(gesture_event->PositionInScreen().x,
@@ -256,19 +253,19 @@ class PepperWidget : public WebWidget {
 // static
 RenderWidgetFullscreenPepper* RenderWidgetFullscreenPepper::Create(
     int32_t routing_id,
-    const RenderWidget::ShowCallback& show_callback,
+    RenderWidget::ShowCallback show_callback,
     CompositorDependencies* compositor_deps,
     PepperPluginInstanceImpl* plugin,
     const GURL& active_url,
     const ScreenInfo& screen_info,
     mojom::WidgetRequest widget_request) {
   DCHECK_NE(MSG_ROUTING_NONE, routing_id);
-  DCHECK(!show_callback.is_null());
+  DCHECK(show_callback);
   scoped_refptr<RenderWidgetFullscreenPepper> widget(
       new RenderWidgetFullscreenPepper(routing_id, compositor_deps, plugin,
                                        active_url, screen_info,
                                        std::move(widget_request)));
-  widget->Init(show_callback, new PepperWidget(widget.get()));
+  widget->Init(std::move(show_callback), new PepperWidget(widget.get()));
   widget->AddRef();
   return widget.get();
 }
@@ -284,10 +281,10 @@ RenderWidgetFullscreenPepper::RenderWidgetFullscreenPepper(
                    compositor_deps,
                    blink::kWebPopupTypeNone,
                    screen_info,
+                   blink::kWebDisplayModeUndefined,
                    false,
                    false,
                    false,
-                   base::ThreadTaskRunnerHandle::Get(),
                    std::move(widget_request)),
       active_url_(active_url),
       plugin_(plugin),
@@ -298,7 +295,7 @@ RenderWidgetFullscreenPepper::~RenderWidgetFullscreenPepper() {
 }
 
 void RenderWidgetFullscreenPepper::Invalidate() {
-  InvalidateRect(gfx::Rect(size_.width(), size_.height()));
+  InvalidateRect(gfx::Rect(size()));
 }
 
 void RenderWidgetFullscreenPepper::InvalidateRect(const blink::WebRect& rect) {
@@ -324,7 +321,7 @@ void RenderWidgetFullscreenPepper::Destroy() {
   // away.
   SetLayer(nullptr);
 
-  Send(new ViewHostMsg_Close(routing_id_));
+  Send(new ViewHostMsg_Close(routing_id()));
   Release();
 }
 
@@ -333,18 +330,19 @@ void RenderWidgetFullscreenPepper::PepperDidChangeCursor(
   DidChangeCursor(cursor);
 }
 
-void RenderWidgetFullscreenPepper::SetLayer(blink::WebLayer* layer) {
+// TODO(danakj): These should be a scoped_refptr<cc::Layer>.
+void RenderWidgetFullscreenPepper::SetLayer(cc::Layer* layer) {
   layer_ = layer;
   if (!layer_) {
-    if (compositor_)
-      compositor_->ClearRootLayer();
+    if (layer_tree_view())
+      layer_tree_view()->ClearRootLayer();
     return;
   }
-  if (!compositor())
+  if (!layer_tree_view())
     InitializeLayerTreeView();
   UpdateLayerBounds();
-  layer_->SetDrawsContent(true);
-  compositor_->SetRootLayer(*layer_);
+  layer_->SetIsDrawable(true);
+  layer_tree_view()->SetRootLayer(layer_);
 }
 
 bool RenderWidgetFullscreenPepper::OnMessageReceived(const IPC::Message& msg) {
@@ -379,8 +377,9 @@ void RenderWidgetFullscreenPepper::Close() {
   RenderWidget::Close();
 }
 
-void RenderWidgetFullscreenPepper::OnResize(const ResizeParams& params) {
-  RenderWidget::OnResize(params);
+void RenderWidgetFullscreenPepper::OnSynchronizeVisualProperties(
+    const VisualProperties& visual_properties) {
+  RenderWidget::OnSynchronizeVisualProperties(visual_properties);
   UpdateLayerBounds();
 }
 
@@ -392,7 +391,7 @@ void RenderWidgetFullscreenPepper::UpdateLayerBounds() {
   if (!layer_)
     return;
 
-  if (IsUseZoomForDSFEnabled()) {
+  if (compositor_deps()->IsUseZoomForDSFEnabled()) {
     // Note that root cc::Layers' bounds are specified in pixels (in contrast
     // with non-root cc::Layers' bounds, which are specified in DIPs).
     layer_->SetBounds(blink::WebSize(compositor_viewport_pixel_size()));

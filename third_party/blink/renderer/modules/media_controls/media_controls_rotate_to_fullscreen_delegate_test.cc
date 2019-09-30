@@ -8,10 +8,11 @@
 #include "services/device/public/mojom/screen_orientation.mojom-blink.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/blink/public/platform/modules/screen_orientation/web_screen_orientation_type.h"
+#include "third_party/blink/public/common/screen_orientation/web_screen_orientation_type.h"
 #include "third_party/blink/public/platform/web_size.h"
 #include "third_party/blink/renderer/core/css/css_style_declaration.h"
 #include "third_party/blink/renderer/core/dom/document.h"
+#include "third_party/blink/renderer/core/dom/events/event.h"
 #include "third_party/blink/renderer/core/dom/user_gesture_indicator.h"
 #include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
@@ -61,11 +62,11 @@ class MockChromeClient : public EmptyChromeClient {
         ->SetScreenOrientationAssociatedPtrForTests(
             std::move(screen_orientation));
   }
-  void EnterFullscreen(LocalFrame& frame) override {
-    Fullscreen::From(*frame.GetDocument()).DidEnterFullscreen();
+  void EnterFullscreen(LocalFrame& frame, const FullscreenOptions&) override {
+    Fullscreen::DidEnterFullscreen(*frame.GetDocument());
   }
   void ExitFullscreen(LocalFrame& frame) override {
-    Fullscreen::From(*frame.GetDocument()).DidExitFullscreen();
+    Fullscreen::DidExitFullscreen(*frame.GetDocument());
   }
 
   MOCK_CONST_METHOD0(GetScreenInfo, WebScreenInfo());
@@ -149,7 +150,7 @@ class MediaControlsRotateToFullscreenDelegateTest
   }
 
   void DispatchEvent(EventTarget& target, const AtomicString& type) {
-    target.DispatchEvent(Event::Create(type));
+    target.DispatchEvent(*Event::Create(type));
   }
 
   void InitScreenAndVideo(WebScreenOrientationType initial_screen_orientation,
@@ -190,8 +191,8 @@ void MediaControlsRotateToFullscreenDelegateTest::InitScreenAndVideo(
   WebScreenInfo screen_info;
   screen_info.orientation_type = initial_screen_orientation;
   EXPECT_CALL(GetChromeClient(), GetScreenInfo())
-      .Times(1)
-      .WillOnce(Return(screen_info));
+      .Times(AtLeast(1))
+      .WillRepeatedly(Return(screen_info));
 
   // Set up the WebMediaPlayer instance.
   GetDocument().body()->AppendChild(&GetVideo());

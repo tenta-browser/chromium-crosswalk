@@ -4,18 +4,28 @@
 
 #include "ash/frame/caption_buttons/frame_caption_button.h"
 
-#include "ash/ash_constants.h"
-#include "ui/base/material_design/material_design_controller.h"
+#include "ash/public/cpp/ash_constants.h"
+#include "ui/base/hit_test.h"
 #include "ui/gfx/animation/slide_animation.h"
 #include "ui/gfx/animation/throb_animation.h"
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/color_palette.h"
 #include "ui/gfx/color_utils.h"
 #include "ui/gfx/paint_vector_icon.h"
+#include "ui/views/animation/flood_fill_ink_drop_ripple.h"
+#include "ui/views/animation/ink_drop_highlight.h"
+#include "ui/views/animation/ink_drop_impl.h"
+#include "ui/views/animation/ink_drop_mask.h"
+#include "ui/views/animation/ink_drop_ripple.h"
+#include "ui/views/window/hit_test_utils.h"
 
 namespace ash {
 
 namespace {
+
+// Ink drop parameters.
+constexpr float kInkDropVisibleOpacity = 0.06f;
+constexpr int kInkDropCornerRadius = 14;
 
 // The duration of the crossfade animation when swapping the button's images.
 const int kSwapImagesAnimationDurationMs = 200;
@@ -27,26 +37,15 @@ const float kFadeOutRatio = 0.5f;
 // The ratio applied to the button's alpha when the button is disabled.
 const float kDisabledButtonAlphaRatio = 0.5f;
 
-// The colors and alpha values used for the button background hovered and
-// pressed states.
-// TODO(tdanderson|estade): Request these colors from ThemeProvider.
-const int kHoveredAlpha = 0x14;
-const int kPressedAlpha = 0x24;
-
-// Minimum theme light color contrast.
-const float kContrastLightItemThreshold = 3;
-// The amount to darken a light theme color by for use as foreground color.
-const float kThemedForegroundBlackFraction = 0.64;
-
-// This mimics |shouldUseLightForegroundOnBackground| in ColorUtils.java.
-bool UseLightColor(FrameCaptionButton::ColorMode color_mode,
-                   SkColor background_color) {
-  if (color_mode == FrameCaptionButton::ColorMode::kThemed) {
-    return color_utils::GetContrastRatio(SK_ColorWHITE, background_color) >=
-           kContrastLightItemThreshold;
-  }
-  DCHECK_EQ(color_mode, FrameCaptionButton::ColorMode::kDefault);
-  return color_utils::IsDark(background_color);
+// Returns the amount by which the inkdrop ripple and mask should be insetted
+// from the button size in order to achieve a circular inkdrop with a size
+// equals to kInkDropHighlightSize.
+gfx::Insets GetInkdropInsets(const gfx::Size& button_size) {
+  constexpr gfx::Size kInkDropHighlightSize{2 * kInkDropCornerRadius,
+                                            2 * kInkDropCornerRadius};
+  return gfx::Insets(
+      (button_size.height() - kInkDropHighlightSize.height()) / 2,
+      (button_size.width() - kInkDropHighlightSize.width()) / 2);
 }
 
 }  // namespace
@@ -55,7 +54,8 @@ bool UseLightColor(FrameCaptionButton::ColorMode color_mode,
 const char FrameCaptionButton::kViewClassName[] = "FrameCaptionButton";
 
 FrameCaptionButton::FrameCaptionButton(views::ButtonListener* listener,
-                                       CaptionButtonIcon icon)
+                                       CaptionButtonIcon icon,
+                                       int hit_test_type)
     : Button(listener),
       icon_(icon),
       background_color_(SK_ColorWHITE),
@@ -63,8 +63,15 @@ FrameCaptionButton::FrameCaptionButton(views::ButtonListener* listener,
       paint_as_active_(false),
       alpha_(255),
       swap_images_animation_(new gfx::SlideAnimation(this)) {
+  views::SetHitTestComponent(this, hit_test_type);
+
   set_animate_on_state_change(true);
   swap_images_animation_->Reset(1);
+
+  set_has_ink_drop_action_on_click(true);
+  SetInkDropMode(InkDropMode::ON);
+  set_ink_drop_visible_opacity(kInkDropVisibleOpacity);
+  UpdateInkDropBaseColor();
 
   // Do not flip the gfx::Canvas passed to the OnPaint() method. The snap left
   // and snap right button icons should not be flipped. The other icons are
@@ -76,28 +83,17 @@ FrameCaptionButton::~FrameCaptionButton() = default;
 // static
 SkColor FrameCaptionButton::GetButtonColor(ColorMode color_mode,
                                            SkColor background_color) {
-  bool use_light_color = UseLightColor(color_mode, background_color);
-
-  if (color_mode == ColorMode::kThemed) {
-    // This mimics |getThemedAssetColor| in ColorUtils.java.
-    return use_light_color
-               ? SK_ColorWHITE
-               : color_utils::AlphaBlend(SK_ColorBLACK, background_color,
-                                         255 * kThemedForegroundBlackFraction);
-  }
+  if (color_mode == ColorMode::kThemed)
+    return color_utils::GetThemedAssetColor(background_color);
 
   DCHECK_EQ(color_mode, ColorMode::kDefault);
-  if (ui::MaterialDesignController::IsTouchOptimizedUiEnabled())
-    return use_light_color ? gfx::kGoogleGrey100 : gfx::kGoogleGrey800;
-
-  return use_light_color ? SK_ColorWHITE : gfx::kChromeIconGrey;
+  return color_utils::IsDark(background_color) ? gfx::kGoogleGrey200
+                                               : gfx::kGoogleGrey700;
 }
 
 // static
 float FrameCaptionButton::GetInactiveButtonColorAlphaRatio() {
-  return ui::MaterialDesignController::IsTouchOptimizedUiEnabled()
-             ? kInactiveFrameButtonIconAlphaRatioTouch
-             : kInactiveFrameButtonIconAlphaRatio;
+  return 0.38f;
 }
 
 void FrameCaptionButton::SetImage(CaptionButtonIcon icon,
@@ -128,7 +124,7 @@ void FrameCaptionButton::SetImage(CaptionButtonIcon icon,
   } else {
     swap_images_animation_->Reset(1);
   }
-  PreferredSizeChanged();
+
   SchedulePaint();
 }
 
@@ -174,20 +170,65 @@ views::PaintInfo::ScaleType FrameCaptionButton::GetPaintScaleType() const {
   return views::PaintInfo::ScaleType::kUniformScaling;
 }
 
-void FrameCaptionButton::PaintButtonContents(gfx::Canvas* canvas) {
-  SkAlpha bg_alpha = SK_AlphaTRANSPARENT;
-  if (hover_animation().is_animating())
-    bg_alpha = hover_animation().CurrentValueBetween(0, kHoveredAlpha);
-  else if (state() == STATE_HOVERED)
-    bg_alpha = kHoveredAlpha;
-  else if (state() == STATE_PRESSED)
-    bg_alpha = kPressedAlpha;
+std::unique_ptr<views::InkDrop> FrameCaptionButton::CreateInkDrop() {
+  auto ink_drop = std::make_unique<views::InkDropImpl>(this, size());
+  ink_drop->SetAutoHighlightMode(views::InkDropImpl::AutoHighlightMode::NONE);
+  ink_drop->SetShowHighlightOnHover(false);
+  return ink_drop;
+}
 
-  if (bg_alpha != SK_AlphaTRANSPARENT) {
-    canvas->DrawColor(SkColorSetA(UseLightColor(color_mode_, background_color_)
-                                      ? SK_ColorWHITE
-                                      : SK_ColorBLACK,
-                                  bg_alpha));
+std::unique_ptr<views::InkDropRipple> FrameCaptionButton::CreateInkDropRipple()
+    const {
+  return std::make_unique<views::FloodFillInkDropRipple>(
+      size(), GetInkdropInsets(size()), GetInkDropCenterBasedOnLastEvent(),
+      GetInkDropBaseColor(), ink_drop_visible_opacity());
+}
+
+std::unique_ptr<views::InkDropMask> FrameCaptionButton::CreateInkDropMask()
+    const {
+  return std::make_unique<views::RoundRectInkDropMask>(
+      size(), GetInkdropInsets(size()), kInkDropCornerRadius);
+}
+
+void FrameCaptionButton::SetBackgroundColor(SkColor background_color) {
+  if (background_color_ == background_color)
+    return;
+
+  background_color_ = background_color;
+  // Refresh the icon since the color may have changed.
+  if (icon_definition_)
+    SetImage(icon_, ANIMATE_NO, *icon_definition_);
+  UpdateInkDropBaseColor();
+}
+
+void FrameCaptionButton::SetColorMode(ColorMode color_mode) {
+  color_mode_ = color_mode;
+  UpdateInkDropBaseColor();
+}
+
+void FrameCaptionButton::PaintButtonContents(gfx::Canvas* canvas) {
+  constexpr SkAlpha kHighlightVisibleOpacity = 0x14;
+  SkAlpha highlight_alpha = SK_AlphaTRANSPARENT;
+  if (hover_animation().is_animating()) {
+    highlight_alpha = hover_animation().CurrentValueBetween(
+        SK_AlphaTRANSPARENT, kHighlightVisibleOpacity);
+  } else if (state() == STATE_HOVERED || state() == STATE_PRESSED) {
+    // Painting a circular highlight in both "hovered" and "pressed" states
+    // simulates and ink drop highlight mode of
+    // AutoHighlightMode::SHOW_ON_RIPPLE.
+    highlight_alpha = kHighlightVisibleOpacity;
+  }
+
+  if (highlight_alpha != SK_AlphaTRANSPARENT) {
+    // We paint the highlight manually here rather than relying on the ink drop
+    // highlight as it doesn't work well when the button size is changing while
+    // the window is moving as a result of the animation from normal to
+    // maximized state or vice versa. https://crbug.com/840901.
+    cc::PaintFlags flags;
+    flags.setColor(GetInkDropBaseColor());
+    flags.setAlpha(highlight_alpha);
+    const gfx::Point center(GetMirroredRect(GetContentsBounds()).CenterPoint());
+    canvas->DrawCircle(center, kInkDropCornerRadius, flags);
   }
 
   int icon_alpha = swap_images_animation_->CurrentValueBetween(0, 255);
@@ -237,6 +278,13 @@ int FrameCaptionButton::GetAlphaForIcon(int base_alpha) const {
     inactive_alpha = 1.0f;
   }
   return base_alpha * inactive_alpha;
+}
+
+void FrameCaptionButton::UpdateInkDropBaseColor() {
+  set_ink_drop_base_color(
+      color_utils::IsDark(GetButtonColor(color_mode_, background_color_))
+          ? SK_ColorBLACK
+          : SK_ColorWHITE);
 }
 
 }  // namespace ash

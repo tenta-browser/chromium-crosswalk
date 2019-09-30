@@ -7,7 +7,7 @@
 #include "base/command_line.h"
 #include "base/message_loop/message_loop.h"
 #include "base/sys_info.h"
-#include "base/task_scheduler/task_scheduler.h"
+#include "base/task/task_scheduler/task_scheduler.h"
 #include "base/test/scoped_command_line.h"
 #include "content/browser/browser_thread_impl.h"
 #include "content/public/browser/browser_thread.h"
@@ -21,7 +21,7 @@ namespace content {
 // the number of cores in its foreground pool.
 TEST(BrowserMainLoopTest, CreateThreadsInSingleProcess) {
   {
-    base::MessageLoop message_loop;
+    base::TaskScheduler::Create("Browser");
     base::test::ScopedCommandLine scoped_command_line;
     scoped_command_line.GetProcessCommandLine()->AppendSwitch(
         switches::kSingleProcess);
@@ -29,7 +29,7 @@ TEST(BrowserMainLoopTest, CreateThreadsInSingleProcess) {
         *scoped_command_line.GetProcessCommandLine());
     BrowserMainLoop browser_main_loop(main_function_params);
     browser_main_loop.MainMessageLoopStart();
-    browser_main_loop.InitializeIOThreadForTesting();
+    browser_main_loop.Init();
     browser_main_loop.CreateThreads();
     EXPECT_GE(base::TaskScheduler::GetInstance()
                   ->GetMaxConcurrentNonBlockedTasksWithTraitsDeprecated(

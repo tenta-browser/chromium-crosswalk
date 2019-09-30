@@ -6,12 +6,12 @@
 
 #include <memory>
 #include <string>
+#include <utility>
 
 #include "android_webview/browser/aw_browser_context.h"
 #include "android_webview/browser/aw_contents_client_bridge.h"
 #include "android_webview/browser/aw_contents_io_thread_client.h"
 #include "android_webview/browser/aw_resource_context.h"
-#include "android_webview/browser/aw_safe_browsing_config_helper.h"
 #include "android_webview/browser/aw_safe_browsing_resource_throttle.h"
 #include "android_webview/browser/net/aw_web_resource_request.h"
 #include "android_webview/browser/renderer_host/auto_login_parser.h"
@@ -24,7 +24,6 @@
 #include "content/public/browser/resource_dispatcher_host.h"
 #include "content/public/browser/resource_request_info.h"
 #include "content/public/browser/web_contents.h"
-#include "content/public/common/browser_side_navigation_policy.h"
 #include "net/base/load_flags.h"
 #include "net/base/net_errors.h"
 #include "net/http/http_response_headers.h"
@@ -251,7 +250,7 @@ bool IoThreadClientThrottle::ShouldBlockRequest() {
         request_, net::LOAD_ONLY_FROM_CACHE | net::LOAD_SKIP_CACHE_VALIDATION);
   } else {
     AwContentsIoThreadClient::CacheMode cache_mode = io_client->GetCacheMode();
-    switch(cache_mode) {
+    switch (cache_mode) {
       case AwContentsIoThreadClient::LOAD_CACHE_ELSE_NETWORK:
         SetCacheControlFlag(request_, net::LOAD_SKIP_CACHE_VALIDATION);
         break;
@@ -299,12 +298,8 @@ void AwResourceDispatcherHostDelegate::RequestBeginning(
 
   if (ioThreadThrottle->GetSafeBrowsingEnabled()) {
     DCHECK(!base::FeatureList::IsEnabled(network::features::kNetworkService));
-    bool safe_browsing_url_loader_throttle_used =
-        base::FeatureList::IsEnabled(
-            safe_browsing::kCheckByURLLoaderThrottle) &&
-        (!content::IsResourceTypeFrame(resource_type) ||
-         content::IsNavigationMojoResponseEnabled());
-    if (!safe_browsing_url_loader_throttle_used) {
+    if (!base::FeatureList::IsEnabled(
+            safe_browsing::kCheckByURLLoaderThrottle)) {
       content::ResourceThrottle* throttle =
           MaybeCreateAwSafeBrowsingResourceThrottle(
               request, resource_type,
@@ -434,9 +429,9 @@ void AwResourceDispatcherHostDelegate::OnResponseStarted(
 void AwResourceDispatcherHostDelegate::RemovePendingThrottleOnIoThread(
     IoThreadClientThrottle* throttle) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
-  PendingThrottleMap::iterator it = pending_throttles_.find(
-      FrameRouteIDPair(throttle->render_process_id(),
-                       throttle->render_frame_id()));
+  PendingThrottleMap::iterator it =
+      pending_throttles_.find(content::GlobalFrameRoutingId(
+          throttle->render_process_id(), throttle->render_frame_id()));
   if (it != pending_throttles_.end()) {
     pending_throttles_.erase(it);
   }
@@ -475,8 +470,8 @@ void AwResourceDispatcherHostDelegate::AddPendingThrottleOnIoThread(
     IoThreadClientThrottle* pending_throttle) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   pending_throttles_.insert(
-      std::pair<FrameRouteIDPair, IoThreadClientThrottle*>(
-          FrameRouteIDPair(render_process_id, render_frame_id_id),
+      std::pair<content::GlobalFrameRoutingId, IoThreadClientThrottle*>(
+          content::GlobalFrameRoutingId(render_process_id, render_frame_id_id),
           pending_throttle));
 }
 
@@ -484,8 +479,9 @@ void AwResourceDispatcherHostDelegate::OnIoThreadClientReadyInternal(
     int new_render_process_id,
     int new_render_frame_id) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
-  PendingThrottleMap::iterator it = pending_throttles_.find(
-      FrameRouteIDPair(new_render_process_id, new_render_frame_id));
+  PendingThrottleMap::iterator it =
+      pending_throttles_.find(content::GlobalFrameRoutingId(
+          new_render_process_id, new_render_frame_id));
 
   if (it != pending_throttles_.end()) {
     IoThreadClientThrottle* throttle = it->second;

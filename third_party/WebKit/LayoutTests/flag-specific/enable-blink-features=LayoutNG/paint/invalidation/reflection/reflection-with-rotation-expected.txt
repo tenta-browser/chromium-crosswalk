@@ -18,36 +18,26 @@
       "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
         {
-          "object": "NGPaintFragment",
+          "object": "NGPhysicalBoxFragment LayoutNGBlockFlow DIV id='target'",
           "rect": [22, 50, 226, 167],
           "reason": "appeared"
         },
         {
-          "object": "NGPaintFragment",
+          "object": "NGPhysicalBoxFragment LayoutNGBlockFlow DIV id='target'",
           "rect": [22, 50, 226, 167],
           "reason": "disappeared"
         },
         {
-          "object": "NGPaintFragment",
-          "rect": [25, 55, 67, 102],
+          "object": "NGPhysicalTextFragment 'PASS'",
+          "rect": [23, 51, 72, 110],
           "reason": "appeared"
         },
         {
-          "object": "NGPaintFragment",
-          "rect": [25, 55, 65, 101],
+          "object": "NGPhysicalTextFragment 'FAIL'",
+          "rect": [23, 51, 69, 109],
           "reason": "disappeared"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "NGPaintFragment",
-      "reason": "subtree"
-    },
-    {
-      "object": "NGPaintFragment",
-      "reason": "subtree"
     }
   ]
 }

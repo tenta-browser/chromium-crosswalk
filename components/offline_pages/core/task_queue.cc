@@ -17,22 +17,27 @@ TaskQueue::TaskQueue(Delegate* delegate)
 TaskQueue::~TaskQueue() {}
 
 void TaskQueue::AddTask(std::unique_ptr<Task> task) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   task->SetTaskCompletionCallback(
       base::ThreadTaskRunnerHandle::Get(),
-      base::Bind(&TaskQueue::TaskCompleted, weak_ptr_factory_.GetWeakPtr()));
+      base::BindOnce(&TaskQueue::TaskCompleted,
+                     weak_ptr_factory_.GetWeakPtr()));
   tasks_.push(std::move(task));
   StartTaskIfAvailable();
 }
 
 bool TaskQueue::HasPendingTasks() const {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   return !tasks_.empty() || HasRunningTask();
 }
 
 bool TaskQueue::HasRunningTask() const {
-  return current_task_.get() != nullptr;
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  return current_task_ != nullptr;
 }
 
 void TaskQueue::StartTaskIfAvailable() {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DVLOG(2) << "running? " << HasRunningTask() << ", pending? "
            << HasPendingTasks() << " " << __func__;
   if (HasRunningTask())
@@ -40,8 +45,8 @@ void TaskQueue::StartTaskIfAvailable() {
 
   if (!HasPendingTasks()) {
     base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE, base::Bind(&TaskQueue::InformTaskQueueIsIdle,
-                              weak_ptr_factory_.GetWeakPtr()));
+        FROM_HERE, base::BindOnce(&TaskQueue::InformTaskQueueIsIdle,
+                                  weak_ptr_factory_.GetWeakPtr()));
     return;
   }
 
@@ -51,6 +56,7 @@ void TaskQueue::StartTaskIfAvailable() {
 }
 
 void TaskQueue::TaskCompleted(Task* task) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK_EQ(task, current_task_.get());
   if (task == current_task_.get()) {
     current_task_.reset(nullptr);
@@ -59,6 +65,7 @@ void TaskQueue::TaskCompleted(Task* task) {
 }
 
 void TaskQueue::InformTaskQueueIsIdle() {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   delegate_->OnTaskQueueIsIdle();
 }
 

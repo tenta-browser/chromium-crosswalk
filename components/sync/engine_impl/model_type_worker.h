@@ -14,8 +14,8 @@
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
+#include "base/sequence_checker.h"
 #include "base/synchronization/waitable_event.h"
-#include "base/threading/thread_checker.h"
 #include "components/sync/base/cancelation_observer.h"
 #include "components/sync/base/cryptographer.h"
 #include "components/sync/base/model_type.h"
@@ -103,6 +103,8 @@ class ModelTypeWorker : public UpdateHandler,
   // CommitContributor implementation.
   std::unique_ptr<CommitContribution> GetContribution(
       size_t max_entries) override;
+
+  bool HasLocalChangesForTest() const;
 
   // An alternative way to drive sending data to the processor, that should be
   // called when a new encryption mechanism is ready.
@@ -209,7 +211,8 @@ class ModelTypeWorker : public UpdateHandler,
   // shutdown.
   CancelationSignal* cancelation_signal_;
 
-  base::ThreadChecker thread_checker_;
+  SEQUENCE_CHECKER(sequence_checker_);
+
   base::WeakPtrFactory<ModelTypeWorker> weak_ptr_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(ModelTypeWorker);

@@ -42,6 +42,15 @@ StyleNonInheritedVariables::StyleNonInheritedVariables(
     StyleNonInheritedVariables& other) {
   data_ = other.data_;
   registered_data_ = other.registered_data_;
+  needs_resolution_ = other.needs_resolution_;
+}
+
+HashSet<AtomicString> StyleNonInheritedVariables::GetCustomPropertyNames()
+    const {
+  HashSet<AtomicString> names;
+  for (const auto& pair : data_)
+    names.insert(pair.key);
+  return names;
 }
 
 }  // namespace blink

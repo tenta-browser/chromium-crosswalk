@@ -17,6 +17,7 @@
 #include "content/common/content_export.h"
 #include "content/common/frame_message_enums.h"
 #include "content/public/browser/site_instance.h"
+#include "content/public/browser/visibility.h"
 #include "content/public/common/javascript_dialog_type.h"
 #include "content/public/common/media_stream_request.h"
 #include "content/public/common/resource_load_info.mojom.h"
@@ -26,6 +27,7 @@
 #include "net/http/http_response_headers.h"
 #include "services/device/public/mojom/geolocation_context.mojom.h"
 #include "services/device/public/mojom/wake_lock.mojom.h"
+#include "services/metrics/public/cpp/ukm_source_id.h"
 #include "ui/base/window_open_disposition.h"
 
 #if defined(OS_WIN)
@@ -52,6 +54,10 @@ namespace url {
 class Origin;
 }
 
+namespace blink {
+struct WebFullscreenOptions;
+}
+
 namespace content {
 class FrameTreeNode;
 class InterstitialPage;
@@ -64,6 +70,7 @@ struct AXEventNotificationDetails;
 struct AXLocationChangeNotificationDetails;
 struct ContextMenuParams;
 struct FileChooserParams;
+struct GlobalRequestID;
 
 namespace mojom {
 class CreateNewWindowParams;
@@ -172,9 +179,8 @@ class CONTENT_EXPORT RenderFrameHostDelegate {
   // The render frame has requested access to media devices listed in
   // |request|, and the client should grant or deny that permission by
   // calling |callback|.
-  virtual void RequestMediaAccessPermission(
-      const MediaStreamRequest& request,
-      const MediaResponseCallback& callback);
+  virtual void RequestMediaAccessPermission(const MediaStreamRequest& request,
+                                            MediaResponseCallback callback);
 
   // Checks if we have permission to access the microphone or camera. Note that
   // this does not query the user. |type| must be MEDIA_DEVICE_AUDIO_CAPTURE
@@ -195,7 +201,7 @@ class CONTENT_EXPORT RenderFrameHostDelegate {
   // from a render frame, when the accessibility mode has the
   // ui::AXMode::kWebContents flag set.
   virtual void AccessibilityEventReceived(
-      const std::vector<AXEventNotificationDetails>& details) {}
+      const AXEventNotificationDetails& details) {}
   virtual void AccessibilityLocationChangesReceived(
       const std::vector<AXLocationChangeNotificationDetails>& details) {}
 
@@ -218,13 +224,19 @@ class CONTENT_EXPORT RenderFrameHostDelegate {
 
   // Notification that the frame wants to go into fullscreen mode.
   // |origin| represents the origin of the frame that requests fullscreen.
-  virtual void EnterFullscreenMode(const GURL& origin) {}
+  virtual void EnterFullscreenMode(const GURL& origin,
+                                   const blink::WebFullscreenOptions& options) {
+  }
 
   // Notification that the frame wants to go out of fullscreen mode.
   // |will_cause_resize| indicates whether the fullscreen change causes a
   // view resize. e.g. This will be false when going from tab fullscreen to
   // browser fullscreen.
   virtual void ExitFullscreenMode(bool will_cause_resize) {}
+
+  // Notification that this frame has changed fullscreen state.
+  virtual void FullscreenStateChanged(RenderFrameHost* rfh,
+                                      bool is_fullscreen) {}
 
   // Let the delegate decide whether postMessage should be delivered to
   // |target_rfh| from a source frame in the given SiteInstance.  This defaults
@@ -349,8 +361,11 @@ class CONTENT_EXPORT RenderFrameHostDelegate {
   virtual void SubresourceResponseStarted(const GURL& url,
                                           net::CertStatus cert_status) {}
 
-  // Notifies that the render finished loading a subresource.
+  // Notifies that the render finished loading a subresource for the frame
+  // associated with |render_frame_host|.
   virtual void ResourceLoadComplete(
+      RenderFrameHost* render_frame_host,
+      const GlobalRequestID& request_id,
       mojom::ResourceLoadInfoPtr resource_load_info) {}
 
   // Request to print a frame that is in a different process than its parent.
@@ -363,9 +378,20 @@ class CONTENT_EXPORT RenderFrameHostDelegate {
   virtual void UpdatePictureInPictureSurfaceId(const viz::SurfaceId& surface_id,
                                                const gfx::Size& natural_size) {}
 
-  // Updates the Picture-in-Picture controller with a signal that
-  // Picture-in-Picture mode has ended.
-  virtual void ExitPictureInPicture() {}
+  // Returns the visibility of the delegate.
+  virtual Visibility GetVisibility() const;
+
+  // Get the UKM source ID for current content. This is used for providing
+  // data about the content to the URL-keyed metrics service.
+  // Note: This is also exposed by the RenderWidgetHostDelegate.
+  virtual ukm::SourceId GetUkmSourceIdForLastCommittedSource() const;
+
+  // Notify observers if WebAudio AudioContext has started (or stopped) playing
+  // audible sounds.
+  virtual void AudioContextPlaybackStarted(RenderFrameHost* host,
+                                           int context_id){};
+  virtual void AudioContextPlaybackStopped(RenderFrameHost* host,
+                                           int context_id){};
 
  protected:
   virtual ~RenderFrameHostDelegate() {}

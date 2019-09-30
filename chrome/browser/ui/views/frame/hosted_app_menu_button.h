@@ -34,11 +34,11 @@ class HostedAppMenuButton : public AppMenuButton,
                            const gfx::Point& point,
                            const ui::Event* event) override;
 
-  // AppMenuButton:
-  gfx::Size CalculatePreferredSize() const override;
-
  private:
   void FadeHighlightOff();
+
+  // views::View:
+  const char* GetClassName() const override;
 
   // The containing browser view.
   BrowserView* browser_view_;

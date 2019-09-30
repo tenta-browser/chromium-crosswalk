@@ -96,9 +96,10 @@
       var testSourceFrame;
       SourcesTestRunner.showScriptSource('edit-me.js', didShowScriptSource);
 
-      function didShowScriptSource(sourceFrame) {
+      async function didShowScriptSource(sourceFrame) {
         testSourceFrame = sourceFrame;
-        SourcesTestRunner.waitJavaScriptSourceFrameBreakpoints(sourceFrame)
+        await SourcesTestRunner.waitUntilDebuggerPluginLoaded(sourceFrame);
+        SourcesTestRunner.waitDebuggerPluginBreakpoints(sourceFrame)
             .then(breakpointAdded);
         SourcesTestRunner.setBreakpoint(sourceFrame, 2, '', true);
       }
@@ -110,13 +111,13 @@
       }
 
       function didEditScriptSource() {
-        SourcesTestRunner.waitJavaScriptSourceFrameBreakpoints(testSourceFrame)
+        SourcesTestRunner.waitDebuggerPluginBreakpoints(testSourceFrame)
             .then(
-                () => SourcesTestRunner.dumpJavaScriptSourceFrameBreakpoints(
+                () => SourcesTestRunner.dumpDebuggerPluginBreakpoints(
                     testSourceFrame))
             .then(
-                () => Bindings.breakpointManager._allBreakpoints().map(
-                    breakpoint => breakpoint.remove()))
+                () => Bindings.breakpointManager.allBreakpointLocations().map(
+                    breakpointLocation => breakpointLocation.breakpoint.remove()))
             .then(next);
       }
     },
@@ -126,9 +127,10 @@
 
       var testSourceFrame;
 
-      function didShowScriptSource(sourceFrame) {
+      async function didShowScriptSource(sourceFrame) {
         testSourceFrame = sourceFrame;
-        SourcesTestRunner.waitJavaScriptSourceFrameBreakpoints(testSourceFrame)
+        await SourcesTestRunner.waitUntilDebuggerPluginLoaded(sourceFrame);
+        SourcesTestRunner.waitDebuggerPluginBreakpoints(testSourceFrame)
             .then(breakpointAdded);
         SourcesTestRunner.setBreakpoint(sourceFrame, 2, '', true);
       }

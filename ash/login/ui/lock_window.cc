@@ -11,9 +11,7 @@
 
 namespace ash {
 
-LockWindow::LockWindow(Config config) {
-  ui::GestureRecognizer::Get()->CancelActiveTouchesExcept(nullptr);
-
+LockWindow::LockWindow() {
   views::Widget::InitParams params(
       views::Widget::InitParams::TYPE_WINDOW_FRAMELESS);
   params.delegate = this;
@@ -25,6 +23,7 @@ LockWindow::LockWindow(Config config) {
                                         kShellWindowId_LockScreenContainer);
   }
   Init(params);
+  GetGestureRecognizer()->CancelActiveTouchesExcept(nullptr);
   SetVisibilityAnimationTransition(views::Widget::ANIMATE_NONE);
 
   // Disable virtual keyboard overscroll because it interferes with scrolling

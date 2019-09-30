@@ -25,6 +25,8 @@
 #define THIRD_PARTY_BLINK_RENDERER_PLATFORM_LOADER_FETCH_RESOURCE_H_
 
 #include <memory>
+#include "base/auto_reset.h"
+#include "base/optional.h"
 #include "base/single_thread_task_runner.h"
 #include "third_party/blink/public/platform/web_data_consumer_handle.h"
 #include "third_party/blink/public/platform/web_scoped_virtual_time_pauser.h"
@@ -47,13 +49,12 @@
 #include "third_party/blink/renderer/platform/timer.h"
 #include "third_party/blink/renderer/platform/web_task_runner.h"
 #include "third_party/blink/renderer/platform/wtf/allocator.h"
-#include "third_party/blink/renderer/platform/wtf/auto_reset.h"
 #include "third_party/blink/renderer/platform/wtf/hash_counted_set.h"
 #include "third_party/blink/renderer/platform/wtf/hash_set.h"
-#include "third_party/blink/renderer/platform/wtf/optional.h"
 #include "third_party/blink/renderer/platform/wtf/text/atomic_string.h"
 #include "third_party/blink/renderer/platform/wtf/text/text_encoding.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
+#include "third_party/blink/renderer/platform/wtf/time.h"
 
 namespace blink {
 
@@ -87,6 +88,53 @@ class PLATFORM_EXPORT Resource : public GarbageCollectedFinalized<Resource>,
   WTF_MAKE_NONCOPYABLE(Resource);
 
  public:
+  // An enum representing whether a resource match with another resource.
+  // There are three kinds of status.
+  // - kOk, which represents the success.
+  // - kUnknownFailure, which represents miscellaneous failures. This includes
+  //   failures which cannot happen for preload matching (for example,
+  //   a failure due to non-cacheable request method cannot be happen for
+  //   preload matching).
+  // - other specific error status
+  enum class MatchStatus {
+    // Match succeeds.
+    kOk,
+
+    // Match fails because of an unknown reason.
+    kUnknownFailure,
+
+    // Subresource integrity value doesn't match.
+    kIntegrityMismatch,
+
+    // Match fails because the new request wants to load the content
+    // as a blob.
+    kBlobRequest,
+
+    // Match fails because loading image is disabled.
+    kImageLoadingDisabled,
+
+    // Match fails due to different synchronous flags.
+    kSynchronousFlagDoesNotMatch,
+
+    // Match fails due to different request modes.
+    kRequestModeDoesNotMatch,
+
+    // Match fails due to different request credentials modes.
+    kRequestCredentialsModeDoesNotMatch,
+
+    // Match fails because keepalive flag is set on either requests.
+    kKeepaliveSet,
+
+    // Match fails due to different request methods.
+    kRequestMethodDoesNotMatch,
+
+    // Match fails due to different request headers.
+    kRequestHeadersDoNotMatch,
+
+    // Match fails due to different image placeholder policies.
+    kImagePlaceholder,
+  };
+
   // |Type| enum values are used in UMAs, so do not change the values of
   // existing |Type|. When adding a new |Type|, append it at the end and update
   // |kLastResourceType|.
@@ -127,10 +175,6 @@ class PLATFORM_EXPORT Resource : public GarbageCollectedFinalized<Resource>,
   void SetLinkPreload(bool is_link_preload) { link_preload_ = is_link_preload; }
   bool IsLinkPreload() const { return link_preload_; }
 
-  void SetPreloadDiscoveryTime(double preload_discovery_time) {
-    preload_discovery_time_ = preload_discovery_time;
-  }
-
   const ResourceError& GetResourceError() const {
     DCHECK(error_);
     return *error_;
@@ -166,9 +210,6 @@ class PLATFORM_EXPORT Resource : public GarbageCollectedFinalized<Resource>,
   // base::SingleThreadTaskRunner is unused.
   void AddClient(ResourceClient*, base::SingleThreadTaskRunner*);
   void RemoveClient(ResourceClient*);
-  // Once called, this resource will not be canceled until load finishes
-  // even if associated with no client.
-  void SetDetachable() { detachable_ = true; }
 
   // If this Resource is already finished when AddFinishObserver is called, the
   // ResourceFinishObserver will be notified asynchronously by a task scheduled
@@ -218,10 +259,8 @@ class PLATFORM_EXPORT Resource : public GarbageCollectedFinalized<Resource>,
 
   // Computes the status of an object after loading. Updates the expire date on
   // the cache entry file
-  virtual void Finish(double finish_time, base::SingleThreadTaskRunner*);
-  void FinishForTest() { Finish(0.0, nullptr); }
-
-  bool PassesAccessControlCheck(const SecurityOrigin&) const;
+  virtual void Finish(TimeTicks finish_time, base::SingleThreadTaskRunner*);
+  void FinishForTest() { Finish(TimeTicks(), nullptr); }
 
   virtual scoped_refptr<const SharedBuffer> ResourceBuffer() const {
     return data_;
@@ -267,11 +306,24 @@ class PLATFORM_EXPORT Resource : public GarbageCollectedFinalized<Resource>,
                             base::SingleThreadTaskRunner*);
 
   bool CanReuseRedirectChain() const;
-  bool MustRevalidateDueToCacheHeaders() const;
+  bool MustRevalidateDueToCacheHeaders(bool allow_stale) const;
+  bool ShouldRevalidateStaleResponse() const;
   virtual bool CanUseCacheValidator() const;
   bool IsCacheValidator() const { return is_revalidating_; }
   bool HasCacheControlNoStoreHeader() const;
   bool MustReloadDueToVaryHeader(const ResourceRequest& new_request) const;
+
+  // Returns true if any response returned from the upstream in the redirect
+  // chain is stale and requires triggering async stale revalidation. Once
+  // revalidation is started SetStaleRevalidationStarted() should be called.
+  bool StaleRevalidationRequested() const;
+
+  // Set that stale revalidation has been started so that subsequent
+  // requests won't trigger it again. When stale revalidation is completed
+  // this resource will be removed from the MemoryCache so there is no
+  // need to reset it back to false.
+  bool StaleRevalidationStarted() const { return stale_revalidation_started_; }
+  void SetStaleRevalidationStarted() { stale_revalidation_started_ = true; }
 
   const IntegrityMetadataSet& IntegrityMetadata() const {
     return options_.integrity_metadata;
@@ -308,7 +360,7 @@ class PLATFORM_EXPORT Resource : public GarbageCollectedFinalized<Resource>,
   virtual void DidDownloadData(int) {}
   virtual void DidDownloadToBlob(scoped_refptr<BlobDataHandle>) {}
 
-  double LoadFinishTime() const { return load_finish_time_; }
+  TimeTicks LoadFinishTime() const { return load_finish_time_; }
 
   void SetEncodedDataLength(int64_t value) {
     response_.SetEncodedDataLength(value);
@@ -320,8 +372,9 @@ class PLATFORM_EXPORT Resource : public GarbageCollectedFinalized<Resource>,
     response_.SetDecodedBodyLength(value);
   }
 
-  virtual bool CanReuse(
-      const FetchParameters&,
+  // Returns |kOk| when |this| can be resused for the given arguments.
+  virtual MatchStatus CanReuse(
+      const FetchParameters& params,
       scoped_refptr<const SecurityOrigin> new_source_origin) const;
 
   // If cache-aware loading is activated, this callback is called when the first
@@ -352,19 +405,22 @@ class PLATFORM_EXPORT Resource : public GarbageCollectedFinalized<Resource>,
   // Used to notify ImageResourceContent of the start of actual loading.
   // JavaScript calls or client/observer notifications are disallowed inside
   // NotifyStartLoad().
-  virtual void NotifyStartLoad() {}
+  virtual void NotifyStartLoad() {
+    CHECK_EQ(status_, ResourceStatus::kNotStarted);
+    status_ = ResourceStatus::kPending;
+  }
 
   static const char* ResourceTypeToString(
       Type,
       const AtomicString& fetch_initiator_name);
 
-  class ProhibitAddRemoveClientInScope : public AutoReset<bool> {
+  class ProhibitAddRemoveClientInScope : public base::AutoReset<bool> {
    public:
     ProhibitAddRemoveClientInScope(Resource* resource)
         : AutoReset(&resource->is_add_remove_client_prohibited_, true) {}
   };
 
-  class RevalidationStartForbiddenScope : public AutoReset<bool> {
+  class RevalidationStartForbiddenScope : public base::AutoReset<bool> {
    public:
     RevalidationStartForbiddenScope(Resource* resource)
         : AutoReset(&resource->is_revalidation_start_forbidden_, true) {}
@@ -495,13 +551,11 @@ class PLATFORM_EXPORT Resource : public GarbageCollectedFinalized<Resource>,
 
   Member<CachedMetadataHandler> cache_handler_;
 
-  Optional<ResourceError> error_;
+  base::Optional<ResourceError> error_;
 
-  double load_finish_time_;
+  TimeTicks load_finish_time_;
 
   unsigned long identifier_;
-
-  double preload_discovery_time_;
 
   size_t encoded_size_;
   size_t encoded_size_memory_usage_;
@@ -521,7 +575,7 @@ class PLATFORM_EXPORT Resource : public GarbageCollectedFinalized<Resource>,
   bool is_add_remove_client_prohibited_;
   bool is_revalidation_start_forbidden_ = false;
   bool is_unused_preload_ = false;
-  bool detachable_ = false;
+  bool stale_revalidation_started_ = false;
 
   ResourceIntegrityDisposition integrity_disposition_;
   SubresourceIntegrity::ReportInfo integrity_report_info_;

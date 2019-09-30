@@ -22,7 +22,7 @@ namespace {
 class FakeEasyUnlockService : public EasyUnlockService {
  public:
   explicit FakeEasyUnlockService(Profile* profile)
-      : EasyUnlockService(profile),
+      : EasyUnlockService(profile, nullptr /* secure_channel_client */),
         turn_off_status_(IDLE),
         is_allowed_(true),
         is_enabled_(false) {}
@@ -60,7 +60,6 @@ class FakeEasyUnlockService : public EasyUnlockService {
 
   const base::ListValue* GetRemoteDevices() const override { return nullptr; }
   void SetRemoteDevices(const base::ListValue& devices) override {}
-  void SetRemoteBleDevices(const base::ListValue& devices) override {}
 
   std::string GetChallenge() const override { return std::string(); }
   std::string GetWrappedSecret() const override { return std::string(); }

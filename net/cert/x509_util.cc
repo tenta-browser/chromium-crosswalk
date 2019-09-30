@@ -5,6 +5,7 @@
 #include "net/cert/x509_util.h"
 
 #include <string.h>
+#include <map>
 #include <memory>
 
 #include "base/lazy_instance.h"
@@ -307,11 +308,6 @@ bssl::UniquePtr<CRYPTO_BUFFER> CreateCryptoBuffer(
                         data.size(), GetBufferPool()));
 }
 
-bssl::UniquePtr<CRYPTO_BUFFER> DupCryptoBuffer(CRYPTO_BUFFER* buffer) {
-  CRYPTO_BUFFER_up_ref(buffer);
-  return bssl::UniquePtr<CRYPTO_BUFFER>(buffer);
-}
-
 bool CryptoBufferEqual(const CRYPTO_BUFFER* a, const CRYPTO_BUFFER* b) {
   DCHECK(a && b);
   if (a == b)
@@ -328,7 +324,7 @@ base::StringPiece CryptoBufferAsStringPiece(const CRYPTO_BUFFER* buffer) {
 }
 
 scoped_refptr<X509Certificate> CreateX509CertificateFromBuffers(
-    STACK_OF(CRYPTO_BUFFER) * buffers) {
+    const STACK_OF(CRYPTO_BUFFER) * buffers) {
   if (sk_CRYPTO_BUFFER_num(buffers) == 0) {
     NOTREACHED();
     return nullptr;
@@ -337,10 +333,10 @@ scoped_refptr<X509Certificate> CreateX509CertificateFromBuffers(
   std::vector<bssl::UniquePtr<CRYPTO_BUFFER>> intermediate_chain;
   for (size_t i = 1; i < sk_CRYPTO_BUFFER_num(buffers); ++i) {
     intermediate_chain.push_back(
-        DupCryptoBuffer(sk_CRYPTO_BUFFER_value(buffers, i)));
+        bssl::UpRef(sk_CRYPTO_BUFFER_value(buffers, i)));
   }
   return X509Certificate::CreateFromBuffer(
-      DupCryptoBuffer(sk_CRYPTO_BUFFER_value(buffers, 0)),
+      bssl::UpRef(sk_CRYPTO_BUFFER_value(buffers, 0)),
       std::move(intermediate_chain));
 }
 
@@ -358,6 +354,46 @@ bool CalculateSha256SpkiHash(const CRYPTO_BUFFER* buffer, HashValue* hash) {
   *hash = HashValue(HASH_VALUE_SHA256);
   crypto::SHA256HashString(spki, hash->data(), hash->size());
   return true;
+}
+
+bool SignatureVerifierInitWithCertificate(
+    crypto::SignatureVerifier* verifier,
+    crypto::SignatureVerifier::SignatureAlgorithm signature_algorithm,
+    base::span<const uint8_t> signature,
+    const CRYPTO_BUFFER* certificate) {
+  base::StringPiece cert_der =
+      x509_util::CryptoBufferAsStringPiece(certificate);
+
+  der::Input tbs_certificate_tlv;
+  der::Input signature_algorithm_tlv;
+  der::BitString signature_value;
+  ParsedTbsCertificate tbs;
+  if (!ParseCertificate(der::Input(cert_der), &tbs_certificate_tlv,
+                        &signature_algorithm_tlv, &signature_value, nullptr) ||
+      !ParseTbsCertificate(tbs_certificate_tlv,
+                           DefaultParseCertificateOptions(), &tbs, nullptr)) {
+    return false;
+  }
+
+  // The key usage extension, if present, must assert the digitalSignature bit.
+  if (tbs.has_extensions) {
+    std::map<der::Input, ParsedExtension> extensions;
+    if (!ParseExtensions(tbs.extensions_tlv, &extensions)) {
+      return false;
+    }
+    ParsedExtension key_usage_ext;
+    if (ConsumeExtension(KeyUsageOid(), &extensions, &key_usage_ext)) {
+      der::BitString key_usage;
+      if (!ParseKeyUsage(key_usage_ext.value, &key_usage) ||
+          !key_usage.AssertsBit(KEY_USAGE_BIT_DIGITAL_SIGNATURE)) {
+        return false;
+      }
+    }
+  }
+
+  return verifier->VerifyInit(
+      signature_algorithm, signature,
+      base::make_span(tbs.spki_tlv.UnsafeData(), tbs.spki_tlv.Length()));
 }
 
 }  // namespace x509_util

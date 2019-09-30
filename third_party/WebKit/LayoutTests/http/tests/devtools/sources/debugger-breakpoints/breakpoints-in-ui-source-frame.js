@@ -16,20 +16,20 @@
       SourcesTestRunner.toggleBreakpoint(sourceFrame, 9, false);
 
       TestRunner.addResult('Dump breakpoints');
-      await SourcesTestRunner.waitJavaScriptSourceFrameBreakpoints(sourceFrame);
-      SourcesTestRunner.dumpJavaScriptSourceFrameBreakpoints(sourceFrame);
+      await SourcesTestRunner.waitDebuggerPluginBreakpoints(sourceFrame);
+      SourcesTestRunner.dumpDebuggerPluginBreakpoints(sourceFrame);
 
       TestRunner.addResult('Disable breakpoint');
       SourcesTestRunner.toggleBreakpoint(sourceFrame, 9, true);
       TestRunner.addResult('Dump breakpoints');
-      await SourcesTestRunner.waitJavaScriptSourceFrameBreakpoints(sourceFrame);
-      SourcesTestRunner.dumpJavaScriptSourceFrameBreakpoints(sourceFrame);
+      await SourcesTestRunner.waitDebuggerPluginBreakpoints(sourceFrame);
+      SourcesTestRunner.dumpDebuggerPluginBreakpoints(sourceFrame);
 
       TestRunner.addResult('Delete breakpoint');
       SourcesTestRunner.toggleBreakpoint(sourceFrame, 9, false);
       TestRunner.addResult('Dump breakpoints');
-      await SourcesTestRunner.waitJavaScriptSourceFrameBreakpoints(sourceFrame);
-      SourcesTestRunner.dumpJavaScriptSourceFrameBreakpoints(sourceFrame);
+      await SourcesTestRunner.waitDebuggerPluginBreakpoints(sourceFrame);
+      SourcesTestRunner.dumpDebuggerPluginBreakpoints(sourceFrame);
 
       next();
     },
@@ -41,20 +41,20 @@
       SourcesTestRunner.createNewBreakpoint(sourceFrame, 9, '', false);
 
       TestRunner.addResult('Dump breakpoints');
-      await SourcesTestRunner.waitJavaScriptSourceFrameBreakpoints(sourceFrame);
-      SourcesTestRunner.dumpJavaScriptSourceFrameBreakpoints(sourceFrame);
+      await SourcesTestRunner.waitDebuggerPluginBreakpoints(sourceFrame);
+      SourcesTestRunner.dumpDebuggerPluginBreakpoints(sourceFrame);
 
       TestRunner.addResult('Enable breakpoint');
       SourcesTestRunner.toggleBreakpoint(sourceFrame, 9, true);
       TestRunner.addResult('Dump breakpoints');
-      await SourcesTestRunner.waitJavaScriptSourceFrameBreakpoints(sourceFrame);
-      SourcesTestRunner.dumpJavaScriptSourceFrameBreakpoints(sourceFrame);
+      await SourcesTestRunner.waitDebuggerPluginBreakpoints(sourceFrame);
+      SourcesTestRunner.dumpDebuggerPluginBreakpoints(sourceFrame);
 
       TestRunner.addResult('Delete breakpoint');
       SourcesTestRunner.toggleBreakpoint(sourceFrame, 9, false);
       TestRunner.addResult('Dump breakpoints');
-      await SourcesTestRunner.waitJavaScriptSourceFrameBreakpoints(sourceFrame);
-      SourcesTestRunner.dumpJavaScriptSourceFrameBreakpoints(sourceFrame);
+      await SourcesTestRunner.waitDebuggerPluginBreakpoints(sourceFrame);
+      SourcesTestRunner.dumpDebuggerPluginBreakpoints(sourceFrame);
 
       next();
     },
@@ -66,16 +66,17 @@
       SourcesTestRunner.createNewBreakpoint(sourceFrame, 9, 'condition', true);
 
       TestRunner.addResult('Dump breakpoints');
-      await SourcesTestRunner.waitJavaScriptSourceFrameBreakpoints(sourceFrame);
-      SourcesTestRunner.dumpJavaScriptSourceFrameBreakpoints(sourceFrame);
+      await SourcesTestRunner.waitDebuggerPluginBreakpoints(sourceFrame);
+      SourcesTestRunner.dumpDebuggerPluginBreakpoints(sourceFrame);
 
       TestRunner.addResult('Change a condition');
-      const lineDecorations = sourceFrame._lineBreakpointDecorations(9);
+      const lineDecorations = SourcesTestRunner.debuggerPlugin(sourceFrame)
+                                  ._lineBreakpointDecorations(9);
       lineDecorations[0].breakpoint.setCondition('');
 
       TestRunner.addResult('Dump breakpoints');
-      await SourcesTestRunner.waitJavaScriptSourceFrameBreakpoints(sourceFrame);
-      SourcesTestRunner.dumpJavaScriptSourceFrameBreakpoints(sourceFrame);
+      await SourcesTestRunner.waitDebuggerPluginBreakpoints(sourceFrame);
+      SourcesTestRunner.dumpDebuggerPluginBreakpoints(sourceFrame);
 
       next();
     }

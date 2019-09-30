@@ -98,6 +98,14 @@ UIView* GetFirstResponderSubview(UIView* view) {
   return [_contentView frame];
 }
 
+- (CGPoint)contentOffset {
+  return _contentView.contentOffset;
+}
+
+- (void)setContentOffset:(CGPoint)contentOffset {
+  _contentView.contentOffset = contentOffset;
+}
+
 - (UIEdgeInsets)contentInset {
   return _contentView.contentInset;
 }
@@ -165,13 +173,6 @@ UIView* GetFirstResponderSubview(UIView* view) {
     return nil;
   UIView* firstResponder = GetFirstResponderSubview(_contentView);
   return firstResponder.inputAccessoryView;
-}
-
-- (UITextInputAssistantItem*)inputAssistantItem {
-  if (!_contentView)
-    return nil;
-  UIView* firstResponder = GetFirstResponderSubview(_contentView);
-  return firstResponder.inputAssistantItem;
 }
 
 - (BOOL)becomeFirstResponder {

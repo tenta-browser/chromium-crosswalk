@@ -18,7 +18,9 @@ goog.require('ChromeVoxState');
 goog.require('CommandHandler');
 goog.require('DesktopAutomationHandler');
 goog.require('FindHandler');
+goog.require('GestureCommandHandler');
 goog.require('LiveRegions');
+goog.require('MathHandler');
 goog.require('MediaAutomationHandler');
 goog.require('NextEarcons');
 goog.require('Notifications');
@@ -122,9 +124,6 @@ Background = function() {
   /** @type {!LiveRegions} @private */
   this.liveRegions_ = new LiveRegions(this);
 
-  chrome.accessibilityPrivate.onAccessibilityGesture.addListener(
-      this.onAccessibilityGesture_);
-
   document.addEventListener('copy', this.onClipboardEvent_);
   document.addEventListener('cut', this.onClipboardEvent_);
   document.addEventListener('paste', this.onClipboardEvent_);
@@ -149,23 +148,6 @@ Background = function() {
   FindHandler.init();
 
   Notifications.onStartup();
-};
-
-/**
- * Map from gesture names (ax::mojom::Gesture defined in ui/accessibility/ax_enums.idl)
- *     to commands.
- * @type {Object<string, string>}
- * @const
- */
-Background.GESTURE_COMMAND_MAP = {
-  'click': 'forceClickOnCurrentItem',
-  'swipeUp1': 'previousLine',
-  'swipeDown1': 'nextLine',
-  'swipeLeft1': 'previousObject',
-  'swipeRight1': 'nextObject',
-  'swipeUp2': 'jumpToTop',
-  'swipeDown2': 'readFromHere',
-  'tap2': 'stopSpeech',
 };
 
 Background.prototype = {
@@ -209,7 +191,7 @@ Background.prototype = {
       start.makeVisible();
 
       var root = AutomationUtil.getTopLevelRoot(start);
-      if (!root || root.role == RoleType.DESKTOP)
+      if (!root || root.role == RoleType.DESKTOP || root == start)
         return;
 
       var position = {};
@@ -229,6 +211,14 @@ Background.prototype = {
     opt_focus = opt_focus === undefined ? true : opt_focus;
     opt_speechProps = opt_speechProps || {};
     var prevRange = this.currentRange_;
+
+    // Specialization for math output.
+    var skipOutput = false;
+    if (MathHandler.init(range)) {
+      skipOutput = MathHandler.instance.speak();
+      opt_focus = false;
+    }
+
     if (opt_focus)
       this.setFocusToRange_(range, prevRange);
 
@@ -239,16 +229,8 @@ Background.prototype = {
     var msg;
 
     if (this.pageSel_ && this.pageSel_.isValid() && range.isValid()) {
-      // Compute the direction of the endpoints of each range.
-
-      // Casts are ok because isValid checks node start and end nodes are
-      // non-null; Closure just doesn't eval enough to see it.
-      var startDir = AutomationUtil.getDirection(
-          this.pageSel_.start.node,
-          /** @type {!AutomationNode} */ (range.start.node));
-      var endDir = AutomationUtil.getDirection(
-          this.pageSel_.end.node,
-          /** @type {!AutomationNode} */ (range.end.node));
+      // Suppress hints.
+      o.withoutHints();
 
       // Selection across roots isn't supported.
       var pageRootStart = this.pageSel_.start.node.root;
@@ -257,21 +239,34 @@ Background.prototype = {
       var curRootEnd = range.end.node.root;
 
       // Disallow crossing over the start of the page selection and roots.
-      if (startDir == Dir.BACKWARD || pageRootStart != pageRootEnd ||
-          pageRootStart != curRootStart || pageRootEnd != curRootEnd) {
+      if (pageRootStart != pageRootEnd || pageRootStart != curRootStart ||
+          pageRootEnd != curRootEnd) {
         o.format('@end_selection');
+        DesktopAutomationHandler.instance.ignoreDocumentSelectionFromAction(
+            false);
         this.pageSel_ = null;
       } else {
         // Expand or shrink requires different feedback.
-        if (endDir == Dir.FORWARD &&
-            (this.pageSel_.end.node != range.end.node ||
-             this.pageSel_.end.index <= range.end.index)) {
+
+        // Page sel is the only place in ChromeVox where we used directed
+        // selections. It is important to keep track of the directedness in
+        // places, but when comparing to other ranges, take the undirected
+        // range.
+        var dir = this.pageSel_.normalize().compare(range);
+
+        if (dir) {
+          // Directed expansion.
           msg = '@selected';
         } else {
+          // Directed shrink.
           msg = '@unselected';
           selectedRange = prevRange;
         }
-        this.pageSel_ = new cursors.Range(this.pageSel_.start, range.end);
+        var wasBackwardSel =
+            this.pageSel_.start.compare(this.pageSel_.end) == Dir.BACKWARD ||
+            dir == Dir.BACKWARD;
+        this.pageSel_ = new cursors.Range(
+            this.pageSel_.start, wasBackwardSel ? range.start : range.end);
         if (this.pageSel_)
           this.pageSel_.select();
       }
@@ -288,8 +283,9 @@ Background.prototype = {
     }
 
     o.withRichSpeechAndBraille(
-         selectedRange || range, prevRange, Output.EventType.NAVIGATE)
-        .withQueueMode(cvox.QueueMode.FLUSH);
+        selectedRange || range, prevRange, Output.EventType.NAVIGATE);
+
+    o.withQueueMode(cvox.QueueMode.FLUSH);
 
     if (msg)
       o.format(msg);
@@ -297,7 +293,8 @@ Background.prototype = {
     for (var prop in opt_speechProps)
       o.format('!' + prop);
 
-    o.go();
+    if (!skipOutput)
+      o.go();
   },
 
   /**
@@ -312,111 +309,7 @@ Background.prototype = {
    * @override
    */
   onBrailleKeyEvent: function(evt, content) {
-    // Note: panning within content occurs earlier in event dispatch.
-    Output.forceModeForNextSpeechUtterance(cvox.QueueMode.FLUSH);
-    switch (evt.command) {
-      case cvox.BrailleKeyCommand.PAN_LEFT:
-        CommandHandler.onCommand('previousObject');
-        break;
-      case cvox.BrailleKeyCommand.PAN_RIGHT:
-        CommandHandler.onCommand('nextObject');
-        break;
-      case cvox.BrailleKeyCommand.LINE_UP:
-        CommandHandler.onCommand('previousLine');
-        break;
-      case cvox.BrailleKeyCommand.LINE_DOWN:
-        CommandHandler.onCommand('nextLine');
-        break;
-      case cvox.BrailleKeyCommand.TOP:
-        CommandHandler.onCommand('jumpToTop');
-        break;
-      case cvox.BrailleKeyCommand.BOTTOM:
-        CommandHandler.onCommand('jumpToBottom');
-        break;
-      case cvox.BrailleKeyCommand.ROUTING:
-        this.brailleRoutingCommand_(
-            content.text,
-            // Cast ok since displayPosition is always defined in this case.
-            /** @type {number} */ (evt.displayPosition));
-        break;
-      case cvox.BrailleKeyCommand.CHORD:
-        if (!evt.brailleDots)
-          return false;
-
-        var command = BrailleCommandData.getCommand(evt.brailleDots);
-        if (command) {
-          if (BrailleCommandHandler.onEditCommand(command))
-            CommandHandler.onCommand(command);
-        }
-        break;
-      default:
-        return false;
-    }
-    return true;
-  },
-
-  /**
-   * @param {!Spannable} text
-   * @param {number} position
-   * @private
-   */
-  brailleRoutingCommand_: function(text, position) {
-    var actionNodeSpan = null;
-    var selectionSpan = null;
-    var selSpans = text.getSpansInstanceOf(Output.SelectionSpan);
-    var nodeSpans = text.getSpansInstanceOf(Output.NodeSpan);
-    for (var i = 0, selSpan; selSpan = selSpans[i]; i++) {
-      if (text.getSpanStart(selSpan) <= position &&
-          position < text.getSpanEnd(selSpan)) {
-        selectionSpan = selSpan;
-        break;
-      }
-    }
-
-    var interval;
-    for (var j = 0, nodeSpan; nodeSpan = nodeSpans[j]; j++) {
-      var intervals = text.getSpanIntervals(nodeSpan);
-      var tempInterval = intervals.find(function(innerInterval) {
-        return innerInterval.start <= position &&
-            position <= innerInterval.end;
-      });
-      if (tempInterval) {
-        actionNodeSpan = nodeSpan;
-        interval = tempInterval;
-      }
-    }
-
-    if (!actionNodeSpan)
-      return;
-
-    var actionNode = actionNodeSpan.node;
-    var offset = actionNodeSpan.offset;
-    if (actionNode.role === RoleType.INLINE_TEXT_BOX)
-      actionNode = actionNode.parent;
-    actionNode.doDefault();
-
-    if (actionNode.role != RoleType.STATIC_TEXT &&
-        actionNode.role != RoleType.TEXT_FIELD &&
-        !actionNode.state[StateType.RICHLY_EDITABLE])
-      return;
-
-    if (!selectionSpan)
-      selectionSpan = actionNodeSpan;
-
-    if (actionNode.state.richlyEditable) {
-      var start = interval ? interval.start : text.getSpanStart(selectionSpan);
-      var targetPosition = position - start + offset;
-      chrome.automation.setDocumentSelection({
-        anchorObject: actionNode,
-        anchorOffset: targetPosition,
-        focusObject: actionNode,
-        focusOffset: targetPosition
-      });
-    } else {
-      var start = text.getSpanStart(selectionSpan);
-      var targetPosition = position - start + offset;
-      actionNode.setSelection(targetPosition, targetPosition);
-    }
+    return BrailleCommandHandler.onBrailleKeyEvent(evt, content);
   },
 
   /**
@@ -454,19 +347,6 @@ Background.prototype = {
     var root = AutomationUtil.getTopLevelRoot(this.currentRange.start.node);
     if (root)
       this.focusRecoveryMap_.set(root, this.currentRange);
-  },
-
-  /**
-   * Handles accessibility gestures from the touch screen.
-   * @param {string} gesture The gesture to handle, based on the ax::mojom::Gesture enum
-   *     defined in ui/accessibility/ax_enums.idl
-   * @private
-   */
-  onAccessibilityGesture_: function(gesture) {
-    Output.forceModeForNextSpeechUtterance(cvox.QueueMode.FLUSH);
-    var command = Background.GESTURE_COMMAND_MAP[gesture];
-    if (command)
-      CommandHandler.onCommand(command);
   },
 
   /**
@@ -543,11 +423,6 @@ Background.prototype = {
       return node.state[StateType.FOCUSABLE] &&
           AutomationPredicate.linkOrControl(node);
     };
-
-    // Always try to give nodes selection.
-    if (start.defaultActionVerb == chrome.automation.DefaultActionVerb.SELECT) {
-      start.doDefault();
-    }
 
     // Next, try to focus the start or end node.
     if (!AutomationPredicate.structuralContainer(start) &&

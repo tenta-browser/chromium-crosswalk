@@ -16,6 +16,7 @@
 #include "third_party/blink/renderer/core/dom/animation_worklet_proxy_client.h"
 #include "third_party/blink/renderer/core/inspector/console_message.h"
 #include "third_party/blink/renderer/core/origin_trials/origin_trial_context.h"
+#include "third_party/blink/renderer/core/script/script.h"
 #include "third_party/blink/renderer/core/testing/page_test_base.h"
 #include "third_party/blink/renderer/core/workers/global_scope_creation_params.h"
 #include "third_party/blink/renderer/core/workers/parent_execution_context_task_runners.h"
@@ -38,10 +39,6 @@ namespace {
 
 class AnimationWorkletTestPlatform : public TestingPlatformSupport {
  public:
-  WebCompositorSupport* CompositorSupport() override {
-    return &compositor_support_;
-  }
-
   // Need to override the thread creating support so we can actually run
   // Animation Worklet code that would go on a backing thread in non-test
   // code. i.e. most tests remove the extra threads, but we need this one.
@@ -49,9 +46,6 @@ class AnimationWorkletTestPlatform : public TestingPlatformSupport {
       const blink::WebThreadCreationParams& params) override {
     return old_platform_->CreateThread(params);
   }
-
- private:
-  TestingCompositorSupport compositor_support_;
 };
 
 class TestAnimationWorkletProxyClient
@@ -88,19 +82,18 @@ class AnimationWorkletThreadTest : public PageTestBase {
                                          new TestAnimationWorkletProxyClient());
 
     std::unique_ptr<AnimationWorkletThread> thread =
-        AnimationWorkletThread::Create(nullptr, *reporting_proxy_);
+        AnimationWorkletThread::Create(*reporting_proxy_);
     Document* document = &GetDocument();
     thread->Start(
         std::make_unique<GlobalScopeCreationParams>(
-            document->Url(), document->UserAgent(),
-            nullptr /* content_security_policy_parsed_headers */,
-            document->GetReferrerPolicy(), document->GetSecurityOrigin(),
-            document->IsSecureContext(), clients, document->AddressSpace(),
+            document->Url(), ScriptType::kModule, document->UserAgent(),
+            Vector<CSPHeaderAndType>(), document->GetReferrerPolicy(),
+            document->GetSecurityOrigin(), document->IsSecureContext(),
+            document->GetHttpsState(), clients, document->AddressSpace(),
             OriginTrialContext::GetTokens(document).get(),
             base::UnguessableToken::Create(), nullptr /* worker_settings */,
-            kV8CacheOptionsDefault,
-            new WorkletModuleResponsesMap(document->Fetcher())),
-        WTF::nullopt, WorkerInspectorProxy::PauseOnWorkerStart::kDontPause,
+            kV8CacheOptionsDefault, new WorkletModuleResponsesMap),
+        base::nullopt, WorkerInspectorProxy::PauseOnWorkerStart::kDontPause,
         ParentExecutionContextTaskRunners::Create());
     return thread;
   }

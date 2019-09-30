@@ -18,13 +18,15 @@
 #include "content/common/content_export.h"
 #include "content/public/browser/bluetooth_chooser.h"
 #include "content/public/browser/invalidate_type.h"
+#include "content/public/browser/web_contents.h"
 #include "content/public/common/media_stream_request.h"
 #include "content/public/common/previews_state.h"
 #include "content/public/common/window_container_type.mojom.h"
+#include "third_party/blink/public/common/manifest/web_display_mode.h"
 #include "third_party/blink/public/mojom/color_chooser/color_chooser.mojom.h"
-#include "third_party/blink/public/platform/web_display_mode.h"
 #include "third_party/blink/public/platform/web_drag_operation.h"
 #include "third_party/blink/public/platform/web_security_style.h"
+#include "third_party/blink/public/web/web_fullscreen_options.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/base/window_open_disposition.h"
 #include "ui/gfx/geometry/rect_f.h"
@@ -48,7 +50,6 @@ class RenderProcessHost;
 class RenderWidgetHost;
 class SessionStorageNamespace;
 class SiteInstance;
-class WebContents;
 class WebContentsImpl;
 struct ContextMenuParams;
 struct DropData;
@@ -121,7 +122,7 @@ class CONTENT_EXPORT WebContentsDelegate {
   // |*was_blocked| will be set to true if the popup gets blocked, and left
   // unchanged otherwise.
   virtual void AddNewContents(WebContents* source,
-                              WebContents* new_contents,
+                              std::unique_ptr<WebContents> new_contents,
                               WindowOpenDisposition disposition,
                               const gfx::Rect& initial_rect,
                               bool user_gesture,
@@ -148,13 +149,10 @@ class CONTENT_EXPORT WebContentsDelegate {
   // it needs to do.
   virtual void CloseContents(WebContents* source) {}
 
-  // Request the delegate to move this WebContents to the specified position
-  // in screen coordinates.
-  virtual void MoveContents(WebContents* source, const gfx::Rect& pos) {}
-
-  // Called to determine if the WebContents is contained in a popup window
-  // or a panel window.
-  virtual bool IsPopupOrPanel(const WebContents* source) const;
+  // Request the delegate to resize this WebContents to the specified size in
+  // screen coordinates. The embedder is free to ignore the request.
+  virtual void SetContentsBounds(WebContents* source, const gfx::Rect& bounds) {
+  }
 
   // Notification that the target URL has changed.
   virtual void UpdateTargetURL(WebContents* source,
@@ -325,13 +323,18 @@ class CONTENT_EXPORT WebContentsDelegate {
   // the WebContents that is hung, and |render_widget_host| is the
   // RenderWidgetHost that, while routing events to it, discovered the hang.
   //
+  // |hang_monitor_restarter| can be used to restart the timer used to
+  // detect the hang.  The timer is typically restarted when the renderer has
+  // become active, the tab got hidden, or the user has chosen to wait some
+  // more.
+  //
   // Useful member functions on |render_widget_host|:
   // - Getting the hung render process: GetProcess()
   // - Querying whether the process is still hung: IsCurrentlyUnresponsive()
-  // - Waiting for the process to recover on its own:
-  //     RestartHangMonitorTimeoutIfNecessary()
-  virtual void RendererUnresponsive(WebContents* source,
-                                    RenderWidgetHost* render_widget_host) {}
+  virtual void RendererUnresponsive(
+      WebContents* source,
+      RenderWidgetHost* render_widget_host,
+      base::RepeatingClosure hang_monitor_restarter) {}
 
   // Notification that a process in the WebContents is no longer hung. |source|
   // is the WebContents that was hung, and |render_widget_host| is the
@@ -384,8 +387,10 @@ class CONTENT_EXPORT WebContentsDelegate {
   // |origin| is the origin of the initiating frame inside the |web_contents|.
   // |origin| can be empty in which case the |web_contents| last committed
   // URL's origin should be used.
-  virtual void EnterFullscreenModeForTab(WebContents* web_contents,
-                                         const GURL& origin) {}
+  virtual void EnterFullscreenModeForTab(
+      WebContents* web_contents,
+      const GURL& origin,
+      const blink::WebFullscreenOptions& options) {}
 
   // Called when the renderer puts a tab out of fullscreen mode.
   virtual void ExitFullscreenModeForTab(WebContents*) {}
@@ -467,10 +472,9 @@ class CONTENT_EXPORT WebContentsDelegate {
   // request is denied, a call should be made to |callback| with an empty list
   // of devices. |request| has the details of the request (e.g. which of audio
   // and/or video devices are requested, and lists of available devices).
-  virtual void RequestMediaAccessPermission(
-      WebContents* web_contents,
-      const MediaStreamRequest& request,
-      const MediaResponseCallback& callback);
+  virtual void RequestMediaAccessPermission(WebContents* web_contents,
+                                            const MediaStreamRequest& request,
+                                            MediaResponseCallback callback);
 
   // Checks if we have permission to access the microphone or camera. Note that
   // this does not query the user. |type| must be MEDIA_DEVICE_AUDIO_CAPTURE
@@ -486,10 +490,6 @@ class CONTENT_EXPORT WebContentsDelegate {
                                               MediaStreamType type);
 
 #if defined(OS_ANDROID)
-  // Creates a view embedding the video view.
-  virtual base::android::ScopedJavaLocalRef<jobject>
-      GetContentVideoViewEmbedder();
-
   // Returns true if the given media should be blocked to load.
   virtual bool ShouldBlockMediaRequest(const GURL& url);
 
@@ -534,9 +534,6 @@ class CONTENT_EXPORT WebContentsDelegate {
   // Requests the app banner. This method is called from the DevTools.
   virtual void RequestAppBannerFromDevTools(content::WebContents* web_contents);
 
-  // Called when an audio change occurs.
-  virtual void OnAudioStateChanged(WebContents* web_contents, bool audible) {}
-
   // Called when a suspicious navigation of the main frame has been blocked.
   // Allows the delegate to provide some UI to let the user know about the
   // blocked navigation and give them the option to recover from it. The given
@@ -580,10 +577,11 @@ class CONTENT_EXPORT WebContentsDelegate {
                                          RenderFrameHost* subframe_host) const {
   }
 
-  // Updates the Picture-in-Picture controller with the relevant viz::SurfaceId
-  // and natural size of the video to be in Picture-in-Picture mode.
-  virtual void UpdatePictureInPictureSurfaceId(const viz::SurfaceId& surface_id,
-                                               const gfx::Size& natural_size);
+  // Notifies the Picture-in-Picture controller that there is a new player
+  // entering Picture-in-Picture.
+  // Returns the size of the Picture-in-Picture window.
+  virtual gfx::Size EnterPictureInPicture(const viz::SurfaceId&,
+                                          const gfx::Size& natural_size);
 
   // Updates the Picture-in-Picture controller with a signal that
   // Picture-in-Picture mode has ended.

@@ -12,7 +12,7 @@
 #include "base/files/file_path.h"
 #include "base/logging.h"
 #include "base/process/kill.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "build/build_config.h"
 #include "chrome/browser/extensions/api/messaging/native_messaging_host_manifest.h"
 #include "chrome/browser/extensions/api/messaging/native_process_launcher.h"
@@ -29,7 +29,7 @@ namespace {
 // Maximum message size in bytes for messages received from Native Messaging
 // hosts. Message size is limited mainly to prevent Chrome from crashing when
 // native application misbehaves (e.g. starts writing garbage to the pipe).
-const size_t kMaximumMessageSize = 1024 * 1024;
+const size_t kMaximumNativeMessageSize = 1024 * 1024;
 
 // Message header contains 4-byte integer size of the message.
 const size_t kMessageHeaderSize = 4;
@@ -71,7 +71,7 @@ NativeMessageProcessHost::~NativeMessageProcessHost() {
 // block, so we have to post a task on the blocking pool.
 #if defined(OS_MACOSX)
     base::PostTaskWithTraits(
-        FROM_HERE, {base::MayBlock(), base::TaskPriority::BACKGROUND},
+        FROM_HERE, {base::MayBlock(), base::TaskPriority::BEST_EFFORT},
         base::BindOnce(&base::EnsureProcessTerminated, Passed(&process_)));
 #else
     base::EnsureProcessTerminated(std::move(process_));
@@ -273,7 +273,7 @@ void NativeMessageProcessHost::ProcessIncomingData(
     size_t message_size =
         *reinterpret_cast<const uint32_t*>(incoming_data_.data());
 
-    if (message_size > kMaximumMessageSize) {
+    if (message_size > kMaximumNativeMessageSize) {
       LOG(ERROR) << "Native Messaging host tried sending a message that is "
                  << message_size << " bytes long.";
       Close(kHostInputOutputError);
@@ -298,8 +298,11 @@ void NativeMessageProcessHost::DoWrite() {
         !current_write_buffer_->BytesRemaining()) {
       if (write_queue_.empty())
         return;
-      current_write_buffer_ = new net::DrainableIOBuffer(
-          write_queue_.front().get(), write_queue_.front()->size());
+      scoped_refptr<net::IOBufferWithSize> buffer =
+          std::move(write_queue_.front());
+      int buffer_size = buffer->size();
+      current_write_buffer_ = base::MakeRefCounted<net::DrainableIOBuffer>(
+          std::move(buffer), buffer_size);
       write_queue_.pop();
     }
 

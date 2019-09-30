@@ -130,8 +130,10 @@ function AutomationEditableText(node) {
     throw Error('Node must have editable state set to true.');
   var start = node.textSelStart;
   var end = node.textSelEnd;
+  var value = this.getProcessedValue_(node) || '';
   cvox.ChromeVoxEditableTextBase.call(
-      this, node.value || '', Math.min(start, end), Math.max(start, end),
+      this, value, Math.min(start, end, value.length),
+      Math.min(Math.max(start, end), value.length),
       node.state[StateType.PROTECTED] /**password*/, cvox.ChromeVox.tts);
   /** @override */
   this.multiline = node.state[StateType.MULTILINE] || false;
@@ -147,10 +149,11 @@ AutomationEditableText.prototype = {
    * @param {string|undefined} eventFrom
    */
   onUpdate: function(eventFrom) {
-    var newValue = this.node_.value || '';
+    var newValue = this.getProcessedValue_(this.node_) || '';
 
     var textChangeEvent = new cvox.TextChangeEvent(
-        newValue, this.node_.textSelStart || 0, this.node_.textSelEnd || 0,
+        newValue, Math.min(this.node_.textSelStart || 0, newValue.length),
+        Math.min(this.node_.textSelEnd || 0, newValue.length),
         true /* triggered by user */);
     this.changed(textChangeEvent);
     this.outputBraille_();
@@ -192,6 +195,16 @@ AutomationEditableText.prototype = {
     range = Range.fromNode(this.node_);
     output.withBraille(range, null, Output.EventType.NAVIGATE);
     output.go();
+  },
+
+  /**
+   * @param {!AutomationNode} node
+   * @return {string|undefined}
+   * @private
+   */
+  getProcessedValue_: function(node) {
+    var value = node.value;
+    return (value && node.inputType == 'tel') ? value['trimEnd']() : value;
   }
 };
 
@@ -296,14 +309,21 @@ AutomationRichEditableText.prototype = {
     // During continuous read, skip speech (which gets handled in
     // CommandHandler). We use the speech end callback to trigger additional
     // speech.
-    if (ChromeVoxState.isReadingContinuously) {
+    // Also, skip speech based on the predicate.
+    if (ChromeVoxState.isReadingContinuously ||
+        AutomationPredicate.shouldOnlyOutputSelectionChangeInBraille(
+            this.node_)) {
       this.brailleCurrentRichLine_();
       this.updateIntraLineState_(cur);
       return;
     }
 
     // Selection stayed within the same line(s) and didn't cross into new lines.
-    if (anchorLine.isSameLine(prevAnchorLine) &&
+
+    // We must validate the previous lines as state changes in the accessibility
+    // tree may have invalidated the lines.
+    if (prevAnchorLine.isValidLine() && prevFocusLine.isValidLine() &&
+        anchorLine.isSameLine(prevAnchorLine) &&
         focusLine.isSameLine(prevFocusLine)) {
       // Intra-line changes.
       this.changed(new cvox.TextChangeEvent(
@@ -506,6 +526,10 @@ AutomationRichEditableText.prototype = {
     var msgs = [];
     if (style.state.linked)
       msgs.push(opt_end ? 'link_end' : 'link_start');
+    if (style.subscript)
+      msgs.push(opt_end ? 'subscript_end' : 'subscript_start');
+    if (style.superscript)
+      msgs.push(opt_end ? 'superscript_end' : 'superscript_start');
     if (style.bold)
       msgs.push(opt_end ? 'bold_end' : 'bold_start');
     if (style.italic)
@@ -538,12 +562,17 @@ AutomationRichEditableText.prototype = {
     for (var i = 0, cur; cur = lineNodes[i]; i++) {
       if (cur.children.length)
         continue;
-      new Output()
-          .withRichSpeech(
-              Range.fromNode(cur), prev ? Range.fromNode(prev) : null,
-              Output.EventType.NAVIGATE)
-          .withQueueMode(queueMode)
-          .go();
+
+      var o = new Output()
+                  .withRichSpeech(
+                      Range.fromNode(cur), prev ? Range.fromNode(prev) : null,
+                      Output.EventType.NAVIGATE)
+                  .withQueueMode(queueMode);
+
+      // Ignore whitespace only output except if it is leading content on the
+      // line.
+      if (!o.isOnlyWhitespace || i == 0)
+        o.go();
       prev = cur;
       queueMode = cvox.QueueMode.QUEUE;
     }
@@ -564,6 +593,7 @@ AutomationRichEditableText.prototype = {
       if (!style)
         return;
       var formType = FormType.PLAIN_TEXT;
+      // Currently no support for sub/superscript in 3rd party liblouis library.
       if (style.bold)
         formType |= FormType.BOLD;
       if (style.italic)
@@ -574,7 +604,9 @@ AutomationRichEditableText.prototype = {
         return;
       var start = value.getSpanStart(span);
       var end = value.getSpanEnd(span);
-      value.setSpan(new cvox.BrailleTextStyleSpan(formType), start, end);
+      value.setSpan(new cvox.BrailleTextStyleSpan(
+          /** @type {cvox.LibLouis.FormType<number>} */(formType)),
+                    start, end);
     });
 
     // Provide context for the current selection.
@@ -1023,6 +1055,60 @@ editing.EditableLine.prototype = {
     return AutomationUtil.getDirection(
                this.lineStartContainer_, otherLine.lineStartContainer_) ==
         Dir.FORWARD;
+  },
+
+  /**
+   * Performs a validation that this line still refers to a line given its
+   * internally tracked state.
+   */
+  isValidLine: function() {
+    if (!this.lineStartContainer_ || !this.lineEndContainer_)
+      return false;
+
+    var start = new cursors.Cursor(
+        this.lineStartContainer_, this.localLineStartContainerOffset_);
+    var end = new cursors.Cursor(
+        this.lineEndContainer_, this.localLineEndContainerOffset_ - 1);
+    var localStart = start.deepEquivalent || start;
+    var localEnd = end.deepEquivalent || end;
+    var localStartNode = localStart.node;
+    var localEndNode = localEnd.node;
+
+    // Unfortunately, there are asymmetric errors in lines, so we need to check
+    // in both directions.
+    var testStartNode = localStartNode;
+    do {
+      if (testStartNode == localEndNode)
+        return true;
+
+      // Hack/workaround for broken *OnLine links.
+      if (testStartNode.nextOnLine && testStartNode.nextOnLine.role)
+        testStartNode = testStartNode.nextOnLine;
+      else if (
+          testStartNode.nextSibling &&
+          testStartNode.nextSibling.previousOnLine == testStartNode)
+        testStartNode = testStartNode.nextSibling;
+      else
+        break;
+    } while (testStartNode);
+
+    var testEndNode = localEndNode;
+    do {
+      if (testEndNode == localStartNode)
+        return true;
+
+      // Hack/workaround for broken *OnLine links.
+      if (testEndNode.previousOnLine && testEndNode.previousOnLine.role)
+        testEndNode = testEndNode.previousOnLine;
+      else if (
+          testEndNode.previousSibling &&
+          testEndNode.previousSibling.nextOnLine == testEndNode)
+        testEndNode = testEndNode.previousSibling;
+      else
+        break;
+    } while (testEndNode);
+
+    return false;
   }
 };
 

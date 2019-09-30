@@ -57,10 +57,6 @@ const int kRightPadding = 10;
 const int kMaxOverflowContainerHeight = 416;
 }
 
-namespace app_menu_controller {
-const CGFloat kAppMenuBubblePointOffsetY = 6;
-}
-
 using base::UserMetricsAction;
 
 @interface AppMenuController (Private)
@@ -362,6 +358,17 @@ class ToolbarActionsBarObserverHelper : public ToolbarActionsBarObserver {
   [view setFrameOrigin:NSZeroPoint];
   [[containerView superview] setFrameOrigin:NSZeroPoint];
   [containerView setFrameOrigin:NSMakePoint(kLeftPadding, 0)];
+
+  if (containerView.isHidden)
+    return;
+
+  // Remove and re-add menu item so menu gets the correct size.
+  // |removeItemAtIndex:| can trigger an eager dealloc, so retain it
+  // in the meantime.
+  base::scoped_nsobject<NSMenuItem> menuItem([browserActionsMenuItem_ retain]);
+  NSInteger index = [[self menu] indexOfItem:browserActionsMenuItem_];
+  [[self menu] removeItemAtIndex:index];
+  [[self menu] insertItem:browserActionsMenuItem_ atIndex:index];
 }
 
 - (void)menuWillOpen:(NSMenu*)menu {
@@ -490,6 +497,10 @@ class ToolbarActionsBarObserverHelper : public ToolbarActionsBarObserver {
 
 - (BrowserActionsController*)browserActionsController {
   return browserActionsController_.get();
+}
+
+- (ui::AcceleratorProvider*)acceleratorProvider {
+  return acceleratorDelegate_.get();
 }
 
 - (void)createModel {

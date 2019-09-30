@@ -10,7 +10,6 @@
 #include "base/command_line.h"
 #include "base/files/file_util.h"
 #include "base/memory/ref_counted.h"
-#include "base/message_loop/message_loop.h"
 #include "base/rand_util.h"
 #include "base/run_loop.h"
 #include "base/stl_util.h"
@@ -18,6 +17,7 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/test/scoped_feature_list.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "chrome/browser/autofill/autofill_uitest_util.h"
@@ -38,8 +38,8 @@
 #include "components/autofill/core/browser/personal_data_manager.h"
 #include "components/autofill/core/browser/personal_data_manager_observer.h"
 #include "components/autofill/core/browser/validation.h"
+#include "components/autofill/core/common/autofill_features.h"
 #include "content/public/browser/navigation_controller.h"
-#include "content/public/browser/render_view_host.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/test_renderer_host.h"
@@ -162,7 +162,7 @@ class AutofillTest : public InProcessBrowserTest {
       observer.reset(new WindowedPersonalDataManagerObserver(browser()));
 
     std::string js = GetJSToFillForm(data) + submit_js;
-    ASSERT_TRUE(content::ExecuteScript(render_view_host(), js));
+    ASSERT_TRUE(content::ExecuteScript(web_contents(), js));
     if (simulate_click) {
       // Simulate a mouse click to submit the form because form submissions not
       // triggered by user gestures are ignored.
@@ -219,14 +219,52 @@ class AutofillTest : public InProcessBrowserTest {
     return parsed_profiles;
   }
 
-  content::RenderViewHost* render_view_host() {
-    return browser()->tab_strip_model()->GetActiveWebContents()->
-        GetRenderViewHost();
+  content::WebContents* web_contents() {
+    return browser()->tab_strip_model()->GetActiveWebContents();
   }
 
  private:
   net::TestURLFetcherFactory url_fetcher_factory_;
 };
+
+class AutofillParamTest : public AutofillTest,
+                          public testing::WithParamInterface<bool> {
+ protected:
+  AutofillParamTest() : enable_company_feature_state_(GetParam()) {
+    feature_list_.InitWithFeatureState(features::kAutofillEnableCompanyName,
+                                       enable_company_feature_state_);
+  }
+
+  const bool enable_company_feature_state_;
+
+ private:
+  base::test::ScopedFeatureList feature_list_;
+};
+
+// Test that Autofill respects CompanyName Feature state
+IN_PROC_BROWSER_TEST_P(AutofillParamTest, CompanyNameTest) {
+  SCOPED_TRACE(enable_company_feature_state_ ? "Enabled" : "Disabled");
+
+  const char kCompanyName[] = "Google";
+  FormMap data;
+  data["NAME_FIRST"] = "Bob";
+  data["NAME_LAST"] = "Smith";
+  data["ADDRESS_HOME_LINE1"] = "1234 H St.";
+  data["ADDRESS_HOME_CITY"] = "Mountain View";
+  data["ADDRESS_HOME_STATE"] = "CA";
+  data["ADDRESS_HOME_ZIP"] = "94043";
+  data["COMPANY_NAME"] = kCompanyName;
+
+  std::string submit("document.forms[0].submit();");
+  FillFormAndSubmitWithHandler("duplicate_profiles_test.html", data, submit,
+                               false, true);
+
+  EXPECT_EQ(
+      ASCIIToUTF16(enable_company_feature_state_ ? kCompanyName : ""),
+      personal_data_manager()->GetProfiles()[0]->GetRawInfo(COMPANY_NAME));
+}
+
+INSTANTIATE_TEST_CASE_P(, AutofillParamTest, testing::Bool());
 
 // Test that Autofill aggregates a minimum valid profile.
 // The minimum required address fields must be specified: First Name, Last Name,

@@ -143,7 +143,7 @@ void CaretDisplayItemClient::UpdateStyleAndLayoutIfNeeded(
   LayoutBlock* new_layout_block = CaretLayoutBlock(caret_position.AnchorNode());
   if (new_layout_block != layout_block_) {
     if (layout_block_)
-      layout_block_->SetMayNeedPaintInvalidation();
+      layout_block_->SetShouldCheckForPaintInvalidation();
     layout_block_ = new_layout_block;
     visual_rect_ = LayoutRect();
     if (new_layout_block) {
@@ -181,7 +181,7 @@ void CaretDisplayItemClient::UpdateStyleAndLayoutIfNeeded(
   }
 
   if (needs_paint_invalidation_)
-    new_layout_block->SetMayNeedPaintInvalidation();
+    new_layout_block->SetShouldCheckForPaintInvalidation();
 }
 
 void CaretDisplayItemClient::InvalidatePaint(
@@ -202,14 +202,6 @@ void CaretDisplayItemClient::InvalidatePaintInPreviousLayoutBlock(
 
   ObjectPaintInvalidatorWithContext object_invalidator(*previous_layout_block_,
                                                        context);
-  // For SPv175 raster invalidation will be done in PaintController.
-  if (!RuntimeEnabledFeatures::SlimmingPaintV175Enabled() &&
-      !IsImmediateFullPaintInvalidationReason(
-          previous_layout_block_->FullPaintInvalidationReason())) {
-    object_invalidator.InvalidatePaintRectangleWithContext(
-        visual_rect_in_previous_layout_block_, PaintInvalidationReason::kCaret);
-  }
-
   context.painting_layer->SetNeedsRepaint();
   object_invalidator.InvalidateDisplayItemClient(
       *this, PaintInvalidationReason::kCaret);
@@ -228,15 +220,7 @@ void CaretDisplayItemClient::InvalidatePaintInCurrentLayoutBlock(
   if (context.NeedsVisualRectUpdate(*layout_block_)) {
     if (!local_rect_.IsEmpty()) {
       new_visual_rect = local_rect_;
-      context.MapLocalRectToVisualRectInBacking(*layout_block_,
-                                                new_visual_rect);
-
-      if (layout_block_->UsesCompositedScrolling()) {
-        // The caret should use scrolling coordinate space.
-        DCHECK(layout_block_ == context.paint_invalidation_container);
-        new_visual_rect.Move(
-            LayoutSize(layout_block_->ScrolledContentOffset()));
-      }
+      context.MapLocalRectToVisualRect(*layout_block_, new_visual_rect);
     }
   } else {
     new_visual_rect = visual_rect_;
@@ -250,14 +234,7 @@ void CaretDisplayItemClient::InvalidatePaintInCurrentLayoutBlock(
     // The caret may change paint offset without changing visual rect, and we
     // need to invalidate the display item client if the block is doing full
     // paint invalidation.
-    if (IsImmediateFullPaintInvalidationReason(
-            layout_block_->FullPaintInvalidationReason()) ||
-        // For SPv1, kSubtreeInvalidationChecking may hint change of
-        // paint offset. See ObjectPaintInvalidatorWithContext::
-        // invalidatePaintIfNeededWithComputedReason().
-        (!RuntimeEnabledFeatures::SlimmingPaintV175Enabled() &&
-         (context.subtree_flags &
-          PaintInvalidatorContext::kSubtreeInvalidationChecking))) {
+    if (layout_block_->ShouldDoFullPaintInvalidation()) {
       object_invalidator.InvalidateDisplayItemClient(
           *this, PaintInvalidationReason::kCaret);
     }
@@ -265,13 +242,6 @@ void CaretDisplayItemClient::InvalidatePaintInCurrentLayoutBlock(
   }
 
   needs_paint_invalidation_ = false;
-
-  if (!RuntimeEnabledFeatures::SlimmingPaintV175Enabled() &&
-      !IsImmediateFullPaintInvalidationReason(
-          layout_block_->FullPaintInvalidationReason())) {
-    object_invalidator.FullyInvalidatePaint(PaintInvalidationReason::kCaret,
-                                            visual_rect_, new_visual_rect);
-  }
 
   context.painting_layer->SetNeedsRepaint();
   object_invalidator.InvalidateDisplayItemClient(

@@ -18,6 +18,10 @@ bool NGBoxStrut::operator==(const NGBoxStrut& other) const {
          std::tie(inline_start, inline_end, block_start, block_end);
 }
 
+bool NGBoxStrut::operator!=(const NGBoxStrut& other) const {
+  return !(*this == other);
+}
+
 NGPhysicalBoxStrut NGBoxStrut::ConvertToPhysical(
     WritingMode writing_mode,
     TextDirection direction) const {
@@ -45,8 +49,6 @@ NGPhysicalBoxStrut NGBoxStrut::ConvertToPhysical(
   }
 }
 
-// Converts physical dimensions to logical ones per
-// https://drafts.csswg.org/css-writing-modes-3/#logical-to-physical
 NGBoxStrut NGPhysicalBoxStrut::ConvertToLogical(WritingMode writing_mode,
                                                 TextDirection direction) const {
   NGBoxStrut strut;
@@ -70,6 +72,13 @@ NGBoxStrut NGPhysicalBoxStrut::ConvertToLogical(WritingMode writing_mode,
   return strut;
 }
 
+NGLineBoxStrut NGPhysicalBoxStrut::ConvertToLineLogical(
+    WritingMode writing_mode,
+    TextDirection direction) const {
+  return NGLineBoxStrut(ConvertToLogical(writing_mode, direction),
+                        IsFlippedLinesWritingMode(writing_mode));
+}
+
 String NGBoxStrut::ToString() const {
   return String::Format("Inline: (%d %d) Block: (%d %d)", inline_start.ToInt(),
                         inline_end.ToInt(), block_start.ToInt(),
@@ -78,6 +87,28 @@ String NGBoxStrut::ToString() const {
 
 std::ostream& operator<<(std::ostream& stream, const NGBoxStrut& value) {
   return stream << value.ToString();
+}
+
+NGBoxStrut::NGBoxStrut(const NGLineBoxStrut& line_relative,
+                       bool is_flipped_lines) {
+  if (!is_flipped_lines) {
+    *this = {line_relative.inline_start, line_relative.inline_end,
+             line_relative.line_over, line_relative.line_under};
+  } else {
+    *this = {line_relative.inline_start, line_relative.inline_end,
+             line_relative.line_under, line_relative.line_over};
+  }
+}
+
+NGLineBoxStrut::NGLineBoxStrut(const NGBoxStrut& flow_relative,
+                               bool is_flipped_lines) {
+  if (!is_flipped_lines) {
+    *this = {flow_relative.inline_start, flow_relative.inline_end,
+             flow_relative.block_start, flow_relative.block_end};
+  } else {
+    *this = {flow_relative.inline_start, flow_relative.inline_end,
+             flow_relative.block_end, flow_relative.block_start};
+  }
 }
 
 NGPixelSnappedPhysicalBoxStrut NGPhysicalBoxStrut::SnapToDevicePixels() const {

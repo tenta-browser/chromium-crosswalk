@@ -16,7 +16,7 @@ function openSingleImage(testVolumeName, volumeType) {
   var launchedPromise = launch(testVolumeName, volumeType, [ENTRIES.desktop]);
   return launchedPromise.then(function(args) {
     var WIDTH = 880;
-    var HEIGHT = 603; /* Inner height 570px + native header 33px. */
+    var HEIGHT = 602; /* Inner height 570px + native header 32px. */
     var appId = args.appId;
     var resizedWindowPromise = gallery.callRemoteTestUtil(
         'resizeWindow', appId, [WIDTH, HEIGHT]
@@ -43,8 +43,8 @@ function openSingleImage(testVolumeName, volumeType) {
     return resizedWindowPromise.then(function() {
       var rootElementPromise =
           gallery.waitForElement(appId, '.gallery[mode="slide"]');
-      var fullImagePromsie = gallery.waitForElement(
-          appId, '.gallery .image-container > .image');
+      var fullImagePromsie = gallery.waitForElementStyles(
+          appId, '.gallery .image-container > .image', ['any']);
       return Promise.all([rootElementPromise, fullImagePromsie]).
           then(function(args) {
             chrome.test.assertEq(760, args[1].renderedWidth);

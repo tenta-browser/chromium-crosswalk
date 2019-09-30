@@ -390,7 +390,7 @@ bool HttpServerPropertiesImpl::SetQuicAlternativeService(
     const url::SchemeHostPort& origin,
     const AlternativeService& alternative_service,
     base::Time expiration,
-    const QuicTransportVersionVector& advertised_versions) {
+    const quic::QuicTransportVersionVector& advertised_versions) {
   DCHECK(alternative_service.protocol == kProtoQUIC);
 
   return SetAlternativeServices(
@@ -478,31 +478,38 @@ bool HttpServerPropertiesImpl::SetAlternativeServices(
 
 void HttpServerPropertiesImpl::MarkAlternativeServiceBroken(
     const AlternativeService& alternative_service) {
-  broken_alternative_services_.MarkAlternativeServiceBroken(
+  broken_alternative_services_.MarkBroken(alternative_service);
+}
+
+void HttpServerPropertiesImpl::
+    MarkAlternativeServiceBrokenUntilDefaultNetworkChanges(
+        const AlternativeService& alternative_service) {
+  broken_alternative_services_.MarkBrokenUntilDefaultNetworkChanges(
       alternative_service);
 }
 
 void HttpServerPropertiesImpl::MarkAlternativeServiceRecentlyBroken(
     const AlternativeService& alternative_service) {
-  broken_alternative_services_.MarkAlternativeServiceRecentlyBroken(
-      alternative_service);
+  broken_alternative_services_.MarkRecentlyBroken(alternative_service);
 }
 
 bool HttpServerPropertiesImpl::IsAlternativeServiceBroken(
     const AlternativeService& alternative_service) const {
-  return broken_alternative_services_.IsAlternativeServiceBroken(
-      alternative_service);
+  return broken_alternative_services_.IsBroken(alternative_service);
 }
 
 bool HttpServerPropertiesImpl::WasAlternativeServiceRecentlyBroken(
     const AlternativeService& alternative_service) {
-  return broken_alternative_services_.WasAlternativeServiceRecentlyBroken(
-      alternative_service);
+  return broken_alternative_services_.WasRecentlyBroken(alternative_service);
 }
 
 void HttpServerPropertiesImpl::ConfirmAlternativeService(
     const AlternativeService& alternative_service) {
-  broken_alternative_services_.ConfirmAlternativeService(alternative_service);
+  broken_alternative_services_.Confirm(alternative_service);
+}
+
+bool HttpServerPropertiesImpl::OnDefaultNetworkChanged() {
+  return broken_alternative_services_.OnDefaultNetworkChanged();
 }
 
 const AlternativeServiceMap& HttpServerPropertiesImpl::alternative_service_map()
@@ -529,8 +536,8 @@ HttpServerPropertiesImpl::GetAlternativeServiceInfoAsValue() const {
         alternative_service.host = server.host();
       }
       base::TimeTicks brokenness_expiration_ticks;
-      if (broken_alternative_services_.IsAlternativeServiceBroken(
-              alternative_service, &brokenness_expiration_ticks)) {
+      if (broken_alternative_services_.IsBroken(alternative_service,
+                                                &brokenness_expiration_ticks)) {
         // Convert |brokenness_expiration| from TimeTicks to Time
         base::Time brokenness_expiration =
             now + (brokenness_expiration_ticks - now_ticks);
@@ -604,7 +611,7 @@ HttpServerPropertiesImpl::server_network_stats_map() const {
 }
 
 bool HttpServerPropertiesImpl::SetQuicServerInfo(
-    const QuicServerId& server_id,
+    const quic::QuicServerId& server_id,
     const std::string& server_info) {
   QuicServerInfoMap::iterator it = quic_server_info_map_.Peek(server_id);
   bool changed =
@@ -615,7 +622,7 @@ bool HttpServerPropertiesImpl::SetQuicServerInfo(
 }
 
 const std::string* HttpServerPropertiesImpl::GetQuicServerInfo(
-    const QuicServerId& server_id) {
+    const quic::QuicServerId& server_id) {
   QuicServerInfoMap::iterator it = quic_server_info_map_.Get(server_id);
   if (it != quic_server_info_map_.end()) {
     // Since |canonical_server_info_map_| should always map to the most
@@ -643,7 +650,7 @@ const std::string* HttpServerPropertiesImpl::GetQuicServerInfo(
 
 HttpServerPropertiesImpl::CanonicalServerInfoMap::const_iterator
 HttpServerPropertiesImpl::GetCanonicalServerInfoHost(
-    const QuicServerId& server) const {
+    const quic::QuicServerId& server) const {
   const std::string* canonical_suffix = GetCanonicalSuffix(server.host());
   if (canonical_suffix == nullptr)
     return canonical_server_info_map_.end();
@@ -689,7 +696,7 @@ void HttpServerPropertiesImpl::SetMaxServerConfigsStoredInProperties(
 }
 
 void HttpServerPropertiesImpl::UpdateCanonicalServerInfoMap(
-    const QuicServerId& server) {
+    const quic::QuicServerId& server) {
   const std::string* suffix = GetCanonicalSuffix(server.host());
   if (suffix) {
     HostPortPair canonical_pair(*suffix, server.port());

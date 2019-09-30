@@ -8,11 +8,14 @@
 {
   "name": "content_packaged_services",
   "display_name": "Content Packaged Services",
+  "options" : {
+    "instance_sharing" : "singleton"
+  },
   "interface_provider_specs": {
     "service_manager:connector": {
       "provides": {
         "service_manager:service_factory": [
-          "service_manager::mojom::ServiceFactory"
+          "service_manager.mojom.ServiceFactory"
         ]
       },
       "requires": {
@@ -20,7 +23,6 @@
         "content_browser": [],
         "service_manager": [
           "service_manager:client_process",
-          "service_manager:singleton",
           "service_manager:user_id"
         ]
       }

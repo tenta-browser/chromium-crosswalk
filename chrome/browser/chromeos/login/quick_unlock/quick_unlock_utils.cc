@@ -21,9 +21,6 @@ namespace {
 // Quick unlock is enabled regardless of flags.
 bool enable_for_testing_ = false;
 bool disable_pin_by_policy_for_testing_ = false;
-// If testing is enabled, PIN will use prefs as backend. Otherwise, it will use
-// cryptohome.
-PinStorageType testing_pin_storage_type_ = PinStorageType::kPrefs;
 
 // Options for the quick unlock whitelist.
 const char kQuickUnlockWhitelistOptionAll[] = "all";
@@ -63,8 +60,6 @@ void RegisterProfilePrefs(PrefRegistrySimple* registry) {
   // 0 indicates no maximum length for the pin.
   registry->RegisterIntegerPref(prefs::kPinUnlockMaximumLength, 0);
   registry->RegisterBooleanPref(prefs::kPinUnlockWeakPinsAllowed, true);
-
-  registry->RegisterBooleanPref(prefs::kEnableQuickUnlockFingerprint, false);
 }
 
 bool IsPinDisabledByPolicy(PrefService* pref_service) {
@@ -102,26 +97,21 @@ bool IsPinEnabled(PrefService* pref_service) {
   return base::FeatureList::IsEnabled(features::kQuickUnlockPin);
 }
 
-PinStorageType GetPinStorageType() {
-  if (enable_for_testing_)
-    return testing_pin_storage_type_;
-
-  if (base::FeatureList::IsEnabled(features::kQuickUnlockPinSignin))
-    return PinStorageType::kCryptohome;
-  return PinStorageType::kPrefs;
-}
-
 bool IsFingerprintEnabled() {
   if (enable_for_testing_)
     return true;
+
+  // Disable fingerprint for secondary user.
+  user_manager::UserManager* user_manager = user_manager::UserManager::Get();
+  if (user_manager->GetActiveUser() != user_manager->GetPrimaryUser())
+    return false;
 
   // Enable fingerprint unlock only if the switch is present.
   return base::FeatureList::IsEnabled(features::kQuickUnlockFingerprint);
 }
 
-void EnableForTesting(PinStorageType pin_storage_type) {
+void EnableForTesting() {
   enable_for_testing_ = true;
-  testing_pin_storage_type_ = pin_storage_type;
 }
 
 void DisablePinByPolicyForTesting(bool disable) {

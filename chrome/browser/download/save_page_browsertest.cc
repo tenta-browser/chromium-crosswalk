@@ -20,7 +20,7 @@
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/test/histogram_tester.h"
+#include "base/test/metrics/histogram_tester.h"
 #include "base/test/test_file_util.h"
 #include "base/threading/thread_restrictions.h"
 #include "build/build_config.h"
@@ -292,7 +292,7 @@ class SavePageBrowserTest : public InProcessBrowserTest {
     content::SetupCrossSiteRedirector(embedded_test_server());
     embedded_test_server()->StartAcceptingConnections();
 
-    ASSERT_TRUE(PathService::Get(chrome::DIR_TEST_DATA, &test_dir_));
+    ASSERT_TRUE(base::PathService::Get(chrome::DIR_TEST_DATA, &test_dir_));
     InProcessBrowserTest::SetUp();
   }
 
@@ -1006,7 +1006,7 @@ IN_PROC_BROWSER_TEST_F(SavePageSitePerProcessBrowserTest,
           << "a.com and bar.com should be in different processes.";
 
       EXPECT_TRUE(process_to_kill->FastShutdownIfPossible());
-      EXPECT_FALSE(process_to_kill->HasConnection());
+      EXPECT_FALSE(process_to_kill->IsInitializedAndNotDead());
       did_kill_a_process = true;
       break;
     }
@@ -1182,10 +1182,11 @@ IN_PROC_BROWSER_TEST_P(SavePageOriginalVsSavedComparisonTest,
 }
 
 // Tests that saving a page from file: URI works.
+// TODO(https://crbug.com/840063): Deflake and reenable.
 IN_PROC_BROWSER_TEST_P(SavePageOriginalVsSavedComparisonTest,
-                       ObjectElementsViaFile) {
+                       DISABLED_ObjectElementsViaFile) {
   base::FilePath test_data_dir;
-  ASSERT_TRUE(PathService::Get(chrome::DIR_TEST_DATA, &test_data_dir));
+  ASSERT_TRUE(base::PathService::Get(chrome::DIR_TEST_DATA, &test_data_dir));
   GURL url(net::FilePathToFileURL(
       test_data_dir.Append(FILE_PATH_LITERAL("save_page/frames-objects.htm"))));
   EXPECT_TRUE(url.SchemeIsFile());

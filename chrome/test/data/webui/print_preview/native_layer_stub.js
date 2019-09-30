@@ -4,8 +4,8 @@
 
 cr.define('print_preview', function() {
   /**
-  * Test version of the native layer.
-  */
+   * Test version of the native layer.
+   */
   class NativeLayerStub extends TestBrowserProxy {
     constructor() {
       super([
@@ -90,17 +90,11 @@ cr.define('print_preview', function() {
 
     /** @override */
     getPreview(printTicket, pageCount) {
-      this.methodCalled('getPreview', {
-        printTicket: printTicket,
-        pageCount: pageCount
-      });
+      this.methodCalled(
+          'getPreview', {printTicket: printTicket, pageCount: pageCount});
       const printTicketParsed = JSON.parse(printTicket);
-      if (printTicketParsed.deviceName == this.badPrinterId_) {
-        let rejectString = print_preview.PreviewArea.EventType.SETTINGS_INVALID;
-        rejectString = rejectString.substring(
-            rejectString.lastIndexOf('.') + 1, rejectString.length);
-        return Promise.reject(rejectString);
-      }
+      if (printTicketParsed.deviceName == this.badPrinterId_)
+        return Promise.reject('SETTINGS_INVALID');
       const pageRanges = printTicketParsed.pageRange;
       const requestId = printTicketParsed.requestID;
       if (pageRanges.length == 0) {  // assume full length document, 1 page.
@@ -133,7 +127,9 @@ cr.define('print_preview', function() {
 
     /** @override */
     getPrinterCapabilities(printerId, type) {
-      this.methodCalled('getPrinterCapabilities', printerId, type);
+      this.methodCalled(
+          'getPrinterCapabilities',
+          {destinationId: printerId, printerType: type});
       if (type != print_preview.PrinterType.LOCAL_PRINTER)
         return Promise.reject();
       return this.localDestinationCapabilities_.get(printerId);
@@ -193,7 +189,8 @@ cr.define('print_preview', function() {
      *     provided.
      */
     setLocalDestinationCapabilities(response, opt_reject) {
-      this.localDestinationCapabilities_.set(response.printer.deviceName,
+      this.localDestinationCapabilities_.set(
+          response.printer.deviceName,
           opt_reject ? Promise.reject() : Promise.resolve(response));
     }
 

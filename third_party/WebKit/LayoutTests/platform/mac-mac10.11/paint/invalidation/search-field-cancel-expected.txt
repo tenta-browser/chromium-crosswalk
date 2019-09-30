@@ -20,27 +20,9 @@
         {
           "object": "LayoutBlockFlow DIV",
           "rect": [12, 45, 51, 14],
-          "reason": "appeared"
+          "reason": "chunk appeared"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutBlockFlow DIV",
-      "reason": "geometry"
-    },
-    {
-      "object": "RootInlineBox",
-      "reason": "geometry"
-    },
-    {
-      "object": "LayoutText #text",
-      "reason": "appeared"
-    },
-    {
-      "object": "InlineTextBox 'some text'",
-      "reason": "appeared"
     }
   ]
 }

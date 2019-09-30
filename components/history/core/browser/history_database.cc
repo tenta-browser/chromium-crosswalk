@@ -38,7 +38,7 @@ namespace {
 // Current version number. We write databases at the "current" version number,
 // but any previous version that can read the "compatible" one can make do with
 // our database without *too* many bad effects.
-const int kCurrentVersionNumber = 39;
+const int kCurrentVersionNumber = 41;
 const int kCompatibleVersionNumber = 16;
 const char kEarlyExpirationThresholdKey[] = "early_expiration_threshold";
 const int kMaxHostsInMemory = 10000;
@@ -392,7 +392,7 @@ void HistoryDatabase::UpdateEarlyExpirationThreshold(base::Time threshold) {
   cached_early_expiration_threshold_ = threshold;
 }
 
-sql::Connection& HistoryDatabase::GetDB() {
+sql::Database& HistoryDatabase::GetDB() {
   return db_;
 }
 
@@ -596,6 +596,25 @@ sql::InitStatus HistoryDatabase::EnsureCurrentVersion() {
   if (cur_version == 38) {
     if (!MigrateDownloadSliceFinished())
       return LogMigrationFailure(38);
+    cur_version++;
+    meta_table_.SetVersionNumber(cur_version);
+  }
+
+  if (cur_version == 39) {
+    if (!MigrateVisitsWithoutIncrementedOmniboxTypedScore())
+      return LogMigrationFailure(39);
+    cur_version++;
+    meta_table_.SetVersionNumber(cur_version);
+  }
+
+  if (cur_version == 40) {
+    std::vector<URLID> visited_url_rowids_sorted;
+    if (!GetAllVisitedURLRowidsForMigrationToVersion40(
+            &visited_url_rowids_sorted) ||
+        !CleanTypedURLOrphanedMetadataForMigrationToVersion40(
+            visited_url_rowids_sorted)) {
+      return LogMigrationFailure(40);
+    }
     cur_version++;
     meta_table_.SetVersionNumber(cur_version);
   }

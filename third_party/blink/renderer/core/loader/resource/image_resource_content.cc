@@ -16,6 +16,7 @@
 #include "third_party/blink/renderer/platform/histogram.h"
 #include "third_party/blink/renderer/platform/instrumentation/tracing/trace_event.h"
 #include "third_party/blink/renderer/platform/network/http_parsers.h"
+#include "third_party/blink/renderer/platform/network/mime/mime_type_registry.h"
 #include "third_party/blink/renderer/platform/shared_buffer.h"
 #include "third_party/blink/renderer/platform/wtf/std_lib_extras.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
@@ -52,8 +53,8 @@ class NullImageResourceInfo final
     return true;
   }
   bool HasCacheControlNoStoreHeader() const override { return false; }
-  Optional<ResourceError> GetResourceError() const override {
-    return WTF::nullopt;
+  base::Optional<ResourceError> GetResourceError() const override {
+    return base::nullopt;
   }
 
   void SetDecodedSize(size_t) override {}
@@ -63,6 +64,8 @@ class NullImageResourceInfo final
       ResourceFetcher*,
       const KURL&,
       const AtomicString& initiator_name) override {}
+
+  void LoadDeferredImage(ResourceFetcher* fetcher) override {}
 
   const KURL url_;
   const ResourceResponse response_;
@@ -239,19 +242,6 @@ blink::Image* ImageResourceContent::GetImage() const {
   return image_.get();
 }
 
-std::pair<blink::Image*, float> ImageResourceContent::BrokenCanvas(
-    float device_scale_factor) {
-  if (device_scale_factor >= 2) {
-    DEFINE_STATIC_REF(blink::Image, broken_canvas_hi_res,
-                      (blink::Image::LoadPlatformResource("brokenCanvas@2x")));
-    return std::make_pair(broken_canvas_hi_res, 2);
-  }
-
-  DEFINE_STATIC_REF(blink::Image, broken_canvas_lo_res,
-                    (blink::Image::LoadPlatformResource("brokenCanvas")));
-  return std::make_pair(broken_canvas_lo_res, 1);
-}
-
 IntSize ImageResourceContent::IntrinsicSize(
     RespectImageOrientationEnum should_respect_image_orientation) {
   if (!image_)
@@ -357,25 +347,6 @@ void ImageResourceContent::UpdateToLoadedContentStatus(
       break;
   }
 
-  // Checks ImageResourceContent's previous status.
-  switch (GetContentStatus()) {
-    case ResourceStatus::kPending:
-      // A non-multipart image or the first part of a multipart image.
-      break;
-
-    case ResourceStatus::kCached:
-    case ResourceStatus::kLoadError:
-    case ResourceStatus::kDecodeError:
-      // Second (or later) part of a multipart image.
-      // TODO(hiroshige): Assert that this is actually a multipart image.
-      break;
-
-    case ResourceStatus::kNotStarted:
-      // Should have updated to kPending via NotifyStartLoad().
-      CHECK(false);
-      break;
-  }
-
   // Updates the status.
   content_status_ = new_status;
 }
@@ -420,10 +391,8 @@ ImageResourceContent::UpdateImageResult ImageResourceContent::UpdateImage(
 
 #if DCHECK_IS_ON()
   DCHECK(!is_update_image_being_called_);
-  AutoReset<bool> scope(&is_update_image_being_called_, true);
+  base::AutoReset<bool> scope(&is_update_image_being_called_, true);
 #endif
-
-  CHECK_NE(GetContentStatus(), ResourceStatus::kNotStarted);
 
   // Clears the existing image, if instructed by |updateImageOption|.
   switch (update_image_option) {
@@ -507,6 +476,32 @@ ImageResourceContent::UpdateImageResult ImageResourceContent::UpdateImage(
   }
 
   return UpdateImageResult::kNoDecodeError;
+}
+
+// Return true if the image type is one of the hard-coded 'modern' image
+// formats.
+// TODO(crbug.com/838263): Support site-defined list of acceptable formats
+// through feature policy declarations.
+bool ImageResourceContent::IsAcceptableContentType() {
+  AtomicString mime_type = GetResponse().HttpContentType();
+  // If this was loaded from disk, there is no mime type. Return true for now.
+  if (mime_type.IsNull())
+    return true;
+  return MIMETypeRegistry::IsModernImageMIMEType(mime_type);
+}
+
+// Return true if the image content is well-compressed (and not full of
+// extraneous metadata). This is currently defined as no using more than 10 bits
+// per pixel of image data.
+// TODO(crbug.com/838263): Support site-defined bit-per-pixel ratio through
+// feature policy declarations.
+bool ImageResourceContent::IsAcceptableCompressionRatio() {
+  uint64_t pixels = IntrinsicSize(kDoNotRespectImageOrientation).Area();
+  if (!pixels)
+    return true;
+  long long resource_length = GetResponse().DecodedBodyLength();
+  // Allow no more than 10 bits per compressed pixel
+  return (double)resource_length / pixels <= 1.25;
 }
 
 void ImageResourceContent::DecodedSizeChangedTo(const blink::Image* image,
@@ -628,12 +623,16 @@ const ResourceResponse& ImageResourceContent::GetResponse() const {
   return info_->GetResponse();
 }
 
-Optional<ResourceError> ImageResourceContent::GetResourceError() const {
+base::Optional<ResourceError> ImageResourceContent::GetResourceError() const {
   return info_->GetResourceError();
 }
 
 bool ImageResourceContent::IsCacheValidator() const {
   return info_->IsCacheValidator();
+}
+
+void ImageResourceContent::LoadDeferredImage(ResourceFetcher* fetcher) {
+  info_->LoadDeferredImage(fetcher);
 }
 
 }  // namespace blink

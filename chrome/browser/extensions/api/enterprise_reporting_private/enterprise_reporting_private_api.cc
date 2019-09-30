@@ -11,6 +11,7 @@
 #include "base/values.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/extensions/api/enterprise_reporting_private/chrome_desktop_report_request_helper.h"
+#include "chrome/browser/net/system_network_context_manager.h"
 #include "chrome/browser/policy/browser_dm_token_storage.h"
 #include "chrome/browser/policy/chrome_browser_policy_connector.h"
 #include "chrome/browser/profiles/profile.h"
@@ -18,11 +19,19 @@
 #include "components/policy/core/common/cloud/cloud_policy_client.h"
 #include "components/policy/core/common/cloud/device_management_service.h"
 #include "components/policy/proto/device_management_backend.pb.h"
-#include "net/url_request/url_request_context_getter.h"
+#include "services/network/public/cpp/shared_url_loader_factory.h"
 
 namespace em = enterprise_management;
 
 namespace extensions {
+namespace {
+
+void LogReportError(const std::string& reason) {
+  VLOG(1) << "Enterprise report is not uploaded: " << reason;
+}
+
+}  // namespace
+
 namespace enterprise_reporting {
 
 const char kInvalidInputErrorMessage[] = "The report is not valid.";
@@ -32,16 +41,25 @@ const char kDeviceNotEnrolled[] = "This device has not been enrolled yet.";
 }  // namespace enterprise_reporting
 
 EnterpriseReportingPrivateUploadChromeDesktopReportFunction::
-    EnterpriseReportingPrivateUploadChromeDesktopReportFunction() {
+    EnterpriseReportingPrivateUploadChromeDesktopReportFunction()
+    : EnterpriseReportingPrivateUploadChromeDesktopReportFunction(
+          g_browser_process->system_network_context_manager()
+              ->GetSharedURLLoaderFactory()) {}
+
+EnterpriseReportingPrivateUploadChromeDesktopReportFunction::
+    EnterpriseReportingPrivateUploadChromeDesktopReportFunction(
+        scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory) {
   policy::DeviceManagementService* device_management_service =
       g_browser_process->browser_policy_connector()
           ->device_management_service();
   // Initial the DeviceManagementService if it exist and hasn't been initialized
   if (device_management_service)
     device_management_service->ScheduleInitialization(0);
+
   cloud_policy_client_ = std::make_unique<policy::CloudPolicyClient>(
-      std::string(), std::string(), device_management_service,
-      g_browser_process->system_request_context(), nullptr,
+      std::string() /* machine_id */, std::string() /* machine_model */,
+      std::string() /* brand_code */, device_management_service,
+      std::move(url_loader_factory), nullptr,
       policy::CloudPolicyClient::DeviceDMTokenCallback());
   dm_token_ = policy::BrowserDMTokenStorage::Get()->RetrieveDMToken();
   client_id_ = policy::BrowserDMTokenStorage::Get()->RetrieveClientId();
@@ -50,10 +68,22 @@ EnterpriseReportingPrivateUploadChromeDesktopReportFunction::
 EnterpriseReportingPrivateUploadChromeDesktopReportFunction::
     ~EnterpriseReportingPrivateUploadChromeDesktopReportFunction() {}
 
+// static
+EnterpriseReportingPrivateUploadChromeDesktopReportFunction*
+EnterpriseReportingPrivateUploadChromeDesktopReportFunction::CreateForTesting(
+    scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory) {
+  return new EnterpriseReportingPrivateUploadChromeDesktopReportFunction(
+      url_loader_factory);
+}
+
 ExtensionFunction::ResponseAction
 EnterpriseReportingPrivateUploadChromeDesktopReportFunction::Run() {
-  if (dm_token_.empty() || client_id_.empty())
+  VLOG(1) << "Uploading enterprise report";
+
+  if (dm_token_.empty() || client_id_.empty()) {
+    LogReportError("Device is not enrolled.");
     return RespondNow(Error(enterprise_reporting::kDeviceNotEnrolled));
+  }
   std::unique_ptr<
       api::enterprise_reporting_private::UploadChromeDesktopReport::Params>
       params(api::enterprise_reporting_private::UploadChromeDesktopReport::
@@ -64,6 +94,7 @@ EnterpriseReportingPrivateUploadChromeDesktopReportFunction::Run() {
           params->report.additional_properties,
           Profile::FromBrowserContext(browser_context()));
   if (!request) {
+    LogReportError("The input from extension is not valid.");
     return RespondNow(Error(enterprise_reporting::kInvalidInputErrorMessage));
   }
 
@@ -94,16 +125,18 @@ void EnterpriseReportingPrivateUploadChromeDesktopReportFunction::
 }
 
 void EnterpriseReportingPrivateUploadChromeDesktopReportFunction::
-    OnResponded() {
-  cloud_policy_client_.reset();
-}
-
-void EnterpriseReportingPrivateUploadChromeDesktopReportFunction::
     OnReportUploaded(bool status) {
-  if (status)
+  // Schedule to delete |cloud_policy_client_| later, as we'll be deleted right
+  // after calling Respond but |cloud_policy_client_| is not done yet.
+  base::ThreadTaskRunnerHandle::Get()->DeleteSoon(
+      FROM_HERE, cloud_policy_client_.release());
+  if (status) {
+    VLOG(1) << "The enterprise report has been uploaded.";
     Respond(NoArguments());
-  else
+  } else {
+    LogReportError("Server error.");
     Respond(Error(enterprise_reporting::kUploadFailed));
+  }
 }
 
 }  // namespace extensions

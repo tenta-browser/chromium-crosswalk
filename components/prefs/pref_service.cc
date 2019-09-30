@@ -68,9 +68,9 @@ PrefService::PrefService(
     bool async)
     : pref_notifier_(std::move(pref_notifier)),
       pref_value_store_(std::move(pref_value_store)),
-      pref_registry_(std::move(pref_registry)),
       user_pref_store_(std::move(user_prefs)),
-      read_error_callback_(std::move(read_error_callback)) {
+      read_error_callback_(std::move(read_error_callback)),
+      pref_registry_(std::move(pref_registry)) {
   pref_notifier_->SetPrefService(this);
 
   DCHECK(pref_registry_);
@@ -92,18 +92,17 @@ void PrefService::InitFromStorage(bool async) {
     // Guarantee that initialization happens after this function returned.
     base::ThreadTaskRunnerHandle::Get()->PostTask(
         FROM_HERE,
-        base::Bind(&PersistentPrefStore::ReadPrefsAsync, user_pref_store_,
-                   new ReadErrorHandler(read_error_callback_)));
+        base::BindOnce(&PersistentPrefStore::ReadPrefsAsync, user_pref_store_,
+                       new ReadErrorHandler(read_error_callback_)));
   }
 }
 
-void PrefService::CommitPendingWrite() {
-  CommitPendingWrite(base::OnceClosure());
-}
-
-void PrefService::CommitPendingWrite(base::OnceClosure done_callback) {
+void PrefService::CommitPendingWrite(
+    base::OnceClosure reply_callback,
+    base::OnceClosure synchronous_done_callback) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  user_pref_store_->CommitPendingWrite(std::move(done_callback));
+  user_pref_store_->CommitPendingWrite(std::move(reply_callback),
+                                       std::move(synchronous_done_callback));
 }
 
 void PrefService::SchedulePendingLossyWrites() {
@@ -276,6 +275,17 @@ bool PrefService::IsUserModifiablePreference(
   return pref && pref->IsUserModifiable();
 }
 
+const base::Value* PrefService::Get(const std::string& path) const {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+
+  const base::Value* value = GetPreferenceValue(path);
+  if (!value) {
+    NOTREACHED() << "Trying to read an unregistered pref: " << path;
+    return nullptr;
+  }
+  return value;
+}
+
 const base::DictionaryValue* PrefService::GetDictionary(
     const std::string& path) const {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
@@ -413,7 +423,8 @@ void PrefService::SetString(const std::string& path, const std::string& value) {
 
 void PrefService::SetFilePath(const std::string& path,
                               const base::FilePath& value) {
-  SetUserPrefValue(path, base::CreateFilePathValue(value));
+  SetUserPrefValue(
+      path, base::Value::ToUniquePtrValue(base::CreateFilePathValue(value)));
 }
 
 void PrefService::SetInt64(const std::string& path, int64_t value) {
@@ -467,6 +478,14 @@ void PrefService::SetTime(const std::string& path, base::Time value) {
 base::Time PrefService::GetTime(const std::string& path) const {
   return base::Time::FromDeltaSinceWindowsEpoch(
       base::TimeDelta::FromMicroseconds(GetInt64(path)));
+}
+
+void PrefService::SetTimeDelta(const std::string& path, base::TimeDelta value) {
+  SetInt64(path, value.InMicroseconds());
+}
+
+base::TimeDelta PrefService::GetTimeDelta(const std::string& path) const {
+  return base::TimeDelta::FromMicroseconds(GetInt64(path));
 }
 
 base::Value* PrefService::GetMutableUserPref(const std::string& path,

@@ -8,14 +8,14 @@
 #include "ash/public/cpp/shell_window_ids.h"
 #include "ash/session/session_controller.h"
 #include "ash/shell.h"
-#include "ash/shell_port.h"
 #include "ash/strings/grit/ash_strings.h"
 #include "ash/system/palette/palette_tray.h"
+#include "chromeos/chromeos_switches.h"
 #include "components/prefs/pref_registry_simple.h"
 #include "components/prefs/pref_service.h"
 #include "ui/aura/window.h"
 #include "ui/base/l10n/l10n_util.h"
-#include "ui/views/bubble/bubble_dialog_delegate.h"
+#include "ui/views/bubble/bubble_dialog_delegate_view.h"
 #include "ui/views/controls/label.h"
 #include "ui/views/layout/fill_layout.h"
 
@@ -57,7 +57,9 @@ class PaletteWelcomeBubble::WelcomeBubbleView
   void Init() override {
     SetLayoutManager(std::make_unique<views::FillLayout>());
     auto* label = new views::Label(l10n_util::GetStringUTF16(
-        IDS_ASH_STYLUS_WARM_WELCOME_BUBBLE_DESCRIPTION));
+        chromeos::switches::IsVoiceInteractionEnabled()
+            ? IDS_ASH_STYLUS_WARM_WELCOME_BUBBLE_WITH_ASSISTANT_DESCRIPTION
+            : IDS_ASH_STYLUS_WARM_WELCOME_BUBBLE_DESCRIPTION));
     label->SetHorizontalAlignment(gfx::ALIGN_LEFT);
     label->SetMultiLine(true);
     label->SizeToFit(kBubbleContentLabelPreferredWidthDp);
@@ -77,7 +79,7 @@ PaletteWelcomeBubble::PaletteWelcomeBubble(PaletteTray* tray) : tray_(tray) {
 PaletteWelcomeBubble::~PaletteWelcomeBubble() {
   if (bubble_view_) {
     bubble_view_->GetWidget()->RemoveObserver(this);
-    ShellPort::Get()->RemovePointerWatcher(this);
+    Shell::Get()->RemovePointerWatcher(this);
   }
   Shell::Get()->session_controller()->RemoveObserver(this);
 }
@@ -90,7 +92,7 @@ void PaletteWelcomeBubble::RegisterProfilePrefs(PrefRegistrySimple* registry) {
 void PaletteWelcomeBubble::OnWidgetClosing(views::Widget* widget) {
   widget->RemoveObserver(this);
   bubble_view_ = nullptr;
-  ShellPort::Get()->RemovePointerWatcher(this);
+  Shell::Get()->RemovePointerWatcher(this);
 }
 
 void PaletteWelcomeBubble::OnActiveUserPrefServiceChanged(
@@ -142,8 +144,7 @@ void PaletteWelcomeBubble::Show(bool shown_by_stylus) {
                                         true);
   bubble_view_->GetWidget()->Show();
   bubble_view_->GetWidget()->AddObserver(this);
-  ShellPort::Get()->AddPointerWatcher(this,
-                                      views::PointerWatcherEventTypes::BASIC);
+  Shell::Get()->AddPointerWatcher(this, views::PointerWatcherEventTypes::BASIC);
 
   // If the bubble is shown after the device first reads a stylus, ignore the
   // first up event so the event responsible for showing the bubble does not

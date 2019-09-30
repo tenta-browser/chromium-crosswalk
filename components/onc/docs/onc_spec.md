@@ -476,6 +476,13 @@ field **WiFi** must be set to an object of type [WiFi](#WiFi-type).
       provided by the system. If the network is not in range this field will
       be set to '0' or not present.
 
+* **TetheringState**
+    * (optional, read-only, defaults to "NotDetected") - **string**
+    * The tethering state of the WiFi connection. If the connection is
+      tethered the value is "Confirmed". If the connection is suspected to be
+      tethered the value is "Suspected". In all other cases it's
+      "NotDetected".
+
 ---
   * At least one of the fields **HexSSID** or **SSID** must be present.
   * If both **HexSSID** and **SSID** are set, the values must be consistent.
@@ -587,8 +594,9 @@ field **VPN** must be set to an object of type [VPN](#VPN-type).
 * **PSK**
     * (optional if **AuthenticationType** is *PSK*, otherwise ignored)
       - **string**
-    * Pre-Shared Key. If not specified, user is prompted at time of
-        connection.
+    * Pre-Shared Key. If not specified, the user is prompted when connecting.
+      If the value is saved but not known, this may be set to an empty value,
+      indicating that the UI does not need to provide it.
 
 * **SaveCredentials**
     * (optional if **AuthenticationType**
@@ -1480,6 +1488,10 @@ ONC configuration of of **Cellular** networks is not yet supported.
     * (optional) - **string**
     * Password for making connections if required.
 
+* **Authentication**
+    * (optional) - **string**
+    * Type of authentication protocol for sending username and password.
+
 * **Language**
     * (optional, rquired if **LocalizedName** is provided) - **string**
       Two letter language code for Localizedname if provided.
@@ -1741,29 +1753,45 @@ expansions. These allow one ONC to have basic user-specific variations.
 
 ### The expansions are:
 
-* ${LOGIN_ID} - expands to the email address of the user, but before the '@'.
+* Placeholders that will only be replaced in user-specific ONC:
+    * ${LOGIN\_ID} - expands to the email address of the user, but before
+      the '@'.
+    * ${LOGIN\_EMAIL} - expands to the email address of the user.
 
-* ${LOGIN_EMAIL} - expands to the email address of the user.
+* Placeholders that will only be replaced in device-wide ONC:
+    * ${DEVICE\_SERIAL\_NUMBER} - expands to the serial number of the device.
+    * ${DEVICE\_ASSET\_ID} - expands to the administrator-set asset ID of the
+      device.
+
+* Placeholders that will only be replaced when a client certificate has been
+  matched by a [CertificatePattern](#CertificatePattern-type):
+    * ${CERT\_SAN\_EMAIL} - expands to the first RFC822 SubjectAlternativeName
+      extracted from the client certificate.
+    * ${CERT\_SAN\_UPN} - expands to the first OtherName SubjectAlternativeName
+      with OID 1.3.6.1.4.1.311.20.2.3 (UserPrincipalName) extracted from the
+      client certificate.
+    * ${CERT\_SUBJECT\_COMMON\_NAME} - expands to the ASCII value of the Subject
+      CommonName extracted from the client certificate.
 
 ### The following SED would properly handle resolution.
 
-* s/\$\{LOGIN_ID\}/bobquail$1/g
+* s/\$\{LOGIN\_ID\}/bobquail$1/g
 
-* s/\$\{LOGIN_EMAIL\}/bobquail@example.com$1/g
+* s/\$\{LOGIN\_EMAIL\}/bobquail@example.com$1/g
 
 ### Example expansions, assuming the user was bobquail@example.com:
 
-* "${LOGIN_ID}" -> "bobquail"
+* "${LOGIN\_ID}" -> "bobquail"
 
-* "${LOGIN_ID}@corp.example.com" -> "bobquail@corp.example.com"
+* "${LOGIN\_ID}@corp.example.com" -> "bobquail@corp.example.com"
 
-* "${LOGIN_EMAIL}" -> "bobquail@example.com"
+* "${LOGIN\_EMAIL}" -> "bobquail@example.com"
 
-* "${LOGIN_ID}X" -> "bobquailX"
+* "${LOGIN\_ID}X" -> "bobquailX"
 
-* "${LOGIN_IDX}" -> "${LOGIN_IDX}"
+* "${LOGIN\_IDX}" -> "${LOGIN\_IDX}"
 
-* "X${LOGIN_ID}" -> "Xbobquail"
+* "X${LOGIN\_ID}" -> "Xbobquail"
 
 
 ## String Substitutions

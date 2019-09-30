@@ -8,9 +8,11 @@
 
 #include "ash/frame/caption_buttons/caption_button_model.h"
 #include "ash/frame/header_view.h"
-#include "ash/window_manager.h"
+#include "ash/shell.h"
 #include "ash/wm/property_util.h"
 #include "ash/wm/window_state.h"
+#include "services/ws/public/mojom/window_tree_constants.mojom.h"
+#include "services/ws/window_properties.h"
 #include "ui/aura/client/aura_constants.h"
 #include "ui/aura/client/transient_window_client.h"
 #include "ui/aura/mus/property_converter.h"
@@ -60,7 +62,9 @@ void ConfigureCommonWidgetProperties(views::Widget* widget) {
 void CreateHeaderView(views::Widget* frame,
                       views::Widget* detached_widget,
                       Source source) {
-  HeaderView* header_view = new HeaderView(frame);
+  HeaderView* header_view = new HeaderView(
+      frame, source == Source::CLIENT ? mojom::WindowStyle::BROWSER
+                                      : mojom::WindowStyle::DEFAULT);
   if (source == Source::CLIENT) {
     // HeaderView behaves differently when the widget it is associated with is
     // fullscreen (HeaderView is normally the
@@ -93,19 +97,17 @@ DetachedTitleAreaRendererForInternal::~DetachedTitleAreaRendererForInternal() =
 
 DetachedTitleAreaRendererForClient::DetachedTitleAreaRendererForClient(
     aura::Window* parent,
-    std::map<std::string, std::vector<uint8_t>>* properties,
-    WindowManager* window_manager)
+    aura::PropertyConverter* property_converter,
+    std::map<std::string, std::vector<uint8_t>>* properties)
     : widget_(new views::Widget) {
   std::unique_ptr<views::Widget::InitParams> params =
       CreateInitParams("DetachedTitleAreaRendererForClient");
   views::NativeWidgetAura* native_widget =
-      new views::NativeWidgetAura(widget_, true);
-  native_widget->GetNativeView()->SetProperty(
-      aura::client::kEmbedType, aura::client::WindowEmbedType::TOP_LEVEL_IN_WM);
+      new views::NativeWidgetAura(widget_, true, Shell::Get()->aura_env());
   aura::SetWindowType(native_widget->GetNativeWindow(),
-                      ui::mojom::WindowType::POPUP);
-  ApplyProperties(native_widget->GetNativeWindow(),
-                  window_manager->property_converter(), *properties);
+                      ws::mojom::WindowType::POPUP);
+  ApplyProperties(native_widget->GetNativeWindow(), property_converter,
+                  *properties);
   native_widget->GetNativeView()->SetProperty(kDetachedTitleAreaRendererKey,
                                               this);
   params->delegate = this;
@@ -131,6 +133,10 @@ void DetachedTitleAreaRendererForClient::Attach(views::Widget* frame) {
 void DetachedTitleAreaRendererForClient::Detach() {
   is_attached_ = false;
   widget_->SetContentsView(new views::View());
+}
+
+bool DetachedTitleAreaRendererForClient::CanActivate() const {
+  return widget_->GetNativeView()->GetProperty(ws::kCanFocus);
 }
 
 views::Widget* DetachedTitleAreaRendererForClient::GetWidget() {

@@ -80,7 +80,7 @@ DirectRenderer::DrawingFrame::~DrawingFrame() = default;
 
 DirectRenderer::DirectRenderer(const RendererSettings* settings,
                                OutputSurface* output_surface,
-                               cc::DisplayResourceProvider* resource_provider)
+                               DisplayResourceProvider* resource_provider)
     : settings_(settings),
       output_surface_(output_surface),
       resource_provider_(resource_provider),
@@ -211,9 +211,8 @@ void DirectRenderer::DrawFrame(RenderPassList* render_passes_in_draw_order,
   DCHECK(root_render_pass);
 
   bool overdraw_tracing_enabled;
-  TRACE_EVENT_CATEGORY_GROUP_ENABLED(
-      TRACE_DISABLED_BY_DEFAULT("cc.debug.overdraw"),
-      &overdraw_tracing_enabled);
+  TRACE_EVENT_CATEGORY_GROUP_ENABLED(TRACE_DISABLED_BY_DEFAULT("viz.overdraw"),
+                                     &overdraw_tracing_enabled);
   bool overdraw_feedback =
       settings_->show_overdraw_feedback || overdraw_tracing_enabled;
   if (overdraw_feedback && !output_surface_->capabilities().supports_stencil) {
@@ -273,7 +272,7 @@ void DirectRenderer::DrawFrame(RenderPassList* render_passes_in_draw_order,
   // Create the overlay candidate for the output surface, and mark it as
   // always handled.
   if (output_surface_->IsDisplayedAsOverlayPlane()) {
-    cc::OverlayCandidate output_surface_plane;
+    OverlayCandidate output_surface_plane;
     output_surface_plane.display_rect =
         gfx::RectF(device_viewport_size.width(), device_viewport_size.height());
     output_surface_plane.resource_size_in_pixels = device_viewport_size;
@@ -330,6 +329,20 @@ void DirectRenderer::DrawFrame(RenderPassList* render_passes_in_draw_order,
 
   if (!skip_drawing_root_render_pass)
     DrawRenderPassAndExecuteCopyRequests(root_render_pass);
+
+  // Use a fence to synchronize display of the overlays. Note that gpu_fence_id
+  // may have the special value 0 ("no fence") if fences are not supported. In
+  // that case synchronization will happen through other means on the service
+  // side. We are currently using the output surface fence for all the overlays,
+  // which is functionally correct due to the position of this fence in the
+  // command stream.
+  // TODO(afrantzis): Consider using per-overlay fences instead of the one
+  // associated with the output surface when possible.
+  if (!current_frame()->overlay_list.empty()) {
+    auto gpu_fence_id = output_surface_->UpdateGpuFence();
+    for (auto& overlay : current_frame()->overlay_list)
+      overlay.gpu_fence_id = gpu_fence_id;
+  }
 
   FinishDrawingFrame();
   render_passes_in_draw_order->clear();

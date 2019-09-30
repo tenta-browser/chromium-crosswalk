@@ -19,6 +19,7 @@
 #include "content/common/frame_owner_properties.h"
 #include "content/common/renderer.mojom.h"
 #include "content/common/view_messages.h"
+#include "content/public/common/content_switches.h"
 #include "content/public/common/previews_state.h"
 #include "content/public/renderer/content_renderer_client.h"
 #include "content/public/renderer/document_state.h"
@@ -29,6 +30,7 @@
 #include "content/renderer/mojo/blink_interface_registry_impl.h"
 #include "content/renderer/navigation_state_impl.h"
 #include "content/renderer/render_frame_impl.h"
+#include "content/renderer/render_frame_proxy.h"
 #include "content/renderer/render_view_impl.h"
 #include "content/test/fake_compositor_dependencies.h"
 #include "content/test/frame_host_test_interface.mojom.h"
@@ -188,18 +190,17 @@ TEST_F(RenderFrameImplTest, SubframeWidget) {
 // Verify a subframe RenderWidget properly processes its viewport being
 // resized.
 TEST_F(RenderFrameImplTest, FrameResize) {
-  ResizeParams resize_params;
+  VisualProperties visual_properties;
   gfx::Size size(200, 200);
-  resize_params.screen_info = ScreenInfo();
-  resize_params.new_size = size;
-  resize_params.compositor_viewport_pixel_size = size;
-  resize_params.visible_viewport_size = size;
-  resize_params.top_controls_height = 0.f;
-  resize_params.browser_controls_shrink_blink_size = false;
-  resize_params.is_fullscreen_granted = false;
-  resize_params.content_source_id = frame_widget()->GetContentSourceId();
+  visual_properties.screen_info = ScreenInfo();
+  visual_properties.new_size = size;
+  visual_properties.compositor_viewport_pixel_size = size;
+  visual_properties.visible_viewport_size = size;
+  visual_properties.top_controls_height = 0.f;
+  visual_properties.browser_controls_shrink_blink_size = false;
+  visual_properties.is_fullscreen_granted = false;
 
-  ViewMsg_Resize resize_message(0, resize_params);
+  ViewMsg_SynchronizeVisualProperties resize_message(0, visual_properties);
   frame_widget()->OnMessageReceived(resize_message);
 
   EXPECT_EQ(frame_widget()->GetWebWidget()->Size(), blink::WebSize(size));
@@ -210,7 +211,7 @@ TEST_F(RenderFrameImplTest, FrameResize) {
 TEST_F(RenderFrameImplTest, FrameWasShown) {
   RenderFrameTestObserver observer(frame());
 
-  ViewMsg_WasShown was_shown_message(0, true, ui::LatencyInfo());
+  ViewMsg_WasShown was_shown_message(0, true, base::TimeTicks());
   frame_widget()->OnMessageReceived(was_shown_message);
 
   EXPECT_FALSE(frame_widget()->is_hidden());
@@ -240,7 +241,7 @@ TEST_F(RenderFrameImplTest, LocalChildFrameWasShown) {
 
   RenderFrameTestObserver observer(grandchild);
 
-  ViewMsg_WasShown was_shown_message(0, true, ui::LatencyInfo());
+  ViewMsg_WasShown was_shown_message(0, true, base::TimeTicks());
   frame_widget()->OnMessageReceived(was_shown_message);
 
   EXPECT_FALSE(frame_widget()->is_hidden());
@@ -253,9 +254,11 @@ TEST_F(RenderFrameImplTest, FrameWasShownAfterWidgetClose) {
   ViewMsg_Close close_message(0);
   frame_widget()->OnMessageReceived(close_message);
 
-  ViewMsg_WasShown was_shown_message(0, true, ui::LatencyInfo());
+  ViewMsg_WasShown was_shown_message(0, true, base::TimeTicks());
   // Test passes if this does not crash.
-  static_cast<RenderViewImpl*>(view_)->OnMessageReceived(was_shown_message);
+  RenderWidget* render_widget =
+      static_cast<RenderViewImpl*>(view_)->GetWidget();
+  render_widget->OnMessageReceived(was_shown_message);
 }
 
 // Test that LoFi state only updates for new main frame documents. Subframes
@@ -270,11 +273,12 @@ TEST_F(RenderFrameImplTest, LoFiNotUpdatedOnSubframeCommits) {
   item.Initialize();
 
   // The main frame's and subframe's LoFi states should stay the same on
-  // navigations within the page.
-  frame()->DidNavigateWithinPage(item, blink::kWebStandardCommit, true);
+  // same-document navigations.
+  frame()->DidFinishSameDocumentNavigation(item, blink::kWebStandardCommit,
+                                           true);
   EXPECT_EQ(SERVER_LOFI_ON, frame()->GetPreviewsState());
-  GetMainRenderFrame()->DidNavigateWithinPage(item, blink::kWebStandardCommit,
-                                              true);
+  GetMainRenderFrame()->DidFinishSameDocumentNavigation(
+      item, blink::kWebStandardCommit, true);
   EXPECT_EQ(SERVER_LOFI_ON, GetMainRenderFrame()->GetPreviewsState());
 
   // The subframe's LoFi state should not be reset on commit.
@@ -299,7 +303,7 @@ TEST_F(RenderFrameImplTest, LoFiNotUpdatedOnSubframeCommits) {
   GetMainRenderFrame()->DidCommitProvisionalLoad(
       item, blink::kWebStandardCommit,
       blink::WebGlobalObjectReusePolicy::kCreateNew);
-  EXPECT_EQ(PREVIEWS_OFF, GetMainRenderFrame()->GetPreviewsState());
+  EXPECT_EQ(PREVIEWS_UNSPECIFIED, GetMainRenderFrame()->GetPreviewsState());
   // The subframe would be deleted here after a cross-document navigation. It
   // happens to be left around in this test because this does not simulate the
   // frame detach.
@@ -331,11 +335,12 @@ TEST_F(RenderFrameImplTest, EffectiveConnectionType) {
     item.Initialize();
 
     // The main frame's and subframe's effective connection type should stay the
-    // same on navigations within the page.
-    frame()->DidNavigateWithinPage(item, blink::kWebStandardCommit, true);
+    // same on same-document navigations.
+    frame()->DidFinishSameDocumentNavigation(item, blink::kWebStandardCommit,
+                                             true);
     EXPECT_EQ(tests[i].type, frame()->GetEffectiveConnectionType());
-    GetMainRenderFrame()->DidNavigateWithinPage(item, blink::kWebStandardCommit,
-                                                true);
+    GetMainRenderFrame()->DidFinishSameDocumentNavigation(
+        item, blink::kWebStandardCommit, true);
     EXPECT_EQ(tests[i].type, frame()->GetEffectiveConnectionType());
 
     // The subframe's effective connection type should not be reset on commit.
@@ -413,6 +418,39 @@ TEST_F(RenderFrameImplTest, SaveImageFromDataURL) {
   EXPECT_FALSE(msg4);
 }
 
+// Tests that url download are throttled when reaching the limit.
+TEST_F(RenderFrameImplTest, DownloadUrlLimit) {
+  const IPC::Message* msg1 = render_thread_->sink().GetFirstMessageMatching(
+      FrameHostMsg_DownloadUrl::ID);
+  EXPECT_FALSE(msg1);
+  render_thread_->sink().ClearMessages();
+
+  WebURLRequest request;
+  request.SetURL(GURL("http://test/test.pdf"));
+  request.SetRequestorOrigin(
+      blink::WebSecurityOrigin::Create(GURL("http://test")));
+
+  for (int i = 0; i < 10; ++i) {
+    frame()->DownloadURL(
+        request, blink::WebLocalFrameClient::CrossOriginRedirects::kNavigate,
+        mojo::ScopedMessagePipeHandle());
+    base::RunLoop().RunUntilIdle();
+    const IPC::Message* msg2 = render_thread_->sink().GetFirstMessageMatching(
+        FrameHostMsg_DownloadUrl::ID);
+    EXPECT_TRUE(msg2);
+    base::RunLoop().RunUntilIdle();
+    render_thread_->sink().ClearMessages();
+  }
+
+  frame()->DownloadURL(
+      request, blink::WebLocalFrameClient::CrossOriginRedirects::kNavigate,
+      mojo::ScopedMessagePipeHandle());
+  base::RunLoop().RunUntilIdle();
+  const IPC::Message* msg3 = render_thread_->sink().GetFirstMessageMatching(
+      FrameHostMsg_DownloadUrl::ID);
+  EXPECT_FALSE(msg3);
+}
+
 TEST_F(RenderFrameImplTest, ZoomLimit) {
   const double kMinZoomLevel = ZoomFactorToZoomLevel(kMinimumZoomFactor);
   const double kMaxZoomLevel = ZoomFactorToZoomLevel(kMaximumZoomFactor);
@@ -444,8 +482,7 @@ TEST_F(RenderFrameImplTest, ZoomLimit) {
 TEST_F(RenderFrameImplTest, NoCrashWhenDeletingFrameDuringFind) {
   blink::WebFindOptions options;
   options.force = true;
-  FrameMsg_Find find_message(0, 1, base::ASCIIToUTF16("foo"), options);
-  frame()->OnMessageReceived(find_message);
+  frame()->GetWebFrame()->Find(1, "foo", options, false);
 
   FrameMsg_Delete delete_message(0);
   frame()->OnMessageReceived(delete_message);
@@ -617,6 +654,29 @@ TEST_F(RenderFrameImplTest, AutoplayFlags_WrongOrigin) {
   // Check the flags have been not been set.
   EXPECT_EQ(blink::mojom::kAutoplayFlagNone,
             AutoplayFlagsForFrame(GetMainRenderFrame()));
+}
+
+TEST_F(RenderFrameImplTest, FileUrlPathAlias) {
+  const struct {
+    const char* original;
+    const char* transformed;
+  } kTestCases[] = {
+      {"file:///alias", "file:///replacement"},
+      {"file:///alias/path/to/file", "file:///replacement/path/to/file"},
+      {"file://alias/path/to/file", "file://alias/path/to/file"},
+      {"file:///notalias/path/to/file", "file:///notalias/path/to/file"},
+      {"file:///root/alias/path/to/file", "file:///root/alias/path/to/file"},
+      {"file:///", "file:///"},
+  };
+  base::CommandLine::ForCurrentProcess()->AppendSwitchASCII(
+      switches::kFileUrlPathAlias, "/alias=/replacement");
+
+  for (const auto& test_case : kTestCases) {
+    WebURLRequest request;
+    request.SetURL(GURL(test_case.original));
+    GetMainRenderFrame()->WillSendRequest(request);
+    EXPECT_EQ(test_case.transformed, request.Url().GetString().Utf8());
+  }
 }
 
 // RenderFrameRemoteInterfacesTest ------------------------------------

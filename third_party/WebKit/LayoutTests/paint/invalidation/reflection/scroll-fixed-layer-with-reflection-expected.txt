@@ -20,7 +20,7 @@
         {
           "object": "LayoutBlockFlow (positioned) DIV class='absolute green reflected'",
           "rect": [250, 280, 100, 100],
-          "reason": "appeared"
+          "reason": "paint property change"
         },
         {
           "object": "LayoutBlockFlow (positioned) DIV class='absolute red'",
@@ -41,20 +41,6 @@
         [0, -180, 0, 1]
       ],
       "flattenInheritedTransform": false
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutBlockFlow (positioned) DIV id='moveMe' class='fixed clipped'",
-      "reason": "full"
-    },
-    {
-      "object": "LayoutBlockFlow (positioned) DIV class='absolute green reflected'",
-      "reason": "geometry"
-    },
-    {
-      "object": "LayoutBlockFlow (positioned) DIV class='absolute red'",
-      "reason": "geometry"
     }
   ]
 }

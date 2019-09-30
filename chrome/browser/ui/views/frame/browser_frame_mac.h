@@ -13,6 +13,8 @@
 
 class BrowserFrame;
 class BrowserView;
+@class BrowserWindowTouchBarController;
+@class BrowserWindowTouchBarViewsDelegate;
 @class ChromeCommandDispatcherDelegate;
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -24,8 +26,11 @@ class BrowserFrameMac : public views::NativeWidgetMac,
  public:
   BrowserFrameMac(BrowserFrame* browser_frame, BrowserView* browser_view);
 
+  BrowserWindowTouchBarController* GetTouchBarController() const;
+
   // Overridden from views::NativeWidgetMac:
   int SheetPositionY() override;
+  void OnWindowFullscreenStateChange() override;
   void InitNativeWidget(const views::Widget::InitParams& params) override;
 
   // Overridden from NativeBrowserFrame:
@@ -35,7 +40,7 @@ class BrowserFrameMac : public views::NativeWidgetMac,
   bool ShouldSaveWindowPlacement() const override;
   void GetWindowPlacement(gfx::Rect* bounds,
                           ui::WindowShowState* show_state) const override;
-  bool PreHandleKeyboardEvent(
+  content::KeyboardEventProcessingResult PreHandleKeyboardEvent(
       const content::NativeWebKeyboardEvent& event) override;
   bool HandleKeyboardEvent(
       const content::NativeWebKeyboardEvent& event) override;
@@ -46,6 +51,7 @@ class BrowserFrameMac : public views::NativeWidgetMac,
   // Overridden from views::NativeWidgetMac:
   NativeWidgetMacNSWindow* CreateNSWindow(
       const views::Widget::InitParams& params) override;
+  void OnWindowDestroying(NSWindow* window) override;
 
   // Overridden from NativeBrowserFrame:
   int GetMinimizeButtonOffset() const override;
@@ -54,6 +60,7 @@ class BrowserFrameMac : public views::NativeWidgetMac,
   BrowserView* browser_view_;  // Weak. Our ClientView.
   base::scoped_nsobject<ChromeCommandDispatcherDelegate>
       command_dispatcher_delegate_;
+  base::scoped_nsobject<BrowserWindowTouchBarViewsDelegate> touch_bar_delegate_;
 
   DISALLOW_COPY_AND_ASSIGN(BrowserFrameMac);
 };

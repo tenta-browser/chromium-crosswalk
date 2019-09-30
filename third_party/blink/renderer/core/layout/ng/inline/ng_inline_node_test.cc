@@ -5,6 +5,7 @@
 #include "third_party/blink/renderer/core/layout/ng/inline/ng_inline_node.h"
 
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/blink/renderer/core/dom/text.h"
 #include "third_party/blink/renderer/core/layout/ng/inline/ng_inline_layout_algorithm.h"
 #include "third_party/blink/renderer/core/layout/ng/inline/ng_physical_line_box_fragment.h"
 #include "third_party/blink/renderer/core/layout/ng/inline/ng_physical_text_fragment.h"
@@ -22,29 +23,29 @@ class NGInlineNodeForTest : public NGInlineNode {
  public:
   using NGInlineNode::NGInlineNode;
 
-  std::string Text() const { return Data().text_content_.Utf8().data(); }
-  Vector<NGInlineItem>& Items() { return MutableData()->items_; }
+  std::string Text() const { return Data().text_content.Utf8().data(); }
+  Vector<NGInlineItem>& Items() { return MutableData()->items; }
   static Vector<NGInlineItem>& Items(NGInlineNodeData& data) {
-    return data.items_;
+    return data.items;
   }
 
   void Append(const String& text,
               const ComputedStyle* style = nullptr,
               LayoutObject* layout_object = nullptr) {
     NGInlineNodeData* data = MutableData();
-    unsigned start = data->text_content_.length();
-    data->text_content_.append(text);
-    data->items_.push_back(NGInlineItem(NGInlineItem::kText, start,
-                                        start + text.length(), style,
-                                        layout_object));
+    unsigned start = data->text_content.length();
+    data->text_content.append(text);
+    data->items.push_back(NGInlineItem(NGInlineItem::kText, start,
+                                       start + text.length(), style,
+                                       layout_object));
     data->is_empty_inline_ = false;
   }
 
   void Append(UChar character) {
     NGInlineNodeData* data = MutableData();
-    data->text_content_.append(character);
-    unsigned end = data->text_content_.length();
-    data->items_.push_back(
+    data->text_content.append(character);
+    unsigned end = data->text_content.length();
+    data->items.push_back(
         NGInlineItem(NGInlineItem::kBidiControl, end - 1, end, nullptr));
     data->is_bidi_enabled_ = true;
     data->is_empty_inline_ = false;
@@ -52,8 +53,8 @@ class NGInlineNodeForTest : public NGInlineNode {
 
   void ClearText() {
     NGInlineNodeData* data = MutableData();
-    data->text_content_ = String();
-    data->items_.clear();
+    data->text_content = String();
+    data->items.clear();
     data->is_empty_inline_ = true;
   }
 
@@ -93,7 +94,7 @@ class NGInlineNodeTest : public NGLayoutTest {
     if (!layout_block_flow_)
       SetupHtml("t", "<div id=t style='font:10px'>test</div>");
     NGInlineNodeForTest node(layout_block_flow_);
-    node.InvalidatePrepareLayout();
+    node.InvalidatePrepareLayoutForTest();
     return node;
   }
 
@@ -114,6 +115,12 @@ class NGInlineNodeTest : public NGLayoutTest {
     for (const auto& child : line->Children()) {
       fragments_out->push_back(ToNGPhysicalTextFragment(child.get()));
     }
+  }
+
+  const String& GetText() const {
+    NGInlineNodeData* data = layout_block_flow_->GetNGInlineNodeData();
+    CHECK(data);
+    return data->text_content;
   }
 
   Vector<NGInlineItem>& Items() {
@@ -304,7 +311,6 @@ TEST_F(NGInlineNodeTest, SegmentSplit1To2) {
   NGInlineNodeForTest node = CreateInlineNode();
   node.Append(u"Hello \u05E2\u05D1\u05E8\u05D9\u05EA");
   node.SegmentText();
-  ASSERT_EQ(2u, node.Items().size());
   Vector<NGInlineItem>& items = node.Items();
   ASSERT_EQ(2u, items.size());
   TEST_ITEM_OFFSET_DIR(items[0], 0u, 6u, TextDirection::kLtr);
@@ -360,7 +366,7 @@ TEST_F(NGInlineNodeTest, SegmentBidiIsolate) {
   NGInlineNodeForTest node = CreateInlineNode();
   node = CreateBidiIsolateNode(node, style_.get(), layout_object_);
   Vector<NGInlineItem>& items = node.Items();
-  ASSERT_EQ(9u, items.size());
+  ASSERT_EQ(10u, items.size());
   TEST_ITEM_OFFSET_DIR(items[0], 0u, 6u, TextDirection::kLtr);
   TEST_ITEM_OFFSET_DIR(items[1], 6u, 7u, TextDirection::kLtr);
   TEST_ITEM_OFFSET_DIR(items[2], 7u, 13u, TextDirection::kRtl);
@@ -369,7 +375,8 @@ TEST_F(NGInlineNodeTest, SegmentBidiIsolate) {
   TEST_ITEM_OFFSET_DIR(items[5], 15u, 16u, TextDirection::kRtl);
   TEST_ITEM_OFFSET_DIR(items[6], 16u, 21u, TextDirection::kRtl);
   TEST_ITEM_OFFSET_DIR(items[7], 21u, 22u, TextDirection::kLtr);
-  TEST_ITEM_OFFSET_DIR(items[8], 22u, 28u, TextDirection::kLtr);
+  TEST_ITEM_OFFSET_DIR(items[8], 22u, 23u, TextDirection::kLtr);
+  TEST_ITEM_OFFSET_DIR(items[9], 23u, 28u, TextDirection::kLtr);
 }
 
 #define TEST_TEXT_FRAGMENT(fragment, start_offset, end_offset) \
@@ -386,19 +393,21 @@ TEST_F(NGInlineNodeTest, CreateLineBidiIsolate) {
   node.ShapeText();
   Vector<scoped_refptr<const NGPhysicalTextFragment>> fragments;
   CreateLine(node, &fragments);
-  ASSERT_EQ(5u, fragments.size());
+  ASSERT_EQ(6u, fragments.size());
   TEST_TEXT_FRAGMENT(fragments[0], 0u, 6u);
   TEST_TEXT_FRAGMENT(fragments[1], 16u, 21u);
   TEST_TEXT_FRAGMENT(fragments[2], 14u, 15u);
   TEST_TEXT_FRAGMENT(fragments[3], 7u, 13u);
-  TEST_TEXT_FRAGMENT(fragments[4], 22u, 28u);
+  TEST_TEXT_FRAGMENT(fragments[4], 22u, 23u);
+  TEST_TEXT_FRAGMENT(fragments[5], 23u, 28u);
 }
 
 TEST_F(NGInlineNodeTest, MinMaxSize) {
   LoadAhem();
   SetupHtml("t", "<div id=t style='font:10px Ahem'>AB CDEF</div>");
   NGInlineNodeForTest node = CreateInlineNode();
-  MinMaxSize sizes = node.ComputeMinMaxSize(MinMaxSizeInput());
+  MinMaxSize sizes =
+      node.ComputeMinMaxSize(WritingMode::kHorizontalTb, MinMaxSizeInput());
   EXPECT_EQ(40, sizes.min_size);
   EXPECT_EQ(70, sizes.max_size);
 }
@@ -407,7 +416,8 @@ TEST_F(NGInlineNodeTest, MinMaxSizeElementBoundary) {
   LoadAhem();
   SetupHtml("t", "<div id=t style='font:10px Ahem'>A B<span>C D</span></div>");
   NGInlineNodeForTest node = CreateInlineNode();
-  MinMaxSize sizes = node.ComputeMinMaxSize(MinMaxSizeInput());
+  MinMaxSize sizes =
+      node.ComputeMinMaxSize(WritingMode::kHorizontalTb, MinMaxSizeInput());
   // |min_content| should be the width of "BC" because there is an element
   // boundary between "B" and "C" but no break opportunities.
   EXPECT_EQ(20, sizes.min_size);
@@ -426,7 +436,8 @@ TEST_F(NGInlineNodeTest, MinMaxSizeFloats) {
   )HTML");
 
   NGInlineNodeForTest node = CreateInlineNode();
-  MinMaxSize sizes = node.ComputeMinMaxSize(MinMaxSizeInput());
+  MinMaxSize sizes =
+      node.ComputeMinMaxSize(WritingMode::kHorizontalTb, MinMaxSizeInput());
 
   EXPECT_EQ(50, sizes.min_size);
   EXPECT_EQ(130, sizes.max_size);
@@ -445,7 +456,8 @@ TEST_F(NGInlineNodeTest, MinMaxSizeFloatsClearance) {
   )HTML");
 
   NGInlineNodeForTest node = CreateInlineNode();
-  MinMaxSize sizes = node.ComputeMinMaxSize(MinMaxSizeInput());
+  MinMaxSize sizes =
+      node.ComputeMinMaxSize(WritingMode::kHorizontalTb, MinMaxSizeInput());
 
   EXPECT_EQ(50, sizes.min_size);
   EXPECT_EQ(160, sizes.max_size);
@@ -612,6 +624,21 @@ TEST_F(NGInlineNodeTest, InvalidateRemoveFloat) {
   ASSERT_TRUE(span);
   span->remove();
   EXPECT_TRUE(layout_block_flow_->NeedsCollectInlines());
+}
+
+TEST_F(NGInlineNodeTest, SpaceRestoredByInsertingWord) {
+  SetupHtml("t", "<div id=t>before <span id=x></span> after</div>");
+  EXPECT_FALSE(layout_block_flow_->NeedsCollectInlines());
+  EXPECT_EQ(String("before after"), GetText());
+
+  Element* span = GetElementById("x");
+  ASSERT_TRUE(span);
+  Text* text = Text::Create(GetDocument(), "mid");
+  span->appendChild(text);
+  // EXPECT_TRUE(layout_block_flow_->NeedsCollectInlines());
+
+  ForceLayout();
+  EXPECT_EQ(String("before mid after"), GetText());
 }
 
 }  // namespace blink

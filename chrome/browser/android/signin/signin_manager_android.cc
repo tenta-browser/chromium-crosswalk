@@ -2,9 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include <vector>
-
 #include "chrome/browser/android/signin/signin_manager_android.h"
+
+#include <utility>
+#include <vector>
 
 #include "base/android/callback_android.h"
 #include "base/android/jni_android.h"
@@ -30,7 +31,7 @@
 #include "chrome/browser/signin/signin_manager_factory.h"
 #include "chrome/common/pref_names.h"
 #include "components/bookmarks/browser/bookmark_model.h"
-#include "components/google/core/browser/google_util.h"
+#include "components/google/core/common/google_util.h"
 #include "components/policy/core/browser/browser_policy_connector.h"
 #include "components/policy/core/common/cloud/cloud_policy_core.h"
 #include "components/policy/core/common/cloud/cloud_policy_store.h"
@@ -44,10 +45,10 @@
 #include "components/signin/core/browser/signin_pref_names.h"
 #include "content/public/browser/browsing_data_filter_builder.h"
 #include "content/public/browser/browsing_data_remover.h"
+#include "content/public/browser/storage_partition.h"
 #include "google_apis/gaia/gaia_auth_util.h"
 #include "google_apis/gaia/gaia_constants.h"
 #include "jni/SigninManager_jni.h"
-#include "net/url_request/url_request_context_getter.h"
 
 using base::android::JavaParamRef;
 using bookmarks::BookmarkModel;
@@ -129,7 +130,7 @@ class ProfileDataRemover : public content::BrowsingDataRemover::Observer {
 void UserManagementDomainFetched(
     base::android::ScopedJavaGlobalRef<jobject> callback,
     const std::string& dm_token, const std::string& client_id) {
-  base::android::RunCallbackAndroid(callback, !dm_token.empty());
+  base::android::RunBooleanCallbackAndroid(callback, !dm_token.empty());
 }
 
 }  // namespace
@@ -172,11 +173,14 @@ void SigninManagerAndroid::FetchPolicyBeforeSignIn(
   if (!dm_token_.empty()) {
     policy::UserPolicySigninService* service =
         policy::UserPolicySigninServiceFactory::GetForProfile(profile_);
+    scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory =
+        content::BrowserContext::GetDefaultStoragePartition(profile_)
+            ->GetURLLoaderFactoryForBrowserProcess();
     service->FetchPolicyForSignedInUser(
-        username_,
-        dm_token_,
-        client_id_,
-        profile_->GetRequestContext(),
+        AccountIdFromAccountInfo(
+            AccountTrackerServiceFactory::GetForProfile(profile_)
+                ->FindAccountInfoByEmail(username_)),
+        dm_token_, client_id_, url_loader_factory,
         base::Bind(&SigninManagerAndroid::OnPolicyFetchDone,
                    weak_factory_.GetWeakPtr()));
     dm_token_.clear();

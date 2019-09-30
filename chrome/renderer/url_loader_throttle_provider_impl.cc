@@ -4,11 +4,16 @@
 
 #include "chrome/renderer/url_loader_throttle_provider_impl.h"
 
+#include <utility>
+
+#include "base/command_line.h"
 #include "base/feature_list.h"
-#include "base/message_loop/message_loop.h"
+#include "base/message_loop/message_loop_current.h"
+#include "chrome/common/google_url_loader_throttle.h"
 #include "chrome/common/prerender.mojom.h"
 #include "chrome/common/prerender_url_loader_throttle.h"
 #include "chrome/renderer/chrome_content_renderer_client.h"
+#include "chrome/renderer/chrome_render_thread_observer.h"
 #include "chrome/renderer/prerender/prerender_dispatcher.h"
 #include "chrome/renderer/prerender/prerender_helper.h"
 #include "components/safe_browsing/features.h"
@@ -24,6 +29,8 @@
 #include "services/service_manager/public/cpp/interface_provider.h"
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)
+#include "extensions/common/switches.h"
+#include "extensions/renderer/extension_throttle_manager.h"
 #include "extensions/renderer/guest_view/mime_handler_view/mime_handler_view_container.h"
 #endif
 
@@ -41,9 +48,58 @@ chrome::mojom::PrerenderCanceler* GetPrerenderCanceller(int render_frame_id) {
 
   auto* canceler = new chrome::mojom::PrerenderCancelerPtr;
   render_frame->GetRemoteInterfaces()->GetInterface(canceler);
-  base::MessageLoop::current()->task_runner()->DeleteSoon(FROM_HERE, canceler);
+  base::MessageLoopCurrent::Get()->task_runner()->DeleteSoon(FROM_HERE,
+                                                             canceler);
   return canceler->get();
 }
+
+#if BUILDFLAG(ENABLE_EXTENSIONS)
+std::unique_ptr<extensions::ExtensionThrottleManager>
+CreateExtensionThrottleManager() {
+  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
+          extensions::switches::kDisableExtensionsHttpThrottling)) {
+    return nullptr;
+  }
+  return std::make_unique<extensions::ExtensionThrottleManager>();
+}
+
+void SetExtensionThrottleManagerTestPolicy(
+    extensions::ExtensionThrottleManager* extension_throttle_manager) {
+  // Requests issued within within |kUserGestureWindowMs| of a user gesture
+  // are also considered as user gestures (see
+  // resource_dispatcher_host_impl.cc), so these tests need to bypass the
+  // checking of the net::LOAD_MAYBE_USER_GESTURE load flag in the manager
+  // in order to test the throttling logic.
+  extension_throttle_manager->SetIgnoreUserGestureLoadFlagForTests(true);
+  std::unique_ptr<net::BackoffEntry::Policy> policy(
+      new net::BackoffEntry::Policy{
+          // Number of initial errors (in sequence) to ignore before
+          // applying exponential back-off rules.
+          1,
+
+          // Initial delay for exponential back-off in ms.
+          10 * 60 * 1000,
+
+          // Factor by which the waiting time will be multiplied.
+          10,
+
+          // Fuzzing percentage. ex: 10% will spread requests randomly
+          // between 90%-100% of the calculated time.
+          0.1,
+
+          // Maximum amount of time we are willing to delay our request in ms.
+          15 * 60 * 1000,
+
+          // Time to keep an entry from being discarded even when it
+          // has no significant state, -1 to never discard.
+          -1,
+
+          // Don't use initial delay unless the last request was an error.
+          false,
+      });
+  extension_throttle_manager->SetBackoffPolicyForTests(std::move(policy));
+}
+#endif
 
 }  // namespace
 
@@ -64,6 +120,24 @@ URLLoaderThrottleProviderImpl::URLLoaderThrottleProviderImpl(
 
 URLLoaderThrottleProviderImpl::~URLLoaderThrottleProviderImpl() {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
+}
+
+URLLoaderThrottleProviderImpl::URLLoaderThrottleProviderImpl(
+    const URLLoaderThrottleProviderImpl& other)
+    : type_(other.type_),
+      chrome_content_renderer_client_(other.chrome_content_renderer_client_) {
+  DETACH_FROM_THREAD(thread_checker_);
+  if (other.safe_browsing_)
+    other.safe_browsing_->Clone(mojo::MakeRequest(&safe_browsing_info_));
+  // An ad_delay_factory_ is created, rather than cloning the existing one.
+}
+
+std::unique_ptr<content::URLLoaderThrottleProvider>
+URLLoaderThrottleProviderImpl::Clone() {
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
+  if (safe_browsing_info_)
+    safe_browsing_.Bind(std::move(safe_browsing_info_));
+  return base::WrapUnique(new URLLoaderThrottleProviderImpl(*this));
 }
 
 std::vector<std::unique_ptr<content::URLLoaderThrottle>>
@@ -108,7 +182,7 @@ URLLoaderThrottleProviderImpl::CreateThrottles(
           prerender_helper->prerender_mode(),
           prerender_helper->histogram_prefix(),
           base::BindOnce(GetPrerenderCanceller, render_frame_id),
-          base::MessageLoop::current()->task_runner());
+          base::MessageLoopCurrent::Get()->task_runner());
       prerender_helper->AddThrottle(throttle->AsWeakPtr());
       if (prerender_helper->prerender_mode() == prerender::PREFETCH_ONLY) {
         auto* prerender_dispatcher =
@@ -139,6 +213,21 @@ URLLoaderThrottleProviderImpl::CreateThrottles(
       }
     }
   }
+
+  if (!extension_throttle_manager_)
+    extension_throttle_manager_ = CreateExtensionThrottleManager();
+
+  if (extension_throttle_manager_) {
+    if (base::CommandLine::ForCurrentProcess()->HasSwitch(
+            extensions::switches::kSetExtensionThrottleTestParams)) {
+      SetExtensionThrottleManagerTestPolicy(extension_throttle_manager_.get());
+    }
+
+    std::unique_ptr<content::URLLoaderThrottle> throttle =
+        extension_throttle_manager_->MaybeCreateURLLoaderThrottle(request);
+    if (throttle)
+      throttles.push_back(std::move(throttle));
+  }
 #endif
 
   // Initialize the factory here rather than in the constructor, since metrics
@@ -150,9 +239,23 @@ URLLoaderThrottleProviderImpl::CreateThrottles(
   }
   if (auto ad_throttle = ad_delay_factory_->MaybeCreate(
           std::make_unique<subresource_filter::AdDelayRendererMetadataProvider>(
-              request))) {
+              request, type_, render_frame_id))) {
     throttles.push_back(std::move(ad_throttle));
   }
 
+  throttles.push_back(std::make_unique<GoogleURLLoaderThrottle>(
+      ChromeRenderThreadObserver::is_incognito_process(),
+      ChromeRenderThreadObserver::force_safe_search(),
+      ChromeRenderThreadObserver::youtube_restrict(),
+      ChromeRenderThreadObserver::allowed_domains_for_apps(),
+      ChromeRenderThreadObserver::variation_ids_header()));
+
   return throttles;
+}
+
+void URLLoaderThrottleProviderImpl::SetOnline(bool is_online) {
+#if BUILDFLAG(ENABLE_EXTENSIONS)
+  if (extension_throttle_manager_)
+    extension_throttle_manager_->SetOnline(is_online);
+#endif
 }

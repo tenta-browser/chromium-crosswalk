@@ -28,7 +28,8 @@ TEST(BuildProtocolRequest, SessionIdProdIdVersion) {
       string::npos,
       request.find(" sessionid=\"{15160585-8ADE-4D3C-839B-1281A6035D1F}\" "));
   EXPECT_NE(string::npos,
-            request.find(" version=\"some_prod_id-1.0\" prodversion=\"1.0\" "));
+            request.find(" updater=\"some_prod_id\" updaterversion=\"1.0\" "
+                         "prodversion=\"1.0\" "));
 }
 
 TEST(BuildProtocolRequest, DownloadPreference) {
@@ -47,8 +48,7 @@ TEST(BuildProtocolRequest, UpdaterStateAttributes) {
   // When no updater state is provided, then check that the elements and
   // attributes related to the updater state are not serialized.
   std::string request =
-      BuildProtocolRequest("1", "", "", "", "", "", "", "", "", nullptr)
-          .c_str();
+      BuildProtocolRequest("1", "", "", "", "", "", "", "", "", nullptr);
   EXPECT_EQ(std::string::npos, request.find(" domainjoined"));
   EXPECT_EQ(std::string::npos, request.find("<updater"));
 

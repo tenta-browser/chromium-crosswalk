@@ -15,6 +15,7 @@
 #include "chrome/browser/ui/toolbar/toolbar_action_view_controller.h"
 #include "chrome/browser/ui/toolbar/toolbar_actions_bar.h"
 #include "chrome/browser/ui/view_ids.h"
+#include "chrome/browser/ui/views/chrome_layout_provider.h"
 #include "chrome/browser/ui/views/toolbar/toolbar_ink_drop_util.h"
 #include "content/public/browser/notification_source.h"
 #include "ui/accessibility/ax_node_data.h"
@@ -73,14 +74,32 @@ ToolbarActionView::ToolbarActionView(
   if (delegate_->ShownInsideMenu())
     SetFocusBehavior(FocusBehavior::ALWAYS);
 
-  if (ui::MaterialDesignController::IsTouchOptimizedUiEnabled())
-    set_ink_drop_visible_opacity(kTouchToolbarInkDropVisibleOpacity);
+  set_ink_drop_visible_opacity(kToolbarInkDropVisibleOpacity);
+
+  const int size = GetLayoutConstant(LOCATION_BAR_HEIGHT);
+  const int radii = ChromeLayoutProvider::Get()->GetCornerRadiusMetric(
+      views::EMPHASIS_MAXIMUM, gfx::Size(size, size));
+  set_ink_drop_corner_radii(radii, radii);
 
   UpdateState();
 }
 
 ToolbarActionView::~ToolbarActionView() {
   view_controller_->SetDelegate(nullptr);
+}
+
+void ToolbarActionView::OnBoundsChanged(const gfx::Rect& previous_bounds) {
+  // TODO(pbos): Consolidate with ToolbarButton::OnBoundsChanged.
+  if (focus_ring()) {
+    focus_ring()->SetPath(CreateToolbarFocusRingPath(this, gfx::Insets()));
+  }
+  MenuButton::OnBoundsChanged(previous_bounds);
+}
+
+gfx::Rect ToolbarActionView::GetAnchorBoundsInScreen() const {
+  gfx::Rect bounds = GetBoundsInScreen();
+  bounds.Inset(GetInkDropInsets(this, gfx::Insets()));
+  return bounds;
 }
 
 void ToolbarActionView::GetAccessibleNodeData(ui::AXNodeData* node_data) {
@@ -109,13 +128,7 @@ SkColor ToolbarActionView::GetInkDropBaseColor() const {
         ui::NativeTheme::kColorId_FocusedMenuItemBackgroundColor);
   }
 
-  const ui::ThemeProvider* provider = GetThemeProvider();
-
-  // There may not be a Widget available in the unit tests, thus there will be
-  // no ThemeProvider.
-  return provider
-             ? provider->GetColor(ThemeProperties::COLOR_TOOLBAR_BUTTON_ICON)
-             : gfx::kChromeIconGrey;
+  return GetToolbarInkDropBaseColor(this);
 }
 
 bool ToolbarActionView::ShouldUseFloodFillInkDrop() const {
@@ -124,15 +137,16 @@ bool ToolbarActionView::ShouldUseFloodFillInkDrop() const {
 
 std::unique_ptr<views::InkDrop> ToolbarActionView::CreateInkDrop() {
   auto ink_drop = CreateToolbarInkDrop<MenuButton>(this);
+
   ink_drop->SetShowHighlightOnHover(!delegate_->ShownInsideMenu());
-  ink_drop->SetShowHighlightOnFocus(true);
+  ink_drop->SetShowHighlightOnFocus(!focus_ring());
   return ink_drop;
 }
 
 std::unique_ptr<views::InkDropRipple> ToolbarActionView::CreateInkDropRipple()
     const {
   return CreateToolbarInkDropRipple<MenuButton>(
-      this, GetInkDropCenterBasedOnLastEvent());
+      this, GetInkDropCenterBasedOnLastEvent(), gfx::Insets());
 }
 
 std::unique_ptr<views::InkDropHighlight>
@@ -143,7 +157,7 @@ ToolbarActionView::CreateInkDropHighlight() const {
 
 std::unique_ptr<views::InkDropMask> ToolbarActionView::CreateInkDropMask()
     const {
-  return CreateToolbarInkDropMask<MenuButton>(this);
+  return CreateToolbarInkDropMask<MenuButton>(this, gfx::Insets());
 }
 
 content::WebContents* ToolbarActionView::GetCurrentWebContents() const {
@@ -166,8 +180,8 @@ void ToolbarActionView::UpdateState() {
   wants_to_run_ = view_controller_->WantsToRun(web_contents);
 
   gfx::ImageSkia icon(
-      view_controller_->GetIcon(web_contents,
-                                GetPreferredSize()).AsImageSkia());
+      view_controller_->GetIcon(web_contents, GetPreferredSize())
+          .AsImageSkia());
 
   if (!icon.isNull())
     SetImage(views::Button::STATE_NORMAL, icon);

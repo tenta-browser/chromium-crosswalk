@@ -24,6 +24,10 @@ namespace net {
 class NetLog;
 }
 
+namespace network {
+class NetworkConnectionTracker;
+}
+
 namespace data_reduction_proxy {
 
 class DataReductionProxyConfigurator;
@@ -40,6 +44,7 @@ class TestDataReductionProxyConfig : public DataReductionProxyConfig {
   TestDataReductionProxyConfig(
       scoped_refptr<base::SingleThreadTaskRunner> io_task_runner,
       net::NetLog* net_log,
+      network::NetworkConnectionTracker* network_connection_tracker,
       DataReductionProxyConfigurator* configurator,
       DataReductionProxyEventCreator* event_creator);
 
@@ -50,6 +55,7 @@ class TestDataReductionProxyConfig : public DataReductionProxyConfig {
       std::unique_ptr<DataReductionProxyConfigValues> config_values,
       scoped_refptr<base::SingleThreadTaskRunner> io_task_runner,
       net::NetLog* net_log,
+      network::NetworkConnectionTracker* network_connection_tracker,
       DataReductionProxyConfigurator* configurator,
       DataReductionProxyEventCreator* event_creator);
 
@@ -74,26 +80,11 @@ class TestDataReductionProxyConfig : public DataReductionProxyConfig {
 
   base::TimeTicks GetTicksNow() const override;
 
-  bool WasDataReductionProxyUsed(
-      const net::URLRequest* request,
-      DataReductionProxyTypeInfo* proxy_info) const override;
-
-  // Sets the data reduction proxy as not used. Subsequent calls to
-  // WasDataReductionProxyUsed() would return false.
-  void SetWasDataReductionProxyNotUsed();
-
-  // Sets the proxy index of the data reduction proxy. Subsequent calls to
-  // WasDataReductionProxyUsed are affected.
-  void SetWasDataReductionProxyUsedProxyIndex(int proxy_index);
-
-  // Resets the behavior of WasDataReductionProxyUsed() calls.
-  void ResetWasDataReductionProxyUsed();
-
   // Sets if the captive portal probe has been blocked for the current network.
   void SetIsCaptivePortal(bool is_captive_portal);
 
   void SetConnectionTypeForTesting(
-      net::NetworkChangeNotifier::ConnectionType connection_type) {
+      network::mojom::ConnectionType connection_type) {
     connection_type_ = connection_type;
   }
 
@@ -132,9 +123,6 @@ class TestDataReductionProxyConfig : public DataReductionProxyConfig {
 
   base::Optional<size_t> previous_attempt_counts_;
 
-  base::Optional<bool> was_data_reduction_proxy_used_;
-  base::Optional<int> proxy_index_;
-
   base::Optional<std::string> current_network_id_;
 
   base::Optional<std::pair<bool /* is_secure_proxy */, bool /*is_core_proxy */>>
@@ -162,9 +150,10 @@ class MockDataReductionProxyConfig : public TestDataReductionProxyConfig {
       std::unique_ptr<DataReductionProxyConfigValues> config_values,
       scoped_refptr<base::SingleThreadTaskRunner> io_task_runner,
       net::NetLog* net_log,
+      network::NetworkConnectionTracker* network_connection_tracker,
       DataReductionProxyConfigurator* configurator,
       DataReductionProxyEventCreator* event_creator);
-  ~MockDataReductionProxyConfig();
+  ~MockDataReductionProxyConfig() override;
 
   MOCK_CONST_METHOD2(WasDataReductionProxyUsed,
                      bool(const net::URLRequest*,

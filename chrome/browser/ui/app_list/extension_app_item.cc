@@ -5,7 +5,9 @@
 #include "chrome/browser/ui/app_list/extension_app_item.h"
 
 #include <stddef.h>
+#include <utility>
 
+#include "ash/public/cpp/app_list/app_list_config.h"
 #include "base/macros.h"
 #include "base/metrics/user_metrics.h"
 #include "build/build_config.h"
@@ -47,7 +49,6 @@ ExtensionAppItem::ExtensionAppItem(
     const gfx::ImageSkia& installing_icon,
     bool is_platform_app)
     : ChromeAppListItem(profile, extension_id),
-      extension_enable_flow_controller_(NULL),
       extension_name_(extension_name),
       installing_icon_(CreateDisabledIcon(installing_icon)),
       is_platform_app_(is_platform_app) {
@@ -76,7 +77,8 @@ void ExtensionAppItem::Reload() {
   SetNameAndShortName(extension->name(), extension->short_name());
   if (!icon_) {
     icon_ = extensions::ChromeAppIconService::Get(profile())->CreateIcon(
-        this, extension_id(), extension_misc::EXTENSION_ICON_MEDIUM);
+        this, extension_id(),
+        app_list::AppListConfig::instance().grid_icon_dimension());
   } else {
     icon_->Reload();
   }
@@ -100,11 +102,8 @@ bool ExtensionAppItem::RunExtensionEnableFlow() {
     return false;
 
   if (!extension_enable_flow_) {
-    extension_enable_flow_controller_ = GetController();
-    extension_enable_flow_controller_->OnShowChildDialog();
-
-    extension_enable_flow_.reset(new ExtensionEnableFlow(
-        profile(), extension_id(), this));
+    extension_enable_flow_ = std::make_unique<ExtensionEnableFlow>(
+        profile(), extension_id(), this);
     extension_enable_flow_->StartForNativeWindow(nullptr);
   }
   return true;
@@ -130,17 +129,12 @@ void ExtensionAppItem::Launch(int event_flags) {
 
 void ExtensionAppItem::ExtensionEnableFlowFinished() {
   extension_enable_flow_.reset();
-  extension_enable_flow_controller_->OnCloseChildDialog();
-  extension_enable_flow_controller_ = NULL;
-
   // Automatically launch app after enabling.
   Launch(ui::EF_NONE);
 }
 
 void ExtensionAppItem::ExtensionEnableFlowAborted(bool user_initiated) {
   extension_enable_flow_.reset();
-  extension_enable_flow_controller_->OnCloseChildDialog();
-  extension_enable_flow_controller_ = NULL;
 }
 
 void ExtensionAppItem::Activate(int event_flags) {
@@ -163,13 +157,11 @@ void ExtensionAppItem::Activate(int event_flags) {
                                event_flags);
 }
 
-ui::MenuModel* ExtensionAppItem::GetContextMenuModel() {
-  context_menu_.reset(new app_list::ExtensionAppContextMenu(this,
-                                                            profile(),
-                                                            extension_id(),
-                                                            GetController()));
+void ExtensionAppItem::GetContextMenuModel(GetMenuModelCallback callback) {
+  context_menu_ = std::make_unique<app_list::ExtensionAppContextMenu>(
+      this, profile(), extension_id(), GetController());
   context_menu_->set_is_platform_app(is_platform_app_);
-  return context_menu_->GetMenuModel();
+  context_menu_->GetMenuModel(std::move(callback));
 }
 
 // static

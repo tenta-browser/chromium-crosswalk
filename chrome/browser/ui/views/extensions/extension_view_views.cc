@@ -36,6 +36,11 @@ ExtensionViewViews::ExtensionViewViews(extensions::ExtensionHost* host,
       browser_(browser),
       container_(nullptr) {
   SetWebContents(host_->web_contents());
+  if (host->extension_host_type() == extensions::VIEW_TYPE_EXTENSION_POPUP) {
+    EnableSizingFromWebContents(
+        gfx::Size(ExtensionPopup::kMinWidth, ExtensionPopup::kMinHeight),
+        gfx::Size(ExtensionPopup::kMaxWidth, ExtensionPopup::kMaxHeight));
+  }
 }
 
 ExtensionViewViews::~ExtensionViewViews() {
@@ -80,18 +85,12 @@ void ExtensionViewViews::ResizeDueToAutoResize(
     return;
   }
 
-  if (new_size != GetPreferredSize())
-    SetPreferredSize(new_size);
+  WebView::ResizeDueToAutoResize(web_contents, new_size);
 }
 
 void ExtensionViewViews::RenderViewCreated(
     content::RenderViewHost* render_view_host) {
-  extensions::ViewType host_type = host_->extension_host_type();
-  if (host_type == extensions::VIEW_TYPE_EXTENSION_POPUP) {
-    host_->host_contents()->GetRenderWidgetHostView()->EnableAutoResize(
-        gfx::Size(ExtensionPopup::kMinWidth, ExtensionPopup::kMinHeight),
-        gfx::Size(ExtensionPopup::kMaxWidth, ExtensionPopup::kMaxHeight));
-  }
+  WebView::RenderViewCreated(render_view_host);
 }
 
 void ExtensionViewViews::HandleKeyboardEvent(
@@ -140,11 +139,6 @@ namespace extensions {
 std::unique_ptr<ExtensionView> ExtensionViewHost::CreateExtensionView(
     ExtensionViewHost* host,
     Browser* browser) {
-#if defined(OS_MACOSX)
-  if (!chrome::ShowAllDialogsWithViewsToolkit()) {
-    return CreateExtensionViewCocoa(host, browser);
-  }
-#endif
   std::unique_ptr<ExtensionViewViews> view(
       new ExtensionViewViews(host, browser));
   // We own |view_|, so don't auto delete when it's removed from the view

@@ -144,8 +144,8 @@ TEST_F(LoginUserViewUnittest, EntireViewIsTapTarget) {
   // Returns true if there is a tap at |point| offset by |dx|, |dy|.
   auto tap = [this](gfx::Point point, int dx, int dy) -> bool {
     point.Offset(dx, dy);
-    GetEventGenerator().MoveMouseTo(point);
-    GetEventGenerator().ClickLeftButton();
+    GetEventGenerator()->MoveMouseTo(point);
+    GetEventGenerator()->ClickLeftButton();
     bool result = tap_count_ == 1;
     tap_count_ = 0;
     return result;
@@ -183,17 +183,17 @@ TEST_F(LoginUserViewUnittest, FocusHoverOpaqueInteractions) {
   EXPECT_TRUE(two_test.is_opaque());
 
   // Non-focused element can be opaque if the mouse is over it.
-  GetEventGenerator().MoveMouseTo(one->GetBoundsInScreen().CenterPoint());
+  GetEventGenerator()->MoveMouseTo(one->GetBoundsInScreen().CenterPoint());
   EXPECT_TRUE(one_test.is_opaque());
   EXPECT_TRUE(two_test.is_opaque());
 
   // Focused element stays opaque when mouse is over it.
-  GetEventGenerator().MoveMouseTo(two->GetBoundsInScreen().CenterPoint());
+  GetEventGenerator()->MoveMouseTo(two->GetBoundsInScreen().CenterPoint());
   EXPECT_FALSE(one_test.is_opaque());
   EXPECT_TRUE(two_test.is_opaque());
 
   // Focused element stays opaque when mouse leaves it.
-  GetEventGenerator().MoveMouseTo(one->GetBoundsInScreen().CenterPoint());
+  GetEventGenerator()->MoveMouseTo(one->GetBoundsInScreen().CenterPoint());
   EXPECT_TRUE(one_test.is_opaque());
   EXPECT_TRUE(two_test.is_opaque());
 
@@ -243,6 +243,23 @@ TEST_F(LoginUserViewUnittest, ForcedOpaque) {
   two->SetForceOpaque(false);
   EXPECT_FALSE(one_test.is_opaque());
   EXPECT_TRUE(two_test.is_opaque());
+}
+
+// Verifies that a long user name does not push the label or dropdown button
+// outside of the LoginUserView bounds.
+TEST_F(LoginUserViewUnittest, ElideUserLabel) {
+  LoginUserView* view = AddUserView(LoginDisplayStyle::kLarge, true);
+  LoginUserView::TestApi view_test(view);
+
+  mojom::LoginUserInfoPtr user =
+      CreateUser("verylongusernamethatfillsthebox@domain.com");
+  view->UpdateForUser(user, false /*animate*/);
+  container_->Layout();
+
+  EXPECT_TRUE(view->GetVisibleBounds().Contains(
+      view_test.user_label()->GetVisibleBounds()));
+  EXPECT_TRUE(view->GetVisibleBounds().Contains(
+      view_test.dropdown()->GetVisibleBounds()));
 }
 
 }  // namespace ash

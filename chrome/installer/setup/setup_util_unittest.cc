@@ -20,7 +20,7 @@
 #include "base/process/process_handle.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/test/histogram_tester.h"
+#include "base/test/metrics/histogram_tester.h"
 #include "base/test/test_reg_util_win.h"
 #include "base/test/test_timeouts.h"
 #include "base/threading/platform_thread.h"
@@ -35,8 +35,8 @@
 #include "chrome/installer/setup/setup_util.h"
 #include "chrome/installer/util/browser_distribution.h"
 #include "chrome/installer/util/google_update_constants.h"
-#include "chrome/installer/util/installation_state.h"
 #include "chrome/installer/util/install_util.h"
+#include "chrome/installer/util/installation_state.h"
 #include "chrome/installer/util/updating_app_registration_data.h"
 #include "chrome/installer/util/util_constants.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -92,11 +92,6 @@ TEST(SetupUtilTest, DeleteFileFromTempProcess) {
   EXPECT_TRUE(installer::DeleteFileFromTempProcess(test_file, 0));
   base::PlatformThread::Sleep(TestTimeouts::tiny_timeout() * 3);
   EXPECT_FALSE(base::PathExists(test_file)) << test_file.value();
-}
-
-TEST(SetupUtilTest, GuidToSquid) {
-  ASSERT_EQ(installer::GuidToSquid(L"EDA620E3-AA98-3846-B81E-3493CB2E0E02"),
-            L"3E026ADE89AA64838BE14339BCE2E020");
 }
 
 TEST(SetupUtilTest, RegisterEventLogProvider) {

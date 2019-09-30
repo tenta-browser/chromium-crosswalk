@@ -11,6 +11,7 @@
 #include "base/strings/sys_string_conversions.h"
 #include "chrome/browser/themes/theme_properties.h"
 #include "chrome/browser/themes/theme_service.h"
+#include "chrome/browser/ui/cocoa/cocoa_util.h"
 #include "chrome/browser/ui/cocoa/l10n_util.h"
 #import "chrome/browser/ui/cocoa/tabs/alert_indicator_button_cocoa.h"
 #import "chrome/browser/ui/cocoa/tabs/tab_controller.h"
@@ -60,7 +61,7 @@ const CGFloat kMouseHoverWhiteValueIncongito = 0.3;
 // has moved less than the threshold, we want to close the tab.
 const CGFloat kRapidCloseDist = 2.5;
 
-@interface NSView (PrivateAPI)
+@interface NSView (PrivateTabViewAPI)
 // Called by AppKit to check if dragging this view should move the window.
 // NSButton overrides this method in the same way so dragging window buttons
 // has no effect. NSView implementation returns NSZeroRect so the whole view
@@ -88,7 +89,8 @@ const CGFloat kRapidCloseDist = 2.5;
 + (void)setTabEdgeStrokeColor;
 @end
 
-extern NSString* const _Nonnull NSWorkspaceAccessibilityDisplayOptionsDidChangeNotification;
+extern NSString* const
+    NSWorkspaceAccessibilityDisplayOptionsDidChangeNotification;
 
 namespace {
 
@@ -184,23 +186,17 @@ ui::ThreePartImage& GetStrokeImage(bool active, StrokeType stroke_type) {
   }
 }
 
-CGFloat LineWidthFromContext(CGContextRef context) {
-  CGRect unitRect = CGRectMake(0.0, 0.0, 1.0, 1.0);
-  CGRect deviceRect = CGContextConvertRectToDeviceSpace(context, unitRect);
-  return 1.0 / deviceRect.size.height;
-}
-
 }  // namespace
 
-@interface TabView(Private)
+@interface TabViewCocoa (Private)
 
 - (void)resetLastGlowUpdateTime;
 - (NSTimeInterval)timeElapsedSinceLastGlowUpdate;
 - (void)adjustGlowValue;
 
-@end  // TabView(Private)
+@end  // TabViewCocoa(Private)
 
-@implementation TabView
+@implementation TabViewCocoa
 
 @synthesize state = state_;
 @synthesize hoverAlpha = hoverAlpha_;
@@ -208,11 +204,11 @@ CGFloat LineWidthFromContext(CGContextRef context) {
 
 + (CGFloat)maskImageFillHeight {
   // Return the height of the "mask on" part of the mask bitmap.
-  return [TabController defaultTabHeight] - 1;
+  return [TabControllerCocoa defaultTabHeight] - 1;
 }
 
 - (id)initWithFrame:(NSRect)frame
-         controller:(TabController*)controller
+         controller:(TabControllerCocoa*)controller
         closeButton:(HoverCloseButton*)closeButton {
   self = [super initWithFrame:frame];
   if (self) {
@@ -328,7 +324,7 @@ CGFloat LineWidthFromContext(CGContextRef context) {
 
   NSPoint viewPoint = [self convertPoint:aPoint fromView:[self superview]];
   NSRect maskRect = [self bounds];
-  maskRect.size.height = [TabView maskImageFillHeight];
+  maskRect.size.height = [TabViewCocoa maskImageFillHeight];
   return GetMaskImage().HitTest(viewPoint, maskRect) ? self : nil;
 }
 
@@ -363,7 +359,7 @@ CGFloat LineWidthFromContext(CGContextRef context) {
   // strip and then deallocated. This will also result in *us* being
   // deallocated. Both these are bad, so we prevent this by retaining the
   // controller.
-  base::scoped_nsobject<TabController> controller([controller_ retain]);
+  base::scoped_nsobject<TabControllerCocoa> controller([controller_ retain]);
 
   // Try to initiate a drag. This will spin a custom event loop and may
   // dispatch other mouse events.
@@ -453,7 +449,7 @@ CGFloat LineWidthFromContext(CGContextRef context) {
   NSRect bounds = [self bounds];
 
   NSRect clippingRect = bounds;
-  clippingRect.size.height = [TabView maskImageFillHeight];
+  clippingRect.size.height = [TabViewCocoa maskImageFillHeight];
   if (state_ != NSOnState) {
     // Background tabs should not paint over the tab strip separator, which is
     // two pixels high in both lodpi and hidpi, and one pixel high in MD.
@@ -685,6 +681,8 @@ CGFloat LineWidthFromContext(CGContextRef context) {
     case TabAlertState::MEDIA_RECORDING:
       return themeProvider->GetColor(
           ThemeProperties::COLOR_TAB_ALERT_RECORDING);
+    case TabAlertState::PIP_PLAYING:
+      return themeProvider->GetColor(ThemeProperties::COLOR_TAB_PIP_PLAYING);
     case TabAlertState::AUDIO_PLAYING:
     case TabAlertState::AUDIO_MUTING:
     case TabAlertState::TAB_CAPTURING:
@@ -736,7 +734,8 @@ CGFloat LineWidthFromContext(CGContextRef context) {
   // Assume the entire region to the left of the alert indicator and/or close
   // buttons is available for click-to-select.  If neither are visible, the
   // entire tab region is available.
-  AlertIndicatorButton* const indicator = [controller_ alertIndicatorButton];
+  AlertIndicatorButtonCocoa* const indicator =
+      [controller_ alertIndicatorButton];
   const int indicatorLeft = (!indicator || [indicator isHidden]) ?
       NSWidth([self frame]) : NSMinX([indicator frame]);
   const int closeButtonLeft = (!closeButton_ || [closeButton_ isHidden])
@@ -840,47 +839,17 @@ CGFloat LineWidthFromContext(CGContextRef context) {
   return [self bounds];
 }
 
-@end  // @implementation TabView
+@end  // @implementation TabViewCocoa
 
-@implementation TabView (TabControllerInterface)
+@implementation TabViewCocoa (TabControllerInterface)
 
-- (void)setController:(TabController*)controller {
+- (void)setController:(TabControllerCocoa*)controller {
   controller_ = controller;
 }
 
-- (CALayer*)maskLayerWithPadding:(int)padding {
-  CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
-  CGContextRef maskContext = CGBitmapContextCreate(
-      NULL, self.bounds.size.width, self.bounds.size.height, 8,
-      self.bounds.size.width * 4, colorSpace, kCGImageAlphaPremultipliedLast);
-  CGColorSpaceRelease(colorSpace);
-  if (!maskContext)
-    return nil;
+@end  // @implementation TabViewCocoa (TabControllerInterface)
 
-  NSGraphicsContext* graphicsContext =
-      [NSGraphicsContext graphicsContextWithGraphicsPort:maskContext
-                                                 flipped:NO];
-  [NSGraphicsContext setCurrentContext:graphicsContext];
-  gfx::ScopedNSGraphicsContextSaveGState scopedGraphicsContext;
-
-  // Uses black for alpha mask.
-  [[NSColor blackColor] setFill];
-  CGContextFillRect(maskContext, [self bounds]);
-  GetMaskImage().DrawInRect(NSInsetRect([self bounds], padding, 0),
-                            NSCompositeDestinationIn, 1.0);
-  CGImageRef alphaMask = CGBitmapContextCreateImage(maskContext);
-
-  CALayer* maskLayer = [CALayer layer];
-  maskLayer.bounds = self.bounds;
-  maskLayer.bounds.size =
-      CGSizeMake(self.bounds.size.width, [TabView maskImageFillHeight]);
-  maskLayer.contents = (id)alphaMask;
-  return maskLayer;
-}
-
-@end  // @implementation TabView (TabControllerInterface)
-
-@implementation TabView(Private)
+@implementation TabViewCocoa (Private)
 
 - (void)resetLastGlowUpdateTime {
   lastGlowUpdate_ = [NSDate timeIntervalSinceReferenceDate];
@@ -932,7 +901,7 @@ CGFloat LineWidthFromContext(CGContextRef context) {
   [self setNeedsDisplay:YES];
 }
 
-@end  // @implementation TabView(Private)
+@end  // @implementation TabViewCocoa(Private)
 
 @implementation TabImageMaker
 
@@ -956,7 +925,7 @@ CGFloat LineWidthFromContext(CGContextRef context) {
   }
 
   // The line width is always 1px.
-  CGFloat lineWidth = LineWidthFromContext(context);
+  CGFloat lineWidth = cocoa_util::LineWidthFromContext(context);
   [bezierPath setLineWidth:lineWidth];
 
   // Screen pixels lay between integral coordinates in user space. If you draw
@@ -998,7 +967,7 @@ CGFloat LineWidthFromContext(CGContextRef context) {
 
   CGContextRef context = static_cast<CGContextRef>(
       [[NSGraphicsContext currentContext] graphicsPort]);
-  CGFloat lineWidth = LineWidthFromContext(context);
+  CGFloat lineWidth = cocoa_util::LineWidthFromContext(context);
 
   // Line width is always 1px.
   [middleEdgePath setLineWidth:lineWidth];

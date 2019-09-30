@@ -12,12 +12,15 @@
 
 #include "base/format_macros.h"
 #include "base/memory/ptr_util.h"
+#include "base/stl_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "cc/animation/animation_host.h"
 #include "cc/layers/layer.h"
 #include "cc/layers/layer_impl.h"
+#include "cc/layers/picture_layer.h"
 #include "cc/test/animation_test_common.h"
+#include "cc/test/fake_content_layer_client.h"
 #include "cc/test/fake_impl_task_runner_provider.h"
 #include "cc/test/fake_layer_tree_host.h"
 #include "cc/test/fake_rendering_stats_instrumentation.h"
@@ -429,18 +432,12 @@ TEST_F(TreeSynchronizerTest, SyncSimpleTreeThenDestroy) {
 
   ASSERT_EQ(3u, layer_impl_destruction_list.size());
 
-  EXPECT_TRUE(std::find(layer_impl_destruction_list.begin(),
-                        layer_impl_destruction_list.end(),
-                        old_tree_root_layer_id) !=
-              layer_impl_destruction_list.end());
-  EXPECT_TRUE(std::find(layer_impl_destruction_list.begin(),
-                        layer_impl_destruction_list.end(),
-                        old_tree_first_child_layer_id) !=
-              layer_impl_destruction_list.end());
-  EXPECT_TRUE(std::find(layer_impl_destruction_list.begin(),
-                        layer_impl_destruction_list.end(),
-                        old_tree_second_child_layer_id) !=
-              layer_impl_destruction_list.end());
+  EXPECT_TRUE(base::ContainsValue(layer_impl_destruction_list,
+                                  old_tree_root_layer_id));
+  EXPECT_TRUE(base::ContainsValue(layer_impl_destruction_list,
+                                  old_tree_first_child_layer_id));
+  EXPECT_TRUE(base::ContainsValue(layer_impl_destruction_list,
+                                  old_tree_second_child_layer_id));
 }
 
 // Constructs+syncs a tree with mask layer.
@@ -451,7 +448,8 @@ TEST_F(TreeSynchronizerTest, SyncMaskLayer) {
   layer_tree_root->AddChild(Layer::Create());
 
   // First child gets a mask layer.
-  scoped_refptr<Layer> mask_layer = Layer::Create();
+  FakeContentLayerClient client;
+  scoped_refptr<PictureLayer> mask_layer = PictureLayer::Create(&client);
   layer_tree_root->children()[0]->SetMaskLayer(mask_layer.get());
 
   host_->SetRootLayer(layer_tree_root);
@@ -571,7 +569,7 @@ TEST_F(TreeSynchronizerTest, SynchronizeScrollTreeScrollOffsetMap) {
   // the pending base and active base must be the same at this stage.
   scoped_refptr<SyncedScrollOffset> scroll_layer_offset =
       new SyncedScrollOffset;
-  scroll_layer_offset->PushMainToPending(scroll_layer->scroll_offset());
+  scroll_layer_offset->PushMainToPending(scroll_layer->CurrentScrollOffset());
   scroll_layer_offset->PushPendingToActive();
   EXPECT_TRUE(AreScrollOffsetsEqual(
       scroll_layer_offset.get(),
@@ -582,7 +580,7 @@ TEST_F(TreeSynchronizerTest, SynchronizeScrollTreeScrollOffsetMap) {
   scoped_refptr<SyncedScrollOffset> transient_scroll_layer_offset =
       new SyncedScrollOffset;
   transient_scroll_layer_offset->PushMainToPending(
-      transient_scroll_layer->scroll_offset());
+      transient_scroll_layer->CurrentScrollOffset());
   transient_scroll_layer_offset->PushPendingToActive();
   EXPECT_TRUE(
       AreScrollOffsetsEqual(transient_scroll_layer_offset.get(),
@@ -604,7 +602,7 @@ TEST_F(TreeSynchronizerTest, SynchronizeScrollTreeScrollOffsetMap) {
   scroll_tree.CollectScrollDeltas(scroll_info.get(), ElementId());
   host_->proxy()->SetNeedsCommit();
   host_->ApplyScrollAndScale(scroll_info.get());
-  EXPECT_EQ(gfx::ScrollOffset(20, 30), scroll_layer->scroll_offset());
+  EXPECT_EQ(gfx::ScrollOffset(20, 30), scroll_layer->CurrentScrollOffset());
   scroll_layer->SetScrollOffset(gfx::ScrollOffset(100, 100));
 
   // More update to ScrollOffset active delta: gfx::ScrollOffset(20, 20)

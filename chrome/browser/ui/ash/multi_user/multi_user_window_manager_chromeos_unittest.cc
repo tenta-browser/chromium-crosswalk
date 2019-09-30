@@ -7,7 +7,6 @@
 #include <set>
 #include <vector>
 
-#include "ash/content/shell_content_state.h"
 #include "ash/public/cpp/shell_window_ids.h"
 #include "ash/root_window_controller.h"
 #include "ash/shell.h"
@@ -17,6 +16,7 @@
 #include "ash/test_shell_delegate.h"
 #include "ash/wm/mru_window_tracker.h"
 #include "ash/wm/tablet_mode/tablet_mode_controller.h"
+#include "ash/wm/tablet_mode/tablet_mode_controller_test_api.h"
 #include "ash/wm/tablet_mode/tablet_mode_window_manager.h"
 #include "ash/wm/window_state.h"
 #include "ash/wm/wm_event.h"
@@ -32,6 +32,7 @@
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
 #include "chrome/browser/chromeos/settings/cros_settings.h"
 #include "chrome/browser/chromeos/settings/device_settings_service.h"
+#include "chrome/browser/chromeos/settings/stub_install_attributes.h"
 #include "chrome/browser/ui/ash/chrome_new_window_client.h"
 #include "chrome/browser/ui/ash/multi_user/multi_user_util.h"
 #include "chrome/browser/ui/ash/multi_user/multi_user_window_manager.h"
@@ -48,7 +49,7 @@
 #include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile.h"
 #include "chrome/test/base/testing_profile_manager.h"
-#include "components/signin/core/account_id/account_id.h"
+#include "components/account_id/account_id.h"
 #include "components/user_manager/scoped_user_manager.h"
 #include "components/user_manager/user_info.h"
 #include "components/user_manager/user_manager.h"
@@ -70,59 +71,22 @@ const char kBAccountIdString[] =
 const char kArrowBAccountIdString[] =
     "->{\"account_type\":\"unknown\",\"email\":\"B\"}";
 
-// TODO(beng): This implementation seems only superficially different to the
-//             production impl. Evaluate whether or not we can just use that
-//             one.
-class TestShellContentState : public ash::ShellContentState {
- public:
-  TestShellContentState() {}
-  ~TestShellContentState() override {}
-
- private:
-  content::BrowserContext* GetActiveBrowserContext() override {
-    const user_manager::UserManager* user_manager =
-        user_manager::UserManager::Get();
-    const user_manager::User* active_user = user_manager->GetActiveUser();
-    return active_user ? multi_user_util::GetProfileFromAccountId(
-                             active_user->GetAccountId())
-                       : NULL;
-  }
-
-  content::BrowserContext* GetBrowserContextByIndex(
-      ash::UserIndex index) override {
-    return nullptr;
-  }
-
-  content::BrowserContext* GetBrowserContextForWindow(
-      aura::Window* window) override {
-    const AccountId& account_id =
-        MultiUserWindowManager::GetInstance()->GetWindowOwner(window);
-    return account_id.is_valid()
-               ? multi_user_util::GetProfileFromAccountId(account_id)
-               : nullptr;
-  }
-
-  content::BrowserContext* GetUserPresentingBrowserContextForWindow(
-      aura::Window* window) override {
-    const AccountId& account_id =
-        MultiUserWindowManager::GetInstance()->GetUserPresentingWindow(window);
-    return account_id.is_valid()
-               ? multi_user_util::GetProfileFromAccountId(account_id)
-               : nullptr;
-  }
-
-  DISALLOW_COPY_AND_ASSIGN(TestShellContentState);
-};
+const content::BrowserContext* GetActiveContext() {
+  const user_manager::UserManager* user_manager =
+      user_manager::UserManager::Get();
+  const user_manager::User* active_user = user_manager->GetActiveUser();
+  return active_user ? multi_user_util::GetProfileFromAccountId(
+                           active_user->GetAccountId())
+                     : nullptr;
+}
 
 class TestShellDelegateChromeOS : public ash::TestShellDelegate {
  public:
   TestShellDelegateChromeOS() {}
 
   bool CanShowWindowForUser(aura::Window* window) const override {
-    return ::CanShowWindowForUser(
-        window,
-        base::Bind(&ash::ShellContentState::GetActiveBrowserContext,
-                   base::Unretained(ash::ShellContentState::GetInstance())));
+    return ::CanShowWindowForUser(window,
+                                  base::BindRepeating(&GetActiveContext));
   }
 
  private:
@@ -271,20 +235,9 @@ class MultiUserWindowManagerChromeOSTest : public AshTestBase {
     return UserSwitchAnimatorChromeOS::CoversScreen(window);
   }
 
-  // Create a tablet mode window manager.
-  TabletModeWindowManager* CreateTabletModeWindowManager() {
-    EXPECT_FALSE(tablet_mode_window_manager());
-    Shell::Get()->tablet_mode_controller()->EnableTabletModeWindowManager(true);
-    return tablet_mode_window_manager();
-  }
-
-  TabletModeWindowManager* tablet_mode_window_manager() {
-    return Shell::Get()
-        ->tablet_mode_controller()
-        ->tablet_mode_window_manager_.get();
-  }
-
  private:
+  chromeos::ScopedStubInstallAttributes test_install_attributes_;
+
   // These get created for each session.
   aura::Window::Windows windows_;
 
@@ -312,10 +265,6 @@ void MultiUserWindowManagerChromeOSTest::SetUp() {
   chromeos::DeviceSettingsService::Initialize();
   chromeos::CrosSettings::Initialize();
   ash_test_helper()->set_test_shell_delegate(new TestShellDelegateChromeOS);
-  ash::AshTestEnvironmentContent* test_environment =
-      static_cast<ash::AshTestEnvironmentContent*>(
-          ash_test_helper()->ash_test_environment());
-  test_environment->set_content_state(new ::TestShellContentState);
   AshTestBase::SetUp();
   profile_manager_.reset(
       new TestingProfileManager(TestingBrowserProcess::GetGlobal()));
@@ -876,7 +825,9 @@ TEST_F(MultiUserWindowManagerChromeOSTest, TabletModeInteraction) {
   EXPECT_FALSE(wm::GetWindowState(window(0))->IsMaximized());
   EXPECT_FALSE(wm::GetWindowState(window(1))->IsMaximized());
 
-  TabletModeWindowManager* manager = CreateTabletModeWindowManager();
+  Shell::Get()->tablet_mode_controller()->EnableTabletModeWindowManager(true);
+  TabletModeWindowManager* manager =
+      TabletModeControllerTestApi().tablet_mode_window_manager();
   ASSERT_TRUE(manager);
 
   EXPECT_TRUE(wm::GetWindowState(window(0))->IsMaximized());

@@ -30,12 +30,12 @@
         {
           "object": "LayoutSVGRect rect id='separate2'",
           "rect": [140, 140, 36, 36],
-          "reason": "full"
+          "reason": "SVG resource change"
         },
         {
           "object": "LayoutSVGRect rect id='filtered'",
           "rect": [140, 100, 36, 36],
-          "reason": "full"
+          "reason": "appeared"
         },
         {
           "object": "LayoutSVGContainer g",
@@ -73,184 +73,6 @@
           "reason": "SVG resource change"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutSVGContainer g",
-      "reason": "SVG resource change"
-    },
-    {
-      "object": "LayoutSVGContainer use",
-      "reason": "SVG resource change"
-    },
-    {
-      "object": "LayoutSVGRect rect id='rect'",
-      "reason": "appeared"
-    },
-    {
-      "object": "LayoutSVGContainer g",
-      "reason": "SVG resource change"
-    },
-    {
-      "object": "LayoutSVGContainer g",
-      "reason": "SVG resource change"
-    },
-    {
-      "object": "LayoutSVGContainer use",
-      "reason": "SVG resource change"
-    },
-    {
-      "object": "LayoutSVGRect rect id='rect'",
-      "reason": "appeared"
-    },
-    {
-      "object": "LayoutSVGContainer g",
-      "reason": "SVG resource change"
-    },
-    {
-      "object": "LayoutSVGContainer g",
-      "reason": "SVG resource change"
-    },
-    {
-      "object": "LayoutSVGContainer use",
-      "reason": "SVG resource change"
-    },
-    {
-      "object": "LayoutSVGRect rect id='rect'",
-      "reason": "appeared"
-    },
-    {
-      "object": "LayoutSVGContainer g",
-      "reason": "SVG resource change"
-    },
-    {
-      "object": "LayoutSVGContainer use",
-      "reason": "SVG resource change"
-    },
-    {
-      "object": "LayoutSVGRect rect id='rect'",
-      "reason": "appeared"
-    },
-    {
-      "object": "LayoutSVGContainer g",
-      "reason": "SVG resource change"
-    },
-    {
-      "object": "LayoutSVGContainer g",
-      "reason": "SVG resource change"
-    },
-    {
-      "object": "LayoutSVGContainer use",
-      "reason": "SVG resource change"
-    },
-    {
-      "object": "LayoutSVGRect rect id='rect'",
-      "reason": "appeared"
-    },
-    {
-      "object": "LayoutSVGContainer g",
-      "reason": "SVG resource change"
-    },
-    {
-      "object": "LayoutSVGContainer g",
-      "reason": "SVG resource change"
-    },
-    {
-      "object": "LayoutSVGContainer use",
-      "reason": "SVG resource change"
-    },
-    {
-      "object": "LayoutSVGRect rect id='rect'",
-      "reason": "appeared"
-    },
-    {
-      "object": "LayoutSVGContainer g",
-      "reason": "SVG resource change"
-    },
-    {
-      "object": "LayoutSVGContainer use",
-      "reason": "SVG resource change"
-    },
-    {
-      "object": "LayoutSVGRect rect id='rect'",
-      "reason": "appeared"
-    },
-    {
-      "object": "LayoutSVGContainer g",
-      "reason": "SVG resource change"
-    },
-    {
-      "object": "LayoutSVGContainer use",
-      "reason": "SVG resource change"
-    },
-    {
-      "object": "LayoutSVGRect rect id='rect'",
-      "reason": "appeared"
-    },
-    {
-      "object": "LayoutSVGContainer g",
-      "reason": "SVG resource change"
-    },
-    {
-      "object": "LayoutSVGContainer use",
-      "reason": "SVG resource change"
-    },
-    {
-      "object": "LayoutSVGRect rect id='rect'",
-      "reason": "appeared"
-    },
-    {
-      "object": "LayoutSVGContainer g",
-      "reason": "SVG resource change"
-    },
-    {
-      "object": "LayoutSVGContainer use",
-      "reason": "SVG resource change"
-    },
-    {
-      "object": "LayoutSVGRect rect id='rect'",
-      "reason": "appeared"
-    },
-    {
-      "object": "LayoutSVGContainer g",
-      "reason": "SVG resource change"
-    },
-    {
-      "object": "LayoutSVGContainer use",
-      "reason": "SVG resource change"
-    },
-    {
-      "object": "LayoutSVGRect rect id='rect'",
-      "reason": "appeared"
-    },
-    {
-      "object": "LayoutSVGContainer g",
-      "reason": "SVG resource change"
-    },
-    {
-      "object": "LayoutSVGContainer use",
-      "reason": "SVG resource change"
-    },
-    {
-      "object": "LayoutSVGRect rect id='rect'",
-      "reason": "appeared"
-    },
-    {
-      "object": "LayoutSVGContainer g",
-      "reason": "SVG resource change"
-    },
-    {
-      "object": "LayoutSVGRect rect id='separate1'",
-      "reason": "style change"
-    },
-    {
-      "object": "LayoutSVGRect rect id='filtered'",
-      "reason": "style change"
-    },
-    {
-      "object": "LayoutSVGRect rect id='separate2'",
-      "reason": "style change"
     }
   ]
 }

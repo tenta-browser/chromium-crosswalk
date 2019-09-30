@@ -63,7 +63,11 @@ ProcessorEntityTracker::ProcessorEntityTracker(
 ProcessorEntityTracker::~ProcessorEntityTracker() {}
 
 void ProcessorEntityTracker::SetStorageKey(const std::string& storage_key) {
-  DCHECK(storage_key_.empty());
+  // TODO(crbug.com/872360): Restore the below DCHECK once we've figured out
+  // (and fixed) why it fired.
+  DCHECK(storage_key_.empty() || storage_key_ == storage_key);
+  // Should be just:
+  // DCHECK(storage_key_.empty());
   DCHECK(!storage_key.empty());
   storage_key_ = storage_key;
 }
@@ -92,8 +96,11 @@ bool ProcessorEntityTracker::HasCommitData() const {
 }
 
 bool ProcessorEntityTracker::MatchesData(const EntityData& data) const {
-  return metadata_.is_deleted() ? data.is_deleted()
-                                : MatchesSpecificsHash(data.specifics);
+  if (metadata_.is_deleted())
+    return data.is_deleted();
+  if (data.is_deleted())
+    return false;
+  return MatchesSpecificsHash(data.specifics);
 }
 
 bool ProcessorEntityTracker::MatchesBaseData(const EntityData& data) const {
@@ -282,6 +289,7 @@ size_t ProcessorEntityTracker::EstimateMemoryUsage() const {
 bool ProcessorEntityTracker::MatchesSpecificsHash(
     const sync_pb::EntitySpecifics& specifics) const {
   DCHECK(!metadata_.is_deleted());
+  DCHECK_GT(specifics.ByteSize(), 0);
   std::string hash;
   HashSpecifics(specifics, &hash);
   return hash == metadata_.specifics_hash();

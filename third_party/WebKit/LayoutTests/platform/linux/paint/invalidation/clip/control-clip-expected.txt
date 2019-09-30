@@ -20,7 +20,7 @@
         {
           "object": "InlineTextBox 'SUCCESS'",
           "rect": [76, 117, 64, 16],
-          "reason": "appeared"
+          "reason": "chunk appeared"
         },
         {
           "object": "InlineTextBox 'SUCCESS'",
@@ -30,7 +30,7 @@
         {
           "object": "InlineTextBox 'FAILURE'",
           "rect": [81, 117, 54, 16],
-          "reason": "disappeared"
+          "reason": "chunk disappeared"
         },
         {
           "object": "InlineTextBox 'FAILURE'",
@@ -38,40 +38,6 @@
           "reason": "disappeared"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutBlockFlow (anonymous)",
-      "reason": "geometry"
-    },
-    {
-      "object": "RootInlineBox",
-      "reason": "geometry"
-    },
-    {
-      "object": "LayoutText (anonymous)",
-      "reason": "full"
-    },
-    {
-      "object": "InlineTextBox 'SUCCESS'",
-      "reason": "full"
-    },
-    {
-      "object": "LayoutBlockFlow (anonymous)",
-      "reason": "geometry"
-    },
-    {
-      "object": "RootInlineBox",
-      "reason": "geometry"
-    },
-    {
-      "object": "LayoutText #text",
-      "reason": "full"
-    },
-    {
-      "object": "InlineTextBox 'SUCCESS'",
-      "reason": "full"
     }
   ]
 }

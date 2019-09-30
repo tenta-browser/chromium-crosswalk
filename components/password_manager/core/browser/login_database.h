@@ -19,11 +19,15 @@
 #include "components/password_manager/core/browser/password_store_change.h"
 #include "components/password_manager/core/browser/psl_matching_helper.h"
 #include "components/password_manager/core/browser/statistics_table.h"
-#include "sql/connection.h"
+#include "sql/database.h"
 #include "sql/meta_table.h"
 
 #if defined(OS_IOS)
 #include "base/gtest_prod_util.h"
+#endif
+
+#if defined(OS_MACOSX) && !defined(OS_IOS)
+#include "components/password_manager/core/browser/password_recovery_util_mac.h"
 #endif
 
 namespace password_manager {
@@ -45,6 +49,12 @@ class LoginDatabase {
   // should be called.
   virtual bool Init();
 
+#if defined(OS_MACOSX) && !defined(OS_IOS)
+  // Registers utility which is used to save password recovery status on MacOS.
+  void InitPasswordRecoveryUtil(
+      std::unique_ptr<PasswordRecoveryUtilMac> password_recovery_util);
+#endif
+
   // Reports usage metrics to UMA.
   void ReportMetrics(const std::string& sync_username,
                      bool custom_passphrase_sync_enabled);
@@ -55,6 +65,12 @@ class LoginDatabase {
   // primary key columns contain the values associated with the removed form.
   PasswordStoreChangeList AddLogin(const autofill::PasswordForm& form)
       WARN_UNUSED_RESULT;
+
+  // This function does the same thing as AddLogin() with the difference that
+  // doesn't check if a site is already blacklisted before adding it. This is
+  // needed for tests that will require to have duplicates in the database.
+  PasswordStoreChangeList AddBlacklistedLoginForTesting(
+      const autofill::PasswordForm& form) WARN_UNUSED_RESULT;
 
   // Updates existing password form. Returns the list of applied changes
   // ({}, {UPDATE}). The password is looked up by the tuple {origin,
@@ -141,11 +157,25 @@ class LoginDatabase {
   // whether further use of this login database will succeed is unspecified.
   bool DeleteAndRecreateDatabaseFile();
 
+  // On MacOS, it deletes all logins from the database that cannot be decrypted
+  // when encryption key from Keychain is available. If the Keychain is locked,
+  // it does nothing and returns ENCRYPTION_UNAVAILABLE. If it's not running on
+  // MacOS, it does nothing and returns SUCCESS. This can be used when syncing
+  // logins from the cloud to rewrite entries that can't be used anymore (due to
+  // modification of the encryption key). If one of the logins couldn't be
+  // removed from the database, returns ITEM_FAILURE.
+  DatabaseCleanupResult DeleteUndecryptableLogins();
+
   // Returns the encrypted password value for the specified |form|.  Returns an
   // empty string if the row for this |form| is not found.
   std::string GetEncryptedPassword(const autofill::PasswordForm& form) const;
 
   StatisticsTable& stats_table() { return stats_table_; }
+
+#if defined(OS_POSIX) && !defined(OS_MACOSX)
+  // This instance should not encrypt/decrypt password values using OSCrypt.
+  void disable_encryption() { use_encryption_ = false; }
+#endif  // defined(OS_POSIX)
 
  private:
 #if defined(OS_IOS)
@@ -175,23 +205,25 @@ class LoginDatabase {
   // successful, or returning false and leaving cipher_text unchanged if
   // encryption fails (e.g., if the underlying OS encryption system is
   // temporarily unavailable).
-  static EncryptionResult EncryptedString(const base::string16& plain_text,
-                                          std::string* cipher_text);
+  EncryptionResult EncryptedString(const base::string16& plain_text,
+                                   std::string* cipher_text) const
+      WARN_UNUSED_RESULT;
 
   // Decrypts cipher_text, setting the value of plain_text and returning true if
   // successful, or returning false and leaving plain_text unchanged if
   // decryption fails (e.g., if the underlying OS encryption system is
   // temporarily unavailable).
-  static EncryptionResult DecryptedString(const std::string& cipher_text,
-                                          base::string16* plain_text);
+  EncryptionResult DecryptedString(const std::string& cipher_text,
+                                   base::string16* plain_text) const
+      WARN_UNUSED_RESULT;
 
   // Fills |form| from the values in the given statement (which is assumed to
   // be of the form used by the Get*Logins methods).
   // Returns the EncryptionResult from decrypting the password in |s|; if not
   // ENCRYPTION_RESULT_SUCCESS, |form| is not filled.
-  static EncryptionResult InitPasswordFormFromStatement(
-      autofill::PasswordForm* form,
-      const sql::Statement& s);
+  EncryptionResult InitPasswordFormFromStatement(autofill::PasswordForm* form,
+                                                 const sql::Statement& s) const
+      WARN_UNUSED_RESULT;
 
   // Gets all blacklisted or all non-blacklisted (depending on |blacklisted|)
   // credentials. On success returns true and overwrites |forms| with the
@@ -203,17 +235,17 @@ class LoginDatabase {
   // Overwrites |forms| with credentials retrieved from |statement|. If
   // |matched_form| is not null, filters out all results but those PSL-matching
   // |*matched_form| or federated credentials for it. On success returns true.
-  static bool StatementToForms(
-      sql::Statement* statement,
-      const PasswordStore::FormDigest* matched_form,
-      std::vector<std::unique_ptr<autofill::PasswordForm>>* forms);
+  bool StatementToForms(sql::Statement* statement,
+                        const PasswordStore::FormDigest* matched_form,
+                        std::vector<std::unique_ptr<autofill::PasswordForm>>*
+                            forms) const WARN_UNUSED_RESULT;
 
   // Initializes all the *_statement_ data members with appropriate SQL
   // fragments based on |builder|.
   void InitializeStatementStrings(const SQLTableBuilder& builder);
 
   base::FilePath db_path_;
-  mutable sql::Connection db_;
+  mutable sql::Database db_;
   sql::MetaTable meta_table_;
   StatisticsTable stats_table_;
 
@@ -232,6 +264,17 @@ class LoginDatabase {
   std::string synced_statement_;
   std::string blacklisted_statement_;
   std::string encrypted_statement_;
+
+#if defined(OS_MACOSX) && !defined(OS_IOS)
+  std::unique_ptr<PasswordRecoveryUtilMac> password_recovery_util_;
+#endif
+
+#if defined(OS_POSIX) && !defined(OS_MACOSX)
+  // Whether password values should be encrypted.
+  // TODO(crbug.com/571003) Only linux doesn't use encryption. Remove this once
+  // Linux is fully migrated into LoginDatabase.
+  bool use_encryption_ = true;
+#endif  // defined(OS_POSIX)
 
   DISALLOW_COPY_AND_ASSIGN(LoginDatabase);
 };

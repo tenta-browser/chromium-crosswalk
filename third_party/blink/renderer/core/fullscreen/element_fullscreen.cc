@@ -9,16 +9,27 @@
 
 namespace blink {
 
-void ElementFullscreen::requestFullscreen(Element& element) {
-  Fullscreen::RequestFullscreen(element, Fullscreen::RequestType::kUnprefixed);
+ScriptPromise ElementFullscreen::requestFullscreen(
+    ScriptState* script_state,
+    Element& element,
+    const FullscreenOptions& options) {
+  return Fullscreen::RequestFullscreen(
+      element, options, Fullscreen::RequestType::kUnprefixed, script_state);
 }
 
 void ElementFullscreen::webkitRequestFullscreen(Element& element) {
+  webkitRequestFullscreen(element, FullscreenOptions());
+}
+
+void ElementFullscreen::webkitRequestFullscreen(
+    Element& element,
+    const FullscreenOptions& options) {
   if (element.IsInShadowTree()) {
     UseCounter::Count(element.GetDocument(),
                       WebFeature::kPrefixedElementRequestFullscreenInShadow);
   }
-  Fullscreen::RequestFullscreen(element, Fullscreen::RequestType::kPrefixed);
+  Fullscreen::RequestFullscreen(element, options,
+                                Fullscreen::RequestType::kPrefixed);
 }
 
 }  // namespace blink

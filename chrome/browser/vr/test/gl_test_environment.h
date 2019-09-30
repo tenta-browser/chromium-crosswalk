@@ -5,6 +5,8 @@
 #ifndef CHROME_BROWSER_VR_TEST_GL_TEST_ENVIRONMENT_H_
 #define CHROME_BROWSER_VR_TEST_GL_TEST_ENVIRONMENT_H_
 
+#include <memory>
+
 #include "ui/gfx/geometry/size.h"
 #include "ui/gl/gl_bindings.h"
 #include "ui/gl/gl_context.h"

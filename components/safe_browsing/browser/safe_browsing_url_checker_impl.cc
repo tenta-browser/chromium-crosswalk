@@ -7,6 +7,7 @@
 #include "base/metrics/histogram_macros.h"
 #include "base/trace_event/trace_event.h"
 #include "components/safe_browsing/browser/url_checker_delegate.h"
+#include "components/safe_browsing/features.h"
 #include "components/safe_browsing/web_ui/constants.h"
 #include "components/security_interstitials/content/unsafe_resource.h"
 #include "content/public/browser/browser_thread.h"
@@ -134,8 +135,15 @@ void SafeBrowsingUrlCheckerImpl::OnCheckBrowseUrlResult(
       "safe_browsing", "CheckUrl", this, "result",
       threat_type == SB_THREAT_TYPE_SAFE ? "safe" : "unsafe");
 
-  if (threat_type == SB_THREAT_TYPE_SAFE) {
+  if (threat_type == SB_THREAT_TYPE_SAFE ||
+      threat_type == SB_THREAT_TYPE_SUSPICIOUS_SITE ||
+      (!base::FeatureList::IsEnabled(safe_browsing::kBillingInterstitial) &&
+       threat_type == SB_THREAT_TYPE_BILLING)) {
     state_ = STATE_NONE;
+
+    if (threat_type == SB_THREAT_TYPE_SUSPICIOUS_SITE) {
+      url_checker_delegate_->NotifySuspiciousSiteDetected(web_contents_getter_);
+    }
 
     if (!RunNextCallback(true, false))
       return;
@@ -252,9 +260,9 @@ void SafeBrowsingUrlCheckerImpl::ProcessUrls() {
 
       content::BrowserThread::PostTask(
           content::BrowserThread::IO, FROM_HERE,
-          base::Bind(&SafeBrowsingUrlCheckerImpl::OnCheckBrowseUrlResult,
-                     weak_factory_.GetWeakPtr(), url, threat_type,
-                     ThreatMetadata()));
+          base::BindOnce(&SafeBrowsingUrlCheckerImpl::OnCheckBrowseUrlResult,
+                         weak_factory_.GetWeakPtr(), url, threat_type,
+                         ThreatMetadata()));
       break;
     }
 

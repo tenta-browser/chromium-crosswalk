@@ -15,7 +15,7 @@
 #include "base/files/scoped_temp_dir.h"
 #include "base/macros.h"
 #include "base/message_loop/message_loop.h"
-#include "sql/connection.h"
+#include "sql/database.h"
 #include "sql/meta_table.h"
 #include "sql/statement.h"
 #include "sql/test/scoped_error_expecter.h"
@@ -74,7 +74,7 @@ class QuotaDatabaseTest : public testing::Test {
     EXPECT_TRUE(db.LazyOpen(true));
     EXPECT_TRUE(db.db_.get());
 
-    typedef EntryVerifier<QuotaTableEntry> Verifier;
+    using Verifier = EntryVerifier<QuotaTableEntry>;
     Verifier verifier(entries, entries + arraysize(entries));
     EXPECT_TRUE(db.DumpQuotaTable(
         base::BindRepeating(&Verifier::Run, base::Unretained(&verifier))));
@@ -112,6 +112,10 @@ class QuotaDatabaseTest : public testing::Test {
     // Delete temporary storage quota.
     EXPECT_TRUE(db.DeleteHostQuota(kHost, kTemporary));
     EXPECT_FALSE(db.GetHostQuota(kHost, kTemporary, &quota));
+
+    // Delete persistent quota by setting it to zero.
+    EXPECT_TRUE(db.SetHostQuota(kHost, kPersistent, 0));
+    EXPECT_FALSE(db.GetHostQuota(kHost, kPersistent, &quota));
   }
 
   void GlobalQuota(const base::FilePath& kDbFile) {
@@ -150,7 +154,7 @@ class QuotaDatabaseTest : public testing::Test {
 
     std::set<GURL> exceptions;
     GURL origin;
-    EXPECT_TRUE(db.GetLRUOrigin(kTemporary, exceptions, NULL, &origin));
+    EXPECT_TRUE(db.GetLRUOrigin(kTemporary, exceptions, nullptr, &origin));
     EXPECT_TRUE(origin.is_empty());
 
     const GURL kOrigin1("http://a/");
@@ -170,7 +174,7 @@ class QuotaDatabaseTest : public testing::Test {
     EXPECT_TRUE(db.SetOriginLastAccessTime(kOrigin4, kPersistent,
                                            base::Time::FromInternalValue(40)));
 
-    EXPECT_TRUE(db.GetLRUOrigin(kTemporary, exceptions, NULL, &origin));
+    EXPECT_TRUE(db.GetLRUOrigin(kTemporary, exceptions, nullptr, &origin));
     EXPECT_EQ(kOrigin1.spec(), origin.spec());
 
     // Test that unlimited origins are exluded from eviction, but
@@ -188,15 +192,15 @@ class QuotaDatabaseTest : public testing::Test {
     EXPECT_EQ(kOrigin3.spec(), origin.spec());
 
     exceptions.insert(kOrigin1);
-    EXPECT_TRUE(db.GetLRUOrigin(kTemporary, exceptions, NULL, &origin));
+    EXPECT_TRUE(db.GetLRUOrigin(kTemporary, exceptions, nullptr, &origin));
     EXPECT_EQ(kOrigin2.spec(), origin.spec());
 
     exceptions.insert(kOrigin2);
-    EXPECT_TRUE(db.GetLRUOrigin(kTemporary, exceptions, NULL, &origin));
+    EXPECT_TRUE(db.GetLRUOrigin(kTemporary, exceptions, nullptr, &origin));
     EXPECT_EQ(kOrigin3.spec(), origin.spec());
 
     exceptions.insert(kOrigin3);
-    EXPECT_TRUE(db.GetLRUOrigin(kTemporary, exceptions, NULL, &origin));
+    EXPECT_TRUE(db.GetLRUOrigin(kTemporary, exceptions, nullptr, &origin));
     EXPECT_TRUE(origin.is_empty());
 
     EXPECT_TRUE(
@@ -207,12 +211,12 @@ class QuotaDatabaseTest : public testing::Test {
 
     // Querying again to see if the deletion has worked.
     exceptions.clear();
-    EXPECT_TRUE(db.GetLRUOrigin(kTemporary, exceptions, NULL, &origin));
+    EXPECT_TRUE(db.GetLRUOrigin(kTemporary, exceptions, nullptr, &origin));
     EXPECT_EQ(kOrigin2.spec(), origin.spec());
 
     exceptions.insert(kOrigin1);
     exceptions.insert(kOrigin2);
-    EXPECT_TRUE(db.GetLRUOrigin(kTemporary, exceptions, NULL, &origin));
+    EXPECT_TRUE(db.GetLRUOrigin(kTemporary, exceptions, nullptr, &origin));
     EXPECT_TRUE(origin.is_empty());
   }
 
@@ -399,7 +403,7 @@ class QuotaDatabaseTest : public testing::Test {
     AssignQuotaTable(db.db_.get(), begin, end);
     db.Commit();
 
-    typedef EntryVerifier<QuotaTableEntry> Verifier;
+    using Verifier = EntryVerifier<QuotaTableEntry>;
     Verifier verifier(begin, end);
     EXPECT_TRUE(db.DumpQuotaTable(
         base::BindRepeating(&Verifier::Run, base::Unretained(&verifier))));
@@ -408,7 +412,7 @@ class QuotaDatabaseTest : public testing::Test {
 
   void DumpOriginInfoTable(const base::FilePath& kDbFile) {
     base::Time now(base::Time::Now());
-    typedef QuotaDatabase::OriginInfoTableEntry Entry;
+    using Entry = QuotaDatabase::OriginInfoTableEntry;
     Entry kTableEntries[] = {
         Entry(GURL("http://go/"), kTemporary, 2147483647, now, now),
         Entry(GURL("http://oo/"), kTemporary, 0, now, now),
@@ -422,7 +426,7 @@ class QuotaDatabaseTest : public testing::Test {
     AssignOriginInfoTable(db.db_.get(), begin, end);
     db.Commit();
 
-    typedef EntryVerifier<Entry> Verifier;
+    using Verifier = EntryVerifier<Entry>;
     Verifier verifier(begin, end);
     EXPECT_TRUE(db.DumpOriginInfoTable(
         base::BindRepeating(&Verifier::Run, base::Unretained(&verifier))));
@@ -431,7 +435,7 @@ class QuotaDatabaseTest : public testing::Test {
 
   void GetOriginInfo(const base::FilePath& kDbFile) {
     const GURL kOrigin = GURL("http://go/");
-    typedef QuotaDatabase::OriginInfoTableEntry Entry;
+    using Entry = QuotaDatabase::OriginInfoTableEntry;
     Entry kTableEntries[] = {
         Entry(kOrigin, kTemporary, 100, base::Time(), base::Time())};
     Entry* begin = kTableEntries;
@@ -461,8 +465,8 @@ class QuotaDatabaseTest : public testing::Test {
 
  private:
   template <typename Iterator>
-  void AssignQuotaTable(sql::Connection* db, Iterator itr, Iterator end) {
-    ASSERT_NE(db, (sql::Connection*)NULL);
+  void AssignQuotaTable(sql::Database* db, Iterator itr, Iterator end) {
+    ASSERT_NE(db, (sql::Database*)nullptr);
     for (; itr != end; ++itr) {
       const char* kSql =
           "INSERT INTO HostQuotaTable"
@@ -480,8 +484,8 @@ class QuotaDatabaseTest : public testing::Test {
   }
 
   template <typename Iterator>
-  void AssignOriginInfoTable(sql::Connection* db, Iterator itr, Iterator end) {
-    ASSERT_NE(db, (sql::Connection*)NULL);
+  void AssignOriginInfoTable(sql::Database* db, Iterator itr, Iterator end) {
+    ASSERT_NE(db, (sql::Database*)nullptr);
     for (; itr != end; ++itr) {
       const char* kSql =
           "INSERT INTO OriginInfoTable"
@@ -500,7 +504,7 @@ class QuotaDatabaseTest : public testing::Test {
     }
   }
 
-  bool OpenDatabase(sql::Connection* db, const base::FilePath& kDbFile) {
+  bool OpenDatabase(sql::Database* db, const base::FilePath& kDbFile) {
     if (kDbFile.empty()) {
       return db->OpenInMemory();
     }
@@ -517,7 +521,7 @@ class QuotaDatabaseTest : public testing::Test {
       const base::FilePath& kDbFile,
       const QuotaTableEntry* entries,
       size_t entries_size) {
-    std::unique_ptr<sql::Connection> db(new sql::Connection);
+    std::unique_ptr<sql::Database> db(new sql::Database);
     std::unique_ptr<sql::MetaTable> meta_table(new sql::MetaTable);
 
     // V2 schema definitions.

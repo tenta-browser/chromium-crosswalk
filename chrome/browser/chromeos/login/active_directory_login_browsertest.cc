@@ -6,32 +6,30 @@
 
 #include "base/command_line.h"
 #include "base/location.h"
-#include "base/path_service.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/chrome_notification_types.h"
+#include "chrome/browser/chromeos/login/active_directory_test_helper.h"
 #include "chrome/browser/chromeos/login/login_manager_test.h"
 #include "chrome/browser/chromeos/login/startup_utils.h"
 #include "chrome/browser/chromeos/login/test/js_checker.h"
 #include "chrome/browser/chromeos/login/test/oobe_screen_waiter.h"
-#include "chrome/browser/chromeos/login/ui/login_display_host_webui.h"
+#include "chrome/browser/chromeos/login/ui/login_display_host.h"
 #include "chrome/browser/chromeos/login/wizard_controller.h"
-#include "chrome/browser/chromeos/settings/stub_install_attributes.h"
 #include "chrome/browser/ui/webui/chromeos/login/signin_screen_handler.h"
-#include "chrome/common/chrome_paths.h"
 #include "chrome/grit/generated_resources.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/interactive_test_utils.h"
-#include "chromeos/chromeos_paths.h"
 #include "chromeos/chromeos_switches.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
 #include "chromeos/dbus/fake_auth_policy_client.h"
 #include "chromeos/dbus/fake_cryptohome_client.h"
+#include "chromeos/dbus/util/tpm_util.h"
 #include "chromeos/login/auth/authpolicy_login_helper.h"
-#include "components/signin/core/account_id/account_id.h"
+#include "components/account_id/account_id.h"
 #include "components/user_manager/user_names.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/test_utils.h"
@@ -47,13 +45,14 @@ const char kPassword[] = "password";
 
 constexpr char kAdOfflineAuthId[] = "offline-ad-auth";
 
-constexpr char kAdMachineName[] = "machine_name";
 constexpr char kTestActiveDirectoryUser[] = "test-user";
+constexpr char kTestUserRealm[] = "user.realm";
 constexpr char kAdMachineInput[] = "machineNameInput";
 constexpr char kAdMoreOptionsButton[] = "moreOptionsBtn";
 constexpr char kAdUserInput[] = "userInput";
 constexpr char kAdPasswordInput[] = "passwordInput";
-constexpr char kAdButton[] = "button";
+constexpr char kAdCredsButton[] = "adCreds /deep/ #button";
+constexpr char kAdPasswordChangeButton[] = "button";
 constexpr char kAdWelcomMessage[] = "welcomeMsg";
 constexpr char kAdAutocompleteRealm[] = "userInput /deep/ #domainLabel";
 
@@ -67,58 +66,35 @@ constexpr char kDifferentNewPassword[] = "different_new_password";
 
 constexpr char kCloseButtonId[] = "closeButton";
 
-class TestAuthPolicyClient : public FakeAuthPolicyClient {
- public:
-  TestAuthPolicyClient() { FakeAuthPolicyClient::set_started(true); }
-
-  void AuthenticateUser(const authpolicy::AuthenticateUserRequest& request,
-                        int password_fd,
-                        AuthCallback callback) override {
-    authpolicy::ActiveDirectoryAccountInfo account_info;
-    if (auth_error_ == authpolicy::ERROR_NONE) {
-      if (request.account_id().empty()) {
-        account_info.set_account_id(
-            base::MD5String(request.user_principal_name()));
-      } else {
-        account_info.set_account_id(request.account_id());
-      }
-    }
-    base::SequencedTaskRunnerHandle::Get()->PostNonNestableTask(
-        FROM_HERE,
-        base::BindOnce(std::move(callback), auth_error_, account_info));
-  }
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(TestAuthPolicyClient);
-};
-
 class ActiveDirectoryLoginTest : public LoginManagerTest {
  public:
   ActiveDirectoryLoginTest()
       : LoginManagerTest(true),
         // Using the same realm as supervised user domain. Should be treated as
         // normal realm.
-        test_realm_(user_manager::kSupervisedUserDomain) {}
+        test_realm_(user_manager::kSupervisedUserDomain),
+        autocomplete_realm_(test_realm_) {}
 
   ~ActiveDirectoryLoginTest() override = default;
 
-  void SetUp() override {
-    SetupTestAuthPolicyClient();
-    LoginManagerTest::SetUp();
-  }
-
   void SetUpInProcessBrowserTestFixture() override {
     LoginManagerTest::SetUpInProcessBrowserTestFixture();
-    base::FilePath user_data_dir;
-    ASSERT_TRUE(PathService::Get(chrome::DIR_USER_DATA, &user_data_dir));
-    chromeos::RegisterStubPathOverrides(user_data_dir);
+
+    auto fake_client = std::make_unique<FakeAuthPolicyClient>();
+    fake_auth_policy_client_ = fake_client.get();
+    fake_auth_policy_client_->DisableOperationDelayForTesting();
+    DBusThreadManager::GetSetterForTesting()->SetAuthPolicyClient(
+        std::move(fake_client));
+
+    // Note: FakeCryptohomeClient needs paths to be set to load install attribs.
+    active_directory_test_helper::OverridePaths();
     DBusThreadManager::GetSetterForTesting()->SetCryptohomeClient(
         std::make_unique<FakeCryptohomeClient>());
   }
 
   void SetUpCommandLine(base::CommandLine* command_line) override {
-    command_line->AppendSwitch(switches::kOobeSkipPostLogin);
     LoginManagerTest::SetUpCommandLine(command_line);
+    command_line->AppendSwitch(switches::kOobeSkipPostLogin);
   }
 
   void SetUpOnMainThread() override {
@@ -129,41 +105,13 @@ class ActiveDirectoryLoginTest : public LoginManagerTest {
         ->GetOobeUI()
         ->signin_screen_handler()
         ->SetOfflineTimeoutForTesting(base::TimeDelta::Max());
-    fake_auth_policy_client()->DisableOperationDelayForTesting();
     LoginManagerTest::SetUpOnMainThread();
   }
 
   void MarkAsActiveDirectoryEnterprise() {
     StartupUtils::MarkOobeCompleted();
-    AuthPolicyLoginHelper helper;
-    {
-      base::RunLoop loop;
-      helper.JoinAdDomain(
-          kAdMachineName, "" /* distinguished_name */,
-          authpolicy::KerberosEncryptionTypes::ENC_TYPES_STRONG,
-          kTestActiveDirectoryUser + ("@" + test_realm_), "" /* password */,
-          base::BindOnce(
-              [](base::OnceClosure closure, const std::string& expected_domain,
-                 authpolicy::ErrorType error, const std::string& domain) {
-                EXPECT_EQ(authpolicy::ERROR_NONE, error);
-                EXPECT_EQ(expected_domain, domain);
-                std::move(closure).Run();
-              },
-              loop.QuitClosure(), test_realm_));
-      loop.Run();
-    }
-    ASSERT_TRUE(AuthPolicyLoginHelper::LockDeviceActiveDirectoryForTesting(
-        test_realm_));
-    {
-      base::RunLoop loop;
-      fake_auth_policy_client()->RefreshDevicePolicy(base::BindOnce(
-          [](base::OnceClosure closure, authpolicy::ErrorType error) {
-            EXPECT_EQ(authpolicy::ERROR_NONE, error);
-            std::move(closure).Run();
-          },
-          loop.QuitClosure()));
-      loop.Run();
-    }
+    active_directory_test_helper::PrepareLogin(kTestActiveDirectoryUser +
+                                               ("@" + test_realm_));
   }
 
   void TriggerPasswordChangeScreen() {
@@ -180,13 +128,6 @@ class ActiveDirectoryLoginTest : public LoginManagerTest {
   void ClosePasswordChangeScreen() {
     js_checker().Evaluate(JSElement(kAdPasswordChangeId, kCloseButtonId) +
                           ".fire('tap')");
-  }
-
-  void SetupTestAuthPolicyClient() {
-    auto test_client = std::make_unique<TestAuthPolicyClient>();
-    fake_auth_policy_client_ = test_client.get();
-    DBusThreadManager::GetSetterForTesting()->SetAuthPolicyClient(
-        std::move(test_client));
   }
 
   // Checks if Active Directory login is visible.
@@ -212,7 +153,7 @@ class ActiveDirectoryLoginTest : public LoginManagerTest {
 
     // Checks if realm is set to autocomplete username.
     EXPECT_EQ(
-        "@" + test_realm_,
+        "@" + autocomplete_realm_,
         js_checker().GetString(
             JSElement(kAdOfflineAuthId, kAdAutocompleteRealm) + innerText));
 
@@ -284,7 +225,7 @@ class ActiveDirectoryLoginTest : public LoginManagerTest {
                               ".value='" + username + "'");
     js_checker().ExecuteAsync(JSElement(kAdOfflineAuthId, kAdPasswordInput) +
                               ".value='" + password + "'");
-    js_checker().Evaluate(JSElement(kAdOfflineAuthId, kAdButton) +
+    js_checker().Evaluate(JSElement(kAdOfflineAuthId, kAdCredsButton) +
                           ".fire('tap')");
   }
 
@@ -302,8 +243,9 @@ class ActiveDirectoryLoginTest : public LoginManagerTest {
     js_checker().ExecuteAsync(
         JSElement(kAdPasswordChangeId, kAdNewPassword2Input) + ".value='" +
         new_password2 + "'");
-    js_checker().Evaluate(JSElement(kAdPasswordChangeId, kAdButton) +
-                          ".fire('tap')");
+    js_checker().Evaluate(
+        JSElement(kAdPasswordChangeId, kAdPasswordChangeButton) +
+        ".fire('tap')");
   }
 
   void SetupActiveDirectoryJSNotifications() {
@@ -331,27 +273,48 @@ class ActiveDirectoryLoginTest : public LoginManagerTest {
     return "document.querySelector('#" + parent_id + " /deep/ #" + element_id +
            "')";
   }
-  TestAuthPolicyClient* fake_auth_policy_client() {
+  FakeAuthPolicyClient* fake_auth_policy_client() {
     return fake_auth_policy_client_;
   }
 
   const std::string test_realm_;
+  std::string autocomplete_realm_;
 
  private:
-  TestAuthPolicyClient* fake_auth_policy_client_;
+  FakeAuthPolicyClient* fake_auth_policy_client_;
 
   DISALLOW_COPY_AND_ASSIGN(ActiveDirectoryLoginTest);
 };
 
+class ActiveDirectoryLoginAutocompleteTest : public ActiveDirectoryLoginTest {
+ public:
+  ActiveDirectoryLoginAutocompleteTest() = default;
+  void SetUpInProcessBrowserTestFixture() override {
+    ActiveDirectoryLoginTest::SetUpInProcessBrowserTestFixture();
+
+    enterprise_management::ChromeDeviceSettingsProto device_settings;
+    device_settings.mutable_login_screen_domain_auto_complete()
+        ->set_login_screen_domain_auto_complete(kTestUserRealm);
+    fake_auth_policy_client()->set_device_policy(device_settings);
+    autocomplete_realm_ = kTestUserRealm;
+  }
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(ActiveDirectoryLoginAutocompleteTest);
+};
+
 }  // namespace
 
-// Marks as Active Directory enterprise device and OOBE as completed.
-IN_PROC_BROWSER_TEST_F(ActiveDirectoryLoginTest, PRE_LoginSuccess) {
-  MarkAsActiveDirectoryEnterprise();
-}
+// Declares a PRE_ test that calls MarkAsActiveDirectoryEnterprise() and the
+// test itself.
+#define IN_PROC_BROWSER_TEST_F_WITH_PRE(class_name, test_name) \
+  IN_PROC_BROWSER_TEST_F(class_name, PRE_##test_name) {        \
+    MarkAsActiveDirectoryEnterprise();                         \
+  }                                                            \
+  IN_PROC_BROWSER_TEST_F(class_name, test_name)
 
 // Test successful Active Directory login.
-IN_PROC_BROWSER_TEST_F(ActiveDirectoryLoginTest, LoginSuccess) {
+IN_PROC_BROWSER_TEST_F_WITH_PRE(ActiveDirectoryLoginTest, LoginSuccess) {
   TestNoError();
   TestDomainVisible();
 
@@ -362,13 +325,8 @@ IN_PROC_BROWSER_TEST_F(ActiveDirectoryLoginTest, LoginSuccess) {
   session_start_waiter.Wait();
 }
 
-// Marks as Active Directory enterprise device and OOBE as completed.
-IN_PROC_BROWSER_TEST_F(ActiveDirectoryLoginTest, PRE_LoginErrors) {
-  MarkAsActiveDirectoryEnterprise();
-}
-
 // Test different UI errors for Active Directory login.
-IN_PROC_BROWSER_TEST_F(ActiveDirectoryLoginTest, LoginErrors) {
+IN_PROC_BROWSER_TEST_F_WITH_PRE(ActiveDirectoryLoginTest, LoginErrors) {
   SetupActiveDirectoryJSNotifications();
   TestNoError();
   TestDomainVisible();
@@ -409,14 +367,9 @@ IN_PROC_BROWSER_TEST_F(ActiveDirectoryLoginTest, LoginErrors) {
   TestDomainVisible();
 }
 
-// Marks as Active Directory enterprise device and OOBE as completed.
-IN_PROC_BROWSER_TEST_F(ActiveDirectoryLoginTest,
-                       PRE_PasswordChange_LoginSuccess) {
-  MarkAsActiveDirectoryEnterprise();
-}
-
 // Test successful Active Directory login from the password change screen.
-IN_PROC_BROWSER_TEST_F(ActiveDirectoryLoginTest, PasswordChange_LoginSuccess) {
+IN_PROC_BROWSER_TEST_F_WITH_PRE(ActiveDirectoryLoginTest,
+                                PasswordChange_LoginSuccess) {
   TestLoginVisible();
   TestDomainVisible();
 
@@ -432,13 +385,9 @@ IN_PROC_BROWSER_TEST_F(ActiveDirectoryLoginTest, PasswordChange_LoginSuccess) {
   session_start_waiter.Wait();
 }
 
-// Marks as Active Directory enterprise device and OOBE as completed.
-IN_PROC_BROWSER_TEST_F(ActiveDirectoryLoginTest, PRE_PasswordChange_UIErrors) {
-  MarkAsActiveDirectoryEnterprise();
-}
-
 // Test different UI errors for Active Directory password change screen.
-IN_PROC_BROWSER_TEST_F(ActiveDirectoryLoginTest, PasswordChange_UIErrors) {
+IN_PROC_BROWSER_TEST_F_WITH_PRE(ActiveDirectoryLoginTest,
+                                PasswordChange_UIErrors) {
   TestLoginVisible();
   TestDomainVisible();
 
@@ -468,15 +417,9 @@ IN_PROC_BROWSER_TEST_F(ActiveDirectoryLoginTest, PasswordChange_UIErrors) {
   TestAdPasswordChangeError(kAdOldPasswordInput);
 }
 
-// Marks as Active Directory enterprise device and OOBE as completed.
-IN_PROC_BROWSER_TEST_F(ActiveDirectoryLoginTest,
-                       PRE_PasswordChange_ReopenClearErrors) {
-  MarkAsActiveDirectoryEnterprise();
-}
-
 // Test reopening Active Directory password change screen clears errors.
-IN_PROC_BROWSER_TEST_F(ActiveDirectoryLoginTest,
-                       PasswordChange_ReopenClearErrors) {
+IN_PROC_BROWSER_TEST_F_WITH_PRE(ActiveDirectoryLoginTest,
+                                PasswordChange_ReopenClearErrors) {
   TestLoginVisible();
   TestDomainVisible();
 
@@ -490,5 +433,15 @@ IN_PROC_BROWSER_TEST_F(ActiveDirectoryLoginTest,
   TestLoginVisible();
   TriggerPasswordChangeScreen();
 }
+
+// Tests that DeviceLoginScreenDomainAutoComplete policy overrides device realm
+// for user autocomplete.
+IN_PROC_BROWSER_TEST_F_WITH_PRE(ActiveDirectoryLoginAutocompleteTest,
+                                TestAutocomplete) {
+  TestLoginVisible();
+  TestDomainVisible();
+}
+
+#undef IN_PROC_BROWSER_TEST_F_WITH_PRE
 
 }  // namespace chromeos

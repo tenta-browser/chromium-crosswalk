@@ -31,20 +31,25 @@
 #include "ash/public/interfaces/constants.mojom.h"
 #include "base/feature_list.h"
 #include "chrome/browser/chromeos/arc/arc_util.h"
+#include "chrome/browser/chromeos/crostini/crostini_manager.h"
+#include "chrome/browser/chromeos/crostini/crostini_util.h"
 #include "chrome/browser/chromeos/login/lock/screen_locker.h"
+#include "chrome/browser/chromeos/printing/cups_printers_manager.h"
 #include "chrome/browser/chromeos/system/input_device_settings.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/ui/ash/login_screen_client.h"
+#include "chrome/browser/ui/views/crostini/crostini_installer_view.h"
 #include "chrome/common/chrome_features.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
 #include "chromeos/dbus/session_manager_client.h"
 #include "chromeos/printing/printer_configuration.h"
+#include "components/arc/arc_prefs.h"
 #include "components/user_manager/user_manager.h"
 #include "content/public/common/service_manager_connection.h"
 #include "mojo/public/cpp/bindings/associated_binding.h"
+#include "net/base/filename_util.h"
 #include "services/service_manager/public/cpp/connector.h"
 #include "ui/base/ui_base_features.h"
-#include "ui/message_center/message_center.h"
 #include "ui/message_center/public/cpp/notification.h"
 #endif
 
@@ -417,27 +422,17 @@ AutotestPrivateGetVisibleNotificationsFunction::
 ExtensionFunction::ResponseAction
 AutotestPrivateGetVisibleNotificationsFunction::Run() {
   DVLOG(1) << "AutotestPrivateGetVisibleNotificationsFunction";
-  std::unique_ptr<base::ListValue> values(new base::ListValue);
 #if defined(OS_CHROMEOS)
-  if (base::FeatureList::IsEnabled(features::kNativeNotifications) ||
-      base::FeatureList::IsEnabled(features::kMash)) {
-    auto* connection = content::ServiceManagerConnection::GetForProcess();
-    connection->GetConnector()->BindInterface(ash::mojom::kServiceName,
-                                              &controller_);
-    controller_->GetActiveNotifications(base::BindOnce(
-        &AutotestPrivateGetVisibleNotificationsFunction::OnGotNotifications,
-        this));
-    return RespondLater();
-  }
-
-  CHECK(message_center::MessageCenter::Get());
-  for (auto* notification :
-       message_center::MessageCenter::Get()->GetVisibleNotifications()) {
-    values->Append(MakeDictionaryFromNotification(*notification));
-  }
-
+  auto* connection = content::ServiceManagerConnection::GetForProcess();
+  connection->GetConnector()->BindInterface(ash::mojom::kServiceName,
+                                            &controller_);
+  controller_->GetActiveNotifications(base::BindOnce(
+      &AutotestPrivateGetVisibleNotificationsFunction::OnGotNotifications,
+      this));
+  return RespondLater();
+#else
+  return RespondNow(OneArgument(std::make_unique<base::ListValue>()));
 #endif
-  return RespondNow(OneArgument(std::move(values)));
 }
 
 #if defined(OS_CHROMEOS)
@@ -494,6 +489,63 @@ ExtensionFunction::ResponseAction AutotestPrivateGetPrinterListFunction::Run() {
   return RespondNow(OneArgument(std::move(values)));
 }
 
+AutotestPrivateUpdatePrinterFunction::AutotestPrivateUpdatePrinterFunction() =
+    default;
+AutotestPrivateUpdatePrinterFunction::~AutotestPrivateUpdatePrinterFunction() =
+    default;
+
+ExtensionFunction::ResponseAction AutotestPrivateUpdatePrinterFunction::Run() {
+  std::unique_ptr<api::autotest_private::UpdatePrinter::Params> params(
+      api::autotest_private::UpdatePrinter::Params::Create(*args_));
+  EXTENSION_FUNCTION_VALIDATE(params);
+  DVLOG(1) << "AutotestPrivateUpdatePrinterFunction";
+#if defined(OS_CHROMEOS)
+  const api::autotest_private::Printer& js_printer = params->printer;
+  chromeos::Printer printer(js_printer.printer_id ? *js_printer.printer_id
+                                                  : "");
+  printer.set_display_name(js_printer.printer_name);
+  if (js_printer.printer_desc)
+    printer.set_description(*js_printer.printer_desc);
+
+  if (js_printer.printer_make_and_model)
+    printer.set_make_and_model(*js_printer.printer_make_and_model);
+
+  if (js_printer.printer_uri)
+    printer.set_uri(*js_printer.printer_uri);
+
+  if (js_printer.printer_ppd) {
+    const GURL ppd =
+        net::FilePathToFileURL(base::FilePath(*js_printer.printer_ppd));
+    if (ppd.is_valid())
+      printer.mutable_ppd_reference()->user_supplied_ppd_url = ppd.spec();
+    else
+      LOG(ERROR) << "Invalid ppd path: " << *js_printer.printer_ppd;
+  }
+  auto printers_manager = chromeos::CupsPrintersManager::Create(
+      ProfileManager::GetActiveUserProfile());
+  printers_manager->UpdateConfiguredPrinter(printer);
+#endif
+  return RespondNow(NoArguments());
+}
+
+AutotestPrivateRemovePrinterFunction::AutotestPrivateRemovePrinterFunction() =
+    default;
+AutotestPrivateRemovePrinterFunction::~AutotestPrivateRemovePrinterFunction() =
+    default;
+
+ExtensionFunction::ResponseAction AutotestPrivateRemovePrinterFunction::Run() {
+  std::unique_ptr<api::autotest_private::RemovePrinter::Params> params(
+      api::autotest_private::RemovePrinter::Params::Create(*args_));
+  EXTENSION_FUNCTION_VALIDATE(params);
+  DVLOG(1) << "AutotestPrivateRemovePrinterFunction";
+#if defined(OS_CHROMEOS)
+  auto printers_manager = chromeos::CupsPrintersManager::Create(
+      ProfileManager::GetActiveUserProfile());
+  printers_manager->RemoveConfiguredPrinter(params->printer_id);
+#endif
+  return RespondNow(NoArguments());
+}
+
 ExtensionFunction::ResponseAction
 AutotestPrivateGetPlayStoreStateFunction::Run() {
   DVLOG(1) << "AutotestPrivateGetPlayStoreStateFunction";
@@ -525,6 +577,8 @@ AutotestPrivateSetPlayStoreEnabledFunction::Run() {
       return RespondNow(
           Error("ARC enabled state cannot be changed for the current user"));
     }
+    profile->GetPrefs()->SetBoolean(arc::prefs::kArcLocationServiceEnabled,
+                                    true);
     return RespondNow(NoArguments());
   } else {
     return RespondNow(Error("ARC is not available for the current user"));
@@ -532,6 +586,44 @@ AutotestPrivateSetPlayStoreEnabledFunction::Run() {
 #endif
   return RespondNow(Error("ARC is not available for the current platform"));
 }
+
+ExtensionFunction::ResponseAction
+AutotestPrivateRunCrostiniInstallerFunction::Run() {
+  DVLOG(1) << "AutotestPrivateInstallCrostiniFunction";
+#if defined(OS_CHROMEOS)
+  if (!IsCrostiniUIAllowedForProfile(ProfileManager::GetActiveUserProfile())) {
+    return RespondNow(Error("Crostini is not available for the current user"));
+  }
+  // Run GUI installer which will install crostini vm / container and
+  // start terminal app on completion.  After starting the installer,
+  // we call RestartCrostini and we will be put in the pending restarters
+  // queue and be notified on success/otherwise of installation.
+  Profile* profile = Profile::FromBrowserContext(browser_context());
+  CrostiniInstallerView::Show(profile);
+  CrostiniInstallerView::GetActiveViewForTesting()->Accept();
+  crostini::CrostiniManager::GetInstance()->RestartCrostini(
+      profile, kCrostiniDefaultVmName, kCrostiniDefaultContainerName,
+      base::BindOnce(
+          &AutotestPrivateRunCrostiniInstallerFunction::CrostiniRestarted,
+          this));
+
+  return RespondLater();
+#else
+  return RespondNow(
+      Error("Crostini is not available for the current platform"));
+#endif
+}
+
+#if defined(OS_CHROMEOS)
+void AutotestPrivateRunCrostiniInstallerFunction::CrostiniRestarted(
+    crostini::ConciergeClientResult result) {
+  if (result == crostini::ConciergeClientResult::SUCCESS) {
+    Respond(NoArguments());
+  } else {
+    Respond(Error("Error installing crostini"));
+  }
+}
+#endif
 
 static base::LazyInstance<BrowserContextKeyedAPIFactory<AutotestPrivateAPI>>::
     DestructorAtExit g_autotest_private_api_factory = LAZY_INSTANCE_INITIALIZER;

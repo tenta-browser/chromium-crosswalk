@@ -208,7 +208,9 @@ public class InfoBarContainer extends SwipableOverlayView {
         updateLayoutParams(tab.getActivity());
 
         mParentView = parentView;
-        mLayout = new InfoBarContainerLayout(context);
+
+        Runnable makeContainerVisibleRunnable = () -> runUpEventAnimation(true);
+        mLayout = new InfoBarContainerLayout(context, makeContainerVisibleRunnable);
         addView(mLayout, new FrameLayout.LayoutParams(LayoutParams.MATCH_PARENT,
                 LayoutParams.WRAP_CONTENT, Gravity.CENTER_HORIZONTAL));
 
@@ -466,7 +468,7 @@ public class InfoBarContainer extends SwipableOverlayView {
                 @Override
                 public void onSheetStateChanged(int sheetState) {
                     if (mTab.isHidden()) return;
-                    setVisibility(sheetState == BottomSheet.SHEET_STATE_FULL ? INVISIBLE : VISIBLE);
+                    setVisibility(sheetState == BottomSheet.SheetState.FULL ? INVISIBLE : VISIBLE);
                 }
             };
             activity.getBottomSheet().addObserver(mBottomSheetObserver);

@@ -10,7 +10,6 @@
 #include "base/logging.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/download/download_item_model.h"
-#include "chrome/browser/download/download_stats.h"
 #include "chrome/browser/themes/theme_properties.h"
 #include "chrome/browser/themes/theme_service.h"
 #include "chrome/browser/themes/theme_service_factory.h"
@@ -43,37 +42,8 @@ using download::DownloadItem;
 
 namespace {
 
-// Max number of download views we'll contain. Any time a view is added and
-// we already have this many download views, one is removed.
-const size_t kMaxDownloadViews = 15;
-
-// Padding from left edge and first download view.
-const int kStartPadding = 4;
-
-// Padding from right edge and close button/show downloads link.
-const int kEndPadding = 6;
-
-// Padding between the show all link and close button.
-const int kCloseAndLinkPadding = 6;
-
 // Padding above the content.
-const int kTopPadding = 1;
-
-// Border color.
-const SkColor kBorderColor = SkColorSetRGB(214, 214, 214);
-
-// New download item animation speed in milliseconds.
-const int kNewItemAnimationDurationMs = 800;
-
-// Shelf show/hide speed.
-const int kShelfAnimationDurationMs = 120;
-
-// Amount of time to delay if the mouse leaves the shelf by way of entering
-// another window. This is much larger than the normal delay as opening a
-// download is most likely going to trigger a new window to appear over the
-// button. Delay the time so that the user has a chance to quickly close the
-// other app and return to chrome with the download shelf still open.
-const int kNotifyOnExitTimeMS = 5000;
+constexpr int kTopPadding = 1;
 
 // Sets size->width() to view's preferred width + size->width().
 // Sets size->height() to the max of the view's preferred height and
@@ -167,7 +137,7 @@ void DownloadShelfView::RemoveDownloadView(View* view) {
   if (download_views_.empty())
     Close(AUTOMATIC);
   else if (CanAutoClose())
-    mouse_watcher_.Start();
+    mouse_watcher_.Start(GetWidget()->GetNativeWindow());
   Layout();
   SchedulePaint();
 }
@@ -197,12 +167,14 @@ views::View* DownloadShelfView::GetDefaultFocusableChild() {
 }
 
 void DownloadShelfView::OnPaintBorder(gfx::Canvas* canvas) {
-  canvas->FillRect(gfx::Rect(0, 0, width(), 1), kBorderColor);
+  canvas->FillRect(gfx::Rect(0, 0, width(), 1),
+                   GetThemeProvider()->GetColor(
+                       ThemeProperties::COLOR_TOOLBAR_CONTENT_AREA_SEPARATOR));
 }
 
 void DownloadShelfView::OpenedDownload() {
   if (CanAutoClose())
-    mouse_watcher_.Start();
+    mouse_watcher_.Start(GetWidget()->GetNativeWindow());
 }
 
 content::PageNavigator* DownloadShelfView::GetNavigator() {
@@ -342,7 +314,7 @@ void DownloadShelfView::UpdateColorsFromTheme() {
       GetThemeProvider()->GetColor(ThemeProperties::COLOR_TOOLBAR)));
 
   views::SetImageFromVectorIcon(
-      close_button_, vector_icons::kClose16Icon,
+      close_button_, vector_icons::kCloseRoundedIcon,
       DownloadItemView::GetTextColorForThemeProvider(GetThemeProvider()));
 }
 
@@ -378,13 +350,6 @@ void DownloadShelfView::DoOpen() {
 }
 
 void DownloadShelfView::DoClose(CloseReason reason) {
-  int num_in_progress = 0;
-  for (size_t i = 0; i < download_views_.size(); ++i) {
-    if (download_views_[i]->download()->GetState() == DownloadItem::IN_PROGRESS)
-      ++num_in_progress;
-  }
-  RecordDownloadShelfClose(
-      download_views_.size(), num_in_progress, reason == AUTOMATIC);
   parent_->SetDownloadShelfVisible(false);
   shelf_animation_.Hide();
 }

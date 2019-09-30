@@ -18,10 +18,13 @@
 #include "chrome/common/url_constants.h"
 #include "chrome/grit/browser_resources.h"
 #include "chrome/grit/generated_resources.h"
+#include "chrome/grit/theme_resources.h"
 #include "components/strings/grit/components_strings.h"
 #include "content/public/browser/web_ui.h"
 #include "content/public/browser/web_ui_data_source.h"
+#include "content/public/common/content_features.h"
 #include "ui/base/l10n/l10n_util.h"
+#include "ui/base/resource/resource_bundle.h"
 
 namespace {
 
@@ -133,7 +136,10 @@ content::WebUIDataSource* CreateMdBookmarksUIHTMLSource(Profile* profile) {
                           IDR_MD_BOOKMARKS_IMAGES_FOLDER_SVG);
 #if BUILDFLAG(OPTIMIZE_WEBUI)
   source->AddResourcePath("crisper.js", IDR_MD_BOOKMARKS_CRISPER_JS);
-  source->SetDefaultResource(IDR_MD_BOOKMARKS_VULCANIZED_HTML);
+  source->SetDefaultResource(
+      base::FeatureList::IsEnabled(features::kWebUIPolymer2)
+          ? IDR_MD_BOOKMARKS_VULCANIZED_P2_HTML
+          : IDR_MD_BOOKMARKS_VULCANIZED_HTML);
   source->UseGzip({"images/folder_open.svg", "images/folder.svg"});
 #else
   source->AddResourcePath("actions.html", IDR_MD_BOOKMARKS_ACTIONS_HTML);
@@ -226,6 +232,8 @@ MdBookmarksUI::MdBookmarksUI(content::WebUI* web_ui) : WebUIController(web_ui) {
 }
 
 // static
-bool MdBookmarksUI::IsEnabled() {
-  return base::FeatureList::IsEnabled(features::kMaterialDesignBookmarks);
+base::RefCountedMemory* MdBookmarksUI::GetFaviconResourceBytes(
+    ui::ScaleFactor scale_factor) {
+  return ui::ResourceBundle::GetSharedInstance().LoadDataResourceBytesForScale(
+      IDR_BOOKMARKS_FAVICON, scale_factor);
 }

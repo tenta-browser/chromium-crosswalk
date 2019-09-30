@@ -54,7 +54,7 @@ class RepeatEvent final : public Event {
 
   int Repeat() const { return repeat_; }
 
-  virtual void Trace(blink::Visitor* visitor) { Event::Trace(visitor); }
+  void Trace(blink::Visitor* visitor) override { Event::Trace(visitor); }
 
  protected:
   RepeatEvent(const AtomicString& type,
@@ -92,7 +92,7 @@ class ConditionEventListener final : public EventListener {
 
   void DisconnectAnimation() { animation_ = nullptr; }
 
-  virtual void Trace(blink::Visitor* visitor) {
+  void Trace(blink::Visitor* visitor) override {
     visitor->Trace(animation_);
     visitor->Trace(condition_);
     EventListener::Trace(visitor);
@@ -302,10 +302,10 @@ void SVGSMILElement::Reset() {
 }
 
 Node::InsertionNotificationRequest SVGSMILElement::InsertedInto(
-    ContainerNode* root_parent) {
+    ContainerNode& root_parent) {
   SVGElement::InsertedInto(root_parent);
 
-  if (!root_parent->isConnected())
+  if (!root_parent.isConnected())
     return kInsertionDone;
 
   UseCounter::Count(GetDocument(), WebFeature::kSVGSMILElementInDocument);
@@ -338,8 +338,8 @@ Node::InsertionNotificationRequest SVGSMILElement::InsertedInto(
   return kInsertionDone;
 }
 
-void SVGSMILElement::RemovedFrom(ContainerNode* root_parent) {
-  if (root_parent->isConnected()) {
+void SVGSMILElement::RemovedFrom(ContainerNode& root_parent) {
+  if (root_parent.isConnected()) {
     ClearResourceAndEventBaseReferences();
     ClearConditions();
     SetTargetElement(nullptr);
@@ -1253,9 +1253,9 @@ void SVGSMILElement::DispatchPendingEvent(const AtomicString& event_type) {
   if (event_type == "repeatn") {
     unsigned repeat_event_count = repeat_event_count_list_.front();
     repeat_event_count_list_.EraseAt(0);
-    DispatchEvent(RepeatEvent::Create(event_type, repeat_event_count));
+    DispatchEvent(*RepeatEvent::Create(event_type, repeat_event_count));
   } else {
-    DispatchEvent(Event::Create(event_type));
+    DispatchEvent(*Event::Create(event_type));
   }
 }
 

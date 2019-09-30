@@ -36,6 +36,10 @@
 #include "ui/views/layout/box_layout.h"
 #include "ui/views/widget/widget.h"
 
+#if defined(OS_MACOSX)
+#include "chrome/browser/global_keyboard_shortcuts_mac.h"
+#endif
+
 #if defined(OS_CHROMEOS)
 #include "ash/public/cpp/window_properties.h"
 #include "ash/public/interfaces/window_state_type.mojom.h"
@@ -142,9 +146,13 @@ PresentationReceiverWindowView::PresentationReceiverWindowView(
 PresentationReceiverWindowView::~PresentationReceiverWindowView() = default;
 
 void PresentationReceiverWindowView::Init() {
-  auto* const focus_manager = GetFocusManager();
-  DCHECK(focus_manager);
-
+#if defined(OS_MACOSX)
+  // On macOS, the mapping between accelerators and commands is dynamic and user
+  // configurable. We fetch and use the default mapping.
+  bool result = GetDefaultMacAcceleratorForCommandId(IDC_FULLSCREEN,
+                                                     &fullscreen_accelerator_);
+  DCHECK(result);
+#else
   const auto accelerators = GetAcceleratorList();
   const auto fullscreen_accelerator =
       std::find_if(accelerators.begin(), accelerators.end(),
@@ -154,6 +162,10 @@ void PresentationReceiverWindowView::Init() {
   DCHECK(fullscreen_accelerator != accelerators.end());
   fullscreen_accelerator_ = ui::Accelerator(fullscreen_accelerator->keycode,
                                             fullscreen_accelerator->modifiers);
+#endif
+
+  auto* const focus_manager = GetFocusManager();
+  DCHECK(focus_manager);
   focus_manager->RegisterAccelerator(
       fullscreen_accelerator_, ui::AcceleratorManager::kNormalPriority, this);
 
@@ -303,7 +315,8 @@ void PresentationReceiverWindowView::EnterFullscreen(
     ExclusiveAccessBubbleType bubble_type) {
   EnterFullscreen();
   UpdateExclusiveAccessExitBubbleContent(url, bubble_type,
-                                         ExclusiveAccessBubbleHideCallback());
+                                         ExclusiveAccessBubbleHideCallback(),
+                                         /*force_update=*/false);
 }
 
 void PresentationReceiverWindowView::ExitFullscreen() {
@@ -317,7 +330,8 @@ void PresentationReceiverWindowView::ExitFullscreen() {
 void PresentationReceiverWindowView::UpdateExclusiveAccessExitBubbleContent(
     const GURL& url,
     ExclusiveAccessBubbleType bubble_type,
-    ExclusiveAccessBubbleHideCallback bubble_first_hide_callback) {
+    ExclusiveAccessBubbleHideCallback bubble_first_hide_callback,
+    bool force_update) {
 #if defined(CHROMEOS)
   // On Chrome OS, we will not show the toast for the normal browser fullscreen
   // mode.  The 'F11' text is confusing since how to access F11 on a Chromebook
@@ -339,7 +353,7 @@ void PresentationReceiverWindowView::UpdateExclusiveAccessExitBubbleContent(
 
   if (exclusive_access_bubble_) {
     exclusive_access_bubble_->UpdateContent(
-        url, bubble_type, std::move(bubble_first_hide_callback));
+        url, bubble_type, std::move(bubble_first_hide_callback), force_update);
     return;
   }
 
@@ -356,6 +370,19 @@ content::WebContents* PresentationReceiverWindowView::GetActiveWebContents() {
 void PresentationReceiverWindowView::UnhideDownloadShelf() {}
 
 void PresentationReceiverWindowView::HideDownloadShelf() {}
+
+bool PresentationReceiverWindowView::ShouldHideUIForFullscreen() const {
+  return false;
+}
+
+ExclusiveAccessBubbleViews*
+PresentationReceiverWindowView::GetExclusiveAccessBubble() {
+  return exclusive_access_bubble_.get();
+}
+
+bool PresentationReceiverWindowView::CanUserExitFullscreen() const {
+  return true;
+}
 
 ExclusiveAccessManager*
 PresentationReceiverWindowView::GetExclusiveAccessManager() {

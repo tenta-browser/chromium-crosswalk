@@ -4,9 +4,12 @@
 
 #include <string>
 
+#include "ash/public/cpp/ash_features.h"
 #include "ash/shelf/shelf.h"
 #include "ash/shell.h"
+#include "ash/system/status_area_widget.h"
 #include "ash/system/tray/system_tray.h"
+#include "ash/system/unified/unified_system_tray.h"
 #include "base/command_line.h"
 #include "base/location.h"
 #include "base/run_loop.h"
@@ -32,9 +35,8 @@
 #include "chrome/test/base/interactive_test_utils.h"
 #include "chromeos/chromeos_switches.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
-#include "chromeos/dbus/fake_auth_policy_client.h"
 #include "chromeos/settings/cros_settings_names.h"
-#include "components/signin/core/account_id/account_id.h"
+#include "components/account_id/account_id.h"
 #include "components/user_manager/user_names.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/test/browser_test_utils.h"
@@ -173,6 +175,7 @@ class LoginTest : public LoginManagerTest {
     StartGaiaAuthOffline();
 
     UserContext user_context(
+        user_manager::UserType::USER_TYPE_REGULAR,
         AccountId::FromUserEmailGaiaId(kTestUser, kGaiaId));
     user_context.SetKey(Key(kPassword));
     SetExpectedCredentials(user_context);
@@ -182,9 +185,14 @@ class LoginTest : public LoginManagerTest {
 // Used to make sure that the system tray is visible and within the screen
 // bounds after login.
 void TestSystemTrayIsVisible(bool otr) {
-  ash::SystemTray* tray = ash::Shell::Get()->GetPrimarySystemTray();
   aura::Window* primary_win = ash::Shell::GetPrimaryRootWindow();
   ash::Shelf* shelf = ash::Shelf::ForWindow(primary_win);
+  ash::TrayBackgroundView* tray =
+      ash::features::IsSystemTrayUnifiedEnabled()
+          ? static_cast<ash::TrayBackgroundView*>(
+                shelf->GetStatusAreaWidget()->unified_system_tray())
+          : static_cast<ash::TrayBackgroundView*>(
+                shelf->GetStatusAreaWidget()->system_tray());
   SCOPED_TRACE(testing::Message()
                << "ShelfVisibilityState=" << shelf->GetVisibilityState()
                << " ShelfAutoHideBehavior=" << shelf->auto_hide_behavior());

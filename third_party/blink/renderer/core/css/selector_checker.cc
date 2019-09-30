@@ -29,7 +29,9 @@
 
 #include "third_party/blink/renderer/core/css/selector_checker.h"
 
+#include "base/auto_reset.h"
 #include "third_party/blink/renderer/core/css/css_selector_list.h"
+#include "third_party/blink/renderer/core/css/part_names.h"
 #include "third_party/blink/renderer/core/css/style_engine.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/element.h"
@@ -57,11 +59,10 @@
 #include "third_party/blink/renderer/core/page/focus_controller.h"
 #include "third_party/blink/renderer/core/page/page.h"
 #include "third_party/blink/renderer/core/probe/core_probes.h"
+#include "third_party/blink/renderer/core/scroll/scrollable_area.h"
+#include "third_party/blink/renderer/core/scroll/scrollbar_theme.h"
 #include "third_party/blink/renderer/core/style/computed_style.h"
 #include "third_party/blink/renderer/platform/runtime_enabled_features.h"
-#include "third_party/blink/renderer/platform/scroll/scrollable_area.h"
-#include "third_party/blink/renderer/platform/scroll/scrollbar_theme.h"
-#include "third_party/blink/renderer/platform/wtf/auto_reset.h"
 
 namespace blink {
 
@@ -235,8 +236,8 @@ SelectorChecker::MatchStatus SelectorChecker::MatchSelector(
         context.pseudo_id != result.dynamic_pseudo)
       return kSelectorFailsCompletely;
 
-    AutoReset<PseudoId> dynamic_pseudo_scope(&result.dynamic_pseudo,
-                                             kPseudoIdNone);
+    base::AutoReset<PseudoId> dynamic_pseudo_scope(&result.dynamic_pseudo,
+                                                   kPseudoIdNone);
     match = MatchForRelation(context, result);
   } else {
     match = MatchForSubSelector(context, result);
@@ -300,14 +301,6 @@ SelectorChecker::MatchStatus SelectorChecker::MatchForPseudoShadow(
 static inline Element* ParentOrV0ShadowHostElement(const Element& element) {
   if (element.parentNode() && element.parentNode()->IsShadowRoot()) {
     if (ToShadowRoot(element.parentNode())->GetType() != ShadowRootType::V0)
-      return nullptr;
-  }
-  return element.ParentOrShadowHostElement();
-}
-
-static inline Element* ParentOrOpenShadowHostElement(const Element& element) {
-  if (element.parentNode() && element.parentNode()->IsShadowRoot()) {
-    if (ToShadowRoot(element.parentNode())->GetType() != ShadowRootType::kOpen)
       return nullptr;
   }
   return element.ParentOrShadowHostElement();
@@ -478,28 +471,6 @@ SelectorChecker::MatchStatus SelectorChecker::MatchForRelation(
           return match;
         if (NextSelectorExceedsScope(next_context))
           return kSelectorFailsCompletely;
-      }
-      return kSelectorFailsCompletely;
-    }
-
-    case CSSSelector::kShadowPiercingDescendant: {
-      DCHECK_EQ(mode_, kQueryingRules);
-      UseCounter::Count(context.element->GetDocument(),
-                        WebFeature::kCSSShadowPiercingDescendantCombinator);
-      // TODO(kochi): parentOrOpenShadowHostElement() is necessary because
-      // SelectorQuery can pass V0 shadow roots. All closed shadow roots are
-      // already filtered out, thus once V0 is removed this logic can use
-      // parentOrShadowHostElement() instead.
-      for (next_context.element =
-               ParentOrOpenShadowHostElement(*context.element);
-           next_context.element;
-           next_context.element =
-               ParentOrOpenShadowHostElement(*next_context.element)) {
-        MatchStatus match = MatchSelector(next_context, result);
-        if (match == kSelectorMatches || match == kSelectorFailsCompletely)
-          return match;
-        if (NextSelectorExceedsScope(next_context))
-          break;
       }
       return kSelectorFailsCompletely;
     }
@@ -1045,14 +1016,6 @@ bool SelectorChecker::CheckPseudoClass(const SelectorCheckingContext& context,
     case CSSSelector::kPseudoFullscreen:
     // fall through
     case CSSSelector::kPseudoFullScreen:
-      // While a Document is in the fullscreen state, and the document's current
-      // fullscreen element is an element in the document, the 'full-screen'
-      // pseudoclass applies to that element. Also, an <iframe>, <object> or
-      // <embed> element whose child browsing context's Document is in the
-      // fullscreen state has the 'full-screen' pseudoclass applied.
-      if (IsHTMLFrameElementBase(element) &&
-          element.ContainsFullScreenElement())
-        return true;
       return Fullscreen::IsFullscreenElement(element);
     case CSSSelector::kPseudoFullScreenAncestor:
       return element.ContainsFullScreenElement();
@@ -1089,6 +1052,9 @@ bool SelectorChecker::CheckPseudoClass(const SelectorCheckingContext& context,
     case CSSSelector::kPseudoSpatialNavigationFocus:
       DCHECK(is_ua_rule_);
       return MatchesSpatialNavigationFocusPseudoClass(element);
+    case CSSSelector::kPseudoIsHtml:
+      DCHECK(is_ua_rule_);
+      return element.GetDocument().IsHTMLDocument();
     case CSSSelector::kPseudoListBox:
       DCHECK(is_ua_rule_);
       return MatchesListBoxPseudoClass(element);
@@ -1118,6 +1084,7 @@ bool SelectorChecker::CheckPseudoClass(const SelectorCheckingContext& context,
       return false;
     case CSSSelector::kPseudoUnknown:
     case CSSSelector::kPseudoMatches:
+    case CSSSelector::kPseudoIS:
     default:
       NOTREACHED();
       break;
@@ -1148,15 +1115,8 @@ bool SelectorChecker::CheckPseudoElement(const SelectorCheckingContext& context,
     case CSSSelector::kPseudoPart:
       if (!RuntimeEnabledFeatures::CSSPartPseudoElementEnabled())
         return false;
-      if (const SpaceSplitString* part_names = element.PartNames()) {
-        if (part_names->Contains(selector.Argument())) {
-          // TODO(crbug/805271): Until partmap is implemented, only consider
-          // styling parts from scope directly containing the shadow host.
-          Element* host = element.OwnerShadowHost();
-          return host && host->GetTreeScope() == context.scope->GetTreeScope();
-        }
-      }
-      return false;
+      DCHECK(part_names_);
+      return part_names_->Contains(selector.Argument());
     case CSSSelector::kPseudoPlaceholder:
       if (ShadowRoot* root = element.ContainingShadowRoot()) {
         return root->IsUserAgent() &&
@@ -1388,14 +1348,17 @@ bool SelectorChecker::MatchesFocusVisiblePseudoClass(const Element& element) {
                           &force_pseudo_state);
   if (force_pseudo_state)
     return true;
-  bool always_show_focus_ring =
-      IsHTMLFormControlElement(element) &&
-      ToHTMLFormControlElement(element).ShouldShowFocusRingOnMouseFocus();
-  // Avoid probing for force_pseudo_state. Otherwise, as currently implemented,
-  // :focus-visible will always match if :focus is forced, since no focus
-  // source flags will be set.
-  return element.IsFocused() && IsFrameFocused(element) &&
-         (!element.WasFocusedByMouse() || always_show_focus_ring);
+
+  const Document& document = element.GetDocument();
+  bool always_show_focus_ring = element.MayTriggerVirtualKeyboard();
+  bool last_focus_from_mouse =
+      document.GetFrame() &&
+      document.GetFrame()->Selection().FrameIsFocusedAndActive() &&
+      document.LastFocusType() == kWebFocusTypeMouse;
+  bool had_keyboard_event = document.HadKeyboardEvent();
+
+  return element.IsFocused() && (!last_focus_from_mouse || had_keyboard_event ||
+                                 always_show_focus_ring);
 }
 
 }  // namespace blink

@@ -42,8 +42,8 @@
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 
-namespace blink {
-class WebLayer;
+namespace cc {
+class Layer;
 }
 
 namespace blink {
@@ -138,7 +138,7 @@ class MODULES_EXPORT CanvasRenderingContext2D final
   void LoseContext(LostContextMode) override;
   void DidSetSurfaceSize() override;
 
-  void RestoreCanvasMatrixClipStack(PaintCanvas*) const override;
+  void RestoreCanvasMatrixClipStack(cc::PaintCanvas*) const override;
 
   // TaskObserver implementation
   void DidProcessTask() final;
@@ -174,8 +174,8 @@ class MODULES_EXPORT CanvasRenderingContext2D final
 
   bool ParseColorOrCurrentColor(Color&, const String& color_string) const final;
 
-  PaintCanvas* DrawingCanvas() const final;
-  PaintCanvas* ExistingDrawingCanvas() const final;
+  cc::PaintCanvas* DrawingCanvas() const final;
+  cc::PaintCanvas* ExistingDrawingCanvas() const final;
   void DisableDeferral(DisableDeferralReason) final;
 
   void DidDraw(const SkIRect& dirty_rect) final;
@@ -193,10 +193,10 @@ class MODULES_EXPORT CanvasRenderingContext2D final
 
   void WillDrawImage(CanvasImageSource*) const final;
 
-  virtual void Trace(blink::Visitor*);
+  void Trace(blink::Visitor*) override;
 
  protected:
-  virtual void NeedsFinalizeFrame() {
+  void NeedsFinalizeFrame() override {
     CanvasRenderingContext::NeedsFinalizeFrame();
   }
 
@@ -244,13 +244,15 @@ class MODULES_EXPORT CanvasRenderingContext2D final
   bool Is2d() const override { return true; }
   bool IsComposited() const override;
   bool IsAccelerated() const override;
+  bool IsOriginTopLeft() const override;
   bool HasAlpha() const override { return CreationAttributes().alpha; }
   void SetIsHidden(bool) override;
   void Stop() final;
 
-  virtual bool IsTransformInvertible() const;
+  bool IsTransformInvertible() const override;
+  AffineTransform Transform() const override;
 
-  WebLayer* PlatformLayer() const override;
+  cc::Layer* CcLayer() const override;
   bool IsCanvas2DBufferValid() const override;
 
   Member<HitRegionManager> hit_region_manager_;

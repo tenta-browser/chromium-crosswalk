@@ -31,8 +31,8 @@
 #include "third_party/blink/public/platform/web_security_origin.h"
 #include "third_party/blink/public/platform/web_url.h"
 #include "third_party/blink/public/web/web_document.h"
-#include "third_party/blink/public/web/web_frame_client.h"
 #include "third_party/blink/public/web/web_local_frame.h"
+#include "third_party/blink/public/web/web_local_frame_client.h"
 #include "third_party/blink/public/web/web_view.h"
 #include "url/gurl.h"
 #include "url/origin.h"
@@ -156,6 +156,11 @@ void ContentSettingsObserver::SetContentSettingRules(
                        content_setting_rules_->client_hints_rules.size());
 }
 
+const RendererContentSettingRules*
+ContentSettingsObserver::GetContentSettingRules() {
+  return content_setting_rules_;
+}
+
 bool ContentSettingsObserver::IsPluginTemporarilyAllowed(
     const std::string& identifier) {
   // If the empty string is in here, it means all plugins are allowed.
@@ -233,7 +238,7 @@ void ContentSettingsObserver::SetAllowRunningInsecureContent() {
   // Reload if we are the main frame.
   blink::WebLocalFrame* frame = render_frame()->GetWebFrame();
   if (!frame->Parent())
-    frame->Reload(blink::WebFrameLoadType::kReload);
+    frame->StartReload(blink::WebFrameLoadType::kReload);
 }
 
 void ContentSettingsObserver::SetAsInterstitial() {
@@ -445,6 +450,16 @@ bool ContentSettingsObserver::AllowAutoplay(bool default_value) {
   blink::WebLocalFrame* frame = render_frame()->GetWebFrame();
   return GetContentSettingFromRules(
              content_setting_rules_->autoplay_rules, frame,
+             url::Origin(frame->GetDocument().GetSecurityOrigin()).GetURL()) ==
+         CONTENT_SETTING_ALLOW;
+}
+
+bool ContentSettingsObserver::AllowPopupsAndRedirects(bool default_value) {
+  if (!content_setting_rules_)
+    return default_value;
+  blink::WebLocalFrame* frame = render_frame()->GetWebFrame();
+  return GetContentSettingFromRules(
+             content_setting_rules_->popup_redirect_rules, frame,
              url::Origin(frame->GetDocument().GetSecurityOrigin()).GetURL()) ==
          CONTENT_SETTING_ALLOW;
 }

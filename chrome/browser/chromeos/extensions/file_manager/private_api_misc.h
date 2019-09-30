@@ -26,6 +26,10 @@ namespace chromeos {
 class RecentFile;
 }  // namespace chromeos
 
+namespace crostini {
+enum class ConciergeClientResult;
+}
+
 namespace file_manager {
 namespace util {
 struct EntryDefinition;
@@ -48,7 +52,7 @@ class FileManagerPrivateLogoutUserForReauthenticationFunction
                              FILEMANAGERPRIVATE_LOGOUTUSERFORREAUTHENTICATION)
 
  protected:
-  ~FileManagerPrivateLogoutUserForReauthenticationFunction() override {}
+  ~FileManagerPrivateLogoutUserForReauthenticationFunction() override = default;
 
   // ExtensionFunction:
   ResponseAction Run() override;
@@ -63,7 +67,7 @@ class FileManagerPrivateGetPreferencesFunction
                              FILEMANAGERPRIVATE_GETPREFERENCES)
 
  protected:
-  ~FileManagerPrivateGetPreferencesFunction() override {}
+  ~FileManagerPrivateGetPreferencesFunction() override = default;
 
   ResponseAction Run() override;
 };
@@ -77,7 +81,7 @@ class FileManagerPrivateSetPreferencesFunction
                              FILEMANAGERPRIVATE_SETPREFERENCES)
 
  protected:
-  ~FileManagerPrivateSetPreferencesFunction() override {}
+  ~FileManagerPrivateSetPreferencesFunction() override = default;
 
   ResponseAction Run() override;
 };
@@ -113,7 +117,7 @@ class FileManagerPrivateZoomFunction : public UIThreadExtensionFunction {
                              FILEMANAGERPRIVATE_ZOOM);
 
  protected:
-  ~FileManagerPrivateZoomFunction() override {}
+  ~FileManagerPrivateZoomFunction() override = default;
 
   // ExtensionFunction:
   ResponseAction Run() override;
@@ -146,7 +150,7 @@ class FileManagerPrivateGetProfilesFunction : public UIThreadExtensionFunction {
                              FILEMANAGERPRIVATE_GETPROFILES);
 
  protected:
-  ~FileManagerPrivateGetProfilesFunction() override {}
+  ~FileManagerPrivateGetProfilesFunction() override = default;
 
   // ExtensionFunction:
   ResponseAction Run() override;
@@ -160,7 +164,7 @@ class FileManagerPrivateOpenInspectorFunction
                              FILEMANAGERPRIVATE_OPENINSPECTOR);
 
  protected:
-  ~FileManagerPrivateOpenInspectorFunction() override {}
+  ~FileManagerPrivateOpenInspectorFunction() override = default;
 
   ResponseAction Run() override;
 };
@@ -173,7 +177,7 @@ class FileManagerPrivateOpenSettingsSubpageFunction
                              FILEMANAGERPRIVATE_OPENSETTINGSSUBPAGE);
 
  protected:
-  ~FileManagerPrivateOpenSettingsSubpageFunction() override {}
+  ~FileManagerPrivateOpenSettingsSubpageFunction() override = default;
 
   ResponseAction Run() override;
 };
@@ -200,11 +204,11 @@ class FileManagerPrivateInternalGetMimeTypeFunction
 class FileManagerPrivateIsPiexLoaderEnabledFunction
     : public UIThreadExtensionFunction {
  public:
-  FileManagerPrivateIsPiexLoaderEnabledFunction() {}
+  FileManagerPrivateIsPiexLoaderEnabledFunction() = default;
   DECLARE_EXTENSION_FUNCTION("fileManagerPrivate.isPiexLoaderEnabled",
                              FILEMANAGERPRIVATE_ISPIEXLOADERENABLED)
  protected:
-  ~FileManagerPrivateIsPiexLoaderEnabledFunction() override {}
+  ~FileManagerPrivateIsPiexLoaderEnabledFunction() override = default;
 
  private:
   ResponseAction Run() override;
@@ -219,7 +223,7 @@ class FileManagerPrivateGetProvidersFunction
   DECLARE_EXTENSION_FUNCTION("fileManagerPrivate.getProviders",
                              FILEMANAGERPRIVATE_GETPROVIDERS)
  protected:
-  ~FileManagerPrivateGetProvidersFunction() override {}
+  ~FileManagerPrivateGetProvidersFunction() override = default;
 
  private:
   ResponseAction Run() override;
@@ -235,7 +239,7 @@ class FileManagerPrivateAddProvidedFileSystemFunction
   DECLARE_EXTENSION_FUNCTION("fileManagerPrivate.addProvidedFileSystem",
                              FILEMANAGERPRIVATE_ADDPROVIDEDFILESYSTEM)
  protected:
-  ~FileManagerPrivateAddProvidedFileSystemFunction() override {}
+  ~FileManagerPrivateAddProvidedFileSystemFunction() override = default;
 
  private:
   ResponseAction Run() override;
@@ -251,7 +255,7 @@ class FileManagerPrivateConfigureVolumeFunction
   DECLARE_EXTENSION_FUNCTION("fileManagerPrivate.configureVolume",
                              FILEMANAGERPRIVATE_CONFIGUREVOLUME)
  protected:
-  ~FileManagerPrivateConfigureVolumeFunction() override {}
+  ~FileManagerPrivateConfigureVolumeFunction() override = default;
 
  private:
   ResponseAction Run() override;
@@ -259,6 +263,57 @@ class FileManagerPrivateConfigureVolumeFunction
 
   const ChromeExtensionFunctionDetails chrome_details_;
   DISALLOW_COPY_AND_ASSIGN(FileManagerPrivateConfigureVolumeFunction);
+};
+
+// Implements the chrome.fileManagerPrivate.isCrostiniEnabled method.
+// Gets crostini sftp mount params.
+class FileManagerPrivateIsCrostiniEnabledFunction
+    : public UIThreadExtensionFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("fileManagerPrivate.isCrostiniEnabled",
+                             FILEMANAGERPRIVATE_ISCROSTINIENABLED)
+
+ protected:
+  ~FileManagerPrivateIsCrostiniEnabledFunction() override = default;
+
+  ResponseAction Run() override;
+};
+
+// Implements the chrome.fileManagerPrivate.mountCrostiniContainer method.
+// Starts and mounts crostini container.
+class FileManagerPrivateMountCrostiniContainerFunction
+    : public LoggedAsyncExtensionFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("fileManagerPrivate.mountCrostiniContainer",
+                             FILEMANAGERPRIVATE_MOUNTCROSTINICONTAINER)
+  FileManagerPrivateMountCrostiniContainerFunction();
+
+ protected:
+  ~FileManagerPrivateMountCrostiniContainerFunction() override;
+
+  bool RunAsync() override;
+  void RestartCallback(crostini::ConciergeClientResult);
+
+ private:
+  std::string source_path_;
+  std::string mount_label_;
+};
+
+// Implements the chrome.fileManagerPrivate.installLinuxPackage method.
+// Starts installation of a Linux package.
+class FileManagerPrivateInternalInstallLinuxPackageFunction
+    : public UIThreadExtensionFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("fileManagerPrivateInternal.installLinuxPackage",
+                             FILEMANAGERPRIVATEINTERNAL_INSTALLLINUXPACKAGE)
+
+ protected:
+  ~FileManagerPrivateInternalInstallLinuxPackageFunction() override = default;
+
+ private:
+  ResponseAction Run() override;
+  void OnInstallLinuxPackage(crostini::ConciergeClientResult result,
+                             const std::string& failure_reason);
 };
 
 // Implements the chrome.fileManagerPrivate.getCustomActions method.
@@ -269,7 +324,7 @@ class FileManagerPrivateInternalGetCustomActionsFunction
   DECLARE_EXTENSION_FUNCTION("fileManagerPrivateInternal.getCustomActions",
                              FILEMANAGERPRIVATEINTERNAL_GETCUSTOMACTIONS)
  protected:
-  ~FileManagerPrivateInternalGetCustomActionsFunction() override {}
+  ~FileManagerPrivateInternalGetCustomActionsFunction() override = default;
 
  private:
   ResponseAction Run() override;
@@ -288,7 +343,7 @@ class FileManagerPrivateInternalExecuteCustomActionFunction
   DECLARE_EXTENSION_FUNCTION("fileManagerPrivateInternal.executeCustomAction",
                              FILEMANAGERPRIVATEINTERNAL_EXECUTECUSTOMACTION)
  protected:
-  ~FileManagerPrivateInternalExecuteCustomActionFunction() override {}
+  ~FileManagerPrivateInternalExecuteCustomActionFunction() override = default;
 
  private:
   ResponseAction Run() override;
@@ -307,7 +362,7 @@ class FileManagerPrivateInternalGetRecentFilesFunction
   DECLARE_EXTENSION_FUNCTION("fileManagerPrivateInternal.getRecentFiles",
                              FILEMANAGERPRIVATE_GETRECENTFILES)
  protected:
-  ~FileManagerPrivateInternalGetRecentFilesFunction() override {}
+  ~FileManagerPrivateInternalGetRecentFilesFunction() override = default;
 
  private:
   ResponseAction Run() override;

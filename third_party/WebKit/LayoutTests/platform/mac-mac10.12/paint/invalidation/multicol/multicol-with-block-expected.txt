@@ -19,28 +19,10 @@
       "paintInvalidations": [
         {
           "object": "LayoutMultiColumnFlowThread (anonymous)",
-          "rect": [488, 8, 80, 21],
-          "reason": "appeared"
+          "rect": [328, 8, 240, 41],
+          "reason": "chunk appeared"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutBlockFlow DIV id='target'",
-      "reason": "style change"
-    },
-    {
-      "object": "RootInlineBox",
-      "reason": "style change"
-    },
-    {
-      "object": "LayoutText #text",
-      "reason": "style change"
-    },
-    {
-      "object": "InlineTextBox 'PASS'",
-      "reason": "style change"
     }
   ]
 }

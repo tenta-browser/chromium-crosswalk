@@ -306,7 +306,7 @@ class CORE_EXPORT HTMLInputElement
  protected:
   HTMLInputElement(Document&, const CreateElementFlags);
 
-  void DefaultEventHandler(Event*) override;
+  void DefaultEventHandler(Event&) override;
   void CreateShadowSubtree();
 
  private:
@@ -314,14 +314,14 @@ class CORE_EXPORT HTMLInputElement
 
   void WillChangeForm() final;
   void DidChangeForm() final;
-  InsertionNotificationRequest InsertedInto(ContainerNode*) override;
-  void RemovedFrom(ContainerNode*) final;
+  InsertionNotificationRequest InsertedInto(ContainerNode&) override;
+  void RemovedFrom(ContainerNode&) final;
   void DidMoveToNewDocument(Document& old_document) final;
   bool HasActivationBehavior() const override;
 
   bool HasCustomFocusLogic() const final;
   bool IsKeyboardFocusable() const final;
-  bool ShouldShowFocusRingOnMouseFocus() const final;
+  bool MayTriggerVirtualKeyboard() const final;
   bool IsEnumeratable() const final;
   bool IsInteractiveContent() const final;
   bool SupportLabels() const final;
@@ -361,8 +361,8 @@ class CORE_EXPORT HTMLInputElement
   void ResetImpl() final;
   bool SupportsAutofocus() const final;
 
-  EventDispatchHandlingState* PreDispatchEventHandler(Event*) final;
-  void PostDispatchEventHandler(Event*, EventDispatchHandlingState*) final;
+  EventDispatchHandlingState* PreDispatchEventHandler(Event&) final;
+  void PostDispatchEventHandler(Event&, EventDispatchHandlingState*) final;
 
   bool IsURLAttribute(const Attribute&) const final;
   bool HasLegalLinkAttribute(const QualifiedName&) const final;
@@ -394,14 +394,13 @@ class CORE_EXPORT HTMLInputElement
 
   void SetListAttributeTargetObserver(ListAttributeTargetObserver*);
   void ResetListAttributeTargetObserver();
-  void ParseMaxLengthAttribute(const AtomicString&);
-  void ParseMinLengthAttribute(const AtomicString&);
 
   // Returns null if this isn't associated with any radio button group.
   RadioButtonGroupScope* GetRadioButtonGroupScope() const;
   void AddToRadioButtonGroup();
   void RemoveFromRadioButtonGroup();
   scoped_refptr<ComputedStyle> CustomStyleForLayoutObject() override;
+  void DidRecalcStyle(StyleRecalcChange) override;
 
   AtomicString name_;
   // The value string in |value| value mode.

@@ -95,6 +95,22 @@ VolumeManagerCommon.RootType = {
 
   // Fake root for the mixed "Recent" view.
   RECENT: 'recent',
+
+  // 'Google Drive' fake parent entry of 'My Drive', 'Shared with me' and
+  // 'Offline'.
+  DRIVE_FAKE_ROOT: 'drive_fake_root',
+
+  // 'Add new services' menu item.
+  ADD_NEW_SERVICES_MENU: 'add_new_services_menu',
+
+  // Root for crostini 'Linux files'.
+  CROSTINI: 'crostini',
+
+  // Root for android files.
+  ANDROID_FILES: 'android_files',
+
+  // My Files root, which aggregates DOWNLOADS, ANDROID_FILES and CROSTINI.
+  MY_FILES: 'my_files',
 };
 Object.freeze(VolumeManagerCommon.RootType);
 
@@ -122,6 +138,11 @@ VolumeManagerCommon.RootTypesForUMA = [
   VolumeManagerCommon.RootType.DRIVE_RECENT,
   VolumeManagerCommon.RootType.MEDIA_VIEW,
   VolumeManagerCommon.RootType.RECENT,
+  VolumeManagerCommon.RootType.DRIVE_FAKE_ROOT,
+  VolumeManagerCommon.RootType.ADD_NEW_SERVICES_MENU,
+  VolumeManagerCommon.RootType.CROSTINI,
+  VolumeManagerCommon.RootType.ANDROID_FILES,
+  VolumeManagerCommon.RootType.MY_FILES,
 ];
 console.assert(
     Object.keys(VolumeManagerCommon.RootType).length ===
@@ -153,9 +174,7 @@ VolumeManagerCommon.VolumeError = {
   INVALID_DEVICE_PATH: 'error_invalid_device_path',
   UNKNOWN_FILESYSTEM: 'error_unknown_filesystem',
   UNSUPPORTED_FILESYSTEM: 'error_unsupported_filesystem',
-  INVALID_ARCHIVE: 'error_invalid_archive',
-  AUTHENTICATION: 'error_authentication',
-  PATH_UNMOUNTED: 'error_path_unmounted'
+  INVALID_ARCHIVE: 'error_invalid_archive'
 };
 Object.freeze(VolumeManagerCommon.VolumeError);
 
@@ -204,6 +223,9 @@ VolumeManagerCommon.VolumeType = {
   MTP: 'mtp',
   PROVIDED: 'provided',
   MEDIA_VIEW: 'media_view',
+  CROSTINI: 'crostini',
+  ANDROID_FILES: 'android_files',
+  MY_FILES: 'my_files',
 };
 
 /**
@@ -226,6 +248,8 @@ VolumeManagerCommon.Source = {
  */
 VolumeManagerCommon.VolumeType.isNative = function(type) {
   return type === VolumeManagerCommon.VolumeType.DOWNLOADS ||
+      type === VolumeManagerCommon.VolumeType.ANDROID_FILES ||
+      type === VolumeManagerCommon.VolumeType.CROSTINI ||
       type === VolumeManagerCommon.VolumeType.REMOVABLE ||
       type === VolumeManagerCommon.VolumeType.ARCHIVE;
 };
@@ -259,8 +283,44 @@ VolumeManagerCommon.getVolumeTypeFromRootType = function(rootType) {
       return VolumeManagerCommon.VolumeType.PROVIDED;
     case VolumeManagerCommon.RootType.MEDIA_VIEW:
       return VolumeManagerCommon.VolumeType.MEDIA_VIEW;
+    case VolumeManagerCommon.RootType.CROSTINI:
+      return VolumeManagerCommon.VolumeType.CROSTINI;
+    case VolumeManagerCommon.RootType.ANDROID_FILES:
+      return VolumeManagerCommon.VolumeType.ANDROID_FILES;
+    case VolumeManagerCommon.RootType.MY_FILES:
+      return VolumeManagerCommon.VolumeType.MY_FILES;
   }
   assertNotReached('Unknown root type: ' + rootType);
+};
+
+/**
+ * @param {VolumeManagerCommon.VolumeType} volumeType .
+ * @return {VolumeManagerCommon.RootType}
+ */
+VolumeManagerCommon.getRootTypeFromVolumeType = function(volumeType) {
+  switch (volumeType) {
+    case VolumeManagerCommon.VolumeType.ANDROID_FILES:
+      return VolumeManagerCommon.RootType.ANDROID_FILES;
+    case VolumeManagerCommon.VolumeType.ARCHIVE:
+      return VolumeManagerCommon.RootType.ARCHIVE;
+    case VolumeManagerCommon.VolumeType.CROSTINI:
+      return VolumeManagerCommon.RootType.CROSTINI;
+    case VolumeManagerCommon.VolumeType.DOWNLOADS:
+      return VolumeManagerCommon.RootType.DOWNLOADS;
+    case VolumeManagerCommon.VolumeType.DRIVE:
+      return VolumeManagerCommon.RootType.DRIVE;
+    case VolumeManagerCommon.VolumeType.MEDIA_VIEW:
+      return VolumeManagerCommon.RootType.MEDIA_VIEW;
+    case VolumeManagerCommon.VolumeType.MTP:
+      return VolumeManagerCommon.RootType.MTP;
+    case VolumeManagerCommon.VolumeType.MY_FILES:
+      return VolumeManagerCommon.RootType.MY_FILES;
+    case VolumeManagerCommon.VolumeType.PROVIDED:
+      return VolumeManagerCommon.RootType.PROVIDED;
+    case VolumeManagerCommon.VolumeType.REMOVABLE:
+      return VolumeManagerCommon.RootType.REMOVABLE;
+  }
+  assertNotReached('Unknown volume type: ' + volumeType);
 };
 
 /**
@@ -281,8 +341,8 @@ VolumeManagerCommon.VolumeInfoProvider = function() {};
 
 /**
  * Obtains a volume info containing the passed entry.
- * @param {!Entry|!FakeEntry} entry Entry on the volume to be returned.
- *     Can be fake.
+ * @param {!Entry|!FakeEntry|!FilesAppEntry} entry Entry on the volume to be
+ *     returned. Can be fake.
  * @return {?VolumeInfo} The VolumeInfo instance or null if not found.
  */
 VolumeManagerCommon.VolumeInfoProvider.prototype.getVolumeInfo;
@@ -311,19 +371,6 @@ VolumeManagerCommon.getMediaViewRootTypeFromVolumeId = function(volumeId) {
   return /** @type {VolumeManagerCommon.MediaViewRootType} */ (
       volumeId.split(':', 2)[1]);
 };
-
-/**
- * Fake entries for virtual folders which hold Google Drive offline files,
- * Google Drive "Shared with me" files, and mixed Recent files.
- * |sourceRestriction| is valid only for the Recent folder.
- * @typedef {{
- *   isDirectory: boolean,
- *   rootType: VolumeManagerCommon.RootType,
- *   toURL: function(): string,
- *   sourceRestriction: (string|undefined)
- * }}
- */
-var FakeEntry;
 
 /**
   * An event name trigerred when a user tries to mount the volume which is

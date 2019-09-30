@@ -47,6 +47,7 @@ class SelectedKeywordView : public IconLabelBubbleView {
 
  private:
   // IconLabelBubbleView:
+  int GetExtraInternalSpacing() const override;
   const char* GetClassName() const override;
 
   LocationBarView* location_bar_;

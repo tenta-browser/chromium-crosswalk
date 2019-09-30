@@ -18,6 +18,7 @@
 #include "base/memory/singleton.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/stl_util.h"
+#include "base/strings/strcat.h"
 #include "base/strings/string16.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_piece.h"
@@ -64,8 +65,6 @@ const char kKeyInfoEndMarker[] = "KEY-----";
 const char kPublic[] = "PUBLIC";
 const char kPrivate[] = "PRIVATE";
 
-bool g_allow_legacy_extensions = false;
-
 bool ContainsReservedCharacters(const base::FilePath& path) {
   // We should disallow backslash '\\' as file path separator even on Windows,
   // because the backslash is not regarded as file path separator on Linux/Mac.
@@ -92,7 +91,6 @@ bool IsManifestSupported(int manifest_version,
   // handling has been removed, which means they will effectively be treated as
   // v2s.
   bool allow_legacy_extensions =
-      g_allow_legacy_extensions ||
       base::CommandLine::ForCurrentProcess()->HasSwitch(
           switches::kAllowLegacyExtensionManifests);
   if (type == Manifest::TYPE_EXTENSION && allow_legacy_extensions)
@@ -159,8 +157,8 @@ scoped_refptr<Extension> Extension::Create(const base::FilePath& path,
   base::ElapsedTimer timer;
   DCHECK(utf8_error);
   base::string16 error;
-  std::unique_ptr<extensions::Manifest> manifest(new extensions::Manifest(
-      location, std::unique_ptr<base::DictionaryValue>(value.DeepCopy())));
+  std::unique_ptr<extensions::Manifest> manifest(
+      new extensions::Manifest(location, value.CreateDeepCopy()));
 
   if (!InitExtensionID(manifest.get(), path, explicit_id, flags, &error)) {
     *utf8_error = base::UTF16ToUTF8(error);
@@ -325,8 +323,8 @@ bool Extension::FormatPEMForFileOutput(const std::string& input,
 
 // static
 GURL Extension::GetBaseURLFromExtensionId(const std::string& extension_id) {
-  return GURL(std::string(extensions::kExtensionScheme) +
-              url::kStandardSchemeSeparator + extension_id + "/");
+  return GURL(base::StrCat({extensions::kExtensionScheme,
+                            url::kStandardSchemeSeparator, extension_id}));
 }
 
 bool Extension::OverlapsWithOrigin(const GURL& origin) const {
@@ -476,14 +474,6 @@ void Extension::AddWebExtentPattern(const URLPattern& pattern) {
   extent_.AddPattern(pattern);
 }
 
-Extension::ScopedAllowLegacyExtensions
-Extension::allow_legacy_extensions_for_testing() {
-  DCHECK(!g_allow_legacy_extensions)
-      << "Multiple ScopedAllowLegacyExtensions objects are not allowed.";
-  return std::make_unique<base::AutoReset<bool>>(&g_allow_legacy_extensions,
-                                                 true);
-}
-
 // static
 bool Extension::InitExtensionID(extensions::Manifest* manifest,
                                 const base::FilePath& path,
@@ -586,7 +576,9 @@ bool Extension::InitFromValue(int flags, base::string16* error) {
 
   finished_parsing_manifest_ = true;
 
-  permissions_data_.reset(new PermissionsData(this));
+  permissions_data_ = std::make_unique<PermissionsData>(
+      id(), GetType(), location(),
+      PermissionsParser::GetRequiredPermissions(this).Clone());
 
   return true;
 }
@@ -794,7 +786,7 @@ ExtensionInfo::ExtensionInfo(const base::DictionaryValue* manifest,
       extension_path(path),
       extension_location(location) {
   if (manifest)
-    extension_manifest.reset(manifest->DeepCopy());
+    extension_manifest = manifest->CreateDeepCopy();
 }
 
 ExtensionInfo::~ExtensionInfo() {}

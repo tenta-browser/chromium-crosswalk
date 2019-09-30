@@ -32,43 +32,34 @@ cr.define('system_dialog_browsertest', function() {
       print_preview.NativeLayer.setInstance(nativeLayer);
       PolymerTest.clearBody();
 
-      const initialSettings = {
-        isInKioskAutoPrintMode: false,
-        isInAppKioskMode: false,
-        thousandsDelimeter: ',',
-        decimalDelimeter: '.',
-        unitType: 1,
-        previewModifiable: true,
-        documentTitle: 'title',
-        documentHasSelection: true,
-        shouldPrintSelectionOnly: false,
-        printerName: 'FooDevice',
-        serializedAppStateStr: null,
-        serializedDefaultDestinationSelectionRulesStr: null
-      };
+      const initialSettings =
+          print_preview_test_utils.getDefaultInitialSettings();
       nativeLayer.setInitialSettings(initialSettings);
       nativeLayer.setLocalDestinationCapabilities(
           print_preview_test_utils.getCddTemplate(initialSettings.printerName));
+      const pluginProxy = new print_preview.PDFPluginStub();
+      print_preview_new.PluginProxy.setInstance(pluginProxy);
 
       page = document.createElement('print-preview-app');
-      linkContainer = page.$$('print-preview-link-container');
-      const previewArea = page.$$('print-preview-preview-area');
-      previewArea.plugin_ = new print_preview.PDFPluginStub(previewArea);
-      previewArea.plugin_.setLoadCallback(
-          previewArea.onPluginLoad_.bind(previewArea));
       document.body.appendChild(page);
-      return Promise.all([
-        nativeLayer.whenCalled('getInitialSettings'),
-        nativeLayer.whenCalled('getPrinterCapabilities'),
-      ]).then(function() {
-        return nativeLayer.whenCalled('getPreview');
-      }).then(function() {
-        assertEquals('FooDevice', page.destination_.id);
-        link = cr.isWindows ?
-            linkContainer.$.systemDialogLink :
-            linkContainer.$.openPdfInPreviewLink;
-        printTicketKey = cr.isWindows ? 'showSystemDialog' : 'OpenPDFInPreview';
-      });
+      const previewArea = page.$.previewArea;
+      pluginProxy.setLoadCallback(previewArea.onPluginLoad_.bind(previewArea));
+      linkContainer = page.$$('print-preview-link-container');
+      return Promise
+          .all([
+            nativeLayer.whenCalled('getInitialSettings'),
+            nativeLayer.whenCalled('getPrinterCapabilities'),
+          ])
+          .then(function() {
+            return nativeLayer.whenCalled('getPreview');
+          })
+          .then(function() {
+            assertEquals('FooDevice', page.destination_.id);
+            link = cr.isWindows ? linkContainer.$.systemDialogLink :
+                                  linkContainer.$.openPdfInPreviewLink;
+            printTicketKey =
+                cr.isWindows ? 'showSystemDialog' : 'OpenPDFInPreview';
+          });
     });
 
     test(assert(TestNames.LinkTriggersLocalPrint), function() {
@@ -92,8 +83,8 @@ cr.define('system_dialog_browsertest', function() {
 
       // Set page settings to a bad value
       pageSettings.$$('#custom-radio-button').checked = true;
-      pageSettings.$$('#all-radio-button').dispatchEvent(
-        new CustomEvent('change'));
+      pageSettings.$$('#all-radio-button')
+          .dispatchEvent(new CustomEvent('change'));
       const pageSettingsInput = pageSettings.$$('.user-value');
       pageSettingsInput.value = 'abc';
       pageSettingsInput.dispatchEvent(new CustomEvent('input'));
@@ -103,8 +94,8 @@ cr.define('system_dialog_browsertest', function() {
         assertTrue(false);
       });
 
-      return test_util.eventToPromise('input-change', pageSettings).then(
-          function() {
+      return test_util.eventToPromise('input-change', pageSettings)
+          .then(function() {
             // Expect disabled print button and Pdf in preview link
             const header = page.$$('print-preview-header');
             const printButton = header.$$('.print');

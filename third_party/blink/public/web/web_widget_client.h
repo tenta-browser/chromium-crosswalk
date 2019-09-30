@@ -44,11 +44,12 @@
 #include "third_party/blink/public/web/web_navigation_policy.h"
 #include "third_party/blink/public/web/web_text_direction.h"
 
+class SkBitmap;
+
 namespace blink {
 
 class WebDragData;
 class WebGestureEvent;
-class WebImage;
 class WebString;
 class WebWidget;
 struct WebCursorInfo;
@@ -141,7 +142,10 @@ class WebWidgetClient {
                              const WebFloatSize& accumulated_overscroll,
                              const WebFloatPoint& position_in_viewport,
                              const WebFloatSize& velocity_in_viewport,
-                             const WebOverscrollBehavior& behavior) {}
+                             const cc::OverscrollBehavior& behavior) {}
+
+  // Called to update if pointerrawmove events should be sent.
+  virtual void HasPointerRawMoveEventHandlers(bool) {}
 
   // Called to update if touch events should be sent.
   virtual void HasTouchEventHandlers(bool) {}
@@ -179,7 +183,7 @@ class WebWidgetClient {
   virtual void StartDragging(WebReferrerPolicy,
                              const WebDragData&,
                              WebDragOperationsMask,
-                             const WebImage& drag_image,
+                             const SkBitmap& drag_image,
                              const WebPoint& drag_image_offset) {}
 };
 

@@ -12,6 +12,7 @@
 #include "base/containers/hash_tables.h"
 #include "base/logging.h"
 #include "base/macros.h"
+#include "base/memory/ref_counted.h"
 #include "build/build_config.h"
 #include "components/domain_reliability/clear_mode.h"
 #include "content/public/browser/browser_context.h"
@@ -39,8 +40,8 @@ namespace content {
 class WebUI;
 }
 
-namespace net {
-class SSLConfigService;
+namespace network {
+class SharedURLLoaderFactory;
 }
 
 namespace user_prefs {
@@ -102,8 +103,6 @@ class Profile : public content::BrowserContext {
 
   // Key used to bind profile to the widget with which it is associated.
   static const char kProfileKey[];
-  // Value representing no hosted domain in the kProfileHostedDomain preference.
-  static const char kNoHostedDomainFound[];
 
   Profile();
   ~Profile() override;
@@ -206,8 +205,9 @@ class Profile : public content::BrowserContext {
   // is only used for a separate cookie store currently.
   virtual net::URLRequestContextGetter* GetRequestContextForExtensions() = 0;
 
-  // Returns the SSLConfigService for this profile.
-  virtual net::SSLConfigService* GetSSLConfigService() = 0;
+  // Returns the main URLLoaderFactory.
+  virtual scoped_refptr<network::SharedURLLoaderFactory>
+  GetURLLoaderFactory() = 0;
 
   // Return whether 2 profiles are the same. 2 profiles are the same if they
   // represent the same profile. This can happen if there is pointer equality
@@ -235,6 +235,8 @@ class Profile : public content::BrowserContext {
     APP_LOCALE_CHANGED_VIA_LOGIN,
     // From login to a public session.
     APP_LOCALE_CHANGED_VIA_PUBLIC_SESSION_LOGIN,
+    // From AllowedUILocales policy
+    APP_LOCALE_CHANGED_VIA_POLICY,
     // Source unknown.
     APP_LOCALE_CHANGED_VIA_UNKNOWN
   };
@@ -294,9 +296,11 @@ class Profile : public content::BrowserContext {
   virtual bool ShouldRestoreOldSessionCookies();
   virtual bool ShouldPersistSessionCookies();
 
-  // Creates the main NetworkContext for the profile, or returns nullptr to
-  // defer NetworkContext creation to the caller.
-  virtual network::mojom::NetworkContextPtr CreateMainNetworkContext();
+  // Creates NetworkContext for the specified isolated app (or for the profile
+  // itself, if |relative_path| is empty).
+  virtual network::mojom::NetworkContextPtr CreateNetworkContext(
+      bool in_memory,
+      const base::FilePath& relative_partition_path);
 
   // Stop sending accessibility events until ResumeAccessibilityEvents().
   // Calls to Pause nest; no events will be sent until the number of
@@ -316,7 +320,8 @@ class Profile : public content::BrowserContext {
 
   // Returns whether the profile is new.  A profile is new if the browser has
   // not been shut down since the profile was created.
-  bool IsNewProfile();
+  // This method is virtual in order to be overridden for tests.
+  virtual bool IsNewProfile();
 
   // Checks whether sync is configurable by the user. Returns false if sync is
   // disallowed by the command line or controlled by configuration management.

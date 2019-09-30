@@ -30,6 +30,8 @@ struct FormFieldData;
 // Common utilities shared amongst Autofill tests.
 namespace test {
 
+const char kEmptyOrigin[] = "";
+
 // The following methods return a PrefService that can be used for
 // Autofill-related testing in contexts where the PrefService would otherwise
 // have to be constructed manually (e.g., in unit tests within Autofill core
@@ -61,10 +63,28 @@ void CreateTestSelectField(const std::vector<const char*>& values,
 // Populates |form| with data corresponding to a simple address form.
 // Note that this actually appends fields to the form data, which can be useful
 // for building up more complex test forms. Another version of the function is
-// provided in case the caller wants the vector of expected field |types|.
-void CreateTestAddressFormData(FormData* form);
+// provided in case the caller wants the vector of expected field |types|. Use
+// |unique_id| optionally ensure that each form has its own signature.
+void CreateTestAddressFormData(FormData* form, const char* unique_id = nullptr);
 void CreateTestAddressFormData(FormData* form,
-                               std::vector<ServerFieldTypeSet>* types);
+                               std::vector<ServerFieldTypeSet>* types,
+                               const char* unique_id = nullptr);
+
+// Populates |form| with data corresponding to a simple personal information
+// form, including name and email, but no address-related fields. Use
+// |unique_id| to optionally ensure that each form has its own signature.
+void CreateTestPersonalInformationFormData(FormData* form,
+                                           const char* unique_id = nullptr);
+
+// Populates |form| with data corresponding to a simple credit card form.
+// Note that this actually appends fields to the form data, which can be
+// useful for building up more complex test forms. Use |unique_id| to optionally
+// ensure that each form has its own signature.
+void CreateTestCreditCardFormData(FormData* form,
+                                  bool is_https,
+                                  bool use_month_type,
+                                  bool split_names = false,
+                                  const char* unique_id = nullptr);
 
 // Returns a full profile with valid info according to rules for Canada.
 AutofillProfile GetFullValidProfileForCanada();
@@ -92,6 +112,12 @@ AutofillProfile GetVerifiedProfile();
 
 // Returns a verified profile full of dummy info, different to the above.
 AutofillProfile GetVerifiedProfile2();
+
+// Returns a server profile full of dummy info.
+AutofillProfile GetServerProfile();
+
+// Returns a server profile full of dummy info, different to the above.
+AutofillProfile GetServerProfile2();
 
 // Returns a credit card full of dummy info.
 CreditCard GetCreditCard();
@@ -199,6 +225,11 @@ void FillQueryField(AutofillQueryContents::Form::Field* field,
 // delegate to display a popup.
 void GenerateTestAutofillPopup(
     AutofillExternalDelegate* autofill_external_delegate);
+
+std::string ObfuscatedCardDigitsAsUTF8(const std::string& str);
+
+std::string NextYear();
+std::string LastYear();
 
 }  // namespace test
 }  // namespace autofill

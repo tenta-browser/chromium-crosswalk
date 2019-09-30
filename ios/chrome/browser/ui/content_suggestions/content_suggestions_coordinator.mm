@@ -18,6 +18,7 @@
 #include "ios/chrome/browser/pref_names.h"
 #include "ios/chrome/browser/reading_list/reading_list_model_factory.h"
 #include "ios/chrome/browser/search_engines/template_url_service_factory.h"
+#import "ios/chrome/browser/ui/commands/application_commands.h"
 #import "ios/chrome/browser/ui/commands/browser_commands.h"
 #import "ios/chrome/browser/ui/commands/open_new_tab_command.h"
 #import "ios/chrome/browser/ui/content_suggestions/content_suggestions_data_sink.h"
@@ -42,6 +43,7 @@
 #import "ios/chrome/browser/web_state_list/web_state_list.h"
 #include "ios/public/provider/chrome/browser/chrome_browser_provider.h"
 #import "ios/public/provider/chrome/browser/voice/voice_search_provider.h"
+#include "ios/web/public/features.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
 #error "This file requires ARC support."
@@ -64,13 +66,6 @@
 @property(nonatomic, strong, readwrite)
     ContentSuggestionsHeaderViewController* headerController;
 
-// Toolbar to be embeded in header view.
-@property(nonatomic, strong)
-    PrimaryToolbarViewController* primaryToolbarViewController;
-
-// Mediator for updating the toolbar when the WebState changes.
-@property(nonatomic, strong) ToolbarMediator* primaryToolbarMediator;
-
 @end
 
 @implementation ContentSuggestionsCoordinator
@@ -89,8 +84,6 @@
 @synthesize delegate = _delegate;
 @synthesize metricsRecorder = _metricsRecorder;
 @synthesize NTPMediator = _NTPMediator;
-@synthesize primaryToolbarViewController = _primaryToolbarViewController;
-@synthesize primaryToolbarMediator = _primaryToolbarMediator;
 
 - (void)start {
   if (self.visible || !self.browserState) {
@@ -144,25 +137,6 @@
   self.headerController.readingListModel =
       ReadingListModelFactory::GetForBrowserState(self.browserState);
   self.headerController.toolbarDelegate = self.toolbarDelegate;
-
-  if (IsUIRefreshPhase1Enabled()) {
-    ToolbarButtonFactory* buttonFactory =
-        [[ToolbarButtonFactory alloc] initWithStyle:NORMAL];
-    buttonFactory.dispatcher = self.dispatcher;
-    buttonFactory.visibilityConfiguration =
-        [[ToolbarButtonVisibilityConfiguration alloc] initWithType:PRIMARY];
-
-    self.primaryToolbarViewController =
-        [[PrimaryToolbarViewController alloc] init];
-    self.primaryToolbarViewController.buttonFactory = buttonFactory;
-    [self.primaryToolbarViewController updateForSideSwipeSnapshotOnNTP:YES];
-    self.headerController.toolbarViewController =
-        self.primaryToolbarViewController;
-
-    self.primaryToolbarMediator = [[ToolbarMediator alloc] init];
-    self.primaryToolbarMediator.consumer = self.primaryToolbarViewController;
-    self.primaryToolbarMediator.webStateList = self.webStateList;
-  }
 
   favicon::LargeIconService* largeIconService =
       IOSChromeLargeIconServiceFactory::GetForBrowserState(self.browserState);
@@ -257,7 +231,7 @@
                    didTriggerAction:(OverscrollAction)action {
   switch (action) {
     case OverscrollAction::NEW_TAB: {
-      [_dispatcher openNewTab:[OpenNewTabCommand command]];
+      [_dispatcher openURLInNewTab:[OpenNewTabCommand command]];
     } break;
     case OverscrollAction::CLOSE_TAB: {
       [_dispatcher closeCurrentTab];
@@ -290,7 +264,18 @@
 }
 
 - (CGFloat)overscrollHeaderHeight {
-  return [self.headerController toolBarView].bounds.size.height;
+  CGFloat height = [self.headerController toolBarView].bounds.size.height;
+  CGFloat topInset = 0.0;
+  if (@available(iOS 11, *)) {
+    topInset = self.suggestionsViewController.view.safeAreaInsets.top;
+  } else if (IsUIRefreshPhase1Enabled() ||
+             base::FeatureList::IsEnabled(
+                 web::features::kBrowserContainerFullscreen)) {
+    // TODO(crbug.com/826369) Replace this when the NTP is contained by the
+    // BVC with |self.suggestionsViewController.topLayoutGuide.length|.
+    topInset = StatusBarHeight();
+  }
+  return height + topInset;
 }
 
 #pragma mark - NewTabPagePanelProtocol

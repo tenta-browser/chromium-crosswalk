@@ -8,6 +8,7 @@ Tests terminate execution.
     id : <number>
     result : {
     }
+    sessionId : <string>
 }
 {
     id : <number>
@@ -17,5 +18,6 @@ Tests terminate execution.
             value : evaluated after
         }
     }
+    sessionId : <string>
 }
 

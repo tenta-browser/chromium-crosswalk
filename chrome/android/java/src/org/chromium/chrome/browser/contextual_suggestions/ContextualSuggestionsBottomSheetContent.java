@@ -6,6 +6,7 @@ package org.chromium.chrome.browser.contextual_suggestions;
 
 import android.view.View;
 
+import org.chromium.chrome.browser.ChromeFeatureList;
 import org.chromium.chrome.browser.widget.bottomsheet.BottomSheet.BottomSheetContent;
 import org.chromium.chrome.browser.widget.bottomsheet.BottomSheet.ContentPriority;
 
@@ -13,6 +14,7 @@ import org.chromium.chrome.browser.widget.bottomsheet.BottomSheet.ContentPriorit
 public class ContextualSuggestionsBottomSheetContent implements BottomSheetContent {
     private final ContentCoordinator mContentCoordinator;
     private final ToolbarCoordinator mToolbarCoordinator;
+    private final boolean mUseSlimPeek;
 
     /**
      * Construct a new {@link ContextualSuggestionsBottomSheetContent}.
@@ -20,11 +22,13 @@ public class ContextualSuggestionsBottomSheetContent implements BottomSheetConte
      *                           displayed.
      * @param toolbarCoordinator The {@link ToolbarCoordinator} that manages the toolbar to be
      *                           displayed.
+     * @param useSlimPeek Whether the slim peek UI should be used for this content.
      */
-    ContextualSuggestionsBottomSheetContent(
-            ContentCoordinator contentCoordinator, ToolbarCoordinator toolbarCoordinator) {
+    ContextualSuggestionsBottomSheetContent(ContentCoordinator contentCoordinator,
+            ToolbarCoordinator toolbarCoordinator, boolean useSlimPeek) {
         mContentCoordinator = contentCoordinator;
         mToolbarCoordinator = toolbarCoordinator;
+        mUseSlimPeek = useSlimPeek;
     }
 
     @Override
@@ -52,6 +56,16 @@ public class ContextualSuggestionsBottomSheetContent implements BottomSheetConte
 
     @Override
     public boolean swipeToDismissEnabled() {
-        return false;
+        return ChromeFeatureList.isEnabled(ChromeFeatureList.CONTEXTUAL_SUGGESTIONS_BUTTON);
+    }
+
+    @Override
+    public boolean isPeekStateEnabled() {
+        return !ChromeFeatureList.isEnabled(ChromeFeatureList.CONTEXTUAL_SUGGESTIONS_BUTTON);
+    }
+
+    @Override
+    public boolean useSlimPeek() {
+        return mUseSlimPeek;
     }
 }

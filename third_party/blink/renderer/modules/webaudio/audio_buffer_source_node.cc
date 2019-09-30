@@ -24,15 +24,15 @@
  */
 
 #include <algorithm>
-#include "third_party/blink/renderer/bindings/core/v8/exception_messages.h"
-#include "third_party/blink/renderer/bindings/core/v8/exception_state.h"
-#include "third_party/blink/renderer/core/dom/exception_code.h"
+
 #include "third_party/blink/renderer/core/frame/use_counter.h"
 #include "third_party/blink/renderer/modules/webaudio/audio_buffer_source_node.h"
 #include "third_party/blink/renderer/modules/webaudio/audio_buffer_source_options.h"
 #include "third_party/blink/renderer/modules/webaudio/audio_node_output.h"
 #include "third_party/blink/renderer/modules/webaudio/base_audio_context.h"
 #include "third_party/blink/renderer/platform/audio/audio_utilities.h"
+#include "third_party/blink/renderer/platform/bindings/exception_messages.h"
+#include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/wtf/math_extras.h"
 
 namespace blink {
@@ -123,8 +123,9 @@ void AudioBufferSourceHandler::Process(size_t frames_to_process) {
     size_t buffer_frames_to_process;
     double start_time_offset;
 
-    UpdateSchedulingInfo(frames_to_process, output_bus, quantum_frame_offset,
-                         buffer_frames_to_process, start_time_offset);
+    std::tie(quantum_frame_offset, buffer_frames_to_process,
+             start_time_offset) =
+        UpdateSchedulingInfo(frames_to_process, output_bus);
 
     if (!buffer_frames_to_process) {
       output_bus->Zero();
@@ -383,7 +384,7 @@ void AudioBufferSourceHandler::SetBuffer(AudioBuffer* buffer,
   DCHECK(IsMainThread());
 
   if (buffer && buffer_has_been_set_) {
-    exception_state.ThrowDOMException(kInvalidStateError,
+    exception_state.ThrowDOMException(DOMExceptionCode::kInvalidStateError,
                                       "Cannot set buffer to non-null after it "
                                       "has been already been set to a non-null "
                                       "buffer");
@@ -407,7 +408,7 @@ void AudioBufferSourceHandler::SetBuffer(AudioBuffer* buffer,
     // many channels either.
     if (number_of_channels > BaseAudioContext::MaxNumberOfChannels()) {
       exception_state.ThrowDOMException(
-          kNotSupportedError,
+          DOMExceptionCode::kNotSupportedError,
           ExceptionMessages::IndexOutsideRange(
               "number of input channels", number_of_channels, 1u,
               ExceptionMessages::kInclusiveBound,
@@ -502,10 +503,10 @@ void AudioBufferSourceHandler::StartSource(double when,
                                            ExceptionState& exception_state) {
   DCHECK(IsMainThread());
 
-  Context()->MaybeRecordStartAttempt();
+  Context()->NotifySourceNodeStart();
 
   if (GetPlaybackState() != UNSCHEDULED_STATE) {
-    exception_state.ThrowDOMException(kInvalidStateError,
+    exception_state.ThrowDOMException(DOMExceptionCode::kInvalidStateError,
                                       "cannot call start more than once.");
     return;
   }
@@ -646,14 +647,18 @@ void AudioBufferSourceHandler::HandleStoppableSourceNode() {
 // ----------------------------------------------------------------
 AudioBufferSourceNode::AudioBufferSourceNode(BaseAudioContext& context)
     : AudioScheduledSourceNode(context),
-      playback_rate_(AudioParam::Create(context,
-                                        kParamTypeAudioBufferSourcePlaybackRate,
-                                        "AudioBufferSource.playbackRate",
-                                        1.0)),
-      detune_(AudioParam::Create(context,
-                                 kParamTypeAudioBufferSourceDetune,
-                                 "AudioBufferSource.detune",
-                                 0.0)) {
+      playback_rate_(
+          AudioParam::Create(context,
+                             kParamTypeAudioBufferSourcePlaybackRate,
+                             1.0,
+                             AudioParamHandler::AutomationRate::kControl,
+                             AudioParamHandler::AutomationRateMode::kFixed)),
+      detune_(
+          AudioParam::Create(context,
+                             kParamTypeAudioBufferSourceDetune,
+                             0.0,
+                             AudioParamHandler::AutomationRate::kControl,
+                             AudioParamHandler::AutomationRateMode::kFixed)) {
   SetHandler(AudioBufferSourceHandler::Create(*this, context.sampleRate(),
                                               playback_rate_->Handler(),
                                               detune_->Handler()));

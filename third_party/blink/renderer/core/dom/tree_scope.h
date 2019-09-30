@@ -43,11 +43,13 @@ class Element;
 class HTMLMapElement;
 class HitTestResult;
 class IdTargetObserverRegistry;
-class Node;
 class SVGTreeScopeResources;
 class ScopedStyleResolver;
-class StyleSheetList;
 
+// The root node of a document tree (in which case this is a Document) or of a
+// shadow tree (in which case this is a ShadowRoot). Various things, like
+// element IDs, are scoped to the TreeScope in which they are rooted, if any.
+//
 // A class which inherits both Node and TreeScope must call clearRareData() in
 // its destructor so that the Node destructor no longer does problematic
 // NodeList cache manipulation in the destructor.
@@ -74,8 +76,8 @@ class CORE_EXPORT TreeScope : public GarbageCollectedMixin {
       const AtomicString&) const;
   bool HasElementWithId(const AtomicString& id) const;
   bool ContainsMultipleElementsWithId(const AtomicString& id) const;
-  void AddElementById(const AtomicString& element_id, Element*);
-  void RemoveElementById(const AtomicString& element_id, Element*);
+  void AddElementById(const AtomicString& element_id, Element&);
+  void RemoveElementById(const AtomicString& element_id, Element&);
 
   Document& GetDocument() const {
     DCHECK(document_);
@@ -84,8 +86,8 @@ class CORE_EXPORT TreeScope : public GarbageCollectedMixin {
 
   Node* AncestorInThisScope(Node*) const;
 
-  void AddImageMap(HTMLMapElement*);
-  void RemoveImageMap(HTMLMapElement*);
+  void AddImageMap(HTMLMapElement&);
+  void RemoveImageMap(HTMLMapElement&);
   HTMLMapElement* GetImageMap(const String& url) const;
 
   Element* ElementFromPoint(double x, double y) const;
@@ -127,7 +129,7 @@ class CORE_EXPORT TreeScope : public GarbageCollectedMixin {
 
   Element* GetElementByAccessKey(const String& key) const;
 
-  virtual void Trace(blink::Visitor*);
+  void Trace(blink::Visitor*) override;
 
   ScopedStyleResolver* GetScopedStyleResolver() const {
     return scoped_style_resolver_.Get();
@@ -136,10 +138,6 @@ class CORE_EXPORT TreeScope : public GarbageCollectedMixin {
   void ClearScopedStyleResolver();
 
   SVGTreeScopeResources& EnsureSVGTreeScopedResources();
-
-  bool HasMoreStyleSheets() const;
-  StyleSheetList& MoreStyleSheets();
-  void SetMoreStyleSheets(StyleSheetList*);
 
  protected:
   TreeScope(ContainerNode&, Document&);
@@ -170,8 +168,6 @@ class CORE_EXPORT TreeScope : public GarbageCollectedMixin {
   RadioButtonGroupScope radio_button_group_scope_;
 
   Member<SVGTreeScopeResources> svg_tree_scoped_resources_;
-
-  Member<StyleSheetList> more_style_sheets_;
 };
 
 inline bool TreeScope::HasElementWithId(const AtomicString& id) const {

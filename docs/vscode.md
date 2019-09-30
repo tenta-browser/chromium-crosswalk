@@ -237,7 +237,7 @@ You might have to adjust the commands to your situation and needs.
 ```
 {
   "version": "0.1.0",
-  "_runner": "terminal",
+  "runner": "terminal",
   "showOutput": "always",
   "echoCommand": true,
   "tasks": [
@@ -397,7 +397,7 @@ your situation and needs.
     "args": [],  // Optional command line args
     "preLaunchTask": "1-build_chrome_debug",
     "stopAtEntry": false,
-    "cwd": "${workspaceRoot}",
+    "cwd": "${workspaceRoot}/out/Debug/",
     "environment": [],
     "externalConsole": true
   },
@@ -410,7 +410,7 @@ your situation and needs.
     "args": [],  // Optional command line args
     "preLaunchTask": "2-build_chrome_release",
     "stopAtEntry": false,
-    "cwd": "${workspaceRoot}",
+    "cwd": "${workspaceRoot}/out/Release/",
     "environment": [],
     "externalConsole": true
   },
@@ -426,7 +426,7 @@ your situation and needs.
               "--test-launcher-timeout=1000000"],
     "preLaunchTask": "5-build_test_debug",
     "stopAtEntry": false,
-    "cwd": "${workspaceRoot}",
+    "cwd": "${workspaceRoot}/out/Debug/",
     "environment": [],
     "externalConsole": true
   },
@@ -438,7 +438,7 @@ your situation and needs.
     "program": "${workspaceRoot}/out/Debug/chrome",
     "args": ["--remote-debugging-port=2224"],
     "stopAtEntry": false,
-    "cwd": "${workspaceRoot}",
+    "cwd": "${workspaceRoot}/out/Debug/",
     "environment": [],
     "externalConsole": false
   }]
@@ -527,7 +527,7 @@ these files are ignored by VS Code (see files.exclude above) and cannot be
 opened e.g. from quick-open (`Ctrl+P`).
 As of version 1.21, VS Code does not support negated glob commands, but you can
 define a set of exclude pattern to include only out/Debug/gen:
-
+```
 "files.exclude": {
   // Ignore build output folders. Except out/Debug/gen/
   "out/[^D]*/": true,
@@ -535,6 +535,7 @@ define a set of exclude pattern to include only out/Debug/gen:
   "out/Debug/g[^e]*": true,
   "out_*/**": true,
 },
+```
 
 Once it does, you can use
 ```
@@ -567,6 +568,12 @@ might want to disable git status autorefresh as well.
 "C_Cpp.autocomplete": "Disabled",
 "C_Cpp.addWorkspaceRootToIncludePath": false
 ```
+
+### Unable to open $File resource is not available when debugging Chromium on Linux
+Chromium [recently changed](https://docs.google.com/document/d/1OX4jY_bOCeNK7PNjVRuBQE9s6BQKS8XRNWGK8FEyh-E/edit?usp=sharing)
+the file path to be relative to the output dir. Check
+`gn args out/$dir --list` if `strip_absolute_paths_from_debug_symbols` is true (which is the default),
+set `cwd` to the output dir. otherwise, set `cwd` to `${workspaceRoot}`.
 
 ### More
 More tips and tricks can be found

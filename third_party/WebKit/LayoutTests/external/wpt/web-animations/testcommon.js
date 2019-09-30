@@ -88,7 +88,7 @@ function createStyle(test, rules, doc) {
 }
 
 // Create a pseudo element
-function createPseudo(test, type) {
+function getPseudoElement(test, type) {
   createStyle(test, { '@keyframes anim': '',
                       [`.pseudo::${type}`]: 'animation: anim 10s; ' +
                                             'content: \'\';'  });
@@ -97,8 +97,6 @@ function createPseudo(test, type) {
   const anims = document.getAnimations();
   assert_true(anims.length >= 1);
   const anim = anims[anims.length - 1];
-  assert_equals(anim.effect.target.parentElement, div);
-  assert_equals(anim.effect.target.type, `::${type}`);
   anim.cancel();
   return anim.effect.target;
 }
@@ -215,7 +213,7 @@ function rotate3dToMatrix3d(x, y, z, radian) {
 }
 
 // Returns an array of the 4x4 matrix equivalent to 'rotate3d(x, y, z, radian)'.
-// https://www.w3.org/TR/css-transforms-1/#Rotate3dDefined
+// https://drafts.csswg.org/css-transforms-2/#Rotate3dDefined
 function rotate3dToMatrix(x, y, z, radian) {
   const sc = Math.sin(radian / 2) * Math.cos(radian / 2);
   const sq = Math.sin(radian / 2) * Math.sin(radian / 2);

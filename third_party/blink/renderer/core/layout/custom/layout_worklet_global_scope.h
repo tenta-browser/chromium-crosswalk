@@ -42,7 +42,6 @@ class CORE_EXPORT LayoutWorkletGlobalScope final
   CSSLayoutDefinition* FindDefinition(const AtomicString& name);
 
   void Trace(blink::Visitor*) override;
-  void TraceWrappers(const ScriptWrappableVisitor*) const override;
 
  private:
   LayoutWorkletGlobalScope(LocalFrame*,

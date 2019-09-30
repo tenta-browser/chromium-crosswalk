@@ -14,6 +14,8 @@
 #include "chrome/browser/notifications/profile_notification.h"
 #include "components/keyed_service/core/keyed_service_shutdown_notifier.h"
 
+class ChromeAshMessageCenterClient;
+
 // The interface that a NotificationPlatformBridge uses to pass back information
 // and interactions from the native notification system. TODO(estade): this
 // should be hoisted into its own file, implemented by
@@ -44,8 +46,6 @@ class NotificationPlatformBridgeDelegate {
 };
 
 // A platform bridge that uses Ash's message center to display notifications.
-// Currently under development and controlled by feature:
-//   --enable-features=NativeNotifications
 class NotificationPlatformBridgeChromeOs
     : public NotificationPlatformBridge,
       public NotificationPlatformBridgeDelegate {
@@ -85,7 +85,7 @@ class NotificationPlatformBridgeChromeOs
 
   void OnProfileDestroying(Profile* profile);
 
-  std::unique_ptr<NotificationPlatformBridge> impl_;
+  std::unique_ptr<ChromeAshMessageCenterClient> impl_;
 
   // A container for all active notifications, where IDs are permuted to
   // uniquely identify both the notification and its source profile. The key is

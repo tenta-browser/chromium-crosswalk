@@ -15,9 +15,9 @@ class MockCredentialManager {
   constructor() {
     this.reset();
 
-    this.binding_ = new mojo.Binding(passwordManager.mojom.CredentialManager, this);
+    this.binding_ = new mojo.Binding(blink.mojom.CredentialManager, this);
     this.interceptor_ = new MojoInterfaceInterceptor(
-        passwordManager.mojom.CredentialManager.name);
+        blink.mojom.CredentialManager.name);
     this.interceptor_.oninterfacerequest = e => {
       this.binding_.bind(e.handle);
     };
@@ -25,7 +25,7 @@ class MockCredentialManager {
   }
 
   constructCredentialInfo_(type, id, password, name, icon) {
-  return new passwordManager.mojom.CredentialInfo({
+  return new blink.mojom.CredentialInfo({
       type: type,
       id: stringToMojoString16(id),
       name: stringToMojoString16(name),
@@ -39,7 +39,7 @@ class MockCredentialManager {
   // Mock functions:
 
   async get(mediation, includePasswords, federations) {
-    if (this.error_ == passwordManager.mojom.CredentialManagerError.SUCCESS) {
+    if (this.error_ == blink.mojom.CredentialManagerError.SUCCESS) {
       return {error: this.error_, credential: this.credentialInfo_};
     } else {
       return {error: this.error_, credential: null};
@@ -56,14 +56,14 @@ class MockCredentialManager {
 
   // Resets state of mock CredentialManager.
   reset() {
-    this.error_ = passwordManager.mojom.CredentialManagerError.SUCCESS;
+    this.error_ = blink.mojom.CredentialManagerError.SUCCESS;
     this.credentialInfo_ = this.constructCredentialInfo_(
-        passwordManager.mojom.CredentialType.EMPTY, '', '', '', '');
+        blink.mojom.CredentialType.EMPTY, '', '', '', '');
   }
 
   setResponse(id, password, name, icon) {
     this.credentialInfo_ = this.constructCredentialInfo_(
-        passwordManager.mojom.CredentialType.PASSWORD, id, password, name,
+        blink.mojom.CredentialType.PASSWORD, id, password, name,
         icon);
   }
 
@@ -77,9 +77,9 @@ class MockAuthenticator {
   constructor() {
     this.reset();
 
-    this.binding_ = new mojo.Binding(webauth.mojom.Authenticator, this);
+    this.binding_ = new mojo.Binding(blink.mojom.Authenticator, this);
     this.interceptor_ = new MojoInterfaceInterceptor(
-        webauth.mojom.Authenticator.name);
+        blink.mojom.Authenticator.name);
     this.interceptor_.oninterfacerequest = e => {
       this.binding_.bind(e.handle);
     };
@@ -89,13 +89,13 @@ class MockAuthenticator {
   // Returns a MakeCredentialResponse to the client.
   async makeCredential(options) {
     var response = null;
-    if (this.status_ == webauth.mojom.AuthenticatorStatus.SUCCESS) {
-      let info = new webauth.mojom.CommonCredentialInfo(
+    if (this.status_ == blink.mojom.AuthenticatorStatus.SUCCESS) {
+      let info = new blink.mojom.CommonCredentialInfo(
           { id: this.id_,
             rawId: this.rawId_,
             clientDataJson: this.clientDataJson_,
           });
-      response = new webauth.mojom.MakeCredentialAuthenticatorResponse(
+      response = new blink.mojom.MakeCredentialAuthenticatorResponse(
           { info: info,
             attestationObject: this.attestationObject_
           });
@@ -107,13 +107,13 @@ class MockAuthenticator {
 
   async getAssertion(options) {
     var response = null;
-    if (this.status_ == webauth.mojom.AuthenticatorStatus.SUCCESS) {
-      let info = new webauth.mojom.CommonCredentialInfo(
+    if (this.status_ == blink.mojom.AuthenticatorStatus.SUCCESS) {
+      let info = new blink.mojom.CommonCredentialInfo(
           { id: this.id_,
             rawId: this.rawId_,
             clientDataJson: this.clientDataJson_,
           });
-      response = new webauth.mojom.GetAssertionAuthenticatorResponse(
+      response = new blink.mojom.GetAssertionAuthenticatorResponse(
           { info: info,
             authenticatorData: this.authenticatorData_,
             signature: this.signature_,
@@ -125,9 +125,13 @@ class MockAuthenticator {
     return {status, credential: response};
   }
 
+  async isUserVerifyingPlatformAuthenticatorAvailable() {
+    return false;
+  }
+
   // Resets state of mock Authenticator.
   reset() {
-    this.status_ = webauth.mojom.AuthenticatorStatus.UNKNOWN_ERROR;
+    this.status_ = blink.mojom.AuthenticatorStatus.UNKNOWN_ERROR;
     this.id_ = null;
     this.rawId_ = new Uint8Array(0);
     this.clientDataJson_ = new Uint8Array(0);
@@ -144,7 +148,7 @@ class MockAuthenticator {
     mockAuthenticator.setClientDataJson(CLIENT_DATA_JSON);
     mockAuthenticator.setAttestationObject(ATTESTATION_OBJECT);
     mockAuthenticator.setAuthenticatorStatus(
-        webauth.mojom.AuthenticatorStatus.SUCCESS);
+        blink.mojom.AuthenticatorStatus.SUCCESS);
   }
 
   // Sets everything needed for a GetAssertion success response.
@@ -155,7 +159,7 @@ class MockAuthenticator {
     mockAuthenticator.setAuthenticatorData(AUTHENTICATOR_DATA);
     mockAuthenticator.setSignature(SIGNATURE);
     mockAuthenticator.setAuthenticatorStatus(
-        webauth.mojom.AuthenticatorStatus.SUCCESS);
+        blink.mojom.AuthenticatorStatus.SUCCESS);
   }
 
   setAuthenticatorStatus(status) {

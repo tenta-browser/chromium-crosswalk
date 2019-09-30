@@ -21,7 +21,7 @@
 #include "chrome/grit/chromium_strings.h"
 #include "chrome/grit/generated_resources.h"
 #include "chrome/grit/theme_resources.h"
-#include "components/signin/core/account_id/account_id.h"
+#include "components/account_id/account_id.h"
 #include "components/user_manager/user_manager.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
@@ -110,7 +110,6 @@ void SyncErrorNotifier::OnErrorChanged() {
           l10n_util::GetStringUTF16(IDS_SYNC_ERROR_BUBBLE_VIEW_TITLE),
           l10n_util::GetStringUTF16(
               IDS_SYNC_PASSPHRASE_ERROR_BUBBLE_VIEW_MESSAGE),
-          gfx::Image(),
           l10n_util::GetStringUTF16(IDS_SIGNIN_ERROR_DISPLAY_SOURCE),
           GURL(notification_id_), notifier_id,
           message_center::RichNotificationData(),

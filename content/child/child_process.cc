@@ -11,7 +11,7 @@
 #include "base/message_loop/message_loop.h"
 #include "base/process/process_handle.h"
 #include "base/single_thread_task_runner.h"
-#include "base/task_scheduler/task_scheduler.h"
+#include "base/task/task_scheduler/task_scheduler.h"
 #include "base/threading/thread.h"
 #include "base/threading/thread_local.h"
 #include "build/build_config.h"
@@ -101,13 +101,13 @@ void ChildProcess::set_main_thread(ChildThreadImpl* thread) {
 
 void ChildProcess::AddRefProcess() {
   DCHECK(!main_thread_.get() ||  // null in unittests.
-         main_thread_->message_loop()->task_runner()->BelongsToCurrentThread());
+         main_thread_->main_thread_runner()->BelongsToCurrentThread());
   ref_count_++;
 }
 
 void ChildProcess::ReleaseProcess() {
   DCHECK(!main_thread_.get() ||  // null in unittests.
-         main_thread_->message_loop()->task_runner()->BelongsToCurrentThread());
+         main_thread_->main_thread_runner()->BelongsToCurrentThread());
   DCHECK(ref_count_);
   if (--ref_count_)
     return;

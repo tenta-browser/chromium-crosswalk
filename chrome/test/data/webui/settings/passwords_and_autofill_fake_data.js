@@ -11,18 +11,18 @@ function FakeDataMaker() {}
 
 /**
  * Creates a single item for the list of passwords.
- * @param {string|undefined} url
- * @param {string|undefined} username
- * @param {number|undefined} passwordLength
+ * @param {string=} url
+ * @param {string=} username
+ * @param {number=} passwordLength
+ * @param {number=} index
  * @return {chrome.passwordsPrivate.PasswordUiEntry}
  */
-FakeDataMaker.passwordEntry = function(url, username, passwordLength) {
+FakeDataMaker.passwordEntry = function(url, username, passwordLength, index) {
   // Generate fake data if param is undefined.
   url = url || FakeDataMaker.patternMaker_('www.xxxxxx.com', 16);
   username = username || FakeDataMaker.patternMaker_('user_xxxxx', 16);
   passwordLength = passwordLength || Math.floor(Math.random() * 15) + 3;
-  entryIndex = -1;
-  exceptionIndex = -1;
+  index = index || 0;
 
   return {
     loginPair: {
@@ -34,24 +34,26 @@ FakeDataMaker.passwordEntry = function(url, username, passwordLength) {
       username: username,
     },
     numCharactersInPassword: passwordLength,
-    index: ++entryIndex,
+    index: index,
   };
 };
 
 /**
  * Creates a single item for the list of password exceptions.
- * @param {string|undefined} url
+ * @param {string=} url
+ * @param {number=} index
  * @return {chrome.passwordsPrivate.ExceptionEntry}
  */
-FakeDataMaker.exceptionEntry = function(url) {
+FakeDataMaker.exceptionEntry = function(url, index) {
   url = url || FakeDataMaker.patternMaker_('www.xxxxxx.com', 16);
+  index = index || 0;
   return {
     urls: {
       origin: 'http://' + url + '/login',
       shown: url,
       link: 'http://' + url + '/login',
     },
-    index: ++exceptionIndex,
+    index: index,
   };
 };
 
@@ -113,7 +115,8 @@ FakeDataMaker.creditCardEntry = function() {
   ret.metadata = {isLocal: true};
   const cards = ['Visa', 'Mastercard', 'Discover', 'Card'];
   const card = cards[Math.floor(Math.random() * cards.length)];
-  ret.metadata.summaryLabel = card + ' ' + '****' + ret.cardNumber.substr(-4);
+  ret.metadata.summaryLabel = card + ' ' +
+      '****' + ret.cardNumber.substr(-4);
   return ret;
 };
 
@@ -247,8 +250,9 @@ TestPasswordManager.prototype = {
 
     assertEquals(expected.requested.passwords, actual.requested.passwords);
     assertEquals(expected.requested.exceptions, actual.requested.exceptions);
-    assertEquals(expected.requested.plaintextPassword,
-                 actual.requested.plaintextPassword);
+    assertEquals(
+        expected.requested.plaintextPassword,
+        actual.requested.plaintextPassword);
 
     assertEquals(expected.removed.passwords, actual.removed.passwords);
     assertEquals(expected.removed.exceptions, actual.removed.exceptions);
@@ -258,17 +262,12 @@ TestPasswordManager.prototype = {
   },
 };
 
-/** @constructor */
-function AutofillManagerExpectations() {
-  this.requested = {
-    addresses: 0,
-    creditCards: 0,
-  };
-
-  this.listening = {
-    addresses: 0,
-    creditCards: 0,
-  };
+/** Helper class to track AutofillManager expectations. */
+class AutofillManagerExpectations {
+  constructor() {
+    this.requestedAddresses = 0;
+    this.listeningAddresses = 0;
+  }
 }
 
 /**
@@ -282,49 +281,30 @@ function TestAutofillManager() {
   // Set these to have non-empty data.
   this.data = {
     addresses: [],
-    creditCards: [],
   };
 
   // Holds the last callbacks so they can be called when needed.
   this.lastCallback = {
     addAddressListChangedListener: null,
-    addCreditCardListChangedListener: null,
   };
 }
 
 TestAutofillManager.prototype = {
   /** @override */
   addAddressListChangedListener: function(listener) {
-    this.actual_.listening.addresses++;
+    this.actual_.listeningAddresses++;
     this.lastCallback.addAddressListChangedListener = listener;
   },
 
   /** @override */
   removeAddressListChangedListener: function(listener) {
-    this.actual_.listening.addresses--;
+    this.actual_.listeningAddresses--;
   },
 
   /** @override */
   getAddressList: function(callback) {
-    this.actual_.requested.addresses++;
+    this.actual_.requestedAddresses++;
     callback(this.data.addresses);
-  },
-
-  /** @override */
-  addCreditCardListChangedListener: function(listener) {
-    this.actual_.listening.creditCards++;
-    this.lastCallback.addCreditCardListChangedListener = listener;
-  },
-
-  /** @override */
-  removeCreditCardListChangedListener: function(listener) {
-    this.actual_.listening.creditCards--;
-  },
-
-  /** @override */
-  getCreditCardList: function(callback) {
-    this.actual_.requested.creditCards++;
-    callback(this.data.creditCards);
   },
 
   /**
@@ -333,11 +313,63 @@ TestAutofillManager.prototype = {
    */
   assertExpectations: function(expected) {
     const actual = this.actual_;
+    assertEquals(expected.requestedAddresses, actual.requestedAddresses);
+    assertEquals(expected.listeningAddresses, actual.listeningAddresses);
+  },
+};
 
-    assertEquals(expected.requested.addresses, actual.requested.addresses);
-    assertEquals(expected.requested.creditCards, actual.requested.creditCards);
+/** Helper class to track PaymentsManager expectations. */
+class PaymentsManagerExpectations {
+  constructor() {
+    this.requestedCreditCards = 0;
+    this.listeningCreditCards = 0;
+  }
+}
 
-    assertEquals(expected.listening.addresses, actual.listening.addresses);
-    assertEquals(expected.listening.creditCards, actual.listening.creditCards);
+/**
+ * Test implementation
+ * @implements {PaymentsManager}
+ * @constructor
+ */
+function TestPaymentsManager() {
+  this.actual_ = new PaymentsManagerExpectations();
+
+  // Set these to have non-empty data.
+  this.data = {
+    creditCards: [],
+  };
+
+  // Holds the last callbacks so they can be called when needed.
+  this.lastCallback = {
+    addCreditCardListChangedListener: null,
+  };
+}
+
+TestPaymentsManager.prototype = {
+  /** @override */
+  addCreditCardListChangedListener: function(listener) {
+    this.actual_.listeningCreditCards++;
+    this.lastCallback.addCreditCardListChangedListener = listener;
+  },
+
+  /** @override */
+  removeCreditCardListChangedListener: function(listener) {
+    this.actual_.listeningCreditCards--;
+  },
+
+  /** @override */
+  getCreditCardList: function(callback) {
+    this.actual_.requestedCreditCards++;
+    callback(this.data.creditCards);
+  },
+
+  /**
+   * Verifies expectations.
+   * @param {!PaymentsManagerExpectations} expected
+   */
+  assertExpectations: function(expected) {
+    const actual = this.actual_;
+    assertEquals(expected.requestedCreditCards, actual.requestedCreditCards);
+    assertEquals(expected.listeningCreditCards, actual.listeningCreditCards);
   },
 };

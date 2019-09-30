@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "ash/app_list/app_list_controller_impl.h"
+#include "ash/app_list/app_list_view_delegate.h"
 #include "ash/app_list/model/app_list_item.h"
 #include "ash/app_list/model/app_list_item_list.h"
 #include "ash/app_list/model/app_list_model.h"
@@ -18,7 +19,6 @@
 #include "ash/shell.h"
 #include "ash/shell/example_factory.h"
 #include "ash/shell/toplevel_window.h"
-#include "ash/shell_port.h"
 #include "base/callback.h"
 #include "base/files/file_path.h"
 #include "base/i18n/case_conversion.h"
@@ -26,7 +26,6 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
-#include "ui/app_list/app_list_view_delegate.h"
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/font_list.h"
 #include "ui/gfx/geometry/rect.h"
@@ -236,6 +235,8 @@ class ExampleAppListViewDelegate : public app_list::AppListViewDelegate {
     NOTIMPLEMENTED();
   }
 
+  void StartAssistant() override { NOTIMPLEMENTED(); }
+
   void StartSearch(const base::string16& raw_query) override {
     base::string16 query;
     base::TrimWhitespace(raw_query, base::TRIM_ALL, &query);
@@ -263,8 +264,7 @@ class ExampleAppListViewDelegate : public app_list::AppListViewDelegate {
     // Nothing needs to be done.
   }
 
-  void Dismiss() override {
-    DCHECK(ShellPort::HasInstance());
+  void DismissAppList() override {
     Shell::Get()->app_list_controller()->DismissAppList();
   }
 
@@ -290,19 +290,32 @@ class ExampleAppListViewDelegate : public app_list::AppListViewDelegate {
     NOTIMPLEMENTED();
   }
 
+  void GetSearchResultContextMenuModel(
+      const std::string& result_id,
+      GetContextMenuModelCallback callback) override {
+    NOTIMPLEMENTED();
+  }
+
   void ContextMenuItemSelected(const std::string& id,
                                int command_id,
                                int event_flags) override {
     NOTIMPLEMENTED();
   }
 
-  void AddObserver(app_list::AppListViewDelegateObserver* observer) override {
+  void ShowWallpaperContextMenu(const gfx::Point& onscreen_location,
+                                ui::MenuSourceType source_type) override {
     NOTIMPLEMENTED();
   }
 
-  void RemoveObserver(
-      app_list::AppListViewDelegateObserver* observer) override {
+  void SearchResultContextMenuItemSelected(const std::string& result_id,
+                                           int command_id,
+                                           int event_flags) override {
     NOTIMPLEMENTED();
+  }
+
+  ws::WindowService* GetWindowService() override {
+    NOTIMPLEMENTED();
+    return nullptr;
   }
 
   std::unique_ptr<app_list::AppListModel> model_;

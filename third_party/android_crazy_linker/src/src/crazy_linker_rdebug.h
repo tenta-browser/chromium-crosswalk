@@ -206,17 +206,6 @@ class RDebug {
   // available.
   r_debug* GetAddress();
 
-  // Debugger support, which is the default, implies calling the special
-  // hook function r_brk(). Unfortunately, this sometimes results in rare
-  // runtime crashes (see https://crbug.com/796938). This method allows the
-  // client to disable this operation. If |enabled| is false, shared
-  // libraries loaded through the crazy linker will *not* be visible to GDB
-  // (but will continue to appear in stack traces).
-  void SetDebuggerSupport(bool enabled);
-
-  // Return the state of debugger support.
-  bool GetDebuggerSupport() const;
-
  private:
   // Try to find the address of the global _r_debug variable, even
   // though there is no symbol for it. Returns true on success.
@@ -228,7 +217,6 @@ class RDebug {
   // is enabled, otherwise it runs immediately on the current thread.
   // AddEntryImpl() and DelEntryImpl() are the member functions called
   // by the static ones to do the actual work.
-  void WriteLinkMapField(link_map_t** link_pointer, link_map_t* entry);
   void AddEntryImpl(link_map_t* entry);
   void DelEntryImpl(link_map_t* entry);
   static void AddEntryInternal(RDebug* rdebug, link_map_t* entry) {

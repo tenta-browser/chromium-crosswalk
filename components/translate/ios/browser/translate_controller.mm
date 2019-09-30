@@ -50,7 +50,6 @@ void TranslateController::InjectTranslateScript(
     const std::string& translate_script) {
   [js_manager_ setScript:base::SysUTF8ToNSString(translate_script)];
   [js_manager_ inject];
-  [js_manager_ injectWaitUntilTranslateReadyScript];
 }
 
 void TranslateController::RevertTranslation() {
@@ -62,10 +61,6 @@ void TranslateController::StartTranslation(const std::string& source_language,
   [js_manager_ startTranslationFrom:source_language to:target_language];
 }
 
-void TranslateController::CheckTranslateStatus() {
-  [js_manager_ injectTranslateStatusScript];
-}
-
 void TranslateController::SetJsTranslateManagerForTesting(
     JsTranslateManager* manager) {
   js_manager_.reset(manager);
@@ -74,7 +69,12 @@ void TranslateController::SetJsTranslateManagerForTesting(
 bool TranslateController::OnJavascriptCommandReceived(
     const base::DictionaryValue& command,
     const GURL& url,
-    bool interacting) {
+    bool interacting,
+    bool is_main_frame) {
+  if (!is_main_frame) {
+    // Translate is only supported on main frame.
+    return false;
+  }
   const base::Value* value = nullptr;
   command.Get("command", &value);
   if (!value) {
@@ -94,17 +94,21 @@ bool TranslateController::OnJavascriptCommandReceived(
 
 bool TranslateController::OnTranslateReady(
     const base::DictionaryValue& command) {
-  if (!command.HasKey("timeout")) {
+  double error_code = 0.;
+  double load_time = 0.;
+  double ready_time = 0.;
+
+  if (!command.HasKey("errorCode") ||
+      !command.GetDouble("errorCode", &error_code) ||
+      error_code < TranslateErrors::NONE ||
+      error_code >= TranslateErrors::TRANSLATE_ERROR_MAX) {
     NOTREACHED();
     return false;
   }
 
-  bool timeout = false;
-  double load_time = 0.;
-  double ready_time = 0.;
-
-  command.GetBoolean("timeout", &timeout);
-  if (!timeout) {
+  TranslateErrors::Type error_type =
+      static_cast<TranslateErrors::Type>(error_code);
+  if (error_type == TranslateErrors::NONE) {
     if (!command.HasKey("loadTime") || !command.HasKey("readyTime")) {
       NOTREACHED();
       return false;
@@ -113,23 +117,27 @@ bool TranslateController::OnTranslateReady(
     command.GetDouble("readyTime", &ready_time);
   }
   if (observer_)
-    observer_->OnTranslateScriptReady(!timeout, load_time, ready_time);
+    observer_->OnTranslateScriptReady(error_type, load_time, ready_time);
   return true;
 }
 
 bool TranslateController::OnTranslateComplete(
     const base::DictionaryValue& command) {
-  if (!command.HasKey("success")) {
+  double error_code = 0.;
+  std::string original_language;
+  double translation_time = 0.;
+
+  if (!command.HasKey("errorCode") ||
+      !command.GetDouble("errorCode", &error_code) ||
+      error_code < TranslateErrors::NONE ||
+      error_code >= TranslateErrors::TRANSLATE_ERROR_MAX) {
     NOTREACHED();
     return false;
   }
 
-  bool success = false;
-  std::string original_language;
-  double translation_time = 0.;
-
-  command.GetBoolean("success", &success);
-  if (success) {
+  TranslateErrors::Type error_type =
+      static_cast<TranslateErrors::Type>(error_code);
+  if (error_type == TranslateErrors::NONE) {
     if (!command.HasKey("originalPageLanguage") ||
         !command.HasKey("translationTime")) {
       NOTREACHED();
@@ -140,7 +148,7 @@ bool TranslateController::OnTranslateComplete(
   }
 
   if (observer_)
-    observer_->OnTranslateComplete(success, original_language,
+    observer_->OnTranslateComplete(error_type, original_language,
                                    translation_time);
   return true;
 }

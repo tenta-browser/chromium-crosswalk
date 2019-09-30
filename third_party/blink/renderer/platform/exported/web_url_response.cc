@@ -70,28 +70,16 @@ class URLResponseExtraDataContainer : public ResourceResponse::ExtraData {
 
 }  // namespace
 
-// The purpose of this struct is to permit allocating a ResourceResponse on the
-// heap, which is otherwise disallowed by the DISALLOW_NEW_EXCEPT_PLACEMENT_NEW
-// annotation on ResourceResponse.
-struct WebURLResponse::ResourceResponseContainer {
-  ResourceResponseContainer() = default;
-
-  explicit ResourceResponseContainer(const ResourceResponse& r)
-      : resource_response(r) {}
-
-  ResourceResponse resource_response;
-};
-
 WebURLResponse::~WebURLResponse() = default;
 
 WebURLResponse::WebURLResponse()
-    : owned_resource_response_(new ResourceResponseContainer()),
-      resource_response_(&owned_resource_response_->resource_response) {}
+    : owned_resource_response_(std::make_unique<ResourceResponse>()),
+      resource_response_(owned_resource_response_.get()) {}
 
 WebURLResponse::WebURLResponse(const WebURLResponse& r)
     : owned_resource_response_(
-          new ResourceResponseContainer(*r.resource_response_)),
-      resource_response_(&owned_resource_response_->resource_response) {}
+          std::make_unique<ResourceResponse>(*r.resource_response_)),
+      resource_response_(owned_resource_response_.get()) {}
 
 WebURLResponse::WebURLResponse(const WebURL& url) : WebURLResponse() {
   SetURL(url);
@@ -338,14 +326,12 @@ void WebURLResponse::SetWasFallbackRequiredByServiceWorker(bool value) {
   resource_response_->SetWasFallbackRequiredByServiceWorker(value);
 }
 
-void WebURLResponse::SetResponseTypeViaServiceWorker(
-    network::mojom::FetchResponseType value) {
-  resource_response_->SetResponseTypeViaServiceWorker(value);
+void WebURLResponse::SetType(network::mojom::FetchResponseType value) {
+  resource_response_->SetType(value);
 }
 
-network::mojom::FetchResponseType WebURLResponse::ResponseTypeViaServiceWorker()
-    const {
-  return resource_response_->ResponseTypeViaServiceWorker();
+network::mojom::FetchResponseType WebURLResponse::GetType() const {
+  return resource_response_->GetType();
 }
 
 void WebURLResponse::SetURLListViaServiceWorker(
@@ -383,14 +369,6 @@ void WebURLResponse::SetCorsExposedHeaderNames(
 
 void WebURLResponse::SetDidServiceWorkerNavigationPreload(bool value) {
   resource_response_->SetDidServiceWorkerNavigationPreload(value);
-}
-
-WebString WebURLResponse::DownloadFilePath() const {
-  return resource_response_->DownloadedFilePath();
-}
-
-void WebURLResponse::SetDownloadFilePath(const WebString& download_file_path) {
-  resource_response_->SetDownloadedFilePath(download_file_path);
 }
 
 WebString WebURLResponse::RemoteIPAddress() const {
@@ -449,6 +427,10 @@ net::HttpResponseInfo::ConnectionInfo WebURLResponse::ConnectionInfo() const {
 void WebURLResponse::SetConnectionInfo(
     net::HttpResponseInfo::ConnectionInfo connection_info) {
   resource_response_->SetConnectionInfo(connection_info);
+}
+
+void WebURLResponse::SetAsyncRevalidationRequested(bool requested) {
+  resource_response_->SetAsyncRevalidationRequested(requested);
 }
 
 WebURLResponse::WebURLResponse(ResourceResponse& r) : resource_response_(&r) {}

@@ -5,14 +5,13 @@
 #include "android_webview/browser/aw_browser_context.h"
 #include "android_webview/browser/aw_contents.h"
 #include "android_webview/browser/aw_contents_io_thread_client.h"
-#include "android_webview/browser/aw_safe_browsing_config_helper.h"
 #include "android_webview/browser/aw_safe_browsing_whitelist_manager.h"
 #include "android_webview/browser/net/aw_url_request_context_getter.h"
 #include "base/android/jni_array.h"
 #include "base/android/jni_string.h"
 #include "base/android/scoped_java_ref.h"
 #include "base/callback.h"
-#include "components/google/core/browser/google_util.h"
+#include "components/google/core/common/google_util.h"
 #include "components/security_interstitials/core/urls.h"
 #include "components/version_info/version_info.h"
 #include "content/public/browser/browser_thread.h"
@@ -41,7 +40,7 @@ void ClientCertificatesCleared(const JavaRef<jobject>& callback) {
 
 void NotifyClientCertificatesChanged() {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
-  net::CertDatabase::GetInstance()->OnAndroidKeyStoreChanged();
+  net::CertDatabase::GetInstance()->NotifyObserversCertDBChanged();
 }
 
 void SafeBrowsingWhitelistAssigned(const JavaRef<jobject>& callback,
@@ -98,21 +97,6 @@ ScopedJavaLocalRef<jstring> JNI_AwContentsStatics_GetProductVersion(
 }
 
 // static
-jboolean JNI_AwContentsStatics_GetSafeBrowsingEnabledByManifest(
-    JNIEnv* env,
-    const JavaParamRef<jclass>&) {
-  return AwSafeBrowsingConfigHelper::GetSafeBrowsingEnabledByManifest();
-}
-
-// static
-void JNI_AwContentsStatics_SetSafeBrowsingEnabledByManifest(
-    JNIEnv* env,
-    const JavaParamRef<jclass>&,
-    jboolean enable) {
-  AwSafeBrowsingConfigHelper::SetSafeBrowsingEnabledByManifest(enable);
-}
-
-// static
 void JNI_AwContentsStatics_SetSafeBrowsingWhitelist(
     JNIEnv* env,
     const JavaParamRef<jclass>&,
@@ -144,6 +128,31 @@ void JNI_AwContentsStatics_SetCheckClearTextPermitted(
     const JavaParamRef<jclass>&,
     jboolean permitted) {
   AwURLRequestContextGetter::set_check_cleartext_permitted(permitted);
+}
+
+// static
+void JNI_AwContentsStatics_SetProxyOverride(
+    JNIEnv* env,
+    const JavaParamRef<jclass>&,
+    const base::android::JavaParamRef<jstring>& jhost,
+    jint port,
+    const base::android::JavaParamRef<jobjectArray>& jexclusion_list) {
+  std::string host;
+  base::android::ConvertJavaStringToUTF8(env, jhost, &host);
+  std::vector<std::string> exclusion_list;
+  base::android::AppendJavaStringArrayToStringVector(env, jexclusion_list,
+                                                     &exclusion_list);
+
+  AwBrowserContext::GetDefault()->GetAwURLRequestContext()->SetProxyOverride(
+      host, port, exclusion_list);
+}
+
+// static
+void JNI_AwContentsStatics_ClearProxyOverride(JNIEnv* env,
+                                              const JavaParamRef<jclass>&) {
+  AwBrowserContext::GetDefault()
+      ->GetAwURLRequestContext()
+      ->ClearProxyOverride();
 }
 
 }  // namespace android_webview

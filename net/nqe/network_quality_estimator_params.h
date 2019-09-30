@@ -31,25 +31,12 @@ NET_EXPORT extern const base::TimeDelta
 // the network quality estimator.
 class NET_EXPORT NetworkQualityEstimatorParams {
  public:
-  // Algorithms supported by network quality estimator for computing effective
-  // connection type.
-  enum class EffectiveConnectionTypeAlgorithm {
-    HTTP_RTT_AND_DOWNSTREAM_THROUGHOUT = 0,
-    TRANSPORT_RTT_OR_DOWNSTREAM_THROUGHOUT,
-    EFFECTIVE_CONNECTION_TYPE_ALGORITHM_LAST
-  };
-
   // |params| is the map containing all field trial parameters related to
   // NetworkQualityEstimator field trial.
   explicit NetworkQualityEstimatorParams(
       const std::map<std::string, std::string>& params);
 
   ~NetworkQualityEstimatorParams();
-
-  // Returns the algorithm to use for computing effective connection type. The
-  // value is obtained from |params|. If the value from |params| is unavailable,
-  // a default value is used.
-  EffectiveConnectionTypeAlgorithm GetEffectiveConnectionTypeAlgorithm() const;
 
   // Returns the default observation for connection |type|. The default
   // observations are different for different connection types (e.g., 2G, 3G,
@@ -118,19 +105,6 @@ class NET_EXPORT NetworkQualityEstimatorParams {
   // single socket watcher.
   base::TimeDelta min_socket_watcher_notification_interval() const {
     return min_socket_watcher_notification_interval_;
-  }
-
-  // Returns the algorithm that should be used for computing effective
-  // connection type. Returns an empty string if a valid algorithm parameter is
-  // not specified.
-  static EffectiveConnectionTypeAlgorithm
-  GetEffectiveConnectionTypeAlgorithmFromString(
-      const std::string& algorithm_param_value);
-
-  void SetEffectiveConnectionTypeAlgorithm(
-      EffectiveConnectionTypeAlgorithm algorithm) {
-    DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-    effective_connection_type_algorithm_ = algorithm;
   }
 
   // Number of bytes received during a throughput observation window of duration
@@ -240,6 +214,13 @@ class NET_EXPORT NetworkQualityEstimatorParams {
     return socket_watchers_min_notification_interval_;
   }
 
+  // Returns true if end-to-end RTT estimates can be used for computing network
+  // quality estimate.
+  bool use_end_to_end_rtt() const { return use_end_to_end_rtt_; }
+
+  // Sets the forced effective connection type as |type|.
+  void SetForcedEffectiveConnectionTypeForTesting(EffectiveConnectionType type);
+
  private:
   // Map containing all field trial parameters related to
   // NetworkQualityEstimator field trial.
@@ -266,10 +247,9 @@ class NET_EXPORT NetworkQualityEstimatorParams {
   const base::TimeDelta hanging_request_min_duration_;
   const bool add_default_platform_observations_;
   const base::TimeDelta socket_watchers_min_notification_interval_;
+  const bool use_end_to_end_rtt_;
 
   bool use_small_responses_;
-
-  EffectiveConnectionTypeAlgorithm effective_connection_type_algorithm_;
 
   // Default network quality observations obtained from |params_|.
   nqe::internal::NetworkQuality

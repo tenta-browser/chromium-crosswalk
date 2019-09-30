@@ -9,6 +9,7 @@ window.foo=42 in session1
             value : 42
         }
     }
+    sessionId : <string>
 }
 window.foo in session2
 {
@@ -20,6 +21,7 @@ window.foo in session2
             value : 42
         }
     }
+    sessionId : <string>
 }
 window.foo in session3
 {
@@ -31,5 +33,6 @@ window.foo in session3
             value : 42
         }
     }
+    sessionId : <string>
 }
 

@@ -99,9 +99,9 @@ _BASE_CHART = {
 }
 _DUMP_STATIC_INITIALIZERS_PATH = os.path.join(
     host_paths.DIR_SOURCE_ROOT, 'tools', 'linux', 'dump-static-initializers.py')
-# Pragma exists when enable_resource_whitelist_generation=true.
-_RC_HEADER_RE = re.compile(
-    r'^#define (?P<name>\w+) (?:_Pragma\(.*?\) )?(?P<id>\d+)$')
+# Macro definitions look like (something, 123) when
+# enable_resource_whitelist_generation=true.
+_RC_HEADER_RE = re.compile(r'^#define (?P<name>\w+).* (?P<id>\d+)\)?$')
 _RE_NON_LANGUAGE_PAK = re.compile(r'^assets/.*(resources|percent)\.pak$')
 _RE_COMPRESSED_LANGUAGE_PAK = re.compile(
     r'\.lpak$|^assets/(?!stored-locales/).*(?!resources|percent)\.pak$')
@@ -562,12 +562,14 @@ def _AnnotatePakResources(out_dir):
 
 
 # This method also used by //build/android/gyp/assert_static_initializers.py
-def AnalyzeStaticInitializers(apk_filename, tool_prefix, dump_sis, out_dir):
+def AnalyzeStaticInitializers(apk_filename, tool_prefix, dump_sis, out_dir,
+                              ignored_libs):
   # Static initializer counting mostly copies logic in
   # infra/scripts/legacy/scripts/slave/chromium/sizes.py.
   with zipfile.ZipFile(apk_filename) as z:
     so_files = [f for f in z.infolist()
-                if f.filename.endswith('.so') and f.file_size > 0]
+                if f.filename.endswith('.so') and f.file_size > 0
+                and os.path.basename(f.filename) not in ignored_libs]
   # Skip checking static initializers for 32 bit .so files when 64 bit .so files
   # are present since the 32 bit versions will be checked by bots that only
   # build the 32 bit version. This avoids the complexity of finding 32 bit .so
@@ -613,17 +615,21 @@ def _CalculateCompressedSize(file_path):
 
 
 def _PrintDexAnalysis(apk_filename, chartjson=None):
-  sizes = method_count.ExtractSizesFromZip(apk_filename)
+  sizes, total_size = method_count.ExtractSizesFromZip(apk_filename)
 
   graph_title = os.path.basename(apk_filename) + '_Dex'
   dex_metrics = method_count.CONTRIBUTORS_TO_DEX_CACHE
+  cumulative_sizes = collections.defaultdict(int)
+  for classes_dex_sizes in sizes.values():
+    for key in dex_metrics:
+      cumulative_sizes[key] += classes_dex_sizes[key]
   for key, label in dex_metrics.iteritems():
     perf_tests_results_helper.ReportPerfResult(chartjson, graph_title, label,
-                                               sizes[key], 'entries')
+                                               cumulative_sizes[key], 'entries')
 
   graph_title = '%sCache' % graph_title
   perf_tests_results_helper.ReportPerfResult(chartjson, graph_title, 'DexCache',
-                                             sizes['dex_cache_size'], 'bytes')
+                                             total_size, 'bytes')
 
 
 def _PrintPatchSizeEstimate(new_apk, builder, bucket, chartjson=None):
@@ -676,7 +682,8 @@ def _ConfigOutDirAndToolsPrefix(out_dir):
     except EnvironmentError:
       pass
   if out_dir:
-    build_vars = build_utils.ReadBuildVars()
+    build_vars = build_utils.ReadBuildVars(
+        os.path.join(out_dir, "build_vars.txt"))
     tool_prefix = os.path.join(out_dir, build_vars['android_tool_prefix'])
   else:
     tool_prefix = ''
@@ -703,6 +710,9 @@ def main():
                          dest='dump_sis',
                          help='Run dump-static-initializers.py to get the list'
                               'of static initializers (slow).')
+  argparser.add_argument('--loadable_module',
+                         action='append',
+                         help='Use for libraries added via loadable_modules')
   argparser.add_argument('--estimate-patch-size',
                          action='store_true',
                          help='Include patch size estimates. Useful for perf '
@@ -730,8 +740,10 @@ def main():
   PrintApkAnalysis(args.apk, tool_prefix, out_dir, chartjson=chartjson)
   _PrintDexAnalysis(args.apk, chartjson=chartjson)
 
+  ignored_libs = args.loadable_module if args.loadable_module else []
+
   si_count = AnalyzeStaticInitializers(
-      args.apk, tool_prefix, args.dump_sis, out_dir)
+      args.apk, tool_prefix, args.dump_sis, out_dir, ignored_libs)
   perf_tests_results_helper.ReportPerfResult(
       chartjson, 'StaticInitializersCount', 'count', si_count, 'count')
 

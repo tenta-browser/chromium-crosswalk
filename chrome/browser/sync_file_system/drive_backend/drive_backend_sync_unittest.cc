@@ -10,12 +10,11 @@
 #include "base/containers/stack.h"
 #include "base/files/file_util.h"
 #include "base/macros.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/sequenced_task_runner.h"
 #include "base/stl_util.h"
-#include "base/task_scheduler/post_task.h"
-#include "base/task_scheduler/task_scheduler.h"
+#include "base/task/post_task.h"
+#include "base/task/task_scheduler/task_scheduler.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/sync_file_system/drive_backend/callback_helper.h"
 #include "chrome/browser/sync_file_system/drive_backend/drive_backend_constants.h"
@@ -87,7 +86,7 @@ class DriveBackendSyncTest : public testing::Test,
 
   void SetUp() override {
     ASSERT_TRUE(base_dir_.CreateUniqueTempDir());
-    in_memory_env_.reset(leveldb_chrome::NewMemEnv(leveldb::Env::Default()));
+    in_memory_env_ = leveldb_chrome::NewMemEnv("DriveBackendSyncTest");
 
     io_task_runner_ = content::BrowserThread::GetTaskRunnerForThread(
         content::BrowserThread::IO);
@@ -125,6 +124,7 @@ class DriveBackendSyncTest : public testing::Test,
         nullptr,  // signin_manager
         nullptr,  // token_service
         nullptr,  // request_context
+        nullptr,  // url_loader_factory
         nullptr,  // drive_service
         in_memory_env_.get()));
     remote_sync_service_->AddServiceObserver(this);
@@ -329,7 +329,7 @@ class DriveBackendSyncTest : public testing::Test,
   }
 
   void FetchRemoteChanges() {
-    remote_sync_service_->OnNotificationReceived();
+    remote_sync_service_->OnNotificationTimerFired();
     WaitForIdleWorker();
   }
 

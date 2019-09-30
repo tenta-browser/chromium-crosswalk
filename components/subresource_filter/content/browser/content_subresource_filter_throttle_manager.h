@@ -14,6 +14,7 @@
 #include "base/memory/weak_ptr.h"
 #include "base/scoped_observer.h"
 #include "base/stl_util.h"
+#include "components/subresource_filter/content/browser/subframe_navigation_filtering_throttle.h"
 #include "components/subresource_filter/content/browser/subresource_filter_observer.h"
 #include "components/subresource_filter/content/browser/verified_ruleset_dealer.h"
 #include "components/subresource_filter/core/common/activation_decision.h"
@@ -34,9 +35,9 @@ namespace subresource_filter {
 
 class AsyncDocumentSubresourceFilter;
 class ActivationStateComputingNavigationThrottle;
-class SubframeNavigationFilteringThrottle;
-class SubresourceFilterObserverManager;
 class PageLoadStatistics;
+class SubresourceFilterObserverManager;
+class SubresourceFilterClient;
 struct DocumentLoadStatistics;
 
 // The ContentSubresourceFilterThrottleManager manages NavigationThrottles in
@@ -50,19 +51,11 @@ struct DocumentLoadStatistics;
 // navgation, and has veto power for frame activation.
 class ContentSubresourceFilterThrottleManager
     : public content::WebContentsObserver,
-      public SubresourceFilterObserver {
+      public SubresourceFilterObserver,
+      public SubframeNavigationFilteringThrottle::Delegate {
  public:
-  // It is expected that the Delegate outlives |this|, and manages the lifetime
-  // of this class.
-  class Delegate {
-   public:
-    // The embedder may be interested in displaying UI to the user when the
-    // first load is disallowed for a given page load.
-    virtual void OnFirstSubresourceLoadDisallowed() {}
-  };
-
   ContentSubresourceFilterThrottleManager(
-      Delegate* delegate,
+      SubresourceFilterClient* client,
       VerifiedRulesetDealer::Handle* dealer_handle,
       content::WebContents* web_contents);
   ~ContentSubresourceFilterThrottleManager() override;
@@ -86,7 +79,11 @@ class ContentSubresourceFilterThrottleManager
     return ruleset_handle_.get();
   }
 
-  bool IsFrameTaggedAsAdForTesting(content::RenderFrameHost* frame_host);
+  // SubframeNavigationFilteringThrottle::Delegate:
+  bool CalculateIsAdSubframe(content::RenderFrameHost* frame_host,
+                             LoadPolicy load_policy) override;
+
+  bool IsFrameTaggedAsAdForTesting(content::RenderFrameHost* frame_host) const;
 
  protected:
   // content::WebContentsObserver:
@@ -104,13 +101,21 @@ class ContentSubresourceFilterThrottleManager
   void OnSubresourceFilterGoingAway() override;
   void OnPageActivationComputed(
       content::NavigationHandle* navigation_handle,
-      ActivationDecision activation_decision,
       const ActivationState& activation_state) override;
   void OnSubframeNavigationEvaluated(
       content::NavigationHandle* navigation_handle,
-      LoadPolicy load_policy) override;
+      LoadPolicy load_policy,
+      bool is_ad_subframe) override;
 
  private:
+  FRIEND_TEST_ALL_PREFIXES(ContentSubresourceFilterThrottleManagerTest,
+                           SubframeNavigationTaggedAsAdByRenderer);
+  FRIEND_TEST_ALL_PREFIXES(ContentSubresourceFilterThrottleManagerTest,
+                           GrandchildNavigationTaggedAsAdByRenderer);
+  FRIEND_TEST_ALL_PREFIXES(ContentSubresourceFilterThrottleManagerTest,
+                           AdTagCarriesAcrossProcesses);
+  FRIEND_TEST_ALL_PREFIXES(ContentSubresourceFilterThrottleManagerTest,
+                           FirstDisallowedLoadCalledOutOfOrder);
   std::unique_ptr<SubframeNavigationFilteringThrottle>
   MaybeCreateSubframeNavigationFilteringThrottle(
       content::NavigationHandle* navigation_handle);
@@ -132,10 +137,9 @@ class ContentSubresourceFilterThrottleManager
 
   void OnDocumentLoadStatistics(const DocumentLoadStatistics& statistics);
 
-  // The navigation handle ptr will be in an invalid state, do not access any
-  // members on it. This method is only for debugging crbug.com/736249.
-  void OnActivationThrottleDestroyed(
-      content::NavigationHandle* navigation_handle);
+  // Registers |render_frame_host| as an ad frame. If the frame later moves to
+  // a new process its RenderHost will be told that it's an ad.
+  void OnFrameIsAdSubframe(content::RenderFrameHost* render_frame_host);
 
   // Adds the navigation's RenderFrameHost to activated_frame_hosts_ if it is a
   // special navigation which did not go through navigation throttles and its
@@ -154,18 +158,17 @@ class ContentSubresourceFilterThrottleManager
   // For each ongoing navigation that requires activation state computation,
   // keeps track of the throttle that is carrying out that computation, so that
   // the result can be retrieved when the navigation is ready to commit.
-  // is_ad_subframe is set if SubframeNavigationFilteringThrottle finds that the
-  // subframe URL matches the ruleset.
-  struct OngoingThrottleInfo {
-    ActivationStateComputingNavigationThrottle* throttle = nullptr;
-    bool is_ad_subframe = false;
-  };
-
-  std::map<content::NavigationHandle*, OngoingThrottleInfo>
+  std::map<content::NavigationHandle*,
+           ActivationStateComputingNavigationThrottle*>
       ongoing_activation_throttles_;
 
-  // Set of frames that have been identified as ads, either through matching the
-  // ruleset or if their parent frame was an ad frame.
+  // Set of RenderFrameHosts that have been identified as ads. An RFH is an ad
+  // subframe if any of the following conditions are met:
+  // 1. Its navigation URL is in the filter list
+  // 2. Its parent is a known ad subframe
+  // 3. The RenderFrame declares the frame is an ad (see AdTracker in Blink)
+  // 4. It's the result of moving an old ad subframe RFH to a new RFH (e.g.,
+  //    OOPIF)
   std::set<content::RenderFrameHost*> ad_frames_;
 
   ScopedObserver<SubresourceFilterObserverManager, SubresourceFilterObserver>
@@ -185,7 +188,7 @@ class ContentSubresourceFilterThrottleManager
 
   // These members outlive this class.
   VerifiedRulesetDealer::Handle* dealer_handle_;
-  Delegate* delegate_;
+  SubresourceFilterClient* client_;
 
   base::WeakPtrFactory<ContentSubresourceFilterThrottleManager>
       weak_ptr_factory_;

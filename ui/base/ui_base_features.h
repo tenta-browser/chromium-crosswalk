@@ -18,13 +18,21 @@ UI_BASE_EXPORT extern const base::Feature kEnableFloatingVirtualKeyboard;
 UI_BASE_EXPORT extern const base::Feature
     kEnableFullscreenHandwritingVirtualKeyboard;
 UI_BASE_EXPORT extern const base::Feature kEnableStylusVirtualKeyboard;
-UI_BASE_EXPORT extern const base::Feature kSecondaryUiMd;
+UI_BASE_EXPORT extern const base::Feature kEnableVirtualKeyboardMdUi;
+UI_BASE_EXPORT extern const base::Feature kEnableVirtualKeyboardUkm;
+UI_BASE_EXPORT extern const base::Feature kExperimentalUi;
+UI_BASE_EXPORT extern const base::Feature kSystemKeyboardLock;
 UI_BASE_EXPORT extern const base::Feature kTouchableAppContextMenu;
+UI_BASE_EXPORT extern const base::Feature kNotificationIndicator;
+UI_BASE_EXPORT extern const base::Feature kUiCompositorScrollWithLayers;
 
 UI_BASE_EXPORT bool IsTouchableAppContextMenuEnabled();
+UI_BASE_EXPORT bool IsNotificationIndicatorEnabled();
+
+UI_BASE_EXPORT bool IsUiGpuRasterizationEnabled();
 
 #if defined(OS_WIN)
-UI_BASE_EXPORT extern const base::Feature kDirectManipulationStylus;
+UI_BASE_EXPORT extern const base::Feature kInputPaneOnScreenKeyboard;
 UI_BASE_EXPORT extern const base::Feature kPointerEventsForTouch;
 UI_BASE_EXPORT extern const base::Feature kPrecisionTouchpad;
 UI_BASE_EXPORT extern const base::Feature kPrecisionTouchpadScrollPhase;
@@ -34,17 +42,30 @@ UI_BASE_EXPORT extern const base::Feature kTSFImeSupport;
 UI_BASE_EXPORT bool IsUsingWMPointerForTouch();
 #endif  // defined(OS_WIN)
 
-// TODO(sky): rename this to something that better conveys what it means.
-UI_BASE_EXPORT extern const base::Feature kMash;
-// WARNING: generally you should only use this in tests to enable the feature.
-// Outside of tests use IsMusEnabled() to detect if mus is enabled.
-// TODO(sky): rename this to kWindowService.
-UI_BASE_EXPORT extern const base::Feature kMus;
+#if defined(OS_WIN) || defined(OS_MACOSX) || defined(OS_LINUX)
+UI_BASE_EXPORT extern const base::Feature kDirectManipulationStylus;
+#endif  // defined(OS_WIN) || defined(OS_MACOSX) || defined(OS_LINUX)
 
-// Returns true if mus (the Window Service) is enabled.
-// NOTE: this returns true if either kMus or kMash is specified.
-// TODO(sky): rename this to IsWindowServiceEnabled().
-UI_BASE_EXPORT bool IsMusEnabled();
+// Used to have ash (Chrome OS system UI) run in its own process.
+// TODO(jamescook): Make flag only available in Chrome OS.
+UI_BASE_EXPORT extern const base::Feature kMash;
+
+UI_BASE_EXPORT extern const base::Feature kSingleProcessMash;
+
+// Returns true if Chrome's aura usage is backed by the WindowService.
+UI_BASE_EXPORT bool IsUsingWindowService();
+
+// Returns true if ash in running in a separate process (and is hosting the UI
+// service and Viz graphics). See //ash/README.md.
+UI_BASE_EXPORT bool IsMultiProcessMash();
+
+// Returns true if code outside of ash is using the WindowService. In this mode
+// there are two aura::Envs. Ash uses one with Env::Mode::LOCAL. Non-ash code
+// uses an aura::Env with a mode of MUS. The non-ash code using mus targets the
+// WindowService that ash is running. This exercises the WindowService mojo APIs
+// similar to kMash, but leaves ash and browser running in the same process.
+// See //ash/README.md.
+UI_BASE_EXPORT bool IsSingleProcessMash();
 
 #if defined(OS_MACOSX)
 // Returns true if the NSWindows for apps will be created in the app's process,
@@ -59,6 +80,13 @@ UI_BASE_EXPORT extern const base::Feature kViewsBrowserWindows;
 UI_BASE_EXPORT bool IsViewsBrowserCocoa();
 #endif  //  BUILDFLAG(MAC_VIEWS_BROWSER)
 #endif  //  defined(OS_MACOSX)
+
+// Use mojo communication in the drm platform instead of paramtraits. Remove
+// this switch (and associated code) when the drm platform always uses mojo
+// communication.
+// TODO(rjkroege): Remove in http://crbug.com/806092.
+UI_BASE_EXPORT extern const base::Feature kEnableOzoneDrmMojo;
+UI_BASE_EXPORT bool IsOzoneDrmMojo();
 
 }  // namespace features
 

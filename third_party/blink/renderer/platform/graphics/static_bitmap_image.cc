@@ -4,14 +4,13 @@
 
 #include "third_party/blink/renderer/platform/graphics/static_bitmap_image.h"
 
+#include "base/numerics/checked_math.h"
 #include "gpu/command_buffer/client/gles2_interface.h"
-#include "skia/ext/texture_handle.h"
 #include "third_party/blink/renderer/platform/graphics/accelerated_static_bitmap_image.h"
 #include "third_party/blink/renderer/platform/graphics/graphics_context.h"
 #include "third_party/blink/renderer/platform/graphics/image_observer.h"
 #include "third_party/blink/renderer/platform/graphics/paint/paint_image.h"
 #include "third_party/blink/renderer/platform/graphics/unaccelerated_static_bitmap_image.h"
-#include "third_party/blink/renderer/platform/wtf/checked_numeric.h"
 #include "third_party/blink/renderer/platform/wtf/typed_arrays/array_buffer_contents.h"
 #include "third_party/skia/include/core/SkCanvas.h"
 #include "third_party/skia/include/core/SkImage.h"
@@ -63,7 +62,7 @@ scoped_refptr<StaticBitmapImage> StaticBitmapImage::Create(
   return Create(SkImage::MakeFromRaster(pixmap, nullptr, nullptr));
 }
 
-void StaticBitmapImage::DrawHelper(PaintCanvas* canvas,
+void StaticBitmapImage::DrawHelper(cc::PaintCanvas* canvas,
                                    const PaintFlags& flags,
                                    const FloatRect& dst_rect,
                                    const FloatRect& src_rect,
@@ -80,8 +79,7 @@ void StaticBitmapImage::DrawHelper(PaintCanvas* canvas,
 }
 
 scoped_refptr<StaticBitmapImage> StaticBitmapImage::ConvertToColorSpace(
-    sk_sp<SkColorSpace> target,
-    SkTransferFunctionBehavior transfer_function_behavior) {
+    sk_sp<SkColorSpace> target) {
   sk_sp<SkImage> skia_image = PaintImageForCurrentFrame().GetSkImage();
   sk_sp<SkColorSpace> src_color_space = skia_image->refColorSpace();
   if (!src_color_space.get())
@@ -93,12 +91,14 @@ scoped_refptr<StaticBitmapImage> StaticBitmapImage::ConvertToColorSpace(
     return this;
 
   sk_sp<SkImage> converted_skia_image =
-      skia_image->makeColorSpace(dst_color_space, transfer_function_behavior);
+      skia_image->makeColorSpace(dst_color_space);
   DCHECK(converted_skia_image.get());
   DCHECK(skia_image.get() != converted_skia_image.get());
 
   return StaticBitmapImage::Create(converted_skia_image,
-                                   ContextProviderWrapper());
+                                   converted_skia_image->isTextureBacked()
+                                       ? ContextProviderWrapper()
+                                       : nullptr);
 }
 
 bool StaticBitmapImage::ConvertToArrayBufferContents(
@@ -108,7 +108,7 @@ bool StaticBitmapImage::ConvertToArrayBufferContents(
     const CanvasColorParams& color_params,
     bool is_accelerated) {
   uint8_t bytes_per_pixel = color_params.BytesPerPixel();
-  CheckedNumeric<int> data_size = bytes_per_pixel;
+  base::CheckedNumeric<int> data_size = bytes_per_pixel;
   data_size *= rect.Size().Area();
   if (!data_size.IsValid() ||
       data_size.ValueOrDie() > v8::TypedArray::kMaxLength)

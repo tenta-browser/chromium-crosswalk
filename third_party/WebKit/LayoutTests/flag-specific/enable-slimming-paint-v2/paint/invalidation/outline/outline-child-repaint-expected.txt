@@ -13,30 +13,10 @@
         },
         {
           "object": "LayoutBlockFlow DIV class='outlined'",
-          "rect": [0, 240, 220, 50],
-          "reason": "geometry"
-        },
-        {
-          "object": "LayoutBlockFlow DIV class='outlined'",
-          "rect": [0, 140, 220, 50],
-          "reason": "geometry"
-        },
-        {
-          "object": "LayoutBlockFlow DIV class='outlined'",
           "rect": [0, 140, 220, 50],
           "reason": "geometry"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutBlockFlow (positioned) DIV id='container'",
-      "reason": "geometry"
-    },
-    {
-      "object": "LayoutBlockFlow DIV class='outlined'",
-      "reason": "geometry"
     }
   ]
 }

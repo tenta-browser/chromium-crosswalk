@@ -75,4 +75,14 @@ class TestBottomSheetContent implements BottomSheetContent {
     public boolean swipeToDismissEnabled() {
         return false;
     }
+
+    @Override
+    public boolean isPeekStateEnabled() {
+        return true;
+    }
+
+    @Override
+    public boolean useSlimPeek() {
+        return false;
+    }
 }

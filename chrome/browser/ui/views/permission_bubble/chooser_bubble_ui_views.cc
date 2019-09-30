@@ -13,7 +13,7 @@
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/permission_bubble/chooser_bubble_delegate.h"
 #include "chrome/browser/ui/views_mode_controller.h"
-#include "ui/views/bubble/bubble_dialog_delegate.h"
+#include "ui/views/bubble/bubble_dialog_delegate_view.h"
 #include "ui/views/widget/widget.h"
 
 // The Views browser implementation of ChooserBubbleUi's anchor methods.
@@ -37,6 +37,9 @@ void ChooserBubbleUi::CreateAndShow(views::BubbleDialogDelegateView* delegate) {
   gfx::NativeView parent = widget->GetNativeView();
   DCHECK(parent);
   delegate->set_parent_window(parent);
-  views::BubbleDialogDelegateView::CreateBubble(delegate)->Show();
+  if (browser_->window()->IsActive())
+    views::BubbleDialogDelegateView::CreateBubble(delegate)->Show();
+  else
+    views::BubbleDialogDelegateView::CreateBubble(delegate)->ShowInactive();
 }
 #endif  // !OS_MACOSX || MAC_VIEWS_BROWSER

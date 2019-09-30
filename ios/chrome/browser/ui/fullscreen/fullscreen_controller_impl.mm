@@ -10,6 +10,8 @@
 #import "ios/chrome/browser/ui/fullscreen/fullscreen_model.h"
 #import "ios/chrome/browser/ui/fullscreen/fullscreen_system_notification_observer.h"
 #import "ios/chrome/browser/ui/fullscreen/fullscreen_web_state_list_observer.h"
+#include "ios/public/provider/chrome/browser/chrome_browser_provider.h"
+#import "ios/public/provider/chrome/browser/ui/fullscreen_provider.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
 #error "This file requires ARC support."
@@ -41,7 +43,14 @@ FullscreenControllerImpl::FullscreenControllerImpl()
   [broadcaster_ addObserver:bridge_
                 forSelector:@selector(broadcastScrollViewIsDragging:)];
   [broadcaster_ addObserver:bridge_
-                forSelector:@selector(broadcastToolbarHeight:)];
+                forSelector:@selector(broadcastCollapsedToolbarHeight:)];
+  [broadcaster_ addObserver:bridge_
+                forSelector:@selector(broadcastExpandedToolbarHeight:)];
+  [broadcaster_ addObserver:bridge_
+                forSelector:@selector(broadcastBottomToolbarHeight:)];
+  ios::GetChromeBrowserProvider()
+      ->GetFullscreenProvider()
+      ->InitializeFullscreen(this);
 }
 
 FullscreenControllerImpl::~FullscreenControllerImpl() = default;
@@ -51,6 +60,8 @@ ChromeBroadcaster* FullscreenControllerImpl::broadcaster() {
 }
 
 void FullscreenControllerImpl::SetWebStateList(WebStateList* web_state_list) {
+  if (web_state_list_ == web_state_list)
+    return;
   if (web_state_list_observer_)
     web_state_list_observer_->Disconnect();
   web_state_list_ = web_state_list;
@@ -87,6 +98,10 @@ CGFloat FullscreenControllerImpl::GetProgress() const {
   return model_->progress();
 }
 
+void FullscreenControllerImpl::ResetModel() {
+  mediator_->AnimateModelReset();
+}
+
 void FullscreenControllerImpl::Shutdown() {
   mediator_->Disconnect();
   [notification_observer_ disconnect];
@@ -107,5 +122,9 @@ void FullscreenControllerImpl::Shutdown() {
   [broadcaster_ removeObserver:bridge_
                    forSelector:@selector(broadcastScrollViewIsDragging:)];
   [broadcaster_ removeObserver:bridge_
-                   forSelector:@selector(broadcastToolbarHeight:)];
+                   forSelector:@selector(broadcastCollapsedToolbarHeight:)];
+  [broadcaster_ removeObserver:bridge_
+                   forSelector:@selector(broadcastExpandedToolbarHeight:)];
+  [broadcaster_ removeObserver:bridge_
+                   forSelector:@selector(broadcastBottomToolbarHeight:)];
 }

@@ -16,6 +16,12 @@ const char kBluetoothAdapterOffHelpURL[] =
     "https://support.google.com/chrome?p=bluetooth";
 #endif
 
+const char kCastCloudServicesHelpURL[] =
+    "https://support.google.com/chromecast/?p=casting_cloud_services";
+
+const char kCastNoDestinationFoundURL[] =
+    "https://support.google.com/chromecast/?p=no_cast_destination";
+
 const char kChooserBluetoothOverviewURL[] =
     "https://support.google.com/chrome?p=bluetooth";
 
@@ -31,7 +37,7 @@ const char kChromeHelpViaKeyboardURL[] =
     "chrome-extension://honijodknafkokifofgiaalefdiedpko/main.html";
 #else
     "https://support.google.com/chromebook/?p=help&ctx=keyboard";
-#endif  // defined(GOOGLE_CHROME_BUILD
+#endif  // defined(GOOGLE_CHROME_BUILD)
 #else
     "https://support.google.com/chrome/?p=help&ctx=keyboard";
 #endif  // defined(OS_CHROMEOS)
@@ -42,7 +48,7 @@ const char kChromeHelpViaMenuURL[] =
     "chrome-extension://honijodknafkokifofgiaalefdiedpko/main.html";
 #else
     "https://support.google.com/chromebook/?p=help&ctx=menu";
-#endif  // defined(GOOGLE_CHROME_BUILD
+#endif  // defined(GOOGLE_CHROME_BUILD)
 #else
     "https://support.google.com/chrome/?p=help&ctx=menu";
 #endif  // defined(OS_CHROMEOS)
@@ -53,7 +59,7 @@ const char kChromeHelpViaWebUIURL[] =
     "chrome-extension://honijodknafkokifofgiaalefdiedpko/main.html";
 #else
     "https://support.google.com/chromebook/?p=help&ctx=settings";
-#endif  // defined(GOOGLE_CHROME_BUILD
+#endif  // defined(GOOGLE_CHROME_BUILD)
 #else
     "https://support.google.com/chrome/?p=help&ctx=settings";
 #endif  // defined(OS_CHROMEOS)
@@ -66,6 +72,10 @@ const char kChromeSearchLocalNtpUrl[] =
 
 const char kChromeSearchMostVisitedHost[] = "most-visited";
 const char kChromeSearchMostVisitedUrl[] = "chrome-search://most-visited/";
+
+const char kChromeSearchLocalNtpBackgroundUrl[] =
+    "chrome-search://local-ntp/background.jpg";
+const char kChromeSearchLocalNtpBackgroundFilename[] = "background.jpg";
 
 const char kChromeSearchRemoteNtpHost[] = "remote-ntp";
 
@@ -126,9 +136,6 @@ const char kDownloadInterruptedLearnMoreURL[] =
 const char kDownloadScanningLearnMoreURL[] =
     "https://support.google.com/chrome/?p=ib_download_blocked";
 
-const char kEasyUnlockLearnMoreUrl[] =
-    "https://support.google.com/chromebook/?p=smart_lock";
-
 const char kExtensionControlledSettingLearnMoreURL[] =
     "https://support.google.com/chrome/?p=ui_settings_api_extension";
 
@@ -136,13 +143,6 @@ const char kExtensionInvalidRequestURL[] = "chrome-extension://invalid/";
 
 const char kGoogleAccountActivityControlsURL[] =
     "https://myaccount.google.com/activitycontrols/search";
-
-const char kLanguageSettingsLearnMoreUrl[] =
-#if defined(OS_CHROMEOS)
-    "https://support.google.com/chromebook/answer/1059490";
-#else
-    "https://support.google.com/chrome/topic/1678461";
-#endif
 
 const char kLearnMoreReportingURL[] =
     "https://support.google.com/chrome/?p=ui_usagestat";
@@ -189,9 +189,6 @@ const char kRemoveNonCWSExtensionURL[] =
 const char kResetProfileSettingsLearnMoreURL[] =
     "https://support.google.com/chrome/?p=ui_reset_settings";
 
-const char kSafeSearchSafeParameter[] = "safe=active";
-const char kSafeSearchSsuiParameter[] = "ssui=on";
-
 const char kSettingsSearchHelpURL[] =
 #if defined(OS_CHROMEOS)
     "https://support.google.com/chromebook/?p=settings_search_help";
@@ -201,6 +198,9 @@ const char kSettingsSearchHelpURL[] =
 
 const char kSmartLockHelpPage[] =
     "https://support.google.com/accounts/answer/6197437";
+
+const char kSyncAndGoogleServicesLearnMoreURL[] =
+    "https://support.google.com/chrome?p=syncgoogleservices";
 
 const char kSyncEncryptionHelpURL[] =
 #if defined(OS_CHROMEOS)
@@ -257,6 +257,9 @@ const char kCrosScheme[] = "cros";
 const char kCupsPrintLearnMoreURL[] =
     "https://support.google.com/chromebook?p=chromebook_printing";
 
+const char kEasyUnlockLearnMoreUrl[] =
+    "https://support.google.com/chromebook/?p=smart_lock";
+
 const char kEULAPathFormat[] = "/usr/share/chromeos-assets/eula/%s/eula.html";
 
 const char kEolNotificationURL[] = "https://www.google.com/chromebook/older/";
@@ -267,8 +270,23 @@ const char kGoogleNameserversLearnMoreURL[] =
 const char kInstantTetheringLearnMoreURL[] =
     "https://support.google.com/chromebook?p=instant_tethering";
 
+const char kMultiDeviceLearnMoreURL[] =
+    "https://support.google.com/pixelbook/?p=better_together";
+
+const char kAndroidMessagesLearnMoreURL[] =
+    "https://support.google.com/pixelbook/?p=bettertogether_android_messages";
+
+const char kLanguageSettingsLearnMoreUrl[] =
+    "https://support.google.com/chromebook/answer/1059490";
+
 const char kLearnMoreEnterpriseURL[] =
     "https://support.google.com/chromebook/?p=managed";
+
+const char kLinuxAppsLearnMoreURL[] =
+    "https://support.google.com/chromebook?p=chromebook_linuxapps";
+
+const char kLinuxCreditsPath[] =
+    "/opt/google/chrome/resources/linux_credits.html";
 
 const char kNaturalScrollHelpURL[] =
     "https://support.google.com/chromebook/?p=simple_scrolling";
@@ -280,6 +298,12 @@ const char kOnlineEulaURLPath[] =
 
 const char kTPMFirmwareUpdateLearnMoreURL[] =
     "https://support.google.com/chromebook/?p=tpm_update";
+
+const char kTimeZoneSettingsLearnMoreURL[] =
+    "https://support.google.com/chromebook?p=chromebook_timezone&hl=%s";
+
+const char kSmbSharesLearnMoreURL[] =
+    "https://support.google.com/chromebook?p=network_file_shares";
 #endif  // defined(OS_CHROMEOS)
 
 #if defined(OS_MACOSX)
@@ -309,11 +333,6 @@ const char kBlockedPluginLearnMoreURL[] =
 
 const char kOutdatedPluginLearnMoreURL[] =
     "https://support.google.com/chrome/?p=ib_outdated_plugin";
-#endif
-
-#if defined(OS_CHROMEOS)
-const char kTimeZoneSettingsLearnMoreURL[] =
-    "https://support.google.com/chromebook/answer/177871?hl=%s";
 #endif
 
 }  // namespace chrome

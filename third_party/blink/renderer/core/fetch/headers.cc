@@ -5,9 +5,9 @@
 #include "third_party/blink/renderer/core/fetch/headers.h"
 
 #include "third_party/blink/renderer/bindings/core/v8/byte_string_sequence_sequence_or_byte_string_byte_string_record.h"
-#include "third_party/blink/renderer/bindings/core/v8/exception_state.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_iterator_result_value.h"
 #include "third_party/blink/renderer/core/dom/iterator.h"
+#include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/loader/cors/cors.h"
 #include "third_party/blink/renderer/platform/loader/fetch/fetch_utils.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
@@ -95,7 +95,7 @@ void Headers::append(const String& name,
   }
   // "4. Otherwise, if guard is |request| and |name| is a forbidden header
   //     name, return."
-  if (guard_ == kRequestGuard && FetchUtils::IsForbiddenHeaderName(name))
+  if (guard_ == kRequestGuard && CORS::IsForbiddenHeaderName(name))
     return;
   // "5. Otherwise, if guard is |request-no-CORS| and |name|/|value| is not a
   //     CORS-safelisted header, return."
@@ -127,7 +127,7 @@ void Headers::remove(const String& name, ExceptionState& exception_state) {
   }
   // "3. Otherwise, if guard is |request| and |name| is a forbidden header
   //     name, return."
-  if (guard_ == kRequestGuard && FetchUtils::IsForbiddenHeaderName(name))
+  if (guard_ == kRequestGuard && CORS::IsForbiddenHeaderName(name))
     return;
   // "4. Otherwise, if guard is |request-no-CORS| and |name|/`invalid` is not
   //     a CORS-safelisted header, return."
@@ -195,7 +195,7 @@ void Headers::set(const String& name,
   }
   // "4. Otherwise, if guard is |request| and |name| is a forbidden header
   //     name, return."
-  if (guard_ == kRequestGuard && FetchUtils::IsForbiddenHeaderName(name))
+  if (guard_ == kRequestGuard && CORS::IsForbiddenHeaderName(name))
     return;
   // "5. Otherwise, if guard is |request-no-CORS| and |name|/|value| is not a
   //     CORS-safelisted header, return."

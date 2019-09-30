@@ -60,6 +60,13 @@ void DirectoryDataTypeController::DeactivateDataType(
   configurer->UnregisterDirectoryDataType(type());
 }
 
+void DirectoryDataTypeController::Stop(SyncStopMetadataFate metadata_fate,
+                                       StopCallback callback) {
+  DCHECK(CalledOnValidThread());
+  Stop(metadata_fate);
+  std::move(callback).Run();
+}
+
 void DirectoryDataTypeController::GetAllNodes(
     const AllNodesCallback& callback) {
   std::unique_ptr<base::ListValue> node_list = GetAllNodesForTypeFromDirectory(
@@ -83,12 +90,13 @@ void DirectoryDataTypeController::GetStatusCounters(
   callback.Run(type(), counters);
 }
 
-void DirectoryDataTypeController::RecordMemoryUsageHistogram() {
+void DirectoryDataTypeController::RecordMemoryUsageAndCountsHistograms() {
   syncer::syncable::Directory* directory =
       sync_client_->GetSyncService()->GetUserShare()->directory.get();
-  size_t memory_usage = directory->EstimateMemoryUsageByType(type());
-  SyncRecordMemoryKbHistogram(kModelTypeMemoryHistogramPrefix, type(),
-                              memory_usage);
+  SyncRecordModelTypeMemoryHistogram(
+      type(), directory->EstimateMemoryUsageByType(type()));
+  SyncRecordModelTypeCountHistogram(type(),
+                                    directory->CountEntriesByType(type()));
 }
 
 // static

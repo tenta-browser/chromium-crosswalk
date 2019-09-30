@@ -38,7 +38,17 @@ WebViewWebDataServiceWrapperFactory::GetAutofillWebDataForBrowserState(
     ServiceAccessType access_type) {
   WebDataServiceWrapper* wrapper =
       GetForBrowserState(browser_state, access_type);
-  return wrapper ? wrapper->GetAutofillWebData() : nullptr;
+  return wrapper ? wrapper->GetProfileAutofillWebData() : nullptr;
+}
+
+// static
+scoped_refptr<autofill::AutofillWebDataService>
+WebViewWebDataServiceWrapperFactory::GetAutofillWebDataForAccount(
+    WebViewBrowserState* browser_state,
+    ServiceAccessType access_type) {
+  WebDataServiceWrapper* wrapper =
+      GetForBrowserState(browser_state, access_type);
+  return wrapper ? wrapper->GetAccountAutofillWebData() : nullptr;
 }
 
 // static

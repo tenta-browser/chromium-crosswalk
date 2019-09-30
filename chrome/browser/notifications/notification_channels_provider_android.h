@@ -76,11 +76,11 @@ class NotificationChannelsProviderAndroid
       PrefService* prefs,
       content_settings::ProviderInterface* pref_provider);
 
-  // Undoes the migration done by |MigrateToChannelsIfNecessary|, if we
-  // previously migrated to channels and did not already un-migrate.
-  void UnmigrateChannelsIfNecessary(
+  // Deletes any existing blocked site channels, unless this one-off deletion
+  // already occurred. See https://crbug.com/835232.
+  void ClearBlockedChannelsIfNecessary(
       PrefService* prefs,
-      content_settings::ProviderInterface* pref_provider);
+      TemplateURLService* template_url_service);
 
   // Deletes any existing blocked site channels, unless this one-off deletion
   // already occurred. See https://crbug.com/835232.

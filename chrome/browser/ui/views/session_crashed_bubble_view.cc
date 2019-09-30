@@ -23,11 +23,11 @@
 #include "chrome/browser/ui/browser_list_observer.h"
 #include "chrome/browser/ui/bubble_anchor_util.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
+#include "chrome/browser/ui/views/chrome_layout_provider.h"
+#include "chrome/browser/ui/views/chrome_typography.h"
 #include "chrome/browser/ui/views/frame/app_menu_button.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
 #include "chrome/browser/ui/views/frame/toolbar_button_provider.h"
-#include "chrome/browser/ui/views/harmony/chrome_layout_provider.h"
-#include "chrome/browser/ui/views/harmony/chrome_typography.h"
 #include "chrome/browser/ui/views/toolbar/toolbar_view.h"
 #include "chrome/browser/ui/views_mode_controller.h"
 #include "chrome/grit/chromium_strings.h"
@@ -53,8 +53,6 @@
 #include "chrome/browser/ui/cocoa/browser_dialogs_views_mac.h"
 #include "chrome/browser/ui/cocoa/bubble_anchor_helper_views.h"
 #endif
-
-using views::GridLayout;
 
 namespace {
 
@@ -295,19 +293,21 @@ views::View* SessionCrashedBubbleView::CreateUmaOptInView() {
 
   // Create a view to hold the checkbox and the text.
   views::View* uma_view = new views::View();
-  GridLayout* uma_layout =
+  views::GridLayout* uma_layout =
       uma_view->SetLayoutManager(std::make_unique<views::GridLayout>(uma_view));
 
   const int kReportColumnSetId = 0;
   views::ColumnSet* cs = uma_layout->AddColumnSet(kReportColumnSetId);
-  cs->AddColumn(GridLayout::CENTER, GridLayout::LEADING, 0,
-                GridLayout::USE_PREF, 0, 0);
-  cs->AddPaddingColumn(0, ChromeLayoutProvider::Get()->GetDistanceMetric(
-                              views::DISTANCE_RELATED_LABEL_HORIZONTAL));
-  cs->AddColumn(GridLayout::FILL, GridLayout::FILL, 1, GridLayout::USE_PREF, 0,
+  cs->AddColumn(views::GridLayout::CENTER, views::GridLayout::LEADING,
+                views::GridLayout::kFixedSize, views::GridLayout::USE_PREF, 0,
                 0);
+  cs->AddPaddingColumn(views::GridLayout::kFixedSize,
+                       ChromeLayoutProvider::Get()->GetDistanceMetric(
+                           views::DISTANCE_RELATED_LABEL_HORIZONTAL));
+  cs->AddColumn(views::GridLayout::FILL, views::GridLayout::FILL, 1.0,
+                views::GridLayout::USE_PREF, 0, 0);
 
-  uma_layout->StartRow(0, kReportColumnSetId);
+  uma_layout->StartRow(views::GridLayout::kFixedSize, kReportColumnSetId);
   uma_layout->AddView(uma_option_);
   uma_layout->AddView(uma_label);
 

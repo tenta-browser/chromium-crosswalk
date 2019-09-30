@@ -25,6 +25,10 @@ class Rect;
 class Size;
 }
 
+namespace viz {
+class SurfaceId;
+}
+
 namespace extensions {
 
 class Extension;
@@ -48,11 +52,12 @@ class AppDelegate {
       content::BrowserContext* context,
       content::WebContents* source,
       const content::OpenURLParams& params) = 0;
-  virtual void AddNewContents(content::BrowserContext* context,
-                              content::WebContents* new_contents,
-                              WindowOpenDisposition disposition,
-                              const gfx::Rect& initial_rect,
-                              bool user_gesture) = 0;
+  virtual void AddNewContents(
+      content::BrowserContext* context,
+      std::unique_ptr<content::WebContents> new_contents,
+      WindowOpenDisposition disposition,
+      const gfx::Rect& initial_rect,
+      bool user_gesture) = 0;
 
   // Feature support.
   virtual content::ColorChooser* ShowColorChooser(
@@ -63,7 +68,7 @@ class AppDelegate {
   virtual void RequestMediaAccessPermission(
       content::WebContents* web_contents,
       const content::MediaStreamRequest& request,
-      const content::MediaResponseCallback& callback,
+      content::MediaResponseCallback callback,
       const Extension* extension) = 0;
   virtual bool CheckMediaAccessPermission(
       content::RenderFrameHost* render_frame_host,
@@ -88,6 +93,17 @@ class AppDelegate {
   // a chance to handle the focus change.
   // Return whether focus has been handled.
   virtual bool TakeFocus(content::WebContents* web_contents, bool reverse) = 0;
+
+  // Notifies the Picture-in-Picture controller that there is a new player
+  // entering Picture-in-Picture.
+  // Returns the size of the Picture-in-Picture window.
+  virtual gfx::Size EnterPictureInPicture(content::WebContents* web_contents,
+                                          const viz::SurfaceId& surface_id,
+                                          const gfx::Size& natural_size) = 0;
+
+  // Updates the Picture-in-Picture controller with a signal that
+  // Picture-in-Picture mode has ended.
+  virtual void ExitPictureInPicture() = 0;
 };
 
 }  // namespace extensions

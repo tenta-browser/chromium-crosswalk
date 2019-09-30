@@ -28,6 +28,8 @@
 #include "third_party/blink/renderer/core/html/parser/html_preload_scanner.h"
 
 #include <memory>
+#include "base/optional.h"
+#include "third_party/blink/public/platform/modules/fetch/fetch_api_request.mojom-shared.h"
 #include "third_party/blink/renderer/core/css/media_list.h"
 #include "third_party/blink/renderer/core/css/media_query_evaluator.h"
 #include "third_party/blink/renderer/core/css/media_values_cached.h"
@@ -35,6 +37,7 @@
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/frame/settings.h"
+#include "third_party/blink/renderer/core/frame/viewport_data.h"
 #include "third_party/blink/renderer/core/html/cross_origin_attribute.h"
 #include "third_party/blink/renderer/core/html/html_image_element.h"
 #include "third_party/blink/renderer/core/html/html_meta_element.h"
@@ -44,6 +47,7 @@
 #include "third_party/blink/renderer/core/html/parser/html_tokenizer.h"
 #include "third_party/blink/renderer/core/html_names.h"
 #include "third_party/blink/renderer/core/input_type_names.h"
+#include "third_party/blink/renderer/core/loader/importance_attribute.h"
 #include "third_party/blink/renderer/core/loader/link_loader.h"
 #include "third_party/blink/renderer/core/loader/subresource_integrity_helper.h"
 #include "third_party/blink/renderer/core/script/script_loader.h"
@@ -53,7 +57,6 @@
 #include "third_party/blink/renderer/platform/loader/subresource_integrity.h"
 #include "third_party/blink/renderer/platform/network/mime/content_type.h"
 #include "third_party/blink/renderer/platform/network/mime/mime_type_registry.h"
-#include "third_party/blink/renderer/platform/wtf/optional.h"
 
 namespace blink {
 
@@ -132,6 +135,8 @@ class TokenPreloadScanner::StartTagScanner {
         source_size_set_(false),
         defer_(FetchParameters::kNoDefer),
         cross_origin_(kCrossOriginAttributeNotSet),
+        importance_(mojom::FetchImportanceMode::kImportanceAuto),
+        importance_mode_set_(false),
         media_values_(media_values),
         referrer_policy_set_(false),
         referrer_policy_(kReferrerPolicyDefault),
@@ -204,14 +209,14 @@ class TokenPreloadScanner::StartTagScanner {
       const ReferrerPolicy document_referrer_policy) {
     PreloadRequest::RequestType request_type =
         PreloadRequest::kRequestTypePreload;
-    WTF::Optional<Resource::Type> type;
+    base::Optional<Resource::Type> type;
     if (ShouldPreconnect()) {
       request_type = PreloadRequest::kRequestTypePreconnect;
     } else {
       if (IsLinkRelPreload()) {
         request_type = PreloadRequest::kRequestTypeLinkRelPreload;
         type = ResourceTypeForLinkPreload();
-        if (type == WTF::nullopt)
+        if (type == base::nullopt)
           return nullptr;
       } else if (IsLinkRelModulePreload()) {
         request_type = PreloadRequest::kRequestTypeLinkRelPreload;
@@ -241,7 +246,7 @@ class TokenPreloadScanner::StartTagScanner {
       resource_width.is_set = true;
     }
 
-    if (type == WTF::nullopt)
+    if (type == base::nullopt)
       type = ResourceType();
 
     // The element's 'referrerpolicy' attribute (if present) takes precedence
@@ -262,6 +267,7 @@ class TokenPreloadScanner::StartTagScanner {
     }
 
     request->SetCrossOrigin(cross_origin_);
+    request->SetImportance(importance_);
     request->SetNonce(nonce_);
     request->SetCharset(Charset());
     request->SetDefer(defer_);
@@ -302,6 +308,11 @@ class TokenPreloadScanner::StartTagScanner {
       language_attribute_value_ = attribute_value;
     } else if (Match(attribute_name, nomoduleAttr)) {
       nomodule_attribute_value_ = true;
+    } else if (!referrer_policy_set_ &&
+               Match(attribute_name, referrerpolicyAttr) &&
+               !attribute_value.IsNull()) {
+      SetReferrerPolicy(attribute_value,
+                        kDoNotSupportReferrerPolicyLegacyKeywords);
     }
   }
 
@@ -320,10 +331,10 @@ class TokenPreloadScanner::StartTagScanner {
     } else if (!referrer_policy_set_ &&
                Match(attribute_name, referrerpolicyAttr) &&
                !attribute_value.IsNull()) {
-      referrer_policy_set_ = true;
-      SecurityPolicy::ReferrerPolicyFromString(
-          attribute_value, kSupportReferrerPolicyLegacyKeywords,
-          &referrer_policy_);
+      SetReferrerPolicy(attribute_value, kSupportReferrerPolicyLegacyKeywords);
+    } else if (!importance_mode_set_ && Match(attribute_name, importanceAttr) &&
+               RuntimeEnabledFeatures::PriorityHintsEnabled()) {
+      SetImportance(attribute_value);
     }
   }
 
@@ -367,10 +378,8 @@ class TokenPreloadScanner::StartTagScanner {
     } else if (!referrer_policy_set_ &&
                Match(attribute_name, referrerpolicyAttr) &&
                !attribute_value.IsNull()) {
-      referrer_policy_set_ = true;
-      SecurityPolicy::ReferrerPolicyFromString(
-          attribute_value, kDoNotSupportReferrerPolicyLegacyKeywords,
-          &referrer_policy_);
+      SetReferrerPolicy(attribute_value,
+                        kDoNotSupportReferrerPolicyLegacyKeywords);
     } else if (!integrity_attr_set_ && Match(attribute_name, integrityAttr)) {
       integrity_attr_set_ = true;
       SubresourceIntegrity::ParseIntegrityAttribute(
@@ -380,6 +389,9 @@ class TokenPreloadScanner::StartTagScanner {
       srcset_attribute_value_ = attribute_value;
     } else if (Match(attribute_name, imgsizesAttr) && !source_size_set_) {
       ParseSourceSize(attribute_value);
+    } else if (!importance_mode_set_ && Match(attribute_name, importanceAttr) &&
+               RuntimeEnabledFeatures::PriorityHintsEnabled()) {
+      SetImportance(attribute_value);
     }
   }
 
@@ -467,7 +479,7 @@ class TokenPreloadScanner::StartTagScanner {
     return charset_;
   }
 
-  WTF::Optional<Resource::Type> ResourceTypeForLinkPreload() const {
+  base::Optional<Resource::Type> ResourceTypeForLinkPreload() const {
     DCHECK(link_is_preload_);
     return LinkLoader::GetResourceTypeFromAsAttribute(as_attribute_value_);
   }
@@ -504,7 +516,7 @@ class TokenPreloadScanner::StartTagScanner {
            !url_to_load_.IsEmpty();
   }
 
-  bool ShouldPreloadLink(WTF::Optional<Resource::Type>& type) const {
+  bool ShouldPreloadLink(base::Optional<Resource::Type>& type) const {
     if (link_is_style_sheet_) {
       return type_attribute_value_.IsEmpty() ||
              MIMETypeRegistry::IsSupportedStyleSheetMIMEType(
@@ -532,7 +544,7 @@ class TokenPreloadScanner::StartTagScanner {
     return true;
   }
 
-  bool ShouldPreload(WTF::Optional<Resource::Type>& type) const {
+  bool ShouldPreload(base::Optional<Resource::Type>& type) const {
     if (url_to_load_.IsEmpty())
       return false;
     if (!matched_)
@@ -566,6 +578,20 @@ class TokenPreloadScanner::StartTagScanner {
     cross_origin_ = GetCrossOriginAttributeValue(cors_setting);
   }
 
+  void SetReferrerPolicy(
+      const String& attribute_value,
+      ReferrerPolicyLegacyKeywordsSupport legacy_keywords_support) {
+    referrer_policy_set_ = true;
+    SecurityPolicy::ReferrerPolicyFromString(
+        attribute_value, legacy_keywords_support, &referrer_policy_);
+  }
+
+  void SetImportance(const String& importance) {
+    DCHECK(RuntimeEnabledFeatures::PriorityHintsEnabled());
+    importance_mode_set_ = true;
+    importance_ = GetFetchImportanceAttributeValue(importance);
+  }
+
   void SetNonce(const String& nonce) { nonce_ = nonce; }
 
   void SetDefer(FetchParameters::DeferOption defer) { defer_ = defer; }
@@ -593,6 +619,8 @@ class TokenPreloadScanner::StartTagScanner {
   bool source_size_set_;
   FetchParameters::DeferOption defer_;
   CrossOriginAttributeValue cross_origin_;
+  mojom::FetchImportanceMode importance_;
+  bool importance_mode_set_;
   String nonce_;
   Member<MediaValuesCached> media_values_;
   bool referrer_policy_set_;
@@ -914,7 +942,8 @@ CachedDocumentParameters::CachedDocumentParameters(Document* document) {
   do_html_preload_scanning =
       !document->GetSettings() ||
       document->GetSettings()->GetDoHtmlPreloadScanning();
-  default_viewport_min_width = document->ViewportDefaultMinWidth();
+  default_viewport_min_width =
+      document->GetViewportData().ViewportDefaultMinWidth();
   viewport_meta_zero_values_quirk =
       document->GetSettings() &&
       document->GetSettings()->GetViewportMetaZeroValuesQuirk();

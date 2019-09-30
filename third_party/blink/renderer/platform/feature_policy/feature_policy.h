@@ -24,7 +24,7 @@ namespace blink {
 typedef HashMap<String, mojom::FeaturePolicyFeature> FeatureNameMap;
 PLATFORM_EXPORT const FeatureNameMap& GetDefaultFeatureNameMap();
 
-// Converts a header policy string into a vector of whitelists, one for each
+// Converts a header policy string into a vector of allowlists, one for each
 // feature specified. Unrecognized features are filtered out. If |messages|
 // is not null, then any message in the input will cause a warning message to be
 // appended to it.
@@ -35,44 +35,62 @@ ParseFeaturePolicyHeader(const String& policy,
                          scoped_refptr<const SecurityOrigin>,
                          Vector<String>* messages);
 
-// Converts a container policy string into a vector of whitelists, given self
+// Converts a container policy string into a vector of allowlists, given self
 // and src origins provided, one for each feature specified. Unrecognized
 // features are filtered out. If |messages| is not null, then any message in the
 // input will cause as warning message to be appended to it.
 // Example of a feature policy string:
 //     "vibrate a.com 'src'; fullscreen 'none'; payment 'self', payment *".
-// If |old_syntax| is not null, it will be set true if the deprecated
-// space-deparated feature list syntax is detected.
-// TODO(loonybear): remove the boolean once the space separated feature list
-// syntax is deprecated.
-// https://crbug.com/761009.
 PLATFORM_EXPORT ParsedFeaturePolicy
 ParseFeaturePolicyAttribute(const String& policy,
                             scoped_refptr<const SecurityOrigin> self_origin,
                             scoped_refptr<const SecurityOrigin> src_origin,
-                            Vector<String>* messages,
-                            bool* old_syntax);
+                            Vector<String>* messages);
 
-// Converts a feature policy string into a vector of whitelists (see comments
+// Converts a feature policy string into a vector of allowlists (see comments
 // above), with an explicit FeatureNameMap. This algorithm is called by both
 // header policy parsing and container policy parsing. |self_origin| and
 // |src_origin| are both nullable.
-// If |old_syntax| is not null, it will be set true if the deprecated
-// space-deparated feature list syntax is detected.
-// TODO(loonybear): remove the boolean once the space separated feature list
-// syntax is deprecated.
-// https://crbug.com/761009.
 PLATFORM_EXPORT ParsedFeaturePolicy
 ParseFeaturePolicy(const String& policy,
                    scoped_refptr<const SecurityOrigin> self_origin,
                    scoped_refptr<const SecurityOrigin> src_origin,
                    Vector<String>* messages,
-                   const FeatureNameMap& feature_names,
-                   bool* old_syntax = nullptr);
+                   const FeatureNameMap& feature_names);
 
-// Verifies whether feature policy is enabled and |feature| is supported in
-// feature policy.
-PLATFORM_EXPORT bool IsSupportedInFeaturePolicy(mojom::FeaturePolicyFeature);
+// Returns true iff any declaration in the policy is for the given feature.
+PLATFORM_EXPORT bool IsFeatureDeclared(mojom::FeaturePolicyFeature,
+                                       const ParsedFeaturePolicy&);
+
+// Removes any declaration in the policy for the given feature. Returns true if
+// the policy was modified.
+PLATFORM_EXPORT bool RemoveFeatureIfPresent(mojom::FeaturePolicyFeature,
+                                            ParsedFeaturePolicy&);
+
+// If no declaration in the policy exists already for the feature, adds a
+// declaration which disallows the feature in all origins. Returns true if the
+// policy was modified.
+PLATFORM_EXPORT bool DisallowFeatureIfNotPresent(mojom::FeaturePolicyFeature,
+                                                 ParsedFeaturePolicy&);
+
+// If no declaration in the policy exists already for the feature, adds a
+// declaration which allows the feature in all origins. Returns true if the
+// policy was modified.
+PLATFORM_EXPORT bool AllowFeatureEverywhereIfNotPresent(
+    mojom::FeaturePolicyFeature,
+    ParsedFeaturePolicy&);
+
+// Replaces any existing declarations in the policy for the given feature with
+// a declaration which disallows the feature in all origins.
+PLATFORM_EXPORT void DisallowFeature(mojom::FeaturePolicyFeature,
+                                     ParsedFeaturePolicy&);
+
+// Replaces any existing declarations in the policy for the given feature with
+// a declaration which allows the feature in all origins.
+PLATFORM_EXPORT void AllowFeatureEverywhere(mojom::FeaturePolicyFeature,
+                                            ParsedFeaturePolicy&);
+
+PLATFORM_EXPORT const String& GetNameForFeature(mojom::FeaturePolicyFeature);
 
 }  // namespace blink
 

@@ -85,6 +85,8 @@ class PLATFORM_EXPORT MemoryCache final
 
   struct TypeStatistic {
     STACK_ALLOCATED();
+
+   public:
     size_t count;
     size_t size;
     size_t decoded_size;
@@ -105,6 +107,8 @@ class PLATFORM_EXPORT MemoryCache final
 
   struct Statistics {
     STACK_ALLOCATED();
+
+   public:
     TypeStatistic images;
     TypeStatistic css_style_sheets;
     TypeStatistic scripts;
@@ -138,8 +142,7 @@ class PLATFORM_EXPORT MemoryCache final
     max_prune_deferral_delay_ = seconds;
   }
 
-  enum EvictResourcePolicy { kEvictAllResources, kDoNotEvictUnusedPreloads };
-  void EvictResources(EvictResourcePolicy = kEvictAllResources);
+  void EvictResources();
 
   void Prune();
 

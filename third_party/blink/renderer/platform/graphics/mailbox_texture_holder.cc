@@ -5,7 +5,6 @@
 #include "third_party/blink/renderer/platform/graphics/mailbox_texture_holder.h"
 
 #include "gpu/command_buffer/client/gles2_interface.h"
-#include "skia/ext/texture_handle.h"
 #include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/renderer/platform/cross_thread_functional.h"
 #include "third_party/blink/renderer/platform/graphics/gpu/shared_gpu_context.h"
@@ -82,6 +81,8 @@ void MailboxTextureHolder::Sync(MailboxSyncMode mode) {
 
   if (!ContextProviderWrapper() || IsAbandoned())
     return;
+
+  TRACE_EVENT0("blink", "MailboxTextureHolder::Sync");
 
   gpu::gles2::GLES2Interface* gl =
       ContextProviderWrapper()->ContextProvider()->ContextGL();

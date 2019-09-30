@@ -35,7 +35,6 @@
 #include "base/memory/ptr_util.h"
 #include "third_party/blink/public/platform/web_file_system.h"
 #include "third_party/blink/public/platform/web_file_system_callbacks.h"
-#include "third_party/blink/renderer/bindings/core/v8/exception_state.h"
 #include "third_party/blink/renderer/core/fileapi/file.h"
 #include "third_party/blink/renderer/core/fileapi/file_error.h"
 #include "third_party/blink/renderer/modules/filesystem/directory_entry_sync.h"
@@ -44,6 +43,7 @@
 #include "third_party/blink/renderer/modules/filesystem/file_system_callbacks.h"
 #include "third_party/blink/renderer/modules/filesystem/file_writer_sync.h"
 #include "third_party/blink/renderer/modules/filesystem/sync_callback_helper.h"
+#include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/file_metadata.h"
 
 namespace blink {
@@ -57,7 +57,7 @@ DOMFileSystemSync* DOMFileSystemSync::Create(DOMFileSystemBase* file_system) {
 
 DOMFileSystemSync::DOMFileSystemSync(ExecutionContext* context,
                                      const String& name,
-                                     FileSystemType type,
+                                     mojom::blink::FileSystemType type,
                                      const KURL& root_url)
     : DOMFileSystemBase(context, name, type, root_url),
       root_entry_(DirectoryEntrySync::Create(this, DOMFilePath::kRoot)) {}
@@ -95,7 +95,7 @@ class CreateFileHelper final : public AsyncFileSystemCallbacks {
       CreateFileResult* result,
       const String& name,
       const KURL& url,
-      FileSystemType type) {
+      mojom::blink::FileSystemType type) {
     return base::WrapUnique(static_cast<AsyncFileSystemCallbacks*>(
         new CreateFileHelper(result, name, url, type)));
   }
@@ -126,13 +126,13 @@ class CreateFileHelper final : public AsyncFileSystemCallbacks {
   CreateFileHelper(CreateFileResult* result,
                    const String& name,
                    const KURL& url,
-                   FileSystemType type)
+                   mojom::blink::FileSystemType type)
       : result_(result), name_(name), url_(url), type_(type) {}
 
   Persistent<CreateFileResult> result_;
   String name_;
   KURL url_;
-  FileSystemType type_;
+  mojom::blink::FileSystemType type_;
 };
 
 }  // namespace
@@ -146,8 +146,9 @@ File* DOMFileSystemSync::CreateFile(const FileEntrySync* file_entry,
       file_system_url, CreateFileHelper::Create(result, file_entry->name(),
                                                 file_system_url, GetType()));
   if (result->failed_) {
-    exception_state.ThrowDOMException(
-        result->code_, "Could not create '" + file_entry->name() + "'.");
+    FileError::ThrowDOMException(
+        exception_state, static_cast<FileError::ErrorCode>(result->code_),
+        "Could not create '" + file_entry->name() + "'.");
     return nullptr;
   }
   return result->file_.Get();

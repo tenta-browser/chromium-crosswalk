@@ -25,7 +25,6 @@
 
 #include "third_party/blink/renderer/core/frame/history.h"
 
-#include "third_party/blink/renderer/bindings/core/v8/exception_state.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
 #include "third_party/blink/renderer/core/frame/frame_console.h"
@@ -38,6 +37,7 @@
 #include "third_party/blink/renderer/core/loader/history_item.h"
 #include "third_party/blink/renderer/core/loader/navigation_scheduler.h"
 #include "third_party/blink/renderer/core/page/page.h"
+#include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/bindings/script_state.h"
 #include "third_party/blink/renderer/platform/weborigin/kurl.h"
 #include "third_party/blink/renderer/platform/weborigin/security_origin.h"
@@ -89,21 +89,30 @@ SerializedScriptValue* History::state(ExceptionState& exception_state) {
 }
 
 SerializedScriptValue* History::StateInternal() const {
-  if (!GetFrame())
+  LocalFrame* frame = GetFrame();
+  if (!frame)
     return nullptr;
 
-  if (HistoryItem* history_item =
-          GetFrame()->Loader().GetDocumentLoader()->GetHistoryItem()) {
-    return history_item->StateObject();
-  }
+  // TODO(kouhei, dcheng): The DocumentLoader null check should be unnecessary.
+  // Investigate and see if it can be removed.
+  DocumentLoader* document_loader = frame->Loader().GetDocumentLoader();
+  if (!document_loader)
+    return nullptr;
 
-  return nullptr;
+  HistoryItem* history_item = document_loader->GetHistoryItem();
+  if (!history_item)
+    return nullptr;
+
+  return history_item->StateObject();
 }
 
 void History::setScrollRestoration(const String& value,
                                    ExceptionState& exception_state) {
   DCHECK(value == "manual" || value == "auto");
-  if (!GetFrame() || !GetFrame()->Client()) {
+  // TODO(kouhei, dcheng): The DocumentLoader null check should be unnecessary.
+  // Investigate and see if it can be removed.
+  if (!GetFrame() || !GetFrame()->Client() ||
+      !GetFrame()->Loader().GetDocumentLoader()) {
     exception_state.ThrowSecurityError(
         "May not use a History object associated with a Document that is not "
         "fully active");
@@ -134,11 +143,23 @@ String History::scrollRestoration(ExceptionState& exception_state) {
 }
 
 HistoryScrollRestorationType History::ScrollRestorationInternal() const {
-  HistoryItem* history_item =
-      GetFrame() ? GetFrame()->Loader().GetDocumentLoader()->GetHistoryItem()
-                 : nullptr;
-  return history_item ? history_item->ScrollRestorationType()
-                      : kScrollRestorationAuto;
+  constexpr HistoryScrollRestorationType default_type = kScrollRestorationAuto;
+
+  LocalFrame* frame = GetFrame();
+  if (!frame)
+    return default_type;
+
+  // TODO(kouhei, dcheng): The DocumentLoader null check should be unnecessary.
+  // Investigate and see if it can be removed.
+  DocumentLoader* document_loader = frame->Loader().GetDocumentLoader();
+  if (!document_loader)
+    return default_type;
+
+  HistoryItem* history_item = document_loader->GetHistoryItem();
+  if (!history_item)
+    return default_type;
+
+  return history_item->ScrollRestorationType();
 }
 
 // TODO(crbug.com/394296): This is not the long-term fix to IPC flooding that we
@@ -212,7 +233,7 @@ void History::go(ScriptState* script_state,
     // Otherwise, navigation happens on the root frame.
     // This behavior is designed in the following spec.
     // https://html.spec.whatwg.org/multipage/browsers.html#dom-history-go
-    GetFrame()->Reload(kFrameLoadTypeReload,
+    GetFrame()->Reload(WebFrameLoadType::kReload,
                        ClientRedirectPolicy::kClientRedirect);
   }
 }
@@ -222,7 +243,7 @@ void History::pushState(scoped_refptr<SerializedScriptValue> data,
                         const String& url,
                         ExceptionState& exception_state) {
   StateObjectAdded(std::move(data), title, url, ScrollRestorationInternal(),
-                   kFrameLoadTypeStandard, exception_state);
+                   WebFrameLoadType::kStandard, exception_state);
 }
 
 KURL History::UrlForState(const String& url_string) {
@@ -248,7 +269,7 @@ bool History::CanChangeToUrl(const KURL& url,
   // We allow sandboxed documents, `data:`/`file:` URLs, etc. to use
   // 'pushState'/'replaceState' to modify the URL fragment: see
   // https://crbug.com/528681 for the compatibility concerns.
-  if (document_origin->IsUnique() || document_origin->IsLocal())
+  if (document_origin->IsOpaque() || document_origin->IsLocal())
     return EqualIgnoringQueryAndFragment(url, document_url);
 
   if (!EqualIgnoringPathQueryAndFragment(url, document_url))
@@ -256,7 +277,7 @@ bool History::CanChangeToUrl(const KURL& url,
 
   scoped_refptr<const SecurityOrigin> requested_origin =
       SecurityOrigin::Create(url);
-  if (requested_origin->IsUnique() ||
+  if (requested_origin->IsOpaque() ||
       !requested_origin->IsSameSchemeHostPort(document_origin)) {
     return false;
   }
@@ -268,7 +289,7 @@ void History::StateObjectAdded(scoped_refptr<SerializedScriptValue> data,
                                const String& /* title */,
                                const String& url_string,
                                HistoryScrollRestorationType restoration_type,
-                               FrameLoadType type,
+                               WebFrameLoadType type,
                                ExceptionState& exception_state) {
   if (!GetFrame() || !GetFrame()->GetPage() ||
       !GetFrame()->Loader().GetDocumentLoader()) {
@@ -295,7 +316,7 @@ void History::StateObjectAdded(scoped_refptr<SerializedScriptValue> data,
   if (ShouldThrottleStateObjectChanges()) {
     // TODO(769592): Get an API spec change so that we can throw an exception:
     //
-    //  exception_state.ThrowDOMException(kQuotaExceededError,
+    //  exception_state.ThrowDOMException(DOMExceptionCode::kQuotaExceededError,
     //                                    "Throttling history state changes to "
     //                                    "prevent the browser from hanging.");
     //

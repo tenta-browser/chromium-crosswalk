@@ -10,7 +10,7 @@
 #include <memory>
 
 #include "base/macros.h"
-#include "base/test/histogram_tester.h"
+#include "base/test/metrics/histogram_tester.h"
 #include "base/test/scoped_feature_list.h"
 #include "build/build_config.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -73,7 +73,8 @@ TEST(EventTest, GetCharacter) {
   // contains Control.
   // e.g. Control+Shift+2 produces U+200C on "Persian" keyboard.
   // http://crbug.com/582453
-  KeyEvent keyev5(0x200C, VKEY_UNKNOWN, EF_CONTROL_DOWN | EF_SHIFT_DOWN);
+  KeyEvent keyev5(0x200C, VKEY_UNKNOWN, ui::DomCode::NONE,
+                  EF_CONTROL_DOWN | EF_SHIFT_DOWN);
   EXPECT_EQ(0x200C, keyev5.GetCharacter());
 }
 
@@ -278,7 +279,7 @@ TEST(EventTest, KeyEvent) {
 }
 
 TEST(EventTest, KeyEventDirectUnicode) {
-  KeyEvent key(0x1234U, ui::VKEY_UNKNOWN, ui::EF_NONE);
+  KeyEvent key(0x1234U, ui::VKEY_UNKNOWN, ui::DomCode::NONE, ui::EF_NONE);
   EXPECT_EQ(0x1234U, key.GetCharacter());
   EXPECT_EQ(ET_KEY_PRESSED, key.type());
   EXPECT_TRUE(key.is_char());
@@ -918,7 +919,7 @@ TEST(EventTest, MouseEventLatencyUIComponentExists) {
   const gfx::Point origin(0, 0);
   MouseEvent mouseev(ET_MOUSE_PRESSED, origin, origin, EventTimeForNow(), 0, 0);
   EXPECT_TRUE(mouseev.latency()->FindLatency(
-      ui::INPUT_EVENT_LATENCY_UI_COMPONENT, 0, nullptr));
+      ui::INPUT_EVENT_LATENCY_UI_COMPONENT, nullptr));
 }
 
 TEST(EventTest, MouseWheelEventLatencyUIComponentExists) {
@@ -926,7 +927,7 @@ TEST(EventTest, MouseWheelEventLatencyUIComponentExists) {
   MouseWheelEvent mouseWheelev(gfx::Vector2d(), origin, origin,
                                EventTimeForNow(), 0, 0);
   EXPECT_TRUE(mouseWheelev.latency()->FindLatency(
-      ui::INPUT_EVENT_LATENCY_UI_COMPONENT, 0, nullptr));
+      ui::INPUT_EVENT_LATENCY_UI_COMPONENT, nullptr));
 }
 
 TEST(EventTest, PointerEventToMouseEvent) {
@@ -1194,26 +1195,13 @@ class AltGraphEventTest
   }
 
   const MSG msg_;
-  base::test::ScopedFeatureList feature_list_;
   BYTE original_keyboard_state_[256] = {};
   HKL original_keyboard_layout_ = nullptr;
 };
 
 }  // namespace
 
-TEST_P(AltGraphEventTest, OldKeyEventAltGraphModifier) {
-  feature_list_.InitFromCommandLine("", "FixAltGraph");
-
-  // Old behaviour always sets AltGraph modifier whenever both Control and Alt
-  // are pressed.
-  KeyEvent event(msg_);
-  EXPECT_EQ(event.flags() & (EF_CONTROL_DOWN | EF_ALT_DOWN | EF_ALTGR_DOWN),
-            EF_CONTROL_DOWN | EF_ALT_DOWN | EF_ALTGR_DOWN);
-}
-
 TEST_P(AltGraphEventTest, KeyEventAltGraphModifer) {
-  feature_list_.InitFromCommandLine("FixAltGraph", "");
-
   KeyEvent event(msg_);
   if (message_type() == WM_CHAR) {
     // By definition, if we receive a WM_CHAR message when Control and Alt are

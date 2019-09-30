@@ -8,7 +8,6 @@
 
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/public/platform/platform.h"
-#include "third_party/blink/public/platform/web_rtc_error.h"
 #include "third_party/blink/public/platform/web_rtc_peer_connection_handler.h"
 #include "third_party/blink/public/platform/web_rtc_rtp_receiver.h"
 #include "third_party/blink/public/platform/web_rtc_rtp_sender.h"
@@ -145,19 +144,22 @@ TEST_F(RTCPeerConnectionTest, GetTrackRemoveStreamAndGCAll) {
 
   MediaStreamTrack* track =
       CreateTrack(scope, MediaStreamSource::kTypeAudio, "audioTrack");
-  HeapVector<Member<MediaStreamTrack>> tracks;
-  tracks.push_back(track);
-  MediaStream* stream =
-      MediaStream::Create(scope.GetExecutionContext(), tracks);
-  ASSERT_TRUE(stream);
-
   MediaStreamComponent* track_component = track->Component();
 
-  EXPECT_FALSE(pc->GetTrack(track_component));
-  AddStream(scope, pc, stream);
-  EXPECT_TRUE(pc->GetTrack(track_component));
+  {
+    HeapVector<Member<MediaStreamTrack>> tracks;
+    tracks.push_back(track);
+    MediaStream* stream =
+        MediaStream::Create(scope.GetExecutionContext(), tracks);
+    ASSERT_TRUE(stream);
 
-  RemoveStream(scope, pc, stream);
+    EXPECT_FALSE(pc->GetTrack(track_component));
+    AddStream(scope, pc, stream);
+    EXPECT_TRUE(pc->GetTrack(track_component));
+
+    RemoveStream(scope, pc, stream);
+  }
+
   // This will destroy |MediaStream|, |MediaStreamTrack| and its
   // |MediaStreamComponent|, which will remove its mapping from the peer
   // connection.
@@ -174,19 +176,22 @@ TEST_F(RTCPeerConnectionTest,
 
   MediaStreamTrack* track =
       CreateTrack(scope, MediaStreamSource::kTypeAudio, "audioTrack");
-  HeapVector<Member<MediaStreamTrack>> tracks;
-  tracks.push_back(track);
-  MediaStream* stream =
-      MediaStream::Create(scope.GetExecutionContext(), tracks);
-  ASSERT_TRUE(stream);
-
   Persistent<MediaStreamComponent> track_component = track->Component();
 
-  EXPECT_FALSE(pc->GetTrack(track_component.Get()));
-  AddStream(scope, pc, stream);
-  EXPECT_TRUE(pc->GetTrack(track_component.Get()));
+  {
+    HeapVector<Member<MediaStreamTrack>> tracks;
+    tracks.push_back(track);
+    MediaStream* stream =
+        MediaStream::Create(scope.GetExecutionContext(), tracks);
+    ASSERT_TRUE(stream);
 
-  RemoveStream(scope, pc, stream);
+    EXPECT_FALSE(pc->GetTrack(track_component.Get()));
+    AddStream(scope, pc, stream);
+    EXPECT_TRUE(pc->GetTrack(track_component.Get()));
+
+    RemoveStream(scope, pc, stream);
+  }
+
   // This will destroy |MediaStream| and |MediaStreamTrack| (but not
   // |MediaStreamComponent|), which will remove its mapping from the peer
   // connection.
@@ -202,19 +207,22 @@ TEST_F(RTCPeerConnectionTest, GetTrackRemoveStreamAndGCWithPersistentStream) {
 
   MediaStreamTrack* track =
       CreateTrack(scope, MediaStreamSource::kTypeAudio, "audioTrack");
-  HeapVector<Member<MediaStreamTrack>> tracks;
-  tracks.push_back(track);
-  Persistent<MediaStream> stream =
-      MediaStream::Create(scope.GetExecutionContext(), tracks);
-  ASSERT_TRUE(stream);
-
   MediaStreamComponent* track_component = track->Component();
+  Persistent<MediaStream> stream;
 
-  EXPECT_FALSE(pc->GetTrack(track_component));
-  AddStream(scope, pc, stream);
-  EXPECT_TRUE(pc->GetTrack(track_component));
+  {
+    HeapVector<Member<MediaStreamTrack>> tracks;
+    tracks.push_back(track);
+    stream = MediaStream::Create(scope.GetExecutionContext(), tracks);
+    ASSERT_TRUE(stream);
 
-  RemoveStream(scope, pc, stream);
+    EXPECT_FALSE(pc->GetTrack(track_component));
+    AddStream(scope, pc, stream);
+    EXPECT_TRUE(pc->GetTrack(track_component));
+
+    RemoveStream(scope, pc, stream);
+  }
+
   // With a persistent |MediaStream|, the |MediaStreamTrack| and
   // |MediaStreamComponent| will not be destroyed and continue to be mapped by
   // peer connection.

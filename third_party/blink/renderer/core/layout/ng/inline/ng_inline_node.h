@@ -7,28 +7,20 @@
 
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/layout/layout_block_flow.h"
-#include "third_party/blink/renderer/core/layout/ng/inline/ng_inline_item.h"
 #include "third_party/blink/renderer/core/layout/ng/inline/ng_inline_node_data.h"
 #include "third_party/blink/renderer/core/layout/ng/ng_layout_input_node.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 
 namespace blink {
 
-template <typename OffsetMappingBuilder>
-class NGInlineItemsBuilderTemplate;
-
-class EmptyOffsetMappingBuilder;
-class LayoutBlockFlow;
-struct MinMaxSize;
 class NGConstraintSpace;
+class NGInlineBreakToken;
 class NGInlineItem;
-class NGInlineItemRange;
-using NGInlineItemsBuilder =
-    NGInlineItemsBuilderTemplate<EmptyOffsetMappingBuilder>;
-struct NGInlineNodeData;
 class NGLayoutResult;
 class NGOffsetMapping;
 class NGInlineNodeLegacy;
+struct MinMaxSize;
+struct NGInlineItemsData;
 
 // Represents an anonymous block box to be laid out, that contains consecutive
 // inline nodes and their descendants.
@@ -52,19 +44,16 @@ class CORE_EXPORT NGInlineNode : public NGLayoutInputNode {
   // Computes the value of min-content and max-content for this anonymous block
   // box. min-content is the inline size when lines wrap at every break
   // opportunity, and max-content is when lines do not wrap at all.
-  MinMaxSize ComputeMinMaxSize(const MinMaxSizeInput&);
+  MinMaxSize ComputeMinMaxSize(WritingMode container_writing_mode,
+                               const MinMaxSizeInput&,
+                               const NGConstraintSpace* = nullptr);
 
   // Instruct to re-compute |PrepareLayout| on the next layout.
-  void InvalidatePrepareLayout();
+  void InvalidatePrepareLayoutForTest();
 
-  const String& Text() const { return Data().text_content_; }
-  StringView Text(unsigned start_offset, unsigned end_offset) const {
-    return StringView(Data().text_content_, start_offset,
-                      end_offset - start_offset);
+  const NGInlineItemsData& ItemsData(bool is_first_line) const {
+    return Data().ItemsData(is_first_line);
   }
-
-  const Vector<NGInlineItem>& Items(bool is_first_line = false) const;
-  NGInlineItemRange Items(unsigned start_index, unsigned end_index);
 
   // Returns the DOM to text content offset mapping of this block. If it is not
   // computed before, compute and store it in NGInlineNodeData.
@@ -76,8 +65,10 @@ class CORE_EXPORT NGInlineNode : public NGLayoutInputNode {
 
   bool IsEmptyInline() { return EnsureData().is_empty_inline_; }
 
-  void AssertOffset(unsigned index, unsigned offset) const;
-  void AssertEndOffset(unsigned index, unsigned offset) const;
+  // @return if this node can contain the "first formatted line".
+  // https://www.w3.org/TR/CSS22/selector.html#first-formatted-line
+  bool CanContainFirstFormattedLine() const;
+
   void CheckConsistency() const;
 
   String ToString() const;
@@ -89,11 +80,21 @@ class CORE_EXPORT NGInlineNode : public NGLayoutInputNode {
   // calling the Layout method.
   void PrepareLayoutIfNeeded();
 
-  void CollectInlines(NGInlineNodeData*);
+  void CollectInlines(NGInlineNodeData*,
+                      NGInlineNodeData* previous_data = nullptr);
   void SegmentText(NGInlineNodeData*);
-  void ShapeText(NGInlineNodeData*);
-  void ShapeText(const String&, Vector<NGInlineItem>*);
+  void SegmentScriptRuns(NGInlineNodeData*);
+  void SegmentFontOrientation(NGInlineNodeData*);
+  void SegmentBidiRuns(NGInlineNodeData*);
+  void ShapeText(NGInlineItemsData*,
+                 NGInlineItemsData* previous_data = nullptr);
+  void ShapeText(const String& text,
+                 Vector<NGInlineItem>*,
+                 const String* previous_text);
   void ShapeTextForFirstLineIfNeeded(NGInlineNodeData*);
+  void AssociateItemsWithInlines(NGInlineNodeData*);
+
+  void ClearAssociatedFragments(NGInlineBreakToken*);
 
   NGInlineNodeData* MutableData();
   const NGInlineNodeData& Data() const;
@@ -102,15 +103,6 @@ class CORE_EXPORT NGInlineNode : public NGLayoutInputNode {
   friend class NGLineBreakerTest;
   friend class NGInlineNodeLegacy;
 };
-
-inline void NGInlineNode::AssertOffset(unsigned index, unsigned offset) const {
-  Data().items_[index].AssertOffset(offset);
-}
-
-inline void NGInlineNode::AssertEndOffset(unsigned index,
-                                          unsigned offset) const {
-  Data().items_[index].AssertEndOffset(offset);
-}
 
 DEFINE_TYPE_CASTS(NGInlineNode,
                   NGLayoutInputNode,

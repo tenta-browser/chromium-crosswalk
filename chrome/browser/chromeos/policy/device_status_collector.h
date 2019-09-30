@@ -25,9 +25,11 @@
 #include "base/timer/timer.h"
 #include "chrome/browser/chromeos/settings/cros_settings.h"
 #include "chromeos/dbus/cryptohome_client.h"
-#include "chromeos/system/version_loader.h"
+#include "chromeos/dbus/power_manager_client.h"
 #include "components/policy/proto/device_management_backend.pb.h"
 #include "components/prefs/pref_member.h"
+#include "components/session_manager/core/session_manager.h"
+#include "components/session_manager/core/session_manager_observer.h"
 #include "ui/base/idle/idle.h"
 
 namespace chromeos {
@@ -52,7 +54,8 @@ struct DeviceLocalAccount;
 class GetStatusState;
 
 // Collects and summarizes the status of an enterprised-managed ChromeOS device.
-class DeviceStatusCollector {
+class DeviceStatusCollector : public session_manager::SessionManagerObserver,
+                              public chromeos::PowerManagerClient::Observer {
  public:
   using VolumeInfoFetcher = base::Callback<
     std::vector<enterprise_management::VolumeInfo>(
@@ -92,16 +95,20 @@ class DeviceStatusCollector {
   // Constructor. Callers can inject their own *Fetcher callbacks, e.g. for unit
   // testing. A null callback can be passed for any *Fetcher parameter, to use
   // the default implementation. These callbacks are always executed on Blocking
-  // Pool. If |is_enterprise_device| additional enterprise relevant status data
-  // will be reported.
-  DeviceStatusCollector(PrefService* local_state,
+  // Pool. Caller is responsible for passing already initialized |pref_service|.
+  // |activity_day_start| indicates what time does the new day start for
+  // activity reporting daily data aggregation. It is represented by the
+  // distance from midnight. If |is_enterprise_device| additional enterprise
+  // relevant status data will be reported.
+  DeviceStatusCollector(PrefService* pref_service,
                         chromeos::system::StatisticsProvider* provider,
                         const VolumeInfoFetcher& volume_info_fetcher,
                         const CPUStatisticsFetcher& cpu_statistics_fetcher,
                         const CPUTempFetcher& cpu_temp_fetcher,
                         const AndroidStatusFetcher& android_status_fetcher,
-                        bool is_enterprise_device);
-  virtual ~DeviceStatusCollector();
+                        base::TimeDelta activity_day_start,
+                        bool is_enterprise_reporting);
+  ~DeviceStatusCollector() override;
 
   // Gathers device and session status information and calls the passed response
   // callback. Null pointers passed into the response indicate errors or that
@@ -127,6 +134,10 @@ class DeviceStatusCollector {
   // The total number of hardware resource usage samples cached internally.
   static const unsigned int kMaxResourceUsageSamples = 10;
 
+  // Returns the amount of time the child has used so far today. If the user is
+  // not a child or if there is no user logged in, it returns 0.
+  base::TimeDelta GetActiveChildScreenTime();
+
  protected:
   // Check whether the user has been idle for a certain period of time.
   virtual void CheckIdleState();
@@ -148,30 +159,33 @@ class DeviceStatusCollector {
   // next device status update.
   void SampleResourceUsage();
 
-  // The number of days in the past to store device activity.
-  // This is kept in case device status uploads fail for a number of days.
-  unsigned int max_stored_past_activity_days_;
+  // session_manager::SessionManagerObserver:
+  void OnSessionStateChanged() override;
 
-  // The number of days in the future to store device activity.
+  // power_manager::PowerManagerClient::Observer:
+  void ScreenIdleStateChanged(
+      const power_manager::ScreenIdleState& state) override;
+
+  // power_manager::PowerManagerClient::Observer:
+  void SuspendImminent(power_manager::SuspendImminent::Reason reason) override;
+
+  // power_manager::PowerManagerClient::Observer:
+  void SuspendDone(const base::TimeDelta& sleep_duration) override;
+
+  // The timeout in the past to store device activity.
+  // This is kept in case device status uploads fail for a number of days.
+  base::TimeDelta max_stored_past_activity_interval_;
+
+  // The timeout in the future to store device activity.
   // When changing the system time and/or timezones, it's possible to record
   // activity time that is slightly in the future.
-  unsigned int max_stored_future_activity_days_;
+  base::TimeDelta max_stored_future_activity_interval_;
+
+  // Updates the child's active time.
+  void UpdateChildUsageTime();
 
  private:
-  // Prevents the local store of activity periods from growing too large by
-  // removing entries that are outside the reporting window.
-  void PruneStoredActivityPeriods(base::Time base_time);
-
-  // Trims the store activity periods to only retain data within the
-  // [|min_day_key|, |max_day_key|). The record for |min_day_key| will be
-  // adjusted by subtracting |min_day_trim_duration|.
-  void TrimStoredActivityPeriods(int64_t min_day_key,
-                                 int min_day_trim_duration,
-                                 int64_t max_day_key);
-
-  void AddActivePeriod(base::Time start,
-                       base::Time end,
-                       const std::string& active_user_email);
+  class ActivityStorage;
 
   // Clears the cached hardware resource usage.
   void ClearCachedResourceUsage();
@@ -215,6 +229,9 @@ class DeviceStatusCollector {
   bool GetAndroidStatus(
       enterprise_management::SessionStatusReportRequest* status,
       const scoped_refptr<GetStatusState>& state);  // Queues async queries!
+  bool GetCrostiniUsage(
+      enterprise_management::SessionStatusReportRequest* status,
+      Profile* profile);
 
   // Update the cached values of the reporting settings.
   void UpdateReportingSettings();
@@ -225,10 +242,27 @@ class DeviceStatusCollector {
   // Callback invoked when reporting users pref is changed.
   void ReportingUsersChanged();
 
-  PrefService* const local_state_;
+  // Returns user's email if it should be included in the activity reports or
+  // empty string otherwise. Primary user is used as unique identifier of a
+  // single session, even for multi-user sessions.
+  std::string GetUserForActivityReporting() const;
+
+  // Returns whether users' email addresses should be included in activity
+  // reports.
+  bool IncludeEmailsInActivityReports() const;
+
+  // Pref service that is mainly used to store activity periods for reporting.
+  PrefService* const pref_service_;
 
   // The last time an idle state check was performed.
   base::Time last_idle_check_;
+
+  // The last time an active state check was performed.
+  base::Time last_active_check_;
+
+  // Whether the last state of the device was active. This is used for child
+  // accounts only. Active is defined as having the screen turned on.
+  bool last_state_active_;
 
   // The maximum key that went into the last report generated by
   // GetDeviceStatusAsync(), and the duration for it. This is used to trim
@@ -238,6 +272,7 @@ class DeviceStatusCollector {
   int duration_for_last_reported_day_ = 0;
 
   base::RepeatingTimer idle_poll_timer_;
+  base::RepeatingTimer update_child_usage_timer_;
   base::RepeatingTimer resource_usage_sampling_timer_;
 
   std::string os_version_;
@@ -272,6 +307,15 @@ class DeviceStatusCollector {
 
   chromeos::CrosSettings* const cros_settings_;
 
+  // Power manager client. Used to listen to suspend and idle events.
+  chromeos::PowerManagerClient* const power_manager_;
+
+  // Session manager. Used to listen to session state changes.
+  session_manager::SessionManager* const session_manager_;
+
+  // Stores and filters activity periods used for reporting.
+  std::unique_ptr<ActivityStorage> activity_storage_;
+
   // The most recent CPU readings.
   uint64_t last_cpu_active_ = 0;
   uint64_t last_cpu_idle_ = 0;
@@ -287,8 +331,12 @@ class DeviceStatusCollector {
   bool report_os_update_status_ = false;
   bool report_running_kiosk_app_ = false;
 
-  // Whether device is managed by enterprise or owned by consumer.
-  bool is_enterprise_device_ = false;
+  // Whether reporting is for enterprise or consumer.
+  bool is_enterprise_reporting_ = false;
+
+  // New day start time used to separate the children usage time into different
+  // days.
+  const base::TimeDelta activity_day_start_;
 
   std::unique_ptr<chromeos::CrosSettings::ObserverSubscription>
       version_info_subscription_;

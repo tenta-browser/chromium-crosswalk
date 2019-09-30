@@ -15,7 +15,7 @@
 #include "base/macros.h"
 #include "base/metrics/field_trial.h"
 #include "base/run_loop.h"
-#include "base/test/histogram_tester.h"
+#include "base/test/metrics/histogram_tester.h"
 #include "base/test/mock_entropy_provider.h"
 #include "base/test/scoped_feature_list.h"
 #include "build/build_config.h"
@@ -658,7 +658,7 @@ TEST_F(PermissionContextBaseTests, TestNonValidRequestingUrl) {
   TestRequestPermissionInvalidUrl(CONTENT_SETTINGS_TYPE_GEOLOCATION);
   TestRequestPermissionInvalidUrl(CONTENT_SETTINGS_TYPE_NOTIFICATIONS);
   TestRequestPermissionInvalidUrl(CONTENT_SETTINGS_TYPE_MIDI_SYSEX);
-#if defined(OS_ANDROID) || defined(OS_CHROMEOS)
+#if defined(OS_CHROMEOS)
   TestRequestPermissionInvalidUrl(
       CONTENT_SETTINGS_TYPE_PROTECTED_MEDIA_IDENTIFIER);
 #endif

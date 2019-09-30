@@ -51,9 +51,12 @@ bool WebUserGestureIndicator::IsProcessingUserGestureThreadSafe(
 // TODO(csharrison): consumeUserGesture() and currentUserGestureToken() use
 // the thread-safe API, which many callers probably do not need. Consider
 // updating them if they are in any sort of critical path or called often.
-bool WebUserGestureIndicator::ConsumeUserGesture(WebLocalFrame* frame) {
+bool WebUserGestureIndicator::ConsumeUserGesture(
+    WebLocalFrame* frame,
+    UserActivationUpdateSource update_source) {
   return Frame::ConsumeTransientUserActivation(
-      frame ? ToWebLocalFrameImpl(frame)->GetFrame() : nullptr, true);
+      frame ? ToWebLocalFrameImpl(frame)->GetFrame() : nullptr, true,
+      update_source);
 
   ;
 }
@@ -70,10 +73,6 @@ WebUserGestureToken WebUserGestureIndicator::CurrentUserGestureToken() {
 
 void WebUserGestureIndicator::ExtendTimeout() {
   UserGestureIndicator::SetTimeoutPolicy(UserGestureToken::kOutOfProcess);
-}
-
-void WebUserGestureIndicator::DisableTimeout() {
-  UserGestureIndicator::SetTimeoutPolicy(UserGestureToken::kHasPaused);
 }
 
 }  // namespace blink

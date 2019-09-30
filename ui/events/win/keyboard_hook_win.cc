@@ -13,6 +13,10 @@
 #include "base/optional.h"
 #include "base/threading/thread_checker.h"
 #include "ui/events/event.h"
+#include "ui/events/event_utils.h"
+#include "ui/events/keycodes/dom/dom_code.h"
+#include "ui/events/keycodes/dom/keycode_converter.h"
+#include "ui/gfx/native_widget_types.h"
 
 namespace ui {
 
@@ -33,7 +37,7 @@ bool IsOSReservedKey(DWORD vk) {
 
 class KeyboardHookWin : public KeyboardHookBase {
  public:
-  KeyboardHookWin(base::Optional<base::flat_set<int>> native_key_codes,
+  KeyboardHookWin(base::Optional<base::flat_set<DomCode>> dom_codes,
                   KeyEventCallback callback);
   ~KeyboardHookWin() override;
 
@@ -49,15 +53,20 @@ class KeyboardHookWin : public KeyboardHookBase {
 
   HHOOK hook_ = nullptr;
 
+  // Tracks the last key down seen in order to determine if the current key
+  // event is a repeated key press.
+  DWORD last_key_down_ = 0;
+
   DISALLOW_COPY_AND_ASSIGN(KeyboardHookWin);
 };
 
 // static
 KeyboardHookWin* KeyboardHookWin::instance_ = nullptr;
 
-KeyboardHookWin::KeyboardHookWin(base::Optional<base::flat_set<int>> key_codes,
-                                 KeyEventCallback callback)
-    : KeyboardHookBase(std::move(key_codes), std::move(callback)) {}
+KeyboardHookWin::KeyboardHookWin(
+    base::Optional<base::flat_set<DomCode>> dom_codes,
+    KeyEventCallback callback)
+    : KeyboardHookBase(std::move(dom_codes), std::move(callback)) {}
 
 KeyboardHookWin::~KeyboardHookWin() {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
@@ -101,12 +110,31 @@ LRESULT CALLBACK KeyboardHookWin::ProcessKeyEvent(int code,
   DCHECK_CALLED_ON_VALID_THREAD(instance_->thread_checker_);
 
   KBDLLHOOKSTRUCT* ll_hooks = reinterpret_cast<KBDLLHOOKSTRUCT*>(l_param);
+  DomCode dom_code =
+      KeycodeConverter::NativeKeycodeToDomCode(ll_hooks->scanCode);
   if (!IsOSReservedKey(ll_hooks->vkCode) &&
-      instance_->ShouldCaptureKeyEvent(ll_hooks->scanCode)) {
+      instance_->ShouldCaptureKeyEvent(dom_code)) {
     MSG msg = {nullptr, w_param, ll_hooks->vkCode,
                (ll_hooks->scanCode << 16) | (ll_hooks->flags & 0xFFFF),
                ll_hooks->time};
-    instance_->ForwardCapturedKeyEvent(std::make_unique<KeyEvent>(msg));
+    KeyEvent key_event = KeyEventFromMSG(msg);
+
+    // Determine if this key event represents a repeated key event.
+    // A low level KB Hook is not passed a parameter or flag which indicates
+    // whether the key event is a repeat or not as it is called very early in
+    // input handling pipeline. That means we need to apply our own heuristic
+    // to determine if it should be treated as a repeated key press or not.
+    if (key_event.type() == ET_KEY_PRESSED) {
+      if (instance_->last_key_down_ != 0 &&
+          instance_->last_key_down_ == ll_hooks->vkCode) {
+        key_event.set_flags(key_event.flags() | EF_IS_REPEAT);
+      }
+      instance_->last_key_down_ = ll_hooks->vkCode;
+    } else {
+      DCHECK_EQ(key_event.type(), ET_KEY_RELEASED);
+      instance_->last_key_down_ = 0;
+    }
+    instance_->ForwardCapturedKeyEvent(std::make_unique<KeyEvent>(key_event));
     return 1;
   }
   return CallNextHookEx(nullptr, code, w_param, l_param);
@@ -116,10 +144,11 @@ LRESULT CALLBACK KeyboardHookWin::ProcessKeyEvent(int code,
 
 // static
 std::unique_ptr<KeyboardHook> KeyboardHook::Create(
-    base::Optional<base::flat_set<int>> key_codes,
+    base::Optional<base::flat_set<DomCode>> dom_codes,
+    gfx::AcceleratedWidget accelerated_widget,
     KeyEventCallback callback) {
   std::unique_ptr<KeyboardHookWin> keyboard_hook =
-      std::make_unique<KeyboardHookWin>(std::move(key_codes),
+      std::make_unique<KeyboardHookWin>(std::move(dom_codes),
                                         std::move(callback));
 
   if (!keyboard_hook->Register())

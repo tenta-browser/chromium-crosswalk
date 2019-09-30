@@ -42,7 +42,7 @@ class MockBrowserViewLayoutDelegate : public BrowserViewLayoutDelegate {
   gfx::Rect GetBoundsForTabStripInBrowserView() const override {
     return gfx::Rect();
   }
-  int GetTopInsetInBrowserView(bool restored) const override { return 0; }
+  int GetTopInsetInBrowserView() const override { return 0; }
   int GetThemeBackgroundXInset() const override { return 0; }
   bool IsToolbarVisible() const override { return toolbar_visible_; }
   bool IsBookmarkBarVisible() const override { return bookmark_bar_visible_; }
@@ -198,7 +198,7 @@ class BrowserViewLayoutTest : public BrowserWithTestWindowTest {
 TEST_F(BrowserViewLayoutTest, BrowserViewLayout) {
   EXPECT_TRUE(layout()->browser());
   EXPECT_TRUE(layout()->GetWebContentsModalDialogHost());
-  EXPECT_FALSE(layout()->InfobarVisible());
+  EXPECT_FALSE(layout()->IsInfobarVisible());
 }
 
 // Test the core layout functions.

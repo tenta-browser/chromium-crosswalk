@@ -33,6 +33,7 @@ namespace blink {
 
 struct PaintInfo;
 class LineLayoutBox;
+class NGConstraintSpace;
 class WordMeasurement;
 
 typedef WTF::ListHashSet<LayoutBox*, 16> TrackedLayoutBoxListHashSet;
@@ -213,9 +214,6 @@ class CORE_EXPORT LayoutBlock : public LayoutBox {
 
   PositionWithAffinity PositionForPoint(const LayoutPoint&) const override;
 
-  LayoutUnit BlockDirectionOffset(const LayoutSize& offset_from_block) const;
-  LayoutUnit InlineDirectionOffset(const LayoutSize& offset_from_block) const;
-
   static LayoutBlock* CreateAnonymousWithParentAndDisplay(
       const LayoutObject*,
       EDisplay = EDisplay::kBlock);
@@ -293,20 +291,15 @@ class CORE_EXPORT LayoutBlock : public LayoutBox {
     return LogicalLeftOffsetForContent() + AvailableLogicalWidth();
   }
   LayoutUnit StartOffsetForContent() const {
-    return Style()->IsLeftToRightDirection()
+    return StyleRef().IsLeftToRightDirection()
                ? LogicalLeftOffsetForContent()
                : LogicalWidth() - LogicalRightOffsetForContent();
   }
   LayoutUnit EndOffsetForContent() const {
-    return !Style()->IsLeftToRightDirection()
+    return !StyleRef().IsLeftToRightDirection()
                ? LogicalLeftOffsetForContent()
                : LogicalWidth() - LogicalRightOffsetForContent();
   }
-
-  virtual LayoutUnit LogicalLeftSelectionOffset(const LayoutBlock* root_block,
-                                                LayoutUnit position) const;
-  virtual LayoutUnit LogicalRightSelectionOffset(const LayoutBlock* root_block,
-                                                 LayoutUnit position) const;
 
 #if DCHECK_IS_ON()
   void CheckPositionedObjectsNeedLayout();
@@ -314,6 +307,9 @@ class CORE_EXPORT LayoutBlock : public LayoutBox {
 
   LayoutUnit AvailableLogicalHeightForPercentageComputation() const;
   bool HasDefiniteLogicalHeight() const;
+
+  const NGConstraintSpace* CachedConstraintSpace() const;
+  void SetCachedConstraintSpace(const NGConstraintSpace& space);
 
  protected:
   bool RecalcNormalFlowChildOverflowIfNeeded(LayoutObject*);
@@ -365,15 +361,26 @@ class CORE_EXPORT LayoutBlock : public LayoutBox {
   void MarkFixedPositionObjectForLayoutIfNeeded(LayoutObject* child,
                                                 SubtreeLayoutScope&);
 
+ public:
+  bool IsLegacyInitiatedOutOfFlowLayout() const {
+    return is_legacy_initiated_out_of_flow_layout_;
+  }
+
+  void SetIsLegacyInitiatedOutOfFlowLayout(bool b) {
+    is_legacy_initiated_out_of_flow_layout_ = b;
+  }
+
+ protected:
   LayoutUnit MarginIntrinsicLogicalWidthForChild(const LayoutBox& child) const;
 
   LayoutUnit BeforeMarginInLineDirection(LineDirectionMode) const;
 
-  void Paint(const PaintInfo&, const LayoutPoint&) const override;
-
  public:
-  virtual void PaintObject(const PaintInfo&, const LayoutPoint&) const;
-  virtual void PaintChildren(const PaintInfo&, const LayoutPoint&) const;
+  void Paint(const PaintInfo&) const override;
+  virtual void PaintObject(const PaintInfo&,
+                           const LayoutPoint& paint_offset) const;
+  virtual void PaintChildren(const PaintInfo&,
+                             const LayoutPoint& paint_offset) const;
   void UpdateAfterLayout() override;
 
  protected:
@@ -452,6 +459,11 @@ class CORE_EXPORT LayoutBlock : public LayoutBox {
 
   bool NeedsPreferredWidthsRecalculation() const override;
 
+  bool IsInSelfHitTestingPhase(HitTestAction hit_test_action) const final {
+    return hit_test_action == kHitTestBlockBackground ||
+           hit_test_action == kHitTestChildBlockBackground;
+  }
+
  private:
   LayoutObjectChildList* VirtualChildren() final { return Children(); }
   const LayoutObjectChildList* VirtualChildren() const final {
@@ -468,11 +480,6 @@ class CORE_EXPORT LayoutBlock : public LayoutBox {
   // Returns true if the positioned movement-only layout succeeded.
   bool TryLayoutDoingPositionedMovementOnly();
 
-  bool IsInSelfHitTestingPhase(HitTestAction hit_test_action) const final {
-    return hit_test_action == kHitTestBlockBackground ||
-           hit_test_action == kHitTestChildBlockBackground;
-  }
-
   bool IsPointInOverflowControl(HitTestResult&,
                                 const LayoutPoint& location_in_container,
                                 const LayoutPoint& accumulated_offset) const;
@@ -488,8 +495,7 @@ class CORE_EXPORT LayoutBlock : public LayoutBox {
   }
 
  protected:
-  PaintInvalidationReason InvalidatePaint(
-      const PaintInvalidatorContext&) const override;
+  void InvalidatePaint(const PaintInvalidatorContext&) const override;
 
   void ClearPreviousVisualRects() override;
 
@@ -526,6 +532,7 @@ class CORE_EXPORT LayoutBlock : public LayoutBox {
   virtual bool UpdateLogicalWidthAndColumnWidth();
 
   LayoutObjectChildList children_;
+  scoped_refptr<const NGConstraintSpace> cached_constraint_space_;
 
   unsigned
       has_margin_before_quirk_ : 1;  // Note these quirk values can't be put
@@ -550,6 +557,10 @@ class CORE_EXPORT LayoutBlock : public LayoutBox {
   // be forced breaks somewhere in there that we suddenly have to pay attention
   // to, for all we know.
   unsigned pagination_state_changed_ : 1;
+
+  // LayoutNG-only: This flag is true if an NG out of flow layout was
+  // initiated by Legacy positioning code.
+  unsigned is_legacy_initiated_out_of_flow_layout_ : 1;
 
   // FIXME: This is temporary as we move code that accesses block flow
   // member variables out of LayoutBlock and into LayoutBlockFlow.

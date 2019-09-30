@@ -75,9 +75,8 @@ void AXInlineTextBox::GetRelativeBounds(AXObject** out_container,
 
   // Subtract the local bounding box of the parent because they're
   // both in the same coordinate system.
-  LayoutObject* parent_layout_object = ParentObject()->GetLayoutObject();
   FloatRect parent_bounding_box =
-      parent_layout_object->LocalBoundingBoxRectForAccessibility();
+      ParentObject()->LocalBoundingBoxRectForAccessibility();
   out_bounds_in_container.MoveBy(-parent_bounding_box.Location());
 }
 
@@ -121,9 +120,11 @@ void AXInlineTextBox::GetWordBoundaries(Vector<AXRange>& words) const {
   inline_text_box_->GetWordBoundaries(boundaries);
   words.ReserveCapacity(boundaries.size());
   for (const auto& boundary : boundaries) {
-    words.emplace_back(
+    const AXRange range(
         AXPosition::CreatePositionInTextObject(*this, boundary.start_index),
         AXPosition::CreatePositionInTextObject(*this, boundary.end_index));
+    if (range.IsValid())
+      words.push_back(range);
   }
 }
 

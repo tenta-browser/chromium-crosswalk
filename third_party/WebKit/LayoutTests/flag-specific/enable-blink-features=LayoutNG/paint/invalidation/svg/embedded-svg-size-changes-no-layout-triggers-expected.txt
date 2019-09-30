@@ -20,7 +20,7 @@
         {
           "object": "LayoutNGBlockFlow HTML",
           "rect": [0, 0, 402, 202],
-          "reason": "appeared"
+          "reason": "chunk appeared"
         },
         {
           "object": "LayoutSVGRect rect",
@@ -43,32 +43,6 @@
           "reason": "paint property change"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "NGPaintFragment",
-      "reason": "subtree"
-    },
-    {
-      "object": "LayoutEmbeddedObject OBJECT",
-      "reason": "subtree"
-    },
-    {
-      "object": "LayoutView #document",
-      "reason": "subtree"
-    },
-    {
-      "object": "LayoutSVGRoot svg",
-      "reason": "subtree"
-    },
-    {
-      "object": "LayoutSVGRect rect",
-      "reason": "subtree"
-    },
-    {
-      "object": "LayoutSVGRect rect",
-      "reason": "subtree"
     }
   ]
 }

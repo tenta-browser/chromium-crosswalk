@@ -9,6 +9,9 @@
 #include "chrome/browser/extensions/extension_api_unittest.h"
 #include "chrome/browser/extensions/extension_function_test_utils.h"
 #include "components/policy/core/common/cloud/mock_cloud_policy_client.h"
+#include "services/network/public/cpp/shared_url_loader_factory.h"
+#include "services/network/public/cpp/weak_wrapper_shared_url_loader_factory.h"
+#include "services/network/test/test_url_loader_factory.h"
 #include "testing/gmock/include/gmock/gmock.h"
 
 using ::testing::_;
@@ -21,16 +24,17 @@ namespace {
 const char kFakeDMToken[] = "fake-dm-token";
 const char kFakeClientId[] = "fake-client-id";
 const char kFakeMachineNameReport[] = "{\"computername\":\"name\"}";
-const char kFakeInvalidMachineNameReport[] = "\"invalid\"";
 
 class MockCloudPolicyClient : public policy::MockCloudPolicyClient {
  public:
-  MockCloudPolicyClient() = default;
+  explicit MockCloudPolicyClient(
+      scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory)
+      : policy::MockCloudPolicyClient(std::move(url_loader_factory)) {}
 
   void UploadChromeDesktopReport(
       std::unique_ptr<enterprise_management::ChromeDesktopReportRequest>
           request,
-      const StatusCallback& callback) {
+      const StatusCallback& callback) override {
     UploadChromeDesktopReportProxy(request.get(), callback);
   }
   MOCK_METHOD2(UploadChromeDesktopReportProxy,
@@ -55,14 +59,20 @@ class MockCloudPolicyClient : public policy::MockCloudPolicyClient {
 
 class EnterpriseReportingPrivateTest : public ExtensionApiUnittest {
  public:
-  EnterpriseReportingPrivateTest() = default;
+  EnterpriseReportingPrivateTest()
+      : test_shared_loader_factory_(
+            base::MakeRefCounted<network::WeakWrapperSharedURLLoaderFactory>(
+                &test_url_loader_factory_)) {}
+
+  void TearDown() override { test_shared_loader_factory_->Detach(); }
 
   UIThreadExtensionFunction* CreateChromeDesktopReportingFunction(
       const std::string& dm_token) {
     EnterpriseReportingPrivateUploadChromeDesktopReportFunction* function =
-        new EnterpriseReportingPrivateUploadChromeDesktopReportFunction();
-    std::unique_ptr<MockCloudPolicyClient> client =
-        std::make_unique<MockCloudPolicyClient>();
+        EnterpriseReportingPrivateUploadChromeDesktopReportFunction::
+            CreateForTesting(test_shared_loader_factory_);
+    auto client =
+        std::make_unique<MockCloudPolicyClient>(test_shared_loader_factory_);
     client_ = client.get();
     function->SetCloudPolicyClientForTesting(std::move(client));
     function->SetRegistrationInfoForTesting(dm_token, kFakeClientId);
@@ -73,9 +83,21 @@ class EnterpriseReportingPrivateTest : public ExtensionApiUnittest {
     return base::StringPrintf("[{\"machineName\":%s}]", name);
   }
 
+  std::string GenerateInvalidReport() {
+    // This report is invalid as the chromeSignInUser dictionary should not be
+    // wrapped in a list.
+    return std::string(
+        "[{\"browserReport\": "
+        "{\"chromeUserProfileReport\":[{\"chromeSignInUser\":\"Name\"}]}}]");
+  }
+
   MockCloudPolicyClient* client_;
 
  private:
+  network::TestURLLoaderFactory test_url_loader_factory_;
+  scoped_refptr<network::WeakWrapperSharedURLLoaderFactory>
+      test_shared_loader_factory_;
+
   DISALLOW_COPY_AND_ASSIGN(EnterpriseReportingPrivateTest);
 };
 
@@ -90,7 +112,7 @@ TEST_F(EnterpriseReportingPrivateTest, ReportIsNotValid) {
   ASSERT_EQ(enterprise_reporting::kInvalidInputErrorMessage,
             RunFunctionAndReturnError(
                 CreateChromeDesktopReportingFunction(kFakeDMToken),
-                GenerateArgs(kFakeInvalidMachineNameReport)));
+                GenerateInvalidReport()));
 }
 
 TEST_F(EnterpriseReportingPrivateTest, UploadFailed) {

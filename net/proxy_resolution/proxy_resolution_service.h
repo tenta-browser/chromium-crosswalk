@@ -18,14 +18,16 @@
 #include "base/optional.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/threading/thread_checker.h"
-#include "net/base/completion_callback.h"
+#include "net/base/completion_once_callback.h"
 #include "net/base/load_states.h"
 #include "net/base/net_export.h"
 #include "net/base/network_change_notifier.h"
 #include "net/base/proxy_server.h"
+#include "net/log/net_log_with_source.h"
 #include "net/proxy_resolution/proxy_config_service.h"
 #include "net/proxy_resolution/proxy_config_with_annotation.h"
 #include "net/proxy_resolution/proxy_info.h"
+#include "net/proxy_resolution/proxy_resolver.h"
 #include "url/gurl.h"
 
 class GURL;
@@ -39,9 +41,7 @@ namespace net {
 
 class DhcpPacFileFetcher;
 class NetLog;
-class NetLogWithSource;
 class ProxyDelegate;
-class ProxyResolver;
 class ProxyResolverFactory;
 class PacFileData;
 class PacFileFetcher;
@@ -123,7 +123,17 @@ class NET_EXPORT ProxyResolutionService
   ~ProxyResolutionService() override;
 
   // Used to track proxy resolution requests that complete asynchronously.
-  class Request;
+  class Request {
+   public:
+    virtual ~Request() = default;
+    virtual LoadState GetLoadState() const = 0;
+
+   protected:
+    Request() = default;
+
+   private:
+    DISALLOW_COPY_AND_ASSIGN(Request);
+  };
 
   // Determines the appropriate proxy for |url| for a |method| request and
   // stores the result in |results|. If |method| is empty, the caller can expect
@@ -135,10 +145,9 @@ class NET_EXPORT ProxyResolutionService
   // ResolveProxy.
   //
   // The caller is responsible for ensuring that |results| and |callback|
-  // remain valid until the callback is run or until |request| is cancelled
-  // via CancelRequest.  |request| is only valid while the completion
-  // callback is still pending. NULL can be passed for |request| if
-  // the caller will not need to cancel the request.
+  // remain valid until the callback is run or until |request| is cancelled,
+  // which occurs when the unique pointer to it is deleted (by leaving scope or
+  // otherwise).  |request| must not be NULL.
   //
   // We use the three possible proxy access types in the following order,
   // doing fallback if one doesn't work.  See "pac_script_decider.h"
@@ -151,8 +160,8 @@ class NET_EXPORT ProxyResolutionService
   int ResolveProxy(const GURL& url,
                    const std::string& method,
                    ProxyInfo* results,
-                   const CompletionCallback& callback,
-                   Request** request,
+                   CompletionOnceCallback callback,
+                   std::unique_ptr<Request>* request,
                    ProxyDelegate* proxy_delegate,
                    const NetLogWithSource& net_log);
 
@@ -184,12 +193,6 @@ class NET_EXPORT ProxyResolutionService
   // |proxy_delegate| will be notified of any proxy fallbacks.
   void ReportSuccess(const ProxyInfo& proxy_info,
                      ProxyDelegate* proxy_delegate);
-
-  // Call this method with a non-null |request| to cancel the PAC request.
-  void CancelRequest(Request* request);
-
-  // Returns the LoadState for this |request| which must be non-NULL.
-  LoadState GetLoadState(const Request* request) const;
 
   // Sets the PacFileFetcher and DhcpPacFileFetcher dependencies. This
   // is needed if the ProxyResolver is of type ProxyResolverWithoutFetch.
@@ -258,9 +261,6 @@ class NET_EXPORT ProxyResolutionService
 
   // Creates a proxy service that uses a DIRECT connection for all requests.
   static std::unique_ptr<ProxyResolutionService> CreateDirect();
-  // |net_log|'s lifetime must exceed ProxyResolutionService.
-  static std::unique_ptr<ProxyResolutionService> CreateDirectWithNetLog(
-      NetLog* net_log);
 
   // This method is used by tests to create a ProxyResolutionService that
   // returns a hardcoded proxy fallback list (|pac_string|) for every URL.
@@ -298,9 +298,13 @@ class NET_EXPORT ProxyResolutionService
   void set_quick_check_enabled(bool value) {
     quick_check_enabled_ = value;
   }
+  bool quick_check_enabled_for_testing() const { return quick_check_enabled_; }
 
   void set_sanitize_url_policy(SanitizeUrlPolicy policy) {
     sanitize_url_policy_ = policy;
+  }
+  SanitizeUrlPolicy sanitize_url_policy_for_testing() const {
+    return sanitize_url_policy_;
   }
 
  private:
@@ -308,11 +312,11 @@ class NET_EXPORT ProxyResolutionService
                            UpdateConfigAfterFailedAutodetect);
   FRIEND_TEST_ALL_PREFIXES(ProxyResolutionServiceTest,
                            UpdateConfigFromPACToDirect);
-  friend class Request;
   class InitProxyResolver;
   class PacFileDeciderPoller;
+  class RequestImpl;
 
-  typedef std::set<scoped_refptr<Request>> PendingRequests;
+  typedef std::set<RequestImpl*> PendingRequests;
 
   enum State {
     STATE_NONE,
@@ -350,8 +354,8 @@ class NET_EXPORT ProxyResolutionService
   int ResolveProxyHelper(const GURL& url,
                          const std::string& method,
                          ProxyInfo* results,
-                         const CompletionCallback& callback,
-                         Request** request,
+                         CompletionOnceCallback callback,
+                         std::unique_ptr<Request>* request,
                          ProxyDelegate* proxy_delegate,
                          const NetLogWithSource& net_log);
 
@@ -364,10 +368,10 @@ class NET_EXPORT ProxyResolutionService
   void SetReady();
 
   // Returns true if |pending_requests_| contains |req|.
-  bool ContainsPendingRequest(Request* req);
+  bool ContainsPendingRequest(RequestImpl* req);
 
   // Removes |req| from the list of pending requests.
-  void RemovePendingRequest(Request* req);
+  void RemovePendingRequest(RequestImpl* req);
 
   // Called when proxy resolution has completed (either synchronously or
   // asynchronously). Handles logging the result, and cleaning out
@@ -467,6 +471,10 @@ class NET_EXPORT ProxyResolutionService
   SanitizeUrlPolicy sanitize_url_policy_;
 
   THREAD_CHECKER(thread_checker_);
+
+  // Flag used by |SetReady()| to check if |this| has been deleted by a
+  // synchronous callback.
+  base::WeakPtrFactory<ProxyResolutionService> weak_ptr_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(ProxyResolutionService);
 };

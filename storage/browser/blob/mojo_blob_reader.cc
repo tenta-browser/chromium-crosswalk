@@ -4,6 +4,7 @@
 
 #include "storage/browser/blob/mojo_blob_reader.h"
 
+#include "base/debug/alias.h"
 #include "base/trace_event/trace_event.h"
 #include "net/base/io_buffer.h"
 #include "services/network/public/cpp/net_adapters.h"
@@ -39,11 +40,14 @@ MojoBlobReader::MojoBlobReader(const BlobDataHandle* handle,
 }
 
 MojoBlobReader::~MojoBlobReader() {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   TRACE_EVENT_ASYNC_END1("Blob", "BlobReader", this, "bytes_written",
                          total_written_bytes_);
 }
 
 void MojoBlobReader::Start() {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+
   if (blob_reader_->net_error()) {
     NotifyCompletedAndDeleteIfNeeded(blob_reader_->net_error());
     return;
@@ -69,6 +73,8 @@ void MojoBlobReader::Start() {
 }
 
 void MojoBlobReader::NotifyCompletedAndDeleteIfNeeded(int result) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+
   blob_reader_ = nullptr;
   if (!notified_completed_) {
     delegate_->OnComplete(static_cast<net::Error>(result),
@@ -82,6 +88,8 @@ void MojoBlobReader::NotifyCompletedAndDeleteIfNeeded(int result) {
 }
 
 void MojoBlobReader::DidCalculateSize(int result) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+
   if (result != net::OK) {
     TRACE_EVENT_ASYNC_END1("Blob", "BlobReader::CountSize", this, "result",
                            "error");
@@ -92,16 +100,27 @@ void MojoBlobReader::DidCalculateSize(int result) {
   TRACE_EVENT_ASYNC_END2("Blob", "BlobReader::CountSize", this, "result",
                          "success", "size", blob_reader_->total_size());
 
+  // TODO(https://crbug.com/864351): Temporary diagnostics.
+  net::HttpByteRange pre_bounds_range = byte_range_;
+  base::debug::Alias(&pre_bounds_range);
+
   // Apply the range requirement.
   if (!byte_range_.ComputeBounds(blob_reader_->total_size())) {
     NotifyCompletedAndDeleteIfNeeded(net::ERR_REQUEST_RANGE_NOT_SATISFIABLE);
     return;
   }
 
+  // TODO(https://crbug.com/864351): Temporary diagnostics.
+  net::HttpByteRange post_bounds_range = byte_range_;
+  base::debug::Alias(&post_bounds_range);
+
   DCHECK_LE(byte_range_.first_byte_position(),
             byte_range_.last_byte_position() + 1);
   uint64_t length = base::checked_cast<uint64_t>(
       byte_range_.last_byte_position() - byte_range_.first_byte_position() + 1);
+
+  // TODO(https://crbug.com/864351): Temporary diagnostics.
+  base::debug::Alias(&length);
 
   if (blob_reader_->SetReadRange(byte_range_.first_byte_position(), length) !=
       BlobReader::Status::DONE) {
@@ -126,6 +145,8 @@ void MojoBlobReader::DidCalculateSize(int result) {
 }
 
 void MojoBlobReader::DidReadSideData(BlobReader::Status status) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+
   if (status != BlobReader::Status::DONE) {
     NotifyCompletedAndDeleteIfNeeded(blob_reader_->net_error());
     return;
@@ -135,6 +156,9 @@ void MojoBlobReader::DidReadSideData(BlobReader::Status status) {
 }
 
 void MojoBlobReader::StartReading() {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  DCHECK(!response_body_stream_);
+
   response_body_stream_ = delegate_->PassDataPipe();
   peer_closed_handle_watcher_.Watch(
       response_body_stream_.get(), MOJO_HANDLE_SIGNAL_PEER_CLOSED,
@@ -152,9 +176,11 @@ void MojoBlobReader::StartReading() {
 }
 
 void MojoBlobReader::ReadMore() {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(!pending_write_.get());
+  DCHECK(response_body_stream_);
 
-  uint32_t num_bytes;
+  uint32_t num_bytes = 0;
   // TODO: we should use the abstractions in MojoAsyncResourceHandler.
   MojoResult result = network::NetToMojoPendingBuffer::BeginWrite(
       &response_body_stream_, &pending_write_, &num_bytes);
@@ -172,43 +198,50 @@ void MojoBlobReader::ReadMore() {
 
   TRACE_EVENT_ASYNC_BEGIN0("Blob", "BlobReader::ReadMore", this);
   CHECK_GT(static_cast<uint32_t>(std::numeric_limits<int>::max()), num_bytes);
+  DCHECK(pending_write_);
   auto buf =
       base::MakeRefCounted<network::NetToMojoIOBuffer>(pending_write_.get());
-  int bytes_read;
+  int bytes_read = 0;
   BlobReader::Status read_status = blob_reader_->Read(
       buf.get(), static_cast<int>(num_bytes), &bytes_read,
       base::BindOnce(&MojoBlobReader::DidRead, base::Unretained(this), false));
   switch (read_status) {
     case BlobReader::Status::NET_ERROR:
-      TRACE_EVENT_ASYNC_END1("Blob", "BlobReader::ReadMore", this, "result",
-                             "error");
-      NotifyCompletedAndDeleteIfNeeded(blob_reader_->net_error());
+      DidRead(true, blob_reader_->net_error());
       return;
     case BlobReader::Status::IO_PENDING:
       // Wait for DidRead.
       return;
     case BlobReader::Status::DONE:
-      if (bytes_read > 0) {
-        DidRead(true, bytes_read);
-      } else {
-        TRACE_EVENT_ASYNC_END1("Blob", "BlobReader::ReadMore", this, "result",
-                               "success");
-        writable_handle_watcher_.Cancel();
-        pending_write_->Complete(0);
-        pending_write_ = nullptr;  // This closes the data pipe.
-        NotifyCompletedAndDeleteIfNeeded(net::OK);
-        return;
-      }
+      DidRead(true, bytes_read);
+      return;
   }
 }
 
 void MojoBlobReader::DidRead(bool completed_synchronously, int num_bytes) {
-  delegate_->DidRead(num_bytes);
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+
+  if (num_bytes < 0) {
+    TRACE_EVENT_ASYNC_END2("Blob", "BlobReader::ReadMore", this, "result",
+                           "error", "net_error", num_bytes);
+    writable_handle_watcher_.Cancel();
+    pending_write_->Complete(0);
+    pending_write_ = nullptr;  // This closes the data pipe.
+    NotifyCompletedAndDeleteIfNeeded(num_bytes);
+    return;
+  }
+  if (num_bytes > 0)
+    delegate_->DidRead(num_bytes);
   TRACE_EVENT_ASYNC_END2("Blob", "BlobReader::ReadMore", this, "result",
                          "success", "num_bytes", num_bytes);
   response_body_stream_ = pending_write_->Complete(num_bytes);
   total_written_bytes_ += num_bytes;
   pending_write_ = nullptr;
+  if (num_bytes == 0) {
+    response_body_stream_.reset();  // This closes the data pipe.
+    NotifyCompletedAndDeleteIfNeeded(net::OK);
+    return;
+  }
   if (completed_synchronously) {
     base::SequencedTaskRunnerHandle::Get()->PostTask(
         FROM_HERE,
@@ -219,13 +252,20 @@ void MojoBlobReader::DidRead(bool completed_synchronously, int num_bytes) {
 }
 
 void MojoBlobReader::OnResponseBodyStreamClosed(MojoResult result) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+
   response_body_stream_.reset();
   pending_write_ = nullptr;
   NotifyCompletedAndDeleteIfNeeded(net::ERR_ABORTED);
 }
 
 void MojoBlobReader::OnResponseBodyStreamReady(MojoResult result) {
-  // TODO(jam): Handle a bad |result| value.
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+
+  if (result == MOJO_RESULT_FAILED_PRECONDITION) {
+    OnResponseBodyStreamClosed(MOJO_RESULT_OK);
+    return;
+  }
   DCHECK_EQ(result, MOJO_RESULT_OK);
   ReadMore();
 }

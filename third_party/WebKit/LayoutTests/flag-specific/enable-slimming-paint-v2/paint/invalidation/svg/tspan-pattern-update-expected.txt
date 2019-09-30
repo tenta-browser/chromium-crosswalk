@@ -9,27 +9,9 @@
         {
           "object": "InlineTextBox 'Y'",
           "rect": [8, 8, 300, 100],
-          "reason": "SVG resource change"
+          "reason": "subtree"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutSVGTSpan tspan",
-      "reason": "SVG resource change"
-    },
-    {
-      "object": "InlineFlowBox",
-      "reason": "SVG resource change"
-    },
-    {
-      "object": "LayoutSVGInlineText #text",
-      "reason": "SVG resource change"
-    },
-    {
-      "object": "InlineTextBox 'Y'",
-      "reason": "SVG resource change"
     }
   ]
 }

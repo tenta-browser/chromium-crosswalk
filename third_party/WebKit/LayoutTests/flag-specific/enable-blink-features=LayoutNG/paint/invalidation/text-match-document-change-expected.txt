@@ -18,28 +18,18 @@
       "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
         {
-          "object": "NGPaintFragment",
-          "rect": [18, 134, 251, 14],
+          "object": "NGPhysicalTextFragment 'To be changed: findme (Manual testing:'",
+          "rect": [18, 130, 251, 19],
           "reason": "disappeared"
         },
         {
-          "object": "NGPaintFragment",
-          "rect": [18, 154, 240, 14],
+          "object": "NGPhysicalTextFragment 'Find-in-page 'findme', then click here)'",
+          "rect": [18, 150, 240, 19],
           "reason": "disappeared"
         },
         {
-          "object": "NGPaintFragment",
-          "rect": [18, 114, 125, 14],
-          "reason": "appeared"
-        },
-        {
-          "object": "NGPaintFragment",
-          "rect": [18, 114, 125, 14],
-          "reason": "disappeared"
-        },
-        {
-          "object": "NGPaintFragment",
-          "rect": [18, 134, 82, 14],
+          "object": "NGPhysicalTextFragment 'After change'",
+          "rect": [18, 130, 82, 19],
           "reason": "appeared"
         },
         {
@@ -48,32 +38,6 @@
           "reason": "scroll control"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "VerticalScrollbar",
-      "reason": "scroll control"
-    },
-    {
-      "object": "NGPaintFragment",
-      "reason": "subtree"
-    },
-    {
-      "object": "NGPaintFragment",
-      "reason": "subtree"
-    },
-    {
-      "object": "NGPaintFragment",
-      "reason": "subtree"
-    },
-    {
-      "object": "NGPaintFragment",
-      "reason": "subtree"
-    },
-    {
-      "object": "LayoutNGBlockFlow DIV",
-      "reason": "geometry"
     }
   ]
 }

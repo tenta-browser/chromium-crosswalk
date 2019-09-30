@@ -7,10 +7,7 @@
 #import "base/logging.h"
 #import "ios/chrome/browser/ui/UIView+SizeClassSupport.h"
 #import "ios/chrome/browser/ui/commands/browser_commands.h"
-#import "ios/chrome/browser/ui/fullscreen/fullscreen_foreground_animator.h"
-#import "ios/chrome/browser/ui/fullscreen/fullscreen_scroll_end_animator.h"
-#import "ios/chrome/browser/ui/fullscreen/fullscreen_scroll_to_top_animator.h"
-#import "ios/chrome/browser/ui/history_popup/requirements/tab_history_constants.h"
+#import "ios/chrome/browser/ui/fullscreen/fullscreen_animator.h"
 #import "ios/chrome/browser/ui/toolbar/adaptive/adaptive_toolbar_view_controller+subclassing.h"
 #import "ios/chrome/browser/ui/toolbar/adaptive/primary_toolbar_view.h"
 #import "ios/chrome/browser/ui/toolbar/adaptive/primary_toolbar_view_controller_delegate.h"
@@ -19,6 +16,7 @@
 #import "ios/chrome/browser/ui/toolbar/buttons/toolbar_configuration.h"
 #import "ios/chrome/browser/ui/toolbar/buttons/toolbar_constants.h"
 #import "ios/chrome/browser/ui/toolbar/buttons/toolbar_tools_menu_button.h"
+#import "ios/chrome/browser/ui/toolbar/public/omnibox_focuser.h"
 #import "ios/chrome/browser/ui/ui_util.h"
 #import "ios/chrome/browser/ui/uikit_ui_util.h"
 #import "ios/chrome/browser/ui/util/named_guide.h"
@@ -32,12 +30,15 @@
 // Redefined to be a PrimaryToolbarView.
 @property(nonatomic, strong) PrimaryToolbarView* view;
 @property(nonatomic, assign) BOOL isNTP;
+// The last fullscreen progress registered.
+@property(nonatomic, assign) CGFloat previousFullscreenProgress;
 @end
 
 @implementation PrimaryToolbarViewController
 
 @synthesize delegate = _delegate;
 @synthesize isNTP = _isNTP;
+@synthesize previousFullscreenProgress = _previousFullscreenProgress;
 @dynamic view;
 
 #pragma mark - Public
@@ -75,8 +76,19 @@
 - (void)setScrollProgressForTabletOmnibox:(CGFloat)progress {
   [super setScrollProgressForTabletOmnibox:progress];
   self.view.locationBarBottomConstraint.constant =
-      -kLocationBarVerticalMargin * progress;
+      -AlignValueToPixel(kAdaptiveLocationBarVerticalMargin * progress);
   self.view.locationBarContainer.alpha = progress;
+
+  // When the locationBarContainer is hidden, show the |fakeOmniboxTarget|.
+  if (progress == 0 && !self.view.fakeOmniboxTarget) {
+    [self.view addFakeOmniboxTarget];
+    UITapGestureRecognizer* tapRecognizer =
+        [[UITapGestureRecognizer alloc] initWithTarget:self.dispatcher
+                                                action:@selector(focusOmnibox)];
+    [self.view.fakeOmniboxTarget addGestureRecognizer:tapRecognizer];
+  } else if (progress > 0 && self.view.fakeOmniboxTarget) {
+    [self.view removeFakeOmniboxTarget];
+  }
 }
 #pragma mark - UIViewController
 
@@ -89,6 +101,17 @@
   // This method cannot be called from the init as the topSafeAnchor can only be
   // set to topLayoutGuide after the view creation on iOS 10.
   [self.view setUp];
+
+  [self.view.collapsedToolbarButton addTarget:self
+                                       action:@selector(exitFullscreen)
+                             forControlEvents:UIControlEventTouchUpInside];
+
+  if (IsCompactHeight(self)) {
+    self.view.locationBarExtraBottomPadding.constant =
+        kAdaptiveLocationBarExtraVerticalMargin;
+  } else {
+    self.view.locationBarExtraBottomPadding.constant = 0;
+  }
 }
 
 - (void)didMoveToParentViewController:(UIViewController*)parent {
@@ -102,6 +125,15 @@
   [super traitCollectionDidChange:previousTraitCollection];
   [self.delegate
       viewControllerTraitCollectionDidChange:previousTraitCollection];
+  if (IsCompactHeight(self)) {
+    self.view.locationBarExtraBottomPadding.constant =
+        kAdaptiveLocationBarExtraVerticalMargin;
+  } else {
+    self.view.locationBarExtraBottomPadding.constant = 0;
+  }
+  self.view.locationBarBottomConstraint.constant =
+      [self verticalMarginForLocationBarForFullscreenProgress:
+                self.previousFullscreenProgress];
 }
 
 #pragma mark - Property accessors
@@ -113,9 +145,9 @@
 - (void)setIsNTP:(BOOL)isNTP {
   if (isNTP == _isNTP)
     return;
+  [super setIsNTP:isNTP];
   _isNTP = isNTP;
-  if (!isNTP && self.view.cr_widthSizeClass == REGULAR &&
-      self.view.cr_heightSizeClass == REGULAR) {
+  if (!isNTP && !IsSplitToolbarMode(self)) {
     // Reset any location bar view updates when not an NTP.
     [self setScrollProgressForTabletOmnibox:1];
   }
@@ -138,9 +170,14 @@
       (kAdaptiveToolbarHeight - 2 * kAdaptiveLocationBarVerticalMargin -
        kToolbarHeightFullscreen) *
           progress);
+  self.view.locationBarBottomConstraint.constant =
+      [self verticalMarginForLocationBarForFullscreenProgress:progress];
   self.view.locationBarContainer.backgroundColor =
       [self.buttonFactory.toolbarConfiguration
           locationBarBackgroundColorWithVisibility:alphaValue];
+  self.previousFullscreenProgress = progress;
+
+  self.view.collapsedToolbarButton.hidden = progress > 0.05;
 }
 
 - (void)updateForFullscreenEnabled:(BOOL)enabled {
@@ -148,18 +185,15 @@
     [self updateForFullscreenProgress:1.0];
 }
 
-- (void)finishFullscreenScrollWithAnimator:
-    (FullscreenScrollEndAnimator*)animator {
+- (void)finishFullscreenScrollWithAnimator:(FullscreenAnimator*)animator {
   [self addFullscreenAnimationsToAnimator:animator];
 }
 
-- (void)scrollFullscreenToTopWithAnimator:
-    (FullscreenScrollToTopAnimator*)animator {
+- (void)scrollFullscreenToTopWithAnimator:(FullscreenAnimator*)animator {
   [self addFullscreenAnimationsToAnimator:animator];
 }
 
-- (void)showToolbarForForgroundWithAnimator:
-    (FullscreenForegroundAnimator*)animator {
+- (void)showToolbarWithAnimator:(FullscreenAnimator*)animator {
   [self addFullscreenAnimationsToAnimator:animator];
 }
 
@@ -213,12 +247,30 @@
 
 #pragma mark - Private
 
+// Returns the vertical margin to the location bar based on fullscreen
+// |progress|, aligned to the nearest pixel.
+- (CGFloat)verticalMarginForLocationBarForFullscreenProgress:(CGFloat)progress {
+  // The vertical bottom margin for the location bar is such that the location
+  // bar looks visually centered. However, the constraints are not geometrically
+  // centering the location bar. It is moved by 0pt (+ 1pt from extra padding)
+  // in iPhone landscape and by 3pt in all other configurations.
+  CGFloat fullscreenVerticalMargin =
+      IsCompactHeight(self) ? 0 : kAdaptiveLocationBarVerticalMarginFullscreen;
+  return -AlignValueToPixel(kAdaptiveLocationBarVerticalMargin * progress +
+                            fullscreenVerticalMargin * (1 - progress));
+}
+
 // Deactivates the constraints on the location bar positioning.
 - (void)deactivateViewLocationBarConstraints {
   [NSLayoutConstraint deactivateConstraints:self.view.contractedConstraints];
   [NSLayoutConstraint
       deactivateConstraints:self.view.contractedNoMarginConstraints];
   [NSLayoutConstraint deactivateConstraints:self.view.expandedConstraints];
+}
+
+// Exits fullscreen.
+- (void)exitFullscreen {
+  [self.delegate exitFullscreen];
 }
 
 @end

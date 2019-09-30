@@ -25,6 +25,10 @@ const char kDisableRemoteCoreAnimation[] = "disable-remote-core-animation";
 const char kShowMacOverlayBorders[] = "show-mac-overlay-borders";
 #endif
 
+// Scale factor to apply to every animation duration. Must be >= 0.0. This will
+// only apply to LinearAnimation and its subclasses.
+const char kAnimationDurationScale[] = "animation-duration-scale";
+
 // Disables layer-edge anti-aliasing in the compositor.
 const char kDisableCompositedAntialiasing[] = "disable-composited-antialiasing";
 
@@ -40,7 +44,7 @@ const char kDisableTouchDragDrop[] = "disable-touch-drag-drop";
 // Enables touch event based drag and drop.
 const char kEnableTouchDragDrop[] = "enable-touch-drag-drop";
 
-// Enables touchable app context menus and notification indicators.
+// Enables touchable app context menus.
 const char kEnableTouchableAppContextMenu[] =
     "enable-touchable-app-context-menus";
 
@@ -85,6 +89,11 @@ const char kTopChromeMDMaterialTouchOptimized[] = "material-touch-optimized";
 // |kTopChromeMD| switch.
 const char kTopChromeMDMaterialRefresh[] = "material-refresh";
 
+// Material design mode that represents a touchable version of material-refresh
+// for the |kTopChromeMD| switch.
+const char kTopChromeMDMaterialRefreshTouchOptimized[] =
+    "material-refresh-touch-optimized";
+
 // Disable partial swap which is needed for some OpenGL drivers / emulators.
 const char kUIDisablePartialSwap[] = "ui-disable-partial-swap";
 
@@ -99,14 +108,6 @@ const char kUIDisablePartialSwap[] = "ui-disable-partial-swap";
 // Pink: Overdrawn three times.
 // Red: Overdrawn four or more times.
 const char kShowOverdrawFeedback[] = "show-overdraw-feedback";
-
-// Use Skia Deferred Display List, with this option, SkiaRenderer will record
-// frames to Skia DDLs and play them back on the GPU thread. This flag is only
-// be effective with --use-skia-renderer.
-const char kUseSkiaDeferredDisplayList[] = "use-skia-deferred-display-list";
-
-// Use SkiaRenderer instead of GLRenderer for direct rendering.
-const char kUseSkiaRenderer[] = "use-skia-renderer";
 
 // Disable re-use of non-exact resources to fulfill ResourcePool requests.
 // Intended only for use in layout or pixel tests to reduce noise.

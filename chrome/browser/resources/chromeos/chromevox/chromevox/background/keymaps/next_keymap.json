@@ -586,6 +586,15 @@
       }
     },
     {
+      "command": "showLogPage",
+      "sequence": {
+        "cvoxModifier": true,
+        "keys": {
+          "keyCode": [79, 87]
+        }
+      }
+    },
+    {
       "command": "help",
       "sequence": {
         "cvoxModifier": true,
@@ -887,6 +896,15 @@
       }
     },
     {
+      "command": "jumpToDetails",
+      "sequence": {
+        "cvoxModifier": true,
+        "keys": {
+          "keyCode": [65,74]
+        }
+      }
+    },
+    {
       "command": "darkenScreen",
       "sequence": {
         "cvoxModifier": true,
@@ -929,6 +947,25 @@
         "cvoxModifier": true,
         "keys": {
           "keyCode": [65, 221]
+        }
+      }
+    },
+    {
+      "command": "forceClickOnCurrentItem",
+      "sequence": {
+        "cvoxModifier": true,
+        "keys": {
+          "keyCode": [32]
+        },
+        "doubleTap": true
+      }
+    },
+    {
+      "command": "showTtsSettings",
+      "sequence": {
+        "cvoxModifier": true,
+        "keys": {
+          "keyCode": [79, 83]
         }
       }
     }

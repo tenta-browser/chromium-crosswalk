@@ -11,7 +11,6 @@ const ROOT_PATH = '../../../../../';
 
 GEN_INCLUDE(
     [ROOT_PATH + 'chrome/test/data/webui/polymer_interactive_ui_test.js']);
-GEN('#include "chrome/common/chrome_features.h"');
 
 function MaterialBookmarksFocusTest() {}
 
@@ -19,8 +18,6 @@ MaterialBookmarksFocusTest.prototype = {
   __proto__: PolymerInteractiveUITest.prototype,
 
   browsePreload: 'chrome://bookmarks',
-
-  featureList: ['features::kMaterialDesignBookmarks', ''],
 
   extraLibraries: PolymerTest.getLibraries(ROOT_PATH).concat([
     'test_command_manager.js',
@@ -479,7 +476,7 @@ TEST_F('MaterialBookmarksFocusTest', 'All', function() {
       focusedItem.focus();
       assertEquals(focusedItem, dialogFocusManager.getFocusedElement_());
 
-      commandManager.openCommandMenuAtPosition(0, 0);
+      commandManager.openCommandMenuAtPosition(0, 0, MenuSource.ITEM);
       const dropdown = commandManager.$.dropdown.getIfExists();
 
       assertTrue(dropdown.open);
@@ -498,7 +495,7 @@ TEST_F('MaterialBookmarksFocusTest', 'All', function() {
       focusedItem.focus();
       assertEquals(focusedItem, dialogFocusManager.getFocusedElement_());
 
-      commandManager.openCommandMenuAtPosition(0, 0);
+      commandManager.openCommandMenuAtPosition(0, 0, MenuSource.ITEM);
       const dropdown = commandManager.$.dropdown.getIfExists();
       dropdown.close();
       assertNotEquals(focusedItem, dialogFocusManager.getFocusedElement_());
@@ -524,14 +521,14 @@ TEST_F('MaterialBookmarksFocusTest', 'All', function() {
       focusedItem.focus();
       assertEquals(focusedItem, dialogFocusManager.getFocusedElement_());
 
-      commandManager.openCommandMenuAtPosition(0, 0);
+      commandManager.openCommandMenuAtPosition(0, 0, MenuSource.ITEM);
       assertNotEquals(focusedItem, dialogFocusManager.getFocusedElement_());
       const dropdown = commandManager.$.dropdown.getIfExists();
       dropdown.close();
 
       focusedItem = items[3];
       focusedItem.focus();
-      commandManager.openCommandMenuAtPosition(0, 0);
+      commandManager.openCommandMenuAtPosition(0, 0, MenuSource.ITEM);
 
       return waitForClose(dropdown)
           .then(() => {

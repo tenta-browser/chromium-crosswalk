@@ -24,7 +24,6 @@ DnsConfig::DnsConfig()
       timeout(base::TimeDelta::FromMilliseconds(kDnsDefaultTimeoutMs)),
       attempts(2),
       rotate(false),
-      edns0(false),
       use_local_ipv6(false) {}
 
 DnsConfig::DnsConfig(const DnsConfig& other) = default;
@@ -44,7 +43,6 @@ bool DnsConfig::EqualsIgnoreHosts(const DnsConfig& d) const {
          (timeout == d.timeout) &&
          (attempts == d.attempts) &&
          (rotate == d.rotate) &&
-         (edns0 == d.edns0) &&
          (use_local_ipv6 == d.use_local_ipv6);
 }
 
@@ -57,7 +55,6 @@ void DnsConfig::CopyIgnoreHosts(const DnsConfig& d) {
   timeout = d.timeout;
   attempts = d.attempts;
   rotate = d.rotate;
-  edns0 = d.edns0;
   use_local_ipv6 = d.use_local_ipv6;
 }
 
@@ -80,7 +77,6 @@ std::unique_ptr<base::Value> DnsConfig::ToValue() const {
   dict->SetDouble("timeout", timeout.InSecondsF());
   dict->SetInteger("attempts", attempts);
   dict->SetBoolean("rotate", rotate);
-  dict->SetBoolean("edns0", edns0);
   dict->SetBoolean("use_local_ipv6", use_local_ipv6);
   dict->SetInteger("num_hosts", hosts.size());
   list = std::make_unique<base::ListValue>();
@@ -88,7 +84,7 @@ std::unique_ptr<base::Value> DnsConfig::ToValue() const {
     base::Value val(base::Value::Type::DICTIONARY);
     base::DictionaryValue* dict;
     val.GetAsDictionary(&dict);
-    dict->SetString("server", server.server.spec());
+    dict->SetString("server_template", server.server_template);
     dict->SetBoolean("use_post", server.use_post);
     list->GetList().push_back(std::move(val));
   }
@@ -98,9 +94,9 @@ std::unique_ptr<base::Value> DnsConfig::ToValue() const {
 }
 
 DnsConfig::DnsOverHttpsServerConfig::DnsOverHttpsServerConfig(
-    const GURL& server,
+    const std::string& server_template,
     bool use_post)
-    : server(server), use_post(use_post) {}
+    : server_template(server_template), use_post(use_post) {}
 
 DnsConfigService::DnsConfigService()
     : watch_failed_(false),

@@ -9,8 +9,8 @@
 #include "base/location.h"
 #include "base/path_service.h"
 #include "base/strings/string16.h"
+#include "base/task/post_task.h"
 #include "base/task_runner_util.h"
-#include "base/task_scheduler/post_task.h"
 #include "base/test/scoped_path_override.h"
 #include "base/test/test_shortcut_win.h"
 #include "chrome/browser/profiles/profile.h"
@@ -22,11 +22,13 @@
 #include "chrome/browser/shell_integration_win.h"
 #include "chrome/grit/chromium_strings.h"
 #include "chrome/installer/util/browser_distribution.h"
+#include "chrome/installer/util/install_util.h"
 #include "chrome/installer/util/product.h"
 #include "chrome/installer/util/shell_util.h"
 #include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile.h"
 #include "chrome/test/base/testing_profile_manager.h"
+#include "components/account_id/account_id.h"
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -91,7 +93,7 @@ class ProfileShortcutManagerTest : public testing::Test {
         << location.ToString();
     profile_attributes_storage_->AddProfile(profile_1_path_, profile_1_name_,
                                             std::string(), base::string16(), 0,
-                                            std::string());
+                                            std::string(), EmptyAccountId());
     // Also create a non-badged shortcut for Chrome, which is conveniently done
     // by |CreateProfileShortcut()| since there is only one profile.
     profile_shortcut_manager_->CreateProfileShortcut(profile_1_path_);
@@ -147,7 +149,7 @@ class ProfileShortcutManagerTest : public testing::Test {
     expected_properties.set_app_id(
         shell_integration::win::GetChromiumModelIdForProfile(profile_path));
     expected_properties.set_target(GetExePath());
-    expected_properties.set_description(GetDistribution()->GetAppDescription());
+    expected_properties.set_description(InstallUtil::GetAppDescription());
     expected_properties.set_dual_mode(false);
     expected_properties.set_arguments(
         profiles::internal::CreateProfileShortcutFlags(profile_path));
@@ -172,7 +174,7 @@ class ProfileShortcutManagerTest : public testing::Test {
     expected_properties.set_target(GetExePath());
     expected_properties.set_arguments(base::string16());
     expected_properties.set_icon(GetExePath(), 0);
-    expected_properties.set_description(GetDistribution()->GetAppDescription());
+    expected_properties.set_description(InstallUtil::GetAppDescription());
     expected_properties.set_dual_mode(false);
     PostValidateShortcut(location, shortcut_path, expected_properties);
   }
@@ -190,7 +192,7 @@ class ProfileShortcutManagerTest : public testing::Test {
         << location.ToString();
     profile_attributes_storage_->AddProfile(profile_path, profile_name,
                                             std::string(), base::string16(), 0,
-                                            std::string());
+                                            std::string(), EmptyAccountId());
     profile_shortcut_manager_->CreateProfileShortcut(profile_path);
     thread_bundle_.RunUntilIdle();
     ValidateProfileShortcut(location, profile_name, profile_path);
@@ -261,7 +263,7 @@ class ProfileShortcutManagerTest : public testing::Test {
 
   base::FilePath GetExePath() {
     base::FilePath exe_path;
-    EXPECT_TRUE(PathService::Get(base::FILE_EXE, &exe_path));
+    EXPECT_TRUE(base::PathService::Get(base::FILE_EXE, &exe_path));
     return exe_path;
   }
 
@@ -372,7 +374,7 @@ TEST_F(ProfileShortcutManagerTest, CreateSecondProfileBadgesFirstShortcut) {
   // Create a second profile without a shortcut.
   profile_attributes_storage_->AddProfile(profile_2_path_, profile_2_name_,
                                           std::string(), base::string16(), 0,
-                                          std::string());
+                                          std::string(), EmptyAccountId());
   thread_bundle_.RunUntilIdle();
 
   // Ensure that the second profile doesn't have a shortcut and that the first
@@ -691,7 +693,7 @@ TEST_F(ProfileShortcutManagerTest, ProfileShortcutsWithSystemLevelShortcut) {
   // Create the initial profile.
   profile_attributes_storage_->AddProfile(profile_1_path_, profile_1_name_,
                                           std::string(), base::string16(), 0,
-                                          std::string());
+                                          std::string(), EmptyAccountId());
   thread_bundle_.RunUntilIdle();
   ASSERT_EQ(1u, profile_attributes_storage_->GetNumberOfProfiles());
 
@@ -710,7 +712,7 @@ TEST_F(ProfileShortcutManagerTest, ProfileShortcutsWithSystemLevelShortcut) {
   // Create a third profile without a shortcut and ensure it doesn't get one.
   profile_attributes_storage_->AddProfile(profile_3_path_, profile_3_name_,
                                           std::string(), base::string16(), 0,
-                                          std::string());
+                                          std::string(), EmptyAccountId());
   thread_bundle_.RunUntilIdle();
   EXPECT_FALSE(ProfileShortcutExistsAtDefaultPath(profile_3_name_));
 

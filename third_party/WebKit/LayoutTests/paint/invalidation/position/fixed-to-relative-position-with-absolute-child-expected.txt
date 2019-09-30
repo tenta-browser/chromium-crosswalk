@@ -18,40 +18,21 @@
       "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
         {
-          "object": "LayoutBlockFlow (positioned) DIV class='absolute green'",
-          "rect": [108, 308, 100, 100],
-          "reason": "style change"
+          "object": "LayoutBlockFlow HTML",
+          "rect": [8, 208, 200, 200],
+          "reason": "chunk appeared"
         },
         {
-          "object": "LayoutBlockFlow (positioned) DIV class='absolute green'",
+          "object": "LayoutBlockFlow (positioned) DIV id='container' class='fixed blue'",
           "rect": [108, 300, 100, 100],
-          "reason": "style change"
+          "reason": "chunk disappeared"
         },
         {
-          "object": "LayoutBlockFlow (relative positioned) DIV id='container' class='fixed blue'",
-          "rect": [8, 208, 100, 100],
-          "reason": "style change"
-        },
-        {
-          "object": "LayoutBlockFlow (relative positioned) DIV id='container' class='fixed blue'",
+          "object": "LayoutBlockFlow (positioned) DIV id='container' class='fixed blue'",
           "rect": [8, 200, 100, 100],
-          "reason": "style change"
+          "reason": "chunk disappeared"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutBlockFlow BODY",
-      "reason": "style change"
-    },
-    {
-      "object": "LayoutBlockFlow (relative positioned) DIV id='container' class='fixed blue'",
-      "reason": "style change"
-    },
-    {
-      "object": "LayoutBlockFlow (positioned) DIV class='absolute green'",
-      "reason": "style change"
     }
   ]
 }

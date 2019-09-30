@@ -8,7 +8,7 @@
 setup({ explicit_done: true, explicit_timeout: true });
 const validMethods = Object.freeze([
   { supportedMethods: "basic-card" },
-  { supportedMethods: "https://apple.com/pay" },
+  { supportedMethods: "https://apple.com/apple-pay" },
 ]);
 const validAmount = Object.freeze({ currency: "USD", value: "5.00" });
 const validTotal = Object.freeze({
@@ -87,6 +87,6 @@ function testShippingOptionChanged(button) {
   </li>
 </ol>
 <small>
-  If you find a buggy test, please <a href="https://github.com/w3c/web-platform-tests/issues">file a bug</a>
-  and tag one of the <a href="https://github.com/w3c/web-platform-tests/blob/master/payment-request/OWNERS">owners</a>.
+  If you find a buggy test, please <a href="https://github.com/web-platform-tests/wpt/issues">file a bug</a>
+  and tag one of the <a href="https://github.com/web-platform-tests/wpt/blob/master/payment-request/META.yml">suggested reviewers</a>.
 </small>

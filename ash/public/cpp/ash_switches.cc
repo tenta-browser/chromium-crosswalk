@@ -45,16 +45,9 @@ const char kAshEnableCursorMotionBlur[] = "ash-enable-cursor-motion-blur";
 const char kAshEnableMagnifierKeyScroller[] =
     "ash-enable-magnifier-key-scroller";
 
-// Enable the Night Light feature.
-const char kAshEnableNightLight[] = "ash-enable-night-light";
-
 // Enables the palette on every display, instead of only the internal one.
 const char kAshEnablePaletteOnAllDisplays[] =
     "ash-enable-palette-on-all-displays";
-
-// Enables the sidebar.
-const char kAshSidebarEnabled[] = "enable-ash-sidebar";
-const char kAshSidebarDisabled[] = "disable-ash-sidebar";
 
 // Enables the observation of accelerometer events to enter tablet
 // mode.  The flag is "enable-touchview" not "enable-tabletmode" as this
@@ -122,19 +115,12 @@ const char kAshTouchHud[] = "ash-touch-hud";
 // instead of displaying an interactive animation.
 const char kAuraLegacyPowerButton[] = "aura-legacy-power-button";
 
-// Forces non-tablet-style power button behavior even if the device has a
-// convertible form factor.
-const char kForceClamshellPowerButton[] = "force-clamshell-power-button";
-
 // Whether this device has an internal stylus.
 const char kHasInternalStylus[] = "has-internal-stylus";
 
 // Draws a circle at each touch point, similar to the Android OS developer
 // option "Show taps".
 const char kShowTaps[] = "show-taps";
-
-// Forces the views login implementation.
-const char kShowViewsLogin[] = "show-views-login";
 
 // If true, the webui lock screen wil be shown. This is deprecated and will be
 // removed in the future.
@@ -153,32 +139,6 @@ const char kTouchscreenUsableWhileScreenOff[] =
 
 // Hides all Message Center notification popups (toasts). Used for testing.
 const char kSuppressMessageCenterPopups[] = "suppress-message-center-popups";
-
-// By default we use classic IME (i.e. InputMethodChromeOS) in kMus. This flag
-// enables the IME service (i.e. InputMethodMus) instead.
-const char kUseIMEService[] = "use-ime-service";
-
-bool IsDisplayMoveWindowAccelsEnabled() {
-  return base::CommandLine::ForCurrentProcess()->HasSwitch(
-      kAshEnableDisplayMoveWindowAccels);
-}
-
-bool IsNightLightEnabled() {
-  return base::CommandLine::ForCurrentProcess()->HasSwitch(
-      kAshEnableNightLight);
-}
-
-bool IsSidebarEnabled() {
-  return base::CommandLine::ForCurrentProcess()->HasSwitch(
-      switches::kAshSidebarEnabled);
-}
-
-bool IsUsingViewsLogin() {
-  // Only show views login if it is forced. If both switches are present use
-  // webui.
-  base::CommandLine* cl = base::CommandLine::ForCurrentProcess();
-  return !cl->HasSwitch(kShowWebUiLogin) && cl->HasSwitch(kShowViewsLogin);
-}
 
 bool IsUsingViewsLock() {
   return !base::CommandLine::ForCurrentProcess()->HasSwitch(kShowWebUiLock);

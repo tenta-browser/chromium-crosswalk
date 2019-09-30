@@ -20,7 +20,7 @@
         {
           "object": "LayoutBlockFlow HTML",
           "rect": [18, 18, 23, 18],
-          "reason": "disappeared"
+          "reason": "chunk disappeared"
         },
         {
           "object": "InlineTextBox 'abc'",
@@ -28,24 +28,6 @@
           "reason": "appeared"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutBlockFlow DIV id='inner-target'",
-      "reason": "appeared"
-    },
-    {
-      "object": "RootInlineBox",
-      "reason": "appeared"
-    },
-    {
-      "object": "LayoutText #text",
-      "reason": "appeared"
-    },
-    {
-      "object": "InlineTextBox 'abc'",
-      "reason": "appeared"
     }
   ]
 }

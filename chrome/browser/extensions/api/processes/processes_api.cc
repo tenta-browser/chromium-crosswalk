@@ -456,12 +456,8 @@ ExtensionFunction::ResponseAction ProcessesGetProcessIdForTabFunction::Run() {
   content::WebContents* contents = nullptr;
   int tab_index = -1;
   if (!ExtensionTabUtil::GetTabById(
-          tab_id,
-          Profile::FromBrowserContext(browser_context()),
-          include_incognito(),
-          nullptr,
-          nullptr,
-          &contents,
+          tab_id, Profile::FromBrowserContext(browser_context()),
+          include_incognito_information(), nullptr, nullptr, &contents,
           &tab_index)) {
     return RespondNow(Error(tabs_constants::kTabNotFoundError,
                             base::IntToString(tab_id)));
@@ -500,7 +496,8 @@ ExtensionFunction::ResponseAction ProcessesTerminateFunction::Run() {
   auto* render_process_host =
       content::RenderProcessHost::FromID(child_process_host_id_);
   if (render_process_host)
-    return RespondNow(TerminateIfAllowed(render_process_host->GetHandle()));
+    return RespondNow(
+        TerminateIfAllowed(render_process_host->GetProcess().Handle()));
 
   // This could be a non-renderer child process like a plugin or a nacl
   // process. Try to get its handle from the BrowserChildProcessHost on the
@@ -523,7 +520,7 @@ base::ProcessHandle ProcessesTerminateFunction::GetProcessHandleOnIO(
 
   auto* host = content::BrowserChildProcessHost::FromID(child_process_host_id);
   if (host)
-    return host->GetData().handle;
+    return host->GetData().GetHandle();
 
   return base::kNullProcessHandle;
 }

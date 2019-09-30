@@ -31,11 +31,14 @@
 #include "third_party/blink/public/platform/web_url_request.h"
 
 #include <memory>
+#include "base/time/time.h"
 #include "third_party/blink/public/platform/web_http_body.h"
 #include "third_party/blink/public/platform/web_http_header_visitor.h"
 #include "third_party/blink/public/platform/web_security_origin.h"
 #include "third_party/blink/public/platform/web_url.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_request.h"
+#include "third_party/blink/renderer/platform/network/encoded_form_data.h"
+#include "third_party/blink/renderer/platform/weborigin/security_origin.h"
 #include "third_party/blink/renderer/platform/wtf/allocator.h"
 #include "third_party/blink/renderer/platform/wtf/noncopyable.h"
 
@@ -122,7 +125,7 @@ void WebURLRequest::SetCacheMode(mojom::FetchCacheMode cache_mode) {
   resource_request_->SetCacheMode(cache_mode);
 }
 
-double WebURLRequest::TimeoutInterval() const {
+base::TimeDelta WebURLRequest::TimeoutInterval() const {
   return resource_request_->TimeoutInterval();
 }
 
@@ -151,6 +154,8 @@ void WebURLRequest::SetHTTPReferrer(const WebString& web_referrer,
   DCHECK_EQ(Referrer::NoReferrer(), String());
   String referrer =
       web_referrer.IsEmpty() ? Referrer::NoReferrer() : String(web_referrer);
+  // TODO(domfarolino): Stop storing ResourceRequest's generated referrer as a
+  // header and instead use a separate member. See https://crbug.com/850813.
   resource_request_->SetHTTPReferrer(
       Referrer(referrer, static_cast<ReferrerPolicy>(referrer_policy)));
 }
@@ -249,14 +254,6 @@ int WebURLRequest::AppCacheHostID() const {
 
 void WebURLRequest::SetAppCacheHostID(int app_cache_host_id) {
   resource_request_->SetAppCacheHostID(app_cache_host_id);
-}
-
-bool WebURLRequest::DownloadToFile() const {
-  return resource_request_->DownloadToFile();
-}
-
-void WebURLRequest::SetDownloadToFile(bool download_to_file) {
-  resource_request_->SetDownloadToFile(download_to_file);
 }
 
 bool WebURLRequest::PassResponsePipeToClient() const {
@@ -360,27 +357,11 @@ void WebURLRequest::SetPriority(WebURLRequest::Priority priority) {
   resource_request_->SetPriority(static_cast<ResourceLoadPriority>(priority));
 }
 
-bool WebURLRequest::CheckForBrowserSideNavigation() const {
-  return resource_request_->CheckForBrowserSideNavigation();
-}
-
-void WebURLRequest::SetCheckForBrowserSideNavigation(bool check) {
-  resource_request_->SetCheckForBrowserSideNavigation(check);
-}
-
 bool WebURLRequest::WasDiscarded() const {
   return resource_request_->WasDiscarded();
 }
 void WebURLRequest::SetWasDiscarded(bool was_discarded) {
   resource_request_->SetWasDiscarded(was_discarded);
-}
-
-double WebURLRequest::UiStartTime() const {
-  return resource_request_->UiStartTime();
-}
-
-void WebURLRequest::SetUiStartTime(double time_seconds) {
-  resource_request_->SetUIStartTime(time_seconds);
 }
 
 bool WebURLRequest::IsExternalRequest() const {
@@ -392,24 +373,9 @@ network::mojom::CORSPreflightPolicy WebURLRequest::GetCORSPreflightPolicy()
   return resource_request_->CORSPreflightPolicy();
 }
 
-void WebURLRequest::SetNavigationStartTime(double navigation_start_seconds) {
+void WebURLRequest::SetNavigationStartTime(
+    base::TimeTicks navigation_start_seconds) {
   resource_request_->SetNavigationStartTime(navigation_start_seconds);
-}
-
-void WebURLRequest::SetIsSameDocumentNavigation(bool is_same_document) {
-  resource_request_->SetIsSameDocumentNavigation(is_same_document);
-}
-
-WebURLRequest::InputToLoadPerfMetricReportPolicy
-WebURLRequest::InputPerfMetricReportPolicy() const {
-  return static_cast<WebURLRequest::InputToLoadPerfMetricReportPolicy>(
-      resource_request_->InputPerfMetricReportPolicy());
-}
-
-void WebURLRequest::SetInputPerfMetricReportPolicy(
-    WebURLRequest::InputToLoadPerfMetricReportPolicy policy) {
-  resource_request_->SetInputPerfMetricReportPolicy(
-      static_cast<blink::InputToLoadPerfMetricReportPolicy>(policy));
 }
 
 base::Optional<WebString> WebURLRequest::GetSuggestedFilename() const {
@@ -421,6 +387,35 @@ base::Optional<WebString> WebURLRequest::GetSuggestedFilename() const {
 
 bool WebURLRequest::IsAdResource() const {
   return resource_request_->IsAdResource();
+}
+
+const WebContentSecurityPolicyList& WebURLRequest::GetNavigationCSP() const {
+  return resource_request_->GetInitiatorCSP();
+}
+
+void WebURLRequest::SetUpgradeIfInsecure(bool upgrade_if_insecure) {
+  resource_request_->SetUpgradeIfInsecure(upgrade_if_insecure);
+}
+
+bool WebURLRequest::UpgradeIfInsecure() const {
+  return resource_request_->UpgradeIfInsecure();
+}
+
+bool WebURLRequest::SupportsAsyncRevalidation() const {
+  return resource_request_->AllowsStaleResponse();
+}
+
+const base::Optional<base::UnguessableToken>& WebURLRequest::GetDevToolsToken()
+    const {
+  return resource_request_->GetDevToolsToken();
+}
+
+void WebURLRequest::SetOriginPolicy(const WebString& policy) {
+  resource_request_->SetOriginPolicy(policy);
+}
+
+const WebString WebURLRequest::GetOriginPolicy() const {
+  return resource_request_->GetOriginPolicy();
 }
 
 const ResourceRequest& WebURLRequest::ToResourceRequest() const {

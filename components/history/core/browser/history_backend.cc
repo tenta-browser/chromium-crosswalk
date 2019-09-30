@@ -41,6 +41,8 @@
 #include "components/history/core/browser/page_usage_data.h"
 #include "components/history/core/browser/url_utils.h"
 #include "components/sync/model_impl/client_tag_based_model_type_processor.h"
+#include "components/url_formatter/url_formatter.h"
+#include "net/base/escape.h"
 #include "net/base/registry_controlled_domains/registry_controlled_domain.h"
 #include "sql/error_delegate_util.h"
 #include "third_party/skia/include/core/SkBitmap.h"
@@ -119,6 +121,17 @@ bool AreIconTypesEquivalent(favicon_base::IconType type_a,
 
 }  // namespace
 
+base::string16 FormatUrlForRedirectComparison(const GURL& url) {
+  url::Replacements<char> remove_port;
+  remove_port.ClearPort();
+  return url_formatter::FormatUrl(
+      url.ReplaceComponents(remove_port),
+      url_formatter::kFormatUrlOmitHTTP | url_formatter::kFormatUrlOmitHTTPS |
+          url_formatter::kFormatUrlOmitUsernamePassword |
+          url_formatter::kFormatUrlOmitTrivialSubdomains,
+      net::UnescapeRule::NONE, nullptr, nullptr, nullptr);
+}
+
 QueuedHistoryDBTask::QueuedHistoryDBTask(
     std::unique_ptr<HistoryDBTask> task,
     scoped_refptr<base::SingleThreadTaskRunner> origin_loop,
@@ -134,8 +147,8 @@ QueuedHistoryDBTask::QueuedHistoryDBTask(
 QueuedHistoryDBTask::~QueuedHistoryDBTask() {
   // Ensure that |task_| is destroyed on its origin thread.
   origin_loop_->PostTask(FROM_HERE,
-                         base::Bind(&base::DeletePointer<HistoryDBTask>,
-                                    base::Unretained(task_.release())));
+                         base::BindOnce(&base::DeletePointer<HistoryDBTask>,
+                                        base::Unretained(task_.release())));
 }
 
 bool QueuedHistoryDBTask::is_canceled() {
@@ -148,10 +161,10 @@ bool QueuedHistoryDBTask::Run(HistoryBackend* backend, HistoryDatabase* db) {
 
 void QueuedHistoryDBTask::DoneRun() {
   origin_loop_->PostTask(
-      FROM_HERE, base::Bind(&RunUnlessCanceled,
-                            base::Bind(&HistoryDBTask::DoneRunOnMainThread,
-                                       base::Unretained(task_.get())),
-                            is_canceled_));
+      FROM_HERE, base::BindOnce(&RunUnlessCanceled,
+                                base::Bind(&HistoryDBTask::DoneRunOnMainThread,
+                                           base::Unretained(task_.get())),
+                                is_canceled_));
 }
 
 // HistoryBackendHelper --------------------------------------------------------
@@ -170,6 +183,18 @@ HistoryBackendHelper::~HistoryBackendHelper() {
 }
 
 // HistoryBackend --------------------------------------------------------------
+
+// static
+bool HistoryBackend::IsTypedIncrement(ui::PageTransition transition) {
+  if (ui::PageTransitionIsNewNavigation(transition) &&
+      ((ui::PageTransitionCoreTypeIs(transition, ui::PAGE_TRANSITION_TYPED) &&
+        !ui::PageTransitionIsRedirect(transition)) ||
+       ui::PageTransitionCoreTypeIs(transition,
+                                    ui::PAGE_TRANSITION_KEYWORD_GENERATED))) {
+    return true;
+  }
+  return false;
+}
 
 HistoryBackend::HistoryBackend(
     Delegate* delegate,
@@ -413,6 +438,8 @@ OriginCountAndLastVisitMap HistoryBackend::GetCountsAndLastVisitForOrigins(
     const std::set<GURL>& origins) const {
   if (!db_)
     return OriginCountAndLastVisitMap();
+  if (origins.empty())
+    return OriginCountAndLastVisitMap();
 
   URLDatabase::URLEnumerator it;
   if (!db_->InitURLEnumeratorForEverything(&it))
@@ -492,7 +519,8 @@ void HistoryBackend::AddPage(const HistoryAddPageArgs& request) {
 
     // No redirect case (one element means just the page itself).
     last_ids = AddPageVisit(request.url, request.time, last_ids.second, t,
-                            request.hidden, request.visit_source);
+                            request.hidden, request.visit_source,
+                            IsTypedIncrement(t), request.title);
 
     // Update the segment for this visit. KEYWORD_GENERATED visits should not
     // result in changing most visited, so we don't update segments (most
@@ -563,6 +591,21 @@ void HistoryBackend::AddPage(const HistoryAddPageArgs& request) {
       }
     }
 
+    bool transfer_typed_credit_from_first_to_second_url = false;
+    if (redirects.size() > 1) {
+      // Check if the first redirect is the same as the original URL but
+      // upgraded to HTTPS. This ignores the port numbers (in case of
+      // non-standard HTTP or HTTPS ports) and trivial subdomains (e.g., "www."
+      // or "m.").
+      if (IsTypedIncrement(request_transition) &&
+          redirects[0].SchemeIs(url::kHttpScheme) &&
+          redirects[1].SchemeIs(url::kHttpsScheme) &&
+          FormatUrlForRedirectComparison(redirects[0]) ==
+              FormatUrlForRedirectComparison(redirects[1])) {
+        transfer_typed_credit_from_first_to_second_url = true;
+      }
+    }
+
     for (size_t redirect_index = 0; redirect_index < redirects.size();
          redirect_index++) {
       ui::PageTransition t = ui::PageTransitionFromInt(
@@ -573,12 +616,21 @@ void HistoryBackend::AddPage(const HistoryAddPageArgs& request) {
         t = ui::PageTransitionFromInt(t | ui::PAGE_TRANSITION_CHAIN_END);
       }
 
+      bool should_increment_typed_count = IsTypedIncrement(t);
+      if (transfer_typed_credit_from_first_to_second_url) {
+        if (redirect_index == 0)
+          should_increment_typed_count = false;
+        else if (redirect_index == 1)
+          should_increment_typed_count = true;
+      }
+
       // Record all redirect visits with the same timestamp. We don't display
       // them anyway, and if we ever decide to, we can reconstruct their order
       // from the redirect chain.
       last_ids =
           AddPageVisit(redirects[redirect_index], request.time, last_ids.second,
-                       t, request.hidden, request.visit_source);
+                       t, request.hidden, request.visit_source,
+                       should_increment_typed_count, request.title);
 
       if (t & ui::PAGE_TRANSITION_CHAIN_START) {
         if (request.consider_for_ntp_most_visited) {
@@ -774,17 +826,9 @@ std::pair<URLID, VisitID> HistoryBackend::AddPageVisit(
     VisitID referring_visit,
     ui::PageTransition transition,
     bool hidden,
-    VisitSource visit_source) {
-  // NOTE: This code must stay in sync with
-  // ExpireHistoryBackend::ExpireURLsForVisits().
-  int typed_increment = 0;
-  if (ui::PageTransitionIsNewNavigation(transition) &&
-      ((ui::PageTransitionCoreTypeIs(transition, ui::PAGE_TRANSITION_TYPED) &&
-        !ui::PageTransitionIsRedirect(transition)) ||
-       ui::PageTransitionCoreTypeIs(transition,
-                                    ui::PAGE_TRANSITION_KEYWORD_GENERATED)))
-    typed_increment = 1;
-
+    VisitSource visit_source,
+    bool should_increment_typed_count,
+    base::Optional<base::string16> title) {
   if (!host_ranks_.empty() && visit_source == SOURCE_BROWSED &&
       (transition & ui::PAGE_TRANSITION_CHAIN_END)) {
     RecordTopHostsMetrics(url);
@@ -797,10 +841,12 @@ std::pair<URLID, VisitID> HistoryBackend::AddPageVisit(
     // Update of an existing row.
     if (!ui::PageTransitionCoreTypeIs(transition, ui::PAGE_TRANSITION_RELOAD))
       url_info.set_visit_count(url_info.visit_count() + 1);
-    if (typed_increment)
-      url_info.set_typed_count(url_info.typed_count() + typed_increment);
+    if (should_increment_typed_count)
+      url_info.set_typed_count(url_info.typed_count() + 1);
     if (url_info.last_visit() < time)
       url_info.set_last_visit(time);
+    if (title)
+      url_info.set_title(title.value());
 
     // Only allow un-hiding of pages, never hiding.
     if (!hidden)
@@ -810,8 +856,10 @@ std::pair<URLID, VisitID> HistoryBackend::AddPageVisit(
   } else {
     // Addition of a new row.
     url_info.set_visit_count(1);
-    url_info.set_typed_count(typed_increment);
+    url_info.set_typed_count(should_increment_typed_count ? 1 : 0);
     url_info.set_last_visit(time);
+    if (title)
+      url_info.set_title(title.value());
     url_info.set_hidden(hidden);
 
     url_id = db_->AddURL(url_info);
@@ -823,7 +871,8 @@ std::pair<URLID, VisitID> HistoryBackend::AddPageVisit(
   }
 
   // Add the visit with the time to the database.
-  VisitRow visit_info(url_id, time, referring_visit, transition, 0);
+  VisitRow visit_info(url_id, time, referring_visit, transition, 0,
+                      should_increment_typed_count);
   VisitID visit_id = db_->AddVisit(&visit_info, visit_source);
 
   if (visit_info.visit_time < first_recorded_time_)
@@ -879,7 +928,7 @@ void HistoryBackend::AddPagesWithDetails(const URLRows& urls,
           ui::PageTransitionFromInt(ui::PAGE_TRANSITION_LINK |
                                     ui::PAGE_TRANSITION_CHAIN_START |
                                     ui::PAGE_TRANSITION_CHAIN_END),
-          0);
+          0, false);
       if (!db_->AddVisit(&visit_info, visit_source)) {
         NOTREACHED() << "Adding visit failed.";
         return;
@@ -1031,7 +1080,7 @@ bool HistoryBackend::AddVisits(const GURL& url,
          visit != visits.end(); ++visit) {
       if (!AddPageVisit(url, visit->first, 0, visit->second,
                         !ui::PageTransitionIsMainFrame(visit->second),
-                        visit_source)
+                        visit_source, IsTypedIncrement(visit->second))
                .first) {
         return false;
       }
@@ -1082,8 +1131,10 @@ void HistoryBackend::QueryURL(const GURL& url,
     db_->GetVisitsForURL(result->row.id(), &result->visits);
 }
 
-TypedURLSyncBridge* HistoryBackend::GetTypedURLSyncBridge() const {
-  return typed_url_sync_bridge_.get();
+base::WeakPtr<syncer::ModelTypeControllerDelegate>
+HistoryBackend::GetTypedURLSyncControllerDelegate() {
+  DCHECK(typed_url_sync_bridge_);
+  return typed_url_sync_bridge_->change_processor()->GetControllerDelegate();
 }
 
 // Statistics ------------------------------------------------------------------
@@ -1230,8 +1281,6 @@ void HistoryBackend::RemoveDownloads(const std::set<uint32_t>& ids) {
   if (downloads_count_after > downloads_count_before)
     return;
   size_t num_downloads_deleted = downloads_count_before - downloads_count_after;
-  UMA_HISTOGRAM_COUNTS("Download.DatabaseRemoveDownloadsCount",
-                       num_downloads_deleted);
   DCHECK_GE(ids.size(), num_downloads_deleted);
 }
 
@@ -1451,7 +1500,7 @@ void HistoryBackend::DeleteFTSIndexDatabases() {
   int num_databases_deleted = 0;
   base::FilePath current_file;
   while (!(current_file = enumerator.Next()).empty()) {
-    if (sql::Connection::Delete(current_file))
+    if (sql::Database::Delete(current_file))
       num_databases_deleted++;
   }
   UMA_HISTOGRAM_COUNTS("History.DeleteFTSIndexDatabases",
@@ -1633,11 +1682,9 @@ void HistoryBackend::MergeFavicon(
   favicon_base::FaviconID favicon_id =
       thumbnail_db_->GetFaviconIDForFaviconURL(icon_url, icon_type);
 
-  bool favicon_created = false;
   if (!favicon_id) {
     // There is no favicon at |icon_url|, create it.
     favicon_id = thumbnail_db_->AddFavicon(icon_url, icon_type);
-    favicon_created = true;
   }
 
   std::vector<FaviconBitmapIDSize> bitmap_id_sizes;
@@ -1776,9 +1823,7 @@ void HistoryBackend::MergeFavicon(
     SendFaviconChangedNotificationForPageAndRedirects(page_url);
   }
 
-  if (!favicon_created && (!bitmap_identical || favicon_bitmaps_copied)) {
-    // If there was a favicon at |icon_url| prior to MergeFavicon() being
-    // called, there may be page URLs which also use the favicon at |icon_url|.
+  if (!bitmap_identical || favicon_bitmaps_copied) {
     // Notify the UI that the favicon has changed for |icon_url|.
     SendFaviconChangedNotificationForIconURL(icon_url);
   }
@@ -1995,10 +2040,8 @@ bool HistoryBackend::SetFaviconsImpl(const base::flat_set<GURL>& page_urls,
     }
   }
 
-  if (favicon_data_modified && !favicon_created) {
-    // If there was a favicon at |icon_url| prior to SetFavicons() being called,
-    // there may be page URLs which also use the favicon at |icon_url|. Notify
-    // the UI that the favicon has changed for |icon_url|.
+  if (favicon_data_modified) {
+    // Notify the UI that the favicon has changed for |icon_url|.
     SendFaviconChangedNotificationForIconURL(icon_url);
   }
   ScheduleCommit();
@@ -2405,7 +2448,7 @@ void HistoryBackend::ProcessDBTaskImpl() {
     // tasks, and process it after an invoke later.
     queued_history_db_tasks_.push_back(std::move(task));
     task_runner_->PostTask(
-        FROM_HERE, base::Bind(&HistoryBackend::ProcessDBTaskImpl, this));
+        FROM_HERE, base::BindOnce(&HistoryBackend::ProcessDBTaskImpl, this));
   }
 }
 
@@ -2526,6 +2569,13 @@ void HistoryBackend::ExpireHistory(
   }
 }
 
+void HistoryBackend::ExpireHistoryBeforeForTesting(base::Time end_time) {
+  if (!db_)
+    return;
+
+  expirer_.ExpireHistoryBeforeForTesting(end_time);
+}
+
 void HistoryBackend::URLsNoLongerBookmarked(const std::set<GURL>& urls) {
   if (!db_)
     return;
@@ -2549,17 +2599,15 @@ void HistoryBackend::DatabaseErrorCallback(int error, sql::Statement* stmt) {
 
     db_diagnostics_ = db_->GetDiagnosticInfo(error, stmt);
 
-    // Notify SyncBridge about storage error. It will report failure to sync
-    // engine and stop accepting remote updates.
-    if (typed_url_sync_bridge_)
-      typed_url_sync_bridge_->OnDatabaseError();
-
     // Don't just do the close/delete here, as we are being called by |db| and
     // that seems dangerous.
-    // TODO(shess): Consider changing KillHistoryDatabase() to use
-    // RazeAndClose().  Then it can be cleared immediately.
+    // TODO(https://crbug.com/854258): It is also dangerous to kill the database
+    // by a posted task: tasks that run before KillHistoryDatabase still can try
+    // to use the broken database. Consider protecting against other tasks using
+    // the DB or consider changing KillHistoryDatabase() to use RazeAndClose()
+    // (then it can be cleared immediately).
     task_runner_->PostTask(
-        FROM_HERE, base::Bind(&HistoryBackend::KillHistoryDatabase, this));
+        FROM_HERE, base::BindOnce(&HistoryBackend::KillHistoryDatabase, this));
   }
 }
 
@@ -2567,6 +2615,11 @@ void HistoryBackend::KillHistoryDatabase() {
   scheduled_kill_db_ = false;
   if (!db_)
     return;
+
+  // Notify SyncBridge about storage error. It will report failure to sync
+  // engine and stop accepting remote updates.
+  if (typed_url_sync_bridge_)
+    typed_url_sync_bridge_->OnDatabaseError();
 
   // Rollback transaction because Raze() cannot be called from within a
   // transaction.
@@ -2635,19 +2688,22 @@ void HistoryBackend::NotifyURLsModified(const URLRows& rows) {
     delegate_->NotifyURLsModified(rows);
 }
 
-void HistoryBackend::NotifyURLsDeleted(const DeletionTimeRange& time_range,
-                                       bool expired,
-                                       const URLRows& rows,
-                                       const std::set<GURL>& favicon_urls) {
-  URLRows copied_rows(rows);
+void HistoryBackend::NotifyURLsDeleted(DeletionInfo deletion_info) {
+  std::set<GURL> origins;
+  for (const history::URLRow& row : deletion_info.deleted_rows())
+    origins.insert(row.url().GetOrigin());
+
+  deletion_info.set_deleted_urls_origin_map(
+      GetCountsAndLastVisitForOrigins(origins));
+
   for (HistoryBackendObserver& observer : observers_) {
-    observer.OnURLsDeleted(this, time_range.IsAllTime(), expired, copied_rows,
-                           favicon_urls);
+    observer.OnURLsDeleted(
+        this, deletion_info.IsAllHistory(), deletion_info.is_from_expiration(),
+        deletion_info.deleted_rows(), deletion_info.favicon_urls());
   }
 
   if (delegate_)
-    delegate_->NotifyURLsDeleted(time_range, expired, copied_rows,
-                                 favicon_urls);
+    delegate_->NotifyURLsDeleted(std::move(deletion_info));
 }
 
 // Deleting --------------------------------------------------------------------
@@ -2704,8 +2760,7 @@ void HistoryBackend::DeleteAllHistory() {
 
   // Send out the notification that history is cleared. The in-memory database
   // will pick this up and clear itself.
-  NotifyURLsDeleted(DeletionTimeRange::AllTime(), false, URLRows(),
-                    std::set<GURL>());
+  NotifyURLsDeleted(DeletionInfo::ForAllHistory());
 }
 
 bool HistoryBackend::ClearAllThumbnailHistory(
@@ -2715,7 +2770,7 @@ bool HistoryBackend::ClearAllThumbnailHistory(
     // error opening it. In this case, we just try to blow it away to try to
     // fix the error if it exists. This may fail, in which case either the
     // file doesn't exist or there's no more we can do.
-    sql::Connection::Delete(GetFaviconsFileName());
+    sql::Database::Delete(GetFaviconsFileName());
     return true;
   }
 

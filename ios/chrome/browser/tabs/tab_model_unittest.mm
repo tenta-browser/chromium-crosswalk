@@ -24,6 +24,8 @@
 #import "ios/chrome/browser/web/chrome_web_client.h"
 #import "ios/chrome/browser/web_state_list/web_state_list.h"
 #import "ios/chrome/browser/web_state_list/web_state_opener.h"
+#import "ios/chrome/browser/web_state_list/web_usage_enabler/web_state_list_web_usage_enabler.h"
+#import "ios/chrome/browser/web_state_list/web_usage_enabler/web_state_list_web_usage_enabler_factory.h"
 #include "ios/chrome/test/ios_chrome_scoped_testing_chrome_browser_state_manager.h"
 #import "ios/web/navigation/navigation_manager_impl.h"
 #import "ios/web/public/crw_session_storage.h"
@@ -33,7 +35,6 @@
 #include "ios/web/public/test/scoped_testing_web_client.h"
 #include "ios/web/public/test/test_web_thread_bundle.h"
 #include "ios/web/public/web_thread.h"
-#import "ios/web/navigation/navigation_manager_impl.h"
 #import "ios/web/web_state/web_state_impl.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "testing/gtest_mac.h"
@@ -82,6 +83,12 @@ class TabModelTest : public PlatformTest {
     TestChromeBrowserState::Builder test_cbs_builder;
     chrome_browser_state_ = test_cbs_builder.Build();
 
+    // Web usage is disabled during these tests.
+    web_usage_enabler_ =
+        WebStateListWebUsageEnablerFactory::GetInstance()->GetForBrowserState(
+            chrome_browser_state_.get());
+    web_usage_enabler_->SetWebUsageEnabled(false);
+
     session_window_ = [[SessionWindowIOS alloc] init];
 
     // Create tab model with just a dummy session service so the async state
@@ -98,6 +105,7 @@ class TabModelTest : public PlatformTest {
 
   void SetTabModel(TabModel* tab_model) {
     if (tab_model_) {
+      web_usage_enabler_->SetWebStateList(nullptr);
       @autoreleasepool {
         [tab_model_ browserStateDestroyed];
         tab_model_ = nil;
@@ -105,6 +113,7 @@ class TabModelTest : public PlatformTest {
     }
 
     tab_model_ = tab_model;
+    web_usage_enabler_->SetWebStateList(tab_model_.webStateList);
   }
 
   TabModel* CreateTabModel(SessionServiceIOS* session_service,
@@ -113,7 +122,6 @@ class TabModelTest : public PlatformTest {
         initWithSessionWindow:session_window
                sessionService:session_service
                  browserState:chrome_browser_state_.get()]);
-    [tab_model setWebUsageEnabled:NO];
     [tab_model setPrimary:YES];
     return tab_model;
   }
@@ -137,6 +145,7 @@ class TabModelTest : public PlatformTest {
   web::ScopedTestingWebClient web_client_;
   SessionWindowIOS* session_window_;
   std::unique_ptr<TestChromeBrowserState> chrome_browser_state_;
+  WebStateListWebUsageEnabler* web_usage_enabler_;
   TabModel* tab_model_;
 };
 
@@ -468,76 +477,6 @@ TEST_F(TabModelTest, InsertWithSessionController) {
   [tab_model_ setCurrentTab:new_tab];
   Tab* current_tab = [tab_model_ currentTab];
   EXPECT_TRUE(current_tab);
-}
-
-TEST_F(TabModelTest, OpenerOfTab) {
-  // Start off with a couple tabs.
-  [tab_model_ insertTabWithURL:GURL(kURL1)
-                      referrer:web::Referrer()
-                    transition:ui::PAGE_TRANSITION_TYPED
-                        opener:nil
-                   openedByDOM:NO
-                       atIndex:[tab_model_ count]
-                  inBackground:NO];
-  [tab_model_ insertTabWithURL:GURL(kURL1)
-                      referrer:web::Referrer()
-                    transition:ui::PAGE_TRANSITION_TYPED
-                        opener:nil
-                   openedByDOM:NO
-                       atIndex:[tab_model_ count]
-                  inBackground:NO];
-  [tab_model_ insertTabWithURL:GURL(kURL1)
-                      referrer:web::Referrer()
-                    transition:ui::PAGE_TRANSITION_TYPED
-                        opener:nil
-                   openedByDOM:NO
-                       atIndex:[tab_model_ count]
-                  inBackground:NO];
-
-  // Create parent tab.
-  Tab* parent_tab = [tab_model_ insertTabWithURL:GURL(kURL1)
-                                        referrer:web::Referrer()
-                                      transition:ui::PAGE_TRANSITION_TYPED
-                                          opener:nil
-                                     openedByDOM:NO
-                                         atIndex:[tab_model_ count]
-                                    inBackground:NO];
-
-  // Create child tab.
-  Tab* child_tab = [tab_model_ insertTabWithURL:GURL(kURL1)
-                                       referrer:web::Referrer()
-                                     transition:ui::PAGE_TRANSITION_TYPED
-                                         opener:parent_tab
-                                    openedByDOM:NO
-                                        atIndex:[tab_model_ count]
-                                   inBackground:NO];
-
-  // Create another unrelated tab.
-  Tab* another_tab = [tab_model_ insertTabWithURL:GURL(kURL1)
-                                         referrer:web::Referrer()
-                                       transition:ui::PAGE_TRANSITION_TYPED
-                                           opener:nil
-                                      openedByDOM:NO
-                                          atIndex:[tab_model_ count]
-                                     inBackground:NO];
-
-  // Create another child of the first tab.
-  Tab* child_tab2 = [tab_model_ insertTabWithURL:GURL(kURL1)
-                                        referrer:web::Referrer()
-                                      transition:ui::PAGE_TRANSITION_TYPED
-                                          opener:parent_tab
-                                     openedByDOM:NO
-                                         atIndex:[tab_model_ count]
-                                    inBackground:NO];
-
-  EXPECT_FALSE([tab_model_ openerOfTab:parent_tab]);
-  EXPECT_FALSE([tab_model_ openerOfTab:another_tab]);
-  EXPECT_EQ(parent_tab, [tab_model_ openerOfTab:child_tab]);
-  EXPECT_EQ(parent_tab, [tab_model_ openerOfTab:child_tab2]);
-}
-
-TEST_F(TabModelTest, OpenerOfTabEmptyModel) {
-  EXPECT_FALSE([tab_model_ openerOfTab:nil]);
 }
 
 TEST_F(TabModelTest, AddWithOrderController) {
@@ -935,12 +874,6 @@ TEST_F(TabModelTest, PersistSelectionChange) {
   ASSERT_EQ(3U, [tab_model_ count]);
   [tab_model_ setCurrentTab:[tab_model_ tabAtIndex:1]];
 
-  EXPECT_EQ(nil, [tab_model_ openerOfTab:[tab_model_ tabAtIndex:1]]);
-  EXPECT_EQ([tab_model_ tabAtIndex:1],
-            [tab_model_ openerOfTab:[tab_model_ tabAtIndex:2]]);
-  EXPECT_EQ([tab_model_ tabAtIndex:2],
-            [tab_model_ openerOfTab:[tab_model_ tabAtIndex:0]]);
-
   // Force state to flush to disk on the main thread so it can be immediately
   // tested below.
   [test_session_service setPerformIO:YES];
@@ -960,11 +893,6 @@ TEST_F(TabModelTest, PersistSelectionChange) {
   ASSERT_EQ(3u, [tab_model_ count]);
 
   EXPECT_EQ([tab_model_ tabAtIndex:1], [tab_model_ currentTab]);
-  EXPECT_EQ(nil, [tab_model_ openerOfTab:[tab_model_ tabAtIndex:1]]);
-  EXPECT_EQ([tab_model_ tabAtIndex:1],
-            [tab_model_ openerOfTab:[tab_model_ tabAtIndex:2]]);
-  EXPECT_EQ([tab_model_ tabAtIndex:2],
-            [tab_model_ openerOfTab:[tab_model_ tabAtIndex:0]]);
 
   // Clean up.
   EXPECT_TRUE([[NSFileManager defaultManager] removeItemAtPath:stashPath

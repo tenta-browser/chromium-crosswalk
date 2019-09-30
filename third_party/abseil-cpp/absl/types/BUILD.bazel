@@ -28,7 +28,7 @@ licenses(["notice"])  # Apache 2.0
 cc_library(
     name = "any",
     hdrs = ["any.h"],
-    copts = ABSL_DEFAULT_COPTS + ABSL_EXCEPTIONS_FLAG,
+    copts = ABSL_DEFAULT_COPTS,
     deps = [
         ":bad_any_cast",
         "//absl/base:config",
@@ -40,9 +40,22 @@ cc_library(
 
 cc_library(
     name = "bad_any_cast",
-    srcs = ["bad_any_cast.cc"],
     hdrs = ["bad_any_cast.h"],
+    copts = ABSL_DEFAULT_COPTS,
+    deps = [
+        ":bad_any_cast_impl",
+        "//absl/base:config",
+    ],
+)
+
+cc_library(
+    name = "bad_any_cast_impl",
+    srcs = [
+        "bad_any_cast.cc",
+        "bad_any_cast.h",
+    ],
     copts = ABSL_EXCEPTIONS_FLAG + ABSL_DEFAULT_COPTS,
+    visibility = ["//visibility:private"],
     deps = [
         "//absl/base",
         "//absl/base:config",
@@ -165,6 +178,17 @@ cc_library(
     ],
 )
 
+cc_library(
+    name = "bad_variant_access",
+    srcs = ["bad_variant_access.cc"],
+    hdrs = ["bad_variant_access.h"],
+    copts = ABSL_EXCEPTIONS_FLAG + ABSL_DEFAULT_COPTS,
+    deps = [
+        "//absl/base",
+        "//absl/base:config",
+    ],
+)
+
 cc_test(
     name = "optional_test",
     size = "small",
@@ -178,6 +202,79 @@ cc_test(
         "//absl/base:config",
         "//absl/meta:type_traits",
         "//absl/strings",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_test(
+    name = "optional_exception_safety_test",
+    srcs = [
+        "optional_exception_safety_test.cc",
+    ],
+    copts = ABSL_TEST_COPTS + ABSL_EXCEPTIONS_FLAG,
+    deps = [
+        ":optional",
+        "//absl/base:exception_safety_testing",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_library(
+    name = "variant",
+    srcs = ["internal/variant.h"],
+    hdrs = ["variant.h"],
+    copts = ABSL_DEFAULT_COPTS,
+    deps = [
+        ":bad_variant_access",
+        "//absl/base:base_internal",
+        "//absl/base:config",
+        "//absl/base:core_headers",
+        "//absl/meta:type_traits",
+        "//absl/utility",
+    ],
+)
+
+cc_test(
+    name = "variant_test",
+    size = "small",
+    srcs = ["variant_test.cc"],
+    copts = ABSL_TEST_COPTS + ABSL_EXCEPTIONS_FLAG,
+    deps = [
+        ":variant",
+        "//absl/base:config",
+        "//absl/base:core_headers",
+        "//absl/memory",
+        "//absl/meta:type_traits",
+        "//absl/strings",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_test(
+    name = "variant_benchmark",
+    srcs = [
+        "variant_benchmark.cc",
+    ],
+    copts = ABSL_TEST_COPTS,
+    tags = ["benchmark"],
+    deps = [
+        ":variant",
+        "//absl/utility",
+        "@com_github_google_benchmark//:benchmark_main",
+    ],
+)
+
+cc_test(
+    name = "variant_exception_safety_test",
+    size = "small",
+    srcs = [
+        "variant_exception_safety_test.cc",
+    ],
+    copts = ABSL_TEST_COPTS + ABSL_EXCEPTIONS_FLAG,
+    deps = [
+        ":variant",
+        "//absl/base:exception_safety_testing",
+        "//absl/memory",
         "@com_google_googletest//:gtest_main",
     ],
 )

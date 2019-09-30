@@ -176,6 +176,9 @@ enum class PrefetchItemErrorCode {
   STALE_AT_DOWNLOADING = 1000,
   STALE_AT_IMPORTING = 1050,
   STALE_AT_UNKNOWN = 1100,
+  // The item was terminated due to not being concluded after being more than 7
+  // days in the pipeline.
+  STUCK = 1150,
   // Exceeded maximum retries for get operation request.
   GET_OPERATION_MAX_ATTEMPTS_REACHED = 1200,
   // Exceeded maximum retries limit for generate page bundle request.
@@ -196,9 +199,9 @@ enum class PrefetchItemErrorCode {
 
 // Callback invoked upon completion of a prefetch request.
 using PrefetchRequestFinishedCallback =
-    base::Callback<void(PrefetchRequestStatus status,
-                        const std::string& operation_name,
-                        const std::vector<RenderPageInfo>& pages)>;
+    base::OnceCallback<void(PrefetchRequestStatus status,
+                            const std::string& operation_name,
+                            const std::vector<RenderPageInfo>& pages)>;
 
 // Holds information about a suggested URL to be prefetched.
 struct PrefetchURL {
@@ -235,10 +238,6 @@ struct PrefetchDownloadResult {
   int64_t file_size = 0;
 };
 
-// Callback invoked upon completion of a download.
-using PrefetchDownloadCompletedCallback =
-    base::Callback<void(const PrefetchDownloadResult& result)>;
-
 // Describes all the info needed to import an archive.
 struct PrefetchArchiveInfo {
   PrefetchArchiveInfo();
@@ -254,6 +253,15 @@ struct PrefetchArchiveInfo {
   base::FilePath file_path;
   int64_t file_size = 0;
 };
+
+// These operators are implemented for testing only, see test_util.cc.
+// They are provided here to avoid ODR problems.
+std::ostream& operator<<(std::ostream& out,
+                         PrefetchBackgroundTaskRescheduleType value);
+std::ostream& operator<<(std::ostream& out, PrefetchRequestStatus value);
+std::ostream& operator<<(std::ostream& out, RenderStatus value);
+std::ostream& operator<<(std::ostream& out, const PrefetchItemState& value);
+std::ostream& operator<<(std::ostream& out, PrefetchItemErrorCode value);
 
 }  // namespace offline_pages
 

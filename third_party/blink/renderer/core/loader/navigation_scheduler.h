@@ -36,7 +36,7 @@
 
 #include "base/macros.h"
 #include "base/memory/scoped_refptr.h"
-#include "third_party/blink/public/platform/scheduler/web_main_thread_scheduler.h"
+#include "third_party/blink/public/platform/scheduler/web_thread_scheduler.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/platform/heap/handle.h"
@@ -91,9 +91,6 @@ class CORE_EXPORT NavigationScheduler final
   Member<LocalFrame> frame_;
   TaskHandle navigate_task_handle_;
   Member<ScheduledNavigation> redirect_;
-
-  // Exists because we can't deref m_frame in destructor.
-  scheduler::WebMainThreadScheduler::NavigatingFrameType frame_type_;
 
   DISALLOW_COPY_AND_ASSIGN(NavigationScheduler);
 };

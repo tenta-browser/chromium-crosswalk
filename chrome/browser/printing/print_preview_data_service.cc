@@ -12,6 +12,22 @@
 #include "base/stl_util.h"
 #include "printing/print_job_constants.h"
 
+namespace {
+
+#if DCHECK_IS_ON()
+void ValidatePreviewData(const scoped_refptr<base::RefCountedMemory>& data) {
+  // PDFs are generally much bigger. This is just a sanity check on size.
+  DCHECK(data);
+  DCHECK_GE(data->size(), 50U);
+
+  static const char kPdfHeader[] = "%PDF-";
+  const char* content = data->front_as<const char>();
+  DCHECK_EQ(0, memcmp(content, kPdfHeader, strlen(kPdfHeader)));
+}
+#endif
+
+}  // namespace
+
 // PrintPreviewDataStore stores data for preview workflow and preview printing
 // workflow.
 //
@@ -50,16 +66,11 @@ class PrintPreviewDataStore {
     if (IsInvalidIndex(index))
       return;
 
-    page_data_map_[index] = std::move(data);
-  }
+#if DCHECK_IS_ON()
+    ValidatePreviewData(data);
+#endif
 
-  // Returns the available draft page count.
-  int GetAvailableDraftPageCount() const {
-    int page_data_map_size = page_data_map_.size();
-    if (base::ContainsKey(page_data_map_,
-                          printing::COMPLETE_PREVIEW_DOCUMENT_INDEX))
-      page_data_map_size--;
-    return page_data_map_size;
+    page_data_map_[index] = std::move(data);
   }
 
  private:
@@ -114,11 +125,4 @@ void PrintPreviewDataService::SetDataEntry(
 
 void PrintPreviewDataService::RemoveEntry(int32_t preview_ui_id) {
   data_store_map_.erase(preview_ui_id);
-}
-
-int PrintPreviewDataService::GetAvailableDraftPageCount(
-    int32_t preview_ui_id) const {
-  PreviewDataStoreMap::const_iterator it = data_store_map_.find(preview_ui_id);
-  return (it == data_store_map_.end()) ?
-      0 : it->second->GetAvailableDraftPageCount();
 }

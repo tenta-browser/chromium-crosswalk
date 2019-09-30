@@ -24,8 +24,15 @@ var media = (function() {
   };
 
   media.onReceiveVideoCaptureCapabilities = function(videoCaptureCapabilities) {
-    manager.updateVideoCaptureCapabilities(videoCaptureCapabilities)
-  }
+    manager.updateVideoCaptureCapabilities(videoCaptureCapabilities);
+  };
+
+  media.onReceiveAudioFocusState = function(audioFocusState) {
+    if (!audioFocusState)
+      return;
+
+    manager.updateAudioFocusSessions(audioFocusState.sessions);
+  };
 
   media.updateAudioComponent = function(component) {
     var uniqueComponentId = component.owner_id + ':' + component.component_id;

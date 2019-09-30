@@ -130,7 +130,7 @@ class HTMLMockHTMLResourcePreloader : public ResourcePreloader {
                                   Document* document,
                                   const char* expected_referrer) {
     PreloadRequestVerification(type, url, base_url, width, referrer_policy);
-    Resource* resource = preload_request_->Start(document, nullptr);
+    Resource* resource = preload_request_->Start(document);
     ASSERT_TRUE(resource);
     EXPECT_EQ(expected_referrer, resource->GetResourceRequest().HttpReferrer());
   }
@@ -150,7 +150,7 @@ class HTMLMockHTMLResourcePreloader : public ResourcePreloader {
       network::mojom::FetchRequestMode request_mode,
       network::mojom::FetchCredentialsMode credentials_mode) {
     ASSERT_TRUE(preload_request_.get());
-    Resource* resource = preload_request_->Start(document, nullptr);
+    Resource* resource = preload_request_->Start(document);
     ASSERT_TRUE(resource);
     EXPECT_EQ(request_mode,
               resource->GetResourceRequest().GetFetchRequestMode());
@@ -657,7 +657,6 @@ TEST_F(HTMLPreloadScannerTest, testMetaAcceptCHInsecureDocument) {
       all};
 
   // For an insecure document, client hint should not be attached.
-  WebRuntimeFeatures::EnableClientHintsPersistent(true);
   RunSetUp(kViewportDisabled, kPreloadEnabled, kReferrerPolicyDefault,
            false /* use_secure_document_url */);
   Test(expect_no_client_hint);
@@ -665,13 +664,6 @@ TEST_F(HTMLPreloadScannerTest, testMetaAcceptCHInsecureDocument) {
   // For a secure document, client hint should be attached.
   RunSetUp(kViewportDisabled, kPreloadEnabled, kReferrerPolicyDefault,
            true /* use_secure_document_url */);
-  Test(expect_client_hint);
-
-  // For an insecure document, client hint should be attached if the persistent
-  // client hints are not enabled.
-  WebRuntimeFeatures::EnableClientHintsPersistent(false);
-  RunSetUp(kViewportDisabled, kPreloadEnabled, kReferrerPolicyDefault,
-           false /* use_secure_document_url */);
   Test(expect_client_hint);
 }
 

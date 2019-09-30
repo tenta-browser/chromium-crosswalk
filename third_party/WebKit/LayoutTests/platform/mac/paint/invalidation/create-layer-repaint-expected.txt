@@ -19,21 +19,20 @@
       "paintInvalidations": [
         {
           "object": "LayoutBlockFlow HTML",
-          "rect": [28, 54, 500, 50],
-          "reason": "disappeared"
+          "rect": [8, 16, 520, 88],
+          "reason": "chunk disappeared"
         },
         {
           "object": "LayoutBlockFlow DIV id='test' class='stretchy'",
           "rect": [28, 54, 250, 50],
-          "reason": "appeared"
+          "reason": "chunk appeared"
+        },
+        {
+          "object": "LayoutBlockFlow HTML",
+          "rect": [8, 16, 182, 18],
+          "reason": "chunk appeared"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutBlockFlow DIV id='test' class='stretchy'",
-      "reason": "style change"
     }
   ]
 }

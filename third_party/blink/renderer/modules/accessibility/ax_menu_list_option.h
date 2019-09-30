@@ -42,9 +42,12 @@ class AXMenuListOption final : public AXMockObject {
   }
   ~AXMenuListOption() override;
 
+  int PosInSet() const override;
+  int SetSize() const override;
+
  private:
   AXMenuListOption(HTMLOptionElement*, AXObjectCacheImpl&);
-  virtual void Trace(blink::Visitor*);
+  void Trace(blink::Visitor*) override;
 
   bool IsMenuListOption() const override { return true; }
 

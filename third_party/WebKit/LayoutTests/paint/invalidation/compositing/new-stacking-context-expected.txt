@@ -36,7 +36,7 @@
         {
           "object": "LayoutBlockFlow DIV",
           "rect": [0, 0, 200, 200],
-          "reason": "disappeared"
+          "reason": "chunk disappeared"
         }
       ]
     },
@@ -67,15 +67,9 @@
         {
           "object": "LayoutBlockFlow DIV id='target'",
           "rect": [0, 0, 200, 200],
-          "reason": "full"
+          "reason": "full layer"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutBlockFlow DIV id='target'",
-      "reason": "style change"
     }
   ]
 }

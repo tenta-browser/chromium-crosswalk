@@ -17,26 +17,32 @@
 #include "chrome/browser/chromeos/app_mode/kiosk_app_manager.h"
 #include "chrome/browser/chromeos/arc/arc_service_launcher.h"
 #include "chrome/browser/chromeos/boot_times_recorder.h"
+#include "chrome/browser/chromeos/child_accounts/consumer_status_reporting_service_factory.h"
+#include "chrome/browser/chromeos/child_accounts/screen_time_controller_factory.h"
+#include "chrome/browser/chromeos/crostini/crostini_manager.h"
 #include "chrome/browser/chromeos/lock_screen_apps/state_controller.h"
+#include "chrome/browser/chromeos/login/demo_mode/demo_session.h"
 #include "chrome/browser/chromeos/login/lock/webui_screen_locker.h"
 #include "chrome/browser/chromeos/login/login_wizard.h"
+#include "chrome/browser/chromeos/login/screens/sync_consent_screen.h"
 #include "chrome/browser/chromeos/login/session/user_session_manager.h"
 #include "chrome/browser/chromeos/login/wizard_controller.h"
 #include "chrome/browser/chromeos/policy/app_install_event_log_manager_wrapper.h"
 #include "chrome/browser/chromeos/policy/browser_policy_connector_chromeos.h"
+#include "chrome/browser/chromeos/profiles/profile_helper.h"
 #include "chrome/browser/chromeos/tether/tether_service.h"
+#include "chrome/browser/chromeos/tpm_firmware_update_notification.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/signin/identity_manager_factory.h"
-#include "chrome/browser/ui/ash/ash_util.h"
+#include "chrome/browser/ui/app_list/app_list_client_impl.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/pref_names.h"
-#include "chromeos/assistant/buildflags.h"
 #include "chromeos/chromeos_switches.h"
 #include "chromeos/cryptohome/cryptohome_parameters.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
 #include "chromeos/dbus/session_manager_client.h"
+#include "components/account_id/account_id.h"
 #include "components/prefs/pref_service.h"
-#include "components/signin/core/account_id/account_id.h"
 #include "components/user_manager/user_manager.h"
 #include "components/user_manager/user_names.h"
 #include "components/user_manager/user_type.h"
@@ -46,11 +52,6 @@
 #include "content/public/common/service_manager_connection.h"
 #include "services/identity/public/cpp/identity_manager.h"
 #include "services/service_manager/public/cpp/connector.h"
-
-#if BUILDFLAG(ENABLE_CROS_ASSISTANT)
-#include "chrome/browser/chromeos/assistant/assistant_client.h"
-#include "chromeos/services/assistant/public/mojom/constants.mojom.h"
-#endif
 
 namespace chromeos {
 
@@ -113,10 +114,26 @@ void StartUserSession(Profile* user_profile, const std::string& login_user_id) {
       LOG(ERROR) << "Could not get active user after crash.";
       return;
     }
+
+    chromeos::DemoSession* demo_session = chromeos::DemoSession::Get();
+    // In demo session, delay starting user session until the offline demo
+    // session resources have been loaded.
+    if (demo_session && demo_session->started() &&
+        !demo_session->offline_resources_loaded()) {
+      demo_session->EnsureOfflineResourcesLoaded(
+          base::BindOnce(&StartUserSession, user_profile, login_user_id));
+      LOG(WARNING) << "Delay demo user session start until offline demo "
+                   << "resources are loaded";
+      return;
+    }
+
     user_session_mgr->InitRlz(user_profile);
     user_session_mgr->InitializeCerts(user_profile);
     user_session_mgr->InitializeCRLSetFetcher(user);
     user_session_mgr->InitializeCertificateTransparencyComponents(user);
+
+    ProfileHelper::Get()->ProfileStartup(user_profile);
+
     if (lock_screen_apps::StateController::IsEnabled())
       lock_screen_apps::StateController::Get()->SetPrimaryProfile(user_profile);
 
@@ -128,13 +145,13 @@ void StartUserSession(Profile* user_profile, const std::string& login_user_id) {
       policy::AppInstallEventLogManagerWrapper::CreateForProfile(user_profile);
     }
     arc::ArcServiceLauncher::Get()->OnPrimaryUserProfilePrepared(user_profile);
+    crostini::CrostiniManager::GetInstance()->MaybeUpgradeCrostini(
+        user_profile);
 
-#if BUILDFLAG(ENABLE_CROS_ASSISTANT)
-    if (chromeos::switches::IsAssistantEnabled()) {
-      assistant::AssistantClient::Get()->Start(
-          content::BrowserContext::GetConnectorFor(user_profile));
+    if (user->GetType() == user_manager::USER_TYPE_CHILD) {
+      ScreenTimeControllerFactory::GetForBrowserContext(user_profile);
+      ConsumerStatusReportingServiceFactory::GetForBrowserContext(user_profile);
     }
-#endif
 
     // Send the PROFILE_PREPARED notification and call SessionStarted()
     // so that the Launcher and other Profile dependent classes are created.
@@ -163,14 +180,20 @@ void StartUserSession(Profile* user_profile, const std::string& login_user_id) {
     TetherService* tether_service = TetherService::Get(user_profile);
     if (tether_service)
       tether_service->StartTetherIfPossible();
+
+    // Associates AppListClient with the current active profile.
+    AppListClientImpl::GetInstance()->UpdateProfile();
   }
 
   UserSessionManager::GetInstance()->CheckEolStatus(user_profile);
+  tpm_firmware_update::ShowNotificationIfNeeded(user_profile);
+  SyncConsentScreen::MaybeLaunchSyncConstentSettings(user_profile);
 }
 
 }  // namespace
 
-ChromeSessionManager::ChromeSessionManager() {}
+ChromeSessionManager::ChromeSessionManager()
+    : oobe_configuration_(std::make_unique<OobeConfiguration>()) {}
 ChromeSessionManager::~ChromeSessionManager() {}
 
 void ChromeSessionManager::Initialize(
@@ -197,11 +220,15 @@ void ChromeSessionManager::Initialize(
     return;
   }
 
+  DemoSession::PreloadOfflineResourcesIfInDemoMode();
   if (parsed_command_line.HasSwitch(switches::kLoginManager) &&
       (!is_running_test || force_login_screen_in_test)) {
     VLOG(1) << "Starting Chrome with login/oobe screen.";
+    oobe_configuration_->CheckConfiguration();
     StartLoginOobeSession();
     return;
+  } else if (is_running_test) {
+    oobe_configuration_->CheckConfiguration();
   }
 
   if (!base::SysInfo::IsRunningOnChromeOS() &&

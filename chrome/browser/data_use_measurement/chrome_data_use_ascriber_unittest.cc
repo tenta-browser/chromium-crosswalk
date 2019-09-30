@@ -7,7 +7,6 @@
 #include <list>
 #include <memory>
 
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/test/scoped_feature_list.h"
 #include "build/build_config.h"
@@ -244,7 +243,7 @@ TEST_F(ChromeDataUseAscriberTest, MainFrameNavigation) {
   // Navigation commit should merge the two data use recorder entries.
   EXPECT_EQ(1u, recorders().size());
   auto& recorder_entry = recorders().front();
-  EXPECT_EQ(RenderFrameHostID(kRenderProcessId, kRenderFrameId),
+  EXPECT_EQ(content::GlobalFrameRoutingId(kRenderProcessId, kRenderFrameId),
             recorder_entry.main_frame_id());
   EXPECT_EQ(content::GlobalRequestID(kRenderProcessId, 0),
             recorder_entry.main_frame_request_id());
@@ -306,7 +305,7 @@ TEST_F(ChromeDataUseAscriberTest, SubResourceRequestsAttributed) {
 
   EXPECT_EQ(1u, recorders().size());
   auto& recorder_entry = recorders().front();
-  EXPECT_EQ(RenderFrameHostID(kRenderProcessId, kRenderFrameId),
+  EXPECT_EQ(content::GlobalFrameRoutingId(kRenderProcessId, kRenderFrameId),
             recorder_entry.main_frame_id());
   EXPECT_EQ(content::GlobalRequestID(kRenderProcessId, 0),
             recorder_entry.main_frame_request_id());
@@ -352,7 +351,7 @@ TEST_F(ChromeDataUseAscriberTest, SubResourceRequestsAfterNavigationFinish) {
 
   EXPECT_EQ(1u, recorders().size());
   auto& page_load_a_recorder = recorders().front();
-  EXPECT_EQ(RenderFrameHostID(kRenderProcessId, kRenderFrameId),
+  EXPECT_EQ(content::GlobalFrameRoutingId(kRenderProcessId, kRenderFrameId),
             page_load_a_recorder.main_frame_id());
   EXPECT_EQ(content::GlobalRequestID(kRenderProcessId, 0),
             page_load_a_recorder.main_frame_request_id());
@@ -385,7 +384,7 @@ TEST_F(ChromeDataUseAscriberTest, SubResourceRequestsAfterNavigationFinish) {
   // Previous page recorder is gone.
   EXPECT_EQ(1u, recorders().size());
   auto& page_load_b_recorder = recorders().back();
-  EXPECT_EQ(RenderFrameHostID(kRenderProcessId, kRenderFrameId),
+  EXPECT_EQ(content::GlobalFrameRoutingId(kRenderProcessId, kRenderFrameId),
             page_load_b_recorder.main_frame_id());
   EXPECT_EQ(content::GlobalRequestID(kRenderProcessId, 0),
             page_load_b_recorder.main_frame_request_id());
@@ -492,7 +491,7 @@ TEST_F(ChromeDataUseAscriberTest, PageLoadObserverNotified) {
 
   EXPECT_EQ(1u, recorders().size());
   auto& recorder_entry = recorders().front();
-  EXPECT_EQ(RenderFrameHostID(kRenderProcessId, kRenderFrameId),
+  EXPECT_EQ(content::GlobalFrameRoutingId(kRenderProcessId, kRenderFrameId),
             recorder_entry.main_frame_id());
   EXPECT_EQ(content::GlobalRequestID(kRenderProcessId, 0),
             recorder_entry.main_frame_request_id());
@@ -549,7 +548,7 @@ TEST_F(ChromeDataUseAscriberTest, PageLoadObserverForErrorPageValidatedURL) {
 
   EXPECT_EQ(1u, recorders().size());
   auto& recorder_entry = recorders().front();
-  EXPECT_EQ(RenderFrameHostID(kRenderProcessId, kRenderFrameId),
+  EXPECT_EQ(content::GlobalFrameRoutingId(kRenderProcessId, kRenderFrameId),
             recorder_entry.main_frame_id());
   EXPECT_EQ(content::GlobalRequestID(kRenderProcessId, 0),
             recorder_entry.main_frame_request_id());

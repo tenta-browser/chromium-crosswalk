@@ -25,11 +25,17 @@ namespace ash {
 class ASH_EXPORT FrameCaptionButton : public views::Button {
  public:
   enum Animate { ANIMATE_YES, ANIMATE_NO };
-  enum class ColorMode { kDefault, kThemed };
+
+  enum class ColorMode {
+    kDefault,  // Most windows.
+    kThemed,   // Windows that have been themed by PWA manifest.
+  };
 
   static const char kViewClassName[];
 
-  FrameCaptionButton(views::ButtonListener* listener, CaptionButtonIcon icon);
+  FrameCaptionButton(views::ButtonListener* listener,
+                     CaptionButtonIcon icon,
+                     int hit_test_type);
   ~FrameCaptionButton() override;
 
   // Gets the color to use for a frame caption button while a theme color is
@@ -59,17 +65,23 @@ class ASH_EXPORT FrameCaptionButton : public views::Button {
   void OnGestureEvent(ui::GestureEvent* event) override;
   views::PaintInfo::ScaleType GetPaintScaleType() const override;
 
-  void set_background_color(SkColor background_color) {
-    background_color_ = background_color;
-  }
+  // views::InkDropHostView:
+  std::unique_ptr<views::InkDrop> CreateInkDrop() override;
+  std::unique_ptr<views::InkDropRipple> CreateInkDropRipple() const override;
+  std::unique_ptr<views::InkDropMask> CreateInkDropMask() const override;
 
-  void set_color_mode(ColorMode color_mode) { color_mode_ = color_mode; }
+  void SetBackgroundColor(SkColor background_color);
+  void SetColorMode(ColorMode color_mode);
 
   void set_paint_as_active(bool paint_as_active) {
     paint_as_active_ = paint_as_active;
   }
 
+  bool paint_as_active() { return paint_as_active_; }
+
   CaptionButtonIcon icon() const { return icon_; }
+
+  const gfx::ImageSkia& icon_image() { return icon_image_; }
 
   const gfx::VectorIcon* icon_definition_for_test() const {
     return icon_definition_;
@@ -83,6 +95,8 @@ class ASH_EXPORT FrameCaptionButton : public views::Button {
   // Determines what alpha to use for the icon based on animation and
   // active state.
   int GetAlphaForIcon(int base_alpha) const;
+
+  void UpdateInkDropBaseColor();
 
   // The button's current icon.
   CaptionButtonIcon icon_;

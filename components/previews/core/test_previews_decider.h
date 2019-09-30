@@ -20,12 +20,13 @@ class TestPreviewsDecider : public previews::PreviewsDecider {
       const net::URLRequest& request,
       previews::PreviewsType type,
       net::EffectiveConnectionType effective_connection_type_threshold,
-      const std::vector<std::string>& host_blacklist_from_server)
-      const override;
+      const std::vector<std::string>& host_blacklist_from_server,
+      bool ignore_long_term_black_list_rules) const override;
   bool ShouldAllowPreview(const net::URLRequest& request,
                           previews::PreviewsType type) const override;
   bool IsURLAllowedForPreview(const net::URLRequest& request,
                               PreviewsType type) const override;
+  void LoadResourceHints(const net::URLRequest& request) override;
 
  private:
   bool allow_previews_;

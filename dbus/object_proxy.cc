@@ -11,7 +11,6 @@
 #include "base/bind_helpers.h"
 #include "base/debug/leak_annotations.h"
 #include "base/logging.h"
-#include "base/message_loop/message_loop.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/string_piece.h"
 #include "base/strings/stringprintf.h"
@@ -289,7 +288,7 @@ void ObjectProxy::WaitForServiceToBeAvailable(
 void ObjectProxy::Detach() {
   bus_->AssertOnDBusThread();
 
-  if (bus_->is_connected())
+  if (bus_->IsConnected())
     bus_->RemoveFilterFunction(&ObjectProxy::HandleMessageThunk, this);
 
   for (const auto& match_rule : match_rules_) {
@@ -520,6 +519,11 @@ DBusHandlerResult ObjectProxy::HandleMessage(
     return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
   }
 
+  std::string sender = signal->GetSender();
+  // Ignore message from sender we are not interested in.
+  if (service_name_owner_ != sender)
+    return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
+
   const std::string interface = signal->GetInterface();
   const std::string member = signal->GetMember();
 
@@ -534,12 +538,6 @@ DBusHandlerResult ObjectProxy::HandleMessage(
     return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
   }
   VLOG(1) << "Signal received: " << signal->ToString();
-
-  std::string sender = signal->GetSender();
-  if (service_name_owner_ != sender) {
-    LOG(ERROR) << "Rejecting a message from a wrong sender.";
-    return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
-  }
 
   const base::TimeTicks start_time = base::TimeTicks::Now();
   if (bus_->HasDBusThread()) {

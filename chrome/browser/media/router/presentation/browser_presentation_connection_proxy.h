@@ -10,9 +10,8 @@
 #include "chrome/browser/media/router/route_message_observer.h"
 #include "chrome/common/media_router/media_route.h"
 #include "content/public/browser/presentation_service_delegate.h"
-#include "content/public/common/presentation_connection_message.h"
-#include "content/public/common/presentation_info.h"
 #include "mojo/public/cpp/bindings/binding.h"
+#include "third_party/blink/public/mojom/presentation/presentation.mojom.h"
 
 namespace media_router {
 
@@ -28,12 +27,10 @@ class MediaRouter;
 // |target_connection_| to 'connected'.
 //
 // Send message from render frame to media router:
-// PresentationConnection::sendString();
-//     -> PresentationDispatcher::DoSendMessage();
-//         -> PresentationConnectionProxy::SendConnectionMessage();
-//             --> (mojo call to browser side PresentationConnection)
-//                 -> BrowserPresentationConnectionProxy::OnMessage();
-//                      -> MediaRouter::SendRouteMessage();
+// blink::PresentationConnection::send();
+//     -> (mojo call to browser side PresentationConnection)
+//         -> BrowserPresentationConnectionProxy::OnMessage();
+//             -> MediaRouter::SendRouteMessage();
 //
 // Instance of this class is only created for remotely rendered presentations.
 // It is owned by PresentationFrame. When PresentationFrame gets destroyed or
@@ -60,12 +57,13 @@ class BrowserPresentationConnectionProxy
   ~BrowserPresentationConnectionProxy() override;
 
   // blink::mojom::PresentationConnection implementation
-  void OnMessage(content::PresentationConnectionMessage message,
+  void OnMessage(blink::mojom::PresentationConnectionMessagePtr message,
                  OnMessageCallback on_message_callback) override;
 
   // Underlying media route is always connected. Media route class does not
   // support state change.
-  void DidChangeState(content::PresentationConnectionState state) override {}
+  void DidChangeState(
+      blink::mojom::PresentationConnectionState state) override {}
 
   // Underlying media route is always connected. Media route class does not
   // support state change.
@@ -73,8 +71,7 @@ class BrowserPresentationConnectionProxy
 
   // RouteMessageObserver implementation.
   void OnMessagesReceived(
-      const std::vector<content::PresentationConnectionMessage>& messages)
-      override;
+      std::vector<mojom::RouteMessagePtr> messages) override;
 
  private:
   // |router_| not owned by this class.

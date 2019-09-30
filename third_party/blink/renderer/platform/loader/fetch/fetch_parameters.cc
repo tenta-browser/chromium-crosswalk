@@ -37,23 +37,8 @@ FetchParameters::FetchParameters(const ResourceRequest& resource_request)
     : resource_request_(resource_request),
       decoder_options_(TextResourceDecoderOptions::kPlainTextContent),
       speculative_preload_type_(SpeculativePreloadType::kNotSpeculative),
-      preload_discovery_time_(0.0),
       defer_(kNoDefer),
-      origin_restriction_(kUseDefaultOriginRestrictionForType),
-      placeholder_image_request_type_(kDisallowPlaceholder) {}
-
-FetchParameters::FetchParameters(
-    std::unique_ptr<CrossThreadFetchParametersData> data)
-    : resource_request_(data->resource_request.get()),
-      decoder_options_(data->decoder_options),
-      options_(data->options),
-      speculative_preload_type_(data->speculative_preload_type),
-      preload_discovery_time_(data->preload_discovery_time),
-      defer_(data->defer),
-      origin_restriction_(data->origin_restriction),
-      resource_width_(data->resource_width),
-      client_hint_preferences_(data->client_hint_preferences),
-      placeholder_image_request_type_(data->placeholder_image_request_type) {}
+      image_request_optimization_(kNone) {}
 
 FetchParameters::FetchParameters(const ResourceRequest& resource_request,
                                  const ResourceLoaderOptions& options)
@@ -61,10 +46,8 @@ FetchParameters::FetchParameters(const ResourceRequest& resource_request,
       decoder_options_(TextResourceDecoderOptions::kPlainTextContent),
       options_(options),
       speculative_preload_type_(SpeculativePreloadType::kNotSpeculative),
-      preload_discovery_time_(0.0),
       defer_(kNoDefer),
-      origin_restriction_(kUseDefaultOriginRestrictionForType),
-      placeholder_image_request_type_(kDisallowPlaceholder) {}
+      image_request_optimization_(kNone) {}
 
 FetchParameters::~FetchParameters() = default;
 
@@ -115,18 +98,12 @@ void FetchParameters::SetSpeculativePreloadType(
     SpeculativePreloadType speculative_preload_type,
     double discovery_time) {
   speculative_preload_type_ = speculative_preload_type;
-  preload_discovery_time_ = discovery_time;
 }
 
 void FetchParameters::MakeSynchronous() {
   // Synchronous requests should always be max priority, lest they hang the
   // renderer.
   resource_request_.SetPriority(ResourceLoadPriority::kHighest);
-  if (resource_request_.TimeoutInterval() == INT_MAX) {
-    // This 1 day timeout is a temporary value to avoid the 100% CPU usage bug
-    // in stable (crbug/848210) and mitigate the timeout bug (crbug/844268).
-    resource_request_.SetTimeoutInterval(60 * 60 * 24);
-  }
   // Skip ServiceWorker for synchronous loads from the main thread to avoid
   // deadlocks.
   if (IsMainThread())
@@ -134,8 +111,14 @@ void FetchParameters::MakeSynchronous() {
   options_.synchronous_policy = kRequestSynchronously;
 }
 
+void FetchParameters::SetClientLoFiPlaceholder() {
+  resource_request_.SetPreviewsState(resource_request_.GetPreviewsState() |
+                                     WebURLRequest::kClientLoFiOn);
+  SetAllowImagePlaceholder();
+}
+
 void FetchParameters::SetAllowImagePlaceholder() {
-  DCHECK_EQ(kDisallowPlaceholder, placeholder_image_request_type_);
+  DCHECK_EQ(kNone, image_request_optimization_);
   if (!resource_request_.Url().ProtocolIsInHTTPFamily() ||
       resource_request_.HttpMethod() != "GET" ||
       !resource_request_.HttpHeaderField("range").IsNull()) {
@@ -146,7 +129,7 @@ void FetchParameters::SetAllowImagePlaceholder() {
     return;
   }
 
-  placeholder_image_request_type_ = kAllowPlaceholder;
+  image_request_optimization_ = kAllowPlaceholder;
 
   // Fetch the first few bytes of the image. This number is tuned to both (a)
   // likely capture the entire image for small images and (b) likely contain
@@ -157,22 +140,6 @@ void FetchParameters::SetAllowImagePlaceholder() {
   // TODO(sclittle): Indicate somehow (e.g. through a new request bit) to the
   // embedder that it should return the full resource if the entire resource is
   // fresh in the cache.
-}
-
-std::unique_ptr<CrossThreadFetchParametersData> FetchParameters::CopyData()
-    const {
-  auto data = std::make_unique<CrossThreadFetchParametersData>();
-  data->resource_request = resource_request_.CopyData();
-  data->decoder_options = decoder_options_;
-  data->options = CrossThreadResourceLoaderOptionsData(options_);
-  data->speculative_preload_type = speculative_preload_type_;
-  data->preload_discovery_time = preload_discovery_time_;
-  data->defer = defer_;
-  data->origin_restriction = origin_restriction_;
-  data->resource_width = resource_width_;
-  data->client_hint_preferences = client_hint_preferences_;
-  data->placeholder_image_request_type = placeholder_image_request_type_;
-  return data;
 }
 
 }  // namespace blink

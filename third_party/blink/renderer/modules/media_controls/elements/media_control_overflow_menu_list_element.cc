@@ -5,6 +5,7 @@
 #include "third_party/blink/renderer/modules/media_controls/elements/media_control_overflow_menu_list_element.h"
 
 #include "third_party/blink/public/platform/task_type.h"
+#include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/events/event.h"
 #include "third_party/blink/renderer/modules/media_controls/elements/media_control_overflow_menu_button_element.h"
 #include "third_party/blink/renderer/modules/media_controls/media_controls_impl.h"
@@ -40,9 +41,9 @@ void MediaControlOverflowMenuListElement::MaybeRecordTimeTaken(
   time_shown_.reset();
 }
 
-void MediaControlOverflowMenuListElement::DefaultEventHandler(Event* event) {
-  if (event->type() == EventTypeNames::click)
-    event->SetDefaultHandled();
+void MediaControlOverflowMenuListElement::DefaultEventHandler(Event& event) {
+  if (event.type() == EventTypeNames::click)
+    event.SetDefaultHandled();
 
   MediaControlPopupMenuElement::DefaultEventHandler(event);
 }
@@ -69,6 +70,12 @@ void MediaControlOverflowMenuListElement::SetIsWanted(bool wanted) {
 
 Element* MediaControlOverflowMenuListElement::PopupAnchor() const {
   return &GetMediaControls().OverflowButton();
+}
+
+void MediaControlOverflowMenuListElement::OnItemSelected() {
+  MaybeRecordTimeTaken(kTimeToAction);
+
+  MediaControlPopupMenuElement::OnItemSelected();
 }
 
 }  // namespace blink

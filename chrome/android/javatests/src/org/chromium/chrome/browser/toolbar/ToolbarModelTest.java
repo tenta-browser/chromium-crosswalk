@@ -12,9 +12,9 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.TestRule;
 import org.junit.runner.RunWith;
 
+import org.chromium.base.ContextUtils;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.Feature;
@@ -24,11 +24,11 @@ import org.chromium.chrome.browser.ChromeFeatureList;
 import org.chromium.chrome.browser.ChromeSwitches;
 import org.chromium.chrome.browser.ChromeTabbedActivity;
 import org.chromium.chrome.browser.UrlConstants;
+import org.chromium.chrome.browser.omnibox.UrlBarData;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 import org.chromium.chrome.test.ChromeTabbedActivityTestRule;
 import org.chromium.chrome.test.util.ChromeTabUtils;
-import org.chromium.chrome.test.util.browser.Features;
 import org.chromium.chrome.test.util.browser.Features.DisableFeatures;
 import org.chromium.chrome.test.util.browser.Features.EnableFeatures;
 
@@ -40,11 +40,6 @@ import org.chromium.chrome.test.util.browser.Features.EnableFeatures;
 public class ToolbarModelTest {
     @Rule
     public ChromeTabbedActivityTestRule mActivityTestRule = new ChromeTabbedActivityTestRule();
-
-    @Rule
-    public TestRule mProcessor = new Features.InstrumentationProcessor();
-
-    private static final String TEST_PAGE = "/chrome/test/data/android/test.html";
 
     @Before
     public void setUp() throws InterruptedException {
@@ -116,10 +111,10 @@ public class ToolbarModelTest {
     private void assertDisplayAndEditText(
             ToolbarDataProvider dataProvider, String displayText, String editText) {
         ThreadUtils.runOnUiThreadBlocking(() -> {
+            UrlBarData urlBarData = dataProvider.getUrlBarData();
             Assert.assertEquals(
-                    "Display text did not match", displayText, dataProvider.getDisplayText());
-            Assert.assertEquals(
-                    "Editing text did not match", editText, dataProvider.getEditingText());
+                    "Display text did not match", displayText, urlBarData.displayText.toString());
+            Assert.assertEquals("Editing text did not match", editText, urlBarData.editingText);
         });
     }
 
@@ -143,7 +138,8 @@ public class ToolbarModelTest {
         private String mUrl;
 
         public TestToolbarModel() {
-            super(null /* bottomSheet */, false /* useModernDesign */);
+            super(ContextUtils.getApplicationContext(), null /* bottomSheet */,
+                    false /* useModernDesign */);
             initializeWithNative();
 
             Tab tab = new Tab(0, false, null) {

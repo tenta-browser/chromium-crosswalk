@@ -90,10 +90,30 @@ class MEDIA_GPU_EXPORT V4L2SliceVideoDecodeAccelerator
     int32_t picture_id;
     GLuint client_texture_id;
     GLuint texture_id;
-    scoped_refptr<gl::GLImage> gl_image;
     EGLSyncKHR egl_sync;
     std::vector<base::ScopedFD> dmabuf_fds;
     bool cleared;
+  };
+
+  // Decoder state enum.
+  enum State {
+    // We are in this state until Initialize() returns successfully.
+    // We can't post errors to the client in this state yet.
+    kUninitialized,
+    // Initialize() returned successfully.
+    kInitialized,
+    // This state allows making progress decoding more input stream.
+    kDecoding,
+    // Transitional state when we are not decoding any more stream, but are
+    // performing flush, reset, resolution change or are destroying ourselves.
+    kIdle,
+    // Requested new PictureBuffers via ProvidePictureBuffers(), awaiting
+    // AssignPictureBuffers().
+    kAwaitingPictureBuffers,
+    // Error state, set when sending NotifyError to client.
+    kError,
+    // Destroying state, when shutting down the decoder.
+    kDestroying,
   };
 
   // See http://crbug.com/255116.
@@ -123,10 +143,6 @@ class MEDIA_GPU_EXPORT V4L2SliceVideoDecodeAccelerator
 
   // Return true if the driver exposes V4L2 control |ctrl_id|, false otherwise.
   bool IsCtrlExposed(uint32_t ctrl_id);
-
-  // Decode of |dec_surface| is ready to be submitted and all codec-specific
-  // settings are set in hardware.
-  void DecodeSurface(const scoped_refptr<V4L2DecodeSurface>& dec_surface);
 
   // |dec_surface| is ready to be outputted once decode is finished.
   // This can be called before decode is actually done in hardware, and this
@@ -184,6 +200,9 @@ class MEDIA_GPU_EXPORT V4L2SliceVideoDecodeAccelerator
 
   void NotifyError(Error error);
   void DestroyTask();
+
+  // Check whether a destroy is scheduled.
+  bool IsDestroyPending();
 
   // Sets the state to kError and notifies client if needed.
   void SetErrorState(Error error);
@@ -269,13 +288,12 @@ class MEDIA_GPU_EXPORT V4L2SliceVideoDecodeAccelerator
       const gfx::Size& size,
       uint32_t fourcc);
 
-  // Take the GLImage |gl_image|, created for |picture_buffer_id|, and use it
+  // Take the dmabuf |passed_dmabuf_fds|, for |picture_buffer_id|, and use it
   // for OutputRecord at |buffer_index|. The buffer is backed by
   // |passed_dmabuf_fds|, and the OutputRecord takes ownership of them.
-  void AssignGLImage(
+  void AssignDmaBufs(
       size_t buffer_index,
       int32_t picture_buffer_id,
-      scoped_refptr<gl::GLImage> gl_image,
       // TODO(posciak): (https://crbug.com/561749) we should normally be able to
       // pass the vector by itself via std::move, but it's not possible to do
       // this if this method is used as a callback.
@@ -295,24 +313,6 @@ class MEDIA_GPU_EXPORT V4L2SliceVideoDecodeAccelerator
 
   // Ran on device_poll_thread_ to wait for device events.
   void DevicePollTask(bool poll_device);
-
-  enum State {
-    // We are in this state until Initialize() returns successfully.
-    // We can't post errors to the client in this state yet.
-    kUninitialized,
-    // Initialize() returned successfully.
-    kInitialized,
-    // This state allows making progress decoding more input stream.
-    kDecoding,
-    // Transitional state when we are not decoding any more stream, but are
-    // performing flush, reset, resolution change or are destroying ourselves.
-    kIdle,
-    // Requested new PictureBuffers via ProvidePictureBuffers(), awaiting
-    // AssignPictureBuffers().
-    kAwaitingPictureBuffers,
-    // Error state, set when sending NotifyError to client.
-    kError,
-  };
 
   // Buffer id for flush buffer, queued by FlushTask().
   const int kFlushBufferId = -2;
@@ -429,6 +429,9 @@ class MEDIA_GPU_EXPORT V4L2SliceVideoDecodeAccelerator
 
   // Decoder state.
   State state_;
+
+  // Waitable event signaled when the decoder is destroying.
+  base::WaitableEvent destroy_pending_;
 
   Config::OutputMode output_mode_;
 

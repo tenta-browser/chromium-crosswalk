@@ -63,8 +63,10 @@ WebSocket::WebSocket(const GURL& url, WebSocketListener* listener)
     : url_(url),
       listener_(listener),
       state_(INITIALIZED),
-      write_buffer_(new net::DrainableIOBuffer(new net::IOBuffer(0), 0)),
-      read_buffer_(new net::IOBufferWithSize(4096)) {}
+      write_buffer_(base::MakeRefCounted<net::DrainableIOBuffer>(
+          base::MakeRefCounted<net::IOBuffer>(0),
+          0)),
+      read_buffer_(base::MakeRefCounted<net::IOBufferWithSize>(4096)) {}
 
 WebSocket::~WebSocket() {
   CHECK(thread_checker_.CalledOnValidThread());
@@ -155,6 +157,12 @@ void WebSocket::OnSocketConnect(int code) {
       sec_key_.c_str());
   VLOG(4) << "WebSocket::OnSocketConnect handshake\n" << handshake;
   Write(handshake);
+  if (state_ == CLOSED) {
+    // The call to Write() above would call Close() if it encounters an error,
+    // in which case it's no longer safe to do anything else. Close() has
+    // already called the callback function, if any.
+    return;
+  }
   Read();
 }
 
@@ -183,8 +191,8 @@ void WebSocket::ContinueWritingIfNecessary() {
   if (!write_buffer_->BytesRemaining()) {
     if (pending_write_.empty())
       return;
-    write_buffer_ = new net::DrainableIOBuffer(
-        new net::StringIOBuffer(pending_write_),
+    write_buffer_ = base::MakeRefCounted<net::DrainableIOBuffer>(
+        base::MakeRefCounted<net::StringIOBuffer>(pending_write_),
         pending_write_.length());
     pending_write_.clear();
   }

@@ -15,7 +15,6 @@
 #include "chrome/browser/ui/cocoa/browser_window_utils.h"
 #import "chrome/browser/ui/cocoa/chrome_event_processing_window.h"
 #include "chrome/browser/ui/cocoa/extensions/extension_keybinding_registry_cocoa.h"
-#include "chrome/browser/ui/cocoa/extensions/extension_view_mac.h"
 #include "chrome/common/chrome_switches.h"
 #include "content/public/browser/native_web_keyboard_event.h"
 #include "content/public/browser/web_contents.h"
@@ -44,7 +43,7 @@
 
 using extensions::AppWindow;
 
-@interface NSWindow (NSPrivateApis)
+@interface NSWindow (NSPrivateNativeAppWindowApis)
 - (void)setBottomCornerRounded:(BOOL)rounded;
 - (BOOL)_isTitleHidden;
 @end
@@ -568,7 +567,7 @@ void NativeAppWindowCocoa::HandleKeyboardEvent(
       event.GetType() == content::NativeWebKeyboardEvent::kChar) {
     return;
   }
-  [window() redispatchKeyEvent:event.os_event];
+  [[window() commandDispatcher] redispatchKeyEvent:event.os_event];
 }
 
 void NativeAppWindowCocoa::UpdateDraggableRegionViews() {

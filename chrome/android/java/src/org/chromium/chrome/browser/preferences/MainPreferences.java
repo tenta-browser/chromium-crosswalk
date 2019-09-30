@@ -21,11 +21,10 @@ import org.chromium.chrome.browser.contextual_suggestions.EnabledStateMonitor;
 import org.chromium.chrome.browser.net.spdyproxy.DataReductionProxySettings;
 import org.chromium.chrome.browser.partnercustomizations.HomepageManager;
 import org.chromium.chrome.browser.preferences.datareduction.DataReductionPreferences;
+import org.chromium.chrome.browser.search_engines.TemplateUrl;
 import org.chromium.chrome.browser.search_engines.TemplateUrlService;
-import org.chromium.chrome.browser.search_engines.TemplateUrlService.TemplateUrl;
 import org.chromium.chrome.browser.signin.SigninManager;
 import org.chromium.chrome.browser.util.FeatureUtilities;
-import org.chromium.ui.base.DeviceFormFactor;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -35,7 +34,9 @@ import java.util.Map;
  */
 public class MainPreferences extends PreferenceFragment
         implements SigninManager.SignInStateObserver, TemplateUrlService.LoadListener {
+    public static final String PREF_ACCOUNT_SECTION = "account_section";
     public static final String PREF_SIGN_IN = "sign_in";
+    public static final String PREF_SYNC_AND_SERVICES = "sync_and_services";
     public static final String PREF_AUTOFILL_SETTINGS = "autofill_settings";
     public static final String PREF_SEARCH_ENGINE = "search_engine";
     public static final String PREF_SAVED_PASSWORDS = "saved_passwords";
@@ -93,8 +94,15 @@ public class MainPreferences extends PreferenceFragment
 
     private void createPreferences() {
         PreferenceUtils.addPreferencesFromResource(this, R.xml.main_preferences);
-
         cachePreferences();
+
+        if (ChromeFeatureList.isEnabled(ChromeFeatureList.UNIFIED_CONSENT)) {
+            mSignInPreference.setOnStateChangedCallback(this::onSignInPreferenceStateChanged);
+        } else {
+            getPreferenceScreen().removePreference(findPreference(PREF_ACCOUNT_SECTION));
+            getPreferenceScreen().removePreference(findPreference(PREF_SYNC_AND_SERVICES));
+        }
+
         setManagedPreferenceDelegateForPreference(PREF_SEARCH_ENGINE);
         setManagedPreferenceDelegateForPreference(PREF_AUTOFILL_SETTINGS);
         setManagedPreferenceDelegateForPreference(PREF_SAVED_PASSWORDS);
@@ -173,13 +181,15 @@ public class MainPreferences extends PreferenceFragment
 
         if (HomepageManager.shouldShowHomepageSetting()) {
             Preference homepagePref = addPreferenceIfAbsent(PREF_HOMEPAGE);
+            if (FeatureUtilities.isNewTabPageButtonEnabled()) {
+                homepagePref.setTitle(R.string.options_startup_page_title);
+            }
             setOnOffSummary(homepagePref, HomepageManager.getInstance().getPrefHomepageEnabled());
         } else {
             removePreferenceIfPresent(PREF_HOMEPAGE);
         }
 
-        boolean isTablet = DeviceFormFactor.isNonMultiDisplayContextOnTablet(getActivity());
-        if (FeatureUtilities.isContextualSuggestionsBottomSheetEnabled(isTablet)
+        if (FeatureUtilities.areContextualSuggestionsEnabled(getActivity())
                 && EnabledStateMonitor.shouldShowSettings()) {
             Preference contextualSuggesitons = addPreferenceIfAbsent(PREF_CONTEXTUAL_SUGGESTIONS);
             setOnOffSummary(contextualSuggesitons, EnabledStateMonitor.getEnabledState());
@@ -238,6 +248,15 @@ public class MainPreferences extends PreferenceFragment
         updatePreferences();
     }
 
+    private void onSignInPreferenceStateChanged() {
+        // Remove "Account" section header if the personalized sign-in promo is shown.
+        if (mSignInPreference.getState() == SignInPreference.State.PERSONALIZED_PROMO) {
+            removePreferenceIfPresent(PREF_ACCOUNT_SECTION);
+        } else {
+            addPreferenceIfAbsent(PREF_ACCOUNT_SECTION);
+        }
+    }
+
     // TemplateUrlService.LoadListener implementation.
     @Override
     public void onTemplateUrlServiceLoaded() {
@@ -255,7 +274,8 @@ public class MainPreferences extends PreferenceFragment
             @Override
             public boolean isPreferenceControlledByPolicy(Preference preference) {
                 if (PREF_AUTOFILL_SETTINGS.equals(preference.getKey())) {
-                    return PersonalDataManager.isAutofillManaged();
+                    return PersonalDataManager.isAutofillProfileManaged()
+                            || PersonalDataManager.isAutofillCreditCardManaged();
                 }
                 if (PREF_SAVED_PASSWORDS.equals(preference.getKey())) {
                     return PrefServiceBridge.getInstance().isRememberPasswordsManaged();
@@ -272,8 +292,12 @@ public class MainPreferences extends PreferenceFragment
             @Override
             public boolean isPreferenceClickDisabledByPolicy(Preference preference) {
                 if (PREF_AUTOFILL_SETTINGS.equals(preference.getKey())) {
-                    return PersonalDataManager.isAutofillManaged()
-                            && !PersonalDataManager.isAutofillEnabled();
+                    // The whole "Autofill and payments" page is disabled by policy if profiles and
+                    // credit cards are both disabled by policy.
+                    return PersonalDataManager.isAutofillProfileManaged()
+                            && PersonalDataManager.isAutofillCreditCardManaged()
+                            && !PersonalDataManager.isAutofillProfileEnabled()
+                            && !PersonalDataManager.isAutofillCreditCardEnabled();
                 }
                 if (PREF_SAVED_PASSWORDS.equals(preference.getKey())) {
                     PrefServiceBridge prefs = PrefServiceBridge.getInstance();
@@ -288,7 +312,8 @@ public class MainPreferences extends PreferenceFragment
                 if (PREF_SEARCH_ENGINE.equals(preference.getKey())) {
                     return TemplateUrlService.getInstance().isDefaultSearchManaged();
                 }
-                return super.isPreferenceClickDisabledByPolicy(preference);
+                return isPreferenceControlledByPolicy(preference)
+                        || isPreferenceControlledByCustodian(preference);
             }
         };
     }

@@ -25,6 +25,7 @@
 #include "services/network/public/mojom/request_context_frame_type.mojom.h"
 #include "storage/browser/blob/blob_storage_context.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/blink/public/common/service_worker/service_worker_utils.h"
 
 namespace content {
 namespace service_worker_request_handler_unittest {
@@ -119,6 +120,11 @@ class ServiceWorkerRequestHandlerTest : public testing::Test {
                                    const std::string& method,
                                    bool skip_service_worker,
                                    ResourceType resource_type) {
+    // Skip handler initialization tests when S13nServiceWorker is enabled
+    // because we don't use this path. See also comments in
+    // ServiceWorkerRequestHandler::InitializeHandler().
+    if (blink::ServiceWorkerUtils::IsServicificationEnabled())
+      return;
     InitializeProviderHostForWindow();
     std::unique_ptr<net::URLRequest> request = CreateRequest(url, method);
     InitializeHandler(request.get(), skip_service_worker, resource_type);
@@ -129,6 +135,20 @@ class ServiceWorkerRequestHandlerTest : public testing::Test {
 
   void InitializeHandlerForNavigationSimpleTest(const std::string& url,
                                                 bool expected_handler_created) {
+    bool handler_created = false;
+    if (blink::ServiceWorkerUtils::IsServicificationEnabled()) {
+      handler_created = InitializeHandlerForNavigationNetworkService(
+          url, expected_handler_created);
+    } else {
+      handler_created = InitializeHandlerForNavigationNonNetworkService(
+          url, expected_handler_created);
+    }
+    EXPECT_EQ(expected_handler_created, handler_created);
+  }
+
+  bool InitializeHandlerForNavigationNonNetworkService(
+      const std::string& url,
+      bool expected_handler_created) {
     std::unique_ptr<ServiceWorkerNavigationHandleCore> navigation_handle_core =
         CreateNavigationHandleCore(helper_->context_wrapper());
     std::unique_ptr<net::URLRequest> request = CreateRequest(url, "GET");
@@ -136,9 +156,27 @@ class ServiceWorkerRequestHandlerTest : public testing::Test {
         request.get(), navigation_handle_core.get(), &blob_storage_context_,
         false /* skip_service_worker */, RESOURCE_TYPE_MAIN_FRAME,
         REQUEST_CONTEXT_TYPE_HYPERLINK,
-        network::mojom::RequestContextFrameType::kTopLevel, true,
-        nullptr /* body */, base::RepeatingCallback<WebContents*(void)>());
-    EXPECT_EQ(expected_handler_created, !!GetHandler(request.get()));
+        network::mojom::RequestContextFrameType::kTopLevel,
+        true /* is_parent_frame_secure */, nullptr /* body */,
+        base::RepeatingCallback<WebContents*(void)>());
+    return !!GetHandler(request.get());
+  }
+
+  bool InitializeHandlerForNavigationNetworkService(
+      const std::string& url,
+      bool expected_handler_created) {
+    std::unique_ptr<ServiceWorkerNavigationHandleCore> navigation_handle_core =
+        CreateNavigationHandleCore(helper_->context_wrapper());
+    std::unique_ptr<NavigationLoaderInterceptor> interceptor =
+        ServiceWorkerRequestHandler::InitializeForNavigationNetworkService(
+            GURL(url), nullptr /* resource_context */,
+            navigation_handle_core.get(), &blob_storage_context_,
+            false /* skip_service_worker */, RESOURCE_TYPE_MAIN_FRAME,
+            REQUEST_CONTEXT_TYPE_HYPERLINK,
+            network::mojom::RequestContextFrameType::kTopLevel,
+            true /* is_parent_frame_secure */, nullptr /* body */,
+            base::RepeatingCallback<WebContents*(void)>());
+    return !!interceptor.get();
   }
 
   TestBrowserThreadBundle browser_thread_bundle_;

@@ -4,6 +4,8 @@
 
 #include "ash/wm/drag_window_resizer.h"
 
+#include <utility>
+
 #include "ash/display/mouse_cursor_event_filter.h"
 #include "ash/shell.h"
 #include "ash/wm/drag_window_controller.h"
@@ -23,6 +25,17 @@
 #include "ui/wm/core/window_util.h"
 
 namespace ash {
+namespace {
+
+void RecursiveSchedulePainter(ui::Layer* layer) {
+  if (!layer)
+    return;
+  layer->SchedulePaint(gfx::Rect(layer->size()));
+  for (auto* child : layer->children())
+    RecursiveSchedulePainter(child);
+}
+
+}  // namespace
 
 // static
 DragWindowResizer* DragWindowResizer::instance_ = NULL;
@@ -35,12 +48,6 @@ DragWindowResizer::~DragWindowResizer() {
   shell->mouse_cursor_filter()->HideSharedEdgeIndicator();
   if (instance_ == this)
     instance_ = NULL;
-}
-
-// static
-DragWindowResizer* DragWindowResizer::Create(WindowResizer* next_window_resizer,
-                                             wm::WindowState* window_state) {
-  return new DragWindowResizer(next_window_resizer, window_state);
 }
 
 void DragWindowResizer::Drag(const gfx::Point& location, int event_flags) {
@@ -66,6 +73,10 @@ void DragWindowResizer::CompleteDrag() {
 
   GetTarget()->layer()->SetOpacity(details().initial_opacity);
   drag_window_controller_.reset();
+
+  // TODO(malaykeshav) - This is temporary fix/workaround that keeps performance
+  // but may not give the best UI while dragging. See https://crbug/834114
+  RecursiveSchedulePainter(GetTarget()->layer());
 
   // Check if the destination is another display.
   gfx::Point last_mouse_location_in_screen = last_mouse_location_;
@@ -114,10 +125,11 @@ void DragWindowResizer::RevertDrag() {
   GetTarget()->layer()->SetOpacity(details().initial_opacity);
 }
 
-DragWindowResizer::DragWindowResizer(WindowResizer* next_window_resizer,
-                                     wm::WindowState* window_state)
+DragWindowResizer::DragWindowResizer(
+    std::unique_ptr<WindowResizer> next_window_resizer,
+    wm::WindowState* window_state)
     : WindowResizer(window_state),
-      next_window_resizer_(next_window_resizer),
+      next_window_resizer_(std::move(next_window_resizer)),
       weak_ptr_factory_(this) {
   // The pointer should be confined in one display during resizing a window
   // because the window cannot span two displays at the same time anyway. The

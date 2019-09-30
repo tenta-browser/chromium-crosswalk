@@ -51,9 +51,6 @@ using bookmarks::BookmarkNode;
 using bookmarks::BookmarkNodeData;
 using content::WebContents;
 
-DEFINE_WEB_CONTENTS_USER_DATA_KEY(
-    extensions::BookmarkManagerPrivateDragEventRouter);
-
 namespace extensions {
 
 namespace bookmark_keys = bookmark_api_constants;
@@ -552,7 +549,8 @@ bool BookmarkManagerPrivateStartDragFunction::RunOnReady() {
   if (!EditBookmarksEnabled())
     return false;
 
-  if (GetViewType(GetSenderWebContents()) != VIEW_TYPE_TAB_CONTENTS) {
+  content::WebContents* web_contents = GetSenderWebContents();
+  if (GetViewType(web_contents) != VIEW_TYPE_TAB_CONTENTS) {
     NOTREACHED();
     return false;
   }
@@ -565,9 +563,6 @@ bool BookmarkManagerPrivateStartDragFunction::RunOnReady() {
   std::vector<const BookmarkNode*> nodes;
   if (!GetNodesFromVector(model, params->id_list, &nodes))
     return false;
-
-  content::WebContents* web_contents = GetAssociatedWebContents();
-  CHECK(web_contents);
 
   ui::DragDropTypes::DragEventSource source =
       ui::DragDropTypes::DRAG_EVENT_SOURCE_MOUSE;
@@ -594,7 +589,8 @@ bool BookmarkManagerPrivateDropFunction::RunOnReady() {
   if (!CanBeModified(drop_parent))
     return false;
 
-  if (GetViewType(GetSenderWebContents()) != VIEW_TYPE_TAB_CONTENTS) {
+  content::WebContents* web_contents = GetSenderWebContents();
+  if (GetViewType(web_contents) != VIEW_TYPE_TAB_CONTENTS) {
     NOTREACHED();
     return false;
   }
@@ -605,8 +601,6 @@ bool BookmarkManagerPrivateDropFunction::RunOnReady() {
   else
     drop_index = drop_parent->child_count();
 
-  WebContents* web_contents = GetAssociatedWebContents();
-  CHECK(web_contents);
   BookmarkManagerPrivateDragEventRouter* router =
       BookmarkManagerPrivateDragEventRouter::FromWebContents(web_contents);
 

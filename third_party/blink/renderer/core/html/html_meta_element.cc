@@ -27,6 +27,7 @@
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/frame/local_frame_client.h"
 #include "third_party/blink/renderer/core/frame/settings.h"
+#include "third_party/blink/renderer/core/frame/viewport_data.h"
 #include "third_party/blink/renderer/core/html/html_head_element.h"
 #include "third_party/blink/renderer/core/html/parser/html_parser_idioms.h"
 #include "third_party/blink/renderer/core/html_names.h"
@@ -304,6 +305,20 @@ float HTMLMetaElement::ParseViewportValueAsDPI(Document* document,
   return value;
 }
 
+blink::mojom::ViewportFit HTMLMetaElement::ParseViewportFitValueAsEnum(
+    bool& unknown_value,
+    const String& value_string) {
+  if (DeprecatedEqualIgnoringCase(value_string, "auto"))
+    return mojom::ViewportFit::kAuto;
+  if (DeprecatedEqualIgnoringCase(value_string, "contain"))
+    return mojom::ViewportFit::kContain;
+  if (DeprecatedEqualIgnoringCase(value_string, "cover"))
+    return mojom::ViewportFit::kCover;
+
+  unknown_value = true;
+  return mojom::ViewportFit::kAuto;
+}
+
 void HTMLMetaElement::ProcessViewportKeyValuePair(
     Document* document,
     bool report_warnings,
@@ -352,7 +367,17 @@ void HTMLMetaElement::ProcessViewportKeyValuePair(
   } else if (key_string == "minimal-ui") {
     // Ignore vendor-specific argument.
   } else if (key_string == "viewport-fit") {
-    // Ignore vendor-specific argument.
+    if (RuntimeEnabledFeatures::DisplayCutoutAPIEnabled()) {
+      bool unknown_value = false;
+      description->SetViewportFit(
+          ParseViewportFitValueAsEnum(unknown_value, value_string));
+
+      // If we got an unknown value then report a warning.
+      if (unknown_value) {
+        ReportViewportWarning(document, kViewportFitUnsupported, value_string,
+                              String());
+      }
+    }
   } else if (key_string == "shrink-to-fit") {
     // Ignore vendor-specific argument.
   } else if (report_warnings) {
@@ -371,6 +396,7 @@ static const char* ViewportErrorMessageTemplate(ViewportErrorCode error_code) {
       "The value for key \"maximum-scale\" is out of bounds and the value has "
       "been clamped.",
       "The key \"target-densitydpi\" is not supported.",
+      "The value \"%replacement1\" for key \"viewport-fit\" is not supported.",
   };
 
   return kErrors[error_code];
@@ -383,6 +409,7 @@ static MessageLevel ViewportErrorMessageLevel(ViewportErrorCode error_code) {
     case kUnrecognizedViewportArgumentKeyError:
     case kUnrecognizedViewportArgumentValueError:
     case kMaximumScaleTooLargeError:
+    case kViewportFitUnsupported:
       return kWarningMessageLevel;
   }
 
@@ -425,24 +452,26 @@ void HTMLMetaElement::GetViewportDescriptionFromContentAttribute(
     description.min_zoom = std::min(description.min_zoom, float(5));
   }
 }
+
 void HTMLMetaElement::ProcessViewportContentAttribute(
     const String& content,
     ViewportDescription::Type origin) {
   DCHECK(!content.IsNull());
 
-  if (!GetDocument().ShouldOverrideLegacyDescription(origin))
+  ViewportData& viewport_data = GetDocument().GetViewportData();
+  if (!viewport_data.ShouldOverrideLegacyDescription(origin))
     return;
 
   ViewportDescription description_from_legacy_tag(origin);
-  if (GetDocument().ShouldMergeWithLegacyDescription(origin))
-    description_from_legacy_tag = GetDocument().GetViewportDescription();
+  if (viewport_data.ShouldMergeWithLegacyDescription(origin))
+    description_from_legacy_tag = viewport_data.GetViewportDescription();
 
   GetViewportDescriptionFromContentAttribute(
       content, description_from_legacy_tag, &GetDocument(),
       GetDocument().GetSettings() &&
           GetDocument().GetSettings()->GetViewportMetaZeroValuesQuirk());
 
-  GetDocument().SetViewportDescription(description_from_legacy_tag);
+  viewport_data.SetViewportDescription(description_from_legacy_tag);
 }
 
 void HTMLMetaElement::ParseAttribute(
@@ -457,7 +486,7 @@ void HTMLMetaElement::ParseAttribute(
 }
 
 Node::InsertionNotificationRequest HTMLMetaElement::InsertedInto(
-    ContainerNode* insertion_point) {
+    ContainerNode& insertion_point) {
   HTMLElement::InsertedInto(insertion_point);
   return kInsertionShouldCallDidNotifySubtreeInsertions;
 }

@@ -30,13 +30,15 @@ class DrmOverlayManager : public OverlayManagerOzone {
   std::unique_ptr<OverlayCandidatesOzone> CreateOverlayCandidates(
       gfx::AcceleratedWidget w) override;
 
+  bool SupportsOverlays() const override;
+
   // Invoked on changes to the window (aka display) that require re-populating
   // the cache from the DRM thread.
   void ResetCache();
 
   // Communication-free implementations of actions performed in response to
   // messages from the GPU thread.
-  void GpuSentOverlayResult(const gfx::AcceleratedWidget& widget,
+  void GpuSentOverlayResult(gfx::AcceleratedWidget widget,
                             const OverlaySurfaceCandidateList& params,
                             const OverlayStatusList& returns);
 
@@ -44,6 +46,8 @@ class DrmOverlayManager : public OverlayManagerOzone {
   void CheckOverlaySupport(
       OverlayCandidatesOzone::OverlaySurfaceCandidateList* candidates,
       gfx::AcceleratedWidget widget);
+
+  void set_supports_overlays(bool yes) { supports_overlays_ = yes; }
 
  private:
   // Value for the request cache, that keeps track of how many times a
@@ -62,6 +66,9 @@ class DrmOverlayManager : public OverlayManagerOzone {
       gfx::AcceleratedWidget widget) const;
   bool CanHandleCandidate(const OverlaySurfaceCandidate& candidate,
                           gfx::AcceleratedWidget widget) const;
+
+  // Whether we have DRM atomic capabilities and we can support HW overlays.
+  bool supports_overlays_ = false;
 
   GpuThreadAdapter* proxy_;               // Not owned.
   DrmWindowHostManager* window_manager_;  // Not owned.

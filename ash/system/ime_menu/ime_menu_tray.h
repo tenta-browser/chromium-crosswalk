@@ -18,6 +18,7 @@
 #include "ui/views/bubble/tray_bubble_view.h"
 
 namespace views {
+class ImageView;
 class Label;
 }  // namespace views
 
@@ -72,8 +73,7 @@ class ASH_EXPORT ImeMenuTray : public TrayBackgroundView,
   void HideBubble(const views::TrayBubbleView* bubble_view) override;
 
   // keyboard::KeyboardControllerObserver:
-  void OnKeyboardClosed() override;
-  void OnKeyboardHidden() override;
+  void OnKeyboardHidden(bool is_temporary_hide) override;
 
   // VirtualKeyboardObserver:
   void OnKeyboardSuppressionChanged(bool suppressed) override;
@@ -87,12 +87,8 @@ class ASH_EXPORT ImeMenuTray : public TrayBackgroundView,
 
   // Updates the text of the label on the tray.
   void UpdateTrayLabel();
-
-  // Disables the virtual keyboard.
-  void DisableVirtualKeyboard();
-
-  // Show the virtual keyboard.
-  void ShowKeyboard();
+  void CreateLabel();
+  void CreateImageView();
 
   ImeController* ime_controller_;
 
@@ -100,9 +96,10 @@ class ASH_EXPORT ImeMenuTray : public TrayBackgroundView,
   std::unique_ptr<TrayBubbleWrapper> bubble_;
   ImeListView* ime_list_view_;
 
+  // Only one of |label_| and |image_view_| can be non null at the same time.
   views::Label* label_;
-  bool show_keyboard_;
-  bool force_show_keyboard_;
+  views::ImageView* image_view_;
+
   bool keyboard_suppressed_;
   bool show_bubble_after_keyboard_hidden_;
   bool is_emoji_enabled_;

@@ -60,10 +60,6 @@ public class OMADownloadHandlerTest {
         public boolean mSucceeded;
         public boolean mFailed;
 
-        public MockDownloadSnackbarController() {
-            super(null);
-        }
-
         public void waitForSnackbarControllerToFinish(final boolean success) {
             CriteriaHelper.pollInstrumentationThread(
                     new Criteria("Failed while waiting for all calls to complete.") {
@@ -296,14 +292,13 @@ public class OMADownloadHandlerTest {
 
         DownloadManagerDelegate downloadManagerDelegate = new DownloadManagerDelegate(context);
         DownloadQueryResultVerifier verifier =
-                new DownloadQueryResultVerifier(DownloadManagerService.DOWNLOAD_STATUS_COMPLETE);
+                new DownloadQueryResultVerifier(DownloadManagerService.DownloadStatus.COMPLETE);
         downloadManagerDelegate.queryDownloadResult(downloadItem, false, verifier);
         waitForQueryCompletion(verifier);
 
         manager.remove(downloadId1);
         downloadItem.setSystemDownloadId(downloadId1);
-        verifier =
-                new DownloadQueryResultVerifier(DownloadManagerService.DOWNLOAD_STATUS_CANCELLED);
+        verifier = new DownloadQueryResultVerifier(DownloadManagerService.DownloadStatus.CANCELLED);
         downloadManagerDelegate.queryDownloadResult(downloadItem, false, verifier);
         waitForQueryCompletion(verifier);
     }

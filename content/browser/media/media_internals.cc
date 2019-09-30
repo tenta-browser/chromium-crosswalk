@@ -16,7 +16,8 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "build/build_config.h"
-#include "content/browser/media/mojo_audio_logging_adapter.h"
+#include "content/browser/media/session/audio_focus_manager.h"
+#include "content/browser/media/session/media_session_impl.h"
 #include "content/browser/renderer_host/media/media_stream_manager.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_thread.h"
@@ -118,7 +119,8 @@ const char kAudioLogUpdateFunction[] = "media.updateAudioComponent";
 
 namespace content {
 
-class AudioLogImpl : public media::mojom::AudioLog {
+class MediaInternals::AudioLogImpl : public media::mojom::AudioLog,
+                                     public media::AudioLog {
  public:
   AudioLogImpl(int owner_id,
                media::AudioLogFactory::AudioComponent component,
@@ -136,6 +138,7 @@ class AudioLogImpl : public media::mojom::AudioLog {
   void OnError() override;
   void OnSetVolume(double volume) override;
   void OnLogMessage(const std::string& message) override;
+  void OnProcessingStateChanged(const std::string& message) override;
 
  private:
   // If possible, i.e. a WebContents exists for the given RenderFrameHostID,
@@ -164,12 +167,13 @@ class AudioLogImpl : public media::mojom::AudioLog {
   DISALLOW_COPY_AND_ASSIGN(AudioLogImpl);
 };
 
-AudioLogImpl::AudioLogImpl(int owner_id,
-                           media::AudioLogFactory::AudioComponent component,
-                           content::MediaInternals* media_internals,
-                           int component_id,
-                           int render_process_id,
-                           int render_frame_id)
+MediaInternals::AudioLogImpl::AudioLogImpl(
+    int owner_id,
+    media::AudioLogFactory::AudioComponent component,
+    content::MediaInternals* media_internals,
+    int component_id,
+    int render_process_id,
+    int render_frame_id)
     : owner_id_(owner_id),
       component_(component),
       media_internals_(media_internals),
@@ -177,10 +181,16 @@ AudioLogImpl::AudioLogImpl(int owner_id,
       render_process_id_(render_process_id),
       render_frame_id_(render_frame_id) {}
 
-AudioLogImpl::~AudioLogImpl() {}
+MediaInternals::AudioLogImpl::~AudioLogImpl() {
+  // Ensure log is always closed. This covers the case of crashes in the audio
+  // service utility process, in which case the log may not be closed
+  // explicitly.
+  OnClosed();
+}
 
-void AudioLogImpl::OnCreated(const media::AudioParameters& params,
-                             const std::string& device_id) {
+void MediaInternals::AudioLogImpl::OnCreated(
+    const media::AudioParameters& params,
+    const std::string& device_id) {
   base::DictionaryValue dict;
   StoreComponentMetadata(&dict);
 
@@ -199,15 +209,15 @@ void AudioLogImpl::OnCreated(const media::AudioParameters& params,
   SetWebContentsTitle();
 }
 
-void AudioLogImpl::OnStarted() {
+void MediaInternals::AudioLogImpl::OnStarted() {
   SendSingleStringUpdate(kAudioLogStatusKey, "started");
 }
 
-void AudioLogImpl::OnStopped() {
+void MediaInternals::AudioLogImpl::OnStopped() {
   SendSingleStringUpdate(kAudioLogStatusKey, "stopped");
 }
 
-void AudioLogImpl::OnClosed() {
+void MediaInternals::AudioLogImpl::OnClosed() {
   base::DictionaryValue dict;
   StoreComponentMetadata(&dict);
   dict.SetString(kAudioLogStatusKey, "closed");
@@ -216,11 +226,11 @@ void AudioLogImpl::OnClosed() {
                                    &dict);
 }
 
-void AudioLogImpl::OnError() {
+void MediaInternals::AudioLogImpl::OnError() {
   SendSingleStringUpdate("error_occurred", "true");
 }
 
-void AudioLogImpl::OnSetVolume(double volume) {
+void MediaInternals::AudioLogImpl::OnSetVolume(double volume) {
   base::DictionaryValue dict;
   StoreComponentMetadata(&dict);
   dict.SetDouble("volume", volume);
@@ -229,11 +239,16 @@ void AudioLogImpl::OnSetVolume(double volume) {
                                    &dict);
 }
 
-void AudioLogImpl::OnLogMessage(const std::string& message) {
+void MediaInternals::AudioLogImpl::OnProcessingStateChanged(
+    const std::string& message) {
+  SendSingleStringUpdate("processing state", message);
+}
+
+void MediaInternals::AudioLogImpl::OnLogMessage(const std::string& message) {
   MediaStreamManager::SendMessageToNativeLog(message);
 }
 
-void AudioLogImpl::SetWebContentsTitle() {
+void MediaInternals::AudioLogImpl::SetWebContentsTitle() {
   if (render_process_id_ < 0 || render_frame_id_ < 0)
     return;
   std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
@@ -242,12 +257,12 @@ void AudioLogImpl::SetWebContentsTitle() {
                              render_process_id_, render_frame_id_);
 }
 
-std::string AudioLogImpl::FormatCacheKey() {
+std::string MediaInternals::AudioLogImpl::FormatCacheKey() {
   return base::StringPrintf("%d:%d:%d", owner_id_, component_, component_id_);
 }
 
 // static
-void AudioLogImpl::SendWebContentsTitleHelper(
+void MediaInternals::AudioLogImpl::SendWebContentsTitleHelper(
     const std::string& cache_key,
     std::unique_ptr<base::DictionaryValue> dict,
     int render_process_id,
@@ -275,8 +290,9 @@ void AudioLogImpl::SendWebContentsTitleHelper(
       dict.get());
 }
 
-void AudioLogImpl::SendSingleStringUpdate(const std::string& key,
-                                          const std::string& value) {
+void MediaInternals::AudioLogImpl::SendSingleStringUpdate(
+    const std::string& key,
+    const std::string& value) {
   base::DictionaryValue dict;
   StoreComponentMetadata(&dict);
   dict.SetString(key, value);
@@ -285,7 +301,8 @@ void AudioLogImpl::SendSingleStringUpdate(const std::string& key,
                                    &dict);
 }
 
-void AudioLogImpl::StoreComponentMetadata(base::DictionaryValue* dict) {
+void MediaInternals::AudioLogImpl::StoreComponentMetadata(
+    base::DictionaryValue* dict) {
   dict->SetInteger("owner_id", owner_id_);
   dict->SetInteger("component_id", component_id_);
   dict->SetInteger("component_type", component_);
@@ -322,6 +339,7 @@ class MediaInternals::MediaInternalsUMAHandler {
     std::string audio_codec_name;
     std::string video_codec_name;
     std::string video_decoder;
+    bool is_platform_video_decoder = false;
     GURL origin_url;
   };
 
@@ -410,6 +428,10 @@ void MediaInternals::MediaInternalsUMAHandler::SavePlayerState(
           player_info.video_decoder_changed = true;
         }
       }
+      if (event.params.HasKey("is_platform_video_decoder")) {
+        event.params.GetBoolean("is_platform_video_decoder",
+                                &player_info.is_platform_video_decoder);
+      }
       if (event.params.HasKey("video_dds")) {
         event.params.GetBoolean("video_dds", &player_info.video_dds);
       }
@@ -469,7 +491,10 @@ std::string MediaInternals::MediaInternalsUMAHandler::GetUMANameForAVStream(
     uma_name += "DDS.";
   }
 
-  if (player_info.video_decoder == media::GpuVideoDecoder::kDecoderName) {
+  // Note that HW essentailly means 'platform' anyway. MediaCodec has been
+  // reported as HW forever, regardless of the underlying platform
+  // implementation.
+  if (player_info.is_platform_video_decoder) {
     uma_name += "HW";
   } else {
     uma_name += "SW";
@@ -628,6 +653,8 @@ void MediaInternals::AddUpdateCallback(const UpdateCallback& callback) {
 
   base::AutoLock auto_lock(lock_);
   can_update_ = true;
+
+  RegisterAudioFocusObserver();
 }
 
 void MediaInternals::RemoveUpdateCallback(const UpdateCallback& callback) {
@@ -641,6 +668,9 @@ void MediaInternals::RemoveUpdateCallback(const UpdateCallback& callback) {
 
   base::AutoLock auto_lock(lock_);
   can_update_ = !update_callbacks_.empty();
+
+  if (!can_update_)
+    UnregisterAudioFocusObserver();
 }
 
 bool MediaInternals::CanUpdate() {
@@ -681,6 +711,35 @@ void MediaInternals::SendVideoCaptureDeviceCapabilities() {
                              &video_capture_capabilities_cached_data_));
 }
 
+void MediaInternals::SendAudioFocusState() {
+#if !defined(OS_ANDROID)
+  if (!CanUpdate())
+    return;
+
+  base::DictionaryValue audio_focus_data;
+  const std::list<AudioFocusManager::StackRow>& stack =
+      AudioFocusManager::GetInstance()->audio_focus_stack_;
+
+  // We should go backwards through the stack so the top of the stack is always
+  // shown first in the list.
+  base::ListValue stack_data;
+  for (auto iter = stack.rbegin(); iter != stack.rend(); ++iter) {
+    MediaSessionImpl::DebugInfo debug_info =
+        (*iter).media_session->GetDebugInfo();
+    base::DictionaryValue media_session_data;
+    media_session_data.SetKey("name", base::Value(debug_info.name));
+    media_session_data.SetKey("owner", base::Value(debug_info.owner));
+    media_session_data.SetKey("state", base::Value(debug_info.state));
+    stack_data.GetList().push_back(std::move(media_session_data));
+  }
+
+  audio_focus_data.SetKey("sessions", std::move(stack_data));
+
+  SendUpdate(
+      SerializeUpdate("media.onReceiveAudioFocusState", &audio_focus_data));
+#endif  // !defined(OS_ANDROID)
+}
+
 void MediaInternals::UpdateVideoCaptureDeviceCapabilities(
     const std::vector<std::tuple<media::VideoCaptureDeviceDescriptor,
                                  media::VideoCaptureFormats>>&
@@ -719,8 +778,7 @@ void MediaInternals::UpdateVideoCaptureDeviceCapabilities(
 std::unique_ptr<media::AudioLog> MediaInternals::CreateAudioLog(
     AudioComponent component,
     int component_id) {
-  return std::make_unique<MojoAudioLogAdapter>(
-      CreateMojoAudioLog(component, component_id));
+  return CreateAudioLogImpl(component, component_id, -1, MSG_ROUTING_NONE);
 }
 
 media::mojom::AudioLogPtr MediaInternals::CreateMojoAudioLog(
@@ -728,17 +786,57 @@ media::mojom::AudioLogPtr MediaInternals::CreateMojoAudioLog(
     int component_id,
     int render_process_id,
     int render_frame_id) {
-  base::AutoLock auto_lock(lock_);
   media::mojom::AudioLogPtr audio_log_ptr;
-  mojo::MakeStrongBinding(std::make_unique<AudioLogImpl>(
-                              owner_ids_[component]++, component, this,
-                              component_id, render_process_id, render_frame_id),
-                          mojo::MakeRequest(&audio_log_ptr));
+  CreateMojoAudioLog(component, component_id, mojo::MakeRequest(&audio_log_ptr),
+                     render_process_id, render_frame_id);
   return audio_log_ptr;
+}
+
+void MediaInternals::CreateMojoAudioLog(
+    media::AudioLogFactory::AudioComponent component,
+    int component_id,
+    media::mojom::AudioLogRequest request,
+    int render_process_id,
+    int render_frame_id) {
+  mojo::MakeStrongBinding(
+      CreateAudioLogImpl(component, component_id, render_process_id,
+                         render_frame_id),
+      std::move(request));
+}
+
+std::unique_ptr<MediaInternals::AudioLogImpl>
+MediaInternals::CreateAudioLogImpl(
+    media::AudioLogFactory::AudioComponent component,
+    int component_id,
+    int render_process_id,
+    int render_frame_id) {
+  base::AutoLock auto_lock(lock_);
+  return std::make_unique<AudioLogImpl>(owner_ids_[component]++, component,
+                                        this, component_id, render_process_id,
+                                        render_frame_id);
 }
 
 void MediaInternals::OnProcessTerminatedForTesting(int process_id) {
   uma_handler_->OnProcessTerminated(process_id);
+}
+
+void MediaInternals::OnFocusGained(
+    media_session::mojom::MediaSessionPtr media_session,
+    media_session::mojom::AudioFocusType type) {
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+
+  BrowserThread::PostTask(BrowserThread::UI, FROM_HERE,
+                          base::BindOnce(&MediaInternals::SendAudioFocusState,
+                                         base::Unretained(this)));
+}
+
+void MediaInternals::OnFocusLost(
+    media_session::mojom::MediaSessionPtr media_session) {
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+
+  BrowserThread::PostTask(BrowserThread::UI, FROM_HERE,
+                          base::BindOnce(&MediaInternals::SendAudioFocusState,
+                                         base::Unretained(this)));
 }
 
 void MediaInternals::SendUpdate(const base::string16& update) {

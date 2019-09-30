@@ -97,6 +97,12 @@ class DISPLAY_EXPORT ScreenWin : public Screen,
   // helps reduce any cascading rounding errors from DIP to the |hwnd|'s DPI.
   static int GetSystemMetricsForHwnd(HWND hwnd, int metric);
 
+  // Returns the result of GetSystemMetrics for |metric| scaled to |monitor|'s
+  // DPI. Use this function if you're already working with screen pixels, as
+  // this helps reduce any cascading rounding errors from DIP to the |monitor|'s
+  // DPI.
+  static int GetSystemMetricsForMonitor(HMONITOR monitor, int metric);
+
   // Returns the result of GetSystemMetrics for |metric| in DIP.
   // Use this function if you need to work in DIP and can tolerate cascading
   // rounding errors towards screen pixels.
@@ -114,7 +120,7 @@ class DISPLAY_EXPORT ScreenWin : public Screen,
 
   // Set a callback to use to query the status of HDR. This callback will be
   // called when the status of HDR may have changed.
-  using RequestHDRStatusCallback = base::Callback<void()>;
+  using RequestHDRStatusCallback = base::RepeatingCallback<void()>;
   static void SetRequestHDRStatusCallback(
       RequestHDRStatusCallback request_hdr_status_callback);
 
@@ -201,6 +207,10 @@ class DISPLAY_EXPORT ScreenWin : public Screen,
   template <typename Getter, typename GetterType>
   static ScreenWinDisplay GetScreenWinDisplayVia(Getter getter,
                                                  GetterType value);
+
+  // Returns the result of GetSystemMetrics for |metric| scaled to the specified
+  // |scale_factor|.
+  static int GetSystemMetricsForScaleFactor(float scale_factor, int metric);
 
   void RecordDisplayScaleFactors() const;
 

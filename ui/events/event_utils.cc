@@ -61,27 +61,20 @@ int RegisterCustomEventType() {
   return ++g_custom_event_types;
 }
 
+bool IsValidTimebase(base::TimeTicks now, base::TimeTicks timestamp) {
+  int64_t delta = (now - timestamp).InMilliseconds();
+  return delta >= 0 && delta <= 60 * 1000;
+}
+
 void ValidateEventTimeClock(base::TimeTicks* timestamp) {
-#if defined(USE_X11) || DCHECK_IS_ON()
-  if (base::debug::BeingDebugged())
-    return;
-
+  // Some fraction of devices, across all platforms provide bogus event
+  // timestamps. See https://crbug.com/650338#c1. Correct timestamps which are
+  // clearly bogus.
+  // TODO(861855): Replace this with an approach that doesn't require an extra
+  // read of the current time per event.
   base::TimeTicks now = EventTimeForNow();
-  int64_t delta = (now - *timestamp).InMilliseconds();
-  bool has_valid_timebase = delta >= 0 && delta <= 60 * 1000;
-
-#if defined(USE_X11)
-  // Restrict this correction to X11 which is known to provide bogus timestamps
-  // that require correction (crbug.com/611950).
-  if (!has_valid_timebase)
+  if (!IsValidTimebase(now, *timestamp))
     *timestamp = now;
-#else
-  DCHECK(has_valid_timebase)
-      << "Event timestamp (" << *timestamp << ") is not consistent with "
-      << "current time (" << now << ").";
-#endif
-
-#endif  // defined(USE_X11) || DCHECK_IS_ON()
 }
 
 bool ShouldDefaultToNaturalScroll() {
@@ -148,6 +141,73 @@ void ConvertEventLocationToTargetWindowLocation(
       located_event->location_f() + gfx::Vector2dF(offset);
   located_event->set_location_f(location_in_pixel_in_host);
   located_event->set_root_location_f(location_in_pixel_in_host);
+}
+
+const char* EventTypeName(EventType type) {
+  if (type >= ET_LAST)
+    return "";
+
+#define CASE_TYPE(t) \
+  case t:            \
+    return #t
+
+  switch (type) {
+    CASE_TYPE(ET_UNKNOWN);
+    CASE_TYPE(ET_MOUSE_PRESSED);
+    CASE_TYPE(ET_MOUSE_DRAGGED);
+    CASE_TYPE(ET_MOUSE_RELEASED);
+    CASE_TYPE(ET_MOUSE_MOVED);
+    CASE_TYPE(ET_MOUSE_ENTERED);
+    CASE_TYPE(ET_MOUSE_EXITED);
+    CASE_TYPE(ET_KEY_PRESSED);
+    CASE_TYPE(ET_KEY_RELEASED);
+    CASE_TYPE(ET_MOUSEWHEEL);
+    CASE_TYPE(ET_MOUSE_CAPTURE_CHANGED);
+    CASE_TYPE(ET_TOUCH_RELEASED);
+    CASE_TYPE(ET_TOUCH_PRESSED);
+    CASE_TYPE(ET_TOUCH_MOVED);
+    CASE_TYPE(ET_TOUCH_CANCELLED);
+    CASE_TYPE(ET_DROP_TARGET_EVENT);
+    CASE_TYPE(ET_POINTER_DOWN);
+    CASE_TYPE(ET_POINTER_MOVED);
+    CASE_TYPE(ET_POINTER_UP);
+    CASE_TYPE(ET_POINTER_CANCELLED);
+    CASE_TYPE(ET_POINTER_ENTERED);
+    CASE_TYPE(ET_POINTER_EXITED);
+    CASE_TYPE(ET_POINTER_WHEEL_CHANGED);
+    CASE_TYPE(ET_POINTER_CAPTURE_CHANGED);
+    CASE_TYPE(ET_GESTURE_SCROLL_BEGIN);
+    CASE_TYPE(ET_GESTURE_SCROLL_END);
+    CASE_TYPE(ET_GESTURE_SCROLL_UPDATE);
+    CASE_TYPE(ET_GESTURE_SHOW_PRESS);
+    CASE_TYPE(ET_GESTURE_TAP);
+    CASE_TYPE(ET_GESTURE_TAP_DOWN);
+    CASE_TYPE(ET_GESTURE_TAP_CANCEL);
+    CASE_TYPE(ET_GESTURE_BEGIN);
+    CASE_TYPE(ET_GESTURE_END);
+    CASE_TYPE(ET_GESTURE_TWO_FINGER_TAP);
+    CASE_TYPE(ET_GESTURE_PINCH_BEGIN);
+    CASE_TYPE(ET_GESTURE_PINCH_END);
+    CASE_TYPE(ET_GESTURE_PINCH_UPDATE);
+    CASE_TYPE(ET_GESTURE_LONG_PRESS);
+    CASE_TYPE(ET_GESTURE_LONG_TAP);
+    CASE_TYPE(ET_GESTURE_SWIPE);
+    CASE_TYPE(ET_GESTURE_TAP_UNCONFIRMED);
+    CASE_TYPE(ET_GESTURE_DOUBLE_TAP);
+    CASE_TYPE(ET_SCROLL);
+    CASE_TYPE(ET_SCROLL_FLING_START);
+    CASE_TYPE(ET_SCROLL_FLING_CANCEL);
+    CASE_TYPE(ET_CANCEL_MODE);
+    CASE_TYPE(ET_UMA_DATA);
+    case ET_LAST:
+      NOTREACHED();
+      return "";
+      // Don't include default, so that we get an error when new type is added.
+  }
+#undef CASE_TYPE
+
+  NOTREACHED();
+  return "";
 }
 
 }  // namespace ui

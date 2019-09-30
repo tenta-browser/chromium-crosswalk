@@ -57,6 +57,8 @@ bool g_accessibility_keyboard_enabled = false;
 
 bool g_hotrod_keyboard_enabled = false;
 
+bool g_keyboard_enabled_from_shelf = false;
+
 bool g_touch_keyboard_enabled = false;
 
 KeyboardState g_requested_keyboard_state = KEYBOARD_STATE_AUTO;
@@ -72,8 +74,8 @@ bool UpdateKeyboardConfig(const KeyboardConfig& keyboard_config) {
   if (g_keyboard_config == keyboard_config)
     return false;
   g_keyboard_config = keyboard_config;
-  keyboard::KeyboardController* controller = KeyboardController::GetInstance();
-  if (controller)
+  auto* controller = KeyboardController::Get();
+  if (controller->enabled())
     controller->NotifyKeyboardConfigChanged();
   return true;
 }
@@ -96,6 +98,14 @@ void SetHotrodKeyboardEnabled(bool enabled) {
 
 bool GetHotrodKeyboardEnabled() {
   return g_hotrod_keyboard_enabled;
+}
+
+void SetKeyboardEnabledFromShelf(bool enabled) {
+  g_keyboard_enabled_from_shelf = enabled;
+}
+
+bool GetKeyboardEnabledFromShelf() {
+  return g_keyboard_enabled_from_shelf;
 }
 
 void SetTouchKeyboardEnabled(bool enabled) {
@@ -124,6 +134,9 @@ bool IsKeyboardEnabled() {
   // Accessibility setting prioritized over policy setting.
   if (g_accessibility_keyboard_enabled)
     return true;
+  // Keyboard can be enabled temporarily by the shelf.
+  if (g_keyboard_enabled_from_shelf)
+    return true;
   // Policy strictly disables showing a virtual keyboard.
   if (g_keyboard_show_override == KEYBOARD_SHOW_OVERRIDE_DISABLED)
     return false;
@@ -143,8 +156,9 @@ bool IsKeyboardEnabled() {
 }
 
 bool IsKeyboardVisible() {
-  auto* keyboard_controller = keyboard::KeyboardController::GetInstance();
-  return keyboard_controller && keyboard_controller->keyboard_visible();
+  auto* keyboard_controller = keyboard::KeyboardController::Get();
+  return keyboard_controller->enabled() &&
+         keyboard_controller->IsKeyboardVisible();
 }
 
 bool IsKeyboardOverscrollEnabled() {
@@ -153,10 +167,9 @@ bool IsKeyboardOverscrollEnabled() {
 
   // Users of the sticky accessibility on-screen keyboard are likely to be using
   // mouse input, which may interfere with overscrolling.
-  if (keyboard::KeyboardController::GetInstance() &&
-      !keyboard::KeyboardController::GetInstance()->IsOverscrollAllowed()) {
+  if (keyboard::KeyboardController::Get()->enabled() &&
+      !keyboard::KeyboardController::Get()->IsOverscrollAllowed())
     return false;
-  }
 
   // If overscroll enabled override is set, use it instead. Currently
   // login / out-of-box disable keyboard overscroll. http://crbug.com/363635
@@ -194,6 +207,19 @@ bool IsFloatingVirtualKeyboardEnabled() {
   return base::FeatureList::IsEnabled(features::kEnableFloatingVirtualKeyboard);
 }
 
+bool IsFullscreenHandwritingVirtualKeyboardEnabled() {
+  return base::FeatureList::IsEnabled(
+      features::kEnableFullscreenHandwritingVirtualKeyboard);
+}
+
+bool IsStylusVirtualKeyboardEnabled() {
+  return base::FeatureList::IsEnabled(features::kEnableStylusVirtualKeyboard);
+}
+
+bool IsVirtualKeyboardMdUiEnabled() {
+  return base::FeatureList::IsEnabled(features::kEnableVirtualKeyboardMdUi);
+}
+
 bool IsGestureTypingEnabled() {
   return !base::CommandLine::ForCurrentProcess()->HasSwitch(
       switches::kDisableGestureTyping);
@@ -205,8 +231,8 @@ bool IsGestureEditingEnabled() {
 }
 
 bool InsertText(const base::string16& text) {
-  KeyboardController* controller = KeyboardController::GetInstance();
-  if (!controller)
+  auto* controller = KeyboardController::Get();
+  if (!controller->enabled())
     return false;
 
   ui::InputMethod* input_method = controller->ui()->GetInputMethod();
@@ -251,7 +277,7 @@ bool SendKeyEvent(const std::string type,
 
       SendProcessKeyEvent(ui::ET_KEY_PRESSED, host);
 
-      ui::KeyEvent char_event(key_value, code, ui::EF_NONE);
+      ui::KeyEvent char_event(key_value, code, ui::DomCode::NONE, ui::EF_NONE);
       if (tic)
         tic->InsertChar(char_event);
       SendProcessKeyEvent(ui::ET_KEY_RELEASED, host);

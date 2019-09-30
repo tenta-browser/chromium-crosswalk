@@ -20,34 +20,24 @@
         {
           "object": "LayoutSVGRect rect",
           "rect": [10, 2, 46, 23],
-          "reason": "appeared"
+          "reason": "chunk appeared"
         },
         {
           "object": "LayoutSVGRect rect",
           "rect": [10, 2, 46, 23],
-          "reason": "appeared"
+          "reason": "chunk appeared"
         },
         {
           "object": "LayoutSVGRect rect",
           "rect": [10, 32, 43, 18],
-          "reason": "disappeared"
+          "reason": "chunk disappeared"
         },
         {
           "object": "LayoutSVGRect rect",
           "rect": [10, 32, 43, 18],
-          "reason": "disappeared"
+          "reason": "chunk disappeared"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutSVGRect rect",
-      "reason": "style change"
-    },
-    {
-      "object": "LayoutSVGRect rect",
-      "reason": "full"
     }
   ]
 }

@@ -26,7 +26,6 @@
 #include "chrome/browser/offline_pages/test_request_coordinator_builder.h"
 #include "chrome/common/chrome_constants.h"
 #include "chrome/test/base/testing_profile.h"
-#include "components/offline_pages/core/background/network_quality_provider_stub.h"
 #include "components/offline_pages/core/background/request_coordinator.h"
 #include "components/offline_pages/core/client_namespace_constants.h"
 #include "components/offline_pages/core/model/offline_page_model_taskified.h"
@@ -138,8 +137,8 @@ OfflinePageUtilsTest::~OfflinePageUtilsTest() {}
 
 void OfflinePageUtilsTest::SetUp() {
   // Create a test web contents.
-  web_contents_.reset(content::WebContents::Create(
-      content::WebContents::CreateParams(profile())));
+  web_contents_ = content::WebContents::Create(
+      content::WebContents::CreateParams(profile()));
   OfflinePageTabHelper::CreateForWebContents(web_contents_.get());
 
   // Set up the factory for testing.
@@ -147,8 +146,6 @@ void OfflinePageUtilsTest::SetUp() {
       &profile_, BuildTestOfflinePageModel);
   RunUntilIdle();
 
-  NetworkQualityProviderStub::SetUserData(
-      &profile_, std::make_unique<NetworkQualityProviderStub>());
   RequestCoordinatorFactory::GetInstance()->SetTestingFactoryAndUse(
       &profile_, BuildTestRequestCoordinator);
   RunUntilIdle();

@@ -10,7 +10,7 @@
 #include <vector>
 
 #include "base/memory/ref_counted.h"
-#include "net/url_request/url_request_context_getter.h"
+#include "services/network/public/cpp/shared_url_loader_factory.h"
 
 class GURL;
 class PrefService;
@@ -92,8 +92,7 @@ class Configurator : public base::RefCountedThreadSafe<Configurator> {
   // Returns an empty string if no policy is in effect.
   virtual std::string GetDownloadPreference() const = 0;
 
-  // The source of contexts for all the url requests.
-  virtual scoped_refptr<net::URLRequestContextGetter> RequestContext()
+  virtual scoped_refptr<network::SharedURLLoaderFactory> URLLoaderFactory()
       const = 0;
 
   // Returns a new connector to the service manager. That connector is not bound
@@ -145,6 +144,10 @@ class Configurator : public base::RefCountedThreadSafe<Configurator> {
   // during the unpacking by the action runner. This is a dependency injection
   // feature to support testing.
   virtual std::vector<uint8_t> GetRunActionKeyHash() const = 0;
+
+  // Returns the app GUID with which Chrome is registered with Google Update, or
+  // an empty string if this brand does not integrate with Google Update.
+  virtual std::string GetAppGuid() const = 0;
 
  protected:
   friend class base::RefCountedThreadSafe<Configurator>;

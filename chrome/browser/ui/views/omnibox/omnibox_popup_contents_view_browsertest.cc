@@ -29,6 +29,7 @@
 #include "components/omnibox/browser/omnibox_popup_model.h"
 #include "content/public/test/test_utils.h"
 #include "ui/base/ui_base_switches.h"
+#include "ui/compositor/layer_animator.h"
 #include "ui/events/test/event_generator.h"
 #include "ui/gfx/color_palette.h"
 #include "ui/gfx/color_utils.h"
@@ -36,20 +37,18 @@
 #include "ui/views/widget/widget.h"
 
 #if defined(USE_AURA)
+#include "ui/aura/window.h"
 #include "ui/native_theme/native_theme_dark_aura.h"
+#include "ui/wm/core/window_properties.h"
 #endif
 
 #if defined(USE_X11)
 #include "ui/views/linux_ui/linux_ui.h"
 #endif
 
-#if defined(OS_CHROMEOS)
-#include "chrome/browser/chromeos/ash_config.h"
-#endif
-
 namespace {
 
-enum PopupType { WIDE, NARROW, ROUNDED };
+enum PopupType { WIDE, ROUNDED };
 
 // A View that positions itself over another View to intercept clicks.
 class ClickTrackingOverlayView : public views::View {
@@ -94,8 +93,6 @@ std::string PrintPopupType(const testing::TestParamInfo<PopupType>& info) {
   switch (info.param) {
     case WIDE:
       return "Wide";
-    case NARROW:
-      return "Narrow";
     case ROUNDED:
       return "Rounded";
   }
@@ -120,10 +117,6 @@ class OmniboxPopupContentsViewTest
             switches::kTopChromeMD,
             switches::kTopChromeMDMaterialTouchOptimized);
         break;
-      case NARROW:
-        feature_list_.InitAndEnableFeature(
-            omnibox::kUIExperimentNarrowDropdown);
-        FALLTHROUGH;
       default:
         // Cater for the touch-optimized UI being enabled by default by always
         // setting --top-chrome-md=material (the current default).
@@ -179,17 +172,19 @@ views::Widget* OmniboxPopupContentsViewTest::CreatePopupForTestQuery() {
 IN_PROC_BROWSER_TEST_P(OmniboxPopupContentsViewTest, PopupAlignment) {
   views::Widget* popup = CreatePopupForTestQuery();
 
+#if defined(USE_AURA)
+  popup_view()->UpdatePopupAppearance();
+  EXPECT_TRUE(
+      popup->GetNativeWindow()->GetProperty(wm::kSnapChildrenToPixelBoundary));
+#endif  // defined(USE_AURA)
+
   if (GetParam() == WIDE) {
     EXPECT_EQ(toolbar()->width(), popup->GetRestoredBounds().width());
-  } else if (GetParam() == NARROW) {
-    // Inset for the views::BubbleBorder::SMALL_SHADOW.
-    gfx::Insets border_insets = popup_view()->GetInsets();
-    EXPECT_EQ(location_bar()->width() + border_insets.width(),
-              popup->GetRestoredBounds().width());
   } else {
     gfx::Rect alignment_rect = location_bar()->GetBoundsInScreen();
     alignment_rect.Inset(
-        -RoundedOmniboxResultsFrame::kLocationBarAlignmentInsets);
+        -RoundedOmniboxResultsFrame::GetLocationBarAlignmentInsets());
+    alignment_rect.Inset(-RoundedOmniboxResultsFrame::GetShadowInsets());
     // Top, left and right should align. Bottom depends on the results.
     gfx::Rect popup_rect = popup->GetRestoredBounds();
     EXPECT_EQ(popup_rect.y(), alignment_rect.y());
@@ -324,20 +319,6 @@ IN_PROC_BROWSER_TEST_P(OmniboxPopupContentsViewTest, MAYBE_ThemeIntegration) {
     loader.LoadExtension(path);
   }
 
-#if defined(OS_CHROMEOS)
-  if (chromeos::GetAshConfig() == ash::Config::MASH) {
-    // http://crbug.com/704942: Incognito frames do not update correctly in
-    // Mash, so the old values remain. Check here so this is revisited when
-    // fixed, and bail out of the rest of the test.
-    if (GetParam() == ROUNDED)
-      EXPECT_EQ(rounded_selection_color_dark, get_selection_color());
-    else
-      EXPECT_EQ(legacy_dark_color, get_selection_color());
-
-    return;
-  }
-#endif
-
   // Check the incognito browser first. Everything should now be light and never
   // GTK.
   if (GetParam() == ROUNDED) {
@@ -441,42 +422,48 @@ IN_PROC_BROWSER_TEST_P(RoundedOmniboxPopupContentsViewTest,
 
   generator.ClickLeftButton();
   ASSERT_TRUE(GetPopupWidget());
+
+  // Instantly finish all queued animations.
+  GetPopupWidget()->GetLayer()->GetAnimator()->StopAnimating();
   EXPECT_TRUE(GetPopupWidget()->IsClosed());
 }
 
 // Check that, for the rounded popup, the location bar background (and the
-// background of the textfield it contains) changes when the popup opens, and
+// background of the textfield it contains) changes when it receives focus, and
 // matches the popup background color.
 IN_PROC_BROWSER_TEST_P(RoundedOmniboxPopupContentsViewTest,
                        PopupMatchesLocationBarBackground) {
-  const SkColor color_before_open = location_bar()->background()->get_color();
-  EXPECT_EQ(color_before_open, omnibox_view()->GetBackgroundColor());
+  // Start with the Omnibox unfocused.
+  omnibox_view()->GetFocusManager()->ClearFocus();
+  const SkColor color_before_focus = location_bar()->background()->get_color();
+  EXPECT_EQ(color_before_focus, omnibox_view()->GetBackgroundColor());
 
-  CreatePopupForTestQuery();
-  const SkColor color_after_open = location_bar()->background()->get_color();
+  // Give the Omnibox focus and get its focused color.
+  omnibox_view()->RequestFocus();
+  const SkColor color_after_focus = location_bar()->background()->get_color();
 
   // Sanity check that the colors are different, otherwise this test will not be
   // testing anything useful. It is possible that a particular theme could
   // configure these colors to be the same. In that case, this test should be
   // updated to detect that, or switch to a theme where they are different.
-  EXPECT_NE(color_before_open, color_after_open);
-
-  EXPECT_EQ(color_after_open, omnibox_view()->GetBackgroundColor());
+  EXPECT_NE(color_before_focus, color_after_focus);
+  EXPECT_EQ(color_after_focus, omnibox_view()->GetBackgroundColor());
 
   // For the rounded popup, the background is hosted in the view that contains
   // the results area.
+  CreatePopupForTestQuery();
   views::View* background_host = popup_view()->parent();
-  EXPECT_EQ(color_after_open, background_host->background()->get_color());
+  EXPECT_EQ(color_after_focus, background_host->background()->get_color());
 
-  // Closing the popup should restore the original colors.
-  edit_model()->StopAutocomplete();
-  EXPECT_EQ(color_before_open, location_bar()->background()->get_color());
-  EXPECT_EQ(color_before_open, omnibox_view()->GetBackgroundColor());
+  // Blurring the Omnibox should restore the original colors.
+  omnibox_view()->GetFocusManager()->ClearFocus();
+  EXPECT_EQ(color_before_focus, location_bar()->background()->get_color());
+  EXPECT_EQ(color_before_focus, omnibox_view()->GetBackgroundColor());
 }
 
 INSTANTIATE_TEST_CASE_P(,
                         OmniboxPopupContentsViewTest,
-                        ::testing::Values(WIDE, NARROW, ROUNDED),
+                        ::testing::Values(WIDE, ROUNDED),
                         &PrintPopupType);
 
 INSTANTIATE_TEST_CASE_P(,

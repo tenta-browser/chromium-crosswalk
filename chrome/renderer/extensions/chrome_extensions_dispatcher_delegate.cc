@@ -18,6 +18,7 @@
 #include "chrome/renderer/extensions/app_bindings.h"
 #include "chrome/renderer/extensions/app_hooks_delegate.h"
 #include "chrome/renderer/extensions/automation_internal_custom_bindings.h"
+#include "chrome/renderer/extensions/cast_streaming_native_handler.h"
 #include "chrome/renderer/extensions/extension_hooks_delegate.h"
 #include "chrome/renderer/extensions/media_galleries_custom_bindings.h"
 #include "chrome/renderer/extensions/notifications_native_handler.h"
@@ -51,10 +52,6 @@
 #include "third_party/blink/public/platform/web_url.h"
 #include "third_party/blink/public/web/web_security_policy.h"
 
-#if BUILDFLAG(ENABLE_WEBRTC)
-#include "chrome/renderer/extensions/cast_streaming_native_handler.h"
-#endif
-
 #if defined(OS_CHROMEOS)
 #include "chrome/renderer/extensions/file_browser_handler_custom_bindings.h"
 #include "chrome/renderer/extensions/file_manager_private_custom_bindings.h"
@@ -69,8 +66,8 @@ ChromeExtensionsDispatcherDelegate::ChromeExtensionsDispatcherDelegate() {
 ChromeExtensionsDispatcherDelegate::~ChromeExtensionsDispatcherDelegate() {
 }
 
-void ChromeExtensionsDispatcherDelegate::InitOriginPermissions(
-    const extensions::Extension* extension,
+void ChromeExtensionsDispatcherDelegate::AddOriginAccessPermissions(
+    const extensions::Extension& extension,
     bool is_extension_active) {
   // Allow component extensions to access chrome://theme/.
   //
@@ -79,21 +76,20 @@ void ChromeExtensionsDispatcherDelegate::InitOriginPermissions(
   // component extension somehow starts as inactive and becomes active later,
   // we'll re-init the origin permissions, so there's no danger in being
   // conservative.
-  if (extensions::Manifest::IsComponentLocation(extension->location()) &&
+  if (extensions::Manifest::IsComponentLocation(extension.location()) &&
       is_extension_active) {
-    blink::WebSecurityPolicy::AddOriginAccessWhitelistEntry(
-        extension->url(), blink::WebString::FromUTF8(content::kChromeUIScheme),
+    blink::WebSecurityPolicy::AddOriginAccessAllowListEntry(
+        extension.url(), blink::WebString::FromUTF8(content::kChromeUIScheme),
         blink::WebString::FromUTF8(chrome::kChromeUIThemeHost), false);
   }
 
   // TODO(jstritar): We should try to remove this special case. Also, these
   // whitelist entries need to be updated when the kManagement permission
   // changes.
-  if (is_extension_active &&
-      extension->permissions_data()->HasAPIPermission(
-          extensions::APIPermission::kManagement)) {
-    blink::WebSecurityPolicy::AddOriginAccessWhitelistEntry(
-        extension->url(), blink::WebString::FromUTF8(content::kChromeUIScheme),
+  if (is_extension_active && extension.permissions_data()->HasAPIPermission(
+                                 extensions::APIPermission::kManagement)) {
+    blink::WebSecurityPolicy::AddOriginAccessAllowListEntry(
+        extension.url(), blink::WebString::FromUTF8(content::kChromeUIScheme),
         blink::WebString::FromUTF8(chrome::kChromeUIExtensionIconHost), false);
   }
 }
@@ -138,12 +134,10 @@ void ChromeExtensionsDispatcherDelegate::RegisterNativeHandlers(
   module_system->RegisterNativeHandler(
       "webstore", std::unique_ptr<NativeHandler>(
                       new extensions::WebstoreBindings(context)));
-#if BUILDFLAG(ENABLE_WEBRTC)
   module_system->RegisterNativeHandler(
       "cast_streaming_natives",
       std::make_unique<extensions::CastStreamingNativeHandler>(
           context, bindings_system));
-#endif
   module_system->RegisterNativeHandler(
       "automationInternal",
       std::make_unique<extensions::AutomationInternalCustomBindings>(
@@ -233,9 +227,14 @@ void ChromeExtensionsDispatcherDelegate::PopulateSourceMap(
   source_map->RegisterSource("platformKeys.utils", IDR_PLATFORM_KEYS_UTILS_JS);
   source_map->RegisterSource("terminalPrivate",
                              IDR_TERMINAL_PRIVATE_CUSTOM_BINDINGS_JS);
+
+  // IME service on Chrome OS.
+  source_map->RegisterSource("chromeos.ime.mojom.input_engine.mojom",
+                             IDR_IME_SERVICE_MOJOM_JS);
+  source_map->RegisterSource("chromeos.ime.service",
+                             IDR_IME_SERVICE_BINDINGS_JS);
 #endif  // defined(OS_CHROMEOS)
 
-#if BUILDFLAG(ENABLE_WEBRTC)
   source_map->RegisterSource("cast.streaming.rtpStream",
                              IDR_CAST_STREAMING_RTP_STREAM_CUSTOM_BINDINGS_JS);
   source_map->RegisterSource("cast.streaming.session",
@@ -246,14 +245,11 @@ void ChromeExtensionsDispatcherDelegate::PopulateSourceMap(
   source_map->RegisterSource(
       "cast.streaming.receiverSession",
       IDR_CAST_STREAMING_RECEIVER_SESSION_CUSTOM_BINDINGS_JS);
-#endif
   source_map->RegisterSource(
       "webrtcDesktopCapturePrivate",
       IDR_WEBRTC_DESKTOP_CAPTURE_PRIVATE_CUSTOM_BINDINGS_JS);
-#if BUILDFLAG(ENABLE_WEBRTC)
   source_map->RegisterSource("webrtcLoggingPrivate",
                              IDR_WEBRTC_LOGGING_PRIVATE_CUSTOM_BINDINGS_JS);
-#endif
   source_map->RegisterSource("webstore", IDR_WEBSTORE_CUSTOM_BINDINGS_JS);
 
 
@@ -287,6 +283,18 @@ void ChromeExtensionsDispatcherDelegate::PopulateSourceMap(
   source_map->RegisterSource(
       "media/mojo/interfaces/mirror_service_remoting.mojom",
       IDR_MEDIA_REMOTING_JS);
+  source_map->RegisterSource(
+      "components/mirroring/mojom/mirroring_service_host.mojom",
+      IDR_MIRRORING_SERVICE_HOST_MOJOM_JS);
+  source_map->RegisterSource(
+      "components/mirroring/mojom/cast_message_channel.mojom",
+      IDR_MIRRORING_CAST_MESSAGE_CHANNEL_MOJOM_JS);
+  source_map->RegisterSource(
+      "components/mirroring/mojom/session_observer.mojom",
+      IDR_MIRRORING_SESSION_OBSERVER_MOJOM_JS);
+  source_map->RegisterSource(
+      "components/mirroring/mojom/session_parameters.mojom",
+      IDR_MIRRORING_SESSION_PARAMETERS_JS);
 
   // These bindings are unnecessary with native bindings enabled.
   if (!base::FeatureList::IsEnabled(extensions::features::kNativeCrxBindings)) {

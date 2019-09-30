@@ -5,7 +5,7 @@
 #include "components/safe_browsing/browser/safe_browsing_url_request_context_getter.h"
 
 #include "base/single_thread_task_runner.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "components/safe_browsing/common/safebrowsing_constants.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/cookie_store_factory.h"
@@ -30,6 +30,7 @@ SafeBrowsingURLRequestContextGetter::SafeBrowsingURLRequestContextGetter(
       network_task_runner_(
           BrowserThread::GetTaskRunnerForThread(BrowserThread::IO)) {
   DCHECK(!user_data_dir.empty());
+  DCHECK(system_context_getter_);
 }
 
 net::URLRequestContext*
@@ -42,14 +43,11 @@ SafeBrowsingURLRequestContextGetter::GetURLRequestContext() {
 
   if (!safe_browsing_request_context_) {
     safe_browsing_request_context_.reset(new net::URLRequestContext());
-    // May be NULL in unit tests.
-    if (system_context_getter_) {
-      safe_browsing_request_context_->CopyFrom(
-          system_context_getter_->GetURLRequestContext());
-    }
+    safe_browsing_request_context_->CopyFrom(
+        system_context_getter_->GetURLRequestContext());
     scoped_refptr<base::SequencedTaskRunner> background_task_runner =
         base::CreateSequencedTaskRunnerWithTraits(
-            {base::MayBlock(), base::TaskPriority::BACKGROUND,
+            {base::MayBlock(), base::TaskPriority::BEST_EFFORT,
              base::TaskShutdownBehavior::BLOCK_SHUTDOWN});
     // Set up the ChannelIDService
     scoped_refptr<net::SQLiteChannelIDStore> channel_id_db =
@@ -63,7 +61,8 @@ SafeBrowsingURLRequestContextGetter::GetURLRequestContext() {
                                              nullptr);
     cookie_config.channel_id_service = channel_id_service_.get();
     cookie_config.background_task_runner = background_task_runner;
-    safe_browsing_cookie_store_ = content::CreateCookieStore(cookie_config);
+    safe_browsing_cookie_store_ =
+        content::CreateCookieStore(cookie_config, nullptr /* netlog */);
     safe_browsing_request_context_->set_cookie_store(
         safe_browsing_cookie_store_.get());
 

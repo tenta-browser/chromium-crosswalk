@@ -11,6 +11,7 @@
 #include "base/logging.h"
 #include "base/threading/sequenced_task_runner_handle.h"
 #include "components/autofill/core/common/password_form.h"
+#include "components/password_manager/core/browser/login_database.h"
 #include "components/password_manager/core/browser/psl_matching_helper.h"
 #include "components/password_manager/core/browser/statistics_table.h"
 #include "url/gurl.h"
@@ -88,6 +89,7 @@ PasswordStoreChangeList TestPasswordStore::RemoveLoginImpl(
 
 std::vector<std::unique_ptr<autofill::PasswordForm>>
 TestPasswordStore::FillMatchingLogins(const FormDigest& form) {
+  ++fill_matching_logins_calls_;
   std::vector<std::unique_ptr<autofill::PasswordForm>> matched_forms;
   for (const auto& elements : stored_passwords_) {
     // The code below doesn't support PSL federated credential. It's doable but
@@ -136,6 +138,10 @@ bool TestPasswordStore::FillBlacklistLogins(
     }
   }
   return true;
+}
+
+DatabaseCleanupResult TestPasswordStore::DeleteUndecryptableLogins() {
+  return DatabaseCleanupResult::kSuccess;
 }
 
 std::vector<std::unique_ptr<autofill::PasswordForm>>

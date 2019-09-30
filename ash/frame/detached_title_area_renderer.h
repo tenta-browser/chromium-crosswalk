@@ -15,12 +15,11 @@
 #include "ui/views/widget/widget_delegate.h"
 
 namespace aura {
+class PropertyConverter;
 class Window;
 }
 
 namespace ash {
-
-class WindowManager;
 
 // This class is used to support immersive fullscreen mode.
 //
@@ -44,12 +43,13 @@ class WindowManager;
 // the immersive logic, including positioning of the reveal window.
 //
 // DetachedTitleAreaRenderer comes in two variants.
-// DetachedTitleAreaRendererForClient is used for clients that need to draw
+// 1. DetachedTitleAreaRendererForClient is used for clients that need to draw
 // into the non-client area of the widget (case 2). For example, Chrome browser
 // windows draw into the non-client area of tabbed browser widgets (the tab
 // strip is in the non-client area). In such a case
-// DetachedTitleAreaRendererForClient is used.
-// If the client does not need to draw to the non-client area (case 1) then
+// DetachedTitleAreaRendererForClient is used. For these, Mash only draws the
+// window controls --- the frame is rendered by the client.
+// 2. If the client does not need to draw to the non-client area (case 1) then
 // DetachedTitleAreaRendererInternal is used (and ash controls the whole
 // immersive experience). Which is used is determined by
 // |kRenderParentTitleArea_Property|. If |kRenderParentTitleArea_Property| is
@@ -77,8 +77,8 @@ class DetachedTitleAreaRendererForClient : public views::WidgetDelegate {
  public:
   DetachedTitleAreaRendererForClient(
       aura::Window* parent,
-      std::map<std::string, std::vector<uint8_t>>* properties,
-      WindowManager* window_manager);
+      aura::PropertyConverter* property_converter,
+      std::map<std::string, std::vector<uint8_t>>* properties);
 
   static DetachedTitleAreaRendererForClient* ForWindow(aura::Window* window);
 
@@ -90,6 +90,7 @@ class DetachedTitleAreaRendererForClient : public views::WidgetDelegate {
   views::Widget* widget() { return widget_; }
 
   // views::WidgetDelegate:
+  bool CanActivate() const override;
   views::Widget* GetWidget() override;
   const views::Widget* GetWidget() const override;
   void DeleteDelegate() override;

@@ -13,13 +13,16 @@
 // corresponding changes must happen in the unit tests, and new migration test
 // added.  See |WebDatabaseMigrationTest::kCurrentTestedVersionNumber|.
 // static
-const int WebDatabase::kCurrentVersionNumber = 77;
+const int WebDatabase::kCurrentVersionNumber = 78;
 
 const int WebDatabase::kDeprecatedVersionNumber = 51;
 
+const base::FilePath::CharType WebDatabase::kInMemoryPath[] =
+    FILE_PATH_LITERAL(":memory");
+
 namespace {
 
-const int kCompatibleVersionNumber = 77;
+const int kCompatibleVersionNumber = 78;
 
 // Change the version number and possibly the compatibility version of
 // |meta_table_|.
@@ -69,7 +72,7 @@ std::string WebDatabase::GetDiagnosticInfo(int extended_error,
   return db_.GetDiagnosticInfo(extended_error, statement);
 }
 
-sql::Connection* WebDatabase::GetSQLConnection() {
+sql::Database* WebDatabase::GetSQLConnection() {
   return &db_;
 }
 
@@ -89,8 +92,10 @@ sql::InitStatus WebDatabase::Init(const base::FilePath& db_name) {
   // database while we're running, and this will give somewhat improved perf.
   db_.set_exclusive_locking();
 
-  if (!db_.Open(db_name))
+  if ((db_name.value() == kInMemoryPath) ? !db_.OpenInMemory()
+                                         : !db_.Open(db_name)) {
     return sql::INIT_FAILURE;
+  }
 
   // Clobber really old databases.
   static_assert(kDeprecatedVersionNumber < kCurrentVersionNumber,

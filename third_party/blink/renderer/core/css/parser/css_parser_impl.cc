@@ -266,8 +266,6 @@ void CSSParserImpl::ParseStyleSheet(const String& string,
         style_sheet->ParserAppendRule(rule);
       });
   style_sheet->SetHasSyntacticallyValidCSSHeader(first_rule_valid);
-  if (parser.lazy_state_)
-    parser.lazy_state_->FinishInitialParsing();
   TRACE_EVENT_END0("blink,blink_style", "CSSParserImpl::parseStyleSheet.parse");
 
   TRACE_EVENT_END2("blink,blink_style", "CSSParserImpl::parseStyleSheet",
@@ -822,7 +820,7 @@ StyleRule* CSSParserImpl::ConsumeStyleRule(CSSParserTokenStream& stream) {
     DCHECK(style_sheet_);
     return StyleRule::CreateLazy(
         std::move(selector_list),
-        lazy_state_->CreateLazyParser(stream.Offset() - 1));
+        new CSSLazyPropertyParserImpl(stream.Offset() - 1, lazy_state_));
   }
   ConsumeDeclarationList(stream, StyleRule::kStyle);
 
@@ -967,8 +965,8 @@ void CSSParserImpl::ConsumeVariableValue(CSSParserTokenRange range,
                                          bool important,
                                          bool is_animation_tainted) {
   if (CSSCustomPropertyDeclaration* value =
-          CSSVariableParser::ParseDeclarationValue(variable_name, range,
-                                                   is_animation_tainted)) {
+          CSSVariableParser::ParseDeclarationValue(
+              variable_name, range, is_animation_tainted, *context_)) {
     parsed_properties_.push_back(
         CSSPropertyValue(GetCSSPropertyVariable(), *value, important));
     context_->Count(context_->Mode(), CSSPropertyVariable);

@@ -12,14 +12,16 @@
 #include "base/logging.h"
 #include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
+#include "chrome/browser/content_settings/host_content_settings_map_factory.h"
 #include "chrome/browser/net/chrome_accept_language_settings.h"
-#include "chrome/browser/net/default_network_context_params.h"
 #include "chrome/browser/net/system_network_context_manager.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/chrome_constants.h"
 #include "chrome/common/chrome_content_client.h"
 #include "chrome/common/chrome_paths_internal.h"
 #include "chrome/common/pref_names.h"
+#include "components/content_settings/core/browser/host_content_settings_map.h"
+#include "components/content_settings/core/common/pref_names.h"
 #include "components/pref_registry/pref_registry_syncable.h"
 #include "components/prefs/pref_service.h"
 #include "content/public/browser/browser_context.h"
@@ -31,74 +33,97 @@
 #include "net/net_buildflags.h"
 #include "services/network/public/cpp/features.h"
 
-#if defined(OS_CHROMEOS)
-#include "chrome/browser/chromeos/policy/browser_policy_connector_chromeos.h"
-#endif
-
 ProfileNetworkContextService::ProfileNetworkContextService(Profile* profile)
     : profile_(profile), proxy_config_monitor_(profile) {
+  PrefService* profile_prefs = profile->GetPrefs();
   quic_allowed_.Init(
-      prefs::kQuicAllowed, profile->GetPrefs(),
+      prefs::kQuicAllowed, profile_prefs,
       base::Bind(&ProfileNetworkContextService::DisableQuicIfNotAllowed,
                  base::Unretained(this)));
   pref_accept_language_.Init(
-      prefs::kAcceptLanguages, profile->GetPrefs(),
+      prefs::kAcceptLanguages, profile_prefs,
       base::BindRepeating(&ProfileNetworkContextService::UpdateAcceptLanguage,
                           base::Unretained(this)));
-  // The system context must be initialized before any other network contexts.
-  // TODO(mmenke): Figure out a way to enforce this.
-  g_browser_process->system_network_context_manager()->GetContext();
+  enable_referrers_.Init(
+      prefs::kEnableReferrers, profile_prefs,
+      base::BindRepeating(&ProfileNetworkContextService::UpdateReferrersEnabled,
+                          base::Unretained(this)));
+  block_third_party_cookies_.Init(
+      prefs::kBlockThirdPartyCookies, profile_prefs,
+      base::BindRepeating(
+          &ProfileNetworkContextService::UpdateBlockThirdPartyCookies,
+          base::Unretained(this)));
   DisableQuicIfNotAllowed();
+
+  // Observe content settings so they can be synced to the network service.
+  HostContentSettingsMapFactory::GetForProfile(profile_)->AddObserver(this);
 }
 
 ProfileNetworkContextService::~ProfileNetworkContextService() {}
 
 network::mojom::NetworkContextPtr
-ProfileNetworkContextService::CreateMainNetworkContext() {
-  if (!base::FeatureList::IsEnabled(network::features::kNetworkService)) {
-    // |profile_io_data_main_network_context_| may be initialized if
-    // SetUpProfileIOdataMainContext was called first.
-    if (!profile_io_data_main_network_context_) {
-      profile_io_data_context_request_ =
-          mojo::MakeRequest(&profile_io_data_main_network_context_);
-    }
-    return std::move(profile_io_data_main_network_context_);
-  }
-
-  network::mojom::NetworkContextPtr network_context;
-  content::GetNetworkService()->CreateNetworkContext(
-      MakeRequest(&network_context), CreateMainNetworkContextParams());
-  return network_context;
-}
-
-network::mojom::NetworkContextPtr
-ProfileNetworkContextService::CreateNetworkContextForPartition(
+ProfileNetworkContextService::CreateNetworkContext(
     bool in_memory,
     const base::FilePath& relative_partition_path) {
-  DCHECK(base::FeatureList::IsEnabled(network::features::kNetworkService));
   network::mojom::NetworkContextPtr network_context;
+  PartitionInfo partition_info(in_memory, relative_partition_path);
+
+  if (!base::FeatureList::IsEnabled(network::features::kNetworkService)) {
+    // The corresponding |profile_io_data_network_contexts_| may already be
+    // initialized if SetUpProfileIODataNetworkContext was called first.
+    auto iter = profile_io_data_network_contexts_.find(partition_info);
+    if (iter == profile_io_data_network_contexts_.end()) {
+      // If this is not the main network context, then this method is expected
+      // to be called after the URLRequestContext is configured.
+      DCHECK(relative_partition_path.empty());
+      // If the NetworkContext has not been requested yet, go ahead and create a
+      // request for it.
+      profile_io_data_context_requests_[partition_info] =
+          mojo::MakeRequest(&network_context);
+    } else {
+      network_context = std::move(iter->second);
+      // This is not strictly necessary, since the network service can't crash,
+      // and NetworkContexts can't be destroyed without destroying the profile.
+      profile_io_data_network_contexts_.erase(iter);
+    }
+    return network_context;
+  }
+
   content::GetNetworkService()->CreateNetworkContext(
       MakeRequest(&network_context),
       CreateNetworkContextParams(in_memory, relative_partition_path));
   return network_context;
 }
 
-void ProfileNetworkContextService::SetUpProfileIODataMainContext(
+void ProfileNetworkContextService::SetUpProfileIODataNetworkContext(
+    bool in_memory,
+    const base::FilePath& relative_partition_path,
     network::mojom::NetworkContextRequest* network_context_request,
     network::mojom::NetworkContextParamsPtr* network_context_params) {
   DCHECK(network_context_request);
   DCHECK(network_context_params);
 
-  // This may be called either before or after CreateMainNetworkContext().
-  if (!profile_io_data_context_request_.is_pending()) {
+  PartitionInfo partition_info(in_memory, relative_partition_path);
+
+  // This may be called either before or after CreateNetworkContext().
+  auto iter = profile_io_data_context_requests_.find(partition_info);
+  if (iter == profile_io_data_context_requests_.end()) {
+    DCHECK(profile_io_data_network_contexts_.find(partition_info) ==
+           profile_io_data_network_contexts_.end());
     *network_context_request =
-        mojo::MakeRequest(&profile_io_data_main_network_context_);
+        mojo::MakeRequest(&profile_io_data_network_contexts_[partition_info]);
   } else {
-    *network_context_request = std::move(profile_io_data_context_request_);
+    DCHECK(relative_partition_path.empty());
+
+    *network_context_request = std::move(iter->second);
+    // Not strictly necessary, since this should only be called once per storage
+    // partition.
+    profile_io_data_context_requests_.erase(iter);
   }
 
   if (!base::FeatureList::IsEnabled(network::features::kNetworkService)) {
-    *network_context_params = CreateMainNetworkContextParams();
+    *network_context_params =
+        CreateNetworkContextParams(in_memory, relative_partition_path);
     return;
   }
 
@@ -125,9 +150,25 @@ void ProfileNetworkContextService::DisableQuicIfNotAllowed() {
 }
 
 void ProfileNetworkContextService::UpdateAcceptLanguage() {
-  content::BrowserContext::GetDefaultStoragePartition(profile_)
-      ->GetNetworkContext()
-      ->SetAcceptLanguage(ComputeAcceptLanguage());
+  content::BrowserContext::ForEachStoragePartition(
+      profile_, base::BindRepeating(
+                    [](const std::string& accept_language,
+                       content::StoragePartition* storage_partition) {
+                      storage_partition->GetNetworkContext()->SetAcceptLanguage(
+                          accept_language);
+                    },
+                    ComputeAcceptLanguage()));
+}
+
+void ProfileNetworkContextService::UpdateBlockThirdPartyCookies() {
+  content::BrowserContext::ForEachStoragePartition(
+      profile_, base::BindRepeating(
+                    [](bool block_third_party_cookies,
+                       content::StoragePartition* storage_partition) {
+                      storage_partition->GetCookieManagerForBrowserProcess()
+                          ->BlockThirdPartyCookies(block_third_party_cookies);
+                    },
+                    block_third_party_cookies_.GetValue()));
 }
 
 std::string ProfileNetworkContextService::ComputeAcceptLanguage() const {
@@ -135,34 +176,54 @@ std::string ProfileNetworkContextService::ComputeAcceptLanguage() const {
       pref_accept_language_.GetValue());
 }
 
-void ProfileNetworkContextService::FlushProxyConfigMonitorForTesting() {
-  proxy_config_monitor_.FlushForTesting();
+void ProfileNetworkContextService::UpdateReferrersEnabled() {
+  content::BrowserContext::ForEachStoragePartition(
+      profile_,
+      base::BindRepeating(
+          [](bool enable_referrers,
+             content::StoragePartition* storage_partition) {
+            storage_partition->GetNetworkContext()->SetEnableReferrers(
+                enable_referrers);
+          },
+          enable_referrers_.GetValue()));
 }
 
-network::mojom::NetworkContextParamsPtr
-ProfileNetworkContextService::CreateMainNetworkContextParams() {
-  return CreateNetworkContextParams(profile_->IsOffTheRecord(),
-                                    base::FilePath());
+void ProfileNetworkContextService::FlushProxyConfigMonitorForTesting() {
+  proxy_config_monitor_.FlushForTesting();
 }
 
 network::mojom::NetworkContextParamsPtr
 ProfileNetworkContextService::CreateNetworkContextParams(
     bool in_memory,
     const base::FilePath& relative_partition_path) {
-  // TODO(mmenke): Set up parameters here.
+  if (profile_->IsOffTheRecord())
+    in_memory = true;
+  base::FilePath path = profile_->GetPath();
+  bool is_main_partition = relative_partition_path.empty();
+  if (!is_main_partition)
+    path = path.Append(relative_partition_path);
+
   network::mojom::NetworkContextParamsPtr network_context_params =
-      CreateDefaultNetworkContextParams();
+      g_browser_process->system_network_context_manager()
+          ->CreateDefaultNetworkContextParams();
 
   network_context_params->context_name = std::string("main");
 
   network_context_params->accept_language = ComputeAcceptLanguage();
+  network_context_params->enable_referrers = enable_referrers_.GetValue();
 
   // Always enable the HTTP cache.
   network_context_params->http_cache_enabled = true;
 
-  base::FilePath path = profile_->GetPath();
-  if (!relative_partition_path.empty())
-    path = path.Append(relative_partition_path);
+  network_context_params->cookie_manager_params =
+      network::mojom::CookieManagerParams::New();
+  network_context_params->cookie_manager_params->block_third_party_cookies =
+      block_third_party_cookies_.GetValue();
+
+  ContentSettingsForOneType settings;
+  HostContentSettingsMapFactory::GetForProfile(profile_)->GetSettingsForOneType(
+      CONTENT_SETTINGS_TYPE_COOKIES, std::string(), &settings);
+  network_context_params->cookie_manager_params->settings = std::move(settings);
 
   // Configure on-disk storage for non-OTR profiles. OTR profiles just use
   // default behavior (in memory storage, default sizes).
@@ -192,7 +253,7 @@ ProfileNetworkContextService::CreateNetworkContextParams(
     channel_id_path = channel_id_path.Append(chrome::kChannelIDFilename);
     network_context_params->channel_id_path = channel_id_path;
 
-    if (relative_partition_path.empty()) {
+    if (is_main_partition) {
       network_context_params->restore_old_session_cookies =
           profile_->ShouldRestoreOldSessionCookies();
       network_context_params->persist_session_cookies =
@@ -202,6 +263,8 @@ ProfileNetworkContextService::CreateNetworkContextParams(
       network_context_params->restore_old_session_cookies = false;
       network_context_params->persist_session_cookies = false;
     }
+
+    network_context_params->transport_security_persister_path = path;
   }
 
   // NOTE(mmenke): Keep these protocol handlers and
@@ -209,26 +272,43 @@ ProfileNetworkContextService::CreateNetworkContextParams(
   // ProfileIOData::IsHandledProtocol().
   // TODO(mmenke): Find a better way of handling tracking supported schemes.
   network_context_params->enable_data_url_support = true;
-  network_context_params->enable_file_url_support = true;
+  // File support is needed for PAC scripts that use file or data URLs.
+  // TODO(crbug.com/839566): remove file support for all cases.
+  // It is disabled with the network service as it is not responsible for
+  // loading files.
+  if (!base::FeatureList::IsEnabled(network::features::kNetworkService))
+    network_context_params->enable_file_url_support = true;
 #if !BUILDFLAG(DISABLE_FTP_SUPPORT)
   network_context_params->enable_ftp_url_support = true;
 #endif  // !BUILDFLAG(DISABLE_FTP_SUPPORT)
 
   proxy_config_monitor_.AddToNetworkContextParams(network_context_params.get());
 
-#if defined(OS_POSIX) && !defined(OS_ANDROID) && !defined(OS_CHROMEOS)
-  if (prefs->FindPreference(prefs::kGSSAPILibraryName)) {
-    network_context_params->gssapi_library_name =
-        prefs->GetString(prefs::kGSSAPILibraryName);
-  }
-#endif
-
-#if defined(OS_CHROMEOS)
-  policy::BrowserPolicyConnectorChromeOS* connector =
-      g_browser_process->platform_part()->browser_policy_connector_chromeos();
-  network_context_params->allow_gssapi_library_load =
-      connector->IsActiveDirectoryManaged();
-#endif
+  network_context_params->enable_certificate_reporting = true;
+  network_context_params->enable_expect_ct_reporting = true;
 
   return network_context_params;
+}
+
+void ProfileNetworkContextService::OnContentSettingChanged(
+    const ContentSettingsPattern& primary_pattern,
+    const ContentSettingsPattern& secondary_pattern,
+    ContentSettingsType content_type,
+    const std::string& resource_identifier) {
+  if (content_type != CONTENT_SETTINGS_TYPE_COOKIES &&
+      content_type != CONTENT_SETTINGS_TYPE_DEFAULT) {
+    return;
+  }
+
+  ContentSettingsForOneType settings;
+  HostContentSettingsMapFactory::GetForProfile(profile_)->GetSettingsForOneType(
+      CONTENT_SETTINGS_TYPE_COOKIES, std::string(), &settings);
+  content::BrowserContext::ForEachStoragePartition(
+      profile_, base::BindRepeating(
+                    [](ContentSettingsForOneType settings,
+                       content::StoragePartition* storage_partition) {
+                      storage_partition->GetCookieManagerForBrowserProcess()
+                          ->SetContentSettings(settings);
+                    },
+                    settings));
 }

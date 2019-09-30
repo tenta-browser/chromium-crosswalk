@@ -47,13 +47,15 @@ class MODULES_EXPORT AXNodeObject : public AXObject {
  public:
   static AXNodeObject* Create(Node*, AXObjectCacheImpl&);
   ~AXNodeObject() override;
-  virtual void Trace(blink::Visitor*);
+  void Trace(blink::Visitor*) override;
 
  protected:
   bool children_dirty_;
 #if DCHECK_IS_ON()
   bool initialized_ = false;
 #endif
+  // The accessibility role, not taking ARIA into account.
+  AccessibilityRole native_role_;
 
   bool ComputeAccessibilityIsIgnored(IgnoredReasons* = nullptr) const override;
   const AXObject* InheritsPresentationalRoleFrom() const override;
@@ -64,7 +66,7 @@ class MODULES_EXPORT AXNodeObject : public AXObject {
   void AlterSliderOrSpinButtonValue(bool increase);
   AXObject* ActiveDescendant() override;
   String AriaAccessibilityDescription() const;
-  String AriaAutoComplete() const;
+  String AriaAutoComplete() const override;
   void AccessibilityChildrenFromAOMProperty(AOMRelationListProperty,
                                             AXObject::AXObjectVector&) const;
 
@@ -124,7 +126,7 @@ class MODULES_EXPORT AXNodeObject : public AXObject {
   AccessibilityExpanded IsExpanded() const override;
   bool IsModal() const final;
   bool IsRequired() const final;
-  bool IsControl() const;
+  bool IsControl() const override;
   AXRestriction Restriction() const override;
 
   // Properties of static elements.
@@ -157,6 +159,7 @@ class MODULES_EXPORT AXNodeObject : public AXObject {
   AccessibilityRole AriaRoleAttribute() const final;
 
   // AX name calculation.
+  String GetName(AXNameFrom&, AXObjectVector* name_objects) const override;
   String TextAlternative(bool recursive,
                          bool in_aria_labelled_by_traversal,
                          AXObjectSet& visited,
@@ -190,6 +193,10 @@ class MODULES_EXPORT AXNodeObject : public AXObject {
   bool CanHaveChildren() const override;
   void AddChild(AXObject*);
   void InsertChild(AXObject*, unsigned index);
+  void ClearChildren() override;
+  bool NeedsToUpdateChildren() const override { return children_dirty_; }
+  void SetNeedsToUpdateChildren() override { children_dirty_ = true; }
+  void UpdateChildrenIfNecessary() override;
 
   // DOM and Render tree access.
   Element* ActionElement() const override;

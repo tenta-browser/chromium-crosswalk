@@ -34,9 +34,12 @@
 namespace blink {
 
 StyleFetchedImage::StyleFetchedImage(const Document& document,
-                                     FetchParameters& params)
+                                     FetchParameters& params,
+                                     bool is_lazyload_possibly_deferred)
     : document_(&document), url_(params.Url()) {
   is_image_resource_ = true;
+  is_lazyload_possibly_deferred_ = is_lazyload_possibly_deferred;
+
   image_ = ImageResourceContent::Fetch(params, document_->Fetcher());
   image_->AddObserver(this);
   // ResourceFetcher is not determined from StyleFetchedImage and it is
@@ -93,7 +96,7 @@ FloatSize StyleFetchedImage::ImageSize(
   // border-image, etc.)
   //
   // https://drafts.csswg.org/css-images-3/#the-image-orientation
-  FloatSize size(image_->IntrinsicSize(kDoNotRespectImageOrientation));
+  FloatSize size(image->Size());
   return ApplyZoom(size, multiplier);
 }
 
@@ -116,7 +119,6 @@ void StyleFetchedImage::RemoveClient(ImageResourceObserver* observer) {
 void StyleFetchedImage::ImageNotifyFinished(ImageResourceContent*) {
   if (image_ && image_->HasImage()) {
     Image& image = *image_->GetImage();
-    Image::RecordCheckerableImageUMA(image, Image::ImageType::kCss);
 
     if (document_ && image.IsSVGImage())
       ToSVGImage(image).UpdateUseCounters(*document_);
@@ -141,6 +143,13 @@ scoped_refptr<Image> StyleFetchedImage::GetImage(
 bool StyleFetchedImage::KnownToBeOpaque(const Document&,
                                         const ComputedStyle&) const {
   return image_->GetImage()->CurrentFrameKnownToBeOpaque();
+}
+
+void StyleFetchedImage::LoadDeferredImage(const Document& document) {
+  DCHECK(is_lazyload_possibly_deferred_);
+  is_lazyload_possibly_deferred_ = false;
+  document_ = &document;
+  image_->LoadDeferredImage(document_->Fetcher());
 }
 
 void StyleFetchedImage::Trace(blink::Visitor* visitor) {

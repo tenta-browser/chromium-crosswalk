@@ -10,13 +10,13 @@
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/numerics/safe_conversions.h"
-#include "base/task_scheduler/post_task.h"
-#include "base/task_scheduler/task_traits.h"
+#include "base/task/post_task.h"
+#include "base/task/task_traits.h"
 #include "base/threading/thread_restrictions.h"
 #include "chrome/browser/media_galleries/chromeos/snapshot_file_details.h"
 #include "components/storage_monitor/storage_monitor.h"
 #include "content/public/browser/browser_thread.h"
-#include "device/media_transfer_protocol/media_transfer_protocol_manager.h"
+#include "services/device/public/mojom/mtp_manager.mojom.h"
 #include "third_party/cros_system_api/dbus/service_constants.h"
 
 using storage_monitor::StorageMonitor;
@@ -64,7 +64,7 @@ void MTPReadFileWorker::ReadDataChunkFromDeviceFile(
   // |snapshot_file_details| in the same_line.
   SnapshotFileDetails* snapshot_file_details_ptr = snapshot_file_details.get();
 
-  device::MediaTransferProtocolManager* mtp_device_manager =
+  auto* mtp_device_manager =
       StorageMonitor::GetInstance()->media_transfer_protocol_manager();
   mtp_device_manager->ReadFileChunk(
       device_handle_,
@@ -93,7 +93,7 @@ void MTPReadFileWorker::OnDidReadDataChunkFromDeviceFile(
   // |snapshot_file_details| in the same_line.
   SnapshotFileDetails* snapshot_file_details_ptr = snapshot_file_details.get();
   base::PostTaskWithTraitsAndReplyWithResult(
-      FROM_HERE, {base::MayBlock(), base::TaskPriority::BACKGROUND},
+      FROM_HERE, {base::MayBlock(), base::TaskPriority::BEST_EFFORT},
       base::Bind(&WriteDataChunkIntoSnapshotFileOnFileThread,
                  snapshot_file_details_ptr->snapshot_file_path(), data),
       base::Bind(&MTPReadFileWorker::OnDidWriteDataChunkIntoSnapshotFile,

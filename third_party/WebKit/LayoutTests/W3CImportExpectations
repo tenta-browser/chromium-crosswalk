@@ -12,12 +12,12 @@
 external/wpt/.codecov.yml [ Skip ]
 external/wpt/.gitmodules [ Skip ]
 external/wpt/.travis.yml [ Skip ]
+external/wpt/CODEOWNERS [ Skip ]
 external/wpt/WebIDL/invalid [ Skip ]
 external/wpt/WebIDL/readme.txt [ Skip ]
 external/wpt/WebIDL/testable_assertions.txt [ Skip ]
 external/wpt/WebIDL/valid [ Skip ]
 external/wpt/accname [ Skip ]
-external/wpt/ambient-light [ Skip ]
 external/wpt/annotation-model [ Skip ]
 external/wpt/annotation-protocol [ Skip ]
 external/wpt/annotation-vocab [ Skip ]
@@ -86,7 +86,6 @@ external/wpt/css/css-counter-styles [ Skip ]
 external/wpt/css/css-display/run-in [ Skip ]
 external/wpt/css/css-exclusions [ Skip ]
 external/wpt/css/css-gcpm [ Skip ]
-external/wpt/css/css-masking [ Skip ]
 external/wpt/css/css-page [ Skip ]
 external/wpt/css/css-regions [ Skip ]
 external/wpt/css/css-round-display [ Skip ]
@@ -108,7 +107,6 @@ external/wpt/css/vendor-imports/mozilla/mozilla-central-reftests/lists-3 [ Skip 
 external/wpt/css/vendor-imports/mozilla/mozilla-central-reftests/masking [ Skip ]
 external/wpt/css/vendor-imports/mozilla/mozilla-central-reftests/multicol3 [ Skip ]
 external/wpt/css/vendor-imports/mozilla/mozilla-central-reftests/ruby [ Skip ]
-external/wpt/css/vendor-imports/mozilla/mozilla-central-reftests/shapes1 [ Skip ]
 external/wpt/css/vendor-imports/mozilla/mozilla-central-reftests/sync-tests-filter [ Skip ]
 external/wpt/css/vendor-imports/mozilla/mozilla-central-reftests/sync-tests.sh [ Skip ]
 external/wpt/css/vendor-imports/mozilla/mozilla-central-reftests/text-decor-3 [ Skip ]
@@ -122,6 +120,8 @@ external/wpt/dpub-aam [ Skip ]
 external/wpt/dpub-aria [ Skip ]
 external/wpt/fonts/math [ Skip ]
 external/wpt/html-longdesc [ Skip ]
+external/wpt/infrastructure/metadata/infrastructure/browsers/firefox [ Skip ]
+external/wpt/infrastructure/browsers/firefox [ Skip ]
 external/wpt/js [ Skip ]
 external/wpt/mathml [ Skip ]
 external/wpt/old-tests [ Skip ]
@@ -157,7 +157,7 @@ external/wpt/html/rendering/replaced-elements/svg-embedded-sizing/svg-in-object-
 external/wpt/html/rendering/replaced-elements/svg-embedded-sizing/svg-in-object-percentage.html [ Skip ]
 
 # The wpt tools (including manifest and wptserve) are checked in to
-# webkitpy/thirdparty/wpt so that we can manually update them and keep
+# blinkpy/third_party/wpt so that we can manually update them and keep
 # a stable pinned version.
 external/wpt/tools [ Skip ]
 external/wpt/wpt [ Skip ]
@@ -454,3 +454,7 @@ external/wpt/uievents/order-of-events/mouse-events/click-order-manual.html [ Ski
 external/wpt/uievents/order-of-events/mouse-events/mouseevents-mousemove-manual.htm [ Skip ]
 external/wpt/uievents/order-of-events/mouse-events/mousemove-across-manual.html [ Skip ]
 external/wpt/uievents/order-of-events/mouse-events/mousemove-between-manual.html [ Skip ]
+
+# Tests that fail in content_shell but pass when run manually.
+third_party/WebKit/LayoutTests/external/wpt/client-hints/accept_ch_lifetime.https.html [ Skip ]
+third_party/WebKit/LayoutTests/external/wpt/client-hints/accept_ch.https.html [ Skip ]

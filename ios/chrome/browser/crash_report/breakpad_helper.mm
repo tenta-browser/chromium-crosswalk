@@ -17,7 +17,7 @@
 #include "base/logging.h"
 #include "base/path_service.h"
 #include "base/strings/sys_string_conversions.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "ios/chrome/browser/chrome_paths.h"
 #import "ios/chrome/browser/crash_report/crash_report_user_application_state.h"
 
@@ -132,8 +132,9 @@ void Start(const std::string& channel_name) {
   NSString* cachePath = [cachesDirectories objectAtIndex:0];
   NSString* dumpDirectory =
       [cachePath stringByAppendingPathComponent:@kDefaultLibrarySubdirectory];
-  PathService::Override(ios::DIR_CRASH_DUMPS,
-                        base::FilePath(base::SysNSStringToUTF8(dumpDirectory)));
+  base::PathService::Override(
+      ios::DIR_CRASH_DUMPS,
+      base::FilePath(base::SysNSStringToUTF8(dumpDirectory)));
 }
 
 void SetEnabled(bool enabled) {
@@ -164,9 +165,9 @@ bool IsUploadingEnabled() {
 
 void CleanupCrashReports() {
   base::FilePath crash_directory;
-  PathService::Get(ios::DIR_CRASH_DUMPS, &crash_directory);
+  base::PathService::Get(ios::DIR_CRASH_DUMPS, &crash_directory);
   base::PostTaskWithTraits(
-      FROM_HERE, {base::MayBlock(), base::TaskPriority::BACKGROUND},
+      FROM_HERE, {base::MayBlock(), base::TaskPriority::BEST_EFFORT},
       base::BindOnce(&DeleteAllReportsInDirectory, crash_directory));
 }
 

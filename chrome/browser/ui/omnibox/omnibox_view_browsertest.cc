@@ -8,7 +8,6 @@
 #include <memory>
 
 #include "base/macros.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/scoped_observer.h"
 #include "base/strings/string16.h"
@@ -34,6 +33,7 @@
 #include "chrome/test/base/interactive_test_utils.h"
 #include "chrome/test/base/search_test_utils.h"
 #include "chrome/test/base/ui_test_utils.h"
+#include "chrome/test/views/scoped_macviews_browser_mode.cc"
 #include "components/bookmarks/browser/bookmark_model.h"
 #include "components/bookmarks/browser/bookmark_utils.h"
 #include "components/bookmarks/test/bookmark_test_helpers.h"
@@ -43,6 +43,8 @@
 #include "components/omnibox/browser/history_quick_provider.h"
 #include "components/omnibox/browser/omnibox_popup_model.h"
 #include "components/omnibox/browser/omnibox_view.h"
+#include "components/policy/core/browser/browser_policy_connector.h"
+#include "components/policy/core/common/mock_configuration_policy_provider.h"
 #include "components/search_engines/template_url.h"
 #include "components/search_engines/template_url_service.h"
 #include "components/toolbar/test_toolbar_model.h"
@@ -158,6 +160,14 @@ class OmniboxViewTest : public InProcessBrowserTest,
     ASSERT_NO_FATAL_FAILURE(SetupComponents());
     chrome::FocusLocationBar(browser());
     ASSERT_TRUE(ui_test_utils::IsViewFocused(browser(), VIEW_ID_OMNIBOX));
+  }
+
+  void SetUp() override {
+    EXPECT_CALL(policy_provider_, IsInitializationComplete(testing::_))
+        .WillRepeatedly(testing::Return(true));
+    policy::BrowserPolicyConnector::SetPolicyProviderForTesting(
+        &policy_provider_);
+    InProcessBrowserTest::SetUp();
   }
 
   static void GetOmniboxViewForBrowser(
@@ -355,6 +365,11 @@ class OmniboxViewTest : public InProcessBrowserTest,
     }
 
     test_toolbar_model_->set_formatted_full_url(text);
+
+    // Normally the URL for display has portions elided. We aren't doing that in
+    // this case, because that is irrevelant for these tests.
+    test_toolbar_model_->set_url_for_display(text);
+
     omnibox_view->Update();
   }
 
@@ -372,7 +387,15 @@ class OmniboxViewTest : public InProcessBrowserTest,
     base::RunLoop::QuitCurrentWhenIdleDeprecated();
   }
 
+  policy::MockConfigurationPolicyProvider* policy_provider() {
+    return &policy_provider_;
+  }
+
  private:
+  policy::MockConfigurationPolicyProvider policy_provider_;
+
+  test::ScopedMacViewsBrowserMode views_mode_{true};
+
   // Non-owning pointer.
   TestToolbarModel* test_toolbar_model_ = nullptr;
 
@@ -676,7 +699,16 @@ IN_PROC_BROWSER_TEST_F(OmniboxViewTest, MAYBE_DesiredTLDWithTemporaryText) {
 }
 
 // See http://crbug.com/431575.
-IN_PROC_BROWSER_TEST_F(OmniboxViewTest, ClearUserTextAfterBackgroundCommit) {
+// Flaky on Mac (crbug.com/841195).
+#if defined(OS_MACOSX)
+#define MAYBE_ClearUserTextAfterBackgroundCommit \
+  DISABLED_ClearUserTextAfterBackgroundCommit
+#else
+#define MAYBE_ClearUserTextAfterBackgroundCommit \
+  ClearUserTextAfterBackgroundCommit
+#endif
+IN_PROC_BROWSER_TEST_F(OmniboxViewTest,
+                       MAYBE_ClearUserTextAfterBackgroundCommit) {
   OmniboxView* omnibox_view = NULL;
   ASSERT_NO_FATAL_FAILURE(GetOmniboxView(&omnibox_view));
 
@@ -815,7 +847,7 @@ IN_PROC_BROWSER_TEST_F(OmniboxViewTest, BasicTextOperations) {
 
   size_t start, end;
   omnibox_view->GetSelectionBounds(&start, &end);
-#if defined(OS_WIN) || defined(OS_LINUX)
+#if defined(TOOLKIT_VIEWS)
   // Views textfields select-all in reverse to show the leading text.
   std::swap(start, end);
 #endif
@@ -847,7 +879,7 @@ IN_PROC_BROWSER_TEST_F(OmniboxViewTest, BasicTextOperations) {
   omnibox_view->SelectAll(true);
   EXPECT_TRUE(omnibox_view->IsSelectAll());
   omnibox_view->GetSelectionBounds(&start, &end);
-#if defined(OS_WIN) || defined(OS_LINUX)
+#if defined(TOOLKIT_VIEWS)
   // Views textfields select-all in reverse to show the leading text.
   std::swap(start, end);
 #endif
@@ -982,6 +1014,25 @@ IN_PROC_BROWSER_TEST_F(OmniboxViewTest, AcceptKeywordByTypingQuestionMark) {
   EXPECT_EQ(base::string16(), omnibox_view->model()->keyword());
   EXPECT_FALSE(omnibox_view->model()->is_keyword_hint());
   EXPECT_FALSE(omnibox_view->model()->is_keyword_selected());
+}
+
+IN_PROC_BROWSER_TEST_F(OmniboxViewTest, SearchDisabledDontCrashOnQuestionMark) {
+  policy::PolicyMap policies;
+  policies.Set("DefaultSearchProviderEnabled", policy::POLICY_LEVEL_MANDATORY,
+               policy::POLICY_SCOPE_USER, policy::POLICY_SOURCE_PLATFORM,
+               std::make_unique<base::Value>(false), nullptr);
+  policy_provider()->UpdateChromePolicy(policies);
+  base::RunLoop().RunUntilIdle();
+
+  OmniboxView* omnibox_view = NULL;
+  ASSERT_NO_FATAL_FAILURE(GetOmniboxView(&omnibox_view));
+
+  base::string16 search_keyword(ASCIIToUTF16(kSearchKeyword));
+
+  ASSERT_NO_FATAL_FAILURE(SendKey(ui::VKEY_OEM_2, ui::EF_SHIFT_DOWN));
+  ASSERT_FALSE(omnibox_view->model()->is_keyword_hint());
+  ASSERT_FALSE(omnibox_view->model()->is_keyword_selected());
+  ASSERT_EQ(ASCIIToUTF16("?"), omnibox_view->GetText());
 }
 
 // Flaky on Windows and Linux. http://crbug.com/751543
@@ -1394,11 +1445,7 @@ IN_PROC_BROWSER_TEST_F(OmniboxViewTest, MAYBE_TabAcceptKeyword) {
   ASSERT_TRUE(omnibox_view->GetText().empty());
 
   // Revert to keyword hint mode with SHIFT+TAB.
-#if defined(OS_MACOSX)
-  ASSERT_NO_FATAL_FAILURE(SendKey(ui::VKEY_BACKTAB, 0));
-#else
   ASSERT_NO_FATAL_FAILURE(SendKey(ui::VKEY_TAB, ui::EF_SHIFT_DOWN));
-#endif
   ASSERT_TRUE(omnibox_view->model()->is_keyword_hint());
   ASSERT_EQ(text, omnibox_view->model()->keyword());
   ASSERT_EQ(text, omnibox_view->GetText());
@@ -1605,25 +1652,18 @@ IN_PROC_BROWSER_TEST_F(OmniboxViewTest, UndoRedo) {
       SendKey(ui::VKEY_Z, kCtrlOrCmdMask | ui::EF_SHIFT_DOWN));
   EXPECT_TRUE(omnibox_view->GetText().empty());
 
-  // The toolkit-views undo manager doesn't support restoring selection. Cocoa
-  // does, so it needs to be cleared.
+  // Perform an undo.
   ASSERT_NO_FATAL_FAILURE(SendKey(ui::VKEY_Z, kCtrlOrCmdMask));
-#if defined(OS_MACOSX)
-  // TODO(tapted): This next line may fail if running a toolkit-views browser
-  // window on Mac. We should fix the toolkit-views undo manager to restore
-  // selection rather than deleting this #ifdef.
   EXPECT_TRUE(omnibox_view->IsSelectAll());
-  ASSERT_NO_FATAL_FAILURE(SendKey(ui::VKEY_RIGHT, 0));
-#endif
-  EXPECT_FALSE(omnibox_view->IsSelectAll());
 
-  // The cursor should be at the end.
+  // The text should be selected.
   size_t start, end;
   omnibox_view->GetSelectionBounds(&start, &end);
   EXPECT_EQ(old_text.size(), start);
-  EXPECT_EQ(old_text.size(), end);
+  EXPECT_EQ(0U, end);
 
   // Delete three characters; "about:bl" should not trigger inline autocomplete.
+  ASSERT_NO_FATAL_FAILURE(SendKey(ui::VKEY_END, 0));
   ASSERT_NO_FATAL_FAILURE(SendKey(ui::VKEY_BACK, 0));
   ASSERT_NO_FATAL_FAILURE(SendKey(ui::VKEY_BACK, 0));
   ASSERT_NO_FATAL_FAILURE(SendKey(ui::VKEY_BACK, 0));

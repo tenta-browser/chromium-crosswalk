@@ -35,13 +35,11 @@
 
 #include "base/memory/scoped_refptr.h"
 #include "build/build_config.h"
-#include "third_party/blink/public/platform/web_display_mode.h"
+#include "third_party/blink/public/common/manifest/web_display_mode.h"
 #include "third_party/blink/public/platform/web_float_size.h"
-#include "third_party/blink/public/platform/web_gesture_curve_target.h"
 #include "third_party/blink/public/platform/web_gesture_event.h"
 #include "third_party/blink/public/platform/web_input_event.h"
 #include "third_party/blink/public/platform/web_input_event_result.h"
-#include "third_party/blink/public/platform/web_layer.h"
 #include "third_party/blink/public/platform/web_point.h"
 #include "third_party/blink/public/platform/web_rect.h"
 #include "third_party/blink/public/platform/web_size.h"
@@ -58,7 +56,6 @@
 #include "third_party/blink/renderer/core/page/event_with_hit_test_results.h"
 #include "third_party/blink/renderer/core/page/page_widget_delegate.h"
 #include "third_party/blink/renderer/core/page/scoped_page_pauser.h"
-#include "third_party/blink/renderer/platform/animation/compositor_animation_timeline.h"
 #include "third_party/blink/renderer/platform/geometry/int_point.h"
 #include "third_party/blink/renderer/platform/geometry/int_rect.h"
 #include "third_party/blink/renderer/platform/graphics/graphics_layer.h"
@@ -69,6 +66,10 @@
 #include "third_party/blink/renderer/platform/wtf/std_lib_extras.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
 
+namespace cc {
+class Layer;
+}
+
 namespace blink {
 
 class BrowserControls;
@@ -76,12 +77,9 @@ class CompositorAnimationHost;
 class DevToolsEmulator;
 class Frame;
 class FullscreenController;
-class LinkHighlightImpl;
-class PageOverlay;
 class PageScaleConstraintsSet;
 class PaintLayerCompositor;
 class UserGestureToken;
-class ValidationMessageClient;
 class WebDevToolsAgentImpl;
 class WebElement;
 class WebInputMethodController;
@@ -91,12 +89,15 @@ class WebLocalFrameImpl;
 class CompositorMutatorImpl;
 class WebRemoteFrame;
 class WebSettingsImpl;
+class WebViewClient;
+class WebWidgetClient;
 
 class CORE_EXPORT WebViewImpl final : public WebView,
                                       public RefCounted<WebViewImpl>,
                                       public PageWidgetEventHandler {
  public:
   static WebViewImpl* Create(WebViewClient*,
+                             WebWidgetClient*,
                              mojom::PageVisibilityState,
                              WebViewImpl* opener);
   static HashSet<WebViewImpl*>& AllInstances();
@@ -113,17 +114,17 @@ class CORE_EXPORT WebViewImpl final : public WebView,
   void DidExitFullscreen() override;
 
   void SetSuppressFrameRequestsWorkaroundFor704763Only(bool) override;
-  void BeginFrame(double last_frame_time_monotonic) override;
+  void BeginFrame(base::TimeTicks last_frame_time) override;
 
   void UpdateLifecycle(LifecycleUpdate requested_update) override;
   void UpdateAllLifecyclePhasesAndCompositeForTesting() override;
-  void Paint(WebCanvas*, const WebRect&) override;
-#if defined(OS_ANDROID)
-  void PaintIgnoringCompositing(WebCanvas*, const WebRect&) override;
-#endif
-  void LayoutAndPaintAsync(WebLayoutAndPaintAsyncCallback*) override;
+  void CompositeWithRasterForTesting() override;
+  void PaintContent(cc::PaintCanvas*, const WebRect&) override;
+  void PaintContentIgnoringCompositing(cc::PaintCanvas*,
+                                       const WebRect&) override;
+  void LayoutAndPaintAsync(base::OnceClosure callback) override;
   void CompositeAndReadbackAsync(
-      WebCompositeAndReadbackAsyncCallback*) override;
+      base::OnceCallback<void(const SkBitmap&)> callback) override;
   void ThemeChanged() override;
   WebInputEventResult HandleInputEvent(const WebCoalescedInputEvent&) override;
   WebInputEventResult DispatchBufferedTouchEvents() override;
@@ -138,7 +139,7 @@ class CORE_EXPORT WebViewImpl final : public WebView,
                                          bool has_scrolled_by_touch) override;
   void MouseCaptureLost() override;
   void SetFocus(bool enable) override;
-  WebColor BackgroundColor() const override;
+  SkColor BackgroundColor() const override;
   WebPagePopupImpl* GetPagePopup() const override;
   bool SelectionBounds(WebRect& anchor, WebRect& focus) const override;
   bool IsAcceleratedCompositingActive() const override;
@@ -149,7 +150,7 @@ class CORE_EXPORT WebViewImpl final : public WebView,
   void ShowContextMenu(WebMenuSourceType) override;
 
   // WebView methods:
-  virtual bool IsWebView() const { return true; }
+  bool IsWebView() const override { return true; }
   void SetPrerendererClient(WebPrerendererClient*) override;
   WebSettings* GetSettings() override;
   WebString PageEncoding() const override;
@@ -184,8 +185,9 @@ class CORE_EXPORT WebViewImpl final : public WebView,
                          double maximum_zoom_level) override;
   float TextZoomFactor() override;
   float SetTextZoomFactor(float) override;
-  bool ZoomToMultipleTargetsRect(const WebRect&) override;
   float PageScaleFactor() const override;
+  float MinimumPageScaleFactor() const override;
+  float MaximumPageScaleFactor() const override;
   void SetDefaultPageScaleLimits(float min_scale, float max_scale) override;
   void SetInitialPageScaleOverride(float) override;
   void SetMaximumLegibleScale(float) override;
@@ -207,8 +209,6 @@ class CORE_EXPORT WebViewImpl final : public WebView,
   void EnableAutoResizeMode(const WebSize& min_size,
                             const WebSize& max_size) override;
   void DisableAutoResizeMode() override;
-  void PerformMediaPlayerAction(const WebMediaPlayerAction&,
-                                const WebPoint& location) override;
   void PerformPluginAction(const WebPluginAction&, const WebPoint&) override;
   void AudioStateChanged(bool is_audio_playing) override;
   void PausePageScheduledTasks(bool paused) override;
@@ -225,31 +225,29 @@ class CORE_EXPORT WebViewImpl final : public WebView,
   void PerformCustomContextMenuAction(unsigned action) override;
   void DidCloseContextMenu() override;
   void HidePopups() override;
-  void SetPageOverlayColor(WebColor) override;
+  void SetPageOverlayColor(SkColor) override;
   WebPageImportanceSignals* PageImportanceSignals() override;
   void SetShowPaintRects(bool) override;
   void SetShowDebugBorders(bool);
   void SetShowFPSCounter(bool) override;
   void SetShowScrollBottleneckRects(bool) override;
   void AcceptLanguagesChanged() override;
-  void FreezePage() override;
+  void SetPageFrozen(bool frozen) override;
 
   void DidUpdateFullscreenSize();
 
   float DefaultMinimumPageScaleFactor() const;
   float DefaultMaximumPageScaleFactor() const;
-  float MinimumPageScaleFactor() const;
-  float MaximumPageScaleFactor() const;
   float ClampPageScaleFactorToLimits(float) const;
   void ResetScaleStateImmediately();
 
   HitTestResult CoreHitTestResultAt(const WebPoint&);
   void InvalidateRect(const IntRect&);
 
-  void SetBaseBackgroundColor(WebColor);
-  void SetBaseBackgroundColorOverride(WebColor);
+  void SetBaseBackgroundColor(SkColor);
+  void SetBaseBackgroundColorOverride(SkColor);
   void ClearBaseBackgroundColorOverride();
-  void SetBackgroundColorOverride(WebColor);
+  void SetBackgroundColorOverride(SkColor);
   void ClearBackgroundColorOverride();
   void SetZoomFactorOverride(float);
   void SetCompositorDeviceScaleFactorOverride(float);
@@ -260,9 +258,7 @@ class CORE_EXPORT WebViewImpl final : public WebView,
   bool BackgroundColorOverrideEnabled() const {
     return background_color_override_enabled_;
   }
-  WebColor BackgroundColorOverride() const {
-    return background_color_override_;
-  }
+  SkColor BackgroundColorOverride() const { return background_color_override_; }
 
   Frame* FocusedCoreFrame() const;
 
@@ -270,13 +266,14 @@ class CORE_EXPORT WebViewImpl final : public WebView,
   Element* FocusedElement() const;
 
   WebViewClient* Client() { return client_; }
+  // TODO(dcheng): This client should be acquirable from the MainFrameImpl
+  // in some cases? We need to know how to get it in all cases.
+  WebWidgetClient* WidgetClient() { return widget_client_; }
 
   // Returns the page object associated with this view. This may be null when
   // the page is shutting down, but will be valid at all other times.
   Page* GetPage() const { return page_.Get(); }
 
-  // Returns a ValidationMessageClient associated to the Page. This is nullable.
-  ValidationMessageClient* GetValidationMessageClient() const;
   WebDevToolsAgentImpl* MainFrameDevToolsAgentImpl();
 
   DevToolsEmulator* GetDevToolsEmulator() const {
@@ -304,8 +301,6 @@ class CORE_EXPORT WebViewImpl final : public WebView,
   // Keyboard event to the Right Mouse button down event.
   WebInputEventResult SendContextMenuEvent();
 
-  void ShowContextMenuAtPoint(float x, float y, ContextMenuProvider*);
-
   void ShowContextMenuForElement(WebElement);
 
   // Notifies the WebView that a load has been committed. isNewNavigation
@@ -316,10 +311,10 @@ class CORE_EXPORT WebViewImpl final : public WebView,
 
   // Indicates two things:
   //   1) This view may have a new layout now.
-  //   2) Calling updateAllLifecyclePhases() is a no-op.
+  //   2) Layout is up-to-date.
   // After calling WebWidget::updateAllLifecyclePhases(), expect to get this
   // notification unless the view did not need a layout.
-  void LayoutUpdated();
+  void MainFrameLayoutUpdated();
   void ResizeAfterLayout();
 
   void DidChangeContentsSize();
@@ -343,9 +338,6 @@ class CORE_EXPORT WebViewImpl final : public WebView,
   GraphicsLayer* RootGraphicsLayer();
   void RegisterViewportLayersWithCompositor();
   PaintLayerCompositor* Compositor() const;
-  CompositorAnimationTimeline* LinkHighlightsTimeline() const {
-    return link_highlights_timeline_.get();
-  }
 
   PageScheduler* Scheduler() const override;
   void SetVisibilityState(mojom::PageVisibilityState, bool) override;
@@ -371,10 +363,6 @@ class CORE_EXPORT WebViewImpl final : public WebView,
   void EnableTapHighlights(HeapVector<Member<Node>>&);
   void AnimateDoubleTapZoom(const IntPoint&);
 
-  void ResolveTapDisambiguation(double timestamp_seconds,
-                                WebPoint tap_viewport_offset,
-                                bool is_long_press) override;
-
   void EnableFakePageScaleAnimationForTesting(bool);
   bool FakeDoubleTapAnimationPendingForTesting() const {
     return double_tap_zoom_pending_;
@@ -389,7 +377,7 @@ class CORE_EXPORT WebViewImpl final : public WebView,
     return fake_page_scale_animation_use_anchor_;
   }
 
-  void EnterFullscreen(LocalFrame&);
+  void EnterFullscreen(LocalFrame&, const FullscreenOptions&);
   void ExitFullscreen(LocalFrame&);
   void FullscreenElementChanged(Element* old_element, Element* new_element);
 
@@ -399,12 +387,6 @@ class CORE_EXPORT WebViewImpl final : public WebView,
   // Exposed for testing purposes.
   bool HasHorizontalScrollbar();
   bool HasVerticalScrollbar();
-
-  // Exposed for tests.
-  unsigned NumLinkHighlights() { return link_highlights_.size(); }
-  LinkHighlightImpl* GetLinkHighlight(int i) {
-    return link_highlights_[i].get();
-  }
 
   WebSettingsImpl* SettingsImpl();
 
@@ -420,8 +402,8 @@ class CORE_EXPORT WebViewImpl final : public WebView,
     return matches_heuristics_for_gpu_rasterization_;
   }
 
-  void UpdateBrowserControlsState(WebBrowserControlsState constraint,
-                                  WebBrowserControlsState current,
+  void UpdateBrowserControlsState(cc::BrowserControlsState constraint,
+                                  cc::BrowserControlsState current,
                                   bool animate) override;
 
   BrowserControls& GetBrowserControls();
@@ -429,7 +411,7 @@ class CORE_EXPORT WebViewImpl final : public WebView,
   // changed.
   void DidUpdateBrowserControls();
 
-  void SetOverscrollBehavior(const WebOverscrollBehavior&);
+  void SetOverscrollBehavior(const cc::OverscrollBehavior&);
 
   void ForceNextWebGLContextCreationToFail() override;
   void ForceNextDrawingBufferCreationToFail() override;
@@ -466,22 +448,19 @@ class CORE_EXPORT WebViewImpl final : public WebView,
       bool zoom_into_legible_scale);
 
  private:
-  FRIEND_TEST_ALL_PREFIXES(ParameterizedWebFrameTest,
-                           DivScrollIntoEditableTest);
-  FRIEND_TEST_ALL_PREFIXES(ParameterizedWebFrameTest,
+  FRIEND_TEST_ALL_PREFIXES(WebFrameTest, DivScrollIntoEditableTest);
+  FRIEND_TEST_ALL_PREFIXES(WebFrameTest,
                            DivScrollIntoEditablePreservePageScaleTest);
-  FRIEND_TEST_ALL_PREFIXES(ParameterizedWebFrameTest,
+  FRIEND_TEST_ALL_PREFIXES(WebFrameTest,
                            DivScrollIntoEditableTestZoomToLegibleScaleDisabled);
+  FRIEND_TEST_ALL_PREFIXES(WebFrameTest,
+                           DivScrollIntoEditableTestWithDeviceScaleFactor);
 
   void SetPageScaleFactorAndLocation(float, const FloatPoint&);
   void PropagateZoomFactorToLocalFrameRoots(Frame*, float);
 
-  void ScrollAndRescaleViewports(float scale_factor,
-                                 const IntPoint& main_frame_origin,
-                                 const FloatPoint& visual_viewport_origin);
-
   float MaximumLegiblePageScale() const;
-  void RefreshPageScaleFactorAfterLayout();
+  void RefreshPageScaleFactor();
   IntSize ContentsSize() const;
 
   void UpdateICBAndResizeViewport();
@@ -502,7 +481,10 @@ class CORE_EXPORT WebViewImpl final : public WebView,
   friend class WebViewFrameWidget;
   friend class WTF::RefCounted<WebViewImpl>;
 
-  WebViewImpl(WebViewClient*, mojom::PageVisibilityState, WebViewImpl* opener);
+  WebViewImpl(WebViewClient*,
+              WebWidgetClient*,
+              mojom::PageVisibilityState,
+              WebViewImpl* opener);
   ~WebViewImpl() override;
 
   void HideSelectPopup();
@@ -536,21 +518,15 @@ class CORE_EXPORT WebViewImpl final : public WebView,
   WebInputEventResult HandleKeyEvent(const WebKeyboardEvent&) override;
   WebInputEventResult HandleCharEvent(const WebKeyboardEvent&) override;
 
-  WebInputEventResult HandleSyntheticWheelFromTouchpadPinchEvent(
-      const WebGestureEvent&);
-
   void EnablePopupMouseWheelEventListener(WebLocalFrameImpl* local_root);
   void DisablePopupMouseWheelEventListener();
 
   void CancelPagePopup();
-  void UpdatePageOverlays();
 
   float DeviceScaleFactor() const;
 
   void SetRootGraphicsLayer(GraphicsLayer*);
-  void SetRootLayer(WebLayer*);
-  void AttachCompositorAnimationTimeline(CompositorAnimationTimeline*);
-  void DetachCompositorAnimationTimeline(CompositorAnimationTimeline*);
+  void SetRootLayer(scoped_refptr<cc::Layer>);
 
   LocalFrame* FocusedLocalFrameInWidget() const;
   LocalFrame* FocusedLocalFrameAvailableForIme() const;
@@ -576,7 +552,8 @@ class CORE_EXPORT WebViewImpl final : public WebView,
       IntPoint& scroll,
       bool& need_animation);
 
-  WebViewClient* client_;  // Can be 0 (e.g. unittests, shared workers, etc.)
+  WebViewClient* client_;  // Can be null (e.g. unittests, shared workers, etc.)
+  WebWidgetClient* widget_client_;  // Can also be null.
 
   Persistent<ChromeClient> chrome_client_;
 
@@ -644,7 +621,6 @@ class CORE_EXPORT WebViewImpl final : public WebView,
   scoped_refptr<WebPagePopupImpl> last_hidden_page_popup_;
 
   Persistent<DevToolsEmulator> dev_tools_emulator_;
-  std::unique_ptr<PageOverlay> page_color_overlay_;
 
   // Whether the user can press tab to focus links.
   bool tabs_to_links_;
@@ -656,22 +632,18 @@ class CORE_EXPORT WebViewImpl final : public WebView,
   WebLayerTreeView* layer_tree_view_;
   std::unique_ptr<CompositorAnimationHost> animation_host_;
 
-  WebLayer* root_layer_;
+  scoped_refptr<cc::Layer> root_layer_;
   GraphicsLayer* root_graphics_layer_;
   GraphicsLayer* visual_viewport_container_layer_;
   bool matches_heuristics_for_gpu_rasterization_;
 
-  Vector<std::unique_ptr<LinkHighlightImpl>> link_highlights_;
-  std::unique_ptr<CompositorAnimationTimeline> link_highlights_timeline_;
   std::unique_ptr<FullscreenController> fullscreen_controller_;
 
-  WebPoint last_tap_disambiguation_best_candidate_position_;
-
-  WebColor base_background_color_;
+  SkColor base_background_color_;
   bool base_background_color_override_enabled_;
-  WebColor base_background_color_override_;
+  SkColor base_background_color_override_;
   bool background_color_override_enabled_;
-  WebColor background_color_override_;
+  SkColor background_color_override_;
   float zoom_factor_override_;
 
   bool should_dispatch_first_visually_non_empty_layout_;

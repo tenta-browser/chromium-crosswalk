@@ -65,10 +65,19 @@ Polymer({
       type: Array,
       computed: 'computeRangesToPrint_(pagesToPrint_, allPagesArray_)',
     },
+
+    /** @private {string} */
+    inputPattern_: {
+      type: String,
+      notify: true,
+      value:
+          '([0-9]*(-)?[0-9]*(,|\u3001)( )?)*([0-9]*(-)?[0-9]*(,|\u3001)?( )?)?',
+    },
   },
 
   observers: [
-    'onRangeChange_(errorState_, rangesToPrint_)',
+    'onRangeChange_(errorState_, rangesToPrint_, settings.pages, ' +
+        'settings.pagesPerSheet.value)',
     'onRadioChange_(allSelected_, customSelected_)'
   ],
 
@@ -91,10 +100,14 @@ Polymer({
 
   /**
    * @return {boolean} Whether the controls should be disabled.
+   * Does not need to depend on |errorState_|, since |errorState_| is always
+   * defined and any change to or from NO_ERROR will also trigger a change in
+   * |disabled|.
    * @private
    */
   getDisabled_: function() {
-    return this.getSetting('pages').valid && this.disabled;
+    // Disable the input if other settings are responsible for the error state.
+    return this.errorState_ == PagesInputErrorState.NO_ERROR && this.disabled;
   },
 
   /**
@@ -102,6 +115,15 @@ Polymer({
    * @private
    */
   computeAllPagesArray_: function() {
+    // This computed function will unnecessarily get triggered if
+    // this.documentInfo is set to a new object, which happens whenever the
+    // preview refreshes, but the page count is the same as before. We do not
+    // want to trigger all observers unnecessarily.
+    if (!!this.allPagesArray_ &&
+        this.allPagesArray_.length == this.documentInfo.pageCount) {
+      return this.allPagesArray_;
+    }
+
     const array = new Array(this.documentInfo.pageCount);
     for (let i = 0; i < array.length; i++)
       array[i] = i + 1;
@@ -126,16 +148,18 @@ Polymer({
 
     const pages = [];
     const added = {};
-    const ranges = this.inputString_.split(',');
+    const ranges = this.inputString_.split(/,|\u3001/);
     const maxPage = this.allPagesArray_.length;
     for (let range of ranges) {
       range = range.trim();
-      if (range == '')
-        continue;
+      if (range == '') {
+        this.errorState_ = PagesInputErrorState.INVALID_SYNTAX;
+        return this.pagesToPrint_;
+      }
       const limits = range.split('-');
       let min = parseInt(limits[0], 10);
       if (min < 1) {
-        this.errorState_ = PagesInputErrorState.OUT_OF_BOUNDS;
+        this.errorState_ = PagesInputErrorState.INVALID_SYNTAX;
         return this.pagesToPrint_;
       }
       if (limits.length == 1) {
@@ -202,17 +226,22 @@ Polymer({
   },
 
   /**
-   * @return {boolean} Whether pages setting and pagesToPrint_ match.
+   * @return {!Array<number>} The final page numbers, reflecting N-up setting.
+   *     Page numbers are 1 indexed, since these numbers are displayed to the
+   *     user.
+   * @private
    */
-  settingMatches_: function() {
-    const setting = this.getSetting('pages').value;
-    if (setting.length != this.pagesToPrint_.length)
-      return false;
-    for (let index = 0; index < this.pagesToPrint_.length; index++) {
-      if (this.pagesToPrint_[index] != setting[index])
-        return false;
-    }
-    return true;
+  getNupPages_: function() {
+    const pagesPerSheet =
+        /** @type {number} */ (this.getSettingValue('pagesPerSheet'));
+    if (pagesPerSheet <= 1 || this.pagesToPrint_.length == 0)
+      return this.pagesToPrint_;
+
+    const numPages = Math.ceil(this.pagesToPrint_.length / pagesPerSheet);
+    const nupPages = new Array(numPages);
+    for (let i = 0; i < nupPages.length; i++)
+      nupPages[i] = i + 1;
+    return nupPages;
   },
 
   /**
@@ -221,6 +250,9 @@ Polymer({
    * @private
    */
   onRangeChange_: function() {
+    if (this.settings === undefined || this.pagesToPrint_ === undefined)
+      return;
+
     if (this.errorState_ != PagesInputErrorState.NO_ERROR) {
       this.setSettingValid('pages', false);
       this.$.pageSettingsCustomInput.classList.add('invalid');
@@ -228,10 +260,16 @@ Polymer({
     }
     this.$.pageSettingsCustomInput.classList.remove('invalid');
     this.setSettingValid('pages', true);
-    if (!this.settingMatches_()) {
-      this.setSetting('pages', this.pagesToPrint_);
-      this.setSetting('ranges', this.rangesToPrint_);
+    const nupPages = this.getNupPages_();
+    const rangesChanged = !areRangesEqual(
+        this.rangesToPrint_,
+        /** @type {!Array} */ (this.getSettingValue('ranges')));
+    if (rangesChanged ||
+        nupPages.length != this.getSettingValue('pages').length) {
+      this.setSetting('pages', nupPages);
     }
+    if (rangesChanged)
+      this.setSetting('ranges', this.rangesToPrint_);
   },
 
   /** @private */
@@ -277,10 +315,11 @@ Polymer({
       return loadTimeData.getStringF(
           'pageRangeSyntaxInstruction',
           loadTimeData.getString('examplePageRangeText'));
-    } else {
-      return loadTimeData.getStringF(
-          'pageRangeLimitInstructionWithValue', this.documentInfo.pageCount);
     }
+    return (this.documentInfo === undefined) ?
+        '' :
+        loadTimeData.getStringF(
+            'pageRangeLimitInstructionWithValue', this.documentInfo.pageCount);
   },
 
   /**

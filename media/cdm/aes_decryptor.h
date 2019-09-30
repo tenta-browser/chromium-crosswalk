@@ -61,6 +61,8 @@ class MEDIA_EXPORT AesDecryptor : public ContentDecryptionModule,
   CdmContext* GetCdmContext() override;
 
   // CdmContext implementation.
+  std::unique_ptr<CallbackRegistration> RegisterNewKeyCB(
+      base::RepeatingClosure new_key_cb) override;
   Decryptor* GetDecryptor() override;
   int GetCdmId() const override;
 
@@ -83,7 +85,9 @@ class MEDIA_EXPORT AesDecryptor : public ContentDecryptionModule,
   void DeinitializeDecoder(StreamType stream_type) override;
 
  private:
+  // Testing classes that needs to manipulate internal states for testing.
   friend class ClearKeyPersistentSessionCdm;
+  friend class ClearKeyCdmProxy;
 
   // Internally this class supports persistent license type sessions so that
   // it can be used by ClearKeyPersistentSessionCdm. The following methods
@@ -180,7 +184,7 @@ class MEDIA_EXPORT AesDecryptor : public ContentDecryptionModule,
   // Since only Decrypt() is called off the renderer thread, we only need to
   // protect |key_map_|, the only member variable that is shared between
   // Decrypt() and other methods.
-  KeyIdToSessionKeysMap key_map_;  // Protected by |key_map_lock_|.
+  KeyIdToSessionKeysMap key_map_;    // Protected by |key_map_lock_|.
   mutable base::Lock key_map_lock_;  // Protects the |key_map_|.
 
   // Keeps track of current open sessions and their type. Although publicly

@@ -20,7 +20,7 @@
         {
           "object": "LayoutBlockFlow HTML",
           "rect": [8, 96, 186, 64],
-          "reason": "appeared"
+          "reason": "chunk appeared"
         }
       ]
     },
@@ -28,12 +28,6 @@
       "name": "LayoutTableCell TD",
       "position": [72, 96],
       "bounds": [59, 64]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutTableRow TR id='target'",
-      "reason": "style change"
     }
   ]
 }

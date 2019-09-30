@@ -57,25 +57,26 @@ PropertyHandleSet KeyframeEffectModelBase::Properties() const {
 }
 
 template <class K>
-void KeyframeEffectModelBase::SetFrames(Vector<K>& keyframes) {
+void KeyframeEffectModelBase::SetFrames(HeapVector<K>& keyframes) {
   // TODO(samli): Should also notify/invalidate the animation
   keyframes_.clear();
   keyframe_groups_ = nullptr;
-  interpolation_effect_.Clear();
+  interpolation_effect_->Clear();
   last_fraction_ = std::numeric_limits<double>::quiet_NaN();
   keyframes_.AppendVector(keyframes);
+  needs_compositor_keyframes_snapshot_ = true;
 }
 
 template CORE_EXPORT void KeyframeEffectModelBase::SetFrames(
-    Vector<scoped_refptr<Keyframe>>& keyframes);
+    HeapVector<Member<Keyframe>>& keyframes);
 template CORE_EXPORT void KeyframeEffectModelBase::SetFrames(
-    Vector<scoped_refptr<StringKeyframe>>& keyframes);
+    HeapVector<Member<StringKeyframe>>& keyframes);
 
 bool KeyframeEffectModelBase::Sample(
     int iteration,
     double fraction,
     double iteration_duration,
-    Vector<scoped_refptr<Interpolation>>& result) const {
+    HeapVector<Member<Interpolation>>& result) const {
   DCHECK_GE(iteration, 0);
   EnsureKeyframeGroups();
   EnsureInterpolationEffectPopulated();
@@ -85,8 +86,8 @@ bool KeyframeEffectModelBase::Sample(
   last_iteration_ = iteration;
   last_fraction_ = fraction;
   last_iteration_duration_ = iteration_duration;
-  interpolation_effect_.GetActiveInterpolations(fraction, iteration_duration,
-                                                result);
+  interpolation_effect_->GetActiveInterpolations(fraction, iteration_duration,
+                                                 result);
   return changed;
 }
 
@@ -132,10 +133,12 @@ bool KeyframeEffectModelBase::SnapshotNeutralCompositorKeyframes(
   return updated;
 }
 
-bool KeyframeEffectModelBase::SnapshotAllCompositorKeyframes(
+bool KeyframeEffectModelBase::SnapshotAllCompositorKeyframesIfNecessary(
     Element& element,
     const ComputedStyle& base_style,
     const ComputedStyle* parent_style) const {
+  if (!needs_compositor_keyframes_snapshot_)
+    return false;
   needs_compositor_keyframes_snapshot_ = false;
   bool updated = false;
   bool has_neutral_compositable_keyframe = false;
@@ -162,7 +165,7 @@ bool KeyframeEffectModelBase::SnapshotAllCompositorKeyframes(
 
 template <class K>
 Vector<double> KeyframeEffectModelBase::GetComputedOffsets(
-    const Vector<K>& keyframes) {
+    const HeapVector<K>& keyframes) {
   // To avoid having to create two vectors when converting from the nullable
   // offsets to the non-nullable computed offsets, we keep the convention in
   // this function that std::numeric_limits::quiet_NaN() represents null.
@@ -171,7 +174,7 @@ Vector<double> KeyframeEffectModelBase::GetComputedOffsets(
   result.ReserveCapacity(keyframes.size());
 
   for (const auto& keyframe : keyframes) {
-    WTF::Optional<double> offset = keyframe->Offset();
+    base::Optional<double> offset = keyframe->Offset();
     if (offset) {
       DCHECK_GE(offset.value(), 0);
       DCHECK_LE(offset.value(), 1);
@@ -209,9 +212,9 @@ Vector<double> KeyframeEffectModelBase::GetComputedOffsets(
 }
 
 template CORE_EXPORT Vector<double> KeyframeEffectModelBase::GetComputedOffsets(
-    const Vector<scoped_refptr<Keyframe>>& keyframes);
+    const HeapVector<Member<Keyframe>>& keyframes);
 template CORE_EXPORT Vector<double> KeyframeEffectModelBase::GetComputedOffsets(
-    const Vector<scoped_refptr<StringKeyframe>>& keyframes);
+    const HeapVector<Member<StringKeyframe>>& keyframes);
 
 bool KeyframeEffectModelBase::IsTransformRelatedEffect() const {
   return Affects(PropertyHandle(GetCSSPropertyTransform())) ||
@@ -220,11 +223,18 @@ bool KeyframeEffectModelBase::IsTransformRelatedEffect() const {
          Affects(PropertyHandle(GetCSSPropertyTranslate()));
 }
 
+void KeyframeEffectModelBase::Trace(Visitor* visitor) {
+  visitor->Trace(keyframes_);
+  visitor->Trace(keyframe_groups_);
+  visitor->Trace(interpolation_effect_);
+  EffectModel::Trace(visitor);
+}
+
 void KeyframeEffectModelBase::EnsureKeyframeGroups() const {
   if (keyframe_groups_)
     return;
 
-  keyframe_groups_ = std::make_unique<KeyframeGroupMap>();
+  keyframe_groups_ = new KeyframeGroupMap;
   scoped_refptr<TimingFunction> zero_offset_easing = default_keyframe_easing_;
   Vector<double> computed_offsets = GetComputedOffsets(keyframes_);
   DCHECK_EQ(computed_offsets.size(), keyframes_.size());
@@ -240,11 +250,10 @@ void KeyframeEffectModelBase::EnsureKeyframeGroups() const {
       PropertySpecificKeyframeGroup* group;
       if (group_iter == keyframe_groups_->end()) {
         group = keyframe_groups_
-                    ->insert(property,
-                             std::make_unique<PropertySpecificKeyframeGroup>())
-                    .stored_value->value.get();
+                    ->insert(property, new PropertySpecificKeyframeGroup)
+                    .stored_value->value.Get();
       } else {
-        group = group_iter->value.get();
+        group = group_iter->value.Get();
       }
 
       group->AppendKeyframe(keyframe->CreatePropertySpecificKeyframe(
@@ -263,7 +272,7 @@ void KeyframeEffectModelBase::EnsureKeyframeGroups() const {
 }
 
 void KeyframeEffectModelBase::EnsureInterpolationEffectPopulated() const {
-  if (interpolation_effect_.IsPopulated())
+  if (interpolation_effect_->IsPopulated())
     return;
 
   for (const auto& entry : *keyframe_groups_) {
@@ -294,7 +303,7 @@ void KeyframeEffectModelBase::EnsureInterpolationEffectPopulated() const {
       }
 
       if (apply_from != apply_to) {
-        interpolation_effect_.AddInterpolationsFromKeyframes(
+        interpolation_effect_->AddInterpolationsFromKeyframes(
             entry.key, *keyframes[start_index], *keyframes[end_index],
             apply_from, apply_to);
       }
@@ -302,7 +311,7 @@ void KeyframeEffectModelBase::EnsureInterpolationEffectPopulated() const {
     }
   }
 
-  interpolation_effect_.SetPopulated();
+  interpolation_effect_->SetPopulated();
 }
 
 bool KeyframeEffectModelBase::IsReplaceOnly() const {
@@ -316,18 +325,8 @@ bool KeyframeEffectModelBase::IsReplaceOnly() const {
   return true;
 }
 
-Keyframe::PropertySpecificKeyframe::PropertySpecificKeyframe(
-    double offset,
-    scoped_refptr<TimingFunction> easing,
-    EffectModel::CompositeOperation composite)
-    : offset_(offset), easing_(std::move(easing)), composite_(composite) {
-  DCHECK(!IsNull(offset));
-  if (!easing_)
-    easing_ = LinearTimingFunction::Shared();
-}
-
 void KeyframeEffectModelBase::PropertySpecificKeyframeGroup::AppendKeyframe(
-    scoped_refptr<Keyframe::PropertySpecificKeyframe> keyframe) {
+    Keyframe::PropertySpecificKeyframe* keyframe) {
   DCHECK(keyframes_.IsEmpty() ||
          keyframes_.back()->Offset() <= keyframe->Offset());
   keyframes_.push_back(std::move(keyframe));

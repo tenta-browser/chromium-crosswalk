@@ -22,7 +22,7 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "base/threading/thread.h"
 #include "base/values.h"
 #include "build/build_config.h"
@@ -222,7 +222,7 @@ void TerminateOnUI(std::unique_ptr<base::Thread> thread,
     thread->task_runner()->DeleteSoon(FROM_HERE, std::move(socket_factory));
   if (thread) {
     base::PostTaskWithTraits(
-        FROM_HERE, {base::MayBlock(), base::TaskPriority::BACKGROUND},
+        FROM_HERE, {base::MayBlock(), base::TaskPriority::BEST_EFFORT},
         BindOnce([](std::unique_ptr<base::Thread>) {}, std::move(thread)));
   }
 }
@@ -277,7 +277,7 @@ void StartServerOnHandlerThread(
     fflush(stderr);
 
     // Write this port to a well-known file in the profile directory
-    // so Telemetry can pick it up.
+    // so Telemetry, ChromeDriver, etc. can pick it up.
     if (!output_directory.empty()) {
       base::FilePath path =
           output_directory.Append(kDevToolsActivePortFileName);
@@ -289,8 +289,9 @@ void StartServerOnHandlerThread(
       }
     }
   } else {
-#ifndef OS_ANDROID
-    LOG(ERROR) << "Cannot start http server for devtools. Stop devtools.";
+#if !defined(OS_ANDROID)
+    // Android uses UNIX domain sockets which don't have an IP address.
+    LOG(ERROR) << "Cannot start http server for devtools.";
 #endif
   }
 

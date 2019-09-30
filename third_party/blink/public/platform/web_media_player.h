@@ -31,14 +31,18 @@
 #ifndef THIRD_PARTY_BLINK_PUBLIC_PLATFORM_WEB_MEDIA_PLAYER_H_
 #define THIRD_PARTY_BLINK_PUBLIC_PLATFORM_WEB_MEDIA_PLAYER_H_
 
+#include "base/time/time.h"
 #include "third_party/blink/public/platform/web_callbacks.h"
-#include "third_party/blink/public/platform/web_canvas.h"
 #include "third_party/blink/public/platform/web_content_decryption_module.h"
 #include "third_party/blink/public/platform/web_media_source.h"
 #include "third_party/blink/public/platform/web_set_sink_id_callbacks.h"
 #include "third_party/blink/public/platform/web_string.h"
+#include "ui/gfx/geometry/rect.h"
 
-#include "cc/paint/paint_flags.h"
+namespace cc {
+class PaintCanvas;
+class PaintFlags;
+}  // namespace cc
 
 namespace gpu {
 namespace gles2 {
@@ -51,12 +55,12 @@ namespace blink {
 class WebAudioSourceProvider;
 class WebContentDecryptionModule;
 class WebMediaPlayerSource;
-class WebSecurityOrigin;
 class WebString;
 class WebURL;
 enum class WebFullscreenVideoStatus;
 struct WebRect;
 struct WebSize;
+struct PictureInPictureControlInfo;
 
 class WebMediaPlayer {
  public:
@@ -109,6 +113,10 @@ class WebMediaPlayer {
     kTexSubImage3D
   };
 
+  // Returned by Load() to signal when a players choose to defer (e.g. as part
+  // of pre-rendering)
+  enum LoadTiming { kImmediate, kDeferred };
+
   // For last-uploaded-frame-metadata API. https://crbug.com/639174
   struct VideoFrameUploadMetadata {
     int frame_id = -1;
@@ -117,9 +125,17 @@ class WebMediaPlayer {
     bool skipped = false;
   };
 
+  // Callback to get notified when the Picture-in-Picture window is opened.
+  using PipWindowOpenedCallback = base::OnceCallback<void(const WebSize&)>;
+  // Callback to get notified when Picture-in-Picture window is closed.
+  using PipWindowClosedCallback = base::OnceClosure;
+  // Callback to get notified when the Picture-in-Picture window is resized.
+  using PipWindowResizedCallback =
+      base::RepeatingCallback<void(const WebSize&)>;
+
   virtual ~WebMediaPlayer() = default;
 
-  virtual void Load(LoadType, const WebMediaPlayerSource&, CORSMode) = 0;
+  virtual LoadTiming Load(LoadType, const WebMediaPlayerSource&, CORSMode) = 0;
 
   // Playback controls.
   virtual void Play() = 0;
@@ -127,13 +143,26 @@ class WebMediaPlayer {
   virtual void Seek(double seconds) = 0;
   virtual void SetRate(double) = 0;
   virtual void SetVolume(double) = 0;
-  virtual void EnterPictureInPicture() = 0;
-  virtual void ExitPictureInPicture() = 0;
+
+  // Enter Picture-in-Picture and notifies Blink with window size
+  // when video successfully enters Picture-in-Picture.
+  virtual void EnterPictureInPicture(PipWindowOpenedCallback) = 0;
+  // Exit Picture-in-Picture and notifies Blink when it's done.
+  virtual void ExitPictureInPicture(PipWindowClosedCallback) = 0;
+  // Assign custom controls to the Picture-in-Picture window.
+  virtual void SetPictureInPictureCustomControls(
+      const std::vector<PictureInPictureControlInfo>&) = 0;
+  // Register a callback that will be run when the Picture-in-Picture window
+  // is resized.
+  virtual void RegisterPictureInPictureWindowResizeCallback(
+      PipWindowResizedCallback) = 0;
 
   virtual void RequestRemotePlayback() {}
   virtual void RequestRemotePlaybackControl() {}
   virtual void RequestRemotePlaybackStop() {}
   virtual void RequestRemotePlaybackDisabled(bool disabled) {}
+  virtual void FlingingStarted() {}
+  virtual void FlingingStopped() {}
   virtual void SetPreload(Preload) {}
   virtual WebTimeRanges Buffered() const = 0;
   virtual WebTimeRanges Seekable() const = 0;
@@ -146,7 +175,6 @@ class WebMediaPlayer {
   // destructors, run in the same thread where the object is created
   // (i.e., the blink thread).
   virtual void SetSinkId(const WebString& sink_id,
-                         const WebSecurityOrigin&,
                          WebSetSinkIdCallbacks*) = 0;
 
   // True if the loaded media has a playable video/audio track.
@@ -188,18 +216,18 @@ class WebMediaPlayer {
   virtual unsigned DecodedFrameCount() const = 0;
   virtual unsigned DroppedFrameCount() const = 0;
   virtual unsigned CorruptedFrameCount() const { return 0; }
-  virtual size_t AudioDecodedByteCount() const = 0;
-  virtual size_t VideoDecodedByteCount() const = 0;
+  virtual uint64_t AudioDecodedByteCount() const = 0;
+  virtual uint64_t VideoDecodedByteCount() const = 0;
 
-  // |out_metadata|, if set, is used to return metadata about the frame
-  //   that is uploaded during this call.
   // |already_uploaded_id| indicates the unique_id of the frame last uploaded
   //   to this destination. It should only be set by the caller if the contents
   //   of the destination are known not to have changed since that upload.
   //   - If |out_metadata| is not null, |already_uploaded_id| is compared with
   //     the unique_id of the frame being uploaded. If it's the same, the
   //     upload may be skipped and considered to be successful.
-  virtual void Paint(WebCanvas*,
+  // |out_metadata|, if not null, is used to return metadata about the frame
+  //   that is uploaded during this call.
+  virtual void Paint(cc::PaintCanvas*,
                      const WebRect&,
                      cc::PaintFlags&,
                      int already_uploaded_id = -1,
@@ -207,17 +235,18 @@ class WebMediaPlayer {
 
   // Do a GPU-GPU texture copy of the current video frame to |texture|,
   // reallocating |texture| at the appropriate size with given internal
-  // format, format, and type if necessary. If the copy is impossible
-  // or fails, it returns false.
+  // format, format, and type if necessary.
   //
-  // |out_metadata|, if set, is used to return metadata about the frame
-  //   that is uploaded during this call.
+  // Returns true iff the copy succeeded.
+  //
   // |already_uploaded_id| indicates the unique_id of the frame last uploaded
   //   to this destination. It should only be set by the caller if the contents
   //   of the destination are known not to have changed since that upload.
   //   - If |out_metadata| is not null, |already_uploaded_id| is compared with
   //     the unique_id of the frame being uploaded. If it's the same, the
   //     upload may be skipped and considered to be successful.
+  // |out_metadata|, if not null, is used to return metadata about the frame
+  //   that is uploaded during this call.
   virtual bool CopyVideoTextureToPlatformTexture(
       gpu::gles2::GLES2Interface*,
       unsigned target,
@@ -228,13 +257,43 @@ class WebMediaPlayer {
       int level,
       bool premultiply_alpha,
       bool flip_y,
-      int already_uploaded_id = -1,
-      VideoFrameUploadMetadata* out_metadata = nullptr) {
+      int already_uploaded_id,
+      VideoFrameUploadMetadata* out_metadata) {
     return false;
   }
 
-  // Copy sub video frame texture to |texture|. If the copy is impossible or
-  // fails, it returns false.
+  // Do a CPU-GPU, YUV-RGB upload of the current video frame to |texture|,
+  // reallocating |texture| at the appropriate size with given internal
+  // format, format, and type if necessary.
+  //
+  // Returns true iff the copy succeeded.
+  //
+  // |already_uploaded_id| indicates the unique_id of the frame last uploaded
+  //   to this destination. It should only be set by the caller if the contents
+  //   of the destination are known not to have changed since that upload.
+  //   - If |out_metadata| is not null, |already_uploaded_id| is compared with
+  //     the unique_id of the frame being uploaded. If it's the same, the
+  //     upload may be skipped and considered to be successful.
+  // |out_metadata|, if not null, is used to return metadata about the frame
+  //   that is uploaded during this call.
+  virtual bool CopyVideoYUVDataToPlatformTexture(
+      gpu::gles2::GLES2Interface*,
+      unsigned target,
+      unsigned texture,
+      unsigned internal_format,
+      unsigned format,
+      unsigned type,
+      int level,
+      bool premultiply_alpha,
+      bool flip_y,
+      int already_uploaded_id,
+      VideoFrameUploadMetadata* out_metadata) {
+    return false;
+  }
+
+  // Copy sub video frame texture to |texture|.
+  //
+  // Returns true iff the copy succeeded.
   virtual bool CopyVideoSubTextureToPlatformTexture(gpu::gles2::GLES2Interface*,
                                                     unsigned target,
                                                     unsigned texture,
@@ -319,8 +378,13 @@ class WebMediaPlayer {
   virtual void OnHasNativeControlsChanged(bool) {}
 
   enum class DisplayType {
+    // Playback is happening inline.
     kInline,
+    // Playback is happening either with the video fullscreen. It may also be
+    // set when Blink detects that the video is effectively fullscreen even if
+    // the element is not.
     kFullscreen,
+    // Playback is happening in a Picture-in-Picture window.
     kPictureInPicture,
   };
 
@@ -335,4 +399,4 @@ class WebMediaPlayer {
 
 }  // namespace blink
 
-#endif
+#endif  // THIRD_PARTY_BLINK_PUBLIC_PLATFORM_WEB_MEDIA_PLAYER_H_

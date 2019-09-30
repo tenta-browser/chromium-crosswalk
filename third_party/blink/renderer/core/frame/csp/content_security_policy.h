@@ -100,6 +100,7 @@ class CORE_EXPORT ContentSecurityPolicy
     kImgSrc,
     kManifestSrc,
     kMediaSrc,
+    kNavigateTo,
     kObjectSrc,
     kPluginTypes,
     kPrefetchSrc,
@@ -150,7 +151,7 @@ class CORE_EXPORT ContentSecurityPolicy
                                 ContentSecurityPolicyHeaderSource);
   void ReportAccumulatedHeaders(LocalFrameClient*) const;
 
-  std::unique_ptr<Vector<CSPHeaderAndType>> Headers() const;
+  Vector<CSPHeaderAndType> Headers() const;
 
   // |element| will not be present for navigations to javascript URLs,
   // as those checks happen in the middle of the navigation algorithm,
@@ -386,7 +387,7 @@ class CORE_EXPORT ContentSecurityPolicy
   // Called when mixed content is detected on a page; will trigger a violation
   // report if the 'block-all-mixed-content' directive is specified for a
   // policy.
-  void ReportMixedContent(const KURL& mixed_url, RedirectStatus);
+  void ReportMixedContent(const KURL& mixed_url, RedirectStatus) const;
 
   void ReportBlockedScriptExecutionToInspector(
       const String& directive_text) const;
@@ -447,6 +448,20 @@ class CORE_EXPORT ContentSecurityPolicy
 
   // Returns the 'wasm-eval' source is supported.
   bool SupportsWasmEval() const { return supports_wasm_eval_; }
+
+  // Sometimes we don't know the initiator or it might be destroyed already
+  // for certain navigational checks. We create a string version of the relevant
+  // CSP directives to be passed around with the request. This allows us to
+  // perform these checks in NavigationRequest::CheckContentSecurityPolicy.
+  WebContentSecurityPolicyList ExposeForNavigationalChecks() const;
+
+  // Retrieves the parsed sandbox flags. A lot of the time the execution
+  // context will be used for all sandbox checks but there are situations
+  // (before installing the document that this CSP will bind to) when
+  // there is no execution context to enforce the sandbox flags.
+  SandboxFlags GetSandboxMask() const { return sandbox_mask_; }
+
+  bool HasPolicyFromSource(ContentSecurityPolicyHeaderSource) const;
 
  private:
   FRIEND_TEST_ALL_PREFIXES(ContentSecurityPolicyTest, NonceInline);

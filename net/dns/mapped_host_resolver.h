@@ -8,6 +8,7 @@
 #include <memory>
 #include <string>
 
+#include "net/base/completion_once_callback.h"
 #include "net/base/host_mapping_rules.h"
 #include "net/base/net_export.h"
 #include "net/dns/host_resolver.h"
@@ -45,10 +46,15 @@ class NET_EXPORT MappedHostResolver : public HostResolver {
   }
 
   // HostResolver methods:
+  std::unique_ptr<ResolveHostRequest> CreateRequest(
+      const HostPortPair& host,
+      const NetLogWithSource& net_log,
+      const base::Optional<ResolveHostParameters>& optional_parameters)
+      override;
   int Resolve(const RequestInfo& info,
               RequestPriority priority,
               AddressList* addresses,
-              const CompletionCallback& callback,
+              CompletionOnceCallback callback,
               std::unique_ptr<Request>* request,
               const NetLogWithSource& net_log) override;
   int ResolveFromCache(const RequestInfo& info,
@@ -70,6 +76,8 @@ class NET_EXPORT MappedHostResolver : public HostResolver {
   bool GetNoIPv6OnWifi() override;
 
  private:
+  class AlwaysErrorRequestImpl;
+
   // Modify the request |info| according to |rules_|. Returns either OK or
   // the network error code that the hostname's resolution mapped to.
   int ApplyRules(RequestInfo* info) const;

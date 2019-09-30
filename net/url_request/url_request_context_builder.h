@@ -27,7 +27,7 @@
 #include "base/files/file_path.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/task_scheduler/task_traits.h"
+#include "base/task/task_traits.h"
 #include "build/build_config.h"
 #include "build/buildflag.h"
 #include "net/base/net_export.h"
@@ -38,8 +38,8 @@
 #include "net/net_buildflags.h"
 #include "net/proxy_resolution/proxy_config_service.h"
 #include "net/proxy_resolution/proxy_resolution_service.h"
-#include "net/quic/core/quic_packets.h"
 #include "net/ssl/ssl_config_service.h"
+#include "net/third_party/quic/core/quic_packets.h"
 #include "net/url_request/url_request_job_factory.h"
 
 namespace net {
@@ -80,6 +80,11 @@ struct ReportingPolicy;
 // Builder may be used to create only a single URLRequestContext.
 class NET_EXPORT URLRequestContextBuilder {
  public:
+  // Creates a LayeredDelegate that wraps |inner_network_delegate|.
+  using CreateLayeredNetworkDelegate =
+      base::OnceCallback<std::unique_ptr<NetworkDelegate>(
+          std::unique_ptr<NetworkDelegate> inner_network_delegate)>;
+
   using CreateInterceptingJobFactory =
       base::OnceCallback<std::unique_ptr<URLRequestJobFactory>(
           std::unique_ptr<URLRequestJobFactory> inner_job_factory)>;
@@ -173,7 +178,7 @@ class NET_EXPORT URLRequestContextBuilder {
   }
 
   void set_ssl_config_service(
-      scoped_refptr<SSLConfigService> ssl_config_service) {
+      std::unique_ptr<SSLConfigService> ssl_config_service) {
     ssl_config_service_ = std::move(ssl_config_service);
   }
 
@@ -238,6 +243,12 @@ class NET_EXPORT URLRequestContextBuilder {
     network_delegate_ = std::move(delegate);
   }
 
+  // Sets an optional callback that creates a NetworkDelegate wrapping either
+  // the default NetworkDelegate, or the one set by the above method.
+  // TODO(mmenke): Remove this once the network service ships.
+  void SetCreateLayeredNetworkDelegateCallback(
+      CreateLayeredNetworkDelegate create_layered_network_delegate_callback);
+
   // Sets the ProxyDelegate.
   void set_proxy_delegate(std::unique_ptr<ProxyDelegate> proxy_delegate);
   // Allows sharing the PreoxyDelegates with other URLRequestContexts. Should
@@ -291,6 +302,10 @@ class NET_EXPORT URLRequestContextBuilder {
       std::unique_ptr<CTPolicyEnforcer> ct_policy_enforcer);
 
   void SetCertVerifier(std::unique_ptr<CertVerifier> cert_verifier);
+  // Same as above, but does not take ownership. The CertVerifier must outlive
+  // the created URLRequestContext.
+  // TODO(mmenke): Remove once no longer needed.
+  void SetSharedCertVerifier(CertVerifier* shared_cert_verifier);
 
 #if BUILDFLAG(ENABLE_REPORTING)
   void set_reporting_policy(std::unique_ptr<ReportingPolicy> reporting_policy);
@@ -388,14 +403,16 @@ class NET_EXPORT URLRequestContextBuilder {
   bool pac_quick_check_enabled_;
   ProxyResolutionService::SanitizeUrlPolicy pac_sanitize_url_policy_;
   std::unique_ptr<ProxyResolutionService> proxy_resolution_service_;
-  scoped_refptr<SSLConfigService> ssl_config_service_;
+  std::unique_ptr<SSLConfigService> ssl_config_service_;
   std::unique_ptr<NetworkDelegate> network_delegate_;
+  CreateLayeredNetworkDelegate create_layered_network_delegate_callback_;
   std::unique_ptr<ProxyDelegate> proxy_delegate_;
   ProxyDelegate* shared_proxy_delegate_;
   std::unique_ptr<CookieStore> cookie_store_;
   std::unique_ptr<HttpAuthHandlerFactory> http_auth_handler_factory_;
   HttpAuthHandlerFactory* shared_http_auth_handler_factory_;
   std::unique_ptr<CertVerifier> cert_verifier_;
+  CertVerifier* shared_cert_verifier_;
   std::unique_ptr<CTVerifier> ct_verifier_;
   std::unique_ptr<CTPolicyEnforcer> ct_policy_enforcer_;
 #if BUILDFLAG(ENABLE_REPORTING)

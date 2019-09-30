@@ -7,19 +7,41 @@
 
 #include <string>
 
-#include "base/callback_forward.h"
+#include "base/optional.h"
+#include "content/browser/web_package/signed_exchange_error.h"
+
+class GURL;
+
+namespace network {
+struct ResourceResponseHead;
+}  // namespace network
 
 namespace content {
+
+class SignedExchangeDevToolsProxy;
+
 namespace signed_exchange_utils {
 
-using LogCallback = base::RepeatingCallback<void(const std::string&)>;
+// Utility method to call SignedExchangeDevToolsProxy::ReportError() and
+// TRACE_EVENT_INSTANT1 to report the error to both DevTools and about:tracing.
+// If |devtools_proxy| is nullptr, it just calls TRACE_EVENT_INSTANT1().
+void ReportErrorAndTraceEvent(
+    SignedExchangeDevToolsProxy* devtools_proxy,
+    const std::string& error_message,
+    base::Optional<SignedExchangeError::FieldIndexPair> error_field =
+        base::nullopt);
 
-// Runs |callback| with |error_message| if |callback| is not null. And calls
-// TRACE_EVENT_END() with "disabled-by-default-loading" category, |name| and
-// |error_meassage|.
-void RunErrorMessageCallbackAndEndTraceEvent(const char* name,
-                                             const LogCallback& callback,
-                                             const std::string& error_message);
+// Returns true when SignedHTTPExchange feature or SignedHTTPExchangeOriginTrial
+// feature is enabled.
+bool IsSignedExchangeHandlingEnabled();
+
+// Returns true when the response should be handled as a signed exchange by
+// checking the mime type and the feature flags. When SignedHTTPExchange feature
+// is not enabled and SignedHTTPExchangeOriginTrial feature is enabled, this
+// method also checks the Origin Trial header.
+bool ShouldHandleAsSignedHTTPExchange(
+    const GURL& request_url,
+    const network::ResourceResponseHead& head);
 
 }  // namespace  signed_exchange_utils
 }  // namespace content

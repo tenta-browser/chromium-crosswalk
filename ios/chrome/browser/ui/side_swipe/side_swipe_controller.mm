@@ -7,6 +7,7 @@
 #include <memory>
 
 #include "base/feature_list.h"
+#import "base/ios/block_types.h"
 #include "base/scoped_observer.h"
 #include "components/reading_list/core/reading_list_model.h"
 #import "ios/chrome/browser/browser_state/chrome_browser_state.h"
@@ -32,6 +33,7 @@
 #import "ios/chrome/browser/ui/toolbar/public/side_swipe_toolbar_interacting.h"
 #include "ios/chrome/browser/ui/ui_util.h"
 #import "ios/chrome/browser/web/page_placeholder_tab_helper.h"
+#import "ios/web/public/web_client.h"
 #import "ios/web/public/web_state/web_state_observer_bridge.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
@@ -240,7 +242,8 @@ const NSUInteger kIpadGreySwipeTabCount = 8;
 
   // Since the toolbar and the contentView can overlap, check the toolbar frame
   // first, and confirm the right gesture recognizer is firing.
-  if ([self.toolbarInteractionHandler isInsideToolbar:location]) {
+  if ([self.toolbarInteractionHandler
+          isInsideToolbar:[gesture.view convertPoint:location toView:nil]]) {
     if (![gesture isEqual:panGestureRecognizer_]) {
       return NO;
     }
@@ -471,7 +474,13 @@ const NSUInteger kIpadGreySwipeTabCount = 8;
           [currentContentProvider_ goForward:webState];
         }
 
-        if (webState && webState->IsLoading()) {
+        // Checking -IsLoading() is likely incorrect, but to narrow the scope of
+        // fixes for slim navigation manager, only ignore this state when
+        // slim is disabled.  With slim navigation enabled, this false when
+        // pages can be served from WKWebView's page cache.
+        if (webState &&
+            (web::GetWebClient()->IsSlimNavigationManagerEnabled() ||
+             webState->IsLoading())) {
           scopedWebStateObserver_->RemoveAll();
           scopedWebStateObserver_->Add(webState);
           [self addCurtainWithCompletionHandler:^{
@@ -578,7 +587,20 @@ const NSUInteger kIpadGreySwipeTabCount = 8;
 
 #pragma mark - CRWWebStateObserver Methods
 
+// Checking -webStateDidStopLoading is likely incorrect, but to narrow the scope
+// of fixes for slim navigation manager, only ignore this callback when slim is
+// disabled.
 - (void)webStateDidStopLoading:(web::WebState*)webState {
+  if (web::GetWebClient()->IsSlimNavigationManagerEnabled())
+    return;
+  [self dismissCurtainWithCompletionHandler:^{
+    inSwipe_ = NO;
+  }];
+}
+
+- (void)webState:(web::WebState*)webState didLoadPageWithSuccess:(BOOL)success {
+  if (!web::GetWebClient()->IsSlimNavigationManagerEnabled())
+    return;
   [self dismissCurtainWithCompletionHandler:^{
     inSwipe_ = NO;
   }];

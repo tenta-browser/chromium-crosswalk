@@ -16,6 +16,8 @@ var ClientRenderer = (function() {
       this.logTable = logElement.querySelector('tbody');
     this.graphElement = document.getElementById('graphs');
     this.audioPropertyName = document.getElementById('audio-property-name');
+    this.audioFocusSessionListElement_ =
+        document.getElementById('audio-focus-session-list');
 
     this.players = null;
     this.selectedPlayer = null;
@@ -67,7 +69,7 @@ var ClientRenderer = (function() {
     while (element.hasChildNodes()) {
       element.removeChild(element.lastChild);
     }
-  };
+  }
 
   function createSelectableButton(id, groupName, buttonLabel, select_cb,
                                   isDestructed) {
@@ -94,7 +96,7 @@ var ClientRenderer = (function() {
     });
 
     return fragment;
-  };
+  }
 
   function selectSelectableButton(id) {
     var element = document.getElementById(id);
@@ -136,6 +138,19 @@ var ClientRenderer = (function() {
             componentType, this.selectedAudioComponentId,
             components[this.selectedAudioComponentId]);
       }
+    },
+
+    /**
+     * Called when the list of audio focus sessions has changed.
+     * @param sessions A list of media sessions that contain the current state.
+     */
+    audioFocusSessionUpdated: function(sessions) {
+      removeChildren(this.audioFocusSessionListElement_);
+
+      sessions.forEach(session => {
+        this.audioFocusSessionListElement_.appendChild(
+            this.createAudioFocusSessionRow_(session));
+      });
     },
 
     /**
@@ -208,7 +223,7 @@ var ClientRenderer = (function() {
       table.appendChild(thead);
       var tbody = document.createElement('tbody');
       for (var i=0; i < formats.length; ++i) {
-        var tr = document.createElement('tr')
+        var tr = document.createElement('tr');
         for (var key in formats[i]) {
           var td = document.createElement('td');
           td.appendChild(document.createTextNode(formats[i][key]));
@@ -245,7 +260,7 @@ var ClientRenderer = (function() {
             cellElement = document.createTextNode(
                 ((typeof value) == 'undefined') ? 'n/a' : value);
           }
-          tableCell.appendChild(cellElement)
+          tableCell.appendChild(cellElement);
           tableRow.appendChild(tableCell);
         }
         videoTableBodyElement.appendChild(tableRow);
@@ -263,7 +278,7 @@ var ClientRenderer = (function() {
           baseName = 'Stream';
           break;
         default:
-          baseName = 'UnknownType'
+          baseName = 'UnknownType';
           console.error('Unrecognized component type: ' + componentType);
           break;
       }
@@ -358,7 +373,7 @@ var ClientRenderer = (function() {
         var label = document.createElement('label');
 
         var name_text = p.url || 'Player ' + player.id;
-        var name_node = document.createElement('span');
+        var name_node = document.createElement('div');
         name_node.appendChild(document.createTextNode(name_text));
         name_node.className = 'player-name';
         label.appendChild(name_node);
@@ -370,14 +385,13 @@ var ClientRenderer = (function() {
           frame.push(p.frame_url);
         var frame_text = frame.join(' - ');
         if (frame_text) {
-          label.appendChild(document.createElement('br'));
-          var frame_node = document.createElement('span');
+          var frame_node = document.createElement('div');
           frame_node.className = 'player-frame';
           frame_node.appendChild(document.createTextNode(frame_text));
           label.appendChild(frame_node);
         }
 
-        var desc = []
+        var desc = [];
         if (p.width && p.height)
           desc.push(p.width + 'x' + p.height);
         if (p.video_codec_name)
@@ -390,8 +404,7 @@ var ClientRenderer = (function() {
           desc.push('(' + p.event + ')');
         var desc_text = desc.join(' ');
         if (desc_text) {
-          label.appendChild(document.createElement('br'));
-          var desc_node = document.createElement('span');
+          var desc_node = document.createElement('div');
           desc_node.className = 'player-desc';
           desc_node.appendChild(document.createTextNode(desc_text));
           label.appendChild(desc_node);
@@ -468,7 +481,7 @@ var ClientRenderer = (function() {
     },
 
     saveLog_: function() {
-      var strippedPlayers = []
+      var strippedPlayers = [];
       for (var id in this.players) {
         var p = this.players[id];
         strippedPlayers.push({properties: p.properties, events: p.allEvents});
@@ -527,6 +540,15 @@ var ClientRenderer = (function() {
         this.selectedPlayerLogIndex = 0;
         this.drawLog_();
       }
+    },
+
+    createAudioFocusSessionRow_: function(session) {
+      const template = $('audio-focus-session-row');
+      const span = template.content.querySelectorAll('span');
+      span[0].textContent = session.name;
+      span[1].textContent = session.owner;
+      span[2].textContent = session.state;
+      return document.importNode(template.content, true);
     },
   };
 

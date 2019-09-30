@@ -33,17 +33,23 @@ class PLATFORM_EXPORT ShapeResultBuffer {
 
   bool HasVerticalOffsets() const { return has_vertical_offsets_; }
 
-  int OffsetForPosition(const TextRun&,
+  int OffsetForPosition(const TextRun& run,
                         float target_x,
-                        bool include_partial_glyphs) const;
-  CharacterRange GetCharacterRange(TextDirection,
+                        IncludePartialGlyphsOption,
+                        BreakGlyphsOption) const;
+  CharacterRange GetCharacterRange(const StringView& text,
+                                   TextDirection,
                                    float total_width,
                                    unsigned from,
                                    unsigned to) const;
   Vector<CharacterRange> IndividualCharacterRanges(TextDirection,
                                                    float total_width) const;
+  Vector<double> IndividualCharacterAdvances(const StringView&,
+                                             TextDirection,
+                                             float total_width) const;
 
   static CharacterRange GetCharacterRange(scoped_refptr<const ShapeResult>,
+                                          const StringView& text,
                                           TextDirection,
                                           float total_width,
                                           unsigned from,
@@ -53,15 +59,21 @@ class PLATFORM_EXPORT ShapeResultBuffer {
 
   GlyphData EmphasisMarkGlyphData(const FontDescription&) const;
 
+  void ExpandRangeToIncludePartialGlyphs(int* from, int* to) const;
+
  private:
   friend class ShapeResultBloberizer;
   static CharacterRange GetCharacterRangeInternal(
       const Vector<scoped_refptr<const ShapeResult>, 64>&,
+      const StringView& text,
       TextDirection,
       float total_width,
       unsigned from,
       unsigned to);
 
+  static void AddRunInfoAdvances(const ShapeResult::RunInfo& run_info,
+                                 float offset,
+                                 Vector<double>& advances);
   static void AddRunInfoRanges(const ShapeResult::RunInfo&,
                                float offset,
                                Vector<CharacterRange>&);

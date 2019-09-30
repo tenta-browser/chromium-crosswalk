@@ -176,8 +176,8 @@ void VideoRendererImpl::Flush(const base::Closure& callback) {
     gpu_memory_buffer_pool_->Abort();
   frame_callback_weak_factory_.InvalidateWeakPtrs();
   video_frame_stream_->Reset(
-      base::Bind(&VideoRendererImpl::OnVideoFrameStreamResetDone,
-                 weak_factory_.GetWeakPtr()));
+      base::BindOnce(&VideoRendererImpl::OnVideoFrameStreamResetDone,
+                     weak_factory_.GetWeakPtr()));
 
   // To avoid unnecessary work by VDAs, only delete queued frames after
   // resetting |video_frame_stream_|. If this is done in the opposite order VDAs
@@ -223,6 +223,7 @@ void VideoRendererImpl::Initialize(
   DCHECK(!time_progressing_);
 
   video_frame_stream_.reset(new VideoFrameStream(
+      std::make_unique<VideoFrameStream::StreamTraits>(media_log_),
       task_runner_, create_video_decoders_cb_, media_log_));
   video_frame_stream_->set_config_change_observer(base::Bind(
       &VideoRendererImpl::OnConfigChange, weak_factory_.GetWeakPtr()));
@@ -251,12 +252,14 @@ void VideoRendererImpl::Initialize(
   DCHECK(current_decoder_config_.IsValidConfig());
 
   video_frame_stream_->Initialize(
-      stream, base::Bind(&VideoRendererImpl::OnVideoFrameStreamInitialized,
-                         weak_factory_.GetWeakPtr()),
-      cdm_context, base::Bind(&VideoRendererImpl::OnStatisticsUpdate,
-                              weak_factory_.GetWeakPtr()),
-      base::Bind(&VideoRendererImpl::OnWaitingForDecryptionKey,
-                 weak_factory_.GetWeakPtr()));
+      stream,
+      base::BindOnce(&VideoRendererImpl::OnVideoFrameStreamInitialized,
+                     weak_factory_.GetWeakPtr()),
+      cdm_context,
+      base::BindRepeating(&VideoRendererImpl::OnStatisticsUpdate,
+                          weak_factory_.GetWeakPtr()),
+      base::BindRepeating(&VideoRendererImpl::OnWaitingForDecryptionKey,
+                          weak_factory_.GetWeakPtr()));
 }
 
 scoped_refptr<VideoFrame> VideoRendererImpl::Render(
@@ -631,8 +634,8 @@ void VideoRendererImpl::AttemptRead_Locked() {
     case kPlaying:
       pending_read_ = true;
       video_frame_stream_->Read(
-          base::BindRepeating(&VideoRendererImpl::FrameReady,
-                              frame_callback_weak_factory_.GetWeakPtr()));
+          base::BindOnce(&VideoRendererImpl::FrameReady,
+                         frame_callback_weak_factory_.GetWeakPtr()));
       return;
     case kUninitialized:
     case kInitializing:

@@ -20,7 +20,7 @@ class CSPDirectiveListTest : public testing::Test {
  public:
   CSPDirectiveListTest() : csp(ContentSecurityPolicy::Create()) {}
 
-  virtual void SetUp() {
+  void SetUp() override {
     csp->SetupSelf(
         *SecurityOrigin::CreateFromString("https://example.test/image.png"));
   }
@@ -88,8 +88,8 @@ TEST_F(CSPDirectiveListTest, IsMatchingNoncePresent) {
     // Report-only
     Member<CSPDirectiveList> directive_list =
         CreateList(test.list, kContentSecurityPolicyHeaderTypeReport);
-    Member<SourceListDirective> script_src =
-        directive_list->OperativeDirective(directive_list->script_src_.Get());
+    Member<SourceListDirective> script_src = directive_list->OperativeDirective(
+        ContentSecurityPolicy::DirectiveType::kScriptSrc);
     EXPECT_EQ(test.expected,
               directive_list->IsMatchingNoncePresent(script_src, test.nonce));
     // Empty/null strings are always not present, regardless of the policy.
@@ -99,8 +99,8 @@ TEST_F(CSPDirectiveListTest, IsMatchingNoncePresent) {
     // Enforce
     directive_list =
         CreateList(test.list, kContentSecurityPolicyHeaderTypeEnforce);
-    script_src =
-        directive_list->OperativeDirective(directive_list->script_src_.Get());
+    script_src = directive_list->OperativeDirective(
+        ContentSecurityPolicy::DirectiveType::kScriptSrc);
     EXPECT_EQ(test.expected,
               directive_list->IsMatchingNoncePresent(script_src, test.nonce));
     // Empty/null strings are always not present, regardless of the policy.
@@ -564,14 +564,14 @@ TEST_F(CSPDirectiveListTest, WorkerSrcChildSrcFallback) {
       // When 'worker-src' is not present, 'child-src' can allow a worker when
       // present.
       {"child-src https://example.test", true},
-      {"child-src https://not-example.test", true},
+      {"child-src https://not-example.test", false},
       {"script-src https://example.test", true},
       {"script-src https://not-example.test", false},
       {"child-src https://example.test; script-src https://example.test", true},
       {"child-src https://example.test; script-src https://not-example.test",
        true},
       {"child-src https://not-example.test; script-src https://example.test",
-       true},
+       false},
       {"child-src https://not-example.test; script-src "
        "https://not-example.test",
        false},
@@ -667,7 +667,7 @@ TEST_F(CSPDirectiveListTest, SubsumesBasedOnCSPSourcesOnly) {
 
   for (const auto& test : cases) {
     HeapVector<Member<CSPDirectiveList>> list_b;
-    for (const auto& policy : test.policies) {
+    for (auto* const policy : test.policies) {
       list_b.push_back(
           CreateList(policy, kContentSecurityPolicyHeaderTypeEnforce));
     }
@@ -774,7 +774,7 @@ TEST_F(CSPDirectiveListTest, SubsumesIfNoneIsPresent) {
         CreateList(test.policy_a, kContentSecurityPolicyHeaderTypeEnforce);
 
     HeapVector<Member<CSPDirectiveList>> list_b;
-    for (const auto& policy_b : test.policies_b)
+    for (auto* const policy_b : test.policies_b)
       list_b.push_back(
           CreateList(policy_b, kContentSecurityPolicyHeaderTypeEnforce));
 
@@ -856,7 +856,7 @@ TEST_F(CSPDirectiveListTest, SubsumesPluginTypes) {
         CreateList(test.policy_a, kContentSecurityPolicyHeaderTypeEnforce);
 
     HeapVector<Member<CSPDirectiveList>> list_b;
-    for (const auto& policy_b : test.policies_b)
+    for (auto* const policy_b : test.policies_b)
       list_b.push_back(
           CreateList(policy_b, kContentSecurityPolicyHeaderTypeEnforce));
 
@@ -869,7 +869,7 @@ TEST_F(CSPDirectiveListTest, OperativeDirectiveGivenType) {
     kDefault,
     kNoDefault,
     kChildAndDefault,
-    kScriptAndDefault
+    kChildAndScriptAndDefault
   };
 
   struct TestCase {
@@ -893,7 +893,8 @@ TEST_F(CSPDirectiveListTest, OperativeDirectiveGivenType) {
       {ContentSecurityPolicy::DirectiveType::kFormAction, kNoDefault},
       // Directive with multiple default directives.
       {ContentSecurityPolicy::DirectiveType::kFrameSrc, kChildAndDefault},
-      {ContentSecurityPolicy::DirectiveType::kWorkerSrc, kScriptAndDefault},
+      {ContentSecurityPolicy::DirectiveType::kWorkerSrc,
+       kChildAndScriptAndDefault},
   };
 
   // Initial set-up.
@@ -922,7 +923,7 @@ TEST_F(CSPDirectiveListTest, OperativeDirectiveGivenType) {
 
     std::stringstream all_except_this;
     std::stringstream all_except_child_src_and_this;
-    std::stringstream all_except_script_src_and_this;
+    std::stringstream all_except_child_src_and_script_src_and_this;
     for (const auto& subtest : cases) {
       if (subtest.directive == test.directive)
         continue;
@@ -936,9 +937,11 @@ TEST_F(CSPDirectiveListTest, OperativeDirectiveGivenType) {
                                       << directive_name << ".com; ";
       }
       if (subtest.directive !=
-          ContentSecurityPolicy::DirectiveType::kScriptSrc) {
-        all_except_script_src_and_this << directive_name << " http://"
-                                       << directive_name << ".com; ";
+              ContentSecurityPolicy::DirectiveType::kChildSrc &&
+          subtest.directive !=
+              ContentSecurityPolicy::DirectiveType::kScriptSrc) {
+        all_except_child_src_and_script_src_and_this
+            << directive_name << " http://" << directive_name << ".com; ";
       }
     }
     CSPDirectiveList* all_except_this_list = CreateList(
@@ -946,8 +949,8 @@ TEST_F(CSPDirectiveListTest, OperativeDirectiveGivenType) {
     CSPDirectiveList* all_except_child_src_and_this_list =
         CreateList(all_except_child_src_and_this.str().c_str(),
                    kContentSecurityPolicyHeaderTypeEnforce);
-    CSPDirectiveList* all_except_script_src_and_this_list =
-        CreateList(all_except_script_src_and_this.str().c_str(),
+    CSPDirectiveList* all_except_child_src_and_script_src_and_this_list =
+        CreateList(all_except_child_src_and_script_src_and_this.str().c_str(),
                    kContentSecurityPolicyHeaderTypeEnforce);
 
     switch (test.type) {
@@ -971,12 +974,17 @@ TEST_F(CSPDirectiveListTest, OperativeDirectiveGivenType) {
         EXPECT_EQ(sources.size(), 1u);
         EXPECT_EQ(sources[0]->host_, "default-src.com");
         break;
-      case kScriptAndDefault:
+      case kChildAndScriptAndDefault:
         sources =
             all_except_this_list->OperativeDirective(test.directive)->list_;
         EXPECT_EQ(sources.size(), 1u);
+        EXPECT_EQ(sources[0]->host_, "child-src.com");
+        sources = all_except_child_src_and_this_list
+                      ->OperativeDirective(test.directive)
+                      ->list_;
+        EXPECT_EQ(sources.size(), 1u);
         EXPECT_EQ(sources[0]->host_, "script-src.com");
-        sources = all_except_script_src_and_this_list
+        sources = all_except_child_src_and_script_src_and_this_list
                       ->OperativeDirective(test.directive)
                       ->list_;
         EXPECT_EQ(sources.size(), 1u);
@@ -1001,7 +1009,7 @@ TEST_F(CSPDirectiveListTest, GetSourceVector) {
 
   // Check expectations on the initial set-up.
   HeapVector<Member<CSPDirectiveList>> policy_vector;
-  for (const auto& policy : policies) {
+  for (auto* const policy : policies) {
     policy_vector.push_back(
         CreateList(policy, kContentSecurityPolicyHeaderTypeEnforce));
   }
@@ -1055,7 +1063,7 @@ TEST_F(CSPDirectiveListTest, GetSourceVector) {
   for (const auto& test : cases) {
     // Initial set-up.
     HeapVector<Member<CSPDirectiveList>> policy_vector;
-    for (const auto& policy : policies) {
+    for (auto* const policy : policies) {
       policy_vector.push_back(
           CreateList(policy, kContentSecurityPolicyHeaderTypeEnforce));
     }

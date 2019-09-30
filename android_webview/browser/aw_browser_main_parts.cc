@@ -15,7 +15,7 @@
 #include "android_webview/common/aw_paths.h"
 #include "android_webview/common/aw_resource.h"
 #include "android_webview/common/aw_switches.h"
-#include "android_webview/common/crash_reporter/aw_microdump_crash_reporter.h"
+#include "android_webview/common/crash_reporter/aw_crash_reporter_client.h"
 #include "base/android/apk_assets.h"
 #include "base/android/build_info.h"
 #include "base/android/locale_utils.h"
@@ -24,12 +24,12 @@
 #include "base/files/file_path.h"
 #include "base/i18n/rtl.h"
 #include "base/message_loop/message_loop.h"
+#include "base/message_loop/message_loop_current.h"
 #include "base/path_service.h"
+#include "components/crash/content/browser/child_exit_observer_android.h"
 #include "components/crash/content/browser/crash_dump_manager_android.h"
-#include "components/crash/content/browser/crash_dump_observer_android.h"
-#include "components/services/heap_profiling/public/cpp/controller.h"
+#include "components/heap_profiling/supervisor.h"
 #include "components/services/heap_profiling/public/cpp/settings.h"
-#include "components/services/heap_profiling/public/mojom/heap_profiling_client.mojom.h"
 #include "content/public/browser/android/synchronous_compositor.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
@@ -57,6 +57,11 @@ AwBrowserMainParts::AwBrowserMainParts(AwContentBrowserClient* browser_client)
 AwBrowserMainParts::~AwBrowserMainParts() {
 }
 
+bool AwBrowserMainParts::ShouldContentCreateFeatureList() {
+  // FeatureList will be created in AwFieldTrialCreator.
+  return false;
+}
+
 int AwBrowserMainParts::PreEarlyInitialization() {
   // Network change notifier factory must be singleton, only set factory
   // instance while it is not been created.
@@ -69,12 +74,11 @@ int AwBrowserMainParts::PreEarlyInitialization() {
         new AwNetworkChangeNotifierFactory());
   }
 
-  // Android WebView does not use default MessageLoop. It has its own
-  // Android specific MessageLoop. Also see MainMessageLoopRun.
+  // Creates a MessageLoop for Android WebView if doesn't yet exist.
   DCHECK(!main_message_loop_.get());
-  main_message_loop_.reset(new base::MessageLoopForUI);
-  base::MessageLoopForUI::current()->Start();
-  return content::RESULT_CODE_NORMAL_EXIT;
+  if (!base::MessageLoopCurrent::IsSet())
+    main_message_loop_.reset(new base::MessageLoopForUI);
+  return service_manager::RESULT_CODE_NORMAL_EXIT;
 }
 
 int AwBrowserMainParts::PreCreateThreads() {
@@ -91,28 +95,28 @@ int AwBrowserMainParts::PreCreateThreads() {
   // Try to directly mmap the resources.pak from the apk. Fall back to load
   // from file, using PATH_SERVICE, otherwise.
   base::FilePath pak_file_path;
-  PathService::Get(ui::DIR_RESOURCE_PAKS_ANDROID, &pak_file_path);
+  base::PathService::Get(ui::DIR_RESOURCE_PAKS_ANDROID, &pak_file_path);
   pak_file_path = pak_file_path.AppendASCII("resources.pak");
   ui::LoadMainAndroidPackFile("assets/resources.pak", pak_file_path);
 
   base::android::MemoryPressureListenerAndroid::Initialize(
       base::android::AttachCurrentThread());
-  breakpad::CrashDumpObserver::Create();
+  ::crash_reporter::ChildExitObserver::Create();
 
   // We need to create the safe browsing specific directory even if the
   // AwSafeBrowsingConfigHelper::GetSafeBrowsingEnabled() is false
   // initially, because safe browsing can be enabled later at runtime
   // on a per-webview basis.
   base::FilePath safe_browsing_dir;
-  if (PathService::Get(android_webview::DIR_SAFE_BROWSING,
-                       &safe_browsing_dir)) {
+  if (base::PathService::Get(android_webview::DIR_SAFE_BROWSING,
+                             &safe_browsing_dir)) {
     if (!base::PathExists(safe_browsing_dir))
       base::CreateDirectory(safe_browsing_dir);
   }
 
   base::FilePath crash_dir;
   if (crash_reporter::IsCrashReporterEnabled()) {
-    if (PathService::Get(android_webview::DIR_CRASH_DUMPS, &crash_dir)) {
+    if (base::PathService::Get(android_webview::DIR_CRASH_DUMPS, &crash_dir)) {
       if (!base::PathExists(crash_dir))
         base::CreateDirectory(crash_dir);
     }
@@ -121,16 +125,13 @@ int AwBrowserMainParts::PreCreateThreads() {
   if (base::CommandLine::ForCurrentProcess()->HasSwitch(
           switches::kWebViewSandboxedRenderer)) {
     // Create the renderers crash manager on the UI thread.
-    breakpad::CrashDumpObserver::GetInstance()->RegisterClient(
+    ::crash_reporter::ChildExitObserver::GetInstance()->RegisterClient(
         std::make_unique<AwBrowserTerminator>(crash_dir));
   }
 
-  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kEnableWebViewVariations)) {
-    aw_field_trial_creator_.SetUpFieldTrials();
-  }
+  aw_field_trial_creator_.SetUpFieldTrials();
 
-  return content::RESULT_CODE_NORMAL_EXIT;
+  return service_manager::RESULT_CODE_NORMAL_EXIT;
 }
 
 void AwBrowserMainParts::PreMainMessageLoopRun() {
@@ -149,31 +150,9 @@ bool AwBrowserMainParts::MainMessageLoopRun(int* result_code) {
 void AwBrowserMainParts::ServiceManagerConnectionStarted(
     content::ServiceManagerConnection* connection) {
   heap_profiling::Mode mode = heap_profiling::GetModeForStartup();
-  // TODO: Add support for heap-profiling other process types if it's deemed to
-  // provide utility. https://crbug.com/827545.
-  if (mode == heap_profiling::Mode::kBrowser) {
-    // Create a Connector that is not bound to any sequence.
-    std::unique_ptr<service_manager::Connector> connector =
-        connection->GetConnector()->Clone();
-
-    // Use it to generate a ProfilingClient for the browser process. This binds
-    // the Connector to the current sequence.
-    heap_profiling::mojom::ProfilingClientPtr profiling_client;
-    heap_profiling::mojom::ProfilingClientRequest request(
-        mojo::MakeRequest(&profiling_client));
-    connector->BindInterface(content::mojom::kBrowserServiceName,
-                             std::move(request));
-
-    // Start the HeapProfilingService and start profiling the browser process.
-    // It's okay to pass the Connector to HeapProfilingService, since both are
-    // bound to the current sequence.
-    heap_profiling_controller_.reset(new heap_profiling::Controller(
-        connection->GetConnector()->Clone(),
-        heap_profiling::GetStackModeForStartup(),
-        heap_profiling::GetSamplingRateForStartup()));
-    heap_profiling_controller_->StartProfilingClient(
-        std::move(profiling_client), getpid(),
-        heap_profiling::mojom::ProcessType::BROWSER);
+  if (mode != heap_profiling::Mode::kNone) {
+    heap_profiling::Supervisor::GetInstance()->Start(connection,
+                                                     base::OnceClosure());
   }
 }
 

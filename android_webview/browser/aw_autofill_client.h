@@ -13,8 +13,6 @@
 #include "base/compiler_specific.h"
 #include "base/macros.h"
 #include "components/autofill/core/browser/autofill_client.h"
-#include "components/prefs/pref_registry_simple.h"
-#include "components/prefs/pref_service_factory.h"
 #include "content/public/browser/web_contents_user_data.h"
 #include "ui/android/view_android.h"
 
@@ -23,8 +21,8 @@ class AutofillPopupDelegate;
 class CardUnmaskDelegate;
 class CreditCard;
 class FormStructure;
+class MigratableCreditCard;
 class PersonalDataManager;
-class SaveCardBubbleController;
 }
 
 namespace content {
@@ -66,21 +64,30 @@ class AwAutofillClient : public autofill::AutofillClient,
   syncer::SyncService* GetSyncService() override;
   identity::IdentityManager* GetIdentityManager() override;
   ukm::UkmRecorder* GetUkmRecorder() override;
+  ukm::SourceId GetUkmSourceId() override;
   autofill::AddressNormalizer* GetAddressNormalizer() override;
-  autofill::SaveCardBubbleController* GetSaveCardBubbleController() override;
-  void ShowAutofillSettings() override;
+  security_state::SecurityLevel GetSecurityLevelForUmaHistograms() override;
+  void ShowAutofillSettings(bool show_credit_card_settings) override;
   void ShowUnmaskPrompt(
       const autofill::CreditCard& card,
       UnmaskCardReason reason,
       base::WeakPtr<autofill::CardUnmaskDelegate> delegate) override;
   void OnUnmaskVerificationResult(PaymentsRpcResult result) override;
+  void ShowLocalCardMigrationDialog(
+      base::OnceClosure show_migration_dialog_closure) override;
+  void ConfirmMigrateLocalCardToCloud(
+      std::unique_ptr<base::DictionaryValue> legal_message,
+      std::vector<autofill::MigratableCreditCard>& migratable_credit_cards,
+      base::OnceClosure start_migrating_cards_closure) override;
+  void ConfirmSaveAutofillProfile(const autofill::AutofillProfile& profile,
+                                  base::OnceClosure callback) override;
   void ConfirmSaveCreditCardLocally(const autofill::CreditCard& card,
                                     const base::Closure& callback) override;
   void ConfirmSaveCreditCardToCloud(
       const autofill::CreditCard& card,
       std::unique_ptr<base::DictionaryValue> legal_message,
-      bool should_cvc_be_requested,
-      const base::Closure& callback) override;
+      bool should_request_name_from_user,
+      base::OnceCallback<void(const base::string16&)> callback) override;
   void ConfirmCreditCardFillAssist(const autofill::CreditCard& card,
                                    const base::Closure& callback) override;
   void LoadRiskData(
@@ -91,6 +98,7 @@ class AwAutofillClient : public autofill::AutofillClient,
       const gfx::RectF& element_bounds,
       base::i18n::TextDirection text_direction,
       const std::vector<autofill::Suggestion>& suggestions,
+      bool /*unused_autoselect_first_suggestion*/,
       base::WeakPtr<autofill::AutofillPopupDelegate> delegate) override;
   void UpdateAutofillPopupDataListValues(
       const std::vector<base::string16>& values,

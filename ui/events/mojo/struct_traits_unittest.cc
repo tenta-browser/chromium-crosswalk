@@ -54,12 +54,12 @@ TEST_F(StructTraitsTest, KeyEvent) {
       {ET_KEY_PRESSED, VKEY_A, ui::DomCode::US_A, EF_NONE},
       {ET_KEY_PRESSED, VKEY_B, ui::DomCode::US_B,
        EF_CONTROL_DOWN | EF_ALT_DOWN},
-      {'\x12', VKEY_2, EF_CONTROL_DOWN},
-      {'Z', VKEY_Z, EF_CAPS_LOCK_ON},
-      {'z', VKEY_Z, EF_NONE},
+      {'\x12', VKEY_2, ui::DomCode::NONE, EF_CONTROL_DOWN},
+      {'Z', VKEY_Z, ui::DomCode::NONE, EF_CAPS_LOCK_ON},
+      {'z', VKEY_Z, ui::DomCode::NONE, EF_NONE},
       {ET_KEY_PRESSED, VKEY_Z, EF_NONE,
        base::TimeTicks() + base::TimeDelta::FromMicroseconds(101)},
-      {'Z', VKEY_Z, EF_NONE,
+      {'Z', VKEY_Z, ui::DomCode::NONE, EF_NONE,
        base::TimeTicks() + base::TimeDelta::FromMicroseconds(102)},
   };
 
@@ -102,11 +102,24 @@ TEST_F(StructTraitsTest, PointerEvent) {
        PointerDetails(EventPointerType::POINTER_TYPE_MOUSE,
                       MouseEvent::kMousePointerId),
        base::TimeTicks() + base::TimeDelta::FromMicroseconds(203)},
+      {ET_POINTER_CANCELLED, gfx::Point(0, 1), gfx::Point(2, 3), EF_ALT_DOWN, 0,
+       PointerDetails(EventPointerType::POINTER_TYPE_MOUSE,
+                      MouseEvent::kMousePointerId),
+       base::TimeTicks() + base::TimeDelta::FromMicroseconds(204)},
+      {ET_POINTER_ENTERED, gfx::Point(6, 7), gfx::Point(8, 9), EF_NONE, 0,
+       PointerDetails(EventPointerType::POINTER_TYPE_MOUSE,
+                      MouseEvent::kMousePointerId),
+       base::TimeTicks() + base::TimeDelta::FromMicroseconds(205)},
       {ET_POINTER_EXITED, gfx::Point(10, 10), gfx::Point(20, 30),
        EF_BACK_MOUSE_BUTTON, 0,
        PointerDetails(EventPointerType::POINTER_TYPE_MOUSE,
                       MouseEvent::kMousePointerId),
-       base::TimeTicks() + base::TimeDelta::FromMicroseconds(204)},
+       base::TimeTicks() + base::TimeDelta::FromMicroseconds(206)},
+      {ET_POINTER_CAPTURE_CHANGED, gfx::Point(99, 99), gfx::Point(99, 99),
+       EF_CONTROL_DOWN, 0,
+       PointerDetails(EventPointerType::POINTER_TYPE_MOUSE,
+                      MouseEvent::kMousePointerId),
+       base::TimeTicks() + base::TimeDelta::FromMicroseconds(207)},
 
       // Touch pointer events:
       {ET_POINTER_DOWN, gfx::Point(10, 10), gfx::Point(20, 30), EF_NONE, 0,
@@ -118,7 +131,7 @@ TEST_F(StructTraitsTest, PointerEvent) {
                       /* twist */ 0,
                       /* tilt_x */ 4.0f,
                       /* tilt_y */ 5.0f),
-       base::TimeTicks() + base::TimeDelta::FromMicroseconds(205)},
+       base::TimeTicks() + base::TimeDelta::FromMicroseconds(208)},
       {ET_POINTER_CANCELLED, gfx::Point(120, 120), gfx::Point(2, 3), EF_NONE, 0,
        PointerDetails(EventPointerType::POINTER_TYPE_TOUCH,
                       /* pointer_id */ 2,
@@ -128,7 +141,7 @@ TEST_F(StructTraitsTest, PointerEvent) {
                       /* twist */ 0,
                       /* tilt_x */ 2.5f,
                       /* tilt_y */ 0.5f),
-       base::TimeTicks() + base::TimeDelta::FromMicroseconds(206)},
+       base::TimeTicks() + base::TimeDelta::FromMicroseconds(209)},
 
       // Pen pointer events:
       {ET_POINTER_DOWN, gfx::Point(1, 2), gfx::Point(3, 4), EF_NONE, 0,
@@ -141,7 +154,7 @@ TEST_F(StructTraitsTest, PointerEvent) {
                       /* tilt_x */ 4.0f,
                       /* tilt_y */ 5.0f,
                       /* tangential_pressure */ -1.f),
-       base::TimeTicks() + base::TimeDelta::FromMicroseconds(207)},
+       base::TimeTicks() + base::TimeDelta::FromMicroseconds(210)},
       {ET_POINTER_UP, gfx::Point(5, 6), gfx::Point(7, 8), EF_NONE, 0,
        PointerDetails(EventPointerType::POINTER_TYPE_PEN,
                       /* pointer_id */ 3,
@@ -152,7 +165,7 @@ TEST_F(StructTraitsTest, PointerEvent) {
                       /* tilt_x */ 4.0f,
                       /* tilt_y */ 5.0f,
                       /* tangential_pressure */ 1.f),
-       base::TimeTicks() + base::TimeDelta::FromMicroseconds(208)},
+       base::TimeTicks() + base::TimeDelta::FromMicroseconds(211)},
   };
 
   mojom::TraitsTestServicePtr proxy = GetTraitsTestProxy();
@@ -227,6 +240,9 @@ TEST_F(StructTraitsTest, KeyEventPropertiesSerialized) {
 
 TEST_F(StructTraitsTest, GestureEvent) {
   GestureEvent kTestData[] = {
+      {10, 20, EF_NONE,
+       base::TimeTicks() + base::TimeDelta::FromMicroseconds(401),
+       GestureEventDetails(ET_SCROLL_FLING_START)},
       {10, 20, EF_NONE,
        base::TimeTicks() + base::TimeDelta::FromMicroseconds(401),
        GestureEventDetails(ET_GESTURE_TAP)},

@@ -196,11 +196,10 @@ void MDnsConnection::OnDatagramReceived(
   delegate_->HandlePacket(response, bytes_read);
 }
 
-MDnsClientImpl::Core::Core(base::Clock* clock, base::Timer* timer)
+MDnsClientImpl::Core::Core(base::Clock* clock, base::OneShotTimer* timer)
     : clock_(clock),
       cleanup_timer_(timer),
-      connection_(new MDnsConnection(this)) {
-}
+      connection_(new MDnsConnection(this)) {}
 
 MDnsClientImpl::Core::~Core() = default;
 
@@ -342,11 +341,9 @@ void MDnsClientImpl::Core::AddListener(
     MDnsListenerImpl* listener) {
   ListenerKey key(listener->GetName(), listener->GetType());
 
-  std::unique_ptr<base::ObserverList<MDnsListenerImpl>>& observer_list =
-      listeners_[key];
-
+  auto& observer_list = listeners_[key];
   if (!observer_list)
-    observer_list = std::make_unique<base::ObserverList<MDnsListenerImpl>>();
+    observer_list = std::make_unique<ObserverListType>();
 
   observer_list->AddObserver(listener);
 }
@@ -418,10 +415,10 @@ void MDnsClientImpl::Core::QueryCache(
 
 MDnsClientImpl::MDnsClientImpl()
     : clock_(base::DefaultClock::GetInstance()),
-      cleanup_timer_(new base::Timer(false, false)) {}
+      cleanup_timer_(new base::OneShotTimer()) {}
 
 MDnsClientImpl::MDnsClientImpl(base::Clock* clock,
-                               std::unique_ptr<base::Timer> timer)
+                               std::unique_ptr<base::OneShotTimer> timer)
     : clock_(clock), cleanup_timer_(std::move(timer)) {}
 
 MDnsClientImpl::~MDnsClientImpl() = default;

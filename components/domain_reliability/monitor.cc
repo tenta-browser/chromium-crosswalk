@@ -132,8 +132,8 @@ void DomainReliabilityMonitor::MoveToNetworkThread() {
 
   network_task_runner_->PostTask(
       FROM_HERE,
-      base::Bind(&net::NetworkChangeNotifier::AddNetworkChangeObserver,
-                 base::Unretained(this)));
+      base::BindOnce(&net::NetworkChangeNotifier::AddNetworkChangeObserver,
+                     base::Unretained(this)));
   moved_to_network_thread_ = true;
 }
 
@@ -336,7 +336,7 @@ void DomainReliabilityMonitor::OnRequestLegComplete(
     return;
 
   int response_code;
-  if (request.response_info.headers.get())
+  if (request.response_info.headers)
     response_code = request.response_info.headers->response_code();
   else
     response_code = -1;
@@ -394,7 +394,7 @@ void DomainReliabilityMonitor::OnRequestLegComplete(
 
 void DomainReliabilityMonitor::MaybeHandleHeader(
     const RequestInfo& request) {
-  if (!request.response_info.headers.get())
+  if (!request.response_info.headers)
     return;
 
   size_t iter = 0;

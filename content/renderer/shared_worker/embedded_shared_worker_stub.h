@@ -15,7 +15,8 @@
 #include "content/common/shared_worker/shared_worker.mojom.h"
 #include "content/common/shared_worker/shared_worker_host.mojom.h"
 #include "content/common/shared_worker/shared_worker_info.mojom.h"
-#include "content/renderer/child_message_filter.h"
+#include "content/public/common/renderer_preference_watcher.mojom.h"
+#include "content/public/common/renderer_preferences.h"
 #include "ipc/ipc_listener.h"
 #include "mojo/public/cpp/bindings/binding.h"
 #include "services/network/public/mojom/url_loader_factory.mojom.h"
@@ -40,6 +41,8 @@ class MessagePortChannel;
 }
 
 namespace content {
+class HostChildURLLoaderFactoryBundle;
+class URLLoaderFactoryBundleInfo;
 class WebApplicationCacheHostImpl;
 
 // A stub class to receive IPC from browser process and talk to
@@ -58,11 +61,15 @@ class EmbeddedSharedWorkerStub : public blink::WebSharedWorkerClient,
       mojom::SharedWorkerInfoPtr info,
       bool pause_on_start,
       const base::UnguessableToken& devtools_worker_token,
+      const RendererPreferences& renderer_preferences,
+      mojom::RendererPreferenceWatcherRequest preference_watcher_request,
       blink::mojom::WorkerContentSettingsProxyPtr content_settings,
       mojom::ServiceWorkerProviderInfoForSharedWorkerPtr
           service_worker_provider_info,
+      int appcache_host_id,
       network::mojom::URLLoaderFactoryAssociatedPtrInfo
           script_loader_factory_info,
+      std::unique_ptr<URLLoaderFactoryBundleInfo> subresource_loaders,
       mojom::SharedWorkerHostPtr host,
       mojom::SharedWorkerRequest request,
       service_manager::mojom::InterfaceProviderPtr interface_provider);
@@ -104,6 +111,10 @@ class EmbeddedSharedWorkerStub : public blink::WebSharedWorkerClient,
   const std::string name_;
   bool running_ = false;
   GURL url_;
+  RendererPreferences renderer_preferences_;
+  // Set on ctor and passed to the fetch context created when
+  // CreateWorkerFetchContext() is called.
+  mojom::RendererPreferenceWatcherRequest preference_watcher_request_;
   std::unique_ptr<blink::WebSharedWorker> impl_;
 
   using PendingChannel =
@@ -111,6 +122,7 @@ class EmbeddedSharedWorkerStub : public blink::WebSharedWorkerClient,
   std::vector<PendingChannel> pending_channels_;
 
   ScopedChildProcessReference process_ref_;
+  const int appcache_host_id_;
   WebApplicationCacheHostImpl* app_cache_host_ = nullptr;  // Not owned.
 
   // S13nServiceWorker: The info needed to connect to the
@@ -120,6 +132,10 @@ class EmbeddedSharedWorkerStub : public blink::WebSharedWorkerClient,
   // NetworkService: The URLLoaderFactory used for loading the shared worker
   // script.
   network::mojom::URLLoaderFactoryAssociatedPtrInfo script_loader_factory_info_;
+
+  // S13nServiceWorker: The factory bundle used for loads from this shared
+  // worker.
+  scoped_refptr<HostChildURLLoaderFactoryBundle> loader_factories_;
 
   DISALLOW_COPY_AND_ASSIGN(EmbeddedSharedWorkerStub);
 };

@@ -36,7 +36,7 @@
 #include "third_party/blink/public/platform/web_mouse_event.h"
 #include "third_party/blink/public/platform/web_vector.h"
 #include "third_party/blink/public/web/web_external_popup_menu.h"
-#include "third_party/blink/public/web/web_frame_client.h"
+#include "third_party/blink/public/web/web_local_frame_client.h"
 #include "third_party/blink/public/web/web_menu_item_info.h"
 #include "third_party/blink/public/web/web_popup_menu_info.h"
 #include "third_party/blink/public/web/web_view.h"
@@ -66,7 +66,7 @@ ExternalPopupMenu::ExternalPopupMenu(LocalFrame& frame,
     : owner_element_(owner_element),
       local_frame_(frame),
       web_view_(web_view),
-      dispatch_event_timer_(frame.GetTaskRunner(TaskType::kUnspecedTimer),
+      dispatch_event_timer_(frame.GetTaskRunner(TaskType::kInternalDefault),
                             this,
                             &ExternalPopupMenu::DispatchEvent),
       web_external_popup_menu_(nullptr) {}
@@ -103,7 +103,7 @@ bool ExternalPopupMenu::ShowInternal() {
                        ->LocalToAbsoluteQuad(FloatQuad(
                            ToLayoutBox(layout_object)->BorderBoundingBox())));
     IntRect rect(quad.EnclosingBoundingBox());
-    IntRect rect_in_viewport = local_frame_->View()->ContentsToViewport(rect);
+    IntRect rect_in_viewport = local_frame_->View()->FrameToViewport(rect);
     web_external_popup_menu_->Show(rect_in_viewport);
     return true;
   }

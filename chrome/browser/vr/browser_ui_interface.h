@@ -8,6 +8,7 @@
 #include "chrome/browser/vr/assets_load_status.h"
 #include "chrome/browser/vr/model/capturing_state_model.h"
 #include "chrome/browser/vr/ui_unsupported_mode.h"
+#include "chrome/browser/vr/vr_export.h"
 #include "components/security_state/core/security_state.h"
 
 namespace base {
@@ -21,7 +22,7 @@ struct OmniboxSuggestions;
 struct ToolbarState;
 
 // The browser communicates state changes to the VR UI via this interface.
-class BrowserUiInterface {
+class VR_EXPORT BrowserUiInterface {
  public:
   virtual ~BrowserUiInterface() {}
 
@@ -34,7 +35,10 @@ class BrowserUiInterface {
   virtual void SetIsExiting() = 0;
   virtual void SetHistoryButtonsEnabled(bool can_go_back,
                                         bool can_go_forward) = 0;
-  virtual void SetCapturingState(const CapturingStateModel& state) = 0;
+  virtual void SetCapturingState(
+      const CapturingStateModel& active_capturing,
+      const CapturingStateModel& background_capturing,
+      const CapturingStateModel& potential_capturing) = 0;
   virtual void ShowExitVrPrompt(UiUnsupportedMode reason) = 0;
   virtual void SetSpeechRecognitionEnabled(bool enabled) = 0;
   virtual void SetRecognitionResult(const base::string16& result) = 0;
@@ -45,15 +49,18 @@ class BrowserUiInterface {
                               std::unique_ptr<Assets> assets,
                               const base::Version& component_version) = 0;
   virtual void OnAssetsUnavailable() = 0;
-  virtual void SetIncognitoTabsOpen(bool open) = 0;
+  virtual void WaitForAssets() = 0;
   virtual void SetOverlayTextureEmpty(bool empty) = 0;
-
-  // Web contents text input related.
   virtual void ShowSoftInput(bool show) = 0;
   virtual void UpdateWebInputIndices(int selection_start,
                                      int selection_end,
                                      int composition_start,
                                      int composition_end) = 0;
+  virtual void AddOrUpdateTab(int id,
+                              bool incognito,
+                              const base::string16& title) = 0;
+  virtual void RemoveTab(int id, bool incognito) = 0;
+  virtual void RemoveAllTabs() = 0;
 };
 
 }  // namespace vr

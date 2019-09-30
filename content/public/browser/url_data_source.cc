@@ -4,6 +4,9 @@
 
 #include "content/public/browser/url_data_source.h"
 
+#include <utility>
+
+#include "base/memory/ptr_util.h"
 #include "content/browser/webui/url_data_manager.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/common/url_constants.h"
@@ -11,9 +14,16 @@
 
 namespace content {
 
+// static
 void URLDataSource::Add(BrowserContext* browser_context,
                         URLDataSource* source) {
-  URLDataManager::AddDataSource(browser_context, source);
+  Add(browser_context, base::WrapUnique(source));
+}
+
+// static
+void URLDataSource::Add(BrowserContext* browser_context,
+                        std::unique_ptr<URLDataSource> source) {
+  URLDataManager::AddDataSource(browser_context, std::move(source));
 }
 
 scoped_refptr<base::SingleThreadTaskRunner>
@@ -34,10 +44,9 @@ bool URLDataSource::ShouldAddContentSecurityPolicy() const {
 }
 
 std::string URLDataSource::GetContentSecurityPolicyScriptSrc() const {
-  // Specific resources require unsafe-eval in the Content Security Policy.
-  // TODO(tsepez,mfoltz): Remove 'unsafe-eval' when tests have been fixed to
-  // not use eval()/new Function().  http://crbug.com/525224
-  return "script-src chrome://resources 'self' 'unsafe-eval';";
+  // Note: Do not add 'unsafe-eval' here. Instead override CSP for the
+  // specific pages that need it, see context http://crbug.com/525224.
+  return "script-src chrome://resources 'self';";
 }
 
 std::string URLDataSource::GetContentSecurityPolicyObjectSrc() const {

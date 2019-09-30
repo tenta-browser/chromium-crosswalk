@@ -14,6 +14,8 @@
 #include "base/macros.h"
 #include "base/metrics/field_trial.h"
 #include "components/variations/client_filterable_state.h"
+#include "components/variations/proto/study.pb.h"
+#include "components/variations/seed_response.h"
 #include "components/variations/service/ui_string_overrider.h"
 #include "components/variations/variations_seed_store.h"
 
@@ -31,6 +33,12 @@ class VariationsFieldTrialCreator {
   VariationsFieldTrialCreator(PrefService* local_state,
                               VariationsServiceClient* client,
                               const UIStringOverrider& ui_string_overrider);
+  // |initial_seed| may be null. If not null, then it will be stored in the
+  // contained seed store.
+  VariationsFieldTrialCreator(PrefService* local_state,
+                              VariationsServiceClient* client,
+                              const UIStringOverrider& ui_string_overrider,
+                              std::unique_ptr<SeedResponse> initial_seed);
   virtual ~VariationsFieldTrialCreator();
 
   // Returns what variations will consider to be the latest country. Returns
@@ -125,6 +133,9 @@ class VariationsFieldTrialCreator {
 
   // Returns the seed store. Virtual for testing.
   virtual VariationsSeedStore* GetSeedStore();
+
+  // Get the platform we're running on, respecting OverrideVariationsPlatform().
+  Study::Platform GetPlatform();
 
   PrefService* local_state() { return seed_store_.local_state(); }
   const PrefService* local_state() const { return seed_store_.local_state(); }

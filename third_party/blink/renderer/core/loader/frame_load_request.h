@@ -27,17 +27,18 @@
 #define THIRD_PARTY_BLINK_RENDERER_CORE_LOADER_FRAME_LOAD_REQUEST_H_
 
 #include "base/unguessable_token.h"
+#include "third_party/blink/public/mojom/blob/blob_url_store.mojom-blink.h"
+#include "third_party/blink/public/web/web_triggering_event_info.h"
 #include "third_party/blink/renderer/core/dom/document.h"
-#include "third_party/blink/renderer/core/dom/events/event.h"
+#include "third_party/blink/renderer/core/frame/frame_types.h"
 #include "third_party/blink/renderer/core/loader/frame_loader_types.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_loader_options.h"
+#include "third_party/blink/renderer/platform/loader/fetch/resource_request.h"
 #include "third_party/blink/renderer/platform/loader/fetch/substitute_data.h"
 
 namespace blink {
 
 class HTMLFormElement;
-class ResourceRequest;
-class SubstituteData;
 
 struct CORE_EXPORT FrameLoadRequest {
   STACK_ALLOCATED();
@@ -85,9 +86,12 @@ struct CORE_EXPORT FrameLoadRequest {
     client_redirect_ = client_redirect;
   }
 
-  Event* TriggeringEvent() const { return triggering_event_.Get(); }
-  void SetTriggeringEvent(Event* triggering_event) {
-    triggering_event_ = triggering_event;
+  WebTriggeringEventInfo TriggeringEventInfo() const {
+    return triggering_event_info_;
+  }
+  void SetTriggeringEventInfo(WebTriggeringEventInfo info) {
+    DCHECK(info != WebTriggeringEventInfo::kUnknown);
+    triggering_event_info_ = info;
   }
 
   HTMLFormElement* Form() const { return form_.Get(); }
@@ -103,6 +107,11 @@ struct CORE_EXPORT FrameLoadRequest {
   ShouldSetOpener GetShouldSetOpener() const { return should_set_opener_; }
   void SetShouldSetOpener(ShouldSetOpener should_set_opener) {
     should_set_opener_ = should_set_opener;
+  }
+
+  const AtomicString& HrefTranslate() { return href_translate_; }
+  void SetHrefTranslate(const AtomicString& translate) {
+    href_translate_ = translate;
   }
 
   ContentSecurityPolicyDisposition ShouldCheckMainWorldContentSecurityPolicy()
@@ -139,6 +148,12 @@ struct CORE_EXPORT FrameLoadRequest {
     return result;
   }
 
+  void SetInputStartTime(base::TimeTicks input_start_time) {
+    input_start_time_ = input_start_time;
+  }
+
+  base::TimeTicks GetInputStartTime() const { return input_start_time_; }
+
  private:
   FrameLoadRequest(Document* origin_document,
                    const ResourceRequest&,
@@ -150,10 +165,12 @@ struct CORE_EXPORT FrameLoadRequest {
   Member<Document> origin_document_;
   ResourceRequest resource_request_;
   AtomicString frame_name_;
+  AtomicString href_translate_;
   SubstituteData substitute_data_;
   bool replaces_current_item_;
   ClientRedirectPolicy client_redirect_;
-  Member<Event> triggering_event_;
+  WebTriggeringEventInfo triggering_event_info_ =
+      WebTriggeringEventInfo::kNotFromEvent;
   Member<HTMLFormElement> form_;
   ShouldSendReferrer should_send_referrer_;
   ShouldSetOpener should_set_opener_;
@@ -162,6 +179,7 @@ struct CORE_EXPORT FrameLoadRequest {
   base::UnguessableToken devtools_navigation_token_;
   scoped_refptr<base::RefCountedData<mojom::blink::BlobURLTokenPtr>>
       blob_url_token_;
+  base::TimeTicks input_start_time_;
 };
 
 }  // namespace blink

@@ -8,7 +8,7 @@
 #include "ui/accessibility/ax_event_generator.h"
 #include "ui/accessibility/ax_tree.h"
 
-struct ExtensionMsg_AccessibilityEventParams;
+struct ExtensionMsg_AccessibilityEventBundleParams;
 
 namespace extensions {
 
@@ -25,18 +25,12 @@ class AutomationAXTreeWrapper : public ui::AXEventGenerator {
   ui::AXTree* tree() { return &tree_; }
   AutomationInternalCustomBindings* owner() { return owner_; }
 
-  // The host node ID is the node ID of the parent node in the parent tree.
-  // For example, the host node ID of a web area of a child frame is the
-  // ID of the <iframe> element in its parent frame.
-  int32_t host_node_id() const { return host_node_id_; }
-  void set_host_node_id(int32_t id) { host_node_id_ = id; }
-
   // Called by AutomationInternalCustomBindings::OnAccessibilityEvents on
   // the AutomationAXTreeWrapper instance for the correct tree corresponding
   // to this event. Unserializes the tree update and calls back to
   // AutomationInternalCustomBindings to fire any automation events needed.
   bool OnAccessibilityEvents(
-      const std::vector<ExtensionMsg_AccessibilityEventParams>& events,
+      const ExtensionMsg_AccessibilityEventBundleParams& events,
       bool is_active_profile);
 
  private:
@@ -55,12 +49,15 @@ class AutomationAXTreeWrapper : public ui::AXEventGenerator {
   bool IsEventTypeHandledByAXEventGenerator(api::automation::EventType) const;
 
   int32_t tree_id_;
-  int32_t host_node_id_;
   ui::AXTree tree_;
   AutomationInternalCustomBindings* owner_;
   std::vector<int> deleted_node_ids_;
   std::vector<int> text_changed_node_ids_;
 
+  // Tracks whether a tree change event was sent during unserialization. Tree
+  // changes outside of unserialization do not get reflected here. The value is
+  // reset after unserialization.
+  bool did_send_tree_change_during_unserialization_ = false;
   DISALLOW_COPY_AND_ASSIGN(AutomationAXTreeWrapper);
 };
 

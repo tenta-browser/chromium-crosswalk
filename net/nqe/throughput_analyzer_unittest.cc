@@ -20,7 +20,7 @@
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/test/histogram_tester.h"
+#include "base/test/metrics/histogram_tester.h"
 #include "base/test/simple_test_tick_clock.h"
 #include "base/threading/platform_thread.h"
 #include "base/threading/thread_task_runner_handle.h"
@@ -30,6 +30,7 @@
 #include "net/nqe/network_quality_estimator_params.h"
 #include "net/nqe/network_quality_estimator_util.h"
 #include "net/nqe/network_quality_provider.h"
+#include "net/test/test_with_scoped_task_environment.h"
 #include "net/traffic_annotation/network_traffic_annotation_test_helper.h"
 #include "net/url_request/url_request.h"
 #include "net/url_request/url_request_test_util.h"
@@ -116,7 +117,9 @@ class TestThroughputAnalyzer : public internal::ThroughputAnalyzer {
   DISALLOW_COPY_AND_ASSIGN(TestThroughputAnalyzer);
 };
 
-TEST(ThroughputAnalyzerTest, MaximumRequests) {
+using ThroughputAnalyzerTest = TestWithScopedTaskEnvironment;
+
+TEST_F(ThroughputAnalyzerTest, MaximumRequests) {
   const struct {
     bool use_local_requests;
   } tests[] = {{
@@ -168,7 +171,7 @@ TEST(ThroughputAnalyzerTest, MaximumRequests) {
 
 // Tests that the throughput observation is taken only if there are sufficient
 // number of requests in-flight.
-TEST(ThroughputAnalyzerTest, TestMinRequestsForThroughputSample) {
+TEST_F(ThroughputAnalyzerTest, TestMinRequestsForThroughputSample) {
   const base::TickClock* tick_clock = base::DefaultTickClock::GetInstance();
   TestNetworkQualityProvider network_quality_provider;
   std::map<std::string, std::string> variation_params;
@@ -184,20 +187,22 @@ TEST(ThroughputAnalyzerTest, TestMinRequestsForThroughputSample) {
        ++num_requests) {
     TestThroughputAnalyzer throughput_analyzer(&network_quality_provider,
                                                &params, tick_clock);
-    TestDelegate test_delegate;
     TestURLRequestContext context;
     throughput_analyzer.AddIPAddressResolution(&context);
     std::vector<std::unique_ptr<URLRequest>> requests_not_local;
 
+    std::vector<TestDelegate> not_local_test_delegates(num_requests);
     for (size_t i = 0; i < num_requests; ++i) {
+      // We don't care about completion, except for the first one (see below).
+      not_local_test_delegates[i].set_on_complete(base::DoNothing());
       std::unique_ptr<URLRequest> request_not_local(context.CreateRequest(
           GURL("http://example.com/echo.html"), DEFAULT_PRIORITY,
-          &test_delegate, TRAFFIC_ANNOTATION_FOR_TESTS));
+          &not_local_test_delegates[i], TRAFFIC_ANNOTATION_FOR_TESTS));
       request_not_local->Start();
       requests_not_local.push_back(std::move(request_not_local));
     }
 
-    base::RunLoop().Run();
+    not_local_test_delegates[0].RunUntilComplete();
 
     EXPECT_EQ(0, throughput_analyzer.throughput_observations_received());
 
@@ -223,7 +228,7 @@ TEST(ThroughputAnalyzerTest, TestMinRequestsForThroughputSample) {
 
 // Tests that the hanging requests are dropped from the |requests_|, and
 // throughput observation window is ended.
-TEST(ThroughputAnalyzerTest, TestHangingRequests) {
+TEST_F(ThroughputAnalyzerTest, TestHangingRequests) {
   static const struct {
     int hanging_request_duration_http_rtt_multiplier;
     base::TimeDelta http_rtt;
@@ -296,20 +301,22 @@ TEST(ThroughputAnalyzerTest, TestHangingRequests) {
     const size_t num_requests = params.throughput_min_requests_in_flight();
     TestThroughputAnalyzer throughput_analyzer(&network_quality_provider,
                                                &params, tick_clock);
-    TestDelegate test_delegate;
     TestURLRequestContext context;
     throughput_analyzer.AddIPAddressResolution(&context);
     std::vector<std::unique_ptr<URLRequest>> requests_not_local;
 
+    std::vector<TestDelegate> not_local_test_delegates(num_requests);
     for (size_t i = 0; i < num_requests; ++i) {
+      // We don't care about completion, except for the first one (see below).
+      not_local_test_delegates[i].set_on_complete(base::DoNothing());
       std::unique_ptr<URLRequest> request_not_local(context.CreateRequest(
           GURL("http://example.com/echo.html"), DEFAULT_PRIORITY,
-          &test_delegate, TRAFFIC_ANNOTATION_FOR_TESTS));
+          &not_local_test_delegates[i], TRAFFIC_ANNOTATION_FOR_TESTS));
       request_not_local->Start();
       requests_not_local.push_back(std::move(request_not_local));
     }
 
-    base::RunLoop().Run();
+    not_local_test_delegates[0].RunUntilComplete();
 
     EXPECT_EQ(0, throughput_analyzer.throughput_observations_received());
 
@@ -380,7 +387,7 @@ TEST(ThroughputAnalyzerTest, TestHangingRequests) {
 }
 
 // Tests that the check for hanging requests is done at most once per second.
-TEST(ThroughputAnalyzerTest, TestHangingRequestsCheckedOnlyPeriodically) {
+TEST_F(ThroughputAnalyzerTest, TestHangingRequestsCheckedOnlyPeriodically) {
   base::SimpleTestTickClock tick_clock;
 
   TestNetworkQualityProvider network_quality_provider;
@@ -410,7 +417,7 @@ TEST(ThroughputAnalyzerTest, TestHangingRequestsCheckedOnlyPeriodically) {
       GURL("http://example.com/echo.html"), DEFAULT_PRIORITY, &test_delegate,
       TRAFFIC_ANNOTATION_FOR_TESTS));
 
-  base::RunLoop().Run();
+  test_delegate.RunUntilComplete();
 
   // First request starts at t=1. The second request starts at t=2. The first
   // request would be marked as hanging at t=6, and the second request at t=7
@@ -453,7 +460,7 @@ TEST(ThroughputAnalyzerTest, TestHangingRequestsCheckedOnlyPeriodically) {
 
 // Tests that the last received time for a request is updated when data is
 // received for that request.
-TEST(ThroughputAnalyzerTest, TestLastReceivedTimeIsUpdated) {
+TEST_F(ThroughputAnalyzerTest, TestLastReceivedTimeIsUpdated) {
   base::SimpleTestTickClock tick_clock;
 
   TestNetworkQualityProvider network_quality_provider;
@@ -475,7 +482,7 @@ TEST(ThroughputAnalyzerTest, TestLastReceivedTimeIsUpdated) {
       TRAFFIC_ANNOTATION_FOR_TESTS));
   request_not_local->Start();
 
-  base::RunLoop().Run();
+  test_delegate.RunUntilComplete();
 
   std::unique_ptr<URLRequest> some_other_request(context.CreateRequest(
       GURL("http://example.com/echo.html"), DEFAULT_PRIORITY, &test_delegate,
@@ -507,7 +514,7 @@ TEST(ThroughputAnalyzerTest, TestLastReceivedTimeIsUpdated) {
 // Test that a request that has been hanging for a long time is deleted
 // immediately when EraseHangingRequests is called even if the last hanging
 // request check was done recently.
-TEST(ThroughputAnalyzerTest, TestRequestDeletedImmediately) {
+TEST_F(ThroughputAnalyzerTest, TestRequestDeletedImmediately) {
   base::SimpleTestTickClock tick_clock;
 
   TestNetworkQualityProvider network_quality_provider;
@@ -529,7 +536,7 @@ TEST(ThroughputAnalyzerTest, TestRequestDeletedImmediately) {
       TRAFFIC_ANNOTATION_FOR_TESTS));
   request_not_local->Start();
 
-  base::RunLoop().Run();
+  test_delegate.RunUntilComplete();
 
   // Start time for the request is t=0 second. The request will be marked as
   // hanging at t=2 seconds.
@@ -551,7 +558,7 @@ TEST(ThroughputAnalyzerTest, TestRequestDeletedImmediately) {
 
 // Tests if the throughput observation is taken correctly when local and network
 // requests overlap.
-TEST(ThroughputAnalyzerTest, TestThroughputWithMultipleRequestsOverlap) {
+TEST_F(ThroughputAnalyzerTest, TestThroughputWithMultipleRequestsOverlap) {
   static const struct {
     bool start_local_request;
     bool local_request_completes_first;
@@ -579,30 +586,34 @@ TEST(ThroughputAnalyzerTest, TestThroughputWithMultipleRequestsOverlap) {
     TestThroughputAnalyzer throughput_analyzer(&network_quality_provider,
                                                &params, tick_clock);
 
-    TestDelegate test_delegate;
+    TestDelegate local_delegate;
+    local_delegate.set_on_complete(base::DoNothing());
     TestURLRequestContext context;
     throughput_analyzer.AddIPAddressResolution(&context);
-
     std::unique_ptr<URLRequest> request_local;
 
     std::vector<std::unique_ptr<URLRequest>> requests_not_local;
-
+    std::vector<TestDelegate> not_local_test_delegates(
+        params.throughput_min_requests_in_flight());
     for (size_t i = 0; i < params.throughput_min_requests_in_flight(); ++i) {
+      // We don't care about completion, except for the first one (see below).
+      not_local_test_delegates[i].set_on_complete(base::DoNothing());
       std::unique_ptr<URLRequest> request_not_local(context.CreateRequest(
           GURL("http://example.com/echo.html"), DEFAULT_PRIORITY,
-          &test_delegate, TRAFFIC_ANNOTATION_FOR_TESTS));
+          &not_local_test_delegates[i], TRAFFIC_ANNOTATION_FOR_TESTS));
       request_not_local->Start();
       requests_not_local.push_back(std::move(request_not_local));
     }
 
     if (test.start_local_request) {
       request_local = context.CreateRequest(GURL("http://127.0.0.1/echo.html"),
-                                            DEFAULT_PRIORITY, &test_delegate,
+                                            DEFAULT_PRIORITY, &local_delegate,
                                             TRAFFIC_ANNOTATION_FOR_TESTS);
       request_local->Start();
     }
 
-    base::RunLoop().Run();
+    // Wait until the first not-local request completes.
+    not_local_test_delegates[0].RunUntilComplete();
 
     EXPECT_EQ(0, throughput_analyzer.throughput_observations_received());
 
@@ -633,6 +644,7 @@ TEST(ThroughputAnalyzerTest, TestThroughputWithMultipleRequestsOverlap) {
     if (test.start_local_request && !test.local_request_completes_first)
       throughput_analyzer.NotifyRequestCompleted(*request_local);
 
+    // Pump the message loop to let analyzer tasks get processed.
     base::RunLoop().RunUntilIdle();
 
     int expected_throughput_observations =
@@ -644,7 +656,7 @@ TEST(ThroughputAnalyzerTest, TestThroughputWithMultipleRequestsOverlap) {
 
 // Tests if the throughput observation is taken correctly when two network
 // requests overlap.
-TEST(ThroughputAnalyzerTest, TestThroughputWithNetworkRequestsOverlap) {
+TEST_F(ThroughputAnalyzerTest, TestThroughputWithNetworkRequestsOverlap) {
   static const struct {
     size_t throughput_min_requests_in_flight;
     size_t number_requests_in_flight;
@@ -687,23 +699,25 @@ TEST(ThroughputAnalyzerTest, TestThroughputWithNetworkRequestsOverlap) {
 
     TestThroughputAnalyzer throughput_analyzer(&network_quality_provider,
                                                &params, tick_clock);
-    TestDelegate test_delegate;
     TestURLRequestContext context;
     throughput_analyzer.AddIPAddressResolution(&context);
 
     EXPECT_EQ(0, throughput_analyzer.throughput_observations_received());
 
     std::vector<std::unique_ptr<URLRequest>> requests_in_flight;
-
+    std::vector<TestDelegate> in_flight_test_delegates(
+        test.number_requests_in_flight);
     for (size_t i = 0; i < test.number_requests_in_flight; ++i) {
+      // We don't care about completion, except for the first one (see below).
+      in_flight_test_delegates[i].set_on_complete(base::DoNothing());
       std::unique_ptr<URLRequest> request_network_1 = context.CreateRequest(
           GURL("http://example.com/echo.html"), DEFAULT_PRIORITY,
-          &test_delegate, TRAFFIC_ANNOTATION_FOR_TESTS);
+          &in_flight_test_delegates[i], TRAFFIC_ANNOTATION_FOR_TESTS);
       requests_in_flight.push_back(std::move(request_network_1));
       requests_in_flight.back()->Start();
     }
 
-    base::RunLoop().Run();
+    in_flight_test_delegates[0].RunUntilComplete();
 
     EXPECT_EQ(0, throughput_analyzer.throughput_observations_received());
 
@@ -735,7 +749,7 @@ TEST(ThroughputAnalyzerTest, TestThroughputWithNetworkRequestsOverlap) {
 // Tests if the throughput observation is taken correctly when the start and end
 // of network requests overlap, and the minimum number of in flight requests
 // when taking an observation is more than 1.
-TEST(ThroughputAnalyzerTest, TestThroughputWithMultipleNetworkRequests) {
+TEST_F(ThroughputAnalyzerTest, TestThroughputWithMultipleNetworkRequests) {
   const base::TickClock* tick_clock = base::DefaultTickClock::GetInstance();
   TestNetworkQualityProvider network_quality_provider;
   std::map<std::string, std::string> variation_params;
@@ -773,7 +787,9 @@ TEST(ThroughputAnalyzerTest, TestThroughputWithMultipleNetworkRequests) {
   request_3->Start();
   request_4->Start();
 
-  base::RunLoop().Run();
+  // We dispatched four requests, so wait for four completions.
+  for (int i = 0; i < 4; ++i)
+    test_delegate.RunUntilComplete();
 
   EXPECT_EQ(0, throughput_analyzer.throughput_observations_received());
 
@@ -788,6 +804,7 @@ TEST(ThroughputAnalyzerTest, TestThroughputWithMultipleNetworkRequests) {
 
   throughput_analyzer.NotifyRequestCompleted(*(request_1.get()));
   base::RunLoop().RunUntilIdle();
+
   // No observation should be taken since only 1 request is in flight.
   EXPECT_EQ(0, throughput_analyzer.throughput_observations_received());
 
@@ -809,7 +826,7 @@ TEST(ThroughputAnalyzerTest, TestThroughputWithMultipleNetworkRequests) {
   EXPECT_EQ(1, throughput_analyzer.throughput_observations_received());
 }
 
-TEST(ThroughputAnalyzerTest, TestHangingWindow) {
+TEST_F(ThroughputAnalyzerTest, TestHangingWindow) {
   static constexpr size_t kCwndSizeKilobytes = 10 * 1.5;
   static constexpr size_t kCwndSizeBits = kCwndSizeKilobytes * 1000 * 8;
 

@@ -4,15 +4,16 @@
 
 #include "third_party/blink/renderer/core/html/custom/custom_element_registry.h"
 
-#include "third_party/blink/renderer/bindings/core/v8/exception_state.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_custom_element_definition_builder.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise_resolver.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/element.h"
 #include "third_party/blink/renderer/core/dom/element_definition_options.h"
-#include "third_party/blink/renderer/core/dom/exception_code.h"
+#include "third_party/blink/renderer/core/dom/element_traversal.h"
+#include "third_party/blink/renderer/core/dom/shadow_root.h"
 #include "third_party/blink/renderer/core/frame/local_dom_window.h"
+#include "third_party/blink/renderer/core/frame/use_counter.h"
 #include "third_party/blink/renderer/core/html/custom/ce_reactions_scope.h"
 #include "third_party/blink/renderer/core/html/custom/custom_element.h"
 #include "third_party/blink/renderer/core/html/custom/custom_element_definition.h"
@@ -23,6 +24,7 @@
 #include "third_party/blink/renderer/core/html/custom/custom_element_upgrade_sorter.h"
 #include "third_party/blink/renderer/core/html/custom/v0_custom_element_registration_context.h"
 #include "third_party/blink/renderer/core/html_element_type_helpers.h"
+#include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/instrumentation/tracing/trace_event.h"
 #include "third_party/blink/renderer/platform/wtf/allocator.h"
 
@@ -30,13 +32,33 @@
 
 namespace blink {
 
+namespace {
+
+void CollectUpgradeCandidateInNode(Node& root,
+                                   HeapVector<Member<Element>>& candidates) {
+  if (root.IsElementNode()) {
+    Element& root_element = ToElement(root);
+    if (root_element.GetCustomElementState() == CustomElementState::kUndefined)
+      candidates.push_back(root_element);
+    if (auto* shadow_root = root_element.GetShadowRoot()) {
+      if (shadow_root->GetType() != ShadowRootType::kUserAgent)
+        CollectUpgradeCandidateInNode(*shadow_root, candidates);
+    }
+  }
+  for (auto& element : Traversal<HTMLElement>::ChildrenOf(root))
+    CollectUpgradeCandidateInNode(element, candidates);
+}
+
+}  // anonymous namespace
+
 // Returns true if |name| is invalid.
 static bool ThrowIfInvalidName(const AtomicString& name,
                                ExceptionState& exception_state) {
   if (CustomElement::IsValidName(name))
     return false;
   exception_state.ThrowDOMException(
-      kSyntaxError, "\"" + name + "\" is not a valid custom element name");
+      DOMExceptionCode::kSyntaxError,
+      "\"" + name + "\" is not a valid custom element name");
   return true;
 }
 
@@ -46,7 +68,8 @@ static bool ThrowIfValidName(const AtomicString& name,
   if (!CustomElement::IsValidName(name))
     return false;
   exception_state.ThrowDOMException(
-      kNotSupportedError, "\"" + name + "\" is a valid custom element name");
+      DOMExceptionCode::kNotSupportedError,
+      "\"" + name + "\" is a valid custom element name");
   return true;
 }
 
@@ -92,15 +115,8 @@ void CustomElementRegistry::Trace(blink::Visitor* visitor) {
   visitor->Trace(v0_);
   visitor->Trace(upgrade_candidates_);
   visitor->Trace(when_defined_promise_map_);
+  visitor->Trace(reaction_stack_);
   ScriptWrappable::Trace(visitor);
-}
-
-void CustomElementRegistry::TraceWrappers(
-    const ScriptWrappableVisitor* visitor) const {
-  visitor->TraceWrappers(reaction_stack_);
-  for (auto definition : definitions_)
-    visitor->TraceWrappers(definition);
-  ScriptWrappable::TraceWrappers(visitor);
 }
 
 CustomElementDefinition* CustomElementRegistry::define(
@@ -133,7 +149,7 @@ CustomElementDefinition* CustomElementRegistry::define(
 
   if (NameIsDefined(name) || V0NameIsDefined(name)) {
     exception_state.ThrowDOMException(
-        kNotSupportedError,
+        DOMExceptionCode::kNotSupportedError,
         "this name has already been used with this registry");
     return nullptr;
   }
@@ -141,12 +157,17 @@ CustomElementDefinition* CustomElementRegistry::define(
   if (!builder.CheckConstructorNotRegistered())
     return nullptr;
 
+  // Polymer V2/V3 uses Custom Elements V1. <dom-module> is defined in its base
+  // library and is a strong signal that this is a Polymer V2+.
+  if (name == "dom-module") {
+    if (Document* document = owner_->document())
+      UseCounter::Count(*document, WebFeature::kPolymerV2Detected);
+  }
   AtomicString local_name = name;
 
   // Step 7. customized built-in elements definition
   // element interface extends option checks
-  if (RuntimeEnabledFeatures::CustomElementsBuiltinEnabled() &&
-      options.hasExtends()) {
+  if (options.hasExtends()) {
     // 7.1. If element interface is valid custom element name, throw exception
     const AtomicString& extends = AtomicString(options.extends());
     if (ThrowIfValidName(AtomicString(options.extends()), exception_state))
@@ -155,7 +176,8 @@ CustomElementDefinition* CustomElementRegistry::define(
     if (htmlElementTypeForTag(extends) ==
         HTMLElementType::kHTMLUnknownElement) {
       exception_state.ThrowDOMException(
-          kNotSupportedError, "\"" + extends + "\" is an HTMLUnknownElement");
+          DOMExceptionCode::kNotSupportedError,
+          "\"" + extends + "\" is an HTMLUnknownElement");
       return nullptr;
     }
     // 7.3. Set localName to extends
@@ -170,7 +192,8 @@ CustomElementDefinition* CustomElementRegistry::define(
   // DOMException and abort these steps.
   if (element_definition_is_running_) {
     exception_state.ThrowDOMException(
-        kNotSupportedError, "an element definition is already being processed");
+        DOMExceptionCode::kNotSupportedError,
+        "an element definition is already being processed");
     return nullptr;
   }
 
@@ -335,6 +358,21 @@ void CustomElementRegistry::CollectCandidates(
     return;
 
   sorter.Sorted(elements, document);
+}
+
+// https://html.spec.whatwg.org/multipage/custom-elements.html#dom-customelementregistry-upgrade
+void CustomElementRegistry::upgrade(Node* root) {
+  DCHECK(root);
+
+  // 1. Let candidates be a list of all of root's shadow-including
+  // inclusive descendant elements, in tree order.
+  HeapVector<Member<Element>> candidates;
+  CollectUpgradeCandidateInNode(*root, candidates);
+
+  // 2. For each candidate of candidates, try to upgrade candidate.
+  for (auto& candidate : candidates) {
+    CustomElement::TryToUpgrade(candidate);
+  }
 }
 
 }  // namespace blink

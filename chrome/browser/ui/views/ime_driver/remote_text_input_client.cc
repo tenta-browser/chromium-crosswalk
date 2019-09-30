@@ -5,7 +5,7 @@
 #include "chrome/browser/ui/views/ime_driver/remote_text_input_client.h"
 
 RemoteTextInputClient::RemoteTextInputClient(
-    ui::mojom::TextInputClientPtr remote_client,
+    ws::mojom::TextInputClientPtr remote_client,
     ui::TextInputType text_input_type,
     ui::TextInputMode text_input_mode,
     base::i18n::TextDirection text_direction,
@@ -91,6 +91,12 @@ bool RemoteTextInputClient::HasCompositionText() const {
   return false;
 }
 
+ui::TextInputClient::FocusReason RemoteTextInputClient::GetFocusReason() const {
+  // TODO(https://crbug.com/824604): Implement this correctly.
+  NOTIMPLEMENTED_LOG_ONCE();
+  return ui::TextInputClient::FOCUS_REASON_OTHER;
+}
+
 bool RemoteTextInputClient::GetTextRange(gfx::Range* range) const {
   // TODO(moshayedi): crbug.com/631527.
   NOTIMPLEMENTED_LOG_ONCE();
@@ -164,10 +170,16 @@ void RemoteTextInputClient::SetTextEditCommandForNextKeyEvent(
   NOTIMPLEMENTED_LOG_ONCE();
 }
 
-const std::string& RemoteTextInputClient::GetClientSourceInfo() const {
+ukm::SourceId RemoteTextInputClient::GetClientSourceForMetrics() const {
   // TODO(moshayedi): crbug.com/631527.
   NOTIMPLEMENTED_LOG_ONCE();
-  return base::EmptyString();
+  return ukm::SourceId();
+}
+
+bool RemoteTextInputClient::ShouldDoLearning() {
+  // TODO(https://crbug.com/311180): Implement this method.
+  NOTIMPLEMENTED_LOG_ONCE();
+  return false;
 }
 
 ui::EventDispatchDetails RemoteTextInputClient::DispatchKeyEventPostIME(

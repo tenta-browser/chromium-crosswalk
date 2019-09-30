@@ -10,21 +10,22 @@
 #include "base/single_thread_task_runner.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
+#include "content/browser/service_worker/embedded_worker_instance.h"
 #include "content/browser/service_worker/embedded_worker_status.h"
 #include "content/browser/service_worker/service_worker_context_core.h"
 #include "content/browser/service_worker/service_worker_job_coordinator.h"
 #include "content/browser/service_worker/service_worker_metrics.h"
 #include "content/browser/service_worker/service_worker_registration.h"
 #include "content/browser/service_worker/service_worker_storage.h"
-#include "content/browser/service_worker/service_worker_type_converters.h"
+#include "content/browser/service_worker/service_worker_version.h"
 #include "content/browser/service_worker/service_worker_write_to_cache_job.h"
-#include "content/common/service_worker/service_worker_event_dispatcher.mojom.h"
-#include "content/common/service_worker/service_worker_messages.h"
+#include "content/common/service_worker/service_worker.mojom.h"
 #include "content/common/service_worker/service_worker_types.h"
 #include "content/common/service_worker/service_worker_utils.h"
 #include "content/public/browser/browser_thread.h"
 #include "mojo/public/cpp/bindings/associated_binding.h"
 #include "net/base/net_errors.h"
+#include "third_party/blink/public/common/service_worker/service_worker_type_converters.h"
 #include "third_party/blink/public/mojom/service_worker/service_worker_object.mojom.h"
 
 namespace content {
@@ -46,7 +47,7 @@ ServiceWorkerRegisterJob::ServiceWorkerRegisterJob(
       should_uninstall_on_failure_(false),
       force_bypass_cache_(false),
       skip_script_comparison_(false),
-      promise_resolved_status_(SERVICE_WORKER_OK),
+      promise_resolved_status_(blink::ServiceWorkerStatusCode::kOk),
       weak_factory_(this) {}
 
 ServiceWorkerRegisterJob::ServiceWorkerRegisterJob(
@@ -64,7 +65,7 @@ ServiceWorkerRegisterJob::ServiceWorkerRegisterJob(
       should_uninstall_on_failure_(false),
       force_bypass_cache_(force_bypass_cache),
       skip_script_comparison_(skip_script_comparison),
-      promise_resolved_status_(SERVICE_WORKER_OK),
+      promise_resolved_status_(blink::ServiceWorkerStatusCode::kOk),
       weak_factory_(this) {
   internal_.registration = registration;
 }
@@ -111,7 +112,8 @@ void ServiceWorkerRegisterJob::StartImpl() {
   if (registration.get())
     base::ThreadTaskRunnerHandle::Get()->PostTask(
         FROM_HERE,
-        base::BindOnce(std::move(next_step), SERVICE_WORKER_OK, registration));
+        base::BindOnce(std::move(next_step),
+                       blink::ServiceWorkerStatusCode::kOk, registration));
   else
     context_->storage()->FindRegistrationForPattern(pattern_,
                                                     std::move(next_step));
@@ -119,7 +121,7 @@ void ServiceWorkerRegisterJob::StartImpl() {
 
 void ServiceWorkerRegisterJob::Abort() {
   SetPhase(ABORT);
-  CompleteInternal(SERVICE_WORKER_ERROR_ABORT, std::string());
+  CompleteInternal(blink::ServiceWorkerStatusCode::kErrorAbort, std::string());
   // Don't have to call FinishJob() because the caller takes care of removing
   // the jobs from the queue.
 }
@@ -143,7 +145,8 @@ RegistrationJobType ServiceWorkerRegisterJob::GetType() const {
 void ServiceWorkerRegisterJob::DoomInstallingWorker() {
   doom_installing_worker_ = true;
   if (phase_ == INSTALL)
-    Complete(SERVICE_WORKER_ERROR_INSTALL_WORKER_FAILED, std::string());
+    Complete(blink::ServiceWorkerStatusCode::kErrorInstallWorkerFailed,
+             std::string());
 }
 
 ServiceWorkerRegisterJob::Internal::Internal() {}
@@ -207,10 +210,11 @@ void ServiceWorkerRegisterJob::SetPhase(Phase phase) {
 // "Let registration be the result of running the [[GetRegistration]] algorithm.
 // Throughout this file, comments in quotes are excerpts from the spec.
 void ServiceWorkerRegisterJob::ContinueWithRegistration(
-    ServiceWorkerStatusCode status,
+    blink::ServiceWorkerStatusCode status,
     scoped_refptr<ServiceWorkerRegistration> existing_registration) {
   DCHECK_EQ(REGISTRATION_JOB, job_type_);
-  if (status != SERVICE_WORKER_ERROR_NOT_FOUND && status != SERVICE_WORKER_OK) {
+  if (status != blink::ServiceWorkerStatusCode::kErrorNotFound &&
+      status != blink::ServiceWorkerStatusCode::kOk) {
     Complete(status);
     return;
   }
@@ -241,7 +245,7 @@ void ServiceWorkerRegisterJob::ContinueWithRegistration(
 
   // "Invoke Set Registration algorithm with job’s scope url and
   // job’s update via cache mode."
-  existing_registration->set_update_via_cache(update_via_cache_);
+  existing_registration->SetUpdateViaCache(update_via_cache_);
   set_registration(existing_registration);
   // "Return the result of running the [[Update]] algorithm, or its equivalent,
   // passing registration as the argument."
@@ -249,23 +253,23 @@ void ServiceWorkerRegisterJob::ContinueWithRegistration(
 }
 
 void ServiceWorkerRegisterJob::ContinueWithUpdate(
-    ServiceWorkerStatusCode status,
+    blink::ServiceWorkerStatusCode status,
     scoped_refptr<ServiceWorkerRegistration> existing_registration) {
   DCHECK_EQ(UPDATE_JOB, job_type_);
-  if (status != SERVICE_WORKER_OK) {
+  if (status != blink::ServiceWorkerStatusCode::kOk) {
     Complete(status);
     return;
   }
 
   if (existing_registration.get() != registration()) {
-    Complete(SERVICE_WORKER_ERROR_NOT_FOUND);
+    Complete(blink::ServiceWorkerStatusCode::kErrorNotFound);
     return;
   }
 
   // A previous job may have unregistered this registration.
   if (registration()->is_uninstalling() ||
       !registration()->GetNewestVersion()) {
-    Complete(SERVICE_WORKER_ERROR_NOT_FOUND);
+    Complete(blink::ServiceWorkerStatusCode::kErrorNotFound);
     return;
   }
 
@@ -285,7 +289,7 @@ void ServiceWorkerRegisterJob::RegisterAndContinue() {
 
   int64_t registration_id = context_->storage()->NewRegistrationId();
   if (registration_id == blink::mojom::kInvalidServiceWorkerRegistrationId) {
-    Complete(SERVICE_WORKER_ERROR_ABORT);
+    Complete(blink::ServiceWorkerStatusCode::kErrorAbort);
     return;
   }
 
@@ -299,8 +303,8 @@ void ServiceWorkerRegisterJob::RegisterAndContinue() {
 
 void ServiceWorkerRegisterJob::ContinueWithUninstallingRegistration(
     scoped_refptr<ServiceWorkerRegistration> existing_registration,
-    ServiceWorkerStatusCode status) {
-  if (status != SERVICE_WORKER_OK) {
+    blink::ServiceWorkerStatusCode status) {
+  if (status != blink::ServiceWorkerStatusCode::kOk) {
     Complete(status);
     return;
   }
@@ -311,8 +315,8 @@ void ServiceWorkerRegisterJob::ContinueWithUninstallingRegistration(
 
 void ServiceWorkerRegisterJob::ContinueWithRegistrationForSameScriptUrl(
     scoped_refptr<ServiceWorkerRegistration> existing_registration,
-    ServiceWorkerStatusCode status) {
-  if (status != SERVICE_WORKER_OK) {
+    blink::ServiceWorkerStatusCode status) {
+  if (status != blink::ServiceWorkerStatusCode::kOk) {
     Complete(status);
     return;
   }
@@ -329,7 +333,7 @@ void ServiceWorkerRegisterJob::ContinueWithRegistrationForSameScriptUrl(
   DCHECK(!existing_registration->installing_version());
   if (existing_registration->active_version()) {
     ResolvePromise(status, std::string(), existing_registration.get());
-    Complete(SERVICE_WORKER_OK);
+    Complete(blink::ServiceWorkerStatusCode::kOk);
     return;
   }
 
@@ -345,7 +349,7 @@ void ServiceWorkerRegisterJob::UpdateAndContinue() {
 
   int64_t version_id = context_->storage()->NewVersionId();
   if (version_id == blink::mojom::kInvalidServiceWorkerVersionId) {
-    Complete(SERVICE_WORKER_ERROR_ABORT);
+    Complete(blink::ServiceWorkerStatusCode::kErrorAbort);
     return;
   }
 
@@ -355,10 +359,9 @@ void ServiceWorkerRegisterJob::UpdateAndContinue() {
                                            version_id, context_));
   new_version()->set_force_bypass_cache_for_scripts(force_bypass_cache_);
   if (registration()->has_installed_version() && !skip_script_comparison_) {
-    new_version()->set_pause_after_download(true);
-    new_version()->embedded_worker()->AddListener(this);
-  } else {
-    new_version()->set_pause_after_download(false);
+    new_version()->SetToPauseAfterDownload(
+        base::BindOnce(&ServiceWorkerRegisterJob::OnPausedAfterDownload,
+                       weak_factory_.GetWeakPtr()));
   }
   new_version()->StartWorker(
       ServiceWorkerMetrics::EventType::INSTALL,
@@ -367,17 +370,17 @@ void ServiceWorkerRegisterJob::UpdateAndContinue() {
 }
 
 void ServiceWorkerRegisterJob::OnStartWorkerFinished(
-    ServiceWorkerStatusCode status) {
+    blink::ServiceWorkerStatusCode status) {
   BumpLastUpdateCheckTimeIfNeeded();
 
-  if (status == SERVICE_WORKER_OK) {
+  if (status == blink::ServiceWorkerStatusCode::kOk) {
     InstallAndContinue();
     return;
   }
 
   // "If serviceWorker fails to start up..." then reject the promise with an
   // error and abort.
-  if (status == SERVICE_WORKER_ERROR_TIMEOUT) {
+  if (status == blink::ServiceWorkerStatusCode::kErrorTimeout) {
     Complete(status, "Timed out while trying to start the Service Worker.");
     return;
   }
@@ -406,7 +409,8 @@ void ServiceWorkerRegisterJob::InstallAndContinue() {
   new_version()->SetStatus(ServiceWorkerVersion::INSTALLING);
 
   // "Resolve registrationPromise with registration."
-  ResolvePromise(SERVICE_WORKER_OK, std::string(), registration());
+  ResolvePromise(blink::ServiceWorkerStatusCode::kOk, std::string(),
+                 registration());
 
   // "Fire a simple event named updatefound..."
   registration()->NotifyUpdateFound();
@@ -421,12 +425,12 @@ void ServiceWorkerRegisterJob::InstallAndContinue() {
   // only do so after we've started the worker and dispatched the install
   // event, as those are atomic substeps in the [[Install]] algorithm.
   if (doom_installing_worker_)
-    Complete(SERVICE_WORKER_ERROR_INSTALL_WORKER_FAILED);
+    Complete(blink::ServiceWorkerStatusCode::kErrorInstallWorkerFailed);
 }
 
 void ServiceWorkerRegisterJob::DispatchInstallEvent(
-    ServiceWorkerStatusCode start_worker_status) {
-  if (start_worker_status != SERVICE_WORKER_OK) {
+    blink::ServiceWorkerStatusCode start_worker_status) {
+  if (start_worker_status != blink::ServiceWorkerStatusCode::kOk) {
     OnInstallFailed(start_worker_status);
     return;
   }
@@ -440,7 +444,7 @@ void ServiceWorkerRegisterJob::DispatchInstallEvent(
       base::BindOnce(&ServiceWorkerRegisterJob::OnInstallFailed,
                      weak_factory_.GetWeakPtr()));
 
-  new_version()->event_dispatcher()->DispatchInstallEvent(
+  new_version()->endpoint()->DispatchInstallEvent(
       base::BindOnce(&ServiceWorkerRegisterJob::OnInstallFinished,
                      weak_factory_.GetWeakPtr(), request_id));
 }
@@ -455,11 +459,13 @@ void ServiceWorkerRegisterJob::OnInstallFinished(
   new_version()->FinishRequest(request_id, succeeded, dispatch_event_time);
 
   if (!succeeded) {
-    OnInstallFailed(mojo::ConvertTo<ServiceWorkerStatusCode>(event_status));
+    OnInstallFailed(
+        mojo::ConvertTo<blink::ServiceWorkerStatusCode>(event_status));
     return;
   }
 
-  ServiceWorkerMetrics::RecordInstallEventStatus(SERVICE_WORKER_OK);
+  ServiceWorkerMetrics::RecordInstallEventStatus(
+      blink::ServiceWorkerStatusCode::kOk);
 
   SetPhase(STORE);
   DCHECK(!registration()->last_update_check().is_null());
@@ -473,17 +479,19 @@ void ServiceWorkerRegisterJob::OnInstallFinished(
                      weak_factory_.GetWeakPtr()));
 }
 
-void ServiceWorkerRegisterJob::OnInstallFailed(ServiceWorkerStatusCode status) {
+void ServiceWorkerRegisterJob::OnInstallFailed(
+    blink::ServiceWorkerStatusCode status) {
   ServiceWorkerMetrics::RecordInstallEventStatus(status);
-  DCHECK_NE(status, SERVICE_WORKER_OK)
-      << "OnInstallFailed should not handle SERVICE_WORKER_OK";
+  DCHECK_NE(status, blink::ServiceWorkerStatusCode::kOk)
+      << "OnInstallFailed should not handle "
+         "blink::ServiceWorkerStatusCode::kOk";
   Complete(status, std::string("ServiceWorker failed to install: ") +
-                       ServiceWorkerStatusToString(status));
+                       blink::ServiceWorkerStatusToString(status));
 }
 
 void ServiceWorkerRegisterJob::OnStoreRegistrationComplete(
-    ServiceWorkerStatusCode status) {
-  if (status != SERVICE_WORKER_OK) {
+    blink::ServiceWorkerStatusCode status) {
+  if (status != blink::ServiceWorkerStatusCode::kOk) {
     Complete(status);
     return;
   }
@@ -513,36 +521,35 @@ void ServiceWorkerRegisterJob::OnStoreRegistrationComplete(
   // client is using registration as their service worker registration."
   registration()->ActivateWaitingVersionWhenReady();
 
-  Complete(SERVICE_WORKER_OK);
+  Complete(blink::ServiceWorkerStatusCode::kOk);
 }
 
-void ServiceWorkerRegisterJob::Complete(ServiceWorkerStatusCode status) {
+void ServiceWorkerRegisterJob::Complete(blink::ServiceWorkerStatusCode status) {
   Complete(status, std::string());
 }
 
-void ServiceWorkerRegisterJob::Complete(ServiceWorkerStatusCode status,
+void ServiceWorkerRegisterJob::Complete(blink::ServiceWorkerStatusCode status,
                                         const std::string& status_message) {
   CompleteInternal(status, status_message);
   context_->job_coordinator()->FinishJob(pattern_, this);
 }
 
 void ServiceWorkerRegisterJob::CompleteInternal(
-    ServiceWorkerStatusCode status,
+    blink::ServiceWorkerStatusCode status,
     const std::string& status_message) {
   SetPhase(COMPLETE);
 
-  if (new_version()) {
-    new_version()->set_pause_after_download(false);
-    new_version()->embedded_worker()->RemoveListener(this);
-  }
+  if (new_version())
+    new_version()->SetToNotPauseAfterDownload();
 
-  if (status != SERVICE_WORKER_OK) {
+  if (status != blink::ServiceWorkerStatusCode::kOk) {
     if (registration()) {
       if (should_uninstall_on_failure_)
         registration()->ClearWhenReady();
       if (new_version()) {
-        if (status == SERVICE_WORKER_ERROR_EXISTS)
-          new_version()->SetStartWorkerStatusCode(SERVICE_WORKER_ERROR_EXISTS);
+        if (status == blink::ServiceWorkerStatusCode::kErrorExists)
+          new_version()->SetStartWorkerStatusCode(
+              blink::ServiceWorkerStatusCode::kErrorExists);
         else
           new_version()->ReportError(status, status_message);
         registration()->UnsetVersion(new_version());
@@ -569,7 +576,7 @@ void ServiceWorkerRegisterJob::CompleteInternal(
 }
 
 void ServiceWorkerRegisterJob::ResolvePromise(
-    ServiceWorkerStatusCode status,
+    blink::ServiceWorkerStatusCode status,
     const std::string& status_message,
     ServiceWorkerRegistration* registration) {
   DCHECK(!is_promise_resolved_);
@@ -588,7 +595,8 @@ void ServiceWorkerRegisterJob::AddRegistrationToMatchingProviderHosts(
   DCHECK(registration);
   for (std::unique_ptr<ServiceWorkerContextCore::ProviderHostIterator> it =
            context_->GetClientProviderHostIterator(
-               registration->pattern().GetOrigin());
+               registration->pattern().GetOrigin(),
+               true /* include_reserved_clients */);
        !it->IsAtEnd(); it->Advance()) {
     ServiceWorkerProviderHost* host = it->GetProviderHost();
     if (!ServiceWorkerUtils::ScopeMatches(registration->pattern(),
@@ -599,20 +607,27 @@ void ServiceWorkerRegisterJob::AddRegistrationToMatchingProviderHosts(
   }
 }
 
-void ServiceWorkerRegisterJob::OnScriptLoaded() {
-  DCHECK(new_version()->pause_after_download());
-  new_version()->set_pause_after_download(false);
+void ServiceWorkerRegisterJob::OnPausedAfterDownload() {
   net::URLRequestStatus status =
       new_version()->script_cache_map()->main_script_status();
   if (!status.is_success()) {
-    // OnScriptLoaded signifies a successful network load, which translates into
-    // a script cache error only in the byte-for-byte identical case.
+    // OnPausedAfterDownload() signifies a successful network load, which
+    // translates into a script cache error only in the byte-for-byte identical
+    // case.
     DCHECK_EQ(status.error(),
               ServiceWorkerWriteToCacheJob::kIdenticalScriptError);
 
     BumpLastUpdateCheckTimeIfNeeded();
-    ResolvePromise(SERVICE_WORKER_OK, std::string(), registration());
-    Complete(SERVICE_WORKER_ERROR_EXISTS,
+    ResolvePromise(blink::ServiceWorkerStatusCode::kOk, std::string(),
+                   registration());
+    // Note: Complete() destroys this job and hence risks destroying
+    // |new_version()| inside this callback, which is impolite and dangerous.
+    // But most of this class operates this way, and introducing asynchronicity
+    // here can potentially create bad interactions with other callbacks into
+    // this class, so continue the pattern here. This code path should be
+    // removed anyway when the byte-to-byte update check is moved outside of
+    // worker startup.
+    Complete(blink::ServiceWorkerStatusCode::kErrorExists,
              "The updated worker is identical to the incumbent.");
     return;
   }

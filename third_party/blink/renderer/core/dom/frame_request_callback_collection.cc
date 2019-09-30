@@ -4,7 +4,7 @@
 
 #include "third_party/blink/renderer/core/dom/frame_request_callback_collection.h"
 
-#include "third_party/blink/renderer/core/inspector/InspectorTraceEvents.h"
+#include "third_party/blink/renderer/core/inspector/inspector_trace_events.h"
 #include "third_party/blink/renderer/core/probe/core_probes.h"
 
 namespace blink {
@@ -86,14 +86,6 @@ void FrameRequestCallbackCollection::Trace(blink::Visitor* visitor) {
   visitor->Trace(context_);
 }
 
-void FrameRequestCallbackCollection::TraceWrappers(
-    const ScriptWrappableVisitor* visitor) const {
-  for (const auto& callback : callbacks_)
-    visitor->TraceWrappers(callback);
-  for (const auto& callback_to_invoke : callbacks_to_invoke_)
-    visitor->TraceWrappers(callback_to_invoke);
-}
-
 FrameRequestCallbackCollection::V8FrameCallback::V8FrameCallback(
     V8FrameRequestCallback* callback)
     : callback_(callback) {}
@@ -102,12 +94,6 @@ void FrameRequestCallbackCollection::V8FrameCallback::Trace(
     blink::Visitor* visitor) {
   visitor->Trace(callback_);
   FrameRequestCallbackCollection::FrameCallback::Trace(visitor);
-}
-
-void FrameRequestCallbackCollection::V8FrameCallback::TraceWrappers(
-    const ScriptWrappableVisitor* visitor) const {
-  visitor->TraceWrappers(callback_);
-  FrameRequestCallbackCollection::FrameCallback::TraceWrappers(visitor);
 }
 
 void FrameRequestCallbackCollection::V8FrameCallback::Invoke(

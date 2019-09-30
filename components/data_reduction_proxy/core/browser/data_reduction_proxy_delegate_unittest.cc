@@ -19,7 +19,7 @@
 #include "base/numerics/safe_conversions.h"
 #include "base/run_loop.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/test/histogram_tester.h"
+#include "base/test/metrics/histogram_tester.h"
 #include "base/test/mock_entropy_provider.h"
 #include "base/test/simple_test_tick_clock.h"
 #include "base/time/time.h"
@@ -41,7 +41,6 @@
 #include "components/data_reduction_proxy/proto/client_config.pb.h"
 #include "net/base/host_port_pair.h"
 #include "net/base/net_errors.h"
-#include "net/base/network_change_notifier.h"
 #include "net/base/proxy_delegate.h"
 #include "net/base/proxy_server.h"
 #include "net/http/http_request_headers.h"
@@ -88,12 +87,14 @@ class TestDataReductionProxyDelegate : public DataReductionProxyDelegate {
       DataReductionProxyEventCreator* event_creator,
       DataReductionProxyBypassStats* bypass_stats,
       bool proxy_supports_quic,
-      net::NetLog* net_log)
+      net::NetLog* net_log,
+      network::NetworkConnectionTracker* network_connection_tracker)
       : DataReductionProxyDelegate(config,
                                    configurator,
                                    event_creator,
                                    bypass_stats,
-                                   net_log),
+                                   net_log,
+                                   network_connection_tracker),
         proxy_supports_quic_(proxy_supports_quic) {}
 
   ~TestDataReductionProxyDelegate() override {}
@@ -187,11 +188,6 @@ class DataReductionProxyDelegateTest : public testing::Test {
     lofi_ui_service_ = lofi_ui_service.get();
     test_context_->io_data()->set_lofi_ui_service(std::move(lofi_ui_service));
 
-    // Create a mock network change notifier to make it possible to call its
-    // static methods.
-    network_change_notifier_.reset(net::NetworkChangeNotifier::CreateMock());
-    base::RunLoop().RunUntilIdle();
-
     proxy_delegate_ = test_context_->io_data()->CreateProxyDelegate();
     context_.set_proxy_delegate(proxy_delegate_.get());
 
@@ -216,7 +212,7 @@ class DataReductionProxyDelegateTest : public testing::Test {
     net::MockRead reads[] = {net::MockRead(response_headers.c_str()),
                              net::MockRead(response_body.c_str()),
                              net::MockRead(net::SYNCHRONOUS, net::OK)};
-    net::StaticSocketDataProvider socket(reads, arraysize(reads), nullptr, 0);
+    net::StaticSocketDataProvider socket(reads, base::span<net::MockWrite>());
     mock_socket_factory_.AddSocketDataProvider(&socket);
 
     net::TestDelegate delegate;
@@ -262,6 +258,10 @@ class DataReductionProxyDelegateTest : public testing::Test {
     return proxy_delegate_.get();
   }
 
+  network::NetworkConnectionTracker* network_connection_tracker() const {
+    return test_context_->test_network_connection_tracker();
+  }
+
  private:
   int64_t GetSessionNetworkStatsInfoInt64(const char* key) const {
     std::unique_ptr<base::DictionaryValue> session_network_stats_info =
@@ -285,9 +285,8 @@ class DataReductionProxyDelegateTest : public testing::Test {
 
   TestLoFiUIService* lofi_ui_service_;
 
-  std::unique_ptr<net::NetworkChangeNotifier> network_change_notifier_;
-  std::unique_ptr<DataReductionProxyDelegate> proxy_delegate_;
   std::unique_ptr<DataReductionProxyTestContext> test_context_;
+  std::unique_ptr<DataReductionProxyDelegate> proxy_delegate_;
 };
 
 TEST_F(DataReductionProxyDelegateTest, OnResolveProxy) {
@@ -484,7 +483,7 @@ TEST_F(DataReductionProxyDelegateTest, AlternativeProxy) {
     TestDataReductionProxyDelegate delegate(
         config(), io_data()->configurator(), io_data()->event_creator(),
         io_data()->bypass_stats(), test.proxy_supports_quic,
-        io_data()->net_log());
+        io_data()->net_log(), network_connection_tracker());
 
     base::FieldTrialList field_trial_list(nullptr);
     base::FieldTrialList::CreateFieldTrial(
@@ -707,7 +706,7 @@ TEST_F(DataReductionProxyDelegateTest, OnCompletedSizeFor200) {
 
     std::unique_ptr<net::URLRequest> request =
         FetchURLRequest(GURL("http://example.com/path/"), nullptr,
-                        test.DrpResponseHeaders.c_str(), 1000);
+                        test.DrpResponseHeaders, 1000);
 
     EXPECT_EQ(request->GetTotalReceivedBytes(),
               total_received_bytes() - baseline_received_bytes);
@@ -721,56 +720,6 @@ TEST_F(DataReductionProxyDelegateTest, OnCompletedSizeFor200) {
 
     histogram_tester.ExpectUniqueSample(
         "DataReductionProxy.ConfigService.HTTPRequests", 1, 1);
-  }
-}
-
-TEST_F(DataReductionProxyDelegateTest, TimeToFirstHttpDataSaverRequest) {
-  base::SimpleTestTickClock tick_clock;
-  proxy_delegate()->SetTickClockForTesting(&tick_clock);
-
-  const char kResponseHeaders[] =
-      "HTTP/1.1 200 OK\r\n"
-      "Via: 1.1 Chrome-Compression-Proxy-Suffix\r\n"
-      "Content-Length: 10\r\n\r\n";
-
-  params()->UseNonSecureProxiesForHttp();
-  {
-    base::HistogramTester histogram_tester;
-    base::TimeDelta advance_time(base::TimeDelta::FromSeconds(1));
-    tick_clock.Advance(advance_time);
-
-    FetchURLRequest(GURL("http://example.com/path/"), nullptr, kResponseHeaders,
-                    10);
-    histogram_tester.ExpectUniqueSample(
-        "DataReductionProxy.TimeToFirstDataSaverRequest",
-        advance_time.InMilliseconds(), 1);
-
-    // Second request should not result in recording of UMA.
-    FetchURLRequest(GURL("http://example.com/path/"), nullptr, kResponseHeaders,
-                    10);
-    histogram_tester.ExpectTotalCount(
-        "DataReductionProxy.TimeToFirstDataSaverRequest", 1);
-  }
-
-  {
-    base::HistogramTester histogram_tester;
-    // Third request should result in recording of UMA due to change in IP.
-    base::TimeDelta advance_time(base::TimeDelta::FromSeconds(2));
-    net::NetworkChangeNotifier::NotifyObserversOfIPAddressChangeForTests();
-    base::RunLoop().RunUntilIdle();
-
-    tick_clock.Advance(advance_time);
-    FetchURLRequest(GURL("http://example.com/path/"), nullptr, kResponseHeaders,
-                    10);
-    histogram_tester.ExpectUniqueSample(
-        "DataReductionProxy.TimeToFirstDataSaverRequest",
-        advance_time.InMilliseconds(), 1);
-
-    // Fourth request should not result in recording of UMA.
-    FetchURLRequest(GURL("http://example.com/path/"), nullptr, kResponseHeaders,
-                    10);
-    histogram_tester.ExpectTotalCount(
-        "DataReductionProxy.TimeToFirstDataSaverRequest", 1);
   }
 }
 
@@ -827,9 +776,8 @@ TEST_F(DataReductionProxyDelegateTest, OnCompletedSizeFor304) {
     int64_t baseline_received_bytes = total_received_bytes();
     int64_t baseline_original_received_bytes = total_original_received_bytes();
 
-    std::unique_ptr<net::URLRequest> request =
-        FetchURLRequest(GURL("http://example.com/path/"), nullptr,
-                        test.DrpResponseHeaders.c_str(), 0);
+    std::unique_ptr<net::URLRequest> request = FetchURLRequest(
+        GURL("http://example.com/path/"), nullptr, test.DrpResponseHeaders, 0);
 
     EXPECT_EQ(request->GetTotalReceivedBytes(),
               total_received_bytes() - baseline_received_bytes);
@@ -852,7 +800,7 @@ TEST_F(DataReductionProxyDelegateTest, OnCompletedSizeForWriteError) {
       net::MockWrite("GET http://example.com/path/ HTTP/1.1\r\n"
                      "Host: example.com\r\n"),
       net::MockWrite(net::ASYNC, net::ERR_ABORTED)};
-  net::StaticSocketDataProvider socket(nullptr, 0, writes, arraysize(writes));
+  net::StaticSocketDataProvider socket(base::span<net::MockRead>(), writes);
   mock_socket_factory()->AddSocketDataProvider(&socket);
 
   net::TestDelegate delegate;
@@ -875,7 +823,7 @@ TEST_F(DataReductionProxyDelegateTest, OnCompletedSizeForReadError) {
   params()->UseNonSecureProxiesForHttp();
   net::MockRead reads[] = {net::MockRead("HTTP/1.1 "),
                            net::MockRead(net::ASYNC, net::ERR_ABORTED)};
-  net::StaticSocketDataProvider socket(reads, arraysize(reads), nullptr, 0);
+  net::StaticSocketDataProvider socket(reads, base::span<net::MockWrite>());
   mock_socket_factory()->AddSocketDataProvider(&socket);
 
   net::TestDelegate delegate;
@@ -981,7 +929,7 @@ TEST_F(DataReductionProxyDelegateTest, PartialRangeSavings) {
                       test.response_headers.size()),
         net::MockRead(net::ASYNC, response_body.data(), response_body.size()),
         net::MockRead(net::SYNCHRONOUS, net::ERR_ABORTED)};
-    net::StaticSocketDataProvider socket(reads, arraysize(reads), nullptr, 0);
+    net::StaticSocketDataProvider socket(reads, base::span<net::MockWrite>());
     mock_socket_factory()->AddSocketDataProvider(&socket);
 
     net::TestDelegate test_delegate;

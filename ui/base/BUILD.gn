@@ -55,6 +55,7 @@ buildflag_header("ui_features") {
     "ENABLE_HIDPI=$enable_hidpi",
     "ENABLE_MESSAGE_CENTER=$enable_message_center",
     "ENABLE_MUS=$enable_mus",
+    "USE_ATK=$use_atk",
     "USE_XKBCOMMON=$use_xkbcommon",
     "MAC_VIEWS_BROWSER=$mac_views_browser",
     "HAS_NATIVE_ACCESSIBILITY=$has_native_accessibility",
@@ -67,9 +68,10 @@ component("base") {
   sources = [
     "accelerators/media_keys_listener.cc",
     "accelerators/media_keys_listener.h",
+    "accelerators/menu_label_accelerator_util.cc",
+    "accelerators/menu_label_accelerator_util.h",
     "accelerators/menu_label_accelerator_util_linux.cc",
     "accelerators/menu_label_accelerator_util_linux.h",
-    "accelerators/platform_accelerator.h",
     "accelerators/platform_accelerator_cocoa.h",
     "accelerators/platform_accelerator_cocoa.mm",
     "class_property.cc",
@@ -88,6 +90,7 @@ component("base") {
     "clipboard/custom_data_helper_mac.mm",
     "cocoa/a11y_util.h",
     "cocoa/a11y_util.mm",
+    "cocoa/accessibility_hostable.h",
     "cocoa/animation_utils.h",
     "cocoa/appkit_utils.h",
     "cocoa/appkit_utils.mm",
@@ -137,6 +140,8 @@ component("base") {
     "cocoa/nsgraphics_context_additions.mm",
     "cocoa/nsview_additions.h",
     "cocoa/nsview_additions.mm",
+    "cocoa/quartz_util.h",
+    "cocoa/quartz_util.mm",
     "cocoa/remote_layer_api.h",
     "cocoa/remote_layer_api.mm",
     "cocoa/scoped_cg_context_smooth_fonts.h",
@@ -210,7 +215,6 @@ component("base") {
     "l10n/l10n_util_collator.h",
     "l10n/l10n_util_mac.h",
     "l10n/l10n_util_mac.mm",
-    "l10n/l10n_util_posix.cc",
     "l10n/l10n_util_win.cc",
     "l10n/l10n_util_win.h",
     "l10n/time_format.cc",
@@ -263,6 +267,7 @@ component("base") {
     "resource/resource_bundle_win.h",
     "resource/resource_data_dll_win.cc",
     "resource/resource_data_dll_win.h",
+    "resource/whitelist.h",
     "template_expressions.cc",
     "template_expressions.h",
     "theme_provider.cc",
@@ -300,6 +305,8 @@ component("base") {
     "win/foreground_helper.h",
     "win/hidden_window.cc",
     "win/hidden_window.h",
+    "win/hwnd_metrics.cc",
+    "win/hwnd_metrics.h",
     "win/hwnd_subclass.cc",
     "win/hwnd_subclass.h",
     "win/internal_constants.cc",
@@ -324,6 +331,10 @@ component("base") {
     "window_open_disposition.h",
     "work_area_watcher_observer.h",
   ]
+
+  if (is_posix) {
+    sources += [ "l10n/l10n_util_posix.cc" ]
+  }
 
   if (!is_ios) {
     sources += [
@@ -356,6 +367,7 @@ component("base") {
       "dragdrop/cocoa_dnd_util.mm",
       "dragdrop/file_info.cc",
       "dragdrop/file_info.h",
+      "emoji/emoji_panel_helper.h",
       "idle/idle.cc",
       "idle/idle.h",
       "idle/idle_chromeos.cc",
@@ -369,6 +381,17 @@ component("base") {
       "touch/touch_editing_controller.cc",
       "touch/touch_editing_controller.h",
     ]
+  }
+
+  if (is_mac) {
+    sources += [ "emoji/emoji_panel_helper_mac.mm" ]
+  } else if (is_win) {
+    sources += [ "emoji/emoji_panel_helper_win.cc" ]
+  } else if (is_chromeos) {
+    sources += [ "emoji/emoji_panel_helper_chromeos.cc" ]
+  } else {
+    # Empty implementation for all other platforms.
+    sources += [ "emoji/emoji_panel_helper.cc" ]
   }
 
   if (is_mac) {
@@ -394,6 +417,7 @@ component("base") {
   if (is_fuchsia) {
     sources += [
       "idle/idle_fuchsia.cc",
+      "l10n/l10n_util_posix.cc",
       "resource/resource_bundle_fuchsia.cc",
     ]
   }
@@ -568,6 +592,7 @@ component("base") {
     libs += [
       "Accelerate.framework",
       "AppKit.framework",
+      "QuartzCore.framework",
       "AudioUnit.framework",
       "Carbon.framework",
       "CoreVideo.framework",
@@ -673,6 +698,8 @@ static_library("test_support") {
 
   if (!is_ios) {
     sources += [
+      "accelerators/test_accelerator_target.cc",
+      "accelerators/test_accelerator_target.h",
       "test/cocoa_helper.h",
       "test/cocoa_helper.mm",
       "test/menu_test_observer.h",
@@ -797,6 +824,7 @@ test("ui_base_unittests") {
     "l10n/time_format_unittest.cc",
     "layout_unittest.cc",
     "material_design/material_design_controller_unittest.cc",
+    "models/simple_menu_model_unittest.cc",
     "models/tree_node_iterator_unittest.cc",
     "resource/data_pack_literal.cc",
     "resource/data_pack_literal.h",
@@ -838,6 +866,8 @@ test("ui_base_unittests") {
       "accelerators/accelerator_manager_unittest.cc",
       "accelerators/accelerator_unittest.cc",
       "accelerators/menu_label_accelerator_util_linux_unittest.cc",
+      "accelerators/menu_label_accelerator_util_unittest.cc",
+      "accelerators/platform_accelerator_cocoa_unittest.mm",
       "clipboard/custom_data_helper_unittest.cc",
       "cocoa/base_view_unittest.mm",
       "cocoa/bubble_closer_unittest.mm",
@@ -870,6 +900,7 @@ test("ui_base_unittests") {
     sources += [
       "ime/candidate_window_unittest.cc",
       "ime/chromeos/character_composer_unittest.cc",
+      "ime/chromeos/extension_ime_util_unittest.cc",
       "ime/chromeos/ime_keyboard_unittest.cc",
       "ime/chromeos/input_method_util_unittest.cc",
       "ime/composition_text_unittest.cc",
@@ -881,7 +912,11 @@ test("ui_base_unittests") {
       "ime/win/tsf_text_store_unittest.cc",
     ]
     if (is_linux && use_aura && !is_chromeos) {
-      sources += [ "ime/input_method_auralinux_unittest.cc" ]
+      if (use_x11) {
+        sources += [ "ime/input_method_auralinux_unittest.cc" ]
+      } else {
+        sources += [ "ime/input_method_minimal_unittest.cc" ]
+      }
     }
     if (use_x11) {
       sources += [ "ime/composition_text_util_pango_unittest.cc" ]
@@ -895,7 +930,7 @@ test("ui_base_unittests") {
     ":ui_base_unittests_bundle_data",
     "//base",
     "//base/test:test_support",
-    "//mojo/edk",
+    "//mojo/core/embedder",
     "//net",
     "//net:test_support",
     "//skia",
@@ -1011,7 +1046,7 @@ test("ui_base_unittests") {
     ]
     data_deps += [
       "//ui/resources:ui_test_pak",  # TODO(brettw): this does nothing.
-      "//third_party/mesa:osmesa",
+      "//third_party/mesa_headers",
     ]
   }
   if (is_linux || is_win || is_fuchsia) {

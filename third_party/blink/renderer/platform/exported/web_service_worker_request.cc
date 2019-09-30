@@ -2,8 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "third_party/blink/public/platform/modules/serviceworker/web_service_worker_request.h"
+#include "third_party/blink/public/platform/modules/service_worker/web_service_worker_request.h"
 
+#include "third_party/blink/public/platform/web_http_body.h"
 #include "third_party/blink/public/platform/web_http_header_visitor.h"
 #include "third_party/blink/public/platform/web_string.h"
 #include "third_party/blink/public/platform/web_url_request.h"
@@ -36,9 +37,11 @@ class WebServiceWorkerRequestPrivate
   network::mojom::RequestContextFrameType frame_type_ =
       network::mojom::RequestContextFrameType::kNone;
   WebString integrity_;
+  WebURLRequest::Priority priority_ = WebURLRequest::Priority::kUnresolved;
   bool keepalive_ = false;
   WebString client_id_;
   bool is_reload_ = false;
+  bool is_history_navigation_ = false;
 };
 
 WebServiceWorkerRequest::WebServiceWorkerRequest()
@@ -58,6 +61,10 @@ void WebServiceWorkerRequest::SetURL(const WebURL& url) {
 
 const WebString& WebServiceWorkerRequest::Integrity() const {
   return private_->integrity_;
+}
+
+WebURLRequest::Priority WebServiceWorkerRequest::Priority() const {
+  return private_->priority_;
 }
 
 bool WebServiceWorkerRequest::Keepalive() const {
@@ -128,6 +135,11 @@ void WebServiceWorkerRequest::SetBlob(const WebString& uuid,
       BlobDataHandle::Create(uuid, String(), size, std::move(blob_info));
 }
 
+void WebServiceWorkerRequest::SetBlobDataHandle(
+    scoped_refptr<BlobDataHandle> blob_data_handle) {
+  private_->blob_data_handle = std::move(blob_data_handle);
+}
+
 scoped_refptr<BlobDataHandle> WebServiceWorkerRequest::GetBlobDataHandle()
     const {
   return private_->blob_data_handle;
@@ -180,6 +192,10 @@ void WebServiceWorkerRequest::SetCredentialsMode(
 
 void WebServiceWorkerRequest::SetIntegrity(const WebString& integrity) {
   private_->integrity_ = integrity;
+}
+
+void WebServiceWorkerRequest::SetPriority(WebURLRequest::Priority priority) {
+  private_->priority_ = priority;
 }
 
 void WebServiceWorkerRequest::SetKeepalive(bool keepalive) {
@@ -243,6 +259,14 @@ void WebServiceWorkerRequest::SetIsReload(bool is_reload) {
 
 bool WebServiceWorkerRequest::IsReload() const {
   return private_->is_reload_;
+}
+
+void WebServiceWorkerRequest::SetIsHistoryNavigation(bool b) {
+  private_->is_history_navigation_ = b;
+}
+
+bool WebServiceWorkerRequest::IsHistoryNavigation() const {
+  return private_->is_history_navigation_;
 }
 
 }  // namespace blink

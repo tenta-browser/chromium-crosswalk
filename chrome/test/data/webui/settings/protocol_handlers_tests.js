@@ -80,18 +80,16 @@ suite('ProtocolHandlers', function() {
     PolymerTest.clearBody();
     testElement = document.createElement('protocol-handlers');
     document.body.appendChild(testElement);
-    return browserProxy.whenCalled('observeProtocolHandlers')
-        .then(function() {
-          Polymer.dom.flush();
-        });
+    return browserProxy.whenCalled('observeProtocolHandlers').then(function() {
+      Polymer.dom.flush();
+    });
   }
 
   test('empty list', function() {
-    return initPage()
-        .then(function() {
-          const listFrames = testElement.root.querySelectorAll('.list-frame');
-          assertEquals(0, listFrames.length);
-        });
+    return initPage().then(function() {
+      const listFrames = testElement.root.querySelectorAll('.list-frame');
+      assertEquals(0, listFrames.length);
+    });
   });
 
   test('non-empty list', function() {
@@ -107,9 +105,9 @@ suite('ProtocolHandlers', function() {
 
       // Check that item hosts are rendered correctly.
       const hosts = testElement.root.querySelectorAll('.protocol-host');
-      assertEquals('www.google.com', hosts[0].textContent);
-      assertEquals('www.google1.com', hosts[1].textContent);
-      assertEquals('www.google2.com', hosts[2].textContent);
+      assertEquals('www.google.com', hosts[0].textContent.trim());
+      assertEquals('www.google1.com', hosts[1].textContent.trim());
+      assertEquals('www.google2.com', hosts[2].textContent.trim());
 
       // Check that item default subtexts are rendered correctly.
       const defText = testElement.root.querySelectorAll('.protocol-default');
@@ -132,7 +130,7 @@ suite('ProtocolHandlers', function() {
 
       // Check that item hosts are rendered correctly.
       const hosts = testElement.root.querySelectorAll('.protocol-host');
-      assertEquals('www.google.com', hosts[0].textContent);
+      assertEquals('www.google.com', hosts[0].textContent.trim());
 
       // Check that item default subtexts are rendered correctly.
       const defText = testElement.root.querySelectorAll('.protocol-protocol');
@@ -159,9 +157,9 @@ suite('ProtocolHandlers', function() {
         // Test the button for the first protocol handler
         browserProxy.reset();
         assertFalse(dialog.open);
-        MockInteractions.tap(menuButtons[menuIndex].querySelector('button'));
+        menuButtons[menuIndex].querySelector('button').click();
         assertTrue(dialog.open);
-        MockInteractions.tap(testElement.$[button]);
+        testElement.$[button].click();
         assertFalse(dialog.open);
         return browserProxy.whenCalled(browserProxyHandler).then(args => {
           const protocol = args[0];
@@ -187,13 +185,13 @@ suite('ProtocolHandlers', function() {
       const menuButtons = testElement.root.querySelectorAll(
           'paper-icon-button-light.icon-more-vert');
       const closeMenu = () => testElement.$$('cr-action-menu').close();
-      MockInteractions.tap(menuButtons[0].querySelector('button'));
+      menuButtons[0].querySelector('button').click();
       assertTrue(testElement.$.defaultButton.hidden);
       closeMenu();
-      MockInteractions.tap(menuButtons[1].querySelector('button'));
+      menuButtons[1].querySelector('button').click();
       assertTrue(testElement.$.defaultButton.hidden);
       closeMenu();
-      MockInteractions.tap(menuButtons[2].querySelector('button'));
+      menuButtons[2].querySelector('button').click();
       assertFalse(testElement.$.defaultButton.hidden);
     });
   });
@@ -202,7 +200,7 @@ suite('ProtocolHandlers', function() {
     browserProxy.setIgnoredProtocols(ignoredProtocols);
     return initPage()
         .then(() => {
-          MockInteractions.tap(testElement.$$('#removeIgnoredButton'));
+          testElement.$$('#removeIgnoredButton').click();
           return browserProxy.whenCalled('removeProtocolHandler');
         })
         .then(args => {

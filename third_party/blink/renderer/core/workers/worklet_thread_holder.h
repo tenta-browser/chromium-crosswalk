@@ -46,16 +46,14 @@ class WorkletThreadHolder {
     MutexLocker locker(HolderInstanceMutex());
     DCHECK(!thread_holder_instance_);
     thread_holder_instance_ = new WorkletThreadHolder<DerivedWorkletThread>;
-    thread_holder_instance_->Initialize(
-        WorkerBackingThread::CreateForTest(params));
+    thread_holder_instance_->Initialize(WorkerBackingThread::Create(params));
   }
 
   static void CreateForTest(WebThread* thread) {
     MutexLocker locker(HolderInstanceMutex());
     DCHECK(!thread_holder_instance_);
     thread_holder_instance_ = new WorkletThreadHolder<DerivedWorkletThread>;
-    thread_holder_instance_->Initialize(
-        WorkerBackingThread::CreateForTest(thread));
+    thread_holder_instance_->Initialize(WorkerBackingThread::Create(thread));
   }
 
   static void ClearInstance() {
@@ -100,13 +98,13 @@ class WorkletThreadHolder {
     WaitableEvent waitable_event;
     thread_->BackingThread().PostTask(
         FROM_HERE,
-        CrossThreadBind(&WorkletThreadHolder::ShutdownOnWorlketThread,
+        CrossThreadBind(&WorkletThreadHolder::ShutdownOnWorkletThread,
                         CrossThreadUnretained(this),
                         CrossThreadUnretained(&waitable_event)));
     waitable_event.Wait();
   }
 
-  void ShutdownOnWorlketThread(WaitableEvent* waitable_event) {
+  void ShutdownOnWorkletThread(WaitableEvent* waitable_event) {
     thread_->ShutdownOnBackingThread();
     waitable_event->Signal();
   }

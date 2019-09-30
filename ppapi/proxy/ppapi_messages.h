@@ -230,6 +230,11 @@ IPC_STRUCT_TRAITS_BEGIN(PP_PdfPrintPresetOptions_Dev)
   IPC_STRUCT_TRAITS_MEMBER(uniform_page_size)
 IPC_STRUCT_TRAITS_END()
 
+IPC_STRUCT_TRAITS_BEGIN(PP_PdfPrintSettings_Dev)
+  IPC_STRUCT_TRAITS_MEMBER(pages_per_sheet)
+  IPC_STRUCT_TRAITS_MEMBER(scale_factor)
+IPC_STRUCT_TRAITS_END()
+
 IPC_STRUCT_TRAITS_BEGIN(PP_PrivateAccessibilityViewportInfo)
   IPC_STRUCT_TRAITS_MEMBER(zoom)
   IPC_STRUCT_TRAITS_MEMBER(scroll)
@@ -443,7 +448,6 @@ IPC_STRUCT_TRAITS_BEGIN(ppapi::URLRequestInfoData)
   IPC_STRUCT_TRAITS_MEMBER(url)
   IPC_STRUCT_TRAITS_MEMBER(method)
   IPC_STRUCT_TRAITS_MEMBER(headers)
-  IPC_STRUCT_TRAITS_MEMBER(stream_to_file)
   IPC_STRUCT_TRAITS_MEMBER(follow_redirects)
   IPC_STRUCT_TRAITS_MEMBER(record_download_progress)
   IPC_STRUCT_TRAITS_MEMBER(record_upload_progress)
@@ -475,7 +479,6 @@ IPC_STRUCT_TRAITS_BEGIN(ppapi::URLResponseInfoData)
   IPC_STRUCT_TRAITS_MEMBER(status_code)
   IPC_STRUCT_TRAITS_MEMBER(status_text)
   IPC_STRUCT_TRAITS_MEMBER(redirect_url)
-  IPC_STRUCT_TRAITS_MEMBER(body_as_file_ref)
 IPC_STRUCT_TRAITS_END()
 
 IPC_STRUCT_TRAITS_BEGIN(ppapi::proxy::SerializedNetworkInfo)
@@ -817,9 +820,25 @@ IPC_MESSAGE_ROUTED3(PpapiMsg_PPPPdf_SetSelectionBounds,
 IPC_SYNC_MESSAGE_ROUTED1_1(PpapiMsg_PPPPdf_CanEditText,
                            PP_Instance /* instance */,
                            PP_Bool /* result */)
+IPC_SYNC_MESSAGE_ROUTED1_1(PpapiMsg_PPPPdf_HasEditableText,
+                           PP_Instance /* instance */,
+                           PP_Bool /* result */)
 IPC_MESSAGE_ROUTED2(PpapiMsg_PPPPdf_ReplaceSelection,
                     PP_Instance /* instance */,
                     std::string /* text */)
+IPC_SYNC_MESSAGE_ROUTED1_1(PpapiMsg_PPPPdf_CanUndo,
+                           PP_Instance /* instance */,
+                           PP_Bool /* result */)
+IPC_SYNC_MESSAGE_ROUTED1_1(PpapiMsg_PPPPdf_CanRedo,
+                           PP_Instance /* instance */,
+                           PP_Bool /* result */)
+IPC_MESSAGE_ROUTED1(PpapiMsg_PPPPdf_Undo, PP_Instance /* instance */)
+IPC_MESSAGE_ROUTED1(PpapiMsg_PPPPdf_Redo, PP_Instance /* instance */)
+IPC_SYNC_MESSAGE_ROUTED3_1(PpapiMsg_PPPPdf_PrintBegin,
+                           PP_Instance /* instance */,
+                           PP_PrintSettings_Dev /* print_settings */,
+                           PP_PdfPrintSettings_Dev /* pdf_print_settings */,
+                           int32_t /* result */)
 
 // Find
 IPC_MESSAGE_ROUTED2(PpapiPluginMsg_PPPFind_StartFind,
@@ -850,7 +869,7 @@ IPC_SYNC_MESSAGE_ROUTED1_1(PpapiMsg_PPPPrinting_QuerySupportedFormats,
                            uint32_t /* result */)
 IPC_SYNC_MESSAGE_ROUTED2_1(PpapiMsg_PPPPrinting_Begin,
                            PP_Instance /* instance */,
-                           std::string /* settings_string */,
+                           PP_PrintSettings_Dev /* settings */,
                            int32_t /* result */)
 IPC_SYNC_MESSAGE_ROUTED2_1(PpapiMsg_PPPPrinting_PrintPages,
                            PP_Instance /* instance */,
@@ -2056,14 +2075,14 @@ IPC_MESSAGE_CONTROL3(PpapiHostMsg_VideoDecoder_Decode,
                      int32_t /* decode_id */)
 IPC_MESSAGE_CONTROL1(PpapiPluginMsg_VideoDecoder_DecodeReply,
                      uint32_t /* shm_id */)
-IPC_MESSAGE_CONTROL4(PpapiPluginMsg_VideoDecoder_RequestTextures,
+IPC_MESSAGE_CONTROL3(PpapiPluginMsg_VideoDecoder_RequestTextures,
                      uint32_t /* num_textures */,
                      PP_Size /* size */,
-                     uint32_t /* texture_target */,
-                     std::vector<gpu::Mailbox> /* mailboxes*/)
-IPC_MESSAGE_CONTROL2(PpapiHostMsg_VideoDecoder_AssignTextures,
+                     uint32_t /* texture_target */)
+IPC_MESSAGE_CONTROL3(PpapiHostMsg_VideoDecoder_AssignTextures,
                      PP_Size /* size */,
-                     std::vector<uint32_t> /* texture_ids */)
+                     std::vector<uint32_t> /* texture_ids */,
+                     std::vector<gpu::Mailbox> /* mailboxes */)
 IPC_MESSAGE_CONTROL3(PpapiPluginMsg_VideoDecoder_PictureReady,
                      int32_t /* decode_id */,
                      uint32_t /* texture_id */,

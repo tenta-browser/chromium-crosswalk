@@ -65,12 +65,6 @@ void UnpremultiplyAndDitherCopyCHROMIUM(GLuint source_id,
 
 GLenum GetGraphicsResetStatusKHR() override;
 
-void InitializeDiscardableTextureCHROMIUM(GLuint texture_id) override;
-
-void UnlockDiscardableTextureCHROMIUM(GLuint texture_id) override;
-
-bool LockDiscardableTextureCHROMIUM(GLuint texture_id) override;
-
 void EndRasterCHROMIUM() override;
 
 GLuint CreateTexture(bool use_buffer,
@@ -80,9 +74,7 @@ GLuint CreateTexture(bool use_buffer,
 void SetColorSpaceMetadata(GLuint texture_id,
                            GLColorSpace color_space) override;
 
-void GenMailbox(GLbyte* mailbox) override;
-
-void ProduceTextureDirect(GLuint texture, const GLbyte* mailbox) override;
+void ProduceTextureDirect(GLuint texture, GLbyte* mailbox) override;
 
 GLuint CreateAndConsumeTexture(bool use_buffer,
                                gfx::BufferUsage buffer_usage,
@@ -95,10 +87,7 @@ void BindTexImage2DCHROMIUM(GLuint texture_id, GLint image_id) override;
 
 void ReleaseTexImage2DCHROMIUM(GLuint texture_id, GLint image_id) override;
 
-void TexStorage2D(GLuint texture_id,
-                  GLsizei levels,
-                  GLsizei width,
-                  GLsizei height) override;
+void TexStorage2D(GLuint texture_id, GLsizei width, GLsizei height) override;
 
 void CopySubTexture(GLuint source_id,
                     GLuint dest_id,
@@ -108,5 +97,14 @@ void CopySubTexture(GLuint source_id,
                     GLint y,
                     GLsizei width,
                     GLsizei height) override;
+
+void TraceBeginCHROMIUM(const char* category_name,
+                        const char* trace_name) override;
+
+void TraceEndCHROMIUM() override;
+
+void SetActiveURLCHROMIUM(const char* url) override;
+
+void ResetActiveURLCHROMIUM() override;
 
 #endif  // GPU_COMMAND_BUFFER_CLIENT_RASTER_IMPLEMENTATION_AUTOGEN_H_

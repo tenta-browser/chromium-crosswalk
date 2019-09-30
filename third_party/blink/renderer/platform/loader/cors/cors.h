@@ -5,10 +5,11 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_PLATFORM_LOADER_CORS_CORS_H_
 #define THIRD_PARTY_BLINK_RENDERER_PLATFORM_LOADER_CORS_CORS_H_
 
+#include "base/optional.h"
+#include "services/network/public/cpp/cors/cors_error_status.h"
 #include "services/network/public/mojom/cors.mojom-shared.h"
 #include "services/network/public/mojom/fetch_api.mojom-shared.h"
 #include "third_party/blink/renderer/platform/platform_export.h"
-#include "third_party/blink/renderer/platform/wtf/optional.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 
 namespace blink {
@@ -17,38 +18,53 @@ class HTTPHeaderMap;
 class KURL;
 class SecurityOrigin;
 
+enum class CORSFlag : uint8_t {
+  Unset,
+  Set,
+};
+
 // CORS related utility functions.
 namespace CORS {
 
 // Thin wrapper functions below are for calling ::network::cors functions from
 // Blink core. Once Out-of-renderer CORS is enabled, following functions will
 // be removed.
-PLATFORM_EXPORT WTF::Optional<network::mojom::CORSError> CheckAccess(
+PLATFORM_EXPORT base::Optional<network::CORSErrorStatus> CheckAccess(
     const KURL&,
     const int response_status_code,
     const HTTPHeaderMap&,
     network::mojom::FetchCredentialsMode,
     const SecurityOrigin&);
 
-PLATFORM_EXPORT WTF::Optional<network::mojom::CORSError> CheckRedirectLocation(
-    const KURL&);
+PLATFORM_EXPORT base::Optional<network::CORSErrorStatus> CheckPreflightAccess(
+    const KURL&,
+    const int response_status_code,
+    const HTTPHeaderMap&,
+    network::mojom::FetchCredentialsMode,
+    const SecurityOrigin&);
 
-PLATFORM_EXPORT WTF::Optional<network::mojom::CORSError> CheckPreflight(
+PLATFORM_EXPORT base::Optional<network::CORSErrorStatus> CheckRedirectLocation(
+    const KURL&,
+    network::mojom::FetchRequestMode,
+    const SecurityOrigin*,
+    CORSFlag);
+
+PLATFORM_EXPORT base::Optional<network::mojom::CORSError> CheckPreflight(
     const int preflight_response_status_code);
 
-PLATFORM_EXPORT WTF::Optional<network::mojom::CORSError> CheckExternalPreflight(
+PLATFORM_EXPORT base::Optional<network::CORSErrorStatus> CheckExternalPreflight(
     const HTTPHeaderMap&);
 
 PLATFORM_EXPORT bool IsCORSEnabledRequestMode(network::mojom::FetchRequestMode);
 
-PLATFORM_EXPORT bool EnsurePreflightResultAndCacheOnSuccess(
+PLATFORM_EXPORT base::Optional<network::CORSErrorStatus>
+EnsurePreflightResultAndCacheOnSuccess(
     const HTTPHeaderMap& response_header_map,
     const String& origin,
     const KURL& request_url,
     const String& request_method,
     const HTTPHeaderMap& request_header_map,
-    network::mojom::FetchCredentialsMode request_credentials_mode,
-    String* error_description);
+    network::mojom::FetchCredentialsMode request_credentials_mode);
 
 PLATFORM_EXPORT bool CheckIfRequestCanSkipPreflight(
     const String& origin,
@@ -63,6 +79,12 @@ PLATFORM_EXPORT bool IsCORSSafelistedMethod(const String& method);
 PLATFORM_EXPORT bool IsCORSSafelistedContentType(const String&);
 PLATFORM_EXPORT bool IsCORSSafelistedHeader(const String& name,
                                             const String& value);
+PLATFORM_EXPORT bool IsForbiddenHeaderName(const String& name);
+PLATFORM_EXPORT bool ContainsOnlyCORSSafelistedHeaders(const HTTPHeaderMap&);
+PLATFORM_EXPORT bool ContainsOnlyCORSSafelistedOrForbiddenHeaders(
+    const HTTPHeaderMap&);
+
+PLATFORM_EXPORT bool IsOkStatus(int status);
 
 }  // namespace CORS
 

@@ -9,10 +9,10 @@
 
 #include <memory>
 #include <string>
-#include <unordered_map>
 #include <vector>
 
 #include "base/compiler_specific.h"
+#include "base/containers/flat_map.h"
 #include "base/gtest_prod_util.h"
 #include "base/logging.h"
 #include "base/macros.h"
@@ -83,7 +83,9 @@ class EVENTS_EXPORT Event {
   const base::TimeTicks time_stamp() const { return time_stamp_; }
   int flags() const { return flags_; }
 
-  // Returns a name for the event, typically used in logging/debugging.
+  // Returns a name for the event, typically used in logging/debugging. This is
+  // a convenience for EventTypeName(type()) (EventTypeName() is in
+  // event_utils).
   const char* GetName() const;
 
   // This is only intended to be used externally by classes that are modifying
@@ -164,8 +166,10 @@ class EVENTS_EXPORT Event {
       case ET_GESTURE_SCROLL_END:
       case ET_GESTURE_SCROLL_UPDATE:
       case ET_GESTURE_TAP:
+      case ET_GESTURE_DOUBLE_TAP:
       case ET_GESTURE_TAP_CANCEL:
       case ET_GESTURE_TAP_DOWN:
+      case ET_GESTURE_TAP_UNCONFIRMED:
       case ET_GESTURE_BEGIN:
       case ET_GESTURE_END:
       case ET_GESTURE_TWO_FINGER_TAP:
@@ -208,7 +212,7 @@ class EVENTS_EXPORT Event {
   }
 
   bool IsScrollEvent() const {
-    // Flings can be GestureEvents too. EF_FROM_TOUCH determins if they're
+    // Flings can be GestureEvents too. EF_FROM_TOUCH determines if they're
     // Gesture or Scroll events.
     return type_ == ET_SCROLL ||
            ((type_ == ET_SCROLL_FLING_START ||
@@ -693,6 +697,7 @@ class EVENTS_EXPORT TouchEvent : public LocatedEvent {
         unique_event_id_(model.unique_event_id_),
         may_cause_scrolling_(model.may_cause_scrolling_),
         should_remove_native_touch_id_mapping_(false),
+        hovering_(false),
         pointer_details_(model.pointer_details_) {}
 
   TouchEvent(EventType type,
@@ -827,7 +832,7 @@ class EVENTS_EXPORT PointerEvent : public LocatedEvent {
 //
 class EVENTS_EXPORT KeyEvent : public Event {
  public:
-  using Properties = std::unordered_map<std::string, std::vector<uint8_t>>;
+  using Properties = base::flat_map<std::string, std::vector<uint8_t>>;
 
   // Create a KeyEvent from a NativeEvent. For Windows this native event can
   // be either a keystroke message (WM_KEYUP/WM_KEYDOWN) or a character message
@@ -856,6 +861,7 @@ class EVENTS_EXPORT KeyEvent : public Event {
   // Create a character event.
   KeyEvent(base::char16 character,
            KeyboardCode key_code,
+           DomCode code,
            int flags,
            base::TimeTicks time_stamp = base::TimeTicks());
 

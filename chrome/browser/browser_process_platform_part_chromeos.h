@@ -14,32 +14,32 @@
 #include "chrome/browser/browser_process_platform_part_base.h"
 
 namespace chromeos {
+class AccountManagerFactory;
 class ChromeSessionManager;
 class ChromeUserManager;
+class DiscoverManager;
 class ProfileHelper;
 class TimeZoneResolver;
-}
 
-namespace chromeos {
 namespace system {
 class AutomaticRebootManager;
 class DeviceDisablingManager;
 class DeviceDisablingManagerDefaultDelegate;
 class SystemClock;
 class TimeZoneResolverManager;
-}
+}  // namespace system
+}  // namespace chromeos
+
+namespace component_updater {
+class CrOSComponentManager;
 }
 
 namespace policy {
 class BrowserPolicyConnectorChromeOS;
 }
 
-namespace ui {
+namespace ws {
 class InputDeviceControllerClient;
-}
-
-namespace component_updater {
-class CrOSComponentManager;
 }
 
 class ScopedKeepAlive;
@@ -103,17 +103,22 @@ class BrowserProcessPlatformPart : public BrowserProcessPlatformPartBase {
 
   chromeos::TimeZoneResolver* GetTimezoneResolver();
 
+  chromeos::DiscoverManager* GetDiscoverManager();
+
   // Overridden from BrowserProcessPlatformPartBase:
   void StartTearDown() override;
   std::unique_ptr<policy::ChromeBrowserPolicyConnector>
   CreateBrowserPolicyConnector() override;
   void RegisterInProcessServices(
-      content::ContentBrowserClient::StaticServiceMap* services) override;
+      content::ContentBrowserClient::StaticServiceMap* services,
+      content::ServiceManagerConnection* connection) override;
 
   chromeos::system::SystemClock* GetSystemClock();
   void DestroySystemClock();
 
-  ui::InputDeviceControllerClient* GetInputDeviceControllerClient();
+  ws::InputDeviceControllerClient* GetInputDeviceControllerClient();
+
+  chromeos::AccountManagerFactory* GetAccountManagerFactory();
 
  private:
   void CreateProfileHelper();
@@ -144,10 +149,14 @@ class BrowserProcessPlatformPart : public BrowserProcessPlatformPartBase {
   std::unique_ptr<component_updater::CrOSComponentManager>
       cros_component_manager_;
 
+  std::unique_ptr<chromeos::AccountManagerFactory> account_manager_factory_;
+
 #if defined(USE_OZONE)
-  std::unique_ptr<ui::InputDeviceControllerClient>
+  std::unique_ptr<ws::InputDeviceControllerClient>
       input_device_controller_client_;
 #endif
+
+  std::unique_ptr<chromeos::DiscoverManager> discover_manager_;
 
   SEQUENCE_CHECKER(sequence_checker_);
 

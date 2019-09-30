@@ -1,22 +1,9 @@
 # These tests currently fail when they run with --site-per-process.
 # See https://crbug.com/477150.
 
-# TODO(lukasza): Remove these once CORB is enabled by default.
-crbug.com/802835 external/wpt/fetch/corb/img-png-mislabeled-as-html-nosniff.tentative.sub.html [ Pass ]
-crbug.com/802835 external/wpt/fetch/corb/img-mime-types-coverage.tentative.sub.html [ Pass ]
-crbug.com/802835 external/wpt/fetch/corb/script-html-correctly-labeled.tentative.sub.html [ Pass ]
-crbug.com/802835 external/wpt/fetch/corb/preload-image-png-mislabeled-as-html-nosniff.tentative.sub.html [ Pass ]
-
-# https://crbug.com/794631: OOPIFs VS feature policy VS opaque origins?
-crbug.com/794631 virtual/unified-autoplay/external/wpt/feature-policy/autoplay-allowed-by-feature-policy-attribute.https.sub.html [ Failure ]
-crbug.com/794631 virtual/unified-autoplay/external/wpt/feature-policy/autoplay-allowed-by-feature-policy.https.sub.html [ Failure ]
-
 # https://crbug.com/793127: NOTREACHED() from clamy@ tickled by frame consolidation CL?
 crbug.com/793127 http/tests/security/upgrade-insecure-requests/iframe-upgrade.https.html [ Crash ]
 crbug.com/793127 external/wpt/content-security-policy/securitypolicyviolation/upgrade-insecure-requests-reporting.https.html [ Crash ]
-
-# https://crbug.com/769502: PlzNavigate-related, not-yet-investigated timeout.
-crbug.com/769502 fast/loader/recursive-before-unload-crash.html [ Timeout ]
 
 # https://crbug.com/769508: PlzNavigate-related, not-yet-investigated failures.
 crbug.com/769508 fast/css/acid2.html [ Failure ]
@@ -33,43 +20,21 @@ crbug.com/393285 http/tests/text-autosizing/wide-iframe.html [ Failure Crash ]
 # https://crbug.com/669083: console messages mismatch (origin-only VS full-URI)
 crbug.com/669083 http/tests/security/frameNavigation/xss-DENIED-top-navigation-without-user-gesture.html [ Failure ]
 
-# https://crbug.com/582245 - no exception, b/c BindingSecurity::shouldAllowAccessTo exits early when |!target|.
-crbug.com/582245 external/wpt/x-frame-options/deny.sub.html [ Failure ]
-crbug.com/582245 external/wpt/x-frame-options/multiple.sub.html [ Failure ]
-crbug.com/582245 external/wpt/x-frame-options/sameorigin.sub.html [ Failure ]
-crbug.com/582245 http/tests/security/xss-DENIED-getSVGDocument-iframe.html [ Failure ]
-crbug.com/582245 http/tests/security/xss-DENIED-getSVGDocument-object.html [ Failure ]
-crbug.com/582245 http/tests/security/xssAuditor/block-does-not-leak-location.html [ Failure ]
-crbug.com/582245 http/tests/security/xssAuditor/block-does-not-leak-referrer.html [ Failure ]
-crbug.com/582245 http/tests/security/xssAuditor/full-block-script-tag-cross-domain.html [ Failure ]
-
-# https://crbug.com/582176 - InspectorTest.changeExecutionContext doesn't like OOPIFs.
-crbug.com/582176 http/tests/devtools/console-cd-completions.js [ Failure ]
-crbug.com/582176 http/tests/devtools/console-cd.js [ Failure ]
-
 # https://crbug.com/608015 - node.contentDocument is undefined.
 crbug.com/608015 http/tests/inspector-protocol/access-inspected-object.js [ Failure Timeout ]
 
 # https://crbug.com/771003 - Dump history from all processes in layout tests
 crbug.com/771003 http/tests/security/mixedContent/insecure-iframe-in-main-frame.html [ Failure ]
 
-# https://crbug.com/585188 - testRunner.addOriginAccessWhitelistEntry is not replicated to OOPIFs.
+# https://crbug.com/585188 - testRunner.addOriginAccessAllowListEntry is not replicated to OOPIFs.
 crbug.com/585188 http/tests/xmlhttprequest/origin-whitelisting-all.html [ Failure ]
 crbug.com/585188 virtual/outofblink-cors/http/tests/xmlhttprequest/origin-whitelisting-all.html [ Failure ]
 crbug.com/585188 http/tests/xmlhttprequest/origin-whitelisting-ip-addresses.html [ Failure ]
 crbug.com/585188 virtual/outofblink-cors/http/tests/xmlhttprequest/origin-whitelisting-ip-addresses.html [ Failure ]
 
-# https://crbug.com/601584 - No OOPIF support for UserGestureIndicator triggers
-#                            cross-origin-iframe.html layout test failure
-crbug.com/601584 external/wpt/bluetooth/requestDevice/cross-origin-iframe.sub.https.html [ Skip ]
-crbug.com/601584 virtual/outofblink-cors/external/wpt/bluetooth/requestDevice/cross-origin-iframe.sub.https.html [ Skip ]
-
 # https://crbug.com/606594 - UaF of delegate_ in WebFrameTestClient::willSendRequest
 # https://crbug.com/786510 - test tries to access cross-origin document body
 crbug.com/606594 http/tests/local/serviceworker/fetch-request-body-file.html [ Skip ]
-
-# https://crbug.com/607991 - MockWebClipboardImpl not replicated across OOPIFs.
-crbug.com/607991 http/tests/misc/copy-resolves-urls.html [ Failure ]
 
 # https://crbug.com/616626 - allow_universal_access_from_file_urls doesn't work with --site-per-process.
 # https://crbug.com/665058 - EventSender drag-and-drop simulation doesn't support OOPIFs.
@@ -109,10 +74,6 @@ crbug.com/778372 external/wpt/html/browsers/origin/cross-origin-objects/cross-or
 # https://crbug.com/819800: Feature policy propagation trouble?  Test synchronization issue?
 crbug.com/819800 external/wpt/payment-request/allowpaymentrequest/setting-allowpaymentrequest-timing.https.sub.html [ Failure ]
 
-# https://crbug.com/820617: Failed to execute 'observe' on 'MutationObserver': parameter 1 is not of type 'Node'.
-crbug.com/820617 external/wpt/fullscreen/api/element-ready-check-allowed-cross-origin-manual.sub.html [ Failure ]
-crbug.com/820617 external/wpt/fullscreen/api/element-ready-check-not-allowed-cross-origin-manual.sub.html [ Failure ]
-
 # The tests below set document.domain.  Such tests are skipped, because they
 # cannot work when same-site WPT origins are isolated from each other via
 # --isolate-origins cmdline flag (which is how bots run the
@@ -123,6 +84,7 @@ crbug.com/820617 external/wpt/fullscreen/api/element-ready-check-not-allowed-cro
 # for the foreseeable future.
 Bug(none) external/wpt/html/browsers/origin/relaxing-the-same-origin-restriction [ Skip ]
 Bug(none) external/wpt/FileAPI/url/multi-global-origin-serialization.sub.html [ Skip ]
+Bug(none) virtual/mojo-blob-urls/external/wpt/FileAPI/url/multi-global-origin-serialization.sub.html [ Skip ]
 Bug(none) external/wpt/dom/events/EventListener-incumbent-global-1.sub.html [ Skip ]
 Bug(none) external/wpt/dom/events/EventListener-incumbent-global-2.sub.html [ Skip ]
 Bug(none) external/wpt/html/browsers/history/the-location-interface/allow_prototype_cycle_through_location.sub.html [ Skip ]
@@ -133,36 +95,18 @@ Bug(none) external/wpt/html/infrastructure/safe-passing-of-structured-data/share
 Bug(none) external/wpt/html/infrastructure/safe-passing-of-structured-data/shared-array-buffers/window-similar-but-cross-origin-success.sub.html [ Skip ]
 Bug(none) virtual/sharedarraybuffer/external/wpt/html/infrastructure/safe-passing-of-structured-data/shared-array-buffers/window-domain-success.sub.html [ Skip ]
 Bug(none) virtual/sharedarraybuffer/external/wpt/html/infrastructure/safe-passing-of-structured-data/shared-array-buffers/window-similar-but-cross-origin-success.sub.html [ Skip ]
+Bug(none) external/wpt/wasm/serialization/window-domain-success.sub.html [ Skip ]
+Bug(none) external/wpt/wasm/serialization/window-similar-but-cross-origin-success.sub.html [ Skip ]
+Bug(none) virtual/enable_wasm/external/wpt/wasm/serialization/window-domain-success.sub.html [ Skip ]
+Bug(none) virtual/enable_wasm/external/wpt/wasm/serialization/window-similar-but-cross-origin-success.sub.html [ Skip ]
 
 # Layout tests don't work for printing cross-site frames.
 crbug.com/822372 http/tests/printing/cross-site-frame.html [ Crash ]
 crbug.com/822372 http/tests/printing/cross-site-frame-scrolled.html [ Crash ]
 
 # TODO(lukasza, alexmos): Triage these failures.
-Bug(none) external/wpt/html/browsers/browsing-the-web/navigating-across-documents/004.html [ Timeout ]
-
-crbug.com/801992 external/wpt/content-security-policy/frame-ancestors/frame-ancestors-nested-cross-in-cross-url-allow.html [ Pass Timeout ]
-crbug.com/801992 external/wpt/content-security-policy/frame-ancestors/frame-ancestors-nested-cross-in-same-none-block.html [ Pass Timeout ]
-crbug.com/801992 external/wpt/content-security-policy/frame-ancestors/frame-ancestors-nested-cross-in-same-url-allow.html [ Pass Timeout ]
-crbug.com/801992 external/wpt/content-security-policy/frame-ancestors/frame-ancestors-nested-cross-in-sandboxed-cross-url-block.html [ Pass Timeout ]
-crbug.com/801992 external/wpt/content-security-policy/frame-ancestors/frame-ancestors-nested-same-in-cross-star-allow.html [ Pass Timeout ]
-crbug.com/801992 external/wpt/content-security-policy/frame-ancestors/frame-ancestors-nested-same-in-cross-url-allow.html [ Pass Timeout ]
-crbug.com/801992 external/wpt/content-security-policy/frame-ancestors/frame-ancestors-star-allow-crossorigin.html [ Pass Timeout ]
-crbug.com/801992 external/wpt/html/browsers/the-window-object/security-window/window-security.html [ Pass Timeout ]
 crbug.com/801992 http/tests/misc/iframe-script-modify-attr.html [ Pass Crash ]
-
-crbug.com/711468 virtual/gpu/fast/canvas/canvas-composite-image.html [ Pass Timeout ]
-crbug.com/711468 virtual/gpu/fast/canvas/canvas-scale-strokePath-shadow.html [ Pass Timeout ]
-crbug.com/711468 http/tests/intersection-observer/cross-origin-iframe-with-nesting.html [ Failure ]
-
 crbug.com/807675 http/tests/images/image-decode-in-frame.html [ Crash Failure ]
 
-# These tests have issues with —site-per-process. https://crbug.com/794631
-crbug.com/794631 http/tests/media/autoplay/document-user-activation-cross-origin-feature-policy-delegation.html [ Failure Pass Timeout ]
-crbug.com/794631 http/tests/media/autoplay/document-user-activation-cross-origin-feature-policy-disabled.html [ Failure Pass Timeout ]
-crbug.com/794631 http/tests/media/autoplay/document-user-activation-cross-origin-feature-policy-gesture.html [ Failure Pass Timeout ]
-crbug.com/794631 http/tests/media/autoplay/document-user-activation-cross-origin-feature-policy-header.html [ Failure Pass Timeout ]
-crbug.com/794631 http/tests/media/autoplay/document-user-activation-feature-policy-alternating.html [ Failure Pass Timeout ]
-crbug.com/794631 http/tests/media/autoplay/document-user-activation-feature-policy-iframe-no-gesture.html [ Failure Pass Timeout ]
-crbug.com/794631 http/tests/media/autoplay/document-user-activation-feature-policy-same-origin.html [ Failure Pass Timeout ]
-crbug.com/794631 http/tests/media/autoplay/document-user-activation-iframe-delegation.html [ Failure Pass Timeout ]
+# https://crbug.com/872952: Autoplay is still disabled if there is no gesture.
+crbug.com/872952 http/tests/media/autoplay/document-user-activation-feature-policy-iframe-no-gesture.html [ Failure Pass Timeout ]

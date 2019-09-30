@@ -20,74 +20,24 @@
         {
           "object": "LayoutTextControl TEXTAREA id='editor'",
           "rect": [5, 5, 147, 38],
-          "reason": "appeared"
+          "reason": "chunk appeared"
         },
         {
           "object": "LayoutTextControl TEXTAREA id='editor'",
           "rect": [5, 5, 147, 38],
-          "reason": "appeared"
+          "reason": "chunk appeared"
         },
         {
           "object": "LayoutBlockFlow HTML",
           "rect": [8, 8, 141, 32],
-          "reason": "disappeared"
+          "reason": "chunk disappeared"
         },
         {
           "object": "LayoutTextControl TEXTAREA id='editor'",
           "rect": [9, 11, 124, 13],
-          "reason": "appeared"
+          "reason": "chunk appeared"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutBlockFlow BODY",
-      "reason": "geometry"
-    },
-    {
-      "object": "RootInlineBox",
-      "reason": "geometry"
-    },
-    {
-      "object": "LayoutTextControl TEXTAREA id='editor'",
-      "reason": "subtree"
-    },
-    {
-      "object": "LayoutTextControl TEXTAREA id='editor'",
-      "reason": "geometry"
-    },
-    {
-      "object": "HorizontalScrollbar",
-      "reason": "scroll control"
-    },
-    {
-      "object": "LayoutTextControl TEXTAREA id='editor'",
-      "reason": "geometry"
-    },
-    {
-      "object": "VerticalScrollbar",
-      "reason": "scroll control"
-    },
-    {
-      "object": "LayoutBlockFlow DIV",
-      "reason": "subtree"
-    },
-    {
-      "object": "RootInlineBox",
-      "reason": "subtree"
-    },
-    {
-      "object": "Caret",
-      "reason": "caret"
-    },
-    {
-      "object": "LayoutText #text",
-      "reason": "subtree"
-    },
-    {
-      "object": "InlineTextBox '------------------------------------------------------------'",
-      "reason": "subtree"
     }
   ]
 }

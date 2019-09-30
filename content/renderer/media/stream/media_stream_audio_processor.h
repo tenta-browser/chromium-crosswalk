@@ -30,6 +30,7 @@
 namespace media {
 class AudioBus;
 class AudioParameters;
+class EchoInformation;
 }  // namespace media
 
 namespace webrtc {
@@ -38,7 +39,6 @@ class TypingDetection;
 
 namespace content {
 
-class EchoInformation;
 class MediaStreamAudioBus;
 class MediaStreamAudioFifo;
 
@@ -120,10 +120,6 @@ class CONTENT_EXPORT MediaStreamAudioProcessor
  protected:
   ~MediaStreamAudioProcessor() override;
 
-  // True if AEC3 is used, false if it's not or no AEC is used at all. Used for
-  // verification in tests.
-  bool using_aec3_ = false;
-
  private:
   friend class MediaStreamAudioProcessorTest;
 
@@ -150,11 +146,6 @@ class CONTENT_EXPORT MediaStreamAudioProcessor
 
   // Helper to initialize the capture converter.
   void InitializeCaptureFifo(const media::AudioParameters& input_format);
-
-  // Helper to initialize the render converter.
-  void InitializeRenderFifoIfNeeded(int sample_rate,
-                                    int number_of_channels,
-                                    int frames_per_buffer);
 
   // Called by ProcessAndConsumeData().
   // Returns the new microphone volume in the range of |0, 255].
@@ -222,10 +213,11 @@ class CONTENT_EXPORT MediaStreamAudioProcessor
   // Counters to avoid excessively logging errors in OnPlayoutData.
   size_t unsupported_buffer_size_log_count_ = 0;
   size_t apm_playout_error_code_log_count_ = 0;
+  size_t large_delay_log_count_ = 0;
 
   // Object for logging UMA stats for echo information when the AEC is enabled.
   // Accessed on the main render thread.
-  std::unique_ptr<EchoInformation> echo_information_;
+  std::unique_ptr<media::EchoInformation> echo_information_;
 
   DISALLOW_COPY_AND_ASSIGN(MediaStreamAudioProcessor);
 };

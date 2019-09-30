@@ -6,6 +6,7 @@
 
 #include "third_party/blink/renderer/core/css/css_calculation_value.h"
 #include "third_party/blink/renderer/core/css/cssom/css_math_invert.h"
+#include "third_party/blink/renderer/platform/wtf/text/string_builder.h"
 
 namespace blink {
 
@@ -33,7 +34,8 @@ CSSNumericSumValue::UnitMap MultiplyUnitMaps(
 CSSMathProduct* CSSMathProduct::Create(const HeapVector<CSSNumberish>& args,
                                        ExceptionState& exception_state) {
   if (args.IsEmpty()) {
-    exception_state.ThrowDOMException(kSyntaxError, "Arguments can't be empty");
+    exception_state.ThrowDOMException(DOMExceptionCode::kSyntaxError,
+                                      "Arguments can't be empty");
     return nullptr;
   }
 
@@ -55,7 +57,7 @@ CSSMathProduct* CSSMathProduct::Create(CSSNumericValueVector values) {
                                     final_type);
 }
 
-WTF::Optional<CSSNumericSumValue> CSSMathProduct::SumValue() const {
+base::Optional<CSSNumericSumValue> CSSMathProduct::SumValue() const {
   CSSNumericSumValue sum;
   // Start with the number '1', which is the multiplicative identity.
   sum.terms.push_back(CSSNumericSumValue::Term{1, {}});
@@ -63,7 +65,7 @@ WTF::Optional<CSSNumericSumValue> CSSMathProduct::SumValue() const {
   for (const auto& value : NumericValues()) {
     const auto child_sum = value->SumValue();
     if (!child_sum)
-      return WTF::nullopt;
+      return base::nullopt;
 
     CSSNumericSumValue new_sum;
     for (const auto& a : sum.terms) {

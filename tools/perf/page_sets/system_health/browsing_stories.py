@@ -111,7 +111,7 @@ class CnnStory(_ArticleBrowsingStory):
   URL = 'http://edition.cnn.com/'
   ITEM_SELECTOR = '.cd__content > h3 > a'
   ITEMS_TO_VISIT = 2
-  TAGS = [story_tags.JAVASCRIPT_HEAVY]
+  TAGS = [story_tags.JAVASCRIPT_HEAVY, story_tags.HEALTH_CHECK]
 
 
 class FacebookMobileStory(_ArticleBrowsingStory):
@@ -172,6 +172,7 @@ class NytimesDesktopStory(_ArticleBrowsingStory):
   URL = 'http://www.nytimes.com'
   ITEM_SELECTOR = '.story-heading > a'
   SUPPORTED_PLATFORMS = platforms.DESKTOP_ONLY
+  COMPLETE_STATE_WAIT_TIMEOUT = 150  # crbug.com/865247
 
 
 # Desktop qq.com opens a news item in a separate tab, for which the back button
@@ -181,7 +182,7 @@ class QqMobileStory(_ArticleBrowsingStory):
   URL = 'http://news.qq.com'
   ITEM_SELECTOR = '.list .full a'
   SUPPORTED_PLATFORMS = platforms.MOBILE_ONLY
-  TAGS = [story_tags.INTERNATIONAL]
+  TAGS = [story_tags.INTERNATIONAL, story_tags.HEALTH_CHECK]
 
 
 class RedditDesktopStory(_ArticleBrowsingStory):
@@ -402,8 +403,8 @@ class YouTubeMobileStory(_MediaBrowsingStory):
   SUPPORTED_PLATFORMS = platforms.MOBILE_ONLY
   IS_SINGLE_PAGE_APP = True
   ITEM_SELECTOR_INDEX = 3
-  TAGS = [story_tags.JAVASCRIPT_HEAVY]
-  TAGS = [story_tags.EMERGING_MARKET]
+  TAGS = [story_tags.JAVASCRIPT_HEAVY, story_tags.EMERGING_MARKET,
+          story_tags.HEALTH_CHECK]
 
 
 class YouTubeDesktopStory(_MediaBrowsingStory):
@@ -462,6 +463,7 @@ class TumblrDesktopStory(_MediaBrowsingStory):
 
   def _ViewMediaItem(self, action_runner, index):
     super(TumblrDesktopStory, self)._ViewMediaItem(action_runner, index)
+    action_runner.Wait(5)  # Give the lightbox time to appear
     action_runner.MouseClick(selector='#tumblr_lightbox_center_image')
     action_runner.Wait(1)  # To make browsing more realistic.
 
@@ -550,7 +552,7 @@ class BrowseAvitoMobileStory(_ArticleBrowsingStory):
   NAME = 'browse:shopping:avito'
   URL = 'https://www.avito.ru/rossiya'
   SUPPORTED_PLATFORMS = platforms.MOBILE_ONLY
-  TAGS = [story_tags.EMERGING_MARKET]
+  TAGS = [story_tags.EMERGING_MARKET, story_tags.HEALTH_CHECK]
 
   ITEM_SELECTOR = '.item-link'
   ITEMS_TO_VISIT = 4

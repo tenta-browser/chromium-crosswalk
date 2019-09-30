@@ -25,6 +25,7 @@
 #include "base/win/scoped_handle.h"
 #include "chrome/common/chrome_constants.h"
 #include "chrome/install_static/install_util.h"
+#include "chrome/installer/util/browser_distribution.h"
 #include "chrome/installer/util/fake_installation_state.h"
 #include "chrome/installer/util/fake_product_state.h"
 #include "chrome/installer/util/google_update_constants.h"
@@ -155,13 +156,13 @@ TEST_F(InstallerStateTest, InitializeTwice) {
   // Override these paths so that they can be found after the registry override
   // manager is in place.
   base::FilePath temp;
-  PathService::Get(base::DIR_PROGRAM_FILES, &temp);
+  base::PathService::Get(base::DIR_PROGRAM_FILES, &temp);
   base::ScopedPathOverride program_files_override(base::DIR_PROGRAM_FILES,
                                                   temp);
-  PathService::Get(base::DIR_PROGRAM_FILESX86, &temp);
+  base::PathService::Get(base::DIR_PROGRAM_FILESX86, &temp);
   base::ScopedPathOverride program_filesx86_override(base::DIR_PROGRAM_FILESX86,
                                                      temp);
-  PathService::Get(base::DIR_LOCAL_APP_DATA, &temp);
+  base::PathService::Get(base::DIR_LOCAL_APP_DATA, &temp);
   base::ScopedPathOverride local_app_data_override(base::DIR_LOCAL_APP_DATA,
                                                    temp);
   registry_util::RegistryOverrideManager override_manager;

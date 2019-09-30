@@ -31,8 +31,10 @@
 #ifndef THIRD_PARTY_BLINK_PUBLIC_WEB_WEB_WIDGET_H_
 #define THIRD_PARTY_BLINK_PUBLIC_WEB_WEB_WIDGET_H_
 
-#include "third_party/blink/public/platform/web_browser_controls_state.h"
-#include "third_party/blink/public/platform/web_canvas.h"
+#include "base/callback.h"
+#include "base/time/time.h"
+#include "cc/input/browser_controls_state.h"
+#include "cc/paint/paint_canvas.h"
 #include "third_party/blink/public/platform/web_common.h"
 #include "third_party/blink/public/platform/web_float_size.h"
 #include "third_party/blink/public/platform/web_input_event_result.h"
@@ -46,12 +48,12 @@
 #include "third_party/blink/public/web/web_range.h"
 #include "third_party/blink/public/web/web_text_direction.h"
 
+class SkBitmap;
+
 namespace blink {
 
-class WebCompositeAndReadbackAsyncCallback;
 class WebCoalescedInputEvent;
 class WebLayerTreeView;
-class WebLayoutAndPaintAsyncCallback;
 class WebPagePopup;
 struct WebPoint;
 
@@ -83,17 +85,17 @@ class WebWidget {
   // Called to update imperative animation state. This should be called before
   // paint, although the client can rate-limit these calls.
   // |lastFrameTimeMonotonic| is in seconds.
-  virtual void BeginFrame(double last_frame_time_monotonic) {}
+  virtual void BeginFrame(base::TimeTicks last_frame_time) {}
 
   // Called to run through the entire set of document lifecycle phases needed
   // to render a frame of the web widget. This MUST be called before Paint,
   // and it may result in calls to WebWidgetClient::didInvalidateRect.
   virtual void UpdateAllLifecyclePhases() { UpdateLifecycle(); }
 
-  // Selectively runs all lifecycle phases or all phases excluding paint. The
-  // latter can be used to trigger side effects of updating layout and
-  // animations if painting is not required.
-  enum class LifecycleUpdate { kPrePaint, kAll };
+  // By default, all phases are updated by |UpdateLifecycle| (e.g., style,
+  // layout, prepaint, paint, etc. See: document_lifecycle.h). |LifecycleUpdate|
+  // can be used to only update to a specific lifecycle phase.
+  enum class LifecycleUpdate { kLayout, kPrePaint, kAll };
   virtual void UpdateLifecycle(
       LifecycleUpdate requested_update = LifecycleUpdate::kAll) {}
 
@@ -101,35 +103,37 @@ class WebWidget {
   // to the compositor state except rasterization.
   virtual void UpdateAllLifecyclePhasesAndCompositeForTesting() {}
 
+  // Synchronously rasterizes and composites a frame.
+  virtual void CompositeWithRasterForTesting() {}
+
   // Called to paint the rectangular region within the WebWidget
   // onto the specified canvas at (viewPort.x,viewPort.y).
   //
-  // Before calling Paint(), you must call
-  // UpdateLifecycle(LifecycleUpdate::All): this method assumes the lifecycle is
-  // clean. It is okay to call paint multiple times once the lifecycle is
+  // Before calling PaintContent(), you must call
+  // UpdateLifecycle(LifecycleUpdate::All): this method assumes the lifecycle
+  // is clean. It is okay to call paint multiple times once the lifecycle is
   // updated, assuming no other changes are made to the WebWidget (e.g., once
   // events are processed, it should be assumed that another call to
-  // UpdateLifecycle is warranted before painting again).
-  virtual void Paint(WebCanvas*, const WebRect& view_port) {}
+  // UpdateLifecycle is warranted before painting again). Paints starting from
+  // the main LayoutView's property tree state, thus ignoring any transient
+  // transormations (e.g. pinch-zoom, dev tools emulation, etc.).
+  virtual void PaintContent(cc::PaintCanvas*, const WebRect& view_port) {}
 
-  // Similar to paint() but ignores compositing decisions, squashing all
-  // contents of the WebWidget into the output given to the WebCanvas.
+  // Similar to PaintContent() but ignores compositing decisions, squashing all
+  // contents of the WebWidget into the output given to the cc::PaintCanvas.
   //
-  // Before calling PaintIgnoringCompositing(), you must call
+  // Before calling PaintContentIgnoringCompositing(), you must call
   // UpdateLifecycle(LifecycleUpdate::All): this method assumes the lifecycle is
   // clean.
-  virtual void PaintIgnoringCompositing(WebCanvas*, const WebRect&) {}
+  virtual void PaintContentIgnoringCompositing(cc::PaintCanvas*,
+                                               const WebRect&) {}
 
   // Run layout and paint of all pending document changes asynchronously.
-  // The caller is resposible for keeping the WebLayoutAndPaintAsyncCallback
-  // object alive until it is called.
-  virtual void LayoutAndPaintAsync(WebLayoutAndPaintAsyncCallback*) {}
+  virtual void LayoutAndPaintAsync(base::OnceClosure callback) {}
 
-  // The caller is responsible for keeping the
-  // WebCompositeAndReadbackAsyncCallback object alive until it is called. This
-  // should only be called when isAcceleratedCompositingActive() is true.
+  // This should only be called when isAcceleratedCompositingActive() is true.
   virtual void CompositeAndReadbackAsync(
-      WebCompositeAndReadbackAsyncCallback*) {}
+      base::OnceCallback<void(const SkBitmap&)> callback) {}
 
   // Called to inform the WebWidget of a change in theme.
   // Implementors that cache rendered copies of widgets need to re-render
@@ -214,7 +218,7 @@ class WebWidget {
 
   // The page background color. Can be used for filling in areas without
   // content.
-  virtual WebColor BackgroundColor() const {
+  virtual SkColor BackgroundColor() const {
     return 0xFFFFFFFF; /* SK_ColorWHITE */
   }
 
@@ -225,8 +229,8 @@ class WebWidget {
   // Updates browser controls constraints and current state. Allows embedder to
   // control what are valid states for browser controls and if it should
   // animate.
-  virtual void UpdateBrowserControlsState(WebBrowserControlsState constraints,
-                                          WebBrowserControlsState current,
+  virtual void UpdateBrowserControlsState(cc::BrowserControlsState constraints,
+                                          cc::BrowserControlsState current,
                                           bool animate) {}
 
   // Called by client to request showing the context menu.

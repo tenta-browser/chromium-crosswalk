@@ -5,6 +5,7 @@
 #include "third_party/blink/renderer/core/layout/scroll_anchor.h"
 
 #include "third_party/blink/renderer/core/dom/static_node_list.h"
+#include "third_party/blink/renderer/core/frame/root_frame_viewport.h"
 #include "third_party/blink/renderer/core/frame/visual_viewport.h"
 #include "third_party/blink/renderer/core/geometry/dom_rect.h"
 #include "third_party/blink/renderer/core/layout/layout_box.h"
@@ -18,16 +19,9 @@ namespace blink {
 
 using Corner = ScrollAnchor::Corner;
 
-typedef bool TestParamRootLayerScrolling;
-class ScrollAnchorTest
-    : public testing::WithParamInterface<TestParamRootLayerScrolling>,
-      private ScopedRootLayerScrollingForTest,
-      private ScopedScrollAnchoringForTest,
-      public RenderingTest {
+class ScrollAnchorTest : public RenderingTest {
  public:
-  ScrollAnchorTest()
-      : ScopedRootLayerScrollingForTest(GetParam()),
-        ScopedScrollAnchoringForTest(true) {}
+  ScrollAnchorTest() {}
 
  protected:
   void Update() {
@@ -37,7 +31,7 @@ class ScrollAnchorTest
   }
 
   ScrollableArea* LayoutViewport() {
-    return GetDocument().View()->LayoutViewportScrollableArea();
+    return GetDocument().View()->LayoutViewport();
   }
 
   VisualViewport& GetVisualViewport() {
@@ -82,16 +76,11 @@ class ScrollAnchorTest
         GetDocument().QuerySelectorAll(AtomicString(serialized.selector));
     EXPECT_EQ(ele_list->length(), 1u);
   }
-
- private:
-  std::unique_ptr<ScopedScrollAnchoringForTest> scroll_anchoring_;
 };
-
-INSTANTIATE_TEST_CASE_P(All, ScrollAnchorTest, testing::Bool());
 
 // TODO(ymalik): Currently, this should be the first test in the file to avoid
 // failure when running with other tests. Dig into this more and fix.
-TEST_P(ScrollAnchorTest, UMAMetricUpdated) {
+TEST_F(ScrollAnchorTest, UMAMetricUpdated) {
   HistogramTester histogram_tester;
   SetBodyInnerHTML(R"HTML(
     <style> body { height: 1000px } div { height: 100px } </style>
@@ -156,7 +145,7 @@ TEST_P(ScrollAnchorTest, UMAMetricUpdated) {
 
 // TODO(skobes): Convert this to web-platform-tests when visual viewport API is
 // launched (http://crbug.com/635031).
-TEST_P(ScrollAnchorTest, VisualViewportAnchors) {
+TEST_F(ScrollAnchorTest, VisualViewportAnchors) {
   SetBodyInnerHTML(R"HTML(
     <style>
         * { font-size: 1.2em; font-family: sans-serif; }
@@ -196,7 +185,7 @@ TEST_P(ScrollAnchorTest, VisualViewportAnchors) {
 
 // Test that a non-anchoring scroll on scroller clears scroll anchors for all
 // parent scrollers.
-TEST_P(ScrollAnchorTest, ClearScrollAnchorsOnAncestors) {
+TEST_F(ScrollAnchorTest, ClearScrollAnchorsOnAncestors) {
   SetBodyInnerHTML(R"HTML(
     <style>
         body { height: 1000px } div { height: 200px }
@@ -223,7 +212,7 @@ TEST_P(ScrollAnchorTest, ClearScrollAnchorsOnAncestors) {
   EXPECT_EQ(nullptr, GetScrollAnchor(viewport).AnchorObject());
 }
 
-TEST_P(ScrollAnchorTest, AncestorClearingWithSiblingReference) {
+TEST_F(ScrollAnchorTest, AncestorClearingWithSiblingReference) {
   SetBodyInnerHTML(R"HTML(
     <style>
     .scroller {
@@ -265,7 +254,7 @@ TEST_P(ScrollAnchorTest, AncestorClearingWithSiblingReference) {
   Update();
 }
 
-TEST_P(ScrollAnchorTest, FractionalOffsetsAreRoundedBeforeComparing) {
+TEST_F(ScrollAnchorTest, FractionalOffsetsAreRoundedBeforeComparing) {
   SetBodyInnerHTML(R"HTML(
     <style> body { height: 1000px } </style>
     <div id='block1' style='height: 50.4px'>abc</div>
@@ -282,7 +271,7 @@ TEST_P(ScrollAnchorTest, FractionalOffsetsAreRoundedBeforeComparing) {
   EXPECT_EQ(101, viewport->ScrollOffsetInt().Height());
 }
 
-TEST_P(ScrollAnchorTest, AvoidStickyAnchorWhichMovesWithScroll) {
+TEST_F(ScrollAnchorTest, AvoidStickyAnchorWhichMovesWithScroll) {
   SetBodyInnerHTML(R"HTML(
     <style> body { height: 1000px } </style>
     <div id='block1' style='height: 50px'>abc</div>
@@ -300,7 +289,7 @@ TEST_P(ScrollAnchorTest, AvoidStickyAnchorWhichMovesWithScroll) {
   EXPECT_EQ(60, viewport->ScrollOffsetInt().Height());
 }
 
-TEST_P(ScrollAnchorTest, AnchorWithLayerInScrollingDiv) {
+TEST_F(ScrollAnchorTest, AnchorWithLayerInScrollingDiv) {
   SetBodyInnerHTML(R"HTML(
     <style>
         #scroller { overflow: scroll; width: 500px; height: 400px; }
@@ -336,7 +325,7 @@ TEST_P(ScrollAnchorTest, AnchorWithLayerInScrollingDiv) {
 
 // Verify that a nested scroller with a div that has its own PaintLayer can be
 // removed without causing a crash. This test passes if it doesn't crash.
-TEST_P(ScrollAnchorTest, RemoveScrollerWithLayerInScrollingDiv) {
+TEST_F(ScrollAnchorTest, RemoveScrollerWithLayerInScrollingDiv) {
   SetBodyInnerHTML(R"HTML(
     <style>
         body { height: 2000px }
@@ -377,7 +366,7 @@ TEST_P(ScrollAnchorTest, RemoveScrollerWithLayerInScrollingDiv) {
   Update();
 }
 
-TEST_P(ScrollAnchorTest, FlexboxDelayedClampingAlsoDelaysAdjustment) {
+TEST_F(ScrollAnchorTest, FlexboxDelayedClampingAlsoDelaysAdjustment) {
   SetBodyInnerHTML(R"HTML(
     <style>
         html { overflow: hidden; }
@@ -408,7 +397,7 @@ TEST_P(ScrollAnchorTest, FlexboxDelayedClampingAlsoDelaysAdjustment) {
   EXPECT_EQ(150, ScrollerForElement(scroller)->ScrollOffsetInt().Height());
 }
 
-TEST_P(ScrollAnchorTest, FlexboxDelayedAdjustmentRespectsSANACLAP) {
+TEST_F(ScrollAnchorTest, FlexboxDelayedAdjustmentRespectsSANACLAP) {
   SetBodyInnerHTML(R"HTML(
     <style>
         html { overflow: hidden; }
@@ -442,7 +431,7 @@ TEST_P(ScrollAnchorTest, FlexboxDelayedAdjustmentRespectsSANACLAP) {
 
 // TODO(skobes): Convert this to web-platform-tests when document.rootScroller
 // is launched (http://crbug.com/505516).
-TEST_P(ScrollAnchorTest, NonDefaultRootScroller) {
+TEST_F(ScrollAnchorTest, NonDefaultRootScroller) {
   SetBodyInnerHTML(R"HTML(
     <style>
         ::-webkit-scrollbar {
@@ -500,7 +489,7 @@ TEST_P(ScrollAnchorTest, NonDefaultRootScroller) {
 
 // This test verifies that scroll anchoring is disabled when the document is in
 // printing mode.
-TEST_P(ScrollAnchorTest, AnchoringDisabledForPrinting) {
+TEST_F(ScrollAnchorTest, AnchoringDisabledForPrinting) {
   SetBodyInnerHTML(R"HTML(
     <style> body { height: 1000px } div { height: 100px } </style>
     <div id='block1'>abc</div>
@@ -517,7 +506,7 @@ TEST_P(ScrollAnchorTest, AnchoringDisabledForPrinting) {
   EXPECT_EQ(nullptr, GetScrollAnchor(viewport).AnchorObject());
 }
 
-TEST_P(ScrollAnchorTest, SerializeAnchorSimple) {
+TEST_F(ScrollAnchorTest, SerializeAnchorSimple) {
   SetBodyInnerHTML(R"HTML(
       <style>
         body { height: 1000px; margin: 0; }
@@ -530,7 +519,7 @@ TEST_P(ScrollAnchorTest, SerializeAnchorSimple) {
   ValidateSerializedAnchor("#block2", LayoutPoint(0, -50));
 }
 
-TEST_P(ScrollAnchorTest, SerializeAnchorUsesTagname) {
+TEST_F(ScrollAnchorTest, SerializeAnchorUsesTagname) {
   SetBodyInnerHTML(R"HTML(
       <style>
         body { height: 1000px; margin: 0; }
@@ -545,7 +534,7 @@ TEST_P(ScrollAnchorTest, SerializeAnchorUsesTagname) {
   ValidateSerializedAnchor("#ancestor>span", LayoutPoint(0, -50));
 }
 
-TEST_P(ScrollAnchorTest, SerializeAnchorSetsIsAnchorBit) {
+TEST_F(ScrollAnchorTest, SerializeAnchorSetsIsAnchorBit) {
   SetBodyInnerHTML(R"HTML(
       <style>
         body { height: 1000px; margin: 0; }
@@ -573,7 +562,7 @@ TEST_P(ScrollAnchorTest, SerializeAnchorSetsIsAnchorBit) {
   ScrollLayoutViewport(ScrollOffset(0, 25));
 }
 
-TEST_P(ScrollAnchorTest, SerializeAnchorSetsSavedRelativeOffset) {
+TEST_F(ScrollAnchorTest, SerializeAnchorSetsSavedRelativeOffset) {
   SetBodyInnerHTML(R"HTML(
       <style>
         body { height: 1000px; margin: 0; }
@@ -590,7 +579,7 @@ TEST_P(ScrollAnchorTest, SerializeAnchorSetsSavedRelativeOffset) {
   EXPECT_EQ(LayoutViewport()->ScrollOffsetInt().Height(), 250);
 }
 
-TEST_P(ScrollAnchorTest, SerializeAnchorUsesClassname) {
+TEST_F(ScrollAnchorTest, SerializeAnchorUsesClassname) {
   SetBodyInnerHTML(R"HTML(
       <style>
         body { height: 1000px; margin: 0; }
@@ -605,7 +594,7 @@ TEST_P(ScrollAnchorTest, SerializeAnchorUsesClassname) {
   ValidateSerializedAnchor("#ancestor>.barbaz", LayoutPoint(0, -50));
 }
 
-TEST_P(ScrollAnchorTest, SerializeAnchorUsesNthChild) {
+TEST_F(ScrollAnchorTest, SerializeAnchorUsesNthChild) {
   SetBodyInnerHTML(R"HTML(
       <style>
         body { height: 1000px; margin: 0; }
@@ -620,7 +609,7 @@ TEST_P(ScrollAnchorTest, SerializeAnchorUsesNthChild) {
   ValidateSerializedAnchor("#ancestor>:nth-child(2)", LayoutPoint(0, -50));
 }
 
-TEST_P(ScrollAnchorTest, SerializeAnchorUsesLeastSpecificSelector) {
+TEST_F(ScrollAnchorTest, SerializeAnchorUsesLeastSpecificSelector) {
   SetBodyInnerHTML(R"HTML(
       <style>
         body { height: 1000px; margin: 0; }
@@ -642,7 +631,7 @@ TEST_P(ScrollAnchorTest, SerializeAnchorUsesLeastSpecificSelector) {
                            LayoutPoint(0, -50));
 }
 
-TEST_P(ScrollAnchorTest, SerializeAnchorWithNoIdAttribute) {
+TEST_F(ScrollAnchorTest, SerializeAnchorWithNoIdAttribute) {
   SetBodyInnerHTML(R"HTML(
       <style>
         body { height: 1000px; margin: 0; }
@@ -664,7 +653,7 @@ TEST_P(ScrollAnchorTest, SerializeAnchorWithNoIdAttribute) {
                            LayoutPoint(0, -50));
 }
 
-TEST_P(ScrollAnchorTest, SerializeAnchorChangesWithScroll) {
+TEST_F(ScrollAnchorTest, SerializeAnchorChangesWithScroll) {
   SetBodyInnerHTML(R"HTML(
       <style>
         body { height: 1000px; margin: 0; }
@@ -688,7 +677,7 @@ TEST_P(ScrollAnchorTest, SerializeAnchorChangesWithScroll) {
   ValidateSerializedAnchor("#ancestor>.foobar", LayoutPoint(0, -1));
 }
 
-TEST_P(ScrollAnchorTest, SerializeAnchorVerticalWritingMode) {
+TEST_F(ScrollAnchorTest, SerializeAnchorVerticalWritingMode) {
   SetBodyInnerHTML(R"HTML(
       <style>
         body {
@@ -713,7 +702,7 @@ TEST_P(ScrollAnchorTest, SerializeAnchorVerticalWritingMode) {
   ValidateSerializedAnchor("html>body>.barbaz", LayoutPoint(-50, 0));
 }
 
-TEST_P(ScrollAnchorTest, SerializeAnchorQualifiedTagName) {
+TEST_F(ScrollAnchorTest, SerializeAnchorQualifiedTagName) {
   SetBodyInnerHTML(R"HTML(
       <style>
         body { height: 1000px; margin: 0; }
@@ -727,7 +716,7 @@ TEST_P(ScrollAnchorTest, SerializeAnchorQualifiedTagName) {
   ValidateSerializedAnchor("html>body>ns\\:div", LayoutPoint(0, -50));
 }
 
-TEST_P(ScrollAnchorTest, SerializeAnchorLimitsSelectorLength) {
+TEST_F(ScrollAnchorTest, SerializeAnchorLimitsSelectorLength) {
   StringBuilder builder;
   builder.Append("<style> body { height: 1000px; margin: 0; }</style>");
   builder.Append("<div style='height:100px'>foobar</div>");
@@ -744,7 +733,7 @@ TEST_P(ScrollAnchorTest, SerializeAnchorLimitsSelectorLength) {
   EXPECT_FALSE(serialized.IsValid());
 }
 
-TEST_P(ScrollAnchorTest, SerializeAnchorIgnoresDuplicatedId) {
+TEST_F(ScrollAnchorTest, SerializeAnchorIgnoresDuplicatedId) {
   SetBodyInnerHTML(R"HTML(
       <style>
         body { height: 1000px; margin: 0; }
@@ -762,7 +751,7 @@ TEST_P(ScrollAnchorTest, SerializeAnchorIgnoresDuplicatedId) {
                            LayoutPoint(0, -50));
 }
 
-TEST_P(ScrollAnchorTest, SerializeAnchorFailsForPseudoElement) {
+TEST_F(ScrollAnchorTest, SerializeAnchorFailsForPseudoElement) {
   SetBodyInnerHTML(R"HTML(
       <style>
         body { height: 1000px; margin: 0; }
@@ -776,7 +765,7 @@ TEST_P(ScrollAnchorTest, SerializeAnchorFailsForPseudoElement) {
   EXPECT_FALSE(GetScrollAnchor(LayoutViewport()).AnchorObject());
 }
 
-TEST_P(ScrollAnchorTest, RestoreAnchorSimple) {
+TEST_F(ScrollAnchorTest, RestoreAnchorSimple) {
   SetBodyInnerHTML(
       "<style> body { height: 1000px; margin: 0; } div { height: 100px } "
       "</style>"
@@ -798,7 +787,7 @@ TEST_P(ScrollAnchorTest, RestoreAnchorSimple) {
   EXPECT_EQ(LayoutViewport()->ScrollOffsetInt().Height(), 50);
 }
 
-TEST_P(ScrollAnchorTest, RestoreAnchorNonTrivialSelector) {
+TEST_F(ScrollAnchorTest, RestoreAnchorNonTrivialSelector) {
   SetBodyInnerHTML(R"HTML(
       <style>
         body { height: 1000px; margin: 0; }
@@ -828,7 +817,7 @@ TEST_P(ScrollAnchorTest, RestoreAnchorNonTrivialSelector) {
   EXPECT_EQ(LayoutViewport()->ScrollOffsetInt().Height(), 450);
 }
 
-TEST_P(ScrollAnchorTest, RestoreAnchorFailsForInvalidSelectors) {
+TEST_F(ScrollAnchorTest, RestoreAnchorFailsForInvalidSelectors) {
   SetBodyInnerHTML(
       "<style> body { height: 1000px; margin: 0; } div { height: 100px } "
       "</style>"
@@ -856,7 +845,7 @@ TEST_P(ScrollAnchorTest, RestoreAnchorFailsForInvalidSelectors) {
 // Ensure that when the serialized selector refers to a non-box, non-text
 // element(meaning its corresponding LayoutObject can't be the anchor object)
 // that restoration will still succeed.
-TEST_P(ScrollAnchorTest, RestoreAnchorSucceedsForNonBoxNonTextElement) {
+TEST_F(ScrollAnchorTest, RestoreAnchorSucceedsForNonBoxNonTextElement) {
   SetBodyInnerHTML(
       "<style> body { height: 1000px; margin: 0; } div { height: 100px } "
       "</style>"
@@ -880,7 +869,7 @@ TEST_P(ScrollAnchorTest, RestoreAnchorSucceedsForNonBoxNonTextElement) {
   ValidateSerializedAnchor("html>body>code", LayoutPoint(0, 0));
 }
 
-TEST_P(ScrollAnchorTest, RestoreAnchorSucceedsWhenScriptForbidden) {
+TEST_F(ScrollAnchorTest, RestoreAnchorSucceedsWhenScriptForbidden) {
   SetBodyInnerHTML(
       "<style> body { height: 1000px; margin: 0; } div { height: 100px } "
       "</style>"

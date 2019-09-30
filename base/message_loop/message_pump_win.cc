@@ -11,7 +11,6 @@
 
 #include "base/debug/alias.h"
 #include "base/memory/ptr_util.h"
-#include "base/message_loop/message_loop.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/stringprintf.h"
 #include "base/trace_event/trace_event.h"
@@ -46,10 +45,6 @@ void MessagePumpWin::Run(Delegate* delegate) {
   s.delegate = delegate;
   s.should_quit = false;
   s.run_depth = state_ ? state_->run_depth + 1 : 1;
-
-  // TODO(stanisc): crbug.com/596190: Remove this code once the bug is fixed.
-  s.schedule_work_error_count = 0;
-  s.last_schedule_work_error_time = Time();
 
   RunState* previous_state = state_;
   state_ = &s;
@@ -119,13 +114,23 @@ void MessagePumpForUI::ScheduleWork() {
   InterlockedExchange(&work_state_, READY);
   UMA_HISTOGRAM_ENUMERATION("Chrome.MessageLoopProblem", MESSAGE_POST_ERROR,
                             MESSAGE_LOOP_PROBLEM_MAX);
-  state_->schedule_work_error_count++;
-  state_->last_schedule_work_error_time = Time::Now();
 }
 
 void MessagePumpForUI::ScheduleDelayedWork(const TimeTicks& delayed_work_time) {
   delayed_work_time_ = delayed_work_time;
   RescheduleTimer();
+}
+
+void MessagePumpForUI::EnableWmQuit() {
+  enable_wm_quit_ = true;
+}
+
+void MessagePumpForUI::AddObserver(Observer* observer) {
+  observers_.AddObserver(observer);
+}
+
+void MessagePumpForUI::RemoveObserver(Observer* observer) {
+  observers_.RemoveObserver(observer);
 }
 
 //-----------------------------------------------------------------------------
@@ -348,12 +353,20 @@ bool MessagePumpForUI::ProcessNextWindowsMessage() {
 }
 
 bool MessagePumpForUI::ProcessMessageHelper(const MSG& msg) {
-  TRACE_EVENT1("base", "MessagePumpForUI::ProcessMessageHelper",
+  TRACE_EVENT1("base,toplevel", "MessagePumpForUI::ProcessMessageHelper",
                "message", msg.message);
   if (WM_QUIT == msg.message) {
+    if (enable_wm_quit_) {
+      // Repost the QUIT message so that it will be retrieved by the primary
+      // GetMessage() loop.
+      state_->should_quit = true;
+      PostQuitMessage(static_cast<int>(msg.wParam));
+      return false;
+    }
+
     // WM_QUIT is the standard way to exit a GetMessage() loop. Our MessageLoop
     // has its own quit mechanism, so WM_QUIT is unexpected and should be
-    // ignored.
+    // ignored when |enable_wm_quit_| is set to false.
     UMA_HISTOGRAM_ENUMERATION("Chrome.MessageLoopProblem",
                               RECEIVED_WM_QUIT_ERROR, MESSAGE_LOOP_PROBLEM_MAX);
     return true;
@@ -363,8 +376,12 @@ bool MessagePumpForUI::ProcessMessageHelper(const MSG& msg) {
   if (msg.message == kMsgHaveWork && msg.hwnd == message_window_.hwnd())
     return ProcessPumpReplacementMessage();
 
+  for (Observer& observer : observers_)
+    observer.WillDispatchMSG(msg);
   TranslateMessage(&msg);
   DispatchMessage(&msg);
+  for (Observer& observer : observers_)
+    observer.DidDispatchMSG(msg);
 
   return true;
 }
@@ -433,8 +450,6 @@ void MessagePumpForIO::ScheduleWork() {
   InterlockedExchange(&work_state_, READY);  // Clarify that we didn't succeed.
   UMA_HISTOGRAM_ENUMERATION("Chrome.MessageLoopProblem", COMPLETION_POST_ERROR,
                             MESSAGE_LOOP_PROBLEM_MAX);
-  state_->schedule_work_error_count++;
-  state_->last_schedule_work_error_time = Time::Now();
 }
 
 void MessagePumpForIO::ScheduleDelayedWork(const TimeTicks& delayed_work_time) {
@@ -444,11 +459,11 @@ void MessagePumpForIO::ScheduleDelayedWork(const TimeTicks& delayed_work_time) {
   delayed_work_time_ = delayed_work_time;
 }
 
-void MessagePumpForIO::RegisterIOHandler(HANDLE file_handle,
-                                         IOHandler* handler) {
+HRESULT MessagePumpForIO::RegisterIOHandler(HANDLE file_handle,
+                                            IOHandler* handler) {
   HANDLE port = CreateIoCompletionPort(file_handle, port_.Get(),
                                        reinterpret_cast<ULONG_PTR>(handler), 1);
-  DPCHECK(port);
+  return (port != nullptr) ? S_OK : HRESULT_FROM_WIN32(GetLastError());
 }
 
 bool MessagePumpForIO::RegisterJobObject(HANDLE job_handle,

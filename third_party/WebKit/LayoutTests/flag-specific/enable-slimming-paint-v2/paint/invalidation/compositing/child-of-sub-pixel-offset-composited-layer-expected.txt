@@ -7,7 +7,7 @@
       "backgroundColor": "#FFFFFF"
     },
     {
-      "name": "LayoutBlockFlow (positioned) DIV id='target' class='green'",
+      "name": "LayoutBlockFlow (positioned) DIV class='container'",
       "position": [-1, 0],
       "bounds": [15, 14],
       "paintInvalidations": [
@@ -29,16 +29,6 @@
         [0, 0, 1, 0],
         [101, 100, 0, 1]
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutBlockFlow (positioned) DIV class='container'",
-      "reason": "appeared"
-    },
-    {
-      "object": "LayoutBlockFlow (positioned) DIV id='target' class='green'",
-      "reason": "style change"
     }
   ]
 }

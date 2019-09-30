@@ -7,6 +7,9 @@
 #include <utility>
 
 #include "base/macros.h"
+#include "base/run_loop.h"
+#include "base/test/scoped_task_environment.h"
+#include "device/fido/fido_test_data.h"
 #include "device/fido/mock_fido_device.h"
 #include "device/fido/mock_fido_discovery_observer.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -90,6 +93,7 @@ TEST(FidoDiscoveryTest, TestNotificationsOnFailedStart) {
 }
 
 TEST(FidoDiscoveryTest, TestAddRemoveDevices) {
+  base::test::ScopedTaskEnvironment scoped_task_environment_;
   ConcreteFidoDiscovery discovery(FidoTransportProtocol::kBluetoothLowEnergy);
   MockFidoDiscoveryObserver observer;
   discovery.set_observer(&observer);
@@ -98,17 +102,25 @@ TEST(FidoDiscoveryTest, TestAddRemoveDevices) {
   // Expect successful insertion.
   auto device0 = std::make_unique<MockFidoDevice>();
   auto* device0_raw = device0.get();
-  EXPECT_CALL(observer, DeviceAdded(&discovery, device0_raw));
+  base::RunLoop device0_done;
+  EXPECT_CALL(observer, DeviceAdded(&discovery, device0_raw))
+      .WillOnce(testing::InvokeWithoutArgs(
+          [&device0_done]() { device0_done.Quit(); }));
   EXPECT_CALL(*device0, GetId()).WillOnce(Return("device0"));
   EXPECT_TRUE(discovery.AddDevice(std::move(device0)));
+  device0_done.Run();
   ::testing::Mock::VerifyAndClearExpectations(&observer);
 
-  // // Expect successful insertion.
+  // Expect successful insertion.
+  base::RunLoop device1_done;
   auto device1 = std::make_unique<MockFidoDevice>();
   auto* device1_raw = device1.get();
-  EXPECT_CALL(observer, DeviceAdded(&discovery, device1_raw));
+  EXPECT_CALL(observer, DeviceAdded(&discovery, device1_raw))
+      .WillOnce(testing::InvokeWithoutArgs(
+          [&device1_done]() { device1_done.Quit(); }));
   EXPECT_CALL(*device1, GetId()).WillOnce(Return("device1"));
   EXPECT_TRUE(discovery.AddDevice(std::move(device1)));
+  device1_done.Run();
   ::testing::Mock::VerifyAndClearExpectations(&observer);
 
   // Inserting a device with an already present id should be prevented.

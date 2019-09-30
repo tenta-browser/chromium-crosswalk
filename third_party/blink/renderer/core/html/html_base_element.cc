@@ -22,11 +22,13 @@
 
 #include "third_party/blink/renderer/core/html/html_base_element.h"
 
+#include "third_party/blink/renderer/bindings/core/v8/usv_string_or_trusted_url.h"
 #include "third_party/blink/renderer/core/dom/attribute.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/html/parser/html_parser_idioms.h"
 #include "third_party/blink/renderer/core/html/parser/text_resource_decoder.h"
 #include "third_party/blink/renderer/core/html_names.h"
+#include "third_party/blink/renderer/core/trustedtypes/trusted_url.h"
 
 namespace blink {
 
@@ -46,22 +48,26 @@ void HTMLBaseElement::ParseAttribute(
 }
 
 Node::InsertionNotificationRequest HTMLBaseElement::InsertedInto(
-    ContainerNode* insertion_point) {
+    ContainerNode& insertion_point) {
   HTMLElement::InsertedInto(insertion_point);
-  if (insertion_point->isConnected())
+  if (insertion_point.isConnected())
     GetDocument().ProcessBaseElement();
   return kInsertionDone;
 }
 
-void HTMLBaseElement::RemovedFrom(ContainerNode* insertion_point) {
+void HTMLBaseElement::RemovedFrom(ContainerNode& insertion_point) {
   HTMLElement::RemovedFrom(insertion_point);
-  if (insertion_point->isConnected())
+  if (insertion_point.isConnected())
     GetDocument().ProcessBaseElement();
 }
 
 bool HTMLBaseElement::IsURLAttribute(const Attribute& attribute) const {
   return attribute.GetName().LocalName() == hrefAttr ||
          HTMLElement::IsURLAttribute(attribute);
+}
+
+void HTMLBaseElement::href(USVStringOrTrustedURL& result) const {
+  result.SetUSVString(href());
 }
 
 KURL HTMLBaseElement::href() const {
@@ -88,8 +94,9 @@ KURL HTMLBaseElement::href() const {
   return url;
 }
 
-void HTMLBaseElement::setHref(const AtomicString& value) {
-  setAttribute(hrefAttr, value);
+void HTMLBaseElement::setHref(const USVStringOrTrustedURL& stringOrUrl,
+                              ExceptionState& exception_state) {
+  setAttribute(hrefAttr, stringOrUrl, exception_state);
 }
 
 }  // namespace blink

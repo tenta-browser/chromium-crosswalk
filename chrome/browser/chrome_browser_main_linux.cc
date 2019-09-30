@@ -12,7 +12,7 @@
 
 #include "base/files/file_path.h"
 #include "base/single_thread_task_runner.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/grit/chromium_strings.h"
@@ -34,9 +34,12 @@
 #endif
 
 ChromeBrowserMainPartsLinux::ChromeBrowserMainPartsLinux(
-    const content::MainFunctionParams& parameters)
-    : ChromeBrowserMainPartsPosix(parameters) {
-}
+    const content::MainFunctionParams& parameters,
+    std::unique_ptr<ui::DataPack> data_pack,
+    ChromeFeatureListCreator* chrome_feature_list_creator)
+    : ChromeBrowserMainPartsPosix(parameters,
+                                  std::move(data_pack),
+                                  chrome_feature_list_creator) {}
 
 ChromeBrowserMainPartsLinux::~ChromeBrowserMainPartsLinux() {
 }
@@ -56,7 +59,7 @@ void ChromeBrowserMainPartsLinux::PreProfileInit() {
   // g_browser_process.  This happens in PreCreateThreads.
   // base::GetLinuxDistro() will initialize its value if needed.
   base::PostTaskWithTraits(
-      FROM_HERE, {base::MayBlock(), base::TaskPriority::BACKGROUND},
+      FROM_HERE, {base::MayBlock(), base::TaskPriority::BEST_EFFORT},
       base::BindOnce(base::IgnoreResult(&base::GetLinuxDistro)));
 #endif
 
@@ -64,6 +67,8 @@ void ChromeBrowserMainPartsLinux::PreProfileInit() {
       l10n_util::GetStringUTF8(IDS_SHORT_PRODUCT_NAME));
 
 #if !defined(OS_CHROMEOS)
+  // Set up crypt config. This should be kept in sync with the OSCrypt parts of
+  // SystemNetworkContextManager::OnNetworkServiceCreated.
   std::unique_ptr<os_crypt::Config> config(new os_crypt::Config());
   // Forward to os_crypt the flag to use a specific password store.
   config->store =

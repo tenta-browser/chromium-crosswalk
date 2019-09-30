@@ -10,13 +10,12 @@ import org.junit.runner.Description;
 import org.junit.runners.model.Statement;
 
 import org.chromium.base.PathUtils;
-import org.chromium.base.ResourceExtractor;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.library_loader.LibraryLoader;
 import org.chromium.base.library_loader.LibraryProcessType;
 import org.chromium.base.library_loader.ProcessInitException;
-import org.chromium.content.browser.BrowserStartupController;
-
+import org.chromium.content_public.browser.BrowserStartupController;
+import org.chromium.ui.resources.ResourceExtractor;
 
 /**
  * TestRule that adds support for loading and dealing with native libraries.
@@ -72,7 +71,7 @@ public class NativeLibraryTestRule implements TestRule {
             }
         } else {
             try {
-                LibraryLoader.get(LibraryProcessType.PROCESS_BROWSER).ensureInitialized();
+                LibraryLoader.getInstance().ensureInitialized(LibraryProcessType.PROCESS_BROWSER);
             } catch (ProcessInitException e) {
                 throw new Error(e);
             }

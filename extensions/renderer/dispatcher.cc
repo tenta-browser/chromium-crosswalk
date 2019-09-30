@@ -130,7 +130,6 @@ namespace extensions {
 namespace {
 
 static const int64_t kInitialExtensionIdleHandlerDelayMs = 5 * 1000;
-static const int64_t kMaxExtensionIdleHandlerDelayMs = 5 * 60 * 1000;
 static const char kOnSuspendEvent[] = "runtime.onSuspend";
 static const char kOnSuspendCanceledEvent[] = "runtime.onSuspendCanceled";
 
@@ -243,16 +242,9 @@ Dispatcher::Dispatcher(std::unique_ptr<DispatcherDelegate> delegate)
   WebSecurityPolicy::RegisterURLSchemeAsFirstPartyWhenTopLevel(
       extension_scheme);
 
-  // For extensions, we want to ensure we call the IdleHandler every so often,
-  // even if the extension keeps up activity.
-  if (set_idle_notifications_) {
-    forced_idle_timer_.reset(new base::RepeatingTimer);
-    forced_idle_timer_->Start(
-        FROM_HERE,
-        base::TimeDelta::FromMilliseconds(kMaxExtensionIdleHandlerDelayMs),
-        RenderThread::Get(),
-        &RenderThread::IdleHandler);
-  }
+  // Disallow running javascript URLs on the chrome-extension scheme.
+  WebSecurityPolicy::RegisterURLSchemeAsNotAllowingJavascriptURLs(
+      extension_scheme);
 
   // Initialize host permissions for any extensions that were activated before
   // WebKit was initialized.
@@ -407,6 +399,7 @@ void Dispatcher::DidInitializeServiceWorkerContextOnWorkerThread(
       extension, Feature::SERVICE_WORKER_CONTEXT);
   context->set_url(script_url);
   context->set_service_worker_scope(service_worker_scope);
+  context->set_service_worker_version_id(service_worker_version_id);
 
   if (ExtensionsClient::Get()->ExtensionAPIEnabledInExtensionServiceWorkers()) {
     WorkerThreadDispatcher* worker_dispatcher = WorkerThreadDispatcher::Get();
@@ -863,21 +856,6 @@ bool Dispatcher::OnControlMessageReceived(const IPC::Message& message) {
 
   return handled;
 }
-void Dispatcher::IdleNotification() {
-  if (set_idle_notifications_ && forced_idle_timer_) {
-    // Dampen the forced delay as well if the extension stays idle for long
-    // periods of time.
-    int64_t forced_delay_ms =
-        std::max(RenderThread::Get()->GetIdleNotificationDelayInMs(),
-                 kMaxExtensionIdleHandlerDelayMs);
-    forced_idle_timer_->Stop();
-    forced_idle_timer_->Start(
-        FROM_HERE,
-        base::TimeDelta::FromMilliseconds(forced_delay_ms),
-        RenderThread::Get(),
-        &RenderThread::IdleHandler);
-  }
-}
 
 void Dispatcher::OnActivateExtension(const std::string& extension_id) {
   const Extension* extension =
@@ -1127,6 +1105,11 @@ void Dispatcher::OnUnloaded(const std::string& id) {
   // reloaded with a new messages map.
   EraseL10nMessagesMap(id);
 
+  // Update the origin access map so that any content scripts injected are no
+  // longer allowlisted for extra origins.
+  WebSecurityPolicy::ClearOriginAccessAllowListForOrigin(
+      Extension::GetBaseURLFromExtensionId(id));
+
   // We don't do anything with existing platform-app stylesheets. They will
   // stay resident, but the URL pattern corresponding to the unloaded
   // extension's URL just won't match anything anymore.
@@ -1151,13 +1134,10 @@ void Dispatcher::OnUpdatePermissions(
   std::unique_ptr<const PermissionSet> withheld =
       params.withheld_permissions.ToPermissionSet();
 
-  UpdateOriginPermissions(
-      extension->url(),
-      extension->permissions_data()->GetEffectiveHostPermissions(),
-      active->effective_hosts());
-
   extension->permissions_data()->SetPermissions(std::move(active),
                                                 std::move(withheld));
+  UpdateOriginPermissions(*extension);
+
   if (params.uses_default_policy_host_restrictions) {
     extension->permissions_data()->SetUsesDefaultHostRestrictions();
   } else {
@@ -1179,19 +1159,13 @@ void Dispatcher::OnUpdateTabSpecificPermissions(const GURL& visible_url,
   if (!extension)
     return;
 
-  URLPatternSet old_effective =
-      extension->permissions_data()->GetEffectiveHostPermissions();
   extension->permissions_data()->UpdateTabSpecificPermissions(
       tab_id, extensions::PermissionSet(extensions::APIPermissionSet(),
                                         extensions::ManifestPermissionSet(),
                                         new_hosts, new_hosts));
 
-  if (update_origin_whitelist) {
-    UpdateOriginPermissions(
-        extension->url(),
-        old_effective,
-        extension->permissions_data()->GetEffectiveHostPermissions());
-  }
+  if (update_origin_whitelist)
+    UpdateOriginPermissions(*extension);
 }
 
 void Dispatcher::OnClearTabSpecificPermissions(
@@ -1201,15 +1175,9 @@ void Dispatcher::OnClearTabSpecificPermissions(
   for (const std::string& id : extension_ids) {
     const Extension* extension = RendererExtensionRegistry::Get()->GetByID(id);
     if (extension) {
-      URLPatternSet old_effective =
-          extension->permissions_data()->GetEffectiveHostPermissions();
       extension->permissions_data()->ClearTabSpecificPermissions(tab_id);
-      if (update_origin_whitelist) {
-        UpdateOriginPermissions(
-            extension->url(),
-            old_effective,
-            extension->permissions_data()->GetEffectiveHostPermissions());
-      }
+      if (update_origin_whitelist)
+        UpdateOriginPermissions(*extension);
     }
   }
 }
@@ -1235,26 +1203,18 @@ void Dispatcher::UpdateActiveExtensions() {
 }
 
 void Dispatcher::InitOriginPermissions(const Extension* extension) {
-  delegate_->InitOriginPermissions(extension,
-                                   IsExtensionActive(extension->id()));
-
   const GURL webstore_launch_url = extension_urls::GetWebstoreLaunchURL();
-  WebSecurityPolicy::AddOriginAccessBlacklistEntry(
+  WebSecurityPolicy::AddOriginAccessBlockListEntry(
       extension->url(), WebString::FromUTF8(webstore_launch_url.scheme()),
       WebString::FromUTF8(webstore_launch_url.host()), true);
 
   // TODO(devlin): Should we also block the webstore update URL here? See
   // https://crbug.com/826946 for a related instance.
 
-  UpdateOriginPermissions(
-      extension->url(),
-      URLPatternSet(),  // No old permissions.
-      extension->permissions_data()->GetEffectiveHostPermissions());
+  UpdateOriginPermissions(*extension);
 }
 
-void Dispatcher::UpdateOriginPermissions(const GURL& extension_url,
-                                         const URLPatternSet& old_patterns,
-                                         const URLPatternSet& new_patterns) {
+void Dispatcher::UpdateOriginPermissions(const Extension& extension) {
   static const char* kSchemes[] = {
     url::kHttpScheme,
     url::kHttpsScheme,
@@ -1267,24 +1227,22 @@ void Dispatcher::UpdateOriginPermissions(const GURL& extension_url,
     extensions::kExtensionScheme,
   };
 
+  // Remove all old patterns associated with this extension.
+  WebSecurityPolicy::ClearOriginAccessAllowListForOrigin(extension.url());
+
+  delegate_->AddOriginAccessPermissions(extension,
+                                        IsExtensionActive(extension.id()));
+
+  URLPatternSet patterns =
+      extension.permissions_data()->GetEffectiveHostPermissions();
+
   for (size_t i = 0; i < arraysize(kSchemes); ++i) {
     const char* scheme = kSchemes[i];
-    // Remove all old patterns...
-    for (URLPatternSet::const_iterator pattern = old_patterns.begin();
-         pattern != old_patterns.end(); ++pattern) {
-      if (pattern->MatchesScheme(scheme)) {
-        WebSecurityPolicy::RemoveOriginAccessWhitelistEntry(
-            extension_url, WebString::FromUTF8(scheme),
-            WebString::FromUTF8(pattern->host()), pattern->match_subdomains());
-      }
-    }
-    // ...And add the new ones.
-    for (URLPatternSet::const_iterator pattern = new_patterns.begin();
-         pattern != new_patterns.end(); ++pattern) {
-      if (pattern->MatchesScheme(scheme)) {
-        WebSecurityPolicy::AddOriginAccessWhitelistEntry(
-            extension_url, WebString::FromUTF8(scheme),
-            WebString::FromUTF8(pattern->host()), pattern->match_subdomains());
+    for (const auto& pattern : patterns) {
+      if (pattern.MatchesScheme(scheme)) {
+        WebSecurityPolicy::AddOriginAccessAllowListEntry(
+            extension.url(), WebString::FromUTF8(scheme),
+            WebString::FromUTF8(pattern.host()), pattern.match_subdomains());
       }
     }
   }

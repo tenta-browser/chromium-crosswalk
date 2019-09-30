@@ -4,6 +4,8 @@
 
 var chrome;
 var mockCommandLinePrivate;
+var metrics;
+var onDirectoryChangedListeners;
 
 /**
  * Set string data.
@@ -24,16 +26,38 @@ function setUp() {
   chrome = {
     fileManagerPrivate: {
       onDirectoryChanged: {
-        addListener: function(listener) { /* Do nothing. */ }
+        addListener: function(listener) {
+          onDirectoryChangedListeners.push(listener);
+        }
       }
     }
   };
+  onDirectoryChangedListeners = [];
   mockCommandLinePrivate = new MockCommandLinePrivate();
+
+  metrics = {recordSmallCount: function() {}};
 
   window.webkitResolveLocalFileSystemURLEntries = {};
   window.webkitResolveLocalFileSystemURL = function(url, callback) {
     callback(webkitResolveLocalFileSystemURLEntries[url]);
   };
+}
+
+/**
+ * Creates a plain object that can be used as mock for MetadataModel.
+ */
+function mockMetadataModel() {
+  const mock = {
+    notifyEntriesChanged: () => {},
+    get: function(entries, labels) {
+      // Mock a non-shared directory.
+      return Promise.resolve([{shared: false}]);
+    },
+    getCache: function(entries, labels) {
+      return [{shared: false}];
+    },
+  };
+  return mock;
 }
 
 /**
@@ -117,7 +141,7 @@ function testCreateDirectoryTree(callback) {
  *
  * Google Drive
  * - My Drive
- * - Team Drives
+ * - Team Drives (only if there is a child team drive).
  * - Shared with me
  * - Offline
  * Downloads
@@ -126,18 +150,11 @@ function testCreateDirectoryTree(callback) {
  *     test result.
  */
 function testCreateDirectoryTreeWithTeamDrive(callback) {
-  mockCommandLinePrivate.addSwitch('team-drives');
-
   // Create elements.
   var parentElement = document.createElement('div');
   var directoryTree = document.createElement('div');
-  directoryTree.metadataModel = {
-    notifyEntriesChanged: function() {},
-    get: function(entries, labels) {
-      // Mock a non-shared directory
-      return Promise.resolve([{shared: false}]);
-    }
-  };
+  directoryTree.metadataModel = mockMetadataModel();
+
   parentElement.appendChild(directoryTree);
 
   // Create mocks.
@@ -189,25 +206,17 @@ function testCreateDirectoryTreeWithTeamDrive(callback) {
 
 /**
  * Test case for creating tree with empty Team Drives.
- * Team Drives subtree should be hidden when the user don't have access to any
- * Team Drive.
+ * The Team Drives subtree should be removed if the user has no team drives.
  *
  * @param {!function(boolean)} callback A callback function which is called with
  *     test result.
  */
 function testCreateDirectoryTreeWithEmptyTeamDrive(callback) {
-  mockCommandLinePrivate.addSwitch('team-drives');
-
   // Create elements.
   var parentElement = document.createElement('div');
   var directoryTree = document.createElement('div');
-  directoryTree.metadataModel = {
-    notifyEntriesChanged: function() {},
-    get: function(entries, labels) {
-      // Mock a non-shared directory
-      return Promise.resolve([{shared: false}]);
-    }
-  };
+  directoryTree.metadataModel = mockMetadataModel();
+
   parentElement.appendChild(directoryTree);
 
   // Create mocks.
@@ -235,15 +244,19 @@ function testCreateDirectoryTreeWithEmptyTeamDrive(callback) {
 
   reportPromise(
       waitUntil(function() {
-        // Root entries under Drive volume is generated except Team Drives.
+        // Root entries under Drive volume is generated, Team Drives isn't
+        // included because it has no child.
         // See testCreateDirectoryTreeWithTeamDrive for detail.
         return driveItem.items.length == 3;
       }).then(function() {
+        var teamDrivesItemFound = false;
         for (var i = 0; i < driveItem.items.length; i++) {
-          assertFalse(
-              driveItem.items[i].label == str('DRIVE_TEAM_DRIVES_LABEL'),
-              'Team Drives node should not be shown');
+          if (driveItem.items[i].label == str('DRIVE_TEAM_DRIVES_LABEL')) {
+            teamDrivesItemFound = true;
+            break;
+          }
         }
+        assertFalse(teamDrivesItemFound, 'Team Drives should NOT be generated');
       }),
       callback);
 }
@@ -346,4 +359,217 @@ function testUpdateSubElementsFromList() {
     str('DOWNLOADS_DIRECTORY_LABEL'),
     str('REMOVABLE_DIRECTORY_LABEL')
   ], getDirectoryTreeItemLabelsAsAList(directoryTree));
+}
+
+/**
+ * Test adding the first team drive for a user.
+ * Team Drives subtree should be shown after the change notification is
+ * delivered.
+ *
+ * @param {!function(boolean)} callback A callback function which is called with
+ *     test result.
+ */
+function testAddFirstTeamDrive(callback) {
+  // Create elements.
+  var parentElement = document.createElement('div');
+  var directoryTree = document.createElement('div');
+  directoryTree.metadataModel = mockMetadataModel();
+
+  parentElement.appendChild(directoryTree);
+
+  // Create mocks.
+  var directoryModel = new MockDirectoryModel();
+  var volumeManager = new MockVolumeManagerWrapper();
+  var fileOperationManager = {addEventListener: function(name, callback) {}};
+
+  // Set entry which is returned by
+  // window.webkitResolveLocalFileSystemURLResults.
+  var driveFileSystem = volumeManager.volumeInfoList.item(0).fileSystem;
+  window.webkitResolveLocalFileSystemURLEntries['filesystem:drive/root'] =
+      new MockDirectoryEntry(driveFileSystem, '/root');
+  window
+      .webkitResolveLocalFileSystemURLEntries['filesystem:drive/team_drives'] =
+      new MockDirectoryEntry(driveFileSystem, '/team_drives');
+  // No directories exist under Team Drives
+
+  DirectoryTree.decorate(
+      directoryTree, directoryModel, volumeManager, null, fileOperationManager,
+      true);
+  directoryTree.dataModel = new MockNavigationListModel(volumeManager);
+  directoryTree.redraw(true);
+
+  var driveItem = directoryTree.items[0];
+
+  reportPromise(
+      waitUntil(() => {
+        return driveItem.items.length == 3;
+      })
+          .then(() => {
+            window.webkitResolveLocalFileSystemURLEntries
+                ['filesystem:drive/team_drives/a'] =
+                new MockDirectoryEntry(driveFileSystem, '/team_drives/a');
+            let event = {
+              entry: window.webkitResolveLocalFileSystemURLEntries
+                         ['filesystem:drive/team_drives'],
+              eventType: 'changed',
+            };
+            for (let listener of onDirectoryChangedListeners) {
+              listener(event);
+            }
+          })
+          .then(() => {
+            return waitUntil(() => {
+              for (var i = 0; i < driveItem.items.length; i++) {
+                if (driveItem.items[i].label ==
+                    str('DRIVE_TEAM_DRIVES_LABEL')) {
+                  return !driveItem.items[i].hidden;
+                }
+              }
+              return false;
+            });
+          }),
+      callback);
+}
+
+/**
+ * Test removing the last team drive for a user.
+ * Team Drives subtree should be removed after the change notification is
+ * delivered.
+ *
+ * @param {!function(boolean)} callback A callback function which is called with
+ *     test result.
+ */
+function testRemoveLastTeamDrive(callback) {
+  // Create elements.
+  var parentElement = document.createElement('div');
+  var directoryTree = document.createElement('div');
+  directoryTree.metadataModel = mockMetadataModel();
+
+  parentElement.appendChild(directoryTree);
+
+  // Create mocks.
+  var directoryModel = new MockDirectoryModel();
+  var volumeManager = new MockVolumeManagerWrapper();
+  var fileOperationManager = {addEventListener: function(name, callback) {}};
+
+  // Set entry which is returned by
+  // window.webkitResolveLocalFileSystemURLResults.
+  var driveFileSystem = volumeManager.volumeInfoList.item(0).fileSystem;
+  window.webkitResolveLocalFileSystemURLEntries['filesystem:drive/root'] =
+      new MockDirectoryEntry(driveFileSystem, '/root');
+  window
+      .webkitResolveLocalFileSystemURLEntries['filesystem:drive/team_drives'] =
+      new MockDirectoryEntry(driveFileSystem, '/team_drives');
+  window.webkitResolveLocalFileSystemURLEntries
+      ['filesystem:drive/team_drives/a'] =
+      new MockDirectoryEntry(driveFileSystem, '/team_drives/a');
+
+  DirectoryTree.decorate(
+      directoryTree, directoryModel, volumeManager, null, fileOperationManager,
+      true);
+  directoryTree.dataModel = new MockNavigationListModel(volumeManager);
+  directoryTree.redraw(true);
+
+  var driveItem = directoryTree.items[0];
+
+  reportPromise(
+      waitUntil(() => {
+        return driveItem.items.length == 4;
+      })
+          .then(() => {
+            return new Promise(resolve => {
+              window
+                  .webkitResolveLocalFileSystemURLEntries
+                      ['filesystem:drive/team_drives/a']
+                  .remove(resolve);
+            });
+          })
+          .then(() => {
+            let event = {
+              entry: window.webkitResolveLocalFileSystemURLEntries
+                         ['filesystem:drive/team_drives'],
+              eventType: 'changed',
+            };
+            for (let listener of onDirectoryChangedListeners) {
+              listener(event);
+            }
+          })
+          .then(() => {
+            // Wait team drive grand root to appear.
+            return waitUntil(() => {
+              for (var i = 0; i < driveItem.items.length; i++) {
+                if (driveItem.items[i].label ==
+                    str('DRIVE_TEAM_DRIVES_LABEL')) {
+                  return false;
+                }
+              }
+              return true;
+            });
+          }),
+      callback);
+}
+
+
+/**
+ * Test DirectoryItem.insideMyDrive property, which should return true when
+ * inside My Drive and any of its sub-directories; Should return false for
+ * everything else, including within Team Drive.
+ *
+ * @param {!function(boolean)} callback A callback function which is called with
+ *     test result.
+ */
+function testInsideMyDriveAndInsideDrive(callback) {
+  const parentElement = document.createElement('div');
+  const directoryTree = document.createElement('div');
+  directoryTree.metadataModel = mockMetadataModel();
+  parentElement.appendChild(directoryTree);
+
+  // Create mocks.
+  const directoryModel = new MockDirectoryModel();
+  const volumeManager = new MockVolumeManagerWrapper();
+  const fileOperationManager = {addEventListener: function(name, callback) {}};
+
+  // Setup My Drive and Downloads and one folder inside each of them.
+  const driveFileSystem = volumeManager.volumeInfoList.item(0).fileSystem;
+  const downloadsFileSystem = volumeManager.volumeInfoList.item(1).fileSystem;
+  window.webkitResolveLocalFileSystemURLEntries['filesystem:drive/root'] =
+      new MockDirectoryEntry(driveFileSystem, '/root');
+  window
+      .webkitResolveLocalFileSystemURLEntries['filesystem:drive/root/folder1'] =
+      new MockDirectoryEntry(driveFileSystem, '/root/folder1');
+  window
+      .webkitResolveLocalFileSystemURLEntries['filesystem:downloads/folder1'] =
+      new MockDirectoryEntry(downloadsFileSystem, '/folder1');
+
+  DirectoryTree.decorate(
+      directoryTree, directoryModel, volumeManager, null, fileOperationManager,
+      true);
+  directoryTree.dataModel = new MockNavigationListModel(volumeManager);
+  directoryTree.redraw(true);
+
+  const driveItem = directoryTree.items[0];
+  const downloadsItem = directoryTree.items[1];
+
+  reportPromise(
+      waitUntil(() => {
+        // Under the drive item, there exist 3 entries. In Downloads should
+        // exist 1 entry folder1.
+        return driveItem.items.length === 3 && downloadsItem.items.length === 1;
+      }).then(() => {
+        // insideMyDrive
+        assertTrue(driveItem.insideMyDrive, 'Drive root');
+        assertTrue(driveItem.items[0].insideMyDrive, 'My Drive root');
+        assertFalse(driveItem.items[1].insideMyDrive, 'Team Drives root');
+        assertFalse(driveItem.items[2].insideMyDrive, 'Offline root');
+        assertFalse(downloadsItem.insideMyDrive, 'Downloads root');
+        assertFalse(downloadsItem.items[0].insideMyDrive, 'Downloads/folder1');
+        // insideDrive
+        assertTrue(driveItem.insideDrive, 'Drive root');
+        assertTrue(driveItem.items[0].insideDrive, 'My Drive root');
+        assertTrue(driveItem.items[1].insideDrive, 'Team Drives root');
+        assertTrue(driveItem.items[2].insideDrive, 'Offline root');
+        assertFalse(downloadsItem.insideDrive, 'Downloads root');
+        assertFalse(downloadsItem.items[0].insideDrive, 'Downloads/folder1');
+      }),
+      callback);
 }

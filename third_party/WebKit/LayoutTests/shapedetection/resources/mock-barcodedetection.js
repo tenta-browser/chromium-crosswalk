@@ -1,20 +1,40 @@
 "use strict";
 
-class MockBarcodeDetection {
+class MockBarcodeDetectionProvider {
   constructor() {
     this.bindingSet_ = new mojo.BindingSet(
-        shapeDetection.mojom.BarcodeDetection);
+        shapeDetection.mojom.BarcodeDetectionProvider);
 
     this.interceptor_ = new MojoInterfaceInterceptor(
-        shapeDetection.mojom.BarcodeDetection.name);
+        shapeDetection.mojom.BarcodeDetectionProvider.name);
     this.interceptor_.oninterfacerequest =
         e => this.bindingSet_.addBinding(this, e.handle);
     this.interceptor_.start();
   }
 
-  detect(bitmap_data) {
-    let receivedStruct = new Uint8Array(bitmap_data.pixel_data);
-    this.buffer_data_ = new Uint32Array(receivedStruct.buffer);
+  createBarcodeDetection(request, options) {
+    this.mockService_ = new MockBarcodeDetection(request, options);
+  }
+
+  getFrameData() {
+    return this.mockService_.bufferData_;
+  }
+
+  getFormats() {
+   return this.mockService_.options_.formats;
+  }
+}
+
+class MockBarcodeDetection {
+  constructor(request, options) {
+    this.options_ = options;
+    this.binding_ =
+        new mojo.Binding(shapeDetection.mojom.BarcodeDetection, this, request);
+  }
+
+  detect(bitmapData) {
+    this.bufferData_ =
+        new Uint32Array(getArrayBufferFromBigBuffer(bitmapData.pixelData));
     return Promise.resolve({
       results: [
         {
@@ -40,10 +60,6 @@ class MockBarcodeDetection {
       ],
     });
   }
-
-  getFrameData() {
-    return this.buffer_data_;
-  }
 }
 
-let mockBarcodeDetection = new MockBarcodeDetection();
+let mockBarcodeDetectionProvider = new MockBarcodeDetectionProvider();

@@ -3,6 +3,8 @@
 // found in the LICENSE file.
 
 #include "third_party/blink/renderer/core/html/canvas/text_metrics.h"
+#include "third_party/blink/renderer/core/html/canvas/baselines.h"
+#include "third_party/blink/renderer/platform/fonts/character_range.h"
 
 namespace blink {
 
@@ -64,18 +66,22 @@ void TextMetrics::Update(const Font& font,
   FloatRect bbox = font.BoundingBox(text_run);
   const FontMetrics& font_metrics = font_data->GetFontMetrics();
 
+  advances_ = font.IndividualCharacterAdvances(text_run);
+
   // x direction
   width_ = bbox.Width();
+  FloatRect glyph_bounds;
+  double real_width = font.Width(text_run, nullptr, &glyph_bounds);
 
   float dx = 0.0f;
   if (align == kCenterTextAlign)
-    dx = -width_ / 2.0f;
+    dx = real_width / 2.0f;
   else if (align == kRightTextAlign ||
            (align == kStartTextAlign && direction == TextDirection::kRtl) ||
            (align == kEndTextAlign && direction != TextDirection::kRtl))
-    dx = -width_;
-  actual_bounding_box_left_ = -bbox.X() - dx;
-  actual_bounding_box_right_ = bbox.MaxX() + dx;
+    dx = real_width;
+  actual_bounding_box_left_ = -glyph_bounds.X() + dx;
+  actual_bounding_box_right_ = glyph_bounds.MaxX() - dx;
 
   // y direction
   const float ascent = font_metrics.FloatAscent();
@@ -94,9 +100,10 @@ void TextMetrics::Update(const Font& font,
   em_height_descent_ = baseline_y;
 
   // TODO(fserb): hanging/ideographic baselines are broken.
-  hanging_baseline_ = ascent * kHangingAsPercentOfAscent / 100.0f - baseline_y;
-  ideographic_baseline_ = -descent - baseline_y;
-  alphabetic_baseline_ = -baseline_y;
+  baselines_.setAlphabetic(-baseline_y);
+  baselines_.setHanging(ascent * kHangingAsPercentOfAscent / 100.0f -
+                        baseline_y);
+  baselines_.setIdeographic(-descent - baseline_y);
 }
 
 }  // namespace blink

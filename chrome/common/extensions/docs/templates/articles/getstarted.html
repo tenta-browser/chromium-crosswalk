@@ -30,7 +30,7 @@
 </p>
 <h2 id="manifest">Create the Manifest</h2>
 <p>
-  Extensions start with their <a href="/manifest">manifest</a>.
+  Extensions start with their <a href="extensions/manifest">manifest</a>.
   Create a file called <code>manifest.json</code>
   and include the following code,
   or download the file
@@ -85,7 +85,7 @@
 <p>
   Although the extension has been installed,
   it has no instruction.
-  Introduce a <a href="/background_page.html">background script</a>
+  Introduce a <a href="/background_pages.html">background script</a>
   by creating a file titled <code>background.js</code>,
   or downloading it
   <a href="examples/tutorials/get_started/background.js"
@@ -105,10 +105,10 @@
     "name": "Getting Started Example",
     "version": "1.0",
     "description": "Build an Extension!",
-    <b>"background": {
-      "scripts": ["background.js"],
-      "persistent": false
-    },</b>
+    <b>"background": {</b>
+      <b>"scripts": ["background.js"],</b>
+      <b>"persistent": false</b>
+    <b>},</b>
     "manifest_version": 2
   }
 </pre>
@@ -212,9 +212,9 @@
       "scripts": ["background.js"],
       "persistent": false
     },
-    <b>"page_action": {
-      "default_popup": "popup.html",
-    },</b>
+    <b>"page_action": {</b>
+      <b>"default_popup": "popup.html",</b>
+    <b>},</b>
     "manifest_version": 2
   }
 </pre>
@@ -241,12 +241,12 @@
     },
     "page_action": {
       "default_popup": "popup.html",
-      <b>"default_icon": {
-        "16": "images/get_started16.png",
-        "32": "images/get_started32.png",
-        "48": "images/get_started48.png",
-        "128": "images/get_started128.png"
-      }</b>
+      <b>"default_icon": {</b>
+        <b>"16": "images/get_started16.png",</b>
+        <b>"32": "images/get_started32.png",</b>
+        <b>"48": "images/get_started48.png",</b>
+        <b>"128": "images/get_started128.png"</b>
+      <b>}</b>
     },
     "manifest_version": 2
   }
@@ -277,12 +277,12 @@
         "128": "images/get_started128.png"
       }
     },
-    <b>"icons": {
-      "16": "images/get_started16.png",
-      "32": "images/get_started32.png",
-      "48": "images/get_started48.png",
-      "128": "images/get_started128.png"
-    },</b>
+    <b>"icons": {</b>
+      <b>"16": "images/get_started16.png",</b>
+      <b>"32": "images/get_started32.png",</b>
+      <b>"48": "images/get_started48.png",</b>
+      <b>"128": "images/get_started128.png"</b>
+    <b>},</b>
     "manifest_version": 2
   }
 </pre>
@@ -295,7 +295,7 @@
   with <code>popup.html</code>.
 </p>
 <p>
-  Add declared rules to the backgroud script with the
+  Add declared rules to the background script with the
   <a href="/declarativeContent"><code>declarativeContent</code></a>
   API within the
   <code>runtime.onInstalled</code> listener event.
@@ -305,15 +305,15 @@
     chrome.storage.sync.set({color: '#3aa757'}, function() {
       console.log('The color is green.');
     });
-    <b>chrome.declarativeContent.onPageChanged.removeRules(undefined, function() {
-      chrome.declarativeContent.onPageChanged.addRules([{
-        conditions: [new chrome.declarativeContent.PageStateMatcher({
-          pageUrl: {hostEquals: 'developer.chrome.com'},
-        })
-        ],
-            actions: [new chrome.declarativeContent.ShowPageAction()]
-      }]);
-    });</b>
+    <b>chrome.declarativeContent.onPageChanged.removeRules(undefined, function() {</b>
+      <b>chrome.declarativeContent.onPageChanged.addRules([{</b>
+        <b>conditions: [new chrome.declarativeContent.PageStateMatcher({</b>
+          <b>pageUrl: {hostEquals: 'developer.chrome.com'},</b>
+        <b>})</b>
+        <b>],</b>
+            <b>actions: [new chrome.declarativeContent.ShowPageAction()]</b>
+      <b>}]);</b>
+    <b>});</b>
   });
 </pre>
 <p>
@@ -386,12 +386,14 @@
 <pre data-filename="popup.js">
   let changeColor = document.getElementById('changeColor');
   ...
-  <b>changeColor.onclick = function(element) {
-    let color = element.target.value;
-      chrome.tabs.executeScript(
-          tabs[0].id,
-          {code: 'document.body.style.backgroundColor = "' + color + '";'});
-  };</b>
+  <b>changeColor.onclick = function(element) {</b>
+    <b>let color = element.target.value;</b>
+    <b>chrome.tabs.query({active: true, currentWindow: true}, function(tabs) {</b>
+      <b>chrome.tabs.executeScript(</b>
+          <b>tabs[0].id,</b>
+          <b>{code: 'document.body.style.backgroundColor = "' + color + '";'});</b>
+    <b>});</b>
+  <b>};</b>
 </pre>
 <p>
   The updated code adds an onclick event the button,
@@ -451,6 +453,9 @@
     &lt;body&gt;
       &lt;div id="buttonDiv"&gt;
       &lt;/div&gt;
+      &lt;div&gt;
+        &lt;p&gt;Choose a different background color!&lt;/p&gt;
+      &lt;/div&gt;
     &lt;/body&gt;
     &lt;script src="options.js"&gt;&lt;/script&gt;
   &lt;/html&gt;
@@ -468,13 +473,13 @@
   }
 </pre>
 <p>
-  Reload the extension and click <strong>DETIALS</strong>.
+  Reload the extension and click <strong>DETAILS</strong>.
 </p>
-<img src="{{static}}/images/get_started/click_detials.png"
+<img src="{{static}}/images/get_started/click_details.png"
   height="300"
   alt="Inspect Views" />
 <p>
-  Scroll down the detials page and select <strong>Extension options</strong>
+  Scroll down the details page and select <strong>Extension options</strong>
   to view the options page,
   although it will currently appear blank.
 </p>
@@ -490,7 +495,8 @@
  download="options.js">here</a>.
 </p>
 <pre data-filename="options.js">
-  const kButtonColors = ['#3aa757', '#e8453c', '#f9bb2d', '#4688f1']
+  let page = document.getElementById('buttonDiv');
+  const kButtonColors = ['#3aa757', '#e8453c', '#f9bb2d', '#4688f1'];
   function constructOptions(kButtonColors) {
     for (let item of kButtonColors) {
       let button = document.createElement('button');
@@ -521,7 +527,7 @@
   Congratulations!
   The directory now holds a fully-functional,
   albeit simplistic,
-  Chrome Extension.
+  Chrome extension.
 </p>
 <p>
   What's next?
@@ -531,20 +537,20 @@
   <li>
     <p>
       The <a href="/overview">Chrome Extension Overview</a> backs up a bit,
-      and fills in a lot of detail about extensions' architecture in general,
+      and fills in a lot of detail about the Extensions architecture in general,
       and some specific concepts
-      extension developers will want to be familiar with.
+      developers will want to be familiar with.
     </p>
   </li>
   <li>
     <p>
-      Learn about the options available for debugging extension in the
+      Learn about the options available for debugging Extensions in the
       <a href="/tut_debugging">debugging tutorial</a>.
     </p>
   </li>
   <li>
     <p>
-      Chrome extensions have access to powerful APIs above and beyond what's
+      Chrome Extensions have access to powerful APIs above and beyond what's
       available on the open web.
       The <a href="/api_index">chrome.* APIs documentation</a> will
       walk through each API.

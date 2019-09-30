@@ -45,7 +45,7 @@ class CORE_EXPORT HTMLObjectElement final : public HTMLPlugInElement,
  public:
   static HTMLObjectElement* Create(Document&, const CreateElementFlags);
   ~HTMLObjectElement() override;
-  virtual void Trace(blink::Visitor*);
+  void Trace(blink::Visitor*) override;
 
   const String& ClassId() const { return class_id_; }
 
@@ -63,7 +63,7 @@ class CORE_EXPORT HTMLObjectElement final : public HTMLPlugInElement,
   bool IsEnumeratable() const override { return true; }
   bool IsInteractiveContent() const override;
 
-  bool ChildrenCanHaveStyle() const { return WillUseFallbackContentAtLayout(); }
+  bool ChildrenCanHaveStyle() const override { return UseFallbackContent(); }
 
   // Implementations of constraint validation API.
   // Note that the object elements are always barred from constraint validation.
@@ -80,7 +80,6 @@ class CORE_EXPORT HTMLObjectElement final : public HTMLPlugInElement,
 
   FormAssociated* ToFormAssociatedOrNull() override { return this; };
   void AssociateWith(HTMLFormElement*) override;
-  void AttachLayoutTree(AttachContext&) final;
 
  private:
   HTMLObjectElement(Document&, const CreateElementFlags);
@@ -92,8 +91,8 @@ class CORE_EXPORT HTMLObjectElement final : public HTMLPlugInElement,
       const AtomicString&,
       MutableCSSPropertyValueSet*) override;
 
-  InsertionNotificationRequest InsertedInto(ContainerNode*) override;
-  void RemovedFrom(ContainerNode*) override;
+  InsertionNotificationRequest InsertedInto(ContainerNode&) override;
+  void RemovedFrom(ContainerNode&) override;
 
   void DidMoveToNewDocument(Document& old_document) override;
 

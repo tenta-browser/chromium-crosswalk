@@ -46,7 +46,7 @@
         {
           "object": "LayoutView #document",
           "rect": [285, 500, 15, 150],
-          "reason": "appeared"
+          "reason": "chunk appeared"
         }
       ]
     }
@@ -61,36 +61,6 @@
         [8, 8, 0, 1]
       ],
       "flattenInheritedTransform": false
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutView #document",
-      "reason": "style change"
-    },
-    {
-      "object": "LayoutView #document",
-      "reason": "geometry"
-    },
-    {
-      "object": "VerticalScrollbar",
-      "reason": "scroll control"
-    },
-    {
-      "object": "LayoutBlockFlow BODY",
-      "reason": "geometry"
-    },
-    {
-      "object": "RootInlineBox",
-      "reason": "geometry"
-    },
-    {
-      "object": "LayoutText #text",
-      "reason": "geometry"
-    },
-    {
-      "object": "InlineTextBox 'test1'",
-      "reason": "geometry"
     }
   ]
 }

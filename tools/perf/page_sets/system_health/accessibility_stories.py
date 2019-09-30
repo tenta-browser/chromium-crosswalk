@@ -2,8 +2,6 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-from page_sets.login_helpers import google_login
-
 from page_sets.system_health import platforms
 from page_sets.system_health import story_tags
 from page_sets.system_health import system_health_story
@@ -52,46 +50,26 @@ class AccessibilityAmazonStory(_AccessibilityStory):
   TAGS = [story_tags.ACCESSIBILITY]
 
 
-class AccessibilityGmailComposeStory(_AccessibilityStory):
-  """Tests typing a lot of text into a Gmail compose window."""
-  NAME = 'browse_accessibility:tools:gmail_compose'
-  URL = 'https://mail.google.com/mail/#inbox?compose=new'
+class AccessibilityYouTubeHomepageStory(_AccessibilityStory):
+  """Tests interacting with the YouTube home page."""
+  NAME = 'browse_accessibility:media:youtube'
+  URL = 'https://www.youtube.com/'
   TAGS = [story_tags.ACCESSIBILITY, story_tags.KEYBOARD_INPUT]
 
   def RunNavigateSteps(self, action_runner):
-    google_login.LoginGoogleAccount(action_runner, 'googletest')
-
-    # Navigating to https://mail.google.com immediately leads to an infinite
-    # redirection loop due to a bug in WPR (see
-    # https://github.com/chromium/web-page-replay/issues/70). We therefore first
-    # navigate to a sub-URL to set up the session and hit the resulting
-    # redirection loop. Afterwards, we can safely navigate to
-    # https://mail.google.com.
-    action_runner.tab.WaitForDocumentReadyStateToBeComplete()
-    action_runner.Navigate(
-        'https://mail.google.com/mail/mu/mp/872/trigger_redirection_loop')
+    action_runner.Navigate('https://www.youtube.com/')
     action_runner.tab.WaitForDocumentReadyStateToBeComplete()
 
-    super(AccessibilityGmailComposeStory, self).RunNavigateSteps(
-        action_runner)
+    # Open and close the sidebar.
+    action_runner.ClickElement(selector='[aria-label="Guide"]')
+    action_runner.Wait(1)
+    action_runner.ClickElement(selector='[aria-label="Guide"]')
+    action_runner.Wait(1)
 
-    action_runner.WaitForJavaScriptCondition(
-        'document.getElementById("loading").style.display === "none"')
+    # Open the apps menu.
+    action_runner.ClickElement(selector='[aria-label="YouTube apps"]')
+    action_runner.Wait(1)
 
-    # Tab from the To field to the message body.
-    action_runner.WaitForElement(selector='#\\:gr')
-    action_runner.PressKey('Tab')
-    action_runner.PressKey('Tab')
-
-    # EnterText doesn't handle newlines for some reason.
-    long_text = LONG_TEXT.replace('\n', ' ')
-
-    # Enter some text
-    action_runner.EnterText(long_text, character_delay_ms=1)
-
-    # Move up a couple of lines and then enter it again, this causes
-    # a huge amount of wrapping and re-layout
-    action_runner.PressKey('Home')
-    action_runner.PressKey('ArrowUp')
-    action_runner.PressKey('ArrowUp')
-    action_runner.EnterText(long_text, character_delay_ms=1)
+    # Navigate through the items in the apps menu.
+    for _ in range(6):
+      action_runner.PressKey('Tab')

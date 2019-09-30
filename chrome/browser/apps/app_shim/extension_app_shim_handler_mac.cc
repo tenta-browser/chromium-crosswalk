@@ -4,6 +4,8 @@
 
 #include "chrome/browser/apps/app_shim/extension_app_shim_handler_mac.h"
 
+#include <utility>
+
 #include "apps/app_lifetime_monitor_factory.h"
 #include "apps/launcher.h"
 #include "base/files/file_path.h"
@@ -25,7 +27,9 @@
 #include "chrome/browser/ui/extensions/extension_enable_flow.h"
 #include "chrome/browser/ui/extensions/extension_enable_flow_delegate.h"
 #include "chrome/browser/ui/user_manager.h"
-#include "chrome/browser/web_applications/web_app_mac.h"
+#include "chrome/browser/web_applications/components/web_app_helpers.h"
+#include "chrome/browser/web_applications/components/web_app_shortcut_mac.h"
+#include "chrome/browser/web_applications/extensions/web_app_extension_shortcut.h"
 #include "chrome/common/extensions/extension_constants.h"
 #include "chrome/common/extensions/extension_metrics.h"
 #include "chrome/common/extensions/manifest_handlers/app_launch_info.h"
@@ -95,7 +99,7 @@ bool FocusWindows(const AppWindowList& windows) {
   return true;
 }
 
-bool FocusHostedAppWindows(std::set<Browser*>& browsers) {
+bool FocusHostedAppWindows(const std::set<Browser*>& browsers) {
   if (browsers.empty())
     return false;
 
@@ -185,7 +189,7 @@ void ExtensionAppShimHandler::Delegate::LoadProfileAsync(
   profile_manager->CreateProfileAsync(
       full_path,
       base::Bind(&ProfileLoadedCallback, callback),
-      base::string16(), std::string(), std::string());
+      base::string16(), std::string());
 }
 
 bool ExtensionAppShimHandler::Delegate::IsProfileLockedForPath(
@@ -245,7 +249,7 @@ void ExtensionAppShimHandler::Delegate::LaunchShim(Profile* profile,
 
 void ExtensionAppShimHandler::Delegate::LaunchUserManager() {
   UserManager::Show(base::FilePath(),
-                    profiles::USER_MANAGER_SELECT_PROFILE_APP_LAUNCHER);
+                    profiles::USER_MANAGER_SELECT_PROFILE_NO_ACTION);
 }
 
 void ExtensionAppShimHandler::Delegate::MaybeTerminate() {
@@ -287,10 +291,8 @@ void ExtensionAppShimHandler::SetHostedAppHidden(Profile* profile,
     return;
 
   for (const Browser* browser : it->second) {
-    if (web_app::GetExtensionIdFromApplicationName(browser->app_name()) !=
-        app_id) {
+    if (web_app::GetAppIdFromApplicationName(browser->app_name()) != app_id)
       continue;
-    }
 
     if (hidden)
       browser->window()->Hide();
@@ -323,7 +325,7 @@ const Extension* ExtensionAppShimHandler::MaybeGetAppForBrowser(
 
   return MaybeGetAppExtension(
       browser->profile(),
-      web_app::GetExtensionIdFromApplicationName(browser->app_name()));
+      web_app::GetAppIdFromApplicationName(browser->app_name()));
 }
 
 // static
@@ -637,9 +639,9 @@ void ExtensionAppShimHandler::OnShimQuit(Host* host) {
   if (!extension)
     return;
 
-  if (extension->is_hosted_app())
+  if (extension->is_hosted_app()) {
     CloseBrowsersForApp(app_id);
-  else {
+  } else {
     const AppWindowList windows = delegate_->GetWindows(profile, app_id);
     for (AppWindowRegistry::const_iterator it = windows.begin();
          it != windows.end(); ++it) {

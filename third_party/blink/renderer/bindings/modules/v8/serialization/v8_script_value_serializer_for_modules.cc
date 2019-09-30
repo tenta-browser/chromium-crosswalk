@@ -13,7 +13,6 @@
 #include "third_party/blink/renderer/bindings/modules/v8/v8_dom_file_system.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_rtc_certificate.h"
 #include "third_party/blink/renderer/platform/bindings/script_wrappable.h"
-#include "third_party/blink/renderer/platform/file_system_type.h"
 
 namespace blink {
 
@@ -36,7 +35,8 @@ bool V8ScriptValueSerializerForModules::WriteDOMObject(
     DOMFileSystem* fs = wrappable->ToImpl<DOMFileSystem>();
     if (!fs->Clonable()) {
       exception_state.ThrowDOMException(
-          kDataCloneError, "A FileSystem object could not be cloned.");
+          DOMExceptionCode::kDataCloneError,
+          "A FileSystem object could not be cloned.");
       return false;
     }
     WriteTag(kDOMFileSystemTag);
@@ -48,10 +48,10 @@ bool V8ScriptValueSerializerForModules::WriteDOMObject(
   }
   if (wrapper_type_info == &V8RTCCertificate::wrapperTypeInfo) {
     RTCCertificate* certificate = wrappable->ToImpl<RTCCertificate>();
-    WebRTCCertificatePEM pem = certificate->Certificate().ToPEM();
+    rtc::RTCCertificatePEM pem = certificate->Certificate()->ToPEM();
     WriteTag(kRTCCertificateTag);
-    WriteUTF8String(pem.PrivateKey());
-    WriteUTF8String(pem.Certificate());
+    WriteUTF8String(pem.private_key().c_str());
+    WriteUTF8String(pem.certificate().c_str());
     return true;
   }
   return false;
@@ -212,7 +212,8 @@ bool V8ScriptValueSerializerForModules::WriteCryptoKey(
   if (!Platform::Current()->Crypto()->SerializeKeyForClone(key, key_data) ||
       key_data.size() > std::numeric_limits<uint32_t>::max()) {
     exception_state.ThrowDOMException(
-        kDataCloneError, "A CryptoKey object could not be cloned.");
+        DOMExceptionCode::kDataCloneError,
+        "A CryptoKey object could not be cloned.");
     return false;
   }
   WriteUint32(key_data.size());

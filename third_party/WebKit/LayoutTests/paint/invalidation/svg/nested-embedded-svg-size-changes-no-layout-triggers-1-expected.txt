@@ -20,12 +20,12 @@
         {
           "object": "LayoutBlockFlow HTML",
           "rect": [0, 0, 402, 202],
-          "reason": "appeared"
+          "reason": "chunk appeared"
         },
         {
           "object": "LayoutView #document",
           "rect": [0, 0, 300, 150],
-          "reason": "disappeared"
+          "reason": "chunk disappeared"
         },
         {
           "object": "LayoutSVGRect rect",
@@ -48,48 +48,6 @@
           "reason": "paint property change"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutBlockFlow BODY",
-      "reason": "geometry"
-    },
-    {
-      "object": "RootInlineBox",
-      "reason": "geometry"
-    },
-    {
-      "object": "LayoutEmbeddedObject OBJECT",
-      "reason": "style change"
-    },
-    {
-      "object": "HorizontalScrollbar",
-      "reason": "scroll control"
-    },
-    {
-      "object": "VerticalScrollbar",
-      "reason": "scroll control"
-    },
-    {
-      "object": "LayoutView #document",
-      "reason": "geometry"
-    },
-    {
-      "object": "LayoutView #document",
-      "reason": "geometry"
-    },
-    {
-      "object": "LayoutBlockFlow BODY",
-      "reason": "geometry"
-    },
-    {
-      "object": "RootInlineBox",
-      "reason": "geometry"
-    },
-    {
-      "object": "LayoutEmbeddedObject OBJECT",
-      "reason": "geometry"
     }
   ]
 }

@@ -11,7 +11,6 @@
 
 #include "base/bind.h"
 #include "base/memory/ref_counted.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/test/scoped_task_environment.h"
 #include "base/threading/thread_task_runner_handle.h"
@@ -20,7 +19,7 @@
 #include "components/update_client/protocol_builder.h"
 #include "components/update_client/test_configurator.h"
 #include "components/update_client/update_engine.h"
-#include "components/update_client/url_request_post_interceptor.h"
+#include "components/update_client/url_loader_post_interceptor.h"
 #include "net/url_request/url_request_test_util.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -104,9 +103,8 @@ scoped_refptr<UpdateContext> PingManagerTest::MakeMockUpdateContext() const {
 }
 
 TEST_F(PingManagerTest, SendPing) {
-  auto interceptor_factory =
-      std::make_unique<InterceptorFactory>(base::ThreadTaskRunnerHandle::Get());
-  auto interceptor = interceptor_factory->CreateInterceptor();
+  auto interceptor = std::make_unique<URLLoaderPostInterceptor>(
+      config_->test_url_loader_factory());
   EXPECT_TRUE(interceptor);
 
   // Test eventresult="1" is sent for successful updates.
@@ -114,7 +112,7 @@ TEST_F(PingManagerTest, SendPing) {
 
   {
     Component component(*update_context, "abc");
-
+    component.crx_component_ = CrxComponent();
     component.state_ = std::make_unique<Component::StateUpdated>(&component);
     component.previous_version_ = base::Version("1.0");
     component.next_version_ = base::Version("2.0");
@@ -134,12 +132,12 @@ TEST_F(PingManagerTest, SendPing) {
     EXPECT_NE(string::npos, interceptor->GetRequestBody(0).find(" sessionid="));
 
     // Check the ping request does not carry the specific extra request headers.
-    EXPECT_FALSE(interceptor->GetRequests()[0].second.HasHeader(
-        "X-Goog-Update-Interactivity"));
-    EXPECT_FALSE(interceptor->GetRequests()[0].second.HasHeader(
-        "X-Goog-Update-Updater"));
-    EXPECT_FALSE(
-        interceptor->GetRequests()[0].second.HasHeader("X-Goog-Update-AppId"));
+    EXPECT_FALSE(std::get<1>(interceptor->GetRequests()[0])
+                     .HasHeader("X-Goog-Update-Interactivity"));
+    EXPECT_FALSE(std::get<1>(interceptor->GetRequests()[0])
+                     .HasHeader("X-Goog-Update-Updater"));
+    EXPECT_FALSE(std::get<1>(interceptor->GetRequests()[0])
+                     .HasHeader("X-Goog-Update-AppId"));
 
     interceptor->Reset();
   }
@@ -147,6 +145,7 @@ TEST_F(PingManagerTest, SendPing) {
   {
     // Test eventresult="0" is sent for failed updates.
     Component component(*update_context, "abc");
+    component.crx_component_ = CrxComponent();
     component.state_ =
         std::make_unique<Component::StateUpdateError>(&component);
     component.previous_version_ = base::Version("1.0");
@@ -170,16 +169,17 @@ TEST_F(PingManagerTest, SendPing) {
   {
     // Test the error values and the fingerprints.
     Component component(*update_context, "abc");
+    component.crx_component_ = CrxComponent();
     component.state_ =
         std::make_unique<Component::StateUpdateError>(&component);
     component.previous_version_ = base::Version("1.0");
     component.next_version_ = base::Version("2.0");
     component.previous_fp_ = "prev fp";
     component.next_fp_ = "next fp";
-    component.error_category_ = 1;
+    component.error_category_ = ErrorCategory::kDownload;
     component.error_code_ = 2;
     component.extra_code1_ = -1;
-    component.diff_error_category_ = 10;
+    component.diff_error_category_ = ErrorCategory::kService;
     component.diff_error_code_ = 20;
     component.diff_extra_code1_ = -10;
     component.crx_diffurls_.push_back(GURL("http://host/path"));
@@ -195,7 +195,7 @@ TEST_F(PingManagerTest, SendPing) {
                   "<app appid=\"abc\">"
                   "<event eventtype=\"3\" eventresult=\"0\" errorcat=\"1\" "
                   "errorcode=\"2\" extracode1=\"-1\" diffresult=\"0\" "
-                  "differrorcat=\"10\" "
+                  "differrorcat=\"4\" "
                   "differrorcode=\"20\" diffextracode1=\"-10\" "
                   "previousfp=\"prev fp\" nextfp=\"next fp\" "
                   "previousversion=\"1.0\" nextversion=\"2.0\"/></app>"))
@@ -206,6 +206,7 @@ TEST_F(PingManagerTest, SendPing) {
   {
     // Test an invalid |next_version| is not serialized.
     Component component(*update_context, "abc");
+    component.crx_component_ = CrxComponent();
     component.state_ =
         std::make_unique<Component::StateUpdateError>(&component);
     component.previous_version_ = base::Version("1.0");
@@ -229,6 +230,7 @@ TEST_F(PingManagerTest, SendPing) {
     // Test a valid |previouversion| and |next_version| = base::Version("0")
     // are serialized correctly under <event...> for uninstall.
     Component component(*update_context, "abc");
+    component.crx_component_ = CrxComponent();
     component.Uninstall(base::Version("1.2.3.4"), 0);
     component.AppendEvent(BuildUninstalledEventElement(component));
 
@@ -249,6 +251,7 @@ TEST_F(PingManagerTest, SendPing) {
   {
     // Test the download metrics.
     Component component(*update_context, "abc");
+    component.crx_component_ = CrxComponent();
     component.state_ = std::make_unique<Component::StateUpdated>(&component);
     component.previous_version_ = base::Version("1.0");
     component.next_version_ = base::Version("2.0");
@@ -306,9 +309,10 @@ TEST_F(PingManagerTest, RequiresEncryption) {
   const auto update_context = MakeMockUpdateContext();
 
   Component component(*update_context, "abc");
+  component.crx_component_ = CrxComponent();
 
   // The default value for |requires_network_encryption| is true.
-  EXPECT_TRUE(component.crx_component_.requires_network_encryption);
+  EXPECT_TRUE(component.crx_component_->requires_network_encryption);
 
   component.state_ = std::make_unique<Component::StateUpdated>(&component);
   component.previous_version_ = base::Version("1.0");

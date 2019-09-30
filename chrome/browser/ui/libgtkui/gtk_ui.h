@@ -24,12 +24,13 @@ typedef struct _GtkStyle GtkStyle;
 typedef struct _GtkWidget GtkWidget;
 
 namespace libgtkui {
-class Gtk2KeyBindingsHandler;
+using ColorMap = std::map<int, SkColor>;
+
+class GtkKeyBindingsHandler;
 class DeviceScaleFactorObserver;
 class SettingsProvider;
 
-// Interface to GTK2 desktop features.
-//
+// Interface to GTK desktop features.
 class GtkUi : public views::LinuxUI {
  public:
   GtkUi();
@@ -71,7 +72,9 @@ class GtkUi : public views::LinuxUI {
   // views::LinuxUI:
   void Initialize() override;
   bool GetTint(int id, color_utils::HSL* tint) const override;
-  bool GetColor(int id, SkColor* color) const override;
+  bool GetColor(int id,
+                SkColor* color,
+                PrefService* pref_service) const override;
   SkColor GetFocusRingColor() const override;
   SkColor GetThumbActiveColor() const override;
   SkColor GetThumbInactiveColor() const override;
@@ -112,14 +115,14 @@ class GtkUi : public views::LinuxUI {
 #if BUILDFLAG(ENABLE_NATIVE_WINDOW_NAV_BUTTONS)
   std::unique_ptr<views::NavButtonProvider> CreateNavButtonProvider() override;
 #endif
+  base::flat_map<std::string, std::string> GetKeyboardLayoutMap() override;
 
   // ui::TextEditKeybindingDelegate:
   bool MatchEvent(const ui::Event& event,
                   std::vector<ui::TextEditCommandAuraLinux>* commands) override;
 
  private:
-  typedef std::map<int, SkColor> ColorMap;
-  typedef std::map<int, color_utils::HSL> TintMap;
+  using TintMap = std::map<int, color_utils::HSL>;
 
   CHROMEG_CALLBACK_1(GtkUi,
                      void,
@@ -142,21 +145,24 @@ class GtkUi : public views::LinuxUI {
   // Updates |default_font_*|.
   void UpdateDefaultFont();
 
-  // Gets a ChromeGtkFrame theme color; returns true on success.  No-op on gtk3.
-  bool GetChromeStyleColor(const char* sytle_property,
-                           SkColor* ret_color) const;
-
   float GetRawDeviceScaleFactor();
 
   ui::NativeTheme* native_theme_;
 
-  // On Gtk2, A GtkWindow object with the class "ChromeGtkFrame".  On
-  // Gtk3, a regular GtkWindow.
+  // A regular GtkWindow.
   GtkWidget* fake_window_;
 
   // Colors calculated by LoadGtkValues() that are given to the
   // caller while |use_gtk_| is true.
   ColorMap colors_;
+
+  // Frame colors (and colors that depend on frame colors) when using
+  // Chrome-rendered borders and titlebar.
+  ColorMap custom_frame_colors_;
+
+  // Frame colors (and colors that depend on frame colors) when using
+  // system-rendered borders and titlebar.
+  ColorMap native_frame_colors_;
 
   // Colors that we pass to WebKit. These are generated each time the theme
   // changes.
@@ -185,14 +191,14 @@ class GtkUi : public views::LinuxUI {
   std::vector<views::FrameButton> leading_buttons_;
   std::vector<views::FrameButton> trailing_buttons_;
 
-  std::unique_ptr<Gtk2KeyBindingsHandler> key_bindings_handler_;
+  std::unique_ptr<GtkKeyBindingsHandler> key_bindings_handler_;
 
   // Objects to notify when the window frame button order changes.
-  base::ObserverList<views::WindowButtonOrderObserver>
+  base::ObserverList<views::WindowButtonOrderObserver>::Unchecked
       window_button_order_observer_list_;
 
   // Objects to notify when the device scale factor changes.
-  base::ObserverList<views::DeviceScaleFactorObserver>
+  base::ObserverList<views::DeviceScaleFactorObserver>::Unchecked
       device_scale_factor_observer_list_;
 
   // The action to take when middle, double, or right clicking the titlebar.
@@ -200,7 +206,7 @@ class GtkUi : public views::LinuxUI {
       window_frame_actions_[WINDOW_FRAME_ACTION_SOURCE_LAST];
 
   // Used to override the native theme for a window. If no override is provided
-  // or the callback returns nullptr, GtkUi will default to a NativeThemeGtk2
+  // or the callback returns nullptr, GtkUi will default to a NativeThemeGtk
   // instance.
   NativeThemeGetter native_theme_overrider_;
 
@@ -211,11 +217,7 @@ class GtkUi : public views::LinuxUI {
 
 }  // namespace libgtkui
 
-// Access point to the GTK2 desktop system. This should be the only symbol that
-// is exported in the library; everything else should be used through the
-// interface, because eventually this .so will be loaded through dlopen at
-// runtime so our main binary can conditionally load GTK2 or GTK3 or EFL or
-// QT or whatever.
+// Access point to the GTK desktop system.
 LIBGTKUI_EXPORT views::LinuxUI* BuildGtkUi();
 
 #endif  // CHROME_BROWSER_UI_LIBGTKUI_GTK_UI_H_

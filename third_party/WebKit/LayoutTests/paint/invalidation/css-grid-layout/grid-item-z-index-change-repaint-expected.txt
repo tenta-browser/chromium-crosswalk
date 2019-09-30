@@ -20,12 +20,12 @@
         {
           "object": "LayoutBlockFlow DIV id='item2' class='sizedToGridArea green'",
           "rect": [8, 236, 200, 100],
-          "reason": "appeared"
+          "reason": "disappeared"
         },
         {
           "object": "LayoutBlockFlow DIV id='item2' class='sizedToGridArea green'",
           "rect": [8, 236, 200, 100],
-          "reason": "disappeared"
+          "reason": "chunk appeared"
         },
         {
           "object": "LayoutBlockFlow DIV id='item1' class='sizedToGridArea green negativeZIndex'",
@@ -33,12 +33,6 @@
           "reason": "chunk reordered"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutBlockFlow DIV id='item2' class='sizedToGridArea green'",
-      "reason": "style change"
     }
   ]
 }

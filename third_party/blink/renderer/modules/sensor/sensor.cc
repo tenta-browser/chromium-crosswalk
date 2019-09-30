@@ -8,7 +8,7 @@
 #include "services/device/public/mojom/sensor.mojom-blink.h"
 #include "third_party/blink/public/platform/task_type.h"
 #include "third_party/blink/renderer/core/dom/document.h"
-#include "third_party/blink/renderer/core/dom/exception_code.h"
+#include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/inspector/console_message.h"
 #include "third_party/blink/renderer/core/timing/dom_window_performance.h"
 #include "third_party/blink/renderer/core/timing/window_performance.h"
@@ -154,9 +154,9 @@ bool Sensor::HasPendingActivity() const {
 auto Sensor::CreateSensorConfig() -> SensorConfigurationPtr {
   auto result = SensorConfiguration::New();
 
-  double default_frequency = sensor_proxy_->DefaultConfig()->frequency;
-  double minimum_frequency = sensor_proxy_->FrequencyLimits().first;
-  double maximum_frequency = sensor_proxy_->FrequencyLimits().second;
+  double default_frequency = sensor_proxy_->GetDefaultFrequency();
+  double minimum_frequency = sensor_proxy_->GetFrequencyLimits().first;
+  double maximum_frequency = sensor_proxy_->GetFrequencyLimits().second;
 
   if (frequency_ == 0.0)  // i.e. was never set.
     frequency_ = default_frequency;
@@ -177,7 +177,7 @@ void Sensor::InitSensorProxyIfNeeded() {
   if (!document || !document->GetFrame())
     return;
 
-  auto provider = SensorProviderProxy::From(document->GetFrame());
+  auto* provider = SensorProviderProxy::From(document->GetFrame());
   sensor_proxy_ = provider->GetSensorProxy(type_);
 
   if (!sensor_proxy_)
@@ -187,6 +187,9 @@ void Sensor::InitSensorProxyIfNeeded() {
 void Sensor::ContextDestroyed(ExecutionContext*) {
   if (!IsIdleOrErrored())
     Deactivate();
+
+  if (sensor_proxy_)
+    sensor_proxy_->Detach();
 }
 
 void Sensor::OnSensorInitialized() {
@@ -204,7 +207,6 @@ void Sensor::OnSensorReadingChanged() {
   // reading is up-to-date.
   if (pending_reading_notification_.IsActive())
     return;
-
   double elapsedTime =
       sensor_proxy_->GetReading().timestamp() - last_reported_timestamp_;
   DCHECK_GT(elapsedTime, 0.0);
@@ -232,7 +234,7 @@ void Sensor::OnSensorReadingChanged() {
   }
 }
 
-void Sensor::OnSensorError(ExceptionCode code,
+void Sensor::OnSensorError(DOMExceptionCode code,
                            const String& sanitized_message,
                            const String& unsanitized_message) {
   HandleError(code, sanitized_message, unsanitized_message);
@@ -243,7 +245,8 @@ void Sensor::OnAddConfigurationRequestCompleted(bool result) {
     return;
 
   if (!result) {
-    HandleError(kNotReadableError, "start() call has failed.");
+    HandleError(DOMExceptionCode::kNotReadableError,
+                "start() call has failed.");
     return;
   }
 
@@ -260,7 +263,7 @@ void Sensor::Activate() {
 
   InitSensorProxyIfNeeded();
   if (!sensor_proxy_) {
-    HandleError(kInvalidStateError,
+    HandleError(DOMExceptionCode::kInvalidStateError,
                 "The Sensor is no longer associated to a frame.");
     return;
   }
@@ -299,9 +302,9 @@ void Sensor::RequestAddConfiguration() {
     configuration_ = CreateSensorConfig();
     DCHECK(configuration_);
     DCHECK_GE(configuration_->frequency,
-              sensor_proxy_->FrequencyLimits().first);
+              sensor_proxy_->GetFrequencyLimits().first);
     DCHECK_LE(configuration_->frequency,
-              sensor_proxy_->FrequencyLimits().second);
+              sensor_proxy_->GetFrequencyLimits().second);
   }
 
   DCHECK(sensor_proxy_);
@@ -311,7 +314,7 @@ void Sensor::RequestAddConfiguration() {
                 WrapWeakPersistent(this)));
 }
 
-void Sensor::HandleError(ExceptionCode code,
+void Sensor::HandleError(DOMExceptionCode code,
                          const String& sanitized_message,
                          const String& unsanitized_message) {
   if (!GetExecutionContext()) {
@@ -324,7 +327,7 @@ void Sensor::HandleError(ExceptionCode code,
 
   Deactivate();
 
-  auto error =
+  auto* error =
       DOMException::Create(code, sanitized_message, unsanitized_message);
   pending_error_notification_ = PostCancellableTask(
       *GetExecutionContext()->GetTaskRunner(TaskType::kSensor), FROM_HERE,
@@ -335,7 +338,7 @@ void Sensor::HandleError(ExceptionCode code,
 void Sensor::NotifyReading() {
   DCHECK_EQ(state_, SensorState::kActivated);
   last_reported_timestamp_ = sensor_proxy_->GetReading().timestamp();
-  DispatchEvent(Event::Create(EventTypeNames::reading));
+  DispatchEvent(*Event::Create(EventTypeNames::reading));
 }
 
 void Sensor::NotifyActivated() {
@@ -351,13 +354,13 @@ void Sensor::NotifyActivated() {
         WTF::Bind(&Sensor::NotifyReading, WrapWeakPersistent(this)));
   }
 
-  DispatchEvent(Event::Create(EventTypeNames::activate));
+  DispatchEvent(*Event::Create(EventTypeNames::activate));
 }
 
 void Sensor::NotifyError(DOMException* error) {
   DCHECK_NE(state_, SensorState::kIdle);
   state_ = SensorState::kIdle;
-  DispatchEvent(SensorErrorEvent::Create(EventTypeNames::error, error));
+  DispatchEvent(*SensorErrorEvent::Create(EventTypeNames::error, error));
 }
 
 bool Sensor::IsIdleOrErrored() const {

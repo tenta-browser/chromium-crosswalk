@@ -17,9 +17,10 @@ class CORE_EXPORT NGPhysicalLineBoxFragment final
  public:
   // This modifies the passed-in children vector.
   NGPhysicalLineBoxFragment(const ComputedStyle&,
+                            NGStyleVariant style_variant,
                             NGPhysicalSize size,
-                            Vector<scoped_refptr<NGPhysicalFragment>>& children,
-                            const NGPhysicalOffsetRect& contents_visual_rect,
+                            Vector<NGLink>& children,
+                            const NGPhysicalOffsetRect& contents_ink_overflow,
                             const NGLineHeightMetrics&,
                             TextDirection base_direction,
                             scoped_refptr<NGBreakToken> break_token = nullptr);
@@ -34,10 +35,18 @@ class CORE_EXPORT NGPhysicalLineBoxFragment final
   }
 
   // Compute baseline for the specified baseline type.
-  LayoutUnit BaselinePosition(FontBaseline) const;
+  NGLineHeightMetrics BaselineMetrics(FontBaseline) const;
 
-  // VisualRect of itself including contents, in the local coordinate.
-  NGPhysicalOffsetRect VisualRectWithContents() const;
+  // Ink overflow of itself including contents, in the local coordinate.
+  NGPhysicalOffsetRect InkOverflow() const;
+
+  // Scrollable overflow. including contents, in the local coordinate.
+  // ScrollableOverflow is not precomputed/cached because it cannot be computed
+  // when LineBox is generated because it needs container dimensions to
+  // resolve relative position of its children.
+  NGPhysicalOffsetRect ScrollableOverflow(
+      const ComputedStyle* container_style,
+      NGPhysicalSize container_physical_size) const;
 
   // Returns the first/last leaf fragment in the line in logical order. Returns
   // nullptr if the line box is empty.
@@ -46,15 +55,6 @@ class CORE_EXPORT NGPhysicalLineBoxFragment final
 
   // Whether the content soft-wraps to the next line.
   bool HasSoftWrapToNextLine() const;
-
-  PositionWithAffinity PositionForPoint(const NGPhysicalOffset&) const final;
-
-  scoped_refptr<NGPhysicalFragment> CloneWithoutOffset() const {
-    Vector<scoped_refptr<NGPhysicalFragment>> children_copy(children_);
-    return base::AdoptRef(new NGPhysicalLineBoxFragment(
-        Style(), size_, children_copy, contents_visual_rect_, metrics_,
-        BaseDirection(), break_token_));
-  }
 
  private:
   NGLineHeightMetrics metrics_;

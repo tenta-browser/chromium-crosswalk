@@ -595,7 +595,7 @@ TEST_F(ClientCertResolverTest, UserPolicyUsesSystemToken) {
 
   StartCertLoader();
   scoped_task_environment_.RunUntilIdle();
-  EXPECT_EQ(1U, cert_loader_->system_certs().size());
+  EXPECT_EQ(1U, cert_loader_->system_token_client_certs().size());
 
   // Verify that the resolver positively matched the pattern in the policy with
   // the test client cert and configured the network.
@@ -633,7 +633,7 @@ TEST_F(ClientCertResolverTest, DevicePolicyUsesSystemToken) {
 
   StartCertLoader();
   scoped_task_environment_.RunUntilIdle();
-  EXPECT_EQ(1U, cert_loader_->system_certs().size());
+  EXPECT_EQ(1U, cert_loader_->system_token_client_certs().size());
 
   // Verify that the resolver positively matched the pattern in the policy with
   // the test client cert and configured the network.
@@ -672,7 +672,7 @@ TEST_F(ClientCertResolverTest, DevicePolicyDoesNotUseUserToken) {
   network_properties_changed_count_ = 0;
   StartCertLoader();
   scoped_task_environment_.RunUntilIdle();
-  EXPECT_EQ(0U, cert_loader_->system_certs().size());
+  EXPECT_EQ(0U, cert_loader_->system_token_client_certs().size());
 
   // Verify that no client certificate was configured.
   std::string pkcs11_id;
@@ -731,6 +731,16 @@ TEST_F(ClientCertResolverTest, PopulateIdentityFromCert) {
   GetServiceProperty(shill::kEapIdentityProperty, &identity);
   EXPECT_EQ("upn-santest@ad.corp.example.com-suffix", identity);
   EXPECT_EQ(2, network_properties_changed_count_);
+
+  // Verify that after changing the ONC policy to request the subject CommonName
+  // field, the correct value is substituted into the shill service entry.
+  SetupPolicyMatchingIssuerPEM(onc::ONC_SOURCE_USER_POLICY,
+                               "subject-cn-${CERT_SUBJECT_COMMON_NAME}-suffix");
+  scoped_task_environment_.RunUntilIdle();
+
+  GetServiceProperty(shill::kEapIdentityProperty, &identity);
+  EXPECT_EQ("subject-cn-Client Cert F-suffix", identity);
+  EXPECT_EQ(3, network_properties_changed_count_);
 }
 
 // Test for crbug.com/781276. A notification which results in no networks to be

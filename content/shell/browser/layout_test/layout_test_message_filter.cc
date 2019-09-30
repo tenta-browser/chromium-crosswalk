@@ -14,13 +14,13 @@
 #include "content/shell/browser/layout_test/blink_test_controller.h"
 #include "content/shell/browser/layout_test/layout_test_browser_context.h"
 #include "content/shell/browser/layout_test/layout_test_content_browser_client.h"
-#include "content/shell/browser/layout_test/layout_test_notification_manager.h"
 #include "content/shell/browser/layout_test/layout_test_permission_manager.h"
 #include "content/shell/browser/shell_browser_context.h"
 #include "content/shell/browser/shell_content_browser_client.h"
 #include "content/shell/browser/shell_network_delegate.h"
 #include "content/shell/common/layout_test/layout_test_messages.h"
 #include "content/shell/test_runner/web_test_delegate.h"
+#include "content/test/mock_platform_notification_service.h"
 #include "net/base/net_errors.h"
 #include "net/cookies/cookie_store.h"
 #include "net/url_request/url_request_context.h"
@@ -86,8 +86,6 @@ bool LayoutTestMessageFilter::OnMessageReceived(const IPC::Message& message) {
                         OnSimulateWebNotificationClick)
     IPC_MESSAGE_HANDLER(LayoutTestHostMsg_SimulateWebNotificationClose,
                         OnSimulateWebNotificationClose)
-    IPC_MESSAGE_HANDLER(LayoutTestHostMsg_BlockThirdPartyCookies,
-                        OnBlockThirdPartyCookies)
     IPC_MESSAGE_HANDLER(LayoutTestHostMsg_DeleteAllCookies, OnDeleteAllCookies)
     IPC_MESSAGE_HANDLER(LayoutTestHostMsg_DeleteAllCookiesForNetworkService,
                         OnDeleteAllCookiesForNetworkService)
@@ -153,23 +151,23 @@ void LayoutTestMessageFilter::OnSimulateWebNotificationClick(
     const base::Optional<int>& action_index,
     const base::Optional<base::string16>& reply) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  LayoutTestNotificationManager* manager =
-      LayoutTestContentBrowserClient::Get()->GetLayoutTestNotificationManager();
-  if (manager)
-    manager->SimulateClick(title, action_index, reply);
+  MockPlatformNotificationService* platform_notification_service =
+      static_cast<MockPlatformNotificationService*>(
+          LayoutTestContentBrowserClient::Get()
+              ->GetPlatformNotificationService());
+
+  platform_notification_service->SimulateClick(title, action_index, reply);
 }
 
 void LayoutTestMessageFilter::OnSimulateWebNotificationClose(
     const std::string& title, bool by_user) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  LayoutTestNotificationManager* manager =
-      LayoutTestContentBrowserClient::Get()->GetLayoutTestNotificationManager();
-  if (manager)
-    manager->SimulateClose(title, by_user);
-}
+  MockPlatformNotificationService* platform_notification_service =
+      static_cast<MockPlatformNotificationService*>(
+          LayoutTestContentBrowserClient::Get()
+              ->GetPlatformNotificationService());
 
-void LayoutTestMessageFilter::OnBlockThirdPartyCookies(bool block) {
-  ShellNetworkDelegate::SetBlockThirdPartyCookies(block);
+  platform_notification_service->SimulateClose(title, by_user);
 }
 
 void LayoutTestMessageFilter::OnDeleteAllCookies() {
@@ -216,6 +214,9 @@ void LayoutTestMessageFilter::OnSetPermission(
     type = PermissionType::CLIPBOARD_WRITE;
   } else if (name == "payment-handler") {
     type = PermissionType::PAYMENT_HANDLER;
+  } else if (name == "accelerometer" || name == "gyroscope" ||
+             name == "magnetometer" || name == "ambient-light-sensor") {
+    type = PermissionType::SENSORS;
   } else {
     NOTREACHED();
     type = PermissionType::NOTIFICATIONS;
@@ -252,11 +253,12 @@ void LayoutTestMessageFilter::OnTestFinishedInSecondaryRenderer() {
 }
 
 void LayoutTestMessageFilter::OnInitiateCaptureDump(
-    bool capture_navigation_history) {
+    bool capture_navigation_history,
+    bool capture_pixels) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   if (BlinkTestController::Get()) {
     BlinkTestController::Get()->OnInitiateCaptureDump(
-        capture_navigation_history);
+        capture_navigation_history, capture_pixels);
   }
 }
 

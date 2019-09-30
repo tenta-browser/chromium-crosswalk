@@ -67,7 +67,7 @@ CloudPolicyRefreshScheduler::CloudPolicyRefreshScheduler(
       creation_time_(base::Time::NowFromSystemTime()) {
   client_->AddObserver(this);
   store_->AddObserver(this);
-  net::NetworkChangeNotifier::AddIPAddressObserver(this);
+  net::NetworkChangeNotifier::AddNetworkChangeObserver(this);
 
   UpdateLastRefreshFromPolicy();
   ScheduleRefresh();
@@ -76,7 +76,7 @@ CloudPolicyRefreshScheduler::CloudPolicyRefreshScheduler(
 CloudPolicyRefreshScheduler::~CloudPolicyRefreshScheduler() {
   store_->RemoveObserver(this);
   client_->RemoveObserver(this);
-  net::NetworkChangeNotifier::RemoveIPAddressObserver(this);
+  net::NetworkChangeNotifier::RemoveNetworkChangeObserver(this);
 }
 
 void CloudPolicyRefreshScheduler::SetDesiredRefreshDelay(
@@ -177,7 +177,11 @@ void CloudPolicyRefreshScheduler::OnStoreError(CloudPolicyStore* store) {
   // error is required. NB: Changes to is_managed fire OnStoreLoaded().
 }
 
-void CloudPolicyRefreshScheduler::OnIPAddressChanged() {
+void CloudPolicyRefreshScheduler::OnNetworkChanged(
+    net::NetworkChangeNotifier::ConnectionType type) {
+  if (type == net::NetworkChangeNotifier::CONNECTION_NONE)
+    return;
+
   if (client_->status() == DM_STATUS_REQUEST_FAILED) {
     RefreshSoon();
     return;
@@ -305,6 +309,7 @@ void CloudPolicyRefreshScheduler::ScheduleRefresh() {
     case DM_STATUS_SERVICE_MISSING_LICENSES:
     case DM_STATUS_SERVICE_DEPROVISIONED:
     case DM_STATUS_SERVICE_DOMAIN_MISMATCH:
+    case DM_STATUS_SERVICE_CONSUMER_ACCOUNT_WITH_PACKAGED_LICENSE:
       // Need a re-registration, no use in retrying.
       CancelRefresh();
       return;

@@ -25,13 +25,13 @@
 
 #include <memory>
 
+#include "base/optional.h"
 #include "third_party/blink/public/platform/web_data_consumer_handle.h"
 #include "third_party/blink/renderer/platform/loader/fetch/buffering_data_pipe_writer.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_client.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_loader_options.h"
 #include "third_party/blink/renderer/platform/platform_export.h"
-#include "third_party/blink/renderer/platform/wtf/optional.h"
 
 namespace blink {
 class WebDataConsumerHandle;
@@ -43,7 +43,9 @@ class SourceKeyedCachedMetadataHandler;
 
 class PLATFORM_EXPORT RawResource final : public Resource {
  public:
-  static RawResource* FetchSynchronously(FetchParameters&, ResourceFetcher*);
+  static RawResource* FetchSynchronously(FetchParameters&,
+                                         ResourceFetcher*,
+                                         RawResourceClient* = nullptr);
   static RawResource* Fetch(FetchParameters&,
                             ResourceFetcher*,
                             RawResourceClient*);
@@ -78,7 +80,7 @@ class PLATFORM_EXPORT RawResource final : public Resource {
   }
 
   // Resource implementation
-  bool CanReuse(
+  MatchStatus CanReuse(
       const FetchParameters&,
       scoped_refptr<const SecurityOrigin> new_source_origin) const override;
   bool WillFollowRedirect(const ResourceRequest&,
@@ -88,12 +90,15 @@ class PLATFORM_EXPORT RawResource final : public Resource {
 
   // Used for code caching of scripts with source code inline in the HTML.
   // Returns a cache handler which can store multiple cache metadata entries,
-  // keyed by the source code of the script.
-  SourceKeyedCachedMetadataHandler* CacheHandler();
+  // keyed by the source code of the script. This is valid only if type is
+  // kMainResource.
+  SourceKeyedCachedMetadataHandler* InlineScriptCacheHandler();
 
-  WTF::Optional<int64_t> DownloadedFileLength() const {
-    return downloaded_file_length_;
-  }
+  // Used for code caching of fetched code resources. Returns a cache handler
+  // which can only store a single cache metadata entry. This is valid only if
+  // type is kRaw.
+  SingleCachedMetadataHandler* ScriptCacheHandler();
+
   scoped_refptr<BlobDataHandle> DownloadedBlob() const {
     return downloaded_blob_;
   }
@@ -134,7 +139,6 @@ class PLATFORM_EXPORT RawResource final : public Resource {
                     base::SingleThreadTaskRunner*) override;
   void NotifyFinished() override;
 
-  WTF::Optional<int64_t> downloaded_file_length_;
   scoped_refptr<BlobDataHandle> downloaded_blob_;
 
   // Used for preload matching.
@@ -144,12 +148,14 @@ class PLATFORM_EXPORT RawResource final : public Resource {
 
 // TODO(yhirano): Recover #if ENABLE_SECURITY_ASSERT when we stop adding
 // RawResources to MemoryCache.
-inline bool IsRawResource(const Resource& resource) {
-  Resource::Type type = resource.GetType();
+inline bool IsRawResource(Resource::Type type) {
   return type == Resource::kMainResource || type == Resource::kRaw ||
          type == Resource::kTextTrack || type == Resource::kAudio ||
          type == Resource::kVideo || type == Resource::kManifest ||
          type == Resource::kImportResource;
+}
+inline bool IsRawResource(const Resource& resource) {
+  return IsRawResource(resource.GetType());
 }
 inline RawResource* ToRawResource(Resource* resource) {
   SECURITY_DCHECK(!resource || IsRawResource(*resource));

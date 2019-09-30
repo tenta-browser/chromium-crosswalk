@@ -28,13 +28,13 @@ const char kEmbeddedSetupChromeOsUrlSuffixV2[] = "embedded/setup/v2/chromeos";
 const char kSigninChromeSyncDice[] = "signin/chrome/sync?ssp=1";
 const char kServiceLoginAuthUrlSuffix[] = "ServiceLoginAuth";
 const char kServiceLogoutUrlSuffix[] = "Logout";
-const char kIssueAuthTokenUrlSuffix[] = "IssueAuthToken";
 const char kGetUserInfoUrlSuffix[] = "GetUserInfo";
 const char kTokenAuthUrlSuffix[] = "TokenAuth";
 const char kMergeSessionUrlSuffix[] = "MergeSession";
 const char kOAuthGetAccessTokenUrlSuffix[] = "OAuthGetAccessToken";
 const char kOAuthWrapBridgeUrlSuffix[] = "OAuthWrapBridge";
 const char kOAuth1LoginUrlSuffix[] = "OAuthLogin";
+const char kOAuthMultiloginSuffix[] = "oauth/multilogin";
 const char kOAuthRevokeTokenUrlSuffix[] = "AuthSubRevokeToken";
 const char kListAccountsSuffix[] = "ListAccounts?json=standard";
 const char kEmbeddedSigninSuffix[] = "embedded/setup/chrome/usermenu";
@@ -109,10 +109,10 @@ GaiaUrls::GaiaUrls() {
   signin_chrome_sync_dice_ = gaia_url_.Resolve(kSigninChromeSyncDice);
   service_login_auth_url_ = gaia_url_.Resolve(kServiceLoginAuthUrlSuffix);
   service_logout_url_ = gaia_url_.Resolve(kServiceLogoutUrlSuffix);
-  issue_auth_token_url_ = gaia_url_.Resolve(kIssueAuthTokenUrlSuffix);
   get_user_info_url_ = gaia_url_.Resolve(kGetUserInfoUrlSuffix);
   token_auth_url_ = gaia_url_.Resolve(kTokenAuthUrlSuffix);
   merge_session_url_ = gaia_url_.Resolve(kMergeSessionUrlSuffix);
+  oauth_multilogin_url_ = gaia_url_.Resolve(kOAuthMultiloginSuffix);
   oauth_get_access_token_url_ =
       gaia_url_.Resolve(kOAuthGetAccessTokenUrlSuffix);
   oauth_wrap_bridge_url_ = gaia_url_.Resolve(kOAuthWrapBridgeUrlSuffix);
@@ -187,10 +187,6 @@ const GURL& GaiaUrls::service_logout_url() const {
   return service_logout_url_;
 }
 
-const GURL& GaiaUrls::issue_auth_token_url() const {
-  return issue_auth_token_url_;
-}
-
 const GURL& GaiaUrls::get_user_info_url() const {
   return get_user_info_url_;
 }
@@ -205,6 +201,10 @@ const GURL& GaiaUrls::merge_session_url() const {
 
 const GURL& GaiaUrls::get_oauth_token_url() const {
   return get_oauth_token_url_;
+}
+
+const GURL& GaiaUrls::oauth_multilogin_url() const {
+  return oauth_multilogin_url_;
 }
 
 const GURL& GaiaUrls::oauth_get_access_token_url() const {

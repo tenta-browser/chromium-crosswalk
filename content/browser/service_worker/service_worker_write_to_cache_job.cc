@@ -353,10 +353,12 @@ void ServiceWorkerWriteToCacheJob::OnResponseStarted(net::URLRequest* request,
     version_->embedded_worker()->OnNetworkAccessedForScriptLoad();
   }
 
-  http_info_.reset(new net::HttpResponseInfo(net_request_->response_info()));
+  http_info_ =
+      std::make_unique<net::HttpResponseInfo>(net_request_->response_info());
   scoped_refptr<HttpResponseInfoIOBuffer> info_buffer =
-      new HttpResponseInfoIOBuffer(
-          new net::HttpResponseInfo(net_request_->response_info()));
+      base::MakeRefCounted<HttpResponseInfoIOBuffer>(
+          std::make_unique<net::HttpResponseInfo>(
+              net_request_->response_info()));
   net::Error error = cache_writer_->MaybeWriteHeaders(
       info_buffer.get(),
       base::BindOnce(&ServiceWorkerWriteToCacheJob::OnWriteHeadersComplete,
@@ -476,7 +478,8 @@ net::Error ServiceWorkerWriteToCacheJob::NotifyFinishedCaching(
   // equivalent, the new version didn't actually install because it already
   // exists.
   if (net_error == net::OK && !cache_writer_->did_replace()) {
-    version_->SetStartWorkerStatusCode(SERVICE_WORKER_ERROR_EXISTS);
+    version_->SetStartWorkerStatusCode(
+        blink::ServiceWorkerStatusCode::kErrorExists);
     version_->script_cache_map()->NotifyFinishedCaching(
         url_, size, kIdenticalScriptError, std::string());
   } else {

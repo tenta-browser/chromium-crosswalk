@@ -50,7 +50,7 @@ cr.define('settings_about_page', function() {
           updateAvailable: false,
         };
 
-        /** @private {boolean} */
+        /** @private {boolean|Promise} */
         this.hasEndOfLife_ = false;
       }
     }
@@ -129,7 +129,7 @@ cr.define('settings_about_page', function() {
       this.regulatoryInfo_ = regulatoryInfo;
     };
 
-    /** @param {boolean} hasEndOfLife */
+    /** @param {boolean|Promise} hasEndOfLife */
     TestAboutPageBrowserProxy.prototype.setHasEndOfLife = function(
         hasEndOfLife) {
       this.hasEndOfLife_ = hasEndOfLife;
@@ -287,7 +287,7 @@ cr.define('settings_about_page', function() {
 
         fireStatusChanged(UpdateStatus.FAILED);
         assertEquals(null, icon.src);
-        assertEquals('settings:error', icon.icon);
+        assertEquals('cr:error', icon.icon);
         assertEquals(0, statusMessageEl.textContent.trim().length);
 
         fireStatusChanged(UpdateStatus.DISABLED);
@@ -298,8 +298,7 @@ cr.define('settings_about_page', function() {
 
       test('ErrorMessageWithHtml', function() {
         const htmlError = 'hello<br>there<br>was<pre>an</pre>error';
-        fireStatusChanged(
-            UpdateStatus.FAILED, {message: htmlError});
+        fireStatusChanged(UpdateStatus.FAILED, {message: htmlError});
         const statusMessageEl = page.$$('#updateStatusMessage div');
         assertEquals(htmlError, statusMessageEl.innerHTML);
       });
@@ -373,19 +372,19 @@ cr.define('settings_about_page', function() {
 
             fireStatusChanged(UpdateStatus.CHECKING);
             assertEquals(null, icon.src);
-            assertEquals('settings:error', icon.icon);
+            assertEquals('cr:error', icon.icon);
             assertFalse(page.$.deprecationWarning.hidden);
             assertTrue(page.$.updateStatusMessage.hidden);
 
             fireStatusChanged(UpdateStatus.FAILED);
             assertEquals(null, icon.src);
-            assertEquals('settings:error', icon.icon);
+            assertEquals('cr:error', icon.icon);
             assertFalse(page.$.deprecationWarning.hidden);
             assertTrue(page.$.updateStatusMessage.hidden);
 
             fireStatusChanged(UpdateStatus.UPDATED);
             assertEquals(null, icon.src);
-            assertEquals('settings:error', icon.icon);
+            assertEquals('cr:error', icon.icon);
             assertFalse(page.$.deprecationWarning.hidden);
             assertTrue(page.$.updateStatusMessage.hidden);
           });
@@ -402,7 +401,7 @@ cr.define('settings_about_page', function() {
 
         relaunch = page.$.relaunch;
         assertTrue(!!relaunch);
-        MockInteractions.tap(relaunch);
+        relaunch.click();
         return lifetimeBrowserProxy.whenCalled('relaunch');
       });
 
@@ -500,11 +499,11 @@ cr.define('settings_about_page', function() {
             assertTrue(page.$.relaunch.hidden);
             assertFalse(page.$.relaunchAndPowerwash.hidden);
 
-            MockInteractions.tap(page.$.relaunchAndPowerwash);
+            page.$.relaunchAndPowerwash.click();
             return lifetimeBrowserProxy.whenCalled('factoryReset')
-              .then((requestTpmFirmwareUpdate) => {
-                assertFalse(requestTpmFirmwareUpdate);
-              });
+                .then((requestTpmFirmwareUpdate) => {
+                  assertFalse(requestTpmFirmwareUpdate);
+                });
           });
         });
 
@@ -525,7 +524,7 @@ cr.define('settings_about_page', function() {
             assertFalse(page.$.relaunch.hidden);
             assertTrue(page.$.relaunchAndPowerwash.hidden);
 
-            MockInteractions.tap(page.$.relaunch);
+            page.$.relaunch.click();
             return lifetimeBrowserProxy.whenCalled('relaunch');
           });
         });
@@ -564,8 +563,8 @@ cr.define('settings_about_page', function() {
            * @return {!Promise}
            */
           function checkRegulatoryInfo(isShowing) {
-            return aboutBrowserProxy.whenCalled('getRegulatoryInfo').then(
-                function() {
+            return aboutBrowserProxy.whenCalled('getRegulatoryInfo')
+                .then(function() {
                   const regulatoryInfoEl = page.$.regulatoryInfo;
                   assertTrue(!!regulatoryInfoEl);
                   assertEquals(isShowing, !regulatoryInfoEl.hidden);
@@ -579,34 +578,39 @@ cr.define('settings_about_page', function() {
                 });
           }
 
-          return checkRegulatoryInfo(false).then(function() {
-            regulatoryInfo = {text: 'foo', url: 'bar'};
-            aboutBrowserProxy.setRegulatoryInfo(regulatoryInfo);
-            return initNewPage();
-          }).then(function() {
-            return checkRegulatoryInfo(true);
-          });
+          return checkRegulatoryInfo(false)
+              .then(function() {
+                regulatoryInfo = {text: 'foo', url: 'bar'};
+                aboutBrowserProxy.setRegulatoryInfo(regulatoryInfo);
+                return initNewPage();
+              })
+              .then(function() {
+                return checkRegulatoryInfo(true);
+              });
         });
 
         test('TPMFirmwareUpdate', function() {
-          return initNewPage().then(function() {
-            assertTrue(page.$.aboutTPMFirmwareUpdate.hidden);
-            aboutBrowserProxy.setTPMFirmwareUpdateStatus(
-                {updateAvailable: true});
-            aboutBrowserProxy.refreshTPMFirmwareUpdateStatus();
-          }).then(function() {
-            assertFalse(page.$.aboutTPMFirmwareUpdate.hidden);
-            MockInteractions.tap(page.$.aboutTPMFirmwareUpdate);
-          }).then(function() {
-            const dialog = page.$$('settings-powerwash-dialog');
-            assertTrue(!!dialog);
-            assertTrue(dialog.$.dialog.open);
-            MockInteractions.tap(dialog.$$('#powerwash'));
-            return lifetimeBrowserProxy.whenCalled('factoryReset')
-                .then((requestTpmFirmwareUpdate) => {
-                  assertTrue(requestTpmFirmwareUpdate);
-                });
-          });
+          return initNewPage()
+              .then(function() {
+                assertTrue(page.$.aboutTPMFirmwareUpdate.hidden);
+                aboutBrowserProxy.setTPMFirmwareUpdateStatus(
+                    {updateAvailable: true});
+                aboutBrowserProxy.refreshTPMFirmwareUpdateStatus();
+              })
+              .then(function() {
+                assertFalse(page.$.aboutTPMFirmwareUpdate.hidden);
+                page.$.aboutTPMFirmwareUpdate.click();
+              })
+              .then(function() {
+                const dialog = page.$$('settings-powerwash-dialog');
+                assertTrue(!!dialog);
+                assertTrue(dialog.$.dialog.open);
+                dialog.$$('#powerwash').click();
+                return lifetimeBrowserProxy.whenCalled('factoryReset')
+                    .then((requestTpmFirmwareUpdate) => {
+                      assertTrue(requestTpmFirmwareUpdate);
+                    });
+              });
         });
 
         test('DeviceEndOfLife', function() {
@@ -644,13 +648,26 @@ cr.define('settings_about_page', function() {
                 });
           }
 
-          return checkHasEndOfLife(false)
+          // Force test proxy to not respond to JS requests.
+          // End of life message should still be hidden in this case.
+          aboutBrowserProxy.setHasEndOfLife(new Promise(function(res, rej) {}));
+          return initNewPage()
+              .then(function() {
+                return checkHasEndOfLife(false);
+              })
               .then(function() {
                 aboutBrowserProxy.setHasEndOfLife(true);
                 return initNewPage();
               })
               .then(function() {
                 return checkHasEndOfLife(true);
+              })
+              .then(function() {
+                aboutBrowserProxy.setHasEndOfLife(false);
+                return initNewPage();
+              })
+              .then(function() {
+                return checkHasEndOfLife(false);
               });
         });
       }
@@ -689,7 +706,7 @@ cr.define('settings_about_page', function() {
 
       test('GetHelp', function() {
         assertTrue(!!page.$.help);
-        MockInteractions.tap(page.$.help);
+        page.$.help.click();
         return aboutBrowserProxy.whenCalled('openHelpPage');
       });
     });
@@ -710,7 +727,7 @@ cr.define('settings_about_page', function() {
 
       test('ReportAnIssue', function() {
         assertTrue(!!page.$.reportIssue);
-        MockInteractions.tap(page.$.reportIssue);
+        page.$.reportIssue.click();
         return browserProxy.whenCalled('openFeedbackDialog');
       });
 
@@ -812,7 +829,7 @@ cr.define('settings_about_page', function() {
           const item = page.$$('#promoteUpdater');
           assertTrue(!!item);
 
-          MockInteractions.tap(item);
+          item.click();
 
           return browserProxy.whenCalled('promoteUpdater');
         });
@@ -848,15 +865,20 @@ cr.define('settings_about_page', function() {
           page = document.createElement('settings-detailed-build-info');
           document.body.appendChild(page);
 
-          return Promise.all([
-            browserProxy.whenCalled('pageReady'),
-            browserProxy.whenCalled('getVersionInfo'),
-            browserProxy.whenCalled('getChannelInfo'),
-          ]).then(function() {
-            assertEquals(versionInfo.arcVersion, page.$.arcVersion.textContent);
-            assertEquals(versionInfo.osVersion, page.$.osVersion.textContent);
-            assertEquals(versionInfo.osFirmware, page.$.osFirmware.textContent);
-          });
+          return Promise
+              .all([
+                browserProxy.whenCalled('pageReady'),
+                browserProxy.whenCalled('getVersionInfo'),
+                browserProxy.whenCalled('getChannelInfo'),
+              ])
+              .then(function() {
+                assertEquals(
+                    versionInfo.arcVersion, page.$.arcVersion.textContent);
+                assertEquals(
+                    versionInfo.osVersion, page.$.osVersion.textContent);
+                assertEquals(
+                    versionInfo.osFirmware, page.$.osFirmware.textContent);
+              });
         });
 
         /**
@@ -903,13 +925,14 @@ cr.define('settings_about_page', function() {
           dialog = document.createElement('settings-channel-switcher-dialog');
           document.body.appendChild(dialog);
 
-          radioButtons = dialog.shadowRoot.querySelectorAll(
-              'paper-radio-button');
+          radioButtons = dialog.shadowRoot.querySelectorAll('cr-radio-button');
           assertEquals(3, radioButtons.length);
           return browserProxy.whenCalled('getChannelInfo');
         });
 
-        teardown(function() { dialog.remove(); });
+        teardown(function() {
+          dialog.remove();
+        });
 
         test('Initialization', function() {
           const radioGroup = dialog.$$('paper-radio-group');
@@ -932,7 +955,7 @@ cr.define('settings_about_page', function() {
         // Test case where user switches to a less stable channel.
         test('ChangeChannel_LessStable', function() {
           assertEquals(BrowserChannel.DEV, radioButtons.item(2).name);
-          MockInteractions.tap(radioButtons.item(2));
+          radioButtons.item(2).click();
           Polymer.dom.flush();
 
           return browserProxy.whenCalled('getChannelInfo').then(function() {
@@ -941,24 +964,26 @@ cr.define('settings_about_page', function() {
             assertTrue(dialog.$.changeChannelAndPowerwash.hidden);
             assertFalse(dialog.$.changeChannel.hidden);
 
-            const whenTargetChannelChangedFired = test_util.eventToPromise(
-                'target-channel-changed', dialog);
+            const whenTargetChannelChangedFired =
+                test_util.eventToPromise('target-channel-changed', dialog);
 
-            MockInteractions.tap(dialog.$.changeChannel);
-            return browserProxy.whenCalled('setChannel').then(function(args) {
-              assertEquals(BrowserChannel.DEV, args[0]);
-              assertFalse(args[1]);
-              return whenTargetChannelChangedFired;
-            }).then(function(event) {
-              assertEquals(BrowserChannel.DEV, event.detail);
-            });
+            dialog.$.changeChannel.click();
+            return browserProxy.whenCalled('setChannel')
+                .then(function(args) {
+                  assertEquals(BrowserChannel.DEV, args[0]);
+                  assertFalse(args[1]);
+                  return whenTargetChannelChangedFired;
+                })
+                .then(function(event) {
+                  assertEquals(BrowserChannel.DEV, event.detail);
+                });
           });
         });
 
         // Test case where user switches to a more stable channel.
         test('ChangeChannel_MoreStable', function() {
           assertEquals(BrowserChannel.STABLE, radioButtons.item(0).name);
-          MockInteractions.tap(radioButtons.item(0));
+          radioButtons.item(0).click();
           Polymer.dom.flush();
 
           return browserProxy.whenCalled('getChannelInfo').then(function() {
@@ -968,17 +993,19 @@ cr.define('settings_about_page', function() {
             assertFalse(dialog.$.changeChannelAndPowerwash.hidden);
             assertTrue(dialog.$.changeChannel.hidden);
 
-            const whenTargetChannelChangedFired = test_util.eventToPromise(
-                'target-channel-changed', dialog);
+            const whenTargetChannelChangedFired =
+                test_util.eventToPromise('target-channel-changed', dialog);
 
-            MockInteractions.tap(dialog.$.changeChannelAndPowerwash);
-            return browserProxy.whenCalled('setChannel').then(function(args) {
-              assertEquals(BrowserChannel.STABLE, args[0]);
-              assertTrue(args[1]);
-              return whenTargetChannelChangedFired;
-            }).then(function(event) {
-              assertEquals(BrowserChannel.STABLE, event.detail);
-            });
+            dialog.$.changeChannelAndPowerwash.click();
+            return browserProxy.whenCalled('setChannel')
+                .then(function(args) {
+                  assertEquals(BrowserChannel.STABLE, args[0]);
+                  assertTrue(args[1]);
+                  return whenTargetChannelChangedFired;
+                })
+                .then(function(event) {
+                  assertEquals(BrowserChannel.STABLE, event.detail);
+                });
           });
         });
       });

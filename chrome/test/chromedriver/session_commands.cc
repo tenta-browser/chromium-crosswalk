@@ -93,14 +93,10 @@ Status EvaluateScriptAndIgnoreResult(Session* session, std::string expression) {
 InitSessionParams::InitSessionParams(
     scoped_refptr<URLRequestContextGetter> context_getter,
     const SyncWebSocketFactory& socket_factory,
-    DeviceManager* device_manager,
-    PortServer* port_server,
-    PortManager* port_manager)
+    DeviceManager* device_manager)
     : context_getter(context_getter),
       socket_factory(socket_factory),
-      device_manager(device_manager),
-      port_server(port_server),
-      port_manager(port_manager) {}
+      device_manager(device_manager) {}
 
 InitSessionParams::InitSessionParams(const InitSessionParams& other) = default;
 
@@ -116,6 +112,9 @@ std::unique_ptr<base::DictionaryValue> CreateCapabilities(
   caps->SetString("version",
                   session->chrome->GetBrowserInfo()->browser_version);
   caps->SetString("chrome.chromedriverVersion", kChromeDriverVersion);
+  caps->SetString(
+      "goog:chromeOptions.debuggerAddress",
+      session->chrome->GetBrowserInfo()->debugger_address.ToString());
   caps->SetString("platform", session->chrome->GetOperatingSystemName());
   caps->SetString("pageLoadStrategy", session->chrome->page_load_strategy());
   caps->SetBoolean("javascriptEnabled", true);
@@ -161,26 +160,57 @@ Status CheckSessionCreated(Session* session) {
   WebView* web_view = NULL;
   Status status = session->GetTargetWindow(&web_view);
   if (status.IsError())
-    return Status(kSessionNotCreatedException, status);
+    return Status(kSessionNotCreated, status);
 
   status = web_view->ConnectIfNecessary();
   if (status.IsError())
-    return Status(kSessionNotCreatedException, status);
+    return Status(kSessionNotCreated, status);
 
   base::ListValue args;
   std::unique_ptr<base::Value> result(new base::Value(0));
   status = web_view->CallFunction(session->GetCurrentFrameId(),
                                   "function(s) { return 1; }", args, &result);
   if (status.IsError())
-    return Status(kSessionNotCreatedException, status);
+    return Status(kSessionNotCreated, status);
 
   int response;
   if (!result->GetAsInteger(&response) || response != 1) {
-    return Status(kSessionNotCreatedException,
+    return Status(kSessionNotCreated,
                   "unexpected response from browser");
   }
 
   return Status(kOk);
+}
+
+// Look for W3C mode setting in InitSession command parameters.
+bool GetW3CSetting(const base::DictionaryValue& params) {
+  bool w3c;
+  const base::ListValue* list;
+  const base::DictionaryValue* dict;
+
+  if (params.GetDictionary("capabilities.alwaysMatch", &dict)) {
+    if (dict->GetBoolean("goog:chromeOptions.w3c", &w3c) ||
+        dict->GetBoolean("chromeOptions.w3c", &w3c)) {
+      return w3c;
+    }
+  }
+
+  if (params.GetList("capabilities.firstMatch", &list) &&
+      list->GetDictionary(0, &dict)) {
+    if (dict->GetBoolean("goog:chromeOptions.w3c", &w3c) ||
+        dict->GetBoolean("chromeOptions.w3c", &w3c)) {
+      return w3c;
+    }
+  }
+
+  if (params.GetDictionary("desiredCapabilities", &dict)) {
+    if (dict->GetBoolean("goog:chromeOptions.w3c", &w3c) ||
+        dict->GetBoolean("chromeOptions.w3c", &w3c)) {
+      return w3c;
+    }
+  }
+
+  return kW3CDefault;
 }
 
 Status InitSessionHelper(const InitSessionParams& bound_params,
@@ -190,14 +220,14 @@ Status InitSessionHelper(const InitSessionParams& bound_params,
   session->driver_log.reset(
       new WebDriverLog(WebDriverLog::kDriverType, Log::kAll));
   const base::DictionaryValue* desired_caps;
+  const base::DictionaryValue empty_dict;
   base::DictionaryValue merged_caps;
 
-  bool w3c_capability = false;
-  if (params.GetDictionary("capabilities.alwaysMatch", &desired_caps) &&
-      (desired_caps->GetBoolean("goog:chromeOptions.w3c", &w3c_capability) ||
-       desired_caps->GetBoolean("chromeOptions.w3c", &w3c_capability)) &&
-      w3c_capability) {
-    session->w3c_compliant = true;
+  session->w3c_compliant = GetW3CSetting(params);
+  if (session->w3c_compliant) {
+    if (!params.GetDictionary("capabilities.alwaysMatch", &desired_caps))
+      desired_caps = &empty_dict;
+
     // TODO(johnchen): Handle capabilities.firstMatch. Currently, we're just
     // merging, not validating or matching as per the spec.
     const base::ListValue* first_match_list;
@@ -215,7 +245,7 @@ Status InitSessionHelper(const InitSessionParams& bound_params,
         continue;
       }
       if (!MergeCapabilities(desired_caps, first_match, &merged_caps)) {
-        return Status(kSessionNotCreatedException, "Invalid capabilities");
+        return Status(kSessionNotCreated, "Invalid capabilities");
       }
       if (MatchCapabilities(&merged_caps)) {
         // If a match is found, we want to use these matched setcapabilities.
@@ -223,16 +253,8 @@ Status InitSessionHelper(const InitSessionParams& bound_params,
         break;
       }
     }
-  } else if (params.GetDictionary("capabilities.desiredCapabilities",
-                                  &desired_caps) &&
-             (desired_caps->GetBoolean("goog:chromeOptions.w3c",
-                                       &w3c_capability) ||
-              desired_caps->GetBoolean("chromeOptions.w3c", &w3c_capability)) &&
-             w3c_capability) {
-    // TODO(johnchen): Remove when clients stop using this.
-    session->w3c_compliant = true;
   } else if (!params.GetDictionary("desiredCapabilities", &desired_caps)) {
-    return Status(kSessionNotCreatedException,
+    return Status(kSessionNotCreated,
                   "Missing or invalid capabilities");
   }
 
@@ -268,7 +290,6 @@ Status InitSessionHelper(const InitSessionParams& bound_params,
   status =
       LaunchChrome(bound_params.context_getter.get(),
                    bound_params.socket_factory, bound_params.device_manager,
-                   bound_params.port_server, bound_params.port_manager,
                    capabilities, std::move(devtools_event_listeners),
                    &session->chrome, session->w3c_compliant);
   if (status.IsError())
@@ -288,7 +309,7 @@ Status InitSessionHelper(const InitSessionParams& bound_params,
   session->force_devtools_screenshot = capabilities.force_devtools_screenshot;
   session->capabilities = CreateCapabilities(session, capabilities);
 
-  if (w3c_capability) {
+  if (session->w3c_compliant) {
     base::DictionaryValue body;
     body.SetDictionary("capabilities", std::move(session->capabilities));
     body.SetString("sessionId", session->id);
@@ -419,11 +440,10 @@ Status ExecuteClose(Session* session,
   if (status.IsError())
     return status;
 
-  status = session->chrome->GetWebViewIds(&web_view_ids,
-                                          session->w3c_compliant);
+  status = ExecuteGetWindowHandles(session, base::DictionaryValue(), value);
   if ((status.code() == kChromeNotReachable && is_last_web_view) ||
-      (status.IsOk() && web_view_ids.empty())) {
-    // If no window is open, close is the equivalent of calling "quit".
+      (status.IsOk() && (*value)->GetList().empty())) {
+    // If the only open window was closed, close is the same as calling "quit".
     session->quit = true;
     return session->chrome->Quit();
   }
@@ -545,9 +565,11 @@ Status ExecuteSwitchToWindow(Session* session,
   return Status(kOk);
 }
 
-Status ExecuteSetTimeout(Session* session,
-                         const base::DictionaryValue& params,
-                         std::unique_ptr<base::Value>* value) {
+// Handles legacy format SetTimeout command.
+// TODO(johnchen@chromium.org): Remove when we stop supporting legacy protocol.
+Status ExecuteSetTimeoutLegacy(Session* session,
+                               const base::DictionaryValue& params,
+                               std::unique_ptr<base::Value>* value) {
   double ms_double;
   if (!params.GetDouble("ms", &ms_double))
     return Status(kUnknownError, "'ms' must be a double");
@@ -557,8 +579,6 @@ Status ExecuteSetTimeout(Session* session,
 
   base::TimeDelta timeout =
       base::TimeDelta::FromMilliseconds(static_cast<int>(ms_double));
-  // TODO(frankf): implicit and script timeout should be cleared
-  // if negative timeout is specified.
   if (type == "implicit") {
     session->implicit_wait = timeout;
   } else if (type == "script") {
@@ -571,6 +591,41 @@ Status ExecuteSetTimeout(Session* session,
     return Status(kUnknownError, "unknown type of timeout:" + type);
   }
   return Status(kOk);
+}
+
+Status ExecuteSetTimeoutsW3C(Session* session,
+                             const base::DictionaryValue& params,
+                             std::unique_ptr<base::Value>* value) {
+  for (const auto& setting : params.DictItems()) {
+    int timeout_ms;
+    if (!setting.second.GetAsInteger(&timeout_ms) || timeout_ms < 0)
+      return Status(kInvalidArgument, "value must be a non-negative integer");
+    base::TimeDelta timeout = base::TimeDelta::FromMilliseconds(timeout_ms);
+    const std::string& type = setting.first;
+    if (type == "script") {
+      session->script_timeout = timeout;
+    } else if (type == "pageLoad") {
+      session->page_load_timeout = timeout;
+    } else if (type == "implicit") {
+      session->implicit_wait = timeout;
+    } else {
+      return Status(kInvalidArgument, "unknown type of timeout: " + type);
+    }
+  }
+  return Status(kOk);
+}
+
+Status ExecuteSetTimeouts(Session* session,
+                          const base::DictionaryValue& params,
+                          std::unique_ptr<base::Value>* value) {
+  // TODO(johnchen@chromium.org): Remove legacy version support when we stop
+  // supporting non-W3C protocol. At that time, we can delete the legacy
+  // function and merge the W3C function into this function.
+  if (params.HasKey("ms")) {
+    return ExecuteSetTimeoutLegacy(session, params, value);
+  } else {
+    return ExecuteSetTimeoutsW3C(session, params, value);
+  }
 }
 
 Status ExecuteGetTimeouts(Session* session,
@@ -756,34 +811,21 @@ Status ExecuteSetNetworkConnection(Session* session,
   return Status(kOk);
 }
 
+// TODO(johnchen): There is no public method in Chrome or ChromeDesktopImpl to
+// get both size and position in one call. What we're doing now is kind of
+// wasteful, since both GetWindowPosition and GetWindowSize end up getting both
+// position and size, and then discard one of the two pieces.
 Status ExecuteGetWindowRect(Session* session,
                             const base::DictionaryValue& params,
                             std::unique_ptr<base::Value>* value) {
-  ChromeDesktopImpl* desktop = NULL;
-  Status status = session->chrome->GetAsDesktop(&desktop);
-  if (status.IsError())
-    return status;
-
   int x, y;
   int width, height;
 
-  if (desktop->GetBrowserInfo()->build_no >= kBrowserWindowDevtoolsBuildNo) {
-    status = desktop->GetWindowPosition(session->window, &x, &y);
-    if (status.IsError())
-      return status;
-    status = desktop->GetWindowSize(session->window, &width, &height);
-  } else {
-    AutomationExtension* extension = NULL;
-    status =
-        desktop->GetAutomationExtension(&extension, session->w3c_compliant);
-    if (status.IsError())
-      return status;
+  Status status = session->chrome->GetWindowPosition(session->window, &x, &y);
+  if (status.IsError())
+    return status;
+  status = session->chrome->GetWindowSize(session->window, &width, &height);
 
-    status = extension->GetWindowPosition(&x, &y);
-    if (status.IsError())
-      return status;
-    status = extension->GetWindowSize(&width, &height);
-  }
   if (status.IsError())
     return status;
 
@@ -799,24 +841,9 @@ Status ExecuteGetWindowRect(Session* session,
 Status ExecuteGetWindowPosition(Session* session,
                                 const base::DictionaryValue& params,
                                 std::unique_ptr<base::Value>* value) {
-  ChromeDesktopImpl* desktop = NULL;
-  Status status = session->chrome->GetAsDesktop(&desktop);
-  if (status.IsError())
-    return status;
-
   int x, y;
+  Status status = session->chrome->GetWindowPosition(session->window, &x, &y);
 
-  if (desktop->GetBrowserInfo()->build_no >= kBrowserWindowDevtoolsBuildNo) {
-    status = desktop->GetWindowPosition(session->window, &x, &y);
-  } else {
-    AutomationExtension* extension = NULL;
-    status =
-        desktop->GetAutomationExtension(&extension, session->w3c_compliant);
-    if (status.IsError())
-      return status;
-
-    status = extension->GetWindowPosition(&x, &y);
-  }
   if (status.IsError())
     return status;
 
@@ -856,24 +883,10 @@ Status ExecuteSetWindowPosition(Session* session,
 Status ExecuteGetWindowSize(Session* session,
                             const base::DictionaryValue& params,
                             std::unique_ptr<base::Value>* value) {
-  ChromeDesktopImpl* desktop = NULL;
-  Status status = session->chrome->GetAsDesktop(&desktop);
-  if (status.IsError())
-    return status;
-
   int width, height;
 
-  if (desktop->GetBrowserInfo()->build_no >= kBrowserWindowDevtoolsBuildNo) {
-    status = desktop->GetWindowSize(session->window, &width, &height);
-  } else {
-    AutomationExtension* extension = NULL;
-    status =
-        desktop->GetAutomationExtension(&extension, session->w3c_compliant);
-    if (status.IsError())
-      return status;
-
-    status = extension->GetWindowSize(&width, &height);
-  }
+  Status status =
+      session->chrome->GetWindowSize(session->window, &width, &height);
   if (status.IsError())
     return status;
 

@@ -39,7 +39,7 @@ void FontFaceSet::FireLoadingEvent() {
   if (should_fire_loading_event_) {
     should_fire_loading_event_ = false;
     DispatchEvent(
-        FontFaceSetLoadEvent::CreateForFontFaces(EventTypeNames::loading));
+        *FontFaceSetLoadEvent::CreateForFontFaces(EventTypeNames::loading));
   }
 }
 
@@ -169,7 +169,8 @@ ScriptPromise FontFaceSet::load(ScriptState* script_state,
         ScriptPromiseResolver::Create(script_state);
     ScriptPromise promise = resolver->Promise();
     resolver->Reject(DOMException::Create(
-        kSyntaxError, "Could not resolve '" + font_string + "' as a font."));
+        DOMExceptionCode::kSyntaxError,
+        "Could not resolve '" + font_string + "' as a font."));
     return promise;
   }
 
@@ -200,7 +201,8 @@ bool FontFaceSet::check(const String& font_string,
   Font font;
   if (!ResolveFontStyle(font_string, font)) {
     exception_state.ThrowDOMException(
-        kSyntaxError, "Could not resolve '" + font_string + "' as a font.");
+        DOMExceptionCode::kSyntaxError,
+        "Could not resolve '" + font_string + "' as a font.");
     return false;
   }
 
@@ -242,9 +244,9 @@ void FontFaceSet::FireDoneEvent() {
       failed_fonts_.clear();
     }
     is_loading_ = false;
-    DispatchEvent(done_event);
+    DispatchEvent(*done_event);
     if (error_event)
-      DispatchEvent(error_event);
+      DispatchEvent(*error_event);
   }
 
   if (ready_->GetState() == ReadyProperty::kPending)

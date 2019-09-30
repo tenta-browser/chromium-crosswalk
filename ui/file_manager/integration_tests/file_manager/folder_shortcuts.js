@@ -4,26 +4,27 @@
 
 'use strict';
 
-/**
- * Constants for selectors.
- */
-var TREEITEM_DRIVE = '#directory-tree > div:nth-child(1) > .tree-children ' +
-    '> div:nth-child(1) ';
-var TREEITEM_A = TREEITEM_DRIVE + '> .tree-children > div:nth-child(1) ';
-var TREEITEM_B = TREEITEM_A + '> .tree-children > div:nth-child(1) ';
-var TREEITEM_C = TREEITEM_B + '> .tree-children > div:nth-child(1) ';
-var TREEITEM_D = TREEITEM_DRIVE + '> .tree-children > div:nth-child(2) ';
-var TREEITEM_E = TREEITEM_D + '> .tree-children > div:nth-child(1) ';
-var EXPAND_ICON = '> .tree-row > .expand-icon';
-var ITEM_ICON = '> .tree-row > .item-icon';
-var EXPANDED_SUBTREE = '> .tree-children[expanded]';
+(function(){
 
 /**
- * Entry set which is used for this test.
- * @type {Array<TestEntryInfo>}
- * @const
+ * Directory tree selector constants.
  */
-var ENTRY_SET = [
+const TREEITEM_A = TREEITEM_DRIVE + ' [entry-label="A"] ';
+const TREEITEM_B = TREEITEM_A + '[entry-label="B"] ';
+const TREEITEM_C = TREEITEM_B + '[entry-label="C"] ';
+
+const TREEITEM_D = TREEITEM_DRIVE + ' [entry-label="D"] ';
+const TREEITEM_E = TREEITEM_D + '[entry-label="E"] ';
+
+const EXPAND_ICON = '> .tree-row > .expand-icon';
+const ITEM_ICON = '> .tree-row > .item-icon';
+const EXPANDED_SUBTREE = '> .tree-children[expanded]';
+
+/**
+ * Entry set used for the folder shortcut tests.
+ * @type {Array<TestEntryInfo>}
+ */
+const FOLDER_ENTRY_SET = [
   ENTRIES.directoryA,
   ENTRIES.directoryB,
   ENTRIES.directoryC,
@@ -33,23 +34,22 @@ var ENTRY_SET = [
 ];
 
 /**
- * Constants for each folders.
+ * Constants for each folder.
  * @type {Array<Object>}
- * @const
  */
-var DIRECTORY = {
+const DIRECTORY = {
   Drive: {
     contents: [
       ENTRIES.directoryA.getExpectedRow(), ENTRIES.directoryD.getExpectedRow()
     ],
     name: 'Drive',
-    navItem: '#tree-item-autogen-id-4',
+    navItem: '.tree-item[entry-label="My Drive"]',
     treeItem: TREEITEM_DRIVE
   },
   A: {
     contents: [ENTRIES.directoryB.getExpectedRow()],
     name: 'A',
-    navItem: '#tree-item-autogen-id-14',
+    navItem: '.tree-item[label="A"]',
     treeItem: TREEITEM_A
   },
   B: {
@@ -60,13 +60,13 @@ var DIRECTORY = {
   C: {
     contents: [],
     name: 'C',
-    navItem: '#tree-item-autogen-id-14',
+    navItem: '.tree-item[label="C"]',
     treeItem: TREEITEM_C
   },
   D: {
     contents: [ENTRIES.directoryE.getExpectedRow()],
     name: 'D',
-    navItem: '#tree-item-autogen-id-13',
+    navItem: '.tree-item[label="D"]',
     treeItem: TREEITEM_D
   },
   E: {
@@ -253,7 +253,7 @@ testcase.traverseFolderShortcuts = function() {
   StepsRunner.run([
     // Set up each window.
     function() {
-      addEntries(['drive'], ENTRY_SET, this.next);
+      addEntries(['drive'], FOLDER_ENTRY_SET, this.next);
     },
     function(result) {
       chrome.test.assertTrue(result);
@@ -294,39 +294,38 @@ testcase.traverseFolderShortcuts = function() {
       expectSelection(
           windowId, DIRECTORY.Drive, DIRECTORY.Drive).then(this.next);
     },
-
-    // Press Ctrl+5 to select 5th shortcut.
-    // Current directory should be D.
-    // Shortcut to C should be selected.
+    // Press Ctrl+3 to select 3d shortcut.
     function() {
       remoteCall.callRemoteTestUtil(
-          'fakeKeyDown', windowId,
-          ['#file-list', '5', 'U+0034', true, false, false], this.next);
+          'fakeKeyDown', windowId, ['#file-list', '3', '3', true, false, false],
+          this.next);
     },
+    // Current directory should be D.
     function(result) {
       chrome.test.assertTrue(result);
       expectSelection(windowId, DIRECTORY.D, DIRECTORY.D).then(this.next);
     },
-
-    // Press UP to select 4th shortcut.
+    // Press UP to select shortcut (above D).
     // Current directory should remain D.
-    // Shortcut to C should be selected.
+    // But Shortcut to C should be selected.
     function() {
       remoteCall.callRemoteTestUtil('fakeKeyDown', windowId,
           ['#directory-tree', 'ArrowUp', 'Up', false, false, false], this.next);
     },
+    // Current directory should remain D.
     function(result) {
       chrome.test.assertTrue(result);
       expectSelection(windowId, DIRECTORY.D, DIRECTORY.C).then(this.next);
     },
-
     // Press Enter to change the directory to C.
-    // Current directory should be C.
+    // Then current directory should change to C.
     function() {
       remoteCall.callRemoteTestUtil('fakeKeyDown', windowId,
           ['#directory-tree', 'Enter', 'Enter', false, false, false],
            this.next);
     },
+
+    // Current directory should be C.
     function(result) {
       chrome.test.assertTrue(result);
       expectSelection(windowId, DIRECTORY.C, DIRECTORY.C).then(this.next);
@@ -348,7 +347,7 @@ testcase.addRemoveFolderShortcuts = function() {
   StepsRunner.run([
     // Set up each window.
     function() {
-      addEntries(['drive'], ENTRY_SET, this.next);
+      addEntries(['drive'], FOLDER_ENTRY_SET, this.next);
     },
     function(result) {
       chrome.test.assertTrue(result);
@@ -415,3 +414,4 @@ testcase.addRemoveFolderShortcuts = function() {
   ]);
 };
 
+})();

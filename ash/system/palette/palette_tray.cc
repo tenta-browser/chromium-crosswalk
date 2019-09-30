@@ -15,13 +15,12 @@
 #include "ash/shelf/shelf.h"
 #include "ash/shelf/shelf_constants.h"
 #include "ash/shell.h"
-#include "ash/shell_port.h"
 #include "ash/strings/grit/ash_strings.h"
+#include "ash/system/model/system_tray_model.h"
 #include "ash/system/palette/palette_tool_manager.h"
 #include "ash/system/palette/palette_utils.h"
 #include "ash/system/palette/palette_welcome_bubble.h"
 #include "ash/system/tray/system_menu_button.h"
-#include "ash/system/tray/system_tray_controller.h"
 #include "ash/system/tray/tray_bubble_wrapper.h"
 #include "ash/system/tray/tray_constants.h"
 #include "ash/system/tray/tray_container.h"
@@ -95,7 +94,8 @@ class TitleView : public views::View, public views::ButtonListener {
         new views::Label(l10n_util::GetStringUTF16(IDS_ASH_STYLUS_TOOLS_TITLE));
     title_label->SetHorizontalAlignment(gfx::ALIGN_LEFT);
     AddChildView(title_label);
-    TrayPopupItemStyle style(TrayPopupItemStyle::FontStyle::TITLE);
+    TrayPopupItemStyle style(TrayPopupItemStyle::FontStyle::TITLE,
+                             false /* use_unified_theme */);
     style.SetupLabel(title_label);
     layout_ptr->SetFlexForView(title_label, 1);
     help_button_ = new SystemMenuButton(this, kSystemMenuHelpIcon,
@@ -117,13 +117,13 @@ class TitleView : public views::View, public views::ButtonListener {
       palette_tray_->RecordPaletteOptionsUsage(
           PaletteTrayOptions::PALETTE_SETTINGS_BUTTON,
           PaletteInvocationMethod::MENU);
-      Shell::Get()->system_tray_controller()->ShowPaletteSettings();
+      Shell::Get()->system_tray_model()->client_ptr()->ShowPaletteSettings();
       palette_tray_->HidePalette();
     } else if (sender == help_button_) {
       palette_tray_->RecordPaletteOptionsUsage(
           PaletteTrayOptions::PALETTE_HELP_BUTTON,
           PaletteInvocationMethod::MENU);
-      Shell::Get()->system_tray_controller()->ShowPaletteHelp();
+      Shell::Get()->system_tray_model()->client_ptr()->ShowPaletteHelp();
       palette_tray_->HidePalette();
     } else {
       NOTREACHED();
@@ -159,8 +159,7 @@ PaletteTray::PaletteTray(Shelf* shelf)
   tray_container()->AddChildView(icon_);
 
   Shell::Get()->AddShellObserver(this);
-  ShellPort::Get()->AddPointerWatcher(this,
-                                      views::PointerWatcherEventTypes::BASIC);
+  Shell::Get()->AddPointerWatcher(this, views::PointerWatcherEventTypes::BASIC);
 }
 
 PaletteTray::~PaletteTray() {
@@ -169,12 +168,13 @@ PaletteTray::~PaletteTray() {
 
   ui::InputDeviceManager::GetInstance()->RemoveObserver(this);
   Shell::Get()->RemoveShellObserver(this);
-  ShellPort::Get()->RemovePointerWatcher(this);
+  Shell::Get()->RemovePointerWatcher(this);
 }
 
 // static
 void PaletteTray::RegisterLocalStatePrefs(PrefRegistrySimple* registry) {
-  registry->RegisterBooleanPref(prefs::kHasSeenStylus, false);
+  registry->RegisterBooleanPref(prefs::kHasSeenStylus, false,
+                                PrefRegistry::PUBLIC);
 }
 
 // static

@@ -10,28 +10,37 @@
 #include "base/strings/string16.h"
 #import "ui/base/cocoa/tool_tip_base_view.h"
 #import "ui/base/cocoa/tracking_area.h"
+#include "ui/views/views_export.h"
 
 namespace ui {
 class TextInputClient;
 }
 
 namespace views {
-class View;
+class BridgedNativeWidget;
 }
 
 // The NSView that sits as the root contentView of the NSWindow, whilst it has
 // a views::RootView present. Bridges requests from Cocoa to the hosted
 // views::View.
+VIEWS_EXPORT
 @interface BridgedContentView : ToolTipBaseView<NSTextInputClient,
                                                 NSUserInterfaceValidations,
                                                 NSDraggingSource> {
  @private
-  // Weak. The hosted RootView, owned by hostedView_->GetWidget().
-  views::View* hostedView_;
+  // Weak, reset by clearView.
+  views::BridgedNativeWidget* bridge_;
 
   // Weak. If non-null the TextInputClient of the currently focused View in the
   // hierarchy rooted at |hostedView_|. Owned by the focused View.
+  // TODO(ccameron): Remove this member.
   ui::TextInputClient* textInputClient_;
+
+  // The TextInputClient about to be set. Requests for a new -inputContext will
+  // use this, but while the input is changing, |self| still needs to service
+  // IME requests using the old |textInputClient_|.
+  // TODO(ccameron): Remove this member.
+  ui::TextInputClient* pendingTextInputClient_;
 
   // A tracking area installed to enable mouseMoved events.
   ui::ScopedCrTrackingArea cursorTrackingArea_;
@@ -44,21 +53,14 @@ class View;
 
   // The last tooltip text, used to limit updates.
   base::string16 lastTooltipText_;
-
-  // Whether to draw an almost-transparent background with rounded corners so
-  // that OSX correctly blurs the background showing through.
-  BOOL drawMenuBackgroundForBlur_;
-
-  // The cached window mask. Only used for non-rectangular windows on 10.9.
-  base::scoped_nsobject<NSBezierPath> windowMask_;
 }
 
-@property(readonly, nonatomic) views::View* hostedView;
+@property(readonly, nonatomic) views::BridgedNativeWidget* bridge;
 @property(assign, nonatomic) ui::TextInputClient* textInputClient;
 @property(assign, nonatomic) BOOL drawMenuBackgroundForBlur;
 
 // Initialize the NSView -> views::View bridge. |viewToHost| must be non-NULL.
-- (id)initWithView:(views::View*)viewToHost;
+- (id)initWithBridge:(views::BridgedNativeWidget*)bridge bounds:(gfx::Rect)rect;
 
 // Clear the hosted view. For example, if it is about to be destroyed.
 - (void)clearView;
@@ -71,9 +73,6 @@ class View;
 // |locationInContent| is the position from the top left of the window's
 // contentRect (also this NSView's frame), as given by a ui::LocatedEvent.
 - (void)updateTooltipIfRequiredAt:(const gfx::Point&)locationInContent;
-
-// Update windowMask_ depending on the current view bounds.
-- (void)updateWindowMask;
 
 // Notifies the associated FocusManager whether full keyboard access is enabled
 // or not.

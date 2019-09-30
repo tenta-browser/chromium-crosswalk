@@ -158,8 +158,8 @@ void VisitedLinkEventListener::Add(VisitedLinkMaster::Fingerprint fingerprint) {
   if (!coalesce_timer_->IsRunning()) {
     coalesce_timer_->Start(
         FROM_HERE, TimeDelta::FromMilliseconds(kCommitIntervalMs),
-        base::Bind(&VisitedLinkEventListener::CommitVisitedLinks,
-                   base::Unretained(this)));
+        base::BindOnce(&VisitedLinkEventListener::CommitVisitedLinks,
+                       base::Unretained(this)));
   }
 }
 
@@ -174,7 +174,7 @@ void VisitedLinkEventListener::Reset(bool invalidate_hashes) {
 }
 
 void VisitedLinkEventListener::SetCoalesceTimerForTest(
-    base::Timer* coalesce_timer_override) {
+    base::OneShotTimer* coalesce_timer_override) {
   coalesce_timer_ = coalesce_timer_override;
 }
 

@@ -20,7 +20,7 @@
 #include "base/memory/weak_ptr.h"
 #include "base/optional.h"
 #include "base/run_loop.h"
-#include "base/test/histogram_tester.h"
+#include "base/test/metrics/histogram_tester.h"
 #include "build/build_config.h"
 #include "content/browser/bad_message.h"
 #include "content/common/frame_messages.h"
@@ -38,7 +38,6 @@ class RenderFrameHost;
 class Shell;
 class SiteInstance;
 class ToRenderFrameHost;
-struct FrameResizeParams;
 
 // Navigates the frame represented by |node| to |url|, blocking until the
 // navigation finishes.
@@ -194,45 +193,6 @@ class UrlCommitObserver : WebContentsObserver {
   DISALLOW_COPY_AND_ASSIGN(UrlCommitObserver);
 };
 
-// Class to sniff incoming IPCs for FrameHostMsg_UpdateResizeParams messages.
-// This allows the message to continue to the target child so that processing
-// can be verified by tests.
-class UpdateResizeParamsMessageFilter : public content::BrowserMessageFilter {
- public:
-  UpdateResizeParamsMessageFilter();
-
-  gfx::Rect last_rect() const { return last_rect_; }
-
-  void WaitForRect();
-  void ResetRectRunLoop();
-
-  // Returns the new viz::FrameSinkId immediately if the IPC has been received.
-  // Otherwise this will block the UI thread until it has been received, then it
-  // will return the new viz::FrameSinkId.
-  viz::FrameSinkId GetOrWaitForId();
-
- protected:
-  ~UpdateResizeParamsMessageFilter() override;
-
- private:
-  void OnUpdateResizeParams(const viz::SurfaceId& surface_id,
-                            const FrameResizeParams& resize_params);
-  // |rect| is in DIPs.
-  void OnUpdatedFrameRectOnUI(const gfx::Rect& rect);
-  void OnUpdatedFrameSinkIdOnUI();
-
-  bool OnMessageReceived(const IPC::Message& message) override;
-
-  viz::FrameSinkId frame_sink_id_;
-  base::RunLoop frame_sink_id_run_loop_;
-
-  std::unique_ptr<base::RunLoop> screen_space_rect_run_loop_;
-  bool screen_space_rect_received_;
-  gfx::Rect last_rect_;
-
-  DISALLOW_COPY_AND_ASSIGN(UpdateResizeParamsMessageFilter);
-};
-
 // Waits for a kill of the given RenderProcessHost and returns the
 // BadMessageReason that caused a //content-triggerred kill.
 //
@@ -287,9 +247,23 @@ class ShowWidgetMessageFilter : public content::BrowserMessageFilter {
 
   scoped_refptr<content::MessageLoopRunner> message_loop_runner_;
   gfx::Rect initial_rect_;
-  int routing_id_;
+  int routing_id_ = MSG_ROUTING_NONE;
 
   DISALLOW_COPY_AND_ASSIGN(ShowWidgetMessageFilter);
+};
+
+// A BrowserMessageFilter that drops SwapOut ACK messages.
+class SwapoutACKMessageFilter : public BrowserMessageFilter {
+ public:
+  SwapoutACKMessageFilter();
+
+ protected:
+  ~SwapoutACKMessageFilter() override;
+
+ private:
+  // BrowserMessageFilter:
+  bool OnMessageReceived(const IPC::Message& message) override;
+  DISALLOW_COPY_AND_ASSIGN(SwapoutACKMessageFilter);
 };
 
 }  // namespace content

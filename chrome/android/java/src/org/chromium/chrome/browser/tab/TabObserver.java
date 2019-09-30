@@ -9,7 +9,7 @@ import android.support.annotation.Nullable;
 import android.view.ContextMenu;
 
 import org.chromium.chrome.browser.TabLoadStatus;
-import org.chromium.content_public.browser.ContentViewCore;
+import org.chromium.chrome.browser.fullscreen.FullscreenOptions;
 import org.chromium.content_public.browser.LoadUrlParams;
 import org.chromium.content_public.browser.WebContents;
 import org.chromium.content_public.common.BrowserControlsState;
@@ -136,7 +136,7 @@ public interface TabObserver {
     void onWebContentsSwapped(Tab tab, boolean didStartLoad, boolean didFinishLoad);
 
     /**
-     * Called when a context menu is shown for a {@link ContentViewCore} owned by a {@link Tab}.
+     * Called when a context menu is shown for a {@link WebContents} owned by a {@link Tab}.
      * @param tab  The notifying {@link Tab}.
      * @param menu The {@link ContextMenu} that is being shown.
      */
@@ -184,11 +184,17 @@ public interface TabObserver {
     void onUpdateUrl(Tab tab, String url);
 
     /**
-     * Called when the {@link Tab} should enter or leave fullscreen mode.
+     * Called when the {@link Tab} should enter fullscreen mode.
      * @param tab    The notifying {@link Tab}.
-     * @param enable Whether or not to enter fullscreen mode.
+     * @param options Options to adjust fullscreen mode.
      */
-    void onToggleFullscreenMode(Tab tab, boolean enable);
+    void onEnterFullscreenMode(Tab tab, FullscreenOptions options);
+
+    /**
+     * Called when the {@link Tab} should exit fullscreen mode.
+     * @param tab    The notifying {@link Tab}.
+     */
+    void onExitFullscreenMode(Tab tab);
 
     // WebContentsObserver methods ---------------------------------------------------------
 

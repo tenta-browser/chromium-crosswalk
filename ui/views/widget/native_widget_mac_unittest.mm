@@ -12,7 +12,6 @@
 #import "base/mac/scoped_nsobject.h"
 #import "base/mac/scoped_objc_class_swizzler.h"
 #include "base/macros.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/strings/utf_string_conversions.h"
@@ -24,10 +23,11 @@
 #import "ui/base/cocoa/constrained_window/constrained_window_animation.h"
 #import "ui/base/cocoa/window_size_constants.h"
 #import "ui/base/test/scoped_fake_full_keyboard_access.h"
+#include "ui/compositor/recyclable_compositor_mac.h"
 #import "ui/events/test/cocoa_test_event_utils.h"
 #include "ui/events/test/event_generator.h"
 #import "ui/gfx/mac/coordinate_conversion.h"
-#include "ui/views/bubble/bubble_dialog_delegate.h"
+#include "ui/views/bubble/bubble_dialog_delegate_view.h"
 #import "ui/views/cocoa/bridged_content_view.h"
 #import "ui/views/cocoa/bridged_native_widget.h"
 #import "ui/views/cocoa/native_widget_mac_nswindow.h"
@@ -60,9 +60,11 @@
 @interface NativeWidgetMacTestWindow : NativeWidgetMacNSWindow {
  @private
   int invalidateShadowCount_;
+  int orderWindowCount_;
   bool* deallocFlag_;
 }
 @property(readonly, nonatomic) int invalidateShadowCount;
+@property(readonly, nonatomic) int orderWindowCount;
 @property(assign, nonatomic) bool* deallocFlag;
 @end
 
@@ -101,15 +103,11 @@ class BridgedNativeWidgetTestApi {
   // Simulate a frame swap from the compositor.
   void SimulateFrameSwap(const gfx::Size& size) {
     const float kScaleFactor = 1.0f;
-    ui::CALayerFrameSink* ca_layer_frame_sink =
-        ui::CALayerFrameSink::FromAcceleratedWidget(
-            bridge_->compositor_widget_->accelerated_widget());
     gfx::CALayerParams ca_layer_params;
     ca_layer_params.is_empty = false;
     ca_layer_params.pixel_size = size;
     ca_layer_params.scale_factor = kScaleFactor;
-    ca_layer_frame_sink->UpdateCALayerTree(ca_layer_params);
-    bridge_->AcceleratedWidgetSwapCompleted();
+    bridge_->SetCALayerParams(ca_layer_params);
   }
 
   NSAnimation* show_animation() {
@@ -455,7 +453,7 @@ TEST_F(NativeWidgetMacTest, DISABLED_OrderFrontAfterMiniaturize) {
   // Wait and check that child is really visible.
   // TODO(kirr): remove the fixed delay.
   base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
-      FROM_HERE, base::MessageLoop::QuitWhenIdleClosure(),
+      FROM_HERE, base::RunLoop::QuitCurrentWhenIdleClosureDeprecated(),
       base::TimeDelta::FromSeconds(2));
   base::RunLoop().Run();
 
@@ -466,6 +464,44 @@ TEST_F(NativeWidgetMacTest, DISABLED_OrderFrontAfterMiniaturize) {
   EXPECT_TRUE([child_ns_window occlusionState] & NSWindowOcclusionStateVisible);
   EXPECT_TRUE(IsWindowStackedAbove(child_widget, widget));
   widget->Close();
+}
+
+// Test that ShowInactive() on already-visible child widgets is ignored, since
+// it may cause a space transition. See https://crbug.com/866760.
+TEST_F(NativeWidgetMacTest, ShowInactiveOnChildWidget) {
+  NativeWidgetMacTestWindow* parent_window;
+  NativeWidgetMacTestWindow* child_window;
+
+  Widget::InitParams init_params =
+      CreateParams(Widget::InitParams::TYPE_WINDOW);
+  init_params.bounds = gfx::Rect(100, 100, 200, 200);
+  Widget* parent = CreateWidgetWithTestWindow(init_params, &parent_window);
+
+  // CreateWidgetWithTestWindow calls Show()
+  EXPECT_EQ(1, [parent_window orderWindowCount]);
+
+  init_params.parent = parent->GetNativeView();
+  Widget* child = CreateWidgetWithTestWindow(init_params, &child_window);
+
+  // The child is ordered twice, once by Show() and again (by AppKit) when it is
+  // registered as a child window.
+  EXPECT_EQ(2, [child_window orderWindowCount]);
+
+  // Parent is unchanged.
+  EXPECT_EQ(1, [parent_window orderWindowCount]);
+
+  // ShowInactive() on a visible regular window may serve to raise its stacking
+  // order without taking focus, so it should invoke -[NSWindow orderWindow:..].
+  parent->ShowInactive();
+  EXPECT_EQ(2, [parent_window orderWindowCount]);  // Increases.
+
+  // However, ShowInactive() on the child should have no effect. It should
+  // already be in a correct stacking order and we must avoid a Space switch.
+  child->ShowInactive();
+  EXPECT_EQ(2, [child_window orderWindowCount]);   // No change.
+  EXPECT_EQ(2, [parent_window orderWindowCount]);  // Parent also unchanged.
+
+  parent->CloseNow();
 }
 
 // Test minimized states triggered externally, implied visibility and restored
@@ -862,7 +898,8 @@ TEST_F(NativeWidgetMacTest, NonWidgetParentLastReference) {
 }
 
 // Tests visibility for child of native NSWindow, reshowing after -[NSApp hide].
-TEST_F(NativeWidgetMacTest, VisibleAfterNativeParentShow) {
+// Occasionally flaky (maybe due to [NSApp hide]). See https://crbug.com/777247.
+TEST_F(NativeWidgetMacTest, DISABLED_VisibleAfterNativeParentShow) {
   NSWindow* native_parent = MakeNativeParent();
   Widget* child = AttachPopupToNativeParent(native_parent);
   child->Show();
@@ -1217,12 +1254,24 @@ TEST_F(NativeWidgetMacTest, ShowAnimationControl) {
   retained_animation.reset();
 
   // Disable animations and show again.
-  modal_dialog_widget->SetVisibilityChangedAnimationsEnabled(false);
+  modal_dialog_widget->SetVisibilityAnimationTransition(Widget::ANIMATE_NONE);
   modal_dialog_widget->Show();
   EXPECT_FALSE(test_api.show_animation());  // No animation this time.
   modal_dialog_widget->Hide();
 
   // Test after re-enabling.
+  modal_dialog_widget->SetVisibilityAnimationTransition(Widget::ANIMATE_BOTH);
+  modal_dialog_widget->Show();
+  EXPECT_TRUE(test_api.show_animation());
+  retained_animation.reset(test_api.show_animation(),
+                           base::scoped_policy::RETAIN);
+
+  // Test whether disabling native animations also disables custom modal ones.
+  modal_dialog_widget->SetVisibilityChangedAnimationsEnabled(false);
+  modal_dialog_widget->Show();
+  EXPECT_FALSE(test_api.show_animation());  // No animation this time.
+  modal_dialog_widget->Hide();
+  // Renable.
   modal_dialog_widget->SetVisibilityChangedAnimationsEnabled(true);
   modal_dialog_widget->Show();
   EXPECT_TRUE(test_api.show_animation());
@@ -1354,6 +1403,7 @@ TEST_F(NativeWidgetMacTest, WindowModalSheet) {
 TEST_F(NativeWidgetMacTest, CloseWithWindowModalSheet) {
   NSWindow* native_parent =
       MakeNativeParentWithStyle(NSClosableWindowMask | NSTitledWindowMask);
+
   {
     Widget* sheet_widget = ShowWindowModalWidget(native_parent);
     EXPECT_TRUE([sheet_widget->GetNativeWindow() isVisible]);
@@ -1384,15 +1434,110 @@ TEST_F(NativeWidgetMacTest, CloseWithWindowModalSheet) {
     base::RunLoop().RunUntilIdle();
   }
 
+  // Similar, but invoke -[NSWindow close] immediately after an asynchronous
+  // Close(). This exercises a scenario where two tasks to end the sheet may be
+  // posted. Experimentally (on 10.13) both tasks run, but the second will never
+  // attempt to invoke -didEndSheet: on the |modalDelegate| arg of -beginSheet:.
+  // (If it did, it would be fine.)
+  {
+    Widget* sheet_widget = ShowWindowModalWidget(native_parent);
+    base::scoped_nsobject<NSWindow> sheet_window(
+        sheet_widget->GetNativeWindow(), base::scoped_policy::RETAIN);
+    EXPECT_TRUE([sheet_window isVisible]);
+
+    WidgetChangeObserver widget_observer(sheet_widget);
+    sheet_widget->Close();  // Asynchronous. Can't be called after -close.
+    EXPECT_FALSE(widget_observer.widget_closed());
+    [sheet_window close];
+    EXPECT_TRUE(widget_observer.widget_closed());
+    base::RunLoop().RunUntilIdle();
+
+    // Pretend both tasks ran fully. Note that |sheet_window| serves as its own
+    // |modalDelegate|.
+    [base::mac::ObjCCastStrict<NativeWidgetMacNSWindow>(sheet_window)
+        sheetDidEnd:sheet_window
+         returnCode:NSModalResponseStop
+        contextInfo:nullptr];
+  }
+
+  // Test another hypothetical: What if -sheetDidEnd: was invoked somehow
+  // without going through [NSApp endSheet:] or -[NSWindow endSheet:].
+  {
+    base::mac::ScopedNSAutoreleasePool pool;
+    Widget* sheet_widget = ShowWindowModalWidget(native_parent);
+    NSWindow* sheet_window = sheet_widget->GetNativeWindow();
+    EXPECT_TRUE([sheet_window isVisible]);
+
+    WidgetChangeObserver widget_observer(sheet_widget);
+    sheet_widget->Close();
+
+    [base::mac::ObjCCastStrict<NativeWidgetMacNSWindow>(sheet_window)
+        sheetDidEnd:sheet_window
+         returnCode:NSModalResponseStop
+        contextInfo:nullptr];
+
+    EXPECT_TRUE(widget_observer.widget_closed());
+    // Here, the ViewsNSWindowDelegate should be dealloc'd.
+  }
+  base::RunLoop().RunUntilIdle();  // Run the task posted in Close().
+
+  // Test -[NSWindow close] on the parent window.
   {
     Widget* sheet_widget = ShowWindowModalWidget(native_parent);
     EXPECT_TRUE([sheet_widget->GetNativeWindow() isVisible]);
     WidgetChangeObserver widget_observer(sheet_widget);
 
-    // Test -[NSWindow close] on the parent window.
     [native_parent close];
     EXPECT_TRUE(widget_observer.widget_closed());
   }
+}
+
+// Exercise a scenario where the task posted in the asynchronous Close() could
+// eventually complete on a destroyed NSWindowDelegate. Regression test for
+// https://crbug.com/851376.
+TEST_F(NativeWidgetMacTest, CloseWindowModalSheetWithoutSheetParent) {
+  NSWindow* native_parent =
+      MakeNativeParentWithStyle(NSClosableWindowMask | NSTitledWindowMask);
+  {
+    base::mac::ScopedNSAutoreleasePool pool;
+    Widget* sheet_widget = ShowWindowModalWidget(native_parent);
+    NSWindow* sheet_window = sheet_widget->GetNativeWindow();
+    EXPECT_TRUE([sheet_window isVisible]);
+
+    sheet_widget->Close();  // Asynchronous. Can't be called after -close.
+
+    // Now there's a task to end the sheet in the message queue. But destroying
+    // the NSWindowDelegate without _also_ posting a task that will _retain_ it
+    // is hard. It _is_ possible for a -performSelector:afterDelay: already in
+    // the queue to happen _after_ a PostTask posted now, but it's a very rare
+    // occurrence. So to simulate it, we pretend the sheet isn't actually a
+    // sheet by hiding its sheetParent. This avoids a task being posted that
+    // would retain the delegate, but also puts |native_parent| into a weird
+    // state.
+    //
+    // In fact, the "real" suspected trigger for this bug requires the PostTask
+    // to still be posted, then run to completion, and to dealloc the delegate
+    // it retains all before the -performSelector:afterDelay runs. That's the
+    // theory anyway.
+    //
+    // In reality, it didn't seem possible for -sheetDidEnd: to be invoked twice
+    // (AppKit would suppress it on subsequent calls to -[NSApp endSheet:] or
+    // -[NSWindow endSheet:]), so if the PostTask were to run to completion, the
+    // waiting -performSelector would always no- op. So this is actually testing
+    // a hypothetical where the sheetParent may be somehow nil during teardown
+    // (perhaps due to the parent window being further along in its teardown).
+    EXPECT_TRUE([sheet_window sheetParent]);
+    [sheet_window setValue:nil forKey:@"sheetParent"];
+    EXPECT_FALSE([sheet_window sheetParent]);
+    [sheet_window close];
+
+    // To repro the crash, we need a dealloc to occur here on |sheet_widget|'s
+    // NSWindowDelegate.
+  }
+  // Now there is still a task to end the sheet in the message queue, which
+  // should not crash.
+  base::RunLoop().RunUntilIdle();
+  [native_parent close];
 }
 
 // Test calls to Widget::ReparentNativeView() that result in a no-op on Mac.
@@ -1607,7 +1752,7 @@ class CustomTitleWidgetDelegate : public WidgetDelegate {
 };
 
 // Test that undocumented title-hiding API we're using does the job.
-TEST_F(NativeWidgetMacTest, DoesHideTitle) {
+TEST_F(NativeWidgetMacTest, DISABLED_DoesHideTitle) {
   // Same as CreateTopLevelPlatformWidget but with a custom delegate.
   Widget::InitParams params = CreateParams(Widget::InitParams::TYPE_WINDOW);
   Widget* widget = new Widget;
@@ -1773,10 +1918,13 @@ TEST_F(NativeWidgetMacTest, SchedulePaintInRect_Titled) {
   NSWindow* window = widget->GetNativeWindow();
   base::scoped_nsobject<MockBridgedView> mock_bridged_view(
       [[MockBridgedView alloc] init]);
+  // Reset drawRect count.
+  [mock_bridged_view setDrawRectCount:0];
   [window setContentView:mock_bridged_view];
 
   // Ensure the initial draw of the window is done.
-  base::RunLoop().RunUntilIdle();
+  while ([mock_bridged_view drawRectCount] == 0)
+    base::RunLoop().RunUntilIdle();
 
   // Add a dummy view to the widget. This will cause SchedulePaint to be called
   // on the dummy view.
@@ -1788,7 +1936,8 @@ TEST_F(NativeWidgetMacTest, SchedulePaintInRect_Titled) {
   widget->GetContentsView()->AddChildView(dummy_view);
 
   // SchedulePaint is asyncronous. Wait for drawRect: to be called.
-  base::RunLoop().RunUntilIdle();
+  while ([mock_bridged_view drawRectCount] == 0)
+    base::RunLoop().RunUntilIdle();
 
   EXPECT_EQ(1u, [mock_bridged_view drawRectCount]);
   int client_area_height = widget->GetClientAreaBoundsInScreen().height();
@@ -1815,10 +1964,13 @@ TEST_F(NativeWidgetMacTest, SchedulePaintInRect_Borderless) {
   NSWindow* window = widget->GetNativeWindow();
   base::scoped_nsobject<MockBridgedView> mock_bridged_view(
       [[MockBridgedView alloc] init]);
+  // Reset drawRect count.
+  [mock_bridged_view setDrawRectCount:0];
   [window setContentView:mock_bridged_view];
 
   // Ensure the initial draw of the window is done.
-  base::RunLoop().RunUntilIdle();
+  while ([mock_bridged_view drawRectCount] == 0)
+    base::RunLoop().RunUntilIdle();
 
   // Add a dummy view to the widget. This will cause SchedulePaint to be called
   // on the dummy view.
@@ -1830,7 +1982,8 @@ TEST_F(NativeWidgetMacTest, SchedulePaintInRect_Borderless) {
   widget->GetRootView()->AddChildView(dummy_view);
 
   // SchedulePaint is asyncronous. Wait for drawRect: to be called.
-  base::RunLoop().RunUntilIdle();
+  while ([mock_bridged_view drawRectCount] == 0)
+    base::RunLoop().RunUntilIdle();
 
   EXPECT_EQ(1u, [mock_bridged_view drawRectCount]);
   // These are expected dummy_view bounds in AppKit coordinate system. The y
@@ -2226,6 +2379,7 @@ TEST_F(NativeWidgetMacTest, TouchBar) {
 @implementation NativeWidgetMacTestWindow
 
 @synthesize invalidateShadowCount = invalidateShadowCount_;
+@synthesize orderWindowCount = orderWindowCount_;
 @synthesize deallocFlag = deallocFlag_;
 
 - (void)dealloc {
@@ -2239,6 +2393,12 @@ TEST_F(NativeWidgetMacTest, TouchBar) {
 - (void)invalidateShadow {
   ++invalidateShadowCount_;
   [super invalidateShadow];
+}
+
+- (void)orderWindow:(NSWindowOrderingMode)orderingMode
+         relativeTo:(NSInteger)otherWindowNumber {
+  ++orderWindowCount_;
+  [super orderWindow:orderingMode relativeTo:otherWindowNumber];
 }
 
 @end

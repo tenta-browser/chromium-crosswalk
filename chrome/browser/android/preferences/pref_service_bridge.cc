@@ -166,7 +166,8 @@ static jboolean JNI_PrefServiceBridge_IsContentSettingEnabled(
   DCHECK(content_settings_type == CONTENT_SETTINGS_TYPE_JAVASCRIPT ||
          content_settings_type == CONTENT_SETTINGS_TYPE_POPUPS ||
          content_settings_type == CONTENT_SETTINGS_TYPE_ADS ||
-         content_settings_type == CONTENT_SETTINGS_TYPE_CLIPBOARD_READ);
+         content_settings_type == CONTENT_SETTINGS_TYPE_CLIPBOARD_READ ||
+         content_settings_type == CONTENT_SETTINGS_TYPE_USB_GUARD);
   ContentSettingsType type =
       static_cast<ContentSettingsType>(content_settings_type);
   return GetBooleanForContentSetting(type);
@@ -181,13 +182,22 @@ static void JNI_PrefServiceBridge_SetContentSettingEnabled(
   // that the new category supports ALLOW/BLOCK pairs and, if not, handle them.
   DCHECK(content_settings_type == CONTENT_SETTINGS_TYPE_JAVASCRIPT ||
          content_settings_type == CONTENT_SETTINGS_TYPE_POPUPS ||
-         content_settings_type == CONTENT_SETTINGS_TYPE_ADS);
+         content_settings_type == CONTENT_SETTINGS_TYPE_ADS ||
+         content_settings_type == CONTENT_SETTINGS_TYPE_USB_GUARD);
+
+  ContentSetting value = CONTENT_SETTING_BLOCK;
+  if (allow) {
+    if (content_settings_type == CONTENT_SETTINGS_TYPE_USB_GUARD) {
+      value = CONTENT_SETTING_ASK;
+    } else {
+      value = CONTENT_SETTING_ALLOW;
+    }
+  }
 
   HostContentSettingsMap* host_content_settings_map =
       HostContentSettingsMapFactory::GetForProfile(GetOriginalProfile());
   host_content_settings_map->SetDefaultContentSetting(
-      static_cast<ContentSettingsType>(content_settings_type),
-      allow ? CONTENT_SETTING_ALLOW : CONTENT_SETTING_BLOCK);
+      static_cast<ContentSettingsType>(content_settings_type), value);
 }
 
 static void JNI_PrefServiceBridge_SetContentSettingForPattern(
@@ -224,6 +234,28 @@ static void JNI_PrefServiceBridge_GetContentSettingsExceptions(
   }
 }
 
+static jint JNI_PrefServiceBridge_GetContentSetting(
+    JNIEnv* env,
+    const JavaParamRef<jobject>& obj,
+    int content_settings_type) {
+  HostContentSettingsMap* content_settings =
+      HostContentSettingsMapFactory::GetForProfile(GetOriginalProfile());
+  return content_settings->GetDefaultContentSetting(
+      static_cast<ContentSettingsType>(content_settings_type), nullptr);
+}
+
+static void JNI_PrefServiceBridge_SetContentSetting(
+    JNIEnv* env,
+    const JavaParamRef<jobject>& obj,
+    int content_settings_type,
+    int setting) {
+  HostContentSettingsMap* host_content_settings_map =
+      HostContentSettingsMapFactory::GetForProfile(GetOriginalProfile());
+  host_content_settings_map->SetDefaultContentSetting(
+      static_cast<ContentSettingsType>(content_settings_type),
+      static_cast<ContentSetting>(setting));
+}
+
 static jboolean JNI_PrefServiceBridge_GetAcceptCookiesEnabled(
     JNIEnv* env,
     const JavaParamRef<jobject>& obj) {
@@ -246,6 +278,12 @@ static jboolean JNI_PrefServiceBridge_GetAutoplayEnabled(
     JNIEnv* env,
     const JavaParamRef<jobject>& obj) {
   return GetBooleanForContentSetting(CONTENT_SETTINGS_TYPE_AUTOPLAY);
+}
+
+static jboolean JNI_PrefServiceBridge_GetSensorsEnabled(
+    JNIEnv* env,
+    const JavaParamRef<jobject>& obj) {
+  return GetBooleanForContentSetting(CONTENT_SETTINGS_TYPE_SENSORS);
 }
 
 static jboolean JNI_PrefServiceBridge_GetSoundEnabled(
@@ -408,13 +446,6 @@ static jboolean JNI_PrefServiceBridge_GetSafeBrowsingManaged(
     JNIEnv* env,
     const JavaParamRef<jobject>& obj) {
   return GetPrefService()->IsManagedPreference(prefs::kSafeBrowsingEnabled);
-}
-
-static jboolean JNI_PrefServiceBridge_GetProtectedMediaIdentifierEnabled(
-    JNIEnv* env,
-    const JavaParamRef<jobject>& obj) {
-  return GetBooleanForContentSetting(
-      CONTENT_SETTINGS_TYPE_PROTECTED_MEDIA_IDENTIFIER);
 }
 
 static jboolean JNI_PrefServiceBridge_GetNotificationsEnabled(
@@ -666,6 +697,17 @@ static void JNI_PrefServiceBridge_SetClipboardEnabled(
       allow ? CONTENT_SETTING_ASK : CONTENT_SETTING_BLOCK);
 }
 
+static void JNI_PrefServiceBridge_SetSensorsEnabled(
+    JNIEnv* env,
+    const JavaParamRef<jobject>& obj,
+    jboolean allow) {
+  HostContentSettingsMap* host_content_settings_map =
+      HostContentSettingsMapFactory::GetForProfile(GetOriginalProfile());
+  host_content_settings_map->SetDefaultContentSetting(
+      CONTENT_SETTINGS_TYPE_SENSORS,
+      allow ? CONTENT_SETTING_ALLOW : CONTENT_SETTING_BLOCK);
+}
+
 static void JNI_PrefServiceBridge_SetSoundEnabled(
     JNIEnv* env,
     const JavaParamRef<jobject>& obj,
@@ -728,17 +770,6 @@ static void JNI_PrefServiceBridge_SetPasswordManagerAutoSigninEnabled(
     jboolean enabled) {
   GetPrefService()->SetBoolean(
       password_manager::prefs::kCredentialsEnableAutosignin, enabled);
-}
-
-static void JNI_PrefServiceBridge_SetProtectedMediaIdentifierEnabled(
-    JNIEnv* env,
-    const JavaParamRef<jobject>& obj,
-    jboolean is_enabled) {
-  HostContentSettingsMap* host_content_settings_map =
-      HostContentSettingsMapFactory::GetForProfile(GetOriginalProfile());
-  host_content_settings_map->SetDefaultContentSetting(
-      CONTENT_SETTINGS_TYPE_PROTECTED_MEDIA_IDENTIFIER,
-      is_enabled ? CONTENT_SETTING_ASK : CONTENT_SETTING_BLOCK);
 }
 
 static void JNI_PrefServiceBridge_SetAllowLocationEnabled(
@@ -1297,6 +1328,23 @@ static void JNI_PrefServiceBridge_SetPromptForDownloadAndroid(
     const JavaParamRef<jobject>& obj,
     const jint status) {
   GetPrefService()->SetInteger(prefs::kPromptForDownloadAndroid, status);
+}
+
+static jboolean JNI_PrefServiceBridge_GetExplicitLanguageAskPromptShown(
+    JNIEnv* env,
+    const JavaParamRef<jobject>& obj) {
+  std::unique_ptr<translate::TranslatePrefs> translate_prefs =
+      ChromeTranslateClient::CreateTranslatePrefs(GetPrefService());
+  return translate_prefs->GetExplicitLanguageAskPromptShown();
+}
+
+static void JNI_PrefServiceBridge_SetExplicitLanguageAskPromptShown(
+    JNIEnv* env,
+    const JavaParamRef<jobject>& obj,
+    jboolean shown) {
+  std::unique_ptr<translate::TranslatePrefs> translate_prefs =
+      ChromeTranslateClient::CreateTranslatePrefs(GetPrefService());
+  translate_prefs->SetExplicitLanguageAskPromptShown(shown);
 }
 
 const char* PrefServiceBridge::GetPrefNameExposedToJava(int pref_index) {

@@ -8,49 +8,74 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "base/command_line.h"
 #include "base/logging.h"
 #import "base/mac/foundation_util.h"
 #include "base/mac/mac_util.h"
 #import "base/mac/sdk_forward_declarations.h"
 #include "base/single_thread_task_runner.h"
-#include "base/threading/thread_task_runner_handle.h"
-#include "components/viz/common/features.h"
-#include "components/viz/common/surfaces/local_surface_id.h"
-#include "ui/accelerated_widget_mac/window_resize_helper_mac.h"
+#include "base/strings/sys_string_conversions.h"
 #import "ui/base/cocoa/constrained_window/constrained_window_animation.h"
 #include "ui/base/hit_test.h"
-#include "ui/base/ime/input_method.h"
-#include "ui/base/ime/input_method_factory.h"
 #include "ui/base/layout.h"
-#include "ui/compositor/compositor_switches.h"
+#include "ui/base/ui_base_switches.h"
+#include "ui/display/screen.h"
 #include "ui/gfx/geometry/dip_util.h"
 #import "ui/gfx/mac/coordinate_conversion.h"
 #import "ui/gfx/mac/nswindow_frame_controls.h"
 #import "ui/native_theme/native_theme_mac.h"
 #import "ui/views/cocoa/bridged_content_view.h"
+#import "ui/views/cocoa/bridged_native_widget_host.h"
 #import "ui/views/cocoa/cocoa_mouse_capture.h"
 #import "ui/views/cocoa/cocoa_window_move_loop.h"
 #import "ui/views/cocoa/drag_drop_client_mac.h"
+#import "ui/views/cocoa/native_widget_mac_nswindow.h"
 #include "ui/views/cocoa/tooltip_manager_mac.h"
 #import "ui/views/cocoa/views_nswindow_delegate.h"
 #import "ui/views/cocoa/widget_owner_nswindow_adapter.h"
-#include "ui/views/view.h"
-#include "ui/views/views_delegate.h"
 #include "ui/views/widget/native_widget_mac.h"
 #include "ui/views/widget/widget.h"
-#include "ui/views/widget/widget_aura_utils.h"
-#include "ui/views/widget/widget_delegate.h"
-#include "ui/views/window/dialog_delegate.h"
 
-extern "C" {
+using views_bridge_mac::mojom::WindowVisibilityState;
 
-typedef int32_t CGSConnection;
-CGSConnection _CGSDefaultConnection();
-CGError CGSSetWindowBackgroundBlurRadius(CGSConnection connection,
-                                         NSInteger windowNumber,
-                                         int radius);
+namespace {
+constexpr auto kUIPaintTimeout = base::TimeDelta::FromSeconds(5);
+}  // namespace
 
+// Self-owning animation delegate that starts a hide animation, then calls
+// -[NSWindow close] when the animation ends, releasing itself.
+@interface ViewsNSWindowCloseAnimator : NSObject<NSAnimationDelegate> {
+ @private
+  base::scoped_nsobject<NSWindow> window_;
+  base::scoped_nsobject<NSAnimation> animation_;
 }
++ (void)closeWindowWithAnimation:(NSWindow*)window;
+@end
+
+@implementation ViewsNSWindowCloseAnimator
+
+- (id)initWithWindow:(NSWindow*)window {
+  if ((self = [super init])) {
+    window_.reset([window retain]);
+    animation_.reset(
+        [[ConstrainedWindowAnimationHide alloc] initWithWindow:window]);
+    [animation_ setDelegate:self];
+    [animation_ setAnimationBlockingMode:NSAnimationNonblocking];
+    [animation_ startAnimation];
+  }
+  return self;
+}
+
++ (void)closeWindowWithAnimation:(NSWindow*)window {
+  [[ViewsNSWindowCloseAnimator alloc] initWithWindow:window];
+}
+
+- (void)animationDidEnd:(NSAnimation*)animation {
+  [window_ close];
+  [animation_ setDelegate:nil];
+  [self release];
+}
+@end
 
 // The NSView that hosts the composited CALayer drawing the UI. It fills the
 // window but is not hittable so that accessibility hit tests always go to the
@@ -127,22 +152,6 @@ using NSViewComparatorValue = __kindof NSView*;
 
 int kWindowPropertiesKey;
 
-float GetDeviceScaleFactorFromView(NSView* view) {
-  return ui::GetScaleFactorForNativeView(view);
-}
-
-// Returns true if bounds passed to window in SetBounds should be treated as
-// though they are in screen coordinates.
-bool PositionWindowInScreenCoordinates(views::Widget* widget,
-                                       views::Widget::InitParams::Type type) {
-  // Replicate the logic in desktop_aura/desktop_screen_position_client.cc.
-  if (views::GetAuraWindowTypeForWidgetType(type) ==
-      aura::client::WINDOW_TYPE_POPUP)
-    return true;
-
-  return widget && widget->is_top_level();
-}
-
 // Returns true if the content_view is reparented.
 bool PositionWindowInNativeViewParent(NSView* content_view) {
   return [[content_view window] contentView] != content_view;
@@ -166,18 +175,6 @@ gfx::Size GetClientSizeForWindowSize(NSWindow* window,
   // be zero at this point, because Widget::GetMinimumSize() may later increase
   // the size.
   return gfx::Size([window contentRectForFrameRect:frame_rect].size);
-}
-
-// Returns a task runner for creating a ui::Compositor. This allows compositor
-// tasks to be funneled through ui::WindowResizeHelper's task runner to allow
-// resize operations to coordinate with frames provided by the GPU process.
-scoped_refptr<base::SingleThreadTaskRunner> GetCompositorTaskRunner() {
-  // If the WindowResizeHelper's pumpable task runner is set, it means the GPU
-  // process is directing messages there, and the compositor can synchronize
-  // with it. Otherwise, just use the UI thread.
-  scoped_refptr<base::SingleThreadTaskRunner> task_runner =
-      ui::WindowResizeHelperMac::Get()->task_runner();
-  return task_runner ? task_runner : base::ThreadTaskRunnerHandle::Get();
 }
 
 void RankNSViews(views::View* view,
@@ -239,18 +236,13 @@ gfx::Size BridgedNativeWidget::GetWindowSizeForClientSize(
   return gfx::Size(NSWidth(frame_rect), NSHeight(frame_rect));
 }
 
-BridgedNativeWidget::BridgedNativeWidget(NativeWidgetMac* parent)
-    : native_widget_mac_(parent),
-      focus_manager_(nullptr),
-      widget_type_(Widget::InitParams::TYPE_WINDOW),  // Updated in Init().
-      parent_(nullptr),
-      target_fullscreen_state_(false),
-      in_fullscreen_transition_(false),
-      window_visible_(false),
-      wants_to_be_visible_(false) {
+BridgedNativeWidget::BridgedNativeWidget(BridgedNativeWidgetHost* host,
+                                         NativeWidgetMac* parent)
+    : host_(host), native_widget_mac_(parent) {
   DCHECK(parent);
   window_delegate_.reset(
       [[ViewsNSWindowDelegate alloc] initWithBridgedNativeWidget:this]);
+  ui::CATransactionCoordinator::Get().AddPreCommitObserver(this);
 }
 
 BridgedNativeWidget::~BridgedNativeWidget() {
@@ -259,20 +251,57 @@ BridgedNativeWidget::~BridgedNativeWidget() {
   // destructor is called.
   DCHECK(![window_ delegate]);
 
+  ui::CATransactionCoordinator::Get().RemovePreCommitObserver(this);
   RemoveOrDestroyChildren();
   DCHECK(child_windows_.empty());
-  SetFocusManager(nullptr);
-  SetRootView(nullptr);
-  DestroyCompositor();
+  DestroyContentView();
 }
 
-void BridgedNativeWidget::Init(base::scoped_nsobject<NSWindow> window,
-                               const Widget::InitParams& params) {
-  widget_type_ = params.type;
-
+void BridgedNativeWidget::SetWindow(
+    base::scoped_nsobject<NativeWidgetMacNSWindow> window) {
   DCHECK(!window_);
-  window_.swap(window);
+  window_ = std::move(window);
+  [window_ setReleasedWhenClosed:NO];  // Owned by scoped_nsobject.
   [window_ setDelegate:window_delegate_];
+}
+
+void BridgedNativeWidget::SetParent(NSView* new_parent) {
+  BridgedNativeWidget* bridged_native_widget_parent =
+      NativeWidgetMac::GetBridgeForNativeWindow([new_parent window]);
+  // Remove from the old parent.
+  if (parent_) {
+    parent_->RemoveChildWindow(this);
+    parent_ = nullptr;
+  }
+
+  if (!new_parent)
+    return;
+
+  // Disallow creating child windows of views not currently in an NSWindow.
+  CHECK([new_parent window]);
+
+  // If the parent is another BridgedNativeWidget, just add to the collection
+  // of child windows it owns and manages. Otherwise, create an adapter to
+  // anchor the child widget and observe when the parent NSWindow is closed.
+  if (bridged_native_widget_parent) {
+    parent_ = bridged_native_widget_parent;
+    bridged_native_widget_parent->child_windows_.push_back(this);
+  } else {
+    parent_ = new WidgetOwnerNSWindowAdapter(this, new_parent);
+  }
+
+  // Widget::ShowInactive() could result in a Space switch when the widget has a
+  // parent, and we're calling -orderWindow:relativeTo:. Use Transient
+  // collection behaviour to prevent that.
+  // https://crbug.com/697829
+  [window_ setCollectionBehavior:[window_ collectionBehavior] |
+                                 NSWindowCollectionBehaviorTransient];
+}
+
+void BridgedNativeWidget::InitWindow(
+    views_bridge_mac::mojom::BridgedNativeWidgetInitParamsPtr params) {
+  modal_type_ = params->modal_type;
+  is_translucent_window_ = params->is_translucent;
 
   // Register for application hide notifications so that visibility can be
   // properly tracked. This is not done in the delegate so that the lifetime is
@@ -297,55 +326,27 @@ void BridgedNativeWidget::Init(base::scoped_nsobject<NSWindow> window,
   DCHECK(![window_ isVisible]);
   DCHECK_EQ(0u, [window_ styleMask] & NSFullScreenWindowMask);
 
-  if (params.parent) {
-    // Disallow creating child windows of views not currently in an NSWindow.
-    CHECK([params.parent window]);
-    BridgedNativeWidget* bridged_native_widget_parent =
-        NativeWidgetMac::GetBridgeForNativeWindow([params.parent window]);
-    // If the parent is another BridgedNativeWidget, just add to the collection
-    // of child windows it owns and manages. Otherwise, create an adapter to
-    // anchor the child widget and observe when the parent NSWindow is closed.
-    if (bridged_native_widget_parent) {
-      parent_ = bridged_native_widget_parent;
-      bridged_native_widget_parent->child_windows_.push_back(this);
-    } else {
-      parent_ = new WidgetOwnerNSWindowAdapter(this, params.parent);
-    }
-    // crbug.com/697829: Widget::ShowInactive() could result in a Space switch
-    // when the widget has a parent, and we're calling -orderWindow:relativeTo:.
-    // Use Transient collection behaviour to prevent that.
-    [window_ setCollectionBehavior:[window_ collectionBehavior] |
-                                   NSWindowCollectionBehaviorTransient];
+  // Include "regular" windows without the standard frame in the window cycle.
+  // These use NSBorderlessWindowMask so do not get it by default.
+  if (params->force_into_collection_cycle) {
+    [window_
+        setCollectionBehavior:[window_ collectionBehavior] |
+                              NSWindowCollectionBehaviorParticipatesInCycle];
   }
 
-  // OSX likes to put shadows on most things. However, frameless windows (with
-  // styleMask = NSBorderlessWindowMask) default to no shadow. So change that.
-  // SHADOW_TYPE_DROP is used for Menus, which get the same shadow style on Mac.
-  switch (params.shadow_type) {
-    case Widget::InitParams::SHADOW_TYPE_NONE:
-      [window_ setHasShadow:NO];
-      break;
-    case Widget::InitParams::SHADOW_TYPE_DEFAULT:
-      // Controls should get views shadows instead of native shadows.
-      [window_ setHasShadow:params.type != Widget::InitParams::TYPE_CONTROL];
-      break;
-    case Widget::InitParams::SHADOW_TYPE_DROP:
-      [window_ setHasShadow:YES];
-      break;
-  }  // No default case, to pick up new types.
+  [window_ setHasShadow:params->has_window_server_shadow];
+  tooltip_manager_.reset(new TooltipManagerMac(this));
+}
 
-  // Set a meaningful initial bounds. Note that except for frameless widgets
-  // with no WidgetDelegate, the bounds will be set again by Widget after
-  // initializing the non-client view. In the former case, if bounds were not
-  // set at all, the creator of the Widget is expected to call SetBounds()
-  // before calling Widget::Show() to avoid a kWindowSizeDeterminedLater-sized
-  // (i.e. 1x1) window appearing.
-  if (!params.bounds.IsEmpty()) {
-    SetBounds(params.bounds);
-  } else {
+void BridgedNativeWidget::SetInitialBounds(
+    const gfx::Rect& new_bounds,
+    const gfx::Size& minimum_content_size,
+    const gfx::Vector2d& bounds_offset_for_parent) {
+  gfx::Rect adjusted_bounds = new_bounds;
+  if (new_bounds.IsEmpty()) {
     // If a position is set, but no size, complain. Otherwise, a 1x1 window
     // would appear there, which might be unexpected.
-    DCHECK(params.bounds.origin().IsOrigin())
+    DCHECK(new_bounds.origin().IsOrigin())
         << "Zero-sized windows not supported on Mac.";
 
     // Otherwise, bounds is all zeroes. Cocoa will currently have the window at
@@ -354,55 +355,28 @@ void BridgedNativeWidget::Init(base::scoped_nsobject<NSWindow> window,
     // Read back the current frame: it will be a 1x1 context rect but the frame
     // size also depends on the window style.
     NSRect frame_rect = [window_ frame];
-    SetBounds(gfx::Rect(gfx::Point(),
-                        gfx::Size(NSWidth(frame_rect), NSHeight(frame_rect))));
+    adjusted_bounds = gfx::Rect(
+        gfx::Point(), gfx::Size(NSWidth(frame_rect), NSHeight(frame_rect)));
   }
-
-  // Widgets for UI controls (usually layered above web contents) start visible.
-  if (params.type == Widget::InitParams::TYPE_CONTROL)
-    SetVisibilityState(SHOW_INACTIVE);
-
-  // Tooltip Widgets shouldn't have their own tooltip manager, but tooltips are
-  // native on Mac, so nothing should ever want one in Widget form.
-  DCHECK_NE(params.type, Widget::InitParams::TYPE_TOOLTIP);
-  tooltip_manager_.reset(new TooltipManagerMac(this));
+  adjusted_bounds.Offset(bounds_offset_for_parent);
+  SetBounds(adjusted_bounds, minimum_content_size);
 }
 
-void BridgedNativeWidget::OnWidgetInitDone() {
-  DialogDelegate* dialog =
-      native_widget_mac_->GetWidget()->widget_delegate()->AsDialogDelegate();
-  if (dialog)
-    dialog->AddObserver(this);
-}
-
-void BridgedNativeWidget::SetFocusManager(FocusManager* focus_manager) {
-  if (focus_manager_ == focus_manager)
-    return;
-
-  if (focus_manager_)
-    focus_manager_->RemoveFocusChangeListener(this);
-
-  if (focus_manager)
-    focus_manager->AddFocusChangeListener(this);
-
-  focus_manager_ = focus_manager;
-}
-
-void BridgedNativeWidget::SetBounds(const gfx::Rect& new_bounds) {
-  Widget* widget = native_widget_mac_->GetWidget();
+void BridgedNativeWidget::SetBounds(const gfx::Rect& new_bounds,
+                                    const gfx::Size& minimum_content_size) {
   // -[NSWindow contentMinSize] is only checked by Cocoa for user-initiated
   // resizes. This is not what toolkit-views expects, so clamp. Note there is
   // no check for maximum size (consistent with aura::Window::SetBounds()).
   gfx::Size clamped_content_size =
       GetClientSizeForWindowSize(window_, new_bounds.size());
-  clamped_content_size.SetToMax(widget->GetMinimumSize());
+  clamped_content_size.SetToMax(minimum_content_size);
 
   // A contentRect with zero width or height is a banned practice in ChromeMac,
   // due to unpredictable OSX treatment.
   DCHECK(!clamped_content_size.IsEmpty())
       << "Zero-sized windows not supported on Mac";
 
-  if (!window_visible_ && native_widget_mac_->IsWindowModalSheet()) {
+  if (!window_visible_ && IsWindowModalSheet()) {
     // Window-Modal dialogs (i.e. sheets) are positioned by Cocoa when shown for
     // the first time. They also have no frame, so just update the content size.
     [window_ setContentSize:NSMakeSize(clamped_content_size.width(),
@@ -413,9 +387,6 @@ void BridgedNativeWidget::SetBounds(const gfx::Rect& new_bounds) {
       new_bounds.origin(),
       GetWindowSizeForClientSize(window_, clamped_content_size));
 
-  if (parent_ && !PositionWindowInScreenCoordinates(widget, widget_type_))
-    actual_new_bounds.Offset(parent_->GetChildWindowOffset());
-
   if (PositionWindowInNativeViewParent(bridged_view_))
     actual_new_bounds.Offset(GetNativeViewParentOffset(bridged_view_));
 
@@ -424,30 +395,91 @@ void BridgedNativeWidget::SetBounds(const gfx::Rect& new_bounds) {
             animate:NO];
 }
 
-void BridgedNativeWidget::SetRootView(views::View* view) {
-  if (view == [bridged_view_ hostedView])
+void BridgedNativeWidget::DestroyContentView() {
+  if (!bridged_view_)
     return;
-
-  // If this is ever false, the compositor will need to be properly torn down
-  // and replaced, pointing at the new view.
-  DCHECK(!view || !compositor_widget_);
-
   drag_drop_client_.reset();
   [bridged_view_ clearView];
   bridged_view_.reset();
-  // Note that there can still be references to the old |bridged_view_|
-  // floating around in Cocoa libraries at this point. However, references to
-  // the old views::View will be gone, so any method calls will become no-ops.
+  [window_ setContentView:nil];
+}
 
-  if (view) {
-    bridged_view_.reset([[BridgedContentView alloc] initWithView:view]);
-    drag_drop_client_.reset(new DragDropClientMac(this, view));
+void BridgedNativeWidget::CreateContentView(const gfx::Rect& bounds) {
+  DCHECK(!bridged_view_);
+  // The compositor needs to point at the new content view created here.
+  DCHECK(!compositor_superview_);
 
-    // Objective C initializers can return nil. However, if |view| is non-NULL
-    // this should be treated as an error and caught early.
-    CHECK(bridged_view_);
-  }
+  bridged_view_.reset(
+      [[BridgedContentView alloc] initWithBridge:this bounds:bounds]);
+
+  // Objective C initializers can return nil. However, if |view| is non-NULL
+  // this should be treated as an error and caught early.
+  CHECK(bridged_view_);
+
+  // Layer backing the content view improves resize performance, reduces memory
+  // use (no backing store), and clips sublayers to rounded window corners.
+  [bridged_view_ setWantsLayer:YES];
+
   [window_ setContentView:bridged_view_];
+}
+
+void BridgedNativeWidget::CreateDragDropClient(views::View* view) {
+  drag_drop_client_.reset(new DragDropClientMac(this, view));
+}
+
+void BridgedNativeWidget::CloseWindow() {
+  // Keep |window| on the stack so that the ObjectiveC block below can capture
+  // it and properly increment the reference count bound to the posted task.
+  NSWindow* window = ns_window();
+
+  if (IsWindowModalSheet()) {
+    // Sheets can't be closed normally. This starts the sheet closing. Once the
+    // sheet has finished animating, it will call sheetDidEnd: on the parent
+    // window's delegate. Note it still needs to be asynchronous, since code
+    // calling Widget::Close() doesn't expect things to be deleted upon return.
+    // Ensure |window| is retained by a block. Note in some cases during
+    // teardown, [window sheetParent] may be nil.
+    base::ThreadTaskRunnerHandle::Get()->PostTask(
+        FROM_HERE, base::BindOnce(base::RetainBlock(^{
+          [NSApp endSheet:window];
+        })));
+    return;
+  }
+
+  // For other modal types, animate the close.
+  if (ShouldRunCustomAnimationFor(Widget::ANIMATE_HIDE)) {
+    [ViewsNSWindowCloseAnimator closeWindowWithAnimation:window];
+    return;
+  }
+
+  // Destroy the content view so that it won't call back into |host_| while
+  // being torn down.
+  DestroyContentView();
+
+  // Widget::Close() ensures [Non]ClientView::CanClose() returns true, so there
+  // is no need to call the NSWindow or its delegate's -windowShouldClose:
+  // implementation in the manner of -[NSWindow performClose:]. But,
+  // like -performClose:, first remove the window from AppKit's display
+  // list to avoid crashes like http://crbug.com/156101.
+  [window orderOut:nil];
+
+  // Many tests assume that base::RunLoop().RunUntilIdle() is always sufficient
+  // to execute a close. However, in rare cases, -performSelector:..afterDelay:0
+  // does not do this. So post a regular task.
+  base::ThreadTaskRunnerHandle::Get()->PostTask(
+      FROM_HERE, base::BindOnce(base::RetainBlock(^{
+        [window close];
+      })));
+}
+
+void BridgedNativeWidget::CloseWindowNow() {
+  // NSWindows must be retained until -[NSWindow close] returns.
+  auto window_retain = window_;
+
+  // If there's a bridge at this point, it means there must be a window as well.
+  DCHECK(window_);
+  [window_ close];
+  // Note: |this| will be deleted here.
 }
 
 void BridgedNativeWidget::SetVisibilityState(WindowVisibilityState new_state) {
@@ -456,18 +488,24 @@ void BridgedNativeWidget::SetVisibilityState(WindowVisibilityState new_state) {
   //  - A parent changing visibility updates child window visibility.
   //    * But only when changed via this function - ignore changes via the
   //      NSWindow API, or changes propagating out from here.
-  wants_to_be_visible_ = new_state != HIDE_WINDOW;
+  wants_to_be_visible_ = new_state != WindowVisibilityState::kHideWindow;
 
   [show_animation_ stopAnimation];
   DCHECK(!show_animation_);
 
-  if (new_state == HIDE_WINDOW) {
+  if (new_state == WindowVisibilityState::kHideWindow) {
     // Calling -orderOut: on a window with an attached sheet encounters broken
     // AppKit behavior. The sheet effectively becomes "lost".
     // See http://crbug.com/667602. Alternatives: call -setAlphaValue:0 and
     // -setIgnoresMouseEvents:YES on the NSWindow, or dismiss the sheet before
     // hiding.
-    DCHECK(![window_ attachedSheet]);
+    //
+    // TODO(ellyjones): Sort this entire situation out. This DCHECK doesn't
+    // trigger in shipped builds, but it does trigger when the browser exits
+    // "abnormally" (not via one of the UI paths to exiting), such as in browser
+    // tests, so this breaks a slew of browser tests in MacViews mode. See also
+    // https://crbug.com/834926.
+    // DCHECK(![window_ attachedSheet]);
 
     [window_ orderOut:nil];
     DCHECK(!window_visible_);
@@ -475,34 +513,21 @@ void BridgedNativeWidget::SetVisibilityState(WindowVisibilityState new_state) {
   }
 
   DCHECK(wants_to_be_visible_);
+
+  if (!ca_transaction_sync_suppressed_)
+    ui::CATransactionCoordinator::Get().Synchronize();
+
   // If the parent (or an ancestor) is hidden, return and wait for it to become
   // visible.
   if (parent() && !parent()->IsVisibleParent())
     return;
 
-  if (native_widget_mac_->IsWindowModalSheet()) {
+  if (IsWindowModalSheet()) {
     ShowAsModalSheet();
     return;
   }
 
-  // Non-modal windows are not animated. Hence opaque non-modal windows can
-  // appear with a "flash" if they are made visible before the frame from the
-  // compositor arrives. To get around this, set the alpha value of the window
-  // to 0, till we receive the correct frame from the compositor. Also, ignore
-  // mouse clicks till then. Also check for an active task runner on the
-  // WindowResizeHelperMac instance to ensure visibility is only suppressed when
-  // there is an active GPU process.
-  // TODO(karandeepb): Investigate whether similar technique is needed for other
-  // dialog types.
-  if (layer() && [window_ isOpaque] && !window_visible_ &&
-      !native_widget_mac_->GetWidget()->IsModal() &&
-      ui::WindowResizeHelperMac::Get()->task_runner()) {
-    initial_visibility_suppressed_ = true;
-    [window_ setAlphaValue:0.0];
-    [window_ setIgnoresMouseEvents:YES];
-  }
-
-  if (new_state == SHOW_AND_ACTIVATE_WINDOW) {
+  if (new_state == WindowVisibilityState::kShowAndActivateWindow) {
     [window_ makeKeyAndOrderFront:nil];
     [NSApp activateIgnoringOtherApps:YES];
   } else {
@@ -510,8 +535,22 @@ void BridgedNativeWidget::SetVisibilityState(WindowVisibilityState new_state) {
     // parent window. So, if there's a parent, order above that. Otherwise, this
     // will order above all windows at the same level.
     NSInteger parent_window_number = 0;
-    if (parent_)
+    if (parent_) {
+      // When there's a parent, check if the window is already visible. If
+      // ShowInactive() is called on an already-visible window, there should be
+      // no effect: the macOS childWindow mechanism should have already raised
+      // the window to the right stacking order. More importantly, invoking
+      // -[NSWindow orderWindow:] could cause a Space switch, which defeats the
+      // point of ShowInactive(), so avoid it. See https://crbug.com/866760.
+
+      // Sanity check: if the window is visible, the prior Show should have
+      // hooked it up as a native child window already.
+      DCHECK_EQ(window_visible_, !![window_ parentWindow]);
+      if (window_visible_)
+        return;  // Avoid a Spaces transition.
+
       parent_window_number = [parent_->GetNSWindow() windowNumber];
+    }
 
     [window_ orderWindow:NSWindowAbove
               relativeTo:parent_window_number];
@@ -520,7 +559,7 @@ void BridgedNativeWidget::SetVisibilityState(WindowVisibilityState new_state) {
 
   // For non-sheet modal types, use the constrained window animations to make
   // the window appear.
-  if (animate_ && native_widget_mac_->GetWidget()->IsModal()) {
+  if (ShouldRunCustomAnimationFor(Widget::ANIMATE_SHOW)) {
     show_animation_.reset(
         [[ModalShowAnimationWithLayer alloc] initWithBridgedNativeWidget:this]);
 
@@ -528,19 +567,22 @@ void BridgedNativeWidget::SetVisibilityState(WindowVisibilityState new_state) {
     // duration of the animation, but would keep it smooth. The window also
     // hasn't yet received a frame from the compositor at this stage, so it is
     // fully transparent until the GPU sends a frame swap IPC. For the blocking
-    // option, the animation needs to wait until AcceleratedWidgetSwapCompleted
-    // has been called at least once, otherwise it will animate nothing.
+    // option, the animation needs to wait until
+    // AcceleratedWidgetCALayerParamsUpdated has been called at least once,
+    // otherwise it will animate nothing.
     [show_animation_ setAnimationBlockingMode:NSAnimationNonblocking];
     [show_animation_ startAnimation];
   }
 }
 
 void BridgedNativeWidget::AcquireCapture() {
-  DCHECK(!HasCapture());
+  if (HasCapture())
+    return;
   if (!window_visible_)
     return;  // Capture on hidden windows is disallowed.
 
   mouse_capture_.reset(new CocoaMouseCapture(this));
+  host_->OnMouseCaptureActiveChanged(true);
 
   // Initiating global event capture with addGlobalMonitorForEventsMatchingMask:
   // will reset the mouse cursor to an arrow. Asking the window for an update
@@ -613,16 +655,13 @@ void BridgedNativeWidget::SetCursor(NSCursor* cursor) {
 }
 
 void BridgedNativeWidget::OnWindowWillClose() {
-  Widget* widget = native_widget_mac_->GetWidget();
-  if (DialogDelegate* dialog = widget->widget_delegate()->AsDialogDelegate())
-    dialog->RemoveObserver(this);
-  widget->OnNativeWidgetDestroying();
+  host_->OnWindowWillClose();
 
   // Ensure BridgedNativeWidget does not have capture, otherwise
-  // OnMouseCaptureLost() may reference a deleted |native_widget_mac_| when
-  // called via ~CocoaMouseCapture() upon the destruction of |mouse_capture_|.
-  // See crbug.com/622201. Also we do this before setting the delegate to nil,
-  // because this may lead to callbacks to bridge which rely on a valid
+  // OnMouseCaptureLost() may reference a deleted |host_| when called via
+  // ~CocoaMouseCapture() upon the destruction of |mouse_capture_|. See
+  // https://crbug.com/622201. Also we do this before setting the delegate to
+  // nil, because this may lead to callbacks to bridge which rely on a valid
   // delegate.
   ReleaseCapture();
 
@@ -636,8 +675,8 @@ void BridgedNativeWidget::OnWindowWillClose() {
   DCHECK(!show_animation_);
 
   [window_ setDelegate:nil];
-  native_widget_mac_->OnWindowDestroyed();
-  // Note: |this| is deleted here.
+  host_->OnWindowHasClosed();
+  // Note: |this| and its host will be deleted here.
 }
 
 void BridgedNativeWidget::OnFullscreenTransitionStart(
@@ -650,9 +689,7 @@ void BridgedNativeWidget::OnFullscreenTransitionStart(
   target_fullscreen_state_ = target_fullscreen_state;
   in_fullscreen_transition_ = true;
 
-  // If going into fullscreen, store an answer for GetRestoredBounds().
-  if (target_fullscreen_state)
-    bounds_before_fullscreen_ = gfx::ScreenRectFromNSRect([window_ frame]);
+  host_->OnWindowFullscreenTransitionStart(target_fullscreen_state);
 }
 
 void BridgedNativeWidget::OnFullscreenTransitionComplete(
@@ -660,8 +697,7 @@ void BridgedNativeWidget::OnFullscreenTransitionComplete(
   in_fullscreen_transition_ = false;
 
   if (target_fullscreen_state_ == actual_fullscreen_state) {
-    // Ensure constraints are re-applied when completing a transition.
-    OnSizeConstraintsChanged();
+    host_->OnWindowFullscreenTransitionComplete(actual_fullscreen_state);
     return;
   }
 
@@ -693,7 +729,7 @@ void BridgedNativeWidget::ToggleDesiredFullscreenState(bool async) {
   // of relying on AppKit to do it, and not worry that OnVisibilityChanged()
   // won't be called for externally triggered fullscreen requests.
   if (!window_visible_)
-    SetVisibilityState(SHOW_INACTIVE);
+    SetVisibilityState(WindowVisibilityState::kShowInactive);
 
   // Enable fullscreen collection behavior because:
   // 1: -[NSWindow toggleFullscreen:] would otherwise be ignored,
@@ -711,30 +747,23 @@ void BridgedNativeWidget::ToggleDesiredFullscreenState(bool async) {
                   withObject:nil
                   afterDelay:0];
   } else {
+    // Suppress synchronous CA transactions during AppKit fullscreen transition
+    // since there is no need for updates during such transition.
+    // Re-layout and re-paint will be done after the transtion. See
+    // https://crbug.com/875707 for potiential problems if we don't suppress.
+    // |ca_transaction_sync_suppressed_| will be reset to false when the next
+    // frame comes in.
+    ca_transaction_sync_suppressed_ = true;
     [window_ toggleFullScreen:nil];
   }
 }
 
 void BridgedNativeWidget::OnSizeChanged() {
-  gfx::Size new_size = GetClientAreaSize();
-  native_widget_mac_->GetWidget()->OnNativeWidgetSizeChanged(new_size);
-  if (layer()) {
-    UpdateLayerProperties();
-    if ([window_ inLiveResize])
-      MaybeWaitForFrame(new_size);
-  }
-
-  // 10.9 is unable to generate a window shadow from the composited CALayer, so
-  // use Quartz.
-  // We don't update the window mask during a live resize, instead it is done
-  // after the resize is completed in viewDidEndLiveResize: in
-  // BridgedContentView.
-  if (base::mac::IsOS10_9() && ![window_ inLiveResize])
-    [bridged_view_ updateWindowMask];
+  UpdateWindowGeometry();
 }
 
 void BridgedNativeWidget::OnPositionChanged() {
-  native_widget_mac_->GetWidget()->OnNativeWidgetMove();
+  UpdateWindowGeometry();
 }
 
 void BridgedNativeWidget::OnVisibilityChanged() {
@@ -765,27 +794,13 @@ void BridgedNativeWidget::OnVisibilityChanged() {
       [parent_->GetNSWindow() removeChildWindow:window_];
   }
 
-  // TODO(tapted): Investigate whether we want this for Mac. This is what Aura
-  // does, and it is what tests expect. However, because layer drawing is
-  // asynchronous (and things like deminiaturize in AppKit are not), it can
-  // result in a CALayer appearing on screen before it has been redrawn in the
-  // GPU process. This is a general problem. In content, a helper class,
-  // RenderWidgetResizeHelper, blocks the UI thread in -[NSView setFrameSize:]
-  // and RenderWidgetHostView::Show() until a frame is ready.
-  if (layer()) {
-    layer()->SetVisible(window_visible_);
-    layer()->SchedulePaint(gfx::Rect(GetClientAreaSize()));
-
-    // For translucent windows which are made visible, recalculate shadow when
-    // the frame from the compositor arrives.
-    if (![window_ isOpaque])
-      invalidate_shadow_on_frame_swap_ = window_visible_;
-  }
+  // Showing a translucent window after hiding it should trigger shadow
+  // invalidation.
+  if (window_visible && ![window_ isOpaque])
+    invalidate_shadow_on_frame_swap_ = true;
 
   NotifyVisibilityChangeDown();
-
-  native_widget_mac_->GetWidget()->OnNativeWidgetVisibilityChanged(
-      window_visible_);
+  host_->OnVisibilityChanged(window_visible_);
 
   // Toolkit-views suppresses redraws while not visible. To prevent Cocoa asking
   // for an "empty" draw, disable auto-display while hidden. For example, this
@@ -799,45 +814,28 @@ void BridgedNativeWidget::OnSystemControlTintChanged() {
 }
 
 void BridgedNativeWidget::OnBackingPropertiesChanged() {
-  if (layer())
-    UpdateLayerProperties();
+  UpdateWindowDisplay();
 }
 
 void BridgedNativeWidget::OnWindowKeyStatusChangedTo(bool is_key) {
-  Widget* widget = native_widget_mac()->GetWidget();
-  if (!widget->OnNativeWidgetActivationChanged(is_key))
-    return;
-  // The contentView is the BridgedContentView hosting the views::RootView. The
-  // focus manager will already know if a native subview has focus.
-  if ([window_ contentView] == [window_ firstResponder]) {
-    if (is_key) {
-      widget->OnNativeFocus();
-      // Explicitly set the keyboard accessibility state on regaining key
-      // window status.
-      [bridged_view_ updateFullKeyboardAccess];
-      widget->GetFocusManager()->RestoreFocusedView();
-    } else {
-      widget->OnNativeBlur();
-      widget->GetFocusManager()->StoreFocusedView(true);
-    }
-  }
+  host_->OnWindowKeyStatusChanged(
+      is_key, [window_ contentView] == [window_ firstResponder],
+      [NSApp isFullKeyboardAccessEnabled]);
 }
 
-void BridgedNativeWidget::OnSizeConstraintsChanged() {
+void BridgedNativeWidget::SetSizeConstraints(const gfx::Size& min_size,
+                                             const gfx::Size& max_size,
+                                             bool is_resizable,
+                                             bool is_maximizable) {
   // Don't modify the size constraints or fullscreen collection behavior while
   // in fullscreen or during a transition. OnFullscreenTransitionComplete will
   // reset these after leaving fullscreen.
   if (target_fullscreen_state_ || in_fullscreen_transition_)
     return;
 
-  Widget* widget = native_widget_mac()->GetWidget();
-  gfx::Size min_size = widget->GetMinimumSize();
-  gfx::Size max_size = widget->GetMaximumSize();
-  bool is_resizable = widget->widget_delegate()->CanResize();
   bool shows_resize_controls =
       is_resizable && (min_size.IsEmpty() || min_size != max_size);
-  bool shows_fullscreen_controls =
-      is_resizable && widget->widget_delegate()->CanMaximize();
+  bool shows_fullscreen_controls = is_resizable && is_maximizable;
 
   gfx::ApplyNSWindowSizeConstraints(window_, min_size, max_size,
                                     shows_resize_controls,
@@ -848,61 +846,33 @@ void BridgedNativeWidget::OnShowAnimationComplete() {
   show_animation_.reset();
 }
 
-ui::InputMethod* BridgedNativeWidget::GetInputMethod() {
-  if (!input_method_) {
-    input_method_ = ui::CreateInputMethod(this, gfx::kNullAcceleratedWidget);
-    // For now, use always-focused mode on Mac for the input method.
-    // TODO(tapted): Move this to OnWindowKeyStatusChangedTo() and balance.
-    input_method_->OnFocus();
-  }
-  return input_method_.get();
-}
+void BridgedNativeWidget::InitCompositorView() {
+  AddCompositorSuperview();
 
-gfx::Rect BridgedNativeWidget::GetRestoredBounds() const {
-  if (target_fullscreen_state_ || in_fullscreen_transition_)
-    return bounds_before_fullscreen_;
-
-  return gfx::ScreenRectFromNSRect([window_ frame]);
-}
-
-void BridgedNativeWidget::CreateLayer(ui::LayerType layer_type,
-                                      bool translucent) {
-  DCHECK(bridged_view_);
-  DCHECK(!layer());
-
-  CreateCompositor();
-  DCHECK(compositor_);
-
-  SetLayer(std::make_unique<ui::Layer>(layer_type));
-  // Note, except for controls, this will set the layer to be hidden, since it
-  // is only called during Init().
-  layer()->SetVisible(window_visible_);
-  layer()->set_delegate(this);
-
-  InitCompositor();
-
-  // Transparent window support.
-  layer()->GetCompositor()->SetBackgroundColor(translucent ? SK_ColorTRANSPARENT
-                                                           : SK_ColorWHITE);
-  layer()->SetFillsBoundsOpaquely(!translucent);
-
-  // Use the regular window background for window modal sheets. The layer() will
+  // Use the regular window background for window modal sheets. The layer will
   // still paint over most of it, but the native -[NSApp beginSheet:] animation
   // blocks the UI thread, so there's no way to invalidate the shadow to match
   // the composited layer. This assumes the native window shape is a good match
   // for the composited NonClientFrameView, which should be the case since the
   // native shape is what's most appropriate for displaying sheets on Mac.
-  if (translucent && !native_widget_mac_->IsWindowModalSheet()) {
+  if (is_translucent_window_ && !IsWindowModalSheet()) {
     [window_ setOpaque:NO];
-    // For Mac OS versions earlier than Yosemite, the Window server isn't able
-    // to generate a window shadow from the composited CALayer. To get around
-    // this, let the window background remain opaque and clip the window
-    // boundary in drawRect method of BridgedContentView. See crbug.com/543671.
-    if (base::mac::IsAtLeastOS10_10())
-      [window_ setBackgroundColor:[NSColor clearColor]];
+    [window_ setBackgroundColor:[NSColor clearColor]];
+
+    // Don't block waiting for the initial frame of completely transparent
+    // windows. This allows us to avoid blocking on the UI thread e.g, while
+    // typing in the omnibox. Note window modal sheets _must_ wait: there is no
+    // way for a frame to arrive during AppKit's sheet animation.
+    // https://crbug.com/712268
+    ca_transaction_sync_suppressed_ = true;
+  } else {
+    DCHECK(!ca_transaction_sync_suppressed_);
   }
 
-  UpdateLayerProperties();
+  // Send the initial window geometry and screen properties. Any future changes
+  // will be forwarded.
+  UpdateWindowDisplay();
+  UpdateWindowGeometry();
 }
 
 void BridgedNativeWidget::SetAssociationForView(const views::View* view,
@@ -944,16 +914,12 @@ void BridgedNativeWidget::ReparentNativeView(NSView* native_view,
   BridgedNativeWidget* parent_bridge =
       NativeWidgetMac::GetBridgeForNativeWindow([new_parent window]);
   if (native_view == bridged_view_.get() && parent_bridge != parent_) {
-    if (parent_)
-      parent_->RemoveChildWindow(this);
+    SetParent(new_parent);
 
-    if (parent_bridge) {
-      parent_ = parent_bridge;
-      parent_bridge->child_windows_.push_back(this);
-    } else {
-      parent_ = new WidgetOwnerNSWindowAdapter(this, new_parent);
-    }
-
+    // TODO(ccameron): This is likely not correct, as the window for |this|
+    // should only be added as a child window if it is visible.
+    if (!window_visible_)
+      NOTIMPLEMENTED();
     [[new_parent window] addChildWindow:window_ ordered:NSWindowAbove];
   }
 
@@ -971,17 +937,71 @@ void BridgedNativeWidget::ReparentNativeView(NSView* native_view,
   }
 }
 
-////////////////////////////////////////////////////////////////////////////////
-// BridgedNativeWidget, internal::InputMethodDelegate:
+void BridgedNativeWidget::SetAnimationEnabled(bool animate) {
+  [window_
+      setAnimationBehavior:(animate ? NSWindowAnimationBehaviorDocumentWindow
+                                    : NSWindowAnimationBehaviorNone)];
+}
 
-ui::EventDispatchDetails BridgedNativeWidget::DispatchKeyEventPostIME(
-    ui::KeyEvent* key) {
-  DCHECK(focus_manager_);
-  if (!focus_manager_->OnKeyEvent(*key))
-    key->StopPropagation();
-  else
-    native_widget_mac_->GetWidget()->OnKeyEvent(key);
-  return ui::EventDispatchDetails();
+bool BridgedNativeWidget::ShouldRunCustomAnimationFor(
+    Widget::VisibilityTransition transition) const {
+  // The logic around this needs to change if new transition types are set.
+  // E.g. it would be nice to distinguish "hide" from "close". Mac currently
+  // treats "hide" only as "close". Hide (e.g. Cmd+h) should not animate on Mac.
+  constexpr int kSupported =
+      Widget::ANIMATE_SHOW | Widget::ANIMATE_HIDE | Widget::ANIMATE_NONE;
+  DCHECK_EQ(0, transitions_to_animate_ & ~kSupported);
+  if (!(transitions_to_animate_ & transition))
+    return false;
+
+  // Custom animations are only used for tab-modals.
+  bool widget_is_modal = false;
+  host_->GetWidgetIsModal(&widget_is_modal);
+  if (!widget_is_modal)
+    return false;
+
+  // Note this also checks the native animation property. Clearing that will
+  // also disable custom animations to ensure that the views::Widget API
+  // behaves consistently.
+  if ([window_ animationBehavior] == NSWindowAnimationBehaviorNone)
+    return false;
+
+  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
+          switches::kDisableModalAnimations)) {
+    return false;
+  }
+
+  return true;
+}
+
+NSWindow* BridgedNativeWidget::ns_window() {
+  return window_.get();
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// BridgedNativeWidget, ui::CATransactionObserver
+
+void BridgedNativeWidget::OnDisplayMetricsChanged(
+    const display::Display& display,
+    uint32_t metrics) {
+  UpdateWindowDisplay();
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// BridgedNativeWidget, ui::CATransactionObserver
+
+bool BridgedNativeWidget::ShouldWaitInPreCommit() {
+  if (!window_visible_)
+    return false;
+  if (ca_transaction_sync_suppressed_)
+    return false;
+  if (!compositor_superview_)
+    return false;
+  return content_dip_size_ != compositor_frame_dip_size_;
+}
+
+base::TimeDelta BridgedNativeWidget::PreCommitTimeout() {
+  return kUIPaintTimeout;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -992,7 +1012,7 @@ void BridgedNativeWidget::PostCapturedEvent(NSEvent* event) {
 }
 
 void BridgedNativeWidget::OnMouseCaptureLost() {
-  native_widget_mac_->GetWidget()->OnMouseCaptureLost();
+  host_->OnMouseCaptureActiveChanged(false);
 }
 
 NSWindow* BridgedNativeWidget::GetWindow() const {
@@ -1000,67 +1020,84 @@ NSWindow* BridgedNativeWidget::GetWindow() const {
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// BridgedNativeWidget, FocusChangeListener:
+// TODO(ccameron): Update class names to:
+// BridgedNativeWidgetImpl, BridgedNativeWidget:
 
-void BridgedNativeWidget::OnWillChangeFocus(View* focused_before,
-                                            View* focused_now) {
+void BridgedNativeWidget::SetVisibleOnAllSpaces(bool always_visible) {
+  gfx::SetNSWindowVisibleOnAllWorkspaces(window_, always_visible);
 }
 
-void BridgedNativeWidget::OnDidChangeFocus(View* focused_before,
-                                           View* focused_now) {
-  ui::InputMethod* input_method =
-      native_widget_mac_->GetWidget()->GetInputMethod();
-  if (input_method) {
-    ui::TextInputClient* input_client = input_method->GetTextInputClient();
-    [bridged_view_ setTextInputClient:input_client];
+void BridgedNativeWidget::SetFullscreen(bool fullscreen) {
+  if (fullscreen == target_fullscreen_state_)
+    return;
+  ToggleDesiredFullscreenState();
+}
+
+void BridgedNativeWidget::SetMiniaturized(bool miniaturized) {
+  if (miniaturized) {
+    // Calling performMiniaturize: will momentarily highlight the button, but
+    // AppKit will reject it if there is no miniaturize button.
+    if ([window_ styleMask] & NSMiniaturizableWindowMask)
+      [window_ performMiniaturize:nil];
+    else
+      [window_ miniaturize:nil];
+  } else {
+    [window_ deminiaturize:nil];
   }
 }
 
-////////////////////////////////////////////////////////////////////////////////
-// BridgedNativeWidget, LayerDelegate:
-
-void BridgedNativeWidget::OnPaintLayer(const ui::PaintContext& context) {
-  DCHECK(window_visible_);
-  native_widget_mac_->GetWidget()->OnNativeWidgetPaint(context);
+void BridgedNativeWidget::SetOpacity(float opacity) {
+  [window_ setAlphaValue:opacity];
 }
 
-void BridgedNativeWidget::OnDeviceScaleFactorChanged(
-    float old_device_scale_factor,
-    float new_device_scale_factor) {
-  native_widget_mac_->GetWidget()->DeviceScaleFactorChanged(
-      old_device_scale_factor, new_device_scale_factor);
+void BridgedNativeWidget::SetContentAspectRatio(
+    const gfx::SizeF& aspect_ratio) {
+  [window_ setContentAspectRatio:NSMakeSize(aspect_ratio.width(),
+                                            aspect_ratio.height())];
 }
 
-////////////////////////////////////////////////////////////////////////////////
-// BridgedNativeWidget, AcceleratedWidgetMac:
-
-NSView* BridgedNativeWidget::AcceleratedWidgetGetNSView() const {
-  return compositor_superview_;
-}
-
-void BridgedNativeWidget::AcceleratedWidgetGetVSyncParameters(
-  base::TimeTicks* timebase, base::TimeDelta* interval) const {
-  // TODO(tapted): Add vsync support.
-  *timebase = base::TimeTicks();
-  *interval = base::TimeDelta();
-}
-
-void BridgedNativeWidget::AcceleratedWidgetSwapCompleted() {
+void BridgedNativeWidget::SetCALayerParams(
+    const gfx::CALayerParams& ca_layer_params) {
   // Ignore frames arriving "late" for an old size. A frame at the new size
   // should arrive soon.
-  if (!compositor_widget_->HasFrameOfSize(GetClientAreaSize()))
+  gfx::Size frame_dip_size = gfx::ConvertSizeToDIP(ca_layer_params.scale_factor,
+                                                   ca_layer_params.pixel_size);
+  if (content_dip_size_ != frame_dip_size)
     return;
+  compositor_frame_dip_size_ = frame_dip_size;
 
-  if (initial_visibility_suppressed_) {
-    initial_visibility_suppressed_ = false;
-    [window_ setAlphaValue:1.0];
-    [window_ setIgnoresMouseEvents:NO];
-  }
+  // Update the DisplayCALayerTree with the most recent CALayerParams, to make
+  // the content display on-screen.
+  display_ca_layer_tree_->UpdateCALayerTree(ca_layer_params);
+
+  if (ca_transaction_sync_suppressed_)
+    ca_transaction_sync_suppressed_ = false;
 
   if (invalidate_shadow_on_frame_swap_) {
     invalidate_shadow_on_frame_swap_ = false;
     [window_ invalidateShadow];
   }
+}
+
+void BridgedNativeWidget::MakeFirstResponder() {
+  [window_ makeFirstResponder:bridged_view_];
+}
+
+void BridgedNativeWidget::SetWindowTitle(const base::string16& title) {
+  NSString* new_title = base::SysUTF16ToNSString(title);
+  [window_ setTitle:new_title];
+}
+
+void BridgedNativeWidget::ClearTouchBar() {
+  if (@available(macOS 10.12.2, *)) {
+    if ([bridged_view_ respondsToSelector:@selector(setTouchBar:)])
+      [bridged_view_ setTouchBar:nil];
+  }
+}
+
+void BridgedNativeWidget::SetTextInputClient(
+    ui::TextInputClient* text_input_client) {
+  [bridged_view_ setTextInputClient:text_input_client];
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -1089,18 +1126,6 @@ void BridgedNativeWidget::RemoveChildWindow(BridgedNativeWidget* child) {
   // version, and possibly some unpredictable reference counting. Removing it
   // here should be safe regardless.
   [window_ removeChildWindow:child->window_];
-}
-
-////////////////////////////////////////////////////////////////////////////////
-// BridgedNativeWidget, DialogObserver:
-
-void BridgedNativeWidget::OnDialogModelChanged() {
-  // Note it's only necessary to clear the TouchBar. If the OS needs it again,
-  // a new one will be created.
-  if (@available(macOS 10.12.2, *)) {
-    if ([bridged_view_ respondsToSelector:@selector(setTouchBar:)])
-      [bridged_view_ setTouchBar:nil];
-  }
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -1167,65 +1192,6 @@ void BridgedNativeWidget::NotifyVisibilityChangeDown() {
             CountBridgedWindows([window_ childWindows]));
 }
 
-gfx::Size BridgedNativeWidget::GetClientAreaSize() const {
-  NSRect content_rect = [window_ contentRectForFrameRect:[window_ frame]];
-  return gfx::Size(NSWidth(content_rect), NSHeight(content_rect));
-}
-
-void BridgedNativeWidget::CreateCompositor() {
-  DCHECK(!compositor_);
-  DCHECK(!compositor_widget_);
-  DCHECK(ViewsDelegate::GetInstance());
-
-  ui::ContextFactory* context_factory =
-      ViewsDelegate::GetInstance()->GetContextFactory();
-  DCHECK(context_factory);
-  ui::ContextFactoryPrivate* context_factory_private =
-      ViewsDelegate::GetInstance()->GetContextFactoryPrivate();
-
-  AddCompositorSuperview();
-
-  compositor_widget_.reset(new ui::AcceleratedWidgetMac());
-  compositor_.reset(new ui::Compositor(
-      context_factory_private->AllocateFrameSinkId(), context_factory,
-      context_factory_private, GetCompositorTaskRunner(),
-      features::IsSurfaceSynchronizationEnabled(),
-      ui::IsPixelCanvasRecordingEnabled()));
-  compositor_->SetAcceleratedWidget(compositor_widget_->accelerated_widget());
-  compositor_widget_->SetNSView(this);
-}
-
-void BridgedNativeWidget::InitCompositor() {
-  DCHECK(layer());
-  float scale_factor = GetDeviceScaleFactorFromView(compositor_superview_);
-  gfx::Size size_in_dip = GetClientAreaSize();
-  compositor_->SetScaleAndSize(scale_factor,
-                               ConvertSizeToPixel(scale_factor, size_in_dip),
-                               parent_local_surface_id_allocator_.GenerateId());
-  compositor_->SetRootLayer(layer());
-}
-
-void BridgedNativeWidget::DestroyCompositor() {
-  if (layer()) {
-    // LayerOwner supports a change in ownership, e.g., to animate a closing
-    // window, but that won't work as expected for the root layer in
-    // BridgedNativeWidget.
-    DCHECK_EQ(this, layer()->owner());
-    layer()->CompleteAllAnimations();
-    layer()->SuppressPaint();
-    layer()->set_delegate(nullptr);
-  }
-  DestroyLayer();
-
-  if (!compositor_widget_) {
-    DCHECK(!compositor_);
-    return;
-  }
-  compositor_widget_->ResetNSView();
-  compositor_.reset();
-  compositor_widget_.reset();
-}
-
 void BridgedNativeWidget::AddCompositorSuperview() {
   DCHECK(!compositor_superview_);
   compositor_superview_.reset(
@@ -1241,11 +1207,11 @@ void BridgedNativeWidget::AddCompositorSuperview() {
     [compositor_superview_ setWantsBestResolutionOpenGLSurface:YES];
   }
 
+  // Set the layer first to create a layer-hosting view (not layer-backed), and
+  // set the compositor output to go to that layer.
   base::scoped_nsobject<CALayer> background_layer([[CALayer alloc] init]);
-  [background_layer
-      setAutoresizingMask:kCALayerWidthSizable | kCALayerHeightSizable];
-
-  // Set the layer first to create a layer-hosting view (not layer-backed).
+  display_ca_layer_tree_ =
+      std::make_unique<ui::DisplayCALayerTree>(background_layer.get());
   [compositor_superview_ setLayer:background_layer];
   [compositor_superview_ setWantsLayer:YES];
 
@@ -1255,48 +1221,31 @@ void BridgedNativeWidget::AddCompositorSuperview() {
   [bridged_view_ addSubview:compositor_superview_];
 }
 
-void BridgedNativeWidget::UpdateLayerProperties() {
-  DCHECK(layer());
-  DCHECK(compositor_superview_);
-  float scale_factor = GetDeviceScaleFactorFromView(compositor_superview_);
-  gfx::Size size_in_dip = GetClientAreaSize();
-  gfx::Size size_in_pixel = ConvertSizeToPixel(scale_factor, size_in_dip);
+void BridgedNativeWidget::UpdateWindowGeometry() {
+  gfx::Rect window_in_screen = gfx::ScreenRectFromNSRect([window_ frame]);
+  gfx::Rect content_in_screen = gfx::ScreenRectFromNSRect(
+      [window_ contentRectForFrameRect:[window_ frame]]);
+  bool content_resized = content_dip_size_ != content_in_screen.size();
+  content_dip_size_ = content_in_screen.size();
 
-  layer()->SetBounds(gfx::Rect(size_in_dip));
+  host_->OnWindowGeometryChanged(window_in_screen, content_in_screen);
 
-  if (compositor_->size() != size_in_pixel ||
-      compositor_->device_scale_factor() != scale_factor) {
-    compositor_->SetScaleAndSize(
-        scale_factor, size_in_pixel,
-        parent_local_surface_id_allocator_.GenerateId());
-  }
+  if (content_resized && !ca_transaction_sync_suppressed_)
+    ui::CATransactionCoordinator::Get().Synchronize();
 
   // For a translucent window, the shadow calculation needs to be carried out
   // after the frame from the compositor arrives.
-  if (![window_ isOpaque])
+  if (content_resized && ![window_ isOpaque])
     invalidate_shadow_on_frame_swap_ = true;
 }
 
-void BridgedNativeWidget::MaybeWaitForFrame(const gfx::Size& size_in_dip) {
-  if (!layer()->IsDrawn() || compositor_widget_->HasFrameOfSize(size_in_dip))
-    return;
+void BridgedNativeWidget::UpdateWindowDisplay() {
+  host_->OnWindowDisplayChanged(
+      display::Screen::GetScreen()->GetDisplayNearestWindow(window_));
+}
 
-  const int kPaintMsgTimeoutMS = 50;
-  const base::TimeTicks start_time = base::TimeTicks::Now();
-  const base::TimeTicks timeout_time =
-      start_time + base::TimeDelta::FromMilliseconds(kPaintMsgTimeoutMS);
-
-  ui::WindowResizeHelperMac* resize_helper = ui::WindowResizeHelperMac::Get();
-  for (base::TimeTicks now = start_time; now < timeout_time;
-       now = base::TimeTicks::Now()) {
-    if (!resize_helper->WaitForSingleTaskToRun(timeout_time - now))
-      return;  // Timeout.
-
-    // Since the UI thread is blocked, the size shouldn't change.
-    DCHECK(size_in_dip == GetClientAreaSize());
-    if (compositor_widget_->HasFrameOfSize(size_in_dip))
-      return;  // Frame arrived.
-  }
+bool BridgedNativeWidget::IsWindowModalSheet() const {
+  return parent_ && modal_type_ == ui::MODAL_TYPE_WINDOW;
 }
 
 void BridgedNativeWidget::ShowAsModalSheet() {
@@ -1304,16 +1253,18 @@ void BridgedNativeWidget::ShowAsModalSheet() {
   // So that it doesn't animate a fully transparent window, first wait for a
   // frame. The first step is to pretend that the window is already visible.
   window_visible_ = true;
-  layer()->SetVisible(true);
-  native_widget_mac_->GetWidget()->OnNativeWidgetVisibilityChanged(true);
-  MaybeWaitForFrame(GetClientAreaSize());
+  host_->OnVisibilityChanged(window_visible_);
 
   NSWindow* parent_window = parent_->GetNSWindow();
   DCHECK(parent_window);
 
+  // -beginSheet: does not retain |modalDelegate| (and we would not want it to).
+  // Since |this| may destroy [window_ delegate], use |window_| itself as the
+  // delegate, which will forward to ViewsNSWindowDelegate if |this| is still
+  // alive (i.e. it has not set the window delegate to nil).
   [NSApp beginSheet:window_
       modalForWindow:parent_window
-       modalDelegate:[window_ delegate]
+       modalDelegate:window_
       didEndSelector:@selector(sheetDidEnd:returnCode:contextInfo:)
          contextInfo:nullptr];
 }

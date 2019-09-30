@@ -17,7 +17,7 @@
 #include "base/command_line.h"
 #include "base/memory/ptr_util.h"
 #include "base/stl_util.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "base/threading/thread_checker.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/chromeos/login/session/user_session_manager.h"
@@ -25,6 +25,7 @@
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
 #include "chrome/browser/chromeos/settings/cros_settings.h"
 #include "chrome/browser/chromeos/settings/device_settings_provider.h"
+#include "chrome/browser/chromeos/settings/install_attributes.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chromeos/chromeos_switches.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
@@ -117,7 +118,7 @@ void ContinueLoadPrivateKeyOnIOThread(
 
   scoped_refptr<base::TaskRunner> task_runner =
       base::CreateTaskRunnerWithTraits(
-          {base::MayBlock(), base::TaskPriority::BACKGROUND,
+          {base::MayBlock(), base::TaskPriority::BEST_EFFORT,
            base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN});
   task_runner->PostTask(
       FROM_HERE,
@@ -165,7 +166,7 @@ void DoesPrivateKeyExistAsync(
   }
   scoped_refptr<base::TaskRunner> task_runner =
       base::CreateTaskRunnerWithTraits(
-          {base::MayBlock(), base::TaskPriority::BACKGROUND,
+          {base::MayBlock(), base::TaskPriority::BEST_EFFORT,
            base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN});
   base::PostTaskAndReplyWithResult(
       task_runner.get(),
@@ -265,6 +266,23 @@ void OwnerSettingsServiceChromeOS::OnEasyUnlockKeyOpsFinished() {
 bool OwnerSettingsServiceChromeOS::HasPendingChanges() const {
   return !pending_changes_.empty() || tentative_settings_.get() ||
          has_pending_fixups_;
+}
+
+bool OwnerSettingsServiceChromeOS::IsOwner() {
+  if (InstallAttributes::Get()->IsEnterpriseManaged()) {
+    return false;
+  }
+  return OwnerSettingsService::IsOwner();
+}
+
+void OwnerSettingsServiceChromeOS::IsOwnerAsync(
+    const IsOwnerCallback& callback) {
+  if (InstallAttributes::Get()->IsEnterpriseManaged()) {
+    base::ThreadTaskRunnerHandle::Get()->PostTask(
+        FROM_HERE, base::BindOnce(callback, false));
+    return;
+  }
+  OwnerSettingsService::IsOwnerAsync(callback);
 }
 
 bool OwnerSettingsServiceChromeOS::HandlesSetting(const std::string& setting) {

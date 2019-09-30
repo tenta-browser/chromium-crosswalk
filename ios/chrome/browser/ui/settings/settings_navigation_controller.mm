@@ -13,9 +13,10 @@
 #import "ios/chrome/browser/ui/icons/chrome_icon.h"
 #import "ios/chrome/browser/ui/keyboard/UIKeyCommand+Chrome.h"
 #import "ios/chrome/browser/ui/material_components/app_bar_presenting.h"
+#import "ios/chrome/browser/ui/material_components/app_bar_view_controller_presenting.h"
 #import "ios/chrome/browser/ui/material_components/utils.h"
 #import "ios/chrome/browser/ui/settings/accounts_collection_view_controller.h"
-#import "ios/chrome/browser/ui/settings/autofill_collection_view_controller.h"
+#import "ios/chrome/browser/ui/settings/autofill_profile_collection_view_controller.h"
 #import "ios/chrome/browser/ui/settings/clear_browsing_data_collection_view_controller.h"
 #import "ios/chrome/browser/ui/settings/import_data_collection_view_controller.h"
 #import "ios/chrome/browser/ui/settings/save_passwords_collection_view_controller.h"
@@ -25,7 +26,7 @@
 #import "ios/chrome/browser/ui/settings/sync_settings_collection_view_controller.h"
 #include "ios/chrome/browser/ui/ui_util.h"
 #import "ios/chrome/browser/ui/uikit_ui_util.h"
-#import "ios/chrome/browser/ui/util/constraints_ui_util.h"
+#import "ios/chrome/common/ui_util/constraints_ui_util.h"
 #include "ios/chrome/grit/ios_strings.h"
 #import "ios/public/provider/chrome/browser/chrome_browser_provider.h"
 #import "ios/public/provider/chrome/browser/user_feedback/user_feedback_provider.h"
@@ -158,18 +159,14 @@ newUserFeedbackController:(ios::ChromeBrowserState*)browserState
   DCHECK(ios::GetChromeBrowserProvider()
              ->GetUserFeedbackProvider()
              ->IsUserFeedbackEnabled());
-  UIViewController* controller =
-      ios::GetChromeBrowserProvider()
-          ->GetUserFeedbackProvider()
-          ->CreateViewController(dataSource, [delegate dispatcherForSettings]);
+  UIViewController* controller = ios::GetChromeBrowserProvider()
+                                     ->GetUserFeedbackProvider()
+                                     ->CreateViewController(dataSource);
   DCHECK(controller);
   SettingsNavigationController* nc = [[SettingsNavigationController alloc]
       initWithRootViewController:controller
                     browserState:browserState
                         delegate:delegate];
-  if (!experimental_flags::IsNewFeedbackKitEnabled()) {
-    [controller navigationItem].rightBarButtonItem = [nc cancelButton];
-  }
   return nc;
 }
 
@@ -252,8 +249,8 @@ newImportDataController:(ios::ChromeBrowserState*)browserState
 + (SettingsNavigationController*)
 newAutofillController:(ios::ChromeBrowserState*)browserState
              delegate:(id<SettingsNavigationControllerDelegate>)delegate {
-  AutofillCollectionViewController* controller =
-      [[AutofillCollectionViewController alloc]
+  AutofillProfileCollectionViewController* controller =
+      [[AutofillProfileCollectionViewController alloc]
           initWithBrowserState:browserState];
   controller.dispatcher = [delegate dispatcherForSettings];
 
@@ -421,9 +418,15 @@ initWithRootViewController:(UIViewController*)rootViewController
       viewController.navigationItem.leftBarButtonItems.count == 0) {
     viewController.navigationItem.leftBarButtonItem = [self backButton];
   }
-  // Wrap the view controller in an MDCAppBarContainerViewController if needed.
-  [super pushViewController:[self wrappedControllerIfNeeded:viewController]
-                   animated:animated];
+  // TODO(crbug.com/875528): This is a workaround for iOS 10.x.
+  if (@available(iOS 11, *)) {
+    // Wrap the view controller in an MDCAppBarContainerViewController if
+    // needed.
+    [super pushViewController:[self wrappedControllerIfNeeded:viewController]
+                     animated:animated];
+  } else {
+    [super pushViewController:viewController animated:animated];
+  }
 }
 
 - (UIViewController*)popViewControllerAnimated:(BOOL)animated {
@@ -533,7 +536,9 @@ initWithRootViewController:(UIViewController*)rootViewController
 - (UIViewController*)wrappedControllerIfNeeded:(UIViewController*)controller {
   // If the controller can't be presented with an app bar, it needs to be
   // wrapped in an MDCAppBarContainerViewController.
-  if (![controller conformsToProtocol:@protocol(AppBarPresenting)]) {
+  if (![controller conformsToProtocol:@protocol(AppBarPresenting)] &&
+      ![controller
+          conformsToProtocol:@protocol(AppBarViewControllerPresenting)]) {
     MDCAppBarContainerViewController* appBarContainer =
         [[SettingsAppBarContainerViewController alloc]
             initWithContentViewController:controller];
@@ -541,6 +546,13 @@ initWithRootViewController:(UIViewController*)rootViewController
     // Configure the style.
     appBarContainer.view.backgroundColor = [UIColor whiteColor];
     ConfigureAppBarWithCardStyle(appBarContainer.appBar);
+
+    // Override the header view's background color if the UIRefresh experiment
+    // is enabled.
+    if (experimental_flags::IsSettingsUIRebootEnabled()) {
+      appBarContainer.appBar.headerViewController.headerView.backgroundColor =
+          [UIColor groupTableViewBackgroundColor];
+    }
 
     // Register the app bar container and return it.
     [self registerAppBarContainer:appBarContainer];

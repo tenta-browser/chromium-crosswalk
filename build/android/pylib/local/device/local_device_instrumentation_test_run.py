@@ -153,7 +153,11 @@ class LocalDeviceInstrumentationTestRun(
           self._replace_package_contextmanager = system_app.ReplaceSystemApp(
               dev, self._test_instance.replace_system_package.package,
               self._test_instance.replace_system_package.replacement_apk)
+          # Pylint is not smart enough to realize that this field has
+          # an __enter__ method, and will complain loudly.
+          # pylint: disable=no-member
           self._replace_package_contextmanager.__enter__()
+          # pylint: enable=no-member
 
         steps.append(replace_package)
 
@@ -308,12 +312,15 @@ class LocalDeviceInstrumentationTestRun(
       valgrind_tools.SetChromeTimeoutScale(dev, None)
 
       if self._replace_package_contextmanager:
+        # See pylint-related commend above with __enter__()
+        # pylint: disable=no-member
         self._replace_package_contextmanager.__exit__(*sys.exc_info())
+        # pylint: enable=no-member
 
     self._env.parallel_devices.pMap(individual_device_tear_down)
 
   def _CreateFlagChangerIfNeeded(self, device):
-    if not str(device) in self._flag_changers:
+    if str(device) not in self._flag_changers:
       self._flag_changers[str(device)] = flag_changer.FlagChanger(
         device, "test-cmdline-file")
 
@@ -659,8 +666,11 @@ class LocalDeviceInstrumentationTestRun(
             dir=dev.GetExternalStoragePath()) as dev_test_list_json:
           junit4_runner_class = self._test_instance.junit4_runner_class
           test_package = self._test_instance.test_package
-          extras = {}
-          extras['log'] = 'true'
+          extras = {
+            'log': 'true',
+            # Workaround for https://github.com/mockito/mockito/issues/922
+            'notPackage': 'net.bytebuddy',
+          }
           extras[_EXTRA_TEST_LIST] = dev_test_list_json.name
           target = '%s/%s' % (test_package, junit4_runner_class)
           timeout = 120

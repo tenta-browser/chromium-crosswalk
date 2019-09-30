@@ -9,6 +9,7 @@
 
 #include "ash/public/interfaces/voice_interaction_controller.mojom.h"
 #include "base/callback_forward.h"
+#include "components/arc/arc_supervision_transition.h"
 
 // Most utility should be put in components/arc/arc_util.{h,cc}, rather than
 // here. However, some utility implementation requires other modules defined in
@@ -138,17 +139,26 @@ bool IsArcTermsOfServiceNegotiationNeeded(const Profile* profile);
 // also checks set of preconditions and uses active user profile.
 bool IsArcTermsOfServiceOobeNegotiationNeeded();
 
+// Returns true if stats reporting is enabled. Otherwise false.
+bool IsArcStatsReportingEnabled();
+
+// Returns whether ARC opt-in in demo mode setup flow is in progress.
+bool IsArcDemoModeSetupFlow();
+
 // Checks and updates the preference value whether the underlying filesystem
 // for the profile is compatible with ARC, when necessary. After it's done (or
 // skipped), |callback| is run either synchronously or asynchronously.
 void UpdateArcFileSystemCompatibilityPrefIfNeeded(
     const AccountId& account_id,
     const base::FilePath& profile_path,
-    const base::Closure& callback);
+    base::OnceClosure callback);
 
 // Returns whether Google Assistant feature is allowed for given |profile|.
 ash::mojom::AssistantAllowedState IsAssistantAllowedForProfile(
     const Profile* profile);
+
+// Returns the supervision transition status as stored in profile prefs.
+ArcSupervisionTransition GetSupervisionTransition(const Profile* profile);
 
 }  // namespace arc
 

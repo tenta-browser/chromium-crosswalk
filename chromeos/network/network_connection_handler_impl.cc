@@ -18,12 +18,14 @@
 #include "chromeos/network/certificate_pattern.h"
 #include "chromeos/network/client_cert_resolver.h"
 #include "chromeos/network/client_cert_util.h"
+#include "chromeos/network/device_state.h"
 #include "chromeos/network/managed_network_configuration_handler.h"
 #include "chromeos/network/network_configuration_handler.h"
 #include "chromeos/network/network_event_log.h"
 #include "chromeos/network/network_profile_handler.h"
 #include "chromeos/network/network_state.h"
 #include "chromeos/network/network_state_handler.h"
+#include "chromeos/network/network_util.h"
 #include "chromeos/network/shill_property_util.h"
 #include "dbus/object_path.h"
 #include "net/cert/x509_certificate.h"
@@ -299,12 +301,12 @@ void NetworkConnectionHandlerImpl::ConnectToNetwork(
   // Connect immediately to 'connectable' networks.
   // TODO(stevenjb): Shill needs to properly set Connectable for VPN.
   if (network && network->connectable() && network->type() != shill::kTypeVPN) {
-    if (IsNetworkProhibitedByPolicy(network->type(), network->guid(),
-                                    network->profile_path())) {
+    if (network->blocked_by_policy()) {
       InvokeConnectErrorCallback(service_path, error_callback,
-                                 kErrorUnmanagedNetwork);
+                                 kErrorBlockedByPolicy);
       return;
     }
+
     call_connect = true;
   }
 
@@ -458,15 +460,27 @@ void NetworkConnectionHandlerImpl::VerifyConfiguredAndConnect(
   service_properties.GetStringWithoutPathExpansion(shill::kProfileProperty,
                                                    &profile);
   ::onc::ONCSource onc_source = onc::ONC_SOURCE_NONE;
-  const base::DictionaryValue* policy = nullptr;
-  if (!profile.empty()) {
-    policy = managed_configuration_handler_->FindPolicyByGuidAndProfile(
-        guid, profile, &onc_source);
-  }
+  const base::DictionaryValue* policy =
+      managed_configuration_handler_->FindPolicyByGuidAndProfile(guid, profile,
+                                                                 &onc_source);
 
-  if (IsNetworkProhibitedByPolicy(type, guid, profile)) {
-    ErrorCallbackForPendingRequest(service_path, kErrorUnmanagedNetwork);
-    return;
+  // Check if network is blocked by policy.
+  if (type == shill::kTypeWifi &&
+      onc_source != ::onc::ONCSource::ONC_SOURCE_DEVICE_POLICY &&
+      onc_source != ::onc::ONCSource::ONC_SOURCE_USER_POLICY) {
+    const base::Value* hex_ssid_value = service_properties.FindKeyOfType(
+        shill::kWifiHexSsid, base::Value::Type::STRING);
+    if (!hex_ssid_value) {
+      ErrorCallbackForPendingRequest(service_path, kErrorHexSsidRequired);
+      return;
+    }
+    if (network_state_handler_->OnlyManagedWifiNetworksAllowed() ||
+        base::ContainsValue(
+            managed_configuration_handler_->GetBlacklistedHexSSIDs(),
+            hex_ssid_value->GetString())) {
+      ErrorCallbackForPendingRequest(service_path, kErrorBlockedByPolicy);
+      return;
+    }
   }
 
   client_cert::ClientCertConfig cert_config_from_policy;
@@ -561,7 +575,6 @@ void NetworkConnectionHandlerImpl::VerifyConfiguredAndConnect(
     NET_LOG(EVENT) << "Configuring Network: " << service_path;
     configuration_handler_->SetShillProperties(
         service_path, config_properties,
-        NetworkConfigurationObserver::SOURCE_USER_ACTION,
         base::Bind(&NetworkConnectionHandlerImpl::CallShillConnect, AsWeakPtr(),
                    service_path),
         base::Bind(&NetworkConnectionHandlerImpl::HandleConfigurationFailure,
@@ -580,31 +593,6 @@ void NetworkConnectionHandlerImpl::VerifyConfiguredAndConnect(
   // Otherwise attempt to connect to possibly gain additional error state from
   // Shill (or in case 'Connectable' is improperly set to false).
   CallShillConnect(service_path);
-}
-
-bool NetworkConnectionHandlerImpl::IsNetworkProhibitedByPolicy(
-    const std::string& type,
-    const std::string& guid,
-    const std::string& profile_path) {
-  if (!logged_in_ || type != shill::kTypeWifi)
-    return false;
-  const base::DictionaryValue* global_network_config =
-      managed_configuration_handler_->GetGlobalConfigFromPolicy(
-          std::string() /* no username hash, device policy */);
-  if (!global_network_config)
-    return false;
-  bool policy_prohibites = false;
-  if (!global_network_config->GetBooleanWithoutPathExpansion(
-          ::onc::global_network_config::kAllowOnlyPolicyNetworksToConnect,
-          &policy_prohibites) ||
-      !policy_prohibites) {
-    return false;
-  }
-  // If |profile_path| is empty, this is not a policy network.
-  if (profile_path.empty())
-    return true;
-  return !managed_configuration_handler_->FindPolicyByGuidAndProfile(
-      guid, profile_path, nullptr /* onc_source */);
 }
 
 void NetworkConnectionHandlerImpl::QueueConnectRequest(
@@ -768,8 +756,7 @@ void NetworkConnectionHandlerImpl::CheckPendingRequest(
     if (!request->profile_path.empty()) {
       // If a profile path was specified, set it on a successful connection.
       configuration_handler_->SetNetworkProfile(
-          service_path, request->profile_path,
-          NetworkConfigurationObserver::SOURCE_USER_ACTION, base::DoNothing(),
+          service_path, request->profile_path, base::DoNothing(),
           chromeos::network_handler::ErrorCallback());
     }
     InvokeConnectSuccessCallback(request->service_path,

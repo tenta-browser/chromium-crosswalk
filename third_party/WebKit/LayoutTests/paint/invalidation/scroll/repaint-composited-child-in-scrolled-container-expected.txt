@@ -37,7 +37,7 @@
       "backgroundColor": "#FF0000",
       "paintInvalidations": [
         {
-          "object": "LayoutBlockFlow (positioned) DIV id='container'",
+          "object": "LayoutBlockFlow DIV id='inner'",
           "rect": [0, 0, 600, 600],
           "reason": "appeared"
         }
@@ -55,16 +55,6 @@
         [-307, 8, 0, 1]
       ],
       "flattenInheritedTransform": false
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "HorizontalScrollbar",
-      "reason": "scroll control"
-    },
-    {
-      "object": "LayoutBlockFlow DIV id='inner'",
-      "reason": "style change"
     }
   ]
 }

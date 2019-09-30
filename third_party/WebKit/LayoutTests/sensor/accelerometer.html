@@ -1,9 +1,9 @@
 <!DOCTYPE html>
 <script src="../resources/testharness.js"></script>
 <script src="../resources/testharnessreport.js"></script>
+<script src="../http/tests/resources/sensor-helpers.js"></script>
 <script src="file:///gen/layout_test_data/mojo/public/js/mojo_bindings.js"></script>
 <script src="file:///gen/services/device/public/mojom/sensor_provider.mojom.js"></script>
-<script src="resources/sensor-helpers.js"></script>
 <script src="resources/generic-sensor-tests.js"></script>
 <script>
 
@@ -21,6 +21,7 @@ function update_sensor_reading(buffer) {
 
 runGenericSensorTests(
     Accelerometer,
+    device.mojom.SensorType.ACCELEROMETER,
     update_sensor_reading,
     verify_xyz_sensor_reading.bind(null, kDefaultReading),
     verify_xyz_sensor_reading.bind(null, kMappedReading),
@@ -28,6 +29,7 @@ runGenericSensorTests(
 
 runGenericSensorTests(
     LinearAccelerationSensor,
+    device.mojom.SensorType.LINEAR_ACCELERATION,
     update_sensor_reading,
     verify_xyz_sensor_reading.bind(null, kDefaultReading),
     verify_xyz_sensor_reading.bind(null, kMappedReading),

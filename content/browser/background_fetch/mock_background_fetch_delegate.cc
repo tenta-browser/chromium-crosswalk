@@ -6,8 +6,10 @@
 #include <vector>
 
 #include "base/files/file_util.h"
+#include "base/threading/sequenced_task_runner_handle.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "content/browser/background_fetch/mock_background_fetch_delegate.h"
+#include "content/public/browser/background_fetch_description.h"
 #include "content/public/browser/background_fetch_response.h"
 #include "content/public/browser/browser_thread.h"
 #include "net/http/http_response_headers.h"
@@ -55,17 +57,20 @@ MockBackgroundFetchDelegate::MockBackgroundFetchDelegate() {}
 
 MockBackgroundFetchDelegate::~MockBackgroundFetchDelegate() {}
 
+void MockBackgroundFetchDelegate::GetPermissionForOrigin(
+    const url::Origin& origin,
+    const ResourceRequestInfo::WebContentsGetter& wc_getter,
+    GetPermissionForOriginCallback callback) {
+  base::SequencedTaskRunnerHandle::Get()->PostTask(
+      FROM_HERE,
+      base::BindOnce(std::move(callback), true /* has_permission */));
+}
+
 void MockBackgroundFetchDelegate::GetIconDisplaySize(
     GetIconDisplaySizeCallback callback) {}
 
 void MockBackgroundFetchDelegate::CreateDownloadJob(
-    const std::string& job_unique_id,
-    const std::string& title,
-    const url::Origin& origin,
-    const SkBitmap& icon,
-    int completed_parts,
-    int total_parts,
-    const std::vector<std::string>& current_guids) {}
+    std::unique_ptr<BackgroundFetchDescription> fetch_description) {}
 
 void MockBackgroundFetchDelegate::DownloadUrl(
     const std::string& job_unique_id,
@@ -135,7 +140,8 @@ void MockBackgroundFetchDelegate::DownloadUrl(
             &BackgroundFetchDelegate::Client::OnDownloadComplete, client(),
             job_unique_id, guid,
             std::make_unique<BackgroundFetchResult>(
-                base::Time::Now(), response_path, test_response->data.size())));
+                base::Time::Now(), response_path,
+                base::nullopt /* blob_handle */, test_response->data.size())));
   } else {
     PostAbortCheckingTask(
         job_unique_id,
@@ -152,6 +158,11 @@ void MockBackgroundFetchDelegate::DownloadUrl(
 void MockBackgroundFetchDelegate::Abort(const std::string& job_unique_id) {
   aborted_jobs_.insert(job_unique_id);
 }
+
+void MockBackgroundFetchDelegate::UpdateUI(
+    const std::string& job_unique_id,
+    const base::Optional<std::string>& title,
+    const base::Optional<SkBitmap>& icon) {}
 
 void MockBackgroundFetchDelegate::RegisterResponse(
     const GURL& url,

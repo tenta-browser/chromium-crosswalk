@@ -23,8 +23,8 @@
 #include "chrome/browser/ui/extensions/extension_installed_bubble.h"
 #include "chrome/browser/ui/singleton_tabs.h"
 #include "chrome/browser/ui/sync/bubble_sync_promo_delegate.h"
+#include "chrome/browser/ui/views/chrome_layout_provider.h"
 #include "chrome/browser/ui/views/frame/app_menu_button.h"
-#include "chrome/browser/ui/views/harmony/chrome_layout_provider.h"
 #include "chrome/browser/ui/views/sync/bubble_sync_promo_view.h"
 #include "chrome/browser/ui/views_mode_controller.h"
 #include "chrome/common/url_constants.h"
@@ -38,7 +38,7 @@
 #include "ui/base/ui_features.h"
 #include "ui/gfx/geometry/insets.h"
 #include "ui/gfx/image/image_skia_operations.h"
-#include "ui/views/bubble/bubble_dialog_delegate.h"
+#include "ui/views/bubble/bubble_dialog_delegate_view.h"
 #include "ui/views/controls/label.h"
 #include "ui/views/controls/link.h"
 #include "ui/views/controls/link_listener.h"
@@ -61,7 +61,7 @@ using extensions::Extension;
 
 namespace {
 
-const int kIconSize = 43;
+const int kExtensionInstalledIconSize = 43;
 
 const int kRightColumnWidth = 285;
 
@@ -162,7 +162,7 @@ class ExtensionInstalledBubbleView : public BubbleSyncPromoDelegate,
   // views::LinkListener:
   void LinkClicked(views::Link* source, int event_flags) override;
 
-  // Gets the size of the icon, capped at kIconSize.
+  // Gets the size of the icon, capped at kExtensionInstalledIconSize.
   gfx::Size GetIconSize() const;
 
   ExtensionInstalledBubble* controller_;
@@ -345,8 +345,10 @@ gfx::Size ExtensionInstalledBubbleView::GetIconSize() const {
   const SkBitmap& bitmap = controller_->icon();
   // Scale down to 43x43, but allow smaller icons (don't scale up).
   gfx::Size size(bitmap.width(), bitmap.height());
-  return size.width() > kIconSize || size.height() > kIconSize
-             ? gfx::Size(kIconSize, kIconSize)
+  return size.width() > kExtensionInstalledIconSize ||
+                 size.height() > kExtensionInstalledIconSize
+             ? gfx::Size(kExtensionInstalledIconSize,
+                         kExtensionInstalledIconSize)
              : size;
 }
 

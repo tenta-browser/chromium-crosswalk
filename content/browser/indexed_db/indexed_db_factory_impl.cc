@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "base/callback_helpers.h"
+#include "base/command_line.h"
 #include "base/feature_list.h"
 #include "base/logging.h"
 #include "base/metrics/histogram_macros.h"
@@ -78,13 +79,39 @@ base::Time GenerateNextGlobalSweepTime(base::Time now) {
   return now + base::TimeDelta::FromMilliseconds(rand_millis);
 }
 
+leveldb::Status GetDBSizeFromEnv(leveldb::Env* env,
+                                 const std::string& path,
+                                 int64_t* total_size_out) {
+  *total_size_out = 0;
+  // Root path should be /, but in MemEnv, a path name is not tailed with '/'
+  DCHECK_EQ(path.back(), '/');
+  const std::string path_without_slash = path.substr(0, path.length() - 1);
+
+  // This assumes that leveldb will not put a subdirectory into the directory
+  std::vector<std::string> file_names;
+  leveldb::Status s = env->GetChildren(path_without_slash, &file_names);
+  if (!s.ok())
+    return s;
+
+  for (std::string& file_name : file_names) {
+    file_name.insert(0, path);
+    uint64_t file_size;
+    s = env->GetFileSize(file_name, &file_size);
+    if (!s.ok())
+      return s;
+    else
+      *total_size_out += static_cast<int64_t>(file_size);
+  }
+  return s;
+}
+
 }  // namespace
 
 const base::Feature kIDBTombstoneStatistics{"IDBTombstoneStatistics",
                                             base::FEATURE_DISABLED_BY_DEFAULT};
 
 const base::Feature kIDBTombstoneDeletion{"IDBTombstoneDeletion",
-                                          base::FEATURE_DISABLED_BY_DEFAULT};
+                                          base::FEATURE_ENABLED_BY_DEFAULT};
 
 constexpr const base::TimeDelta
     IndexedDBFactoryImpl::kMaxEarliestGlobalSweepFromNow;
@@ -153,12 +180,19 @@ void IndexedDBFactoryImpl::ReleaseBackingStore(const Origin& origin,
     return;
   }
 
+  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
+          kIDBCloseImmediatelySwitch)) {
+    MaybeCloseBackingStore(origin);
+    return;
+  }
+
   // Start a timer to close the backing store, unless something else opens it
   // in the mean time.
   DCHECK(!backing_store_map_[origin]->close_timer()->IsRunning());
   backing_store_map_[origin]->close_timer()->Start(
       FROM_HERE, base::TimeDelta::FromSeconds(kBackingStoreGracePeriodSeconds),
-      base::Bind(&IndexedDBFactoryImpl::MaybeStartPreCloseTasks, this, origin));
+      base::BindOnce(&IndexedDBFactoryImpl::MaybeStartPreCloseTasks, this,
+                     origin));
 }
 
 void IndexedDBFactoryImpl::MaybeStartPreCloseTasks(const Origin& origin) {
@@ -304,6 +338,17 @@ void IndexedDBFactoryImpl::ForceClose(const Origin& origin) {
     ReleaseBackingStore(origin, true /* immediate */);
 }
 
+void IndexedDBFactoryImpl::ForceSchemaDowngrade(const Origin& origin) {
+  OriginDBs range = GetOpenDatabasesForOrigin(origin);
+
+  while (range.first != range.second) {
+    IndexedDBDatabase* db = range.first->second;
+    ++range.first;
+    leveldb::Status s = db->backing_store()->RevertSchemaToV2();
+    DLOG_IF(ERROR, !s.ok()) << "Unable to force downgrade: " << s.ToString();
+  }
+}
+
 void IndexedDBFactoryImpl::ContextDestroyed() {
   // Timers on backing stores hold a reference to this factory. When the
   // context (which nominally owns this factory) is destroyed during thread
@@ -353,10 +398,13 @@ void IndexedDBFactoryImpl::GetDatabaseNames(
       OpenBackingStore(origin, data_directory, request_context_getter,
                        &data_loss_info, &disk_full, &s);
   if (!backing_store.get()) {
-    callbacks->OnError(
-        IndexedDBDatabaseError(blink::kWebIDBDatabaseExceptionUnknownError,
-                               "Internal error opening backing store for "
-                               "indexedDB.webkitGetDatabaseNames."));
+    IndexedDBDatabaseError error(
+        blink::kWebIDBDatabaseExceptionUnknownError,
+        ASCIIToUTF16("Internal error opening backing store for "
+                     "indexedDB.webkitGetDatabaseNames."));
+    callbacks->OnError(error);
+    if (s.IsCorruption())
+      HandleBackingStoreCorruption(origin, error);
     return;
   }
 
@@ -713,6 +761,29 @@ size_t IndexedDBFactoryImpl::GetConnectionCount(const Origin& origin) const {
     count += it->second->ConnectionCount();
 
   return count;
+}
+
+int64_t IndexedDBFactoryImpl::GetInMemoryDBSize(const Origin& origin) const {
+  const auto& it = backing_store_map_.find(origin);
+  DCHECK(it != backing_store_map_.end());
+
+  const scoped_refptr<IndexedDBBackingStore>& backing_store = it->second;
+  int64_t level_db_size = 0;
+  leveldb::Status s =
+      GetDBSizeFromEnv(backing_store->db()->env(), "/", &level_db_size);
+  if (!s.ok())
+    LOG(ERROR) << "Failed to GetDBSizeFromEnv: " << s.ToString();
+
+  return backing_store->GetInMemoryBlobSize() + level_db_size;
+}
+
+base::Time IndexedDBFactoryImpl::GetLastModified(
+    const url::Origin& origin) const {
+  const auto& it = backing_store_map_.find(origin);
+  DCHECK(it != backing_store_map_.end());
+
+  const scoped_refptr<IndexedDBBackingStore>& backing_store = it->second;
+  return backing_store->db()->LastModified();
 }
 
 void IndexedDBFactoryImpl::NotifyIndexedDBContentChanged(

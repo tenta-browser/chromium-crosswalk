@@ -10,6 +10,7 @@
 #include "base/memory/ptr_util.h"
 #include "build/build_config.h"
 #include "components/content_settings/core/common/content_settings.h"
+#include "components/content_settings/core/common/features.h"
 
 namespace {
 
@@ -124,22 +125,21 @@ void WebsiteSettingsRegistry::Init() {
   Register(CONTENT_SETTINGS_TYPE_AUTO_SELECT_CERTIFICATE,
            "auto-select-certificate", nullptr, WebsiteSettingsInfo::UNSYNCABLE,
            WebsiteSettingsInfo::NOT_LOSSY,
-           WebsiteSettingsInfo::REQUESTING_ORIGIN_ONLY_SCOPE, ALL_PLATFORMS,
-           WebsiteSettingsInfo::INHERIT_IN_INCOGNITO);
-  Register(CONTENT_SETTINGS_TYPE_SSL_CERT_DECISIONS,
-           "ssl-cert-decisions", nullptr, WebsiteSettingsInfo::UNSYNCABLE,
-           WebsiteSettingsInfo::NOT_LOSSY,
-           WebsiteSettingsInfo::REQUESTING_ORIGIN_ONLY_SCOPE,
-           DESKTOP | PLATFORM_ANDROID,
-           WebsiteSettingsInfo::INHERIT_IN_INCOGNITO);
+           WebsiteSettingsInfo::SINGLE_ORIGIN_WITH_EMBEDDED_EXCEPTIONS_SCOPE,
+           ALL_PLATFORMS, WebsiteSettingsInfo::INHERIT_IN_INCOGNITO);
+  Register(
+      CONTENT_SETTINGS_TYPE_SSL_CERT_DECISIONS, "ssl-cert-decisions", nullptr,
+      WebsiteSettingsInfo::UNSYNCABLE, WebsiteSettingsInfo::NOT_LOSSY,
+      WebsiteSettingsInfo::SINGLE_ORIGIN_WITH_EMBEDDED_EXCEPTIONS_SCOPE,
+      DESKTOP | PLATFORM_ANDROID, WebsiteSettingsInfo::INHERIT_IN_INCOGNITO);
   Register(CONTENT_SETTINGS_TYPE_APP_BANNER, "app-banner", nullptr,
            WebsiteSettingsInfo::UNSYNCABLE, WebsiteSettingsInfo::LOSSY,
-           WebsiteSettingsInfo::REQUESTING_ORIGIN_ONLY_SCOPE,
+           WebsiteSettingsInfo::SINGLE_ORIGIN_WITH_EMBEDDED_EXCEPTIONS_SCOPE,
            DESKTOP | PLATFORM_ANDROID,
            WebsiteSettingsInfo::INHERIT_IN_INCOGNITO);
   Register(CONTENT_SETTINGS_TYPE_SITE_ENGAGEMENT, "site-engagement", nullptr,
            WebsiteSettingsInfo::UNSYNCABLE, WebsiteSettingsInfo::LOSSY,
-           WebsiteSettingsInfo::REQUESTING_ORIGIN_ONLY_SCOPE,
+           WebsiteSettingsInfo::SINGLE_ORIGIN_WITH_EMBEDDED_EXCEPTIONS_SCOPE,
            DESKTOP | PLATFORM_ANDROID,
            WebsiteSettingsInfo::INHERIT_IN_INCOGNITO);
   Register(CONTENT_SETTINGS_TYPE_USB_CHOOSER_DATA, "usb-chooser-data", nullptr,
@@ -149,42 +149,49 @@ void WebsiteSettingsRegistry::Init() {
            WebsiteSettingsInfo::DONT_INHERIT_IN_INCOGNITO);
   Register(CONTENT_SETTINGS_TYPE_IMPORTANT_SITE_INFO, "important-site-info",
            nullptr, WebsiteSettingsInfo::UNSYNCABLE, WebsiteSettingsInfo::LOSSY,
-           WebsiteSettingsInfo::REQUESTING_ORIGIN_ONLY_SCOPE,
+           WebsiteSettingsInfo::SINGLE_ORIGIN_WITH_EMBEDDED_EXCEPTIONS_SCOPE,
            DESKTOP | PLATFORM_ANDROID,
            WebsiteSettingsInfo::INHERIT_IN_INCOGNITO);
   Register(CONTENT_SETTINGS_TYPE_PERMISSION_AUTOBLOCKER_DATA,
            "permission-autoblocking-data", nullptr,
            WebsiteSettingsInfo::UNSYNCABLE, WebsiteSettingsInfo::NOT_LOSSY,
-           WebsiteSettingsInfo::REQUESTING_ORIGIN_ONLY_SCOPE,
+           WebsiteSettingsInfo::SINGLE_ORIGIN_WITH_EMBEDDED_EXCEPTIONS_SCOPE,
            DESKTOP | PLATFORM_ANDROID,
            WebsiteSettingsInfo::INHERIT_IN_INCOGNITO);
-  Register(
-      CONTENT_SETTINGS_TYPE_PASSWORD_PROTECTION, "password-protection", nullptr,
-      WebsiteSettingsInfo::UNSYNCABLE, WebsiteSettingsInfo::NOT_LOSSY,
-      WebsiteSettingsInfo::REQUESTING_ORIGIN_ONLY_SCOPE,
-      DESKTOP | PLATFORM_ANDROID, WebsiteSettingsInfo::INHERIT_IN_INCOGNITO);
+  Register(CONTENT_SETTINGS_TYPE_PASSWORD_PROTECTION, "password-protection",
+           nullptr, WebsiteSettingsInfo::UNSYNCABLE,
+           WebsiteSettingsInfo::NOT_LOSSY,
+           WebsiteSettingsInfo::SINGLE_ORIGIN_WITH_EMBEDDED_EXCEPTIONS_SCOPE,
+           DESKTOP, WebsiteSettingsInfo::INHERIT_IN_INCOGNITO);
   // Set when an origin is activated for subresource filtering and the
   // associated UI is shown to the user. Cleared when a site is de-activated or
   // the first URL matching the origin is removed from history.
   Register(CONTENT_SETTINGS_TYPE_ADS_DATA, "subresource-filter-data", nullptr,
            WebsiteSettingsInfo::UNSYNCABLE, WebsiteSettingsInfo::NOT_LOSSY,
-           WebsiteSettingsInfo::REQUESTING_ORIGIN_ONLY_SCOPE,
+           WebsiteSettingsInfo::SINGLE_ORIGIN_WITH_EMBEDDED_EXCEPTIONS_SCOPE,
            DESKTOP | PLATFORM_ANDROID,
            WebsiteSettingsInfo::INHERIT_IN_INCOGNITO);
   Register(CONTENT_SETTINGS_TYPE_MEDIA_ENGAGEMENT, "media-engagement", nullptr,
            WebsiteSettingsInfo::UNSYNCABLE, WebsiteSettingsInfo::LOSSY,
-           WebsiteSettingsInfo::REQUESTING_ORIGIN_ONLY_SCOPE,
+           WebsiteSettingsInfo::SINGLE_ORIGIN_WITH_EMBEDDED_EXCEPTIONS_SCOPE,
            DESKTOP | PLATFORM_ANDROID,
            WebsiteSettingsInfo::INHERIT_IN_INCOGNITO);
   Register(CONTENT_SETTINGS_TYPE_CLIENT_HINTS, "client-hints", nullptr,
            WebsiteSettingsInfo::UNSYNCABLE, WebsiteSettingsInfo::LOSSY,
-           WebsiteSettingsInfo::REQUESTING_ORIGIN_ONLY_SCOPE,
+           WebsiteSettingsInfo::SINGLE_ORIGIN_WITH_EMBEDDED_EXCEPTIONS_SCOPE,
            DESKTOP | PLATFORM_ANDROID,
            WebsiteSettingsInfo::DONT_INHERIT_IN_INCOGNITO);
-  Register(CONTENT_SETTINGS_TYPE_PLUGINS_DATA, "flash-data", nullptr,
-           WebsiteSettingsInfo::UNSYNCABLE, WebsiteSettingsInfo::NOT_LOSSY,
-           WebsiteSettingsInfo::REQUESTING_ORIGIN_ONLY_SCOPE, DESKTOP,
-           WebsiteSettingsInfo::INHERIT_IN_INCOGNITO);
+  Register(
+      CONTENT_SETTINGS_TYPE_PLUGINS_DATA, "flash-data", nullptr,
+      // To counteract the reduced usability of the Flash permission
+      // when it becomes ephemeral, we sync the bit indicating that
+      // the Flash permission should be displayed in the page info.
+      base::FeatureList::IsEnabled(features::kEnableEphemeralFlashPermission)
+          ? WebsiteSettingsInfo::SYNCABLE
+          : WebsiteSettingsInfo::UNSYNCABLE,
+      WebsiteSettingsInfo::NOT_LOSSY,
+      WebsiteSettingsInfo::SINGLE_ORIGIN_WITH_EMBEDDED_EXCEPTIONS_SCOPE,
+      DESKTOP, WebsiteSettingsInfo::INHERIT_IN_INCOGNITO);
 }
 
 }  // namespace content_settings

@@ -30,7 +30,9 @@
 #include <memory>
 
 #include "base/memory/scoped_refptr.h"
+#include "base/optional.h"
 #include "base/single_thread_task_runner.h"
+#include "base/synchronization/waitable_event.h"
 #include "base/thread_annotations.h"
 #include "base/unguessable_token.h"
 #include "services/network/public/mojom/fetch_api.mojom-shared.h"
@@ -38,29 +40,26 @@
 #include "third_party/blink/public/platform/web_thread_type.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/frame/csp/content_security_policy.h"
-#include "third_party/blink/renderer/core/loader/threadable_loading_context.h"
 #include "third_party/blink/renderer/core/workers/parent_execution_context_task_runners.h"
 #include "third_party/blink/renderer/core/workers/worker_backing_thread_startup_data.h"
 #include "third_party/blink/renderer/core/workers/worker_inspector_proxy.h"
-#include "third_party/blink/renderer/core/workers/worker_thread_lifecycle_context.h"
-#include "third_party/blink/renderer/core/workers/worker_thread_lifecycle_observer.h"
-#include "third_party/blink/renderer/platform/scheduler/child/worker_global_scope_scheduler.h"
-#include "third_party/blink/renderer/platform/waitable_event.h"
+#include "third_party/blink/renderer/platform/scheduler/public/worker_scheduler.h"
 #include "third_party/blink/renderer/platform/web_task_runner.h"
 #include "third_party/blink/renderer/platform/wtf/forward.h"
 #include "third_party/blink/renderer/platform/wtf/functional.h"
-#include "third_party/blink/renderer/platform/wtf/optional.h"
 #include "v8/include/v8.h"
 
 namespace blink {
 
 class ConsoleMessageStorage;
+class FetchClientSettingsObjectSnapshot;
 class InspectorTaskRunner;
 class InstalledScriptsManager;
 class WorkerBackingThread;
 class WorkerInspectorController;
 class WorkerOrWorkletGlobalScope;
 class WorkerReportingProxy;
+struct CrossThreadFetchClientSettingsObjectData;
 struct GlobalScopeCreationParams;
 
 // WorkerThread is a kind of WorkerBackingThread client. Each worker mechanism
@@ -92,14 +91,14 @@ class CORE_EXPORT WorkerThread : public WebThread::TaskObserver {
 
   // Starts the underlying thread and creates the global scope. Called on the
   // main thread.
-  // Startup data for WorkerBackingThread is WTF::nullopt if |this| doesn't own
+  // Startup data for WorkerBackingThread is base::nullopt if |this| doesn't own
   // the underlying WorkerBackingThread.
   // TODO(nhiroki): We could separate WorkerBackingThread initialization from
   // GlobalScope initialization sequence, that is, InitializeOnWorkerThread().
   // After that, we could remove this startup data for WorkerBackingThread.
   // (https://crbug.com/710364)
   void Start(std::unique_ptr<GlobalScopeCreationParams>,
-             const WTF::Optional<WorkerBackingThreadStartupData>&,
+             const base::Optional<WorkerBackingThreadStartupData>&,
              WorkerInspectorProxy::PauseOnWorkerStart,
              ParentExecutionContextTaskRunners*);
 
@@ -112,8 +111,10 @@ class CORE_EXPORT WorkerThread : public WebThread::TaskObserver {
 
   // Posts a task to import a top-level module script on the worker thread.
   // Called on the main thread after start().
-  void ImportModuleScript(const KURL& script_url,
-                          network::mojom::FetchCredentialsMode);
+  void ImportModuleScript(
+      const KURL& script_url,
+      FetchClientSettingsObjectSnapshot* outside_settings_object,
+      network::mojom::FetchCredentialsMode);
 
   // Posts a task to the worker thread to close the global scope and terminate
   // the underlying thread. This task may be blocked by JavaScript execution on
@@ -147,9 +148,6 @@ class CORE_EXPORT WorkerThread : public WebThread::TaskObserver {
 
   bool IsCurrentThread();
 
-  // Called on the worker thread.
-  ThreadableLoadingContext* GetLoadingContext();
-
   WorkerReportingProxy& GetWorkerReportingProxy() const {
     return worker_reporting_proxy_;
   }
@@ -157,7 +155,7 @@ class CORE_EXPORT WorkerThread : public WebThread::TaskObserver {
   // Only callable on the main thread.
   void AppendDebuggerTask(CrossThreadClosure);
 
-  // Only callable on the main thread.
+  // Callable on both the main thread and the worker thread.
   const base::UnguessableToken& GetDevToolsWorkerToken() const {
     return devtools_worker_token_;
   }
@@ -170,12 +168,6 @@ class CORE_EXPORT WorkerThread : public WebThread::TaskObserver {
   // and WorkerInspectorController are not thread safe.
   WorkerOrWorkletGlobalScope* GlobalScope();
   WorkerInspectorController* GetWorkerInspectorController();
-
-  // Called for creating WorkerThreadLifecycleObserver on both the main thread
-  // and the worker thread.
-  WorkerThreadLifecycleContext* GetWorkerThreadLifecycleContext() const {
-    return worker_thread_lifecycle_context_;
-  }
 
   // Number of active worker threads.
   static unsigned WorkerThreadCount();
@@ -190,7 +182,7 @@ class CORE_EXPORT WorkerThread : public WebThread::TaskObserver {
 
   bool IsForciblyTerminated() LOCKS_EXCLUDED(mutex_);
 
-  void WaitForShutdownForTesting() { shutdown_event_->Wait(); }
+  void WaitForShutdownForTesting();
   ExitCode GetExitCodeForTesting() LOCKS_EXCLUDED(mutex_);
 
   ParentExecutionContextTaskRunners* GetParentExecutionContextTaskRunners()
@@ -203,7 +195,7 @@ class CORE_EXPORT WorkerThread : public WebThread::TaskObserver {
     return nullptr;
   }
 
-  scheduler::WorkerGlobalScopeScheduler* GetScheduler();
+  scheduler::WorkerScheduler* GetScheduler();
 
   // Returns a task runner bound to the per-global-scope scheduler's task queue.
   // You don't have to care about the lifetime of the associated global scope
@@ -211,20 +203,20 @@ class CORE_EXPORT WorkerThread : public WebThread::TaskObserver {
   // are discarded and PostTask on the returned task runner just fails. This
   // function can be called on both the main thread and the worker thread.
   scoped_refptr<base::SingleThreadTaskRunner> GetTaskRunner(TaskType type) {
-    return global_scope_scheduler_->GetTaskRunner(type);
+    return worker_scheduler_->GetTaskRunner(type);
   }
 
   void ChildThreadStartedOnWorkerThread(WorkerThread*);
   void ChildThreadTerminatedOnWorkerThread(WorkerThread*);
 
  protected:
-  WorkerThread(ThreadableLoadingContext*, WorkerReportingProxy&);
+  explicit WorkerThread(WorkerReportingProxy&);
 
   virtual WebThreadType GetThreadType() const = 0;
 
   // Official moment of creation of worker: when the worker thread is created.
   // (https://w3c.github.io/hr-time/#time-origin)
-  const double time_origin_;
+  const base::TimeTicks time_origin_;
 
  private:
   friend class WorkerThreadTest;
@@ -270,10 +262,10 @@ class CORE_EXPORT WorkerThread : public WebThread::TaskObserver {
   void EnsureScriptExecutionTerminates(ExitCode) LOCKS_EXCLUDED(mutex_);
 
   // These are called in this order during worker thread startup.
-  void InitializeSchedulerOnWorkerThread(WaitableEvent*);
+  void InitializeSchedulerOnWorkerThread(base::WaitableEvent*);
   void InitializeOnWorkerThread(
       std::unique_ptr<GlobalScopeCreationParams>,
-      const WTF::Optional<WorkerBackingThreadStartupData>&,
+      const base::Optional<WorkerBackingThreadStartupData>&,
       WorkerInspectorProxy::PauseOnWorkerStart) LOCKS_EXCLUDED(mutex_);
 
   void EvaluateClassicScriptOnWorkerThread(
@@ -281,10 +273,11 @@ class CORE_EXPORT WorkerThread : public WebThread::TaskObserver {
       String source_code,
       std::unique_ptr<Vector<char>> cached_meta_data,
       const v8_inspector::V8StackTraceId& stack_id);
-  void ImportModuleScriptOnWorkerThread(const KURL& script_url,
-                                        network::mojom::FetchCredentialsMode);
-
-  void TerminateChildThreadsOnWorkerThread();
+  void ImportModuleScriptOnWorkerThread(
+      const KURL& script_url,
+      std::unique_ptr<CrossThreadFetchClientSettingsObjectData>
+          outside_settings_object,
+      network::mojom::FetchCredentialsMode);
 
   // These are called in this order during worker thread termination.
   void PrepareForShutdownOnWorkerThread() LOCKS_EXCLUDED(mutex_);
@@ -310,11 +303,7 @@ class CORE_EXPORT WorkerThread : public WebThread::TaskObserver {
   TimeDelta forcible_termination_delay_;
 
   scoped_refptr<InspectorTaskRunner> inspector_task_runner_;
-  base::UnguessableToken devtools_worker_token_;
-
-  // Created on the main thread, passed to the worker thread but should kept
-  // being accessed only on the main thread.
-  CrossThreadPersistent<ThreadableLoadingContext> loading_context_;
+  const base::UnguessableToken devtools_worker_token_;
 
   WorkerReportingProxy& worker_reporting_proxy_;
 
@@ -323,8 +312,7 @@ class CORE_EXPORT WorkerThread : public WebThread::TaskObserver {
 
   // Tasks managed by this scheduler are canceled when the global scope is
   // closed.
-  std::unique_ptr<scheduler::WorkerGlobalScopeScheduler>
-      global_scope_scheduler_;
+  std::unique_ptr<scheduler::WorkerScheduler> worker_scheduler_;
 
   // This lock protects shared states between the main thread and the worker
   // thread. See thread-safety annotations (e.g., GUARDED_BY) in this header
@@ -335,17 +323,15 @@ class CORE_EXPORT WorkerThread : public WebThread::TaskObserver {
   CrossThreadPersistent<WorkerOrWorkletGlobalScope> global_scope_;
   CrossThreadPersistent<WorkerInspectorController> worker_inspector_controller_;
 
-  // Signaled when the thread completes termination on the worker thread.
-  std::unique_ptr<WaitableEvent> shutdown_event_;
+  // Signaled when the thread completes termination on the worker thread. Only
+  // the parent context thread should wait on this event after calling
+  // Terminate().
+  class RefCountedWaitableEvent;
+  scoped_refptr<RefCountedWaitableEvent> shutdown_event_;
 
   // Used to cancel a scheduled forcible termination task. See
   // mayForciblyTerminateExecution() for details.
   TaskHandle forcible_termination_task_handle_;
-
-  // Created on the main thread heap, but will be accessed cross-thread
-  // when worker thread posts tasks.
-  CrossThreadPersistent<WorkerThreadLifecycleContext>
-      worker_thread_lifecycle_context_;
 
   HashSet<WorkerThread*> child_threads_;
 

@@ -21,12 +21,13 @@
 #include "media/base/cdm_key_information.h"
 #include "media/base/decoder_buffer.h"
 #include "media/base/decrypt_config.h"
+#include "media/base/encryption_pattern.h"
 #include "media/cdm/api/content_decryption_module_ext.h"
 #include "media/cdm/json_web_key.h"
+#include "media/cdm/library_cdm/cdm_host_proxy.h"
+#include "media/cdm/library_cdm/cdm_host_proxy_impl.h"
 #include "media/cdm/library_cdm/clear_key_cdm/cdm_file_io_test.h"
-#include "media/cdm/library_cdm/clear_key_cdm/cdm_host_proxy.h"
-#include "media/cdm/library_cdm/clear_key_cdm/cdm_host_proxy_impl.h"
-#include "media/cdm/library_cdm/clear_key_cdm/cdm_proxy_test.h"
+#include "media/cdm/library_cdm/clear_key_cdm/cdm_proxy_handler.h"
 #include "media/cdm/library_cdm/clear_key_cdm/cdm_video_decoder.h"
 #include "media/media_buildflags.h"
 
@@ -36,7 +37,6 @@
 #include "base/path_service.h"
 #include "media/base/media.h"
 #include "media/cdm/library_cdm/clear_key_cdm/ffmpeg_cdm_audio_decoder.h"
-#include "media/cdm/library_cdm/clear_key_cdm/ffmpeg_cdm_video_decoder.h"
 
 #if !defined COMPONENT_BUILD
 static base::AtExitManager g_at_exit_manager;
@@ -65,8 +65,8 @@ const char kExternalClearKeyStorageIdTestKeySystem[] =
     "org.chromium.externalclearkey.storageidtest";
 const char kExternalClearKeyDifferentGuidTestKeySystem[] =
     "org.chromium.externalclearkey.differentguid";
-const char kExternalClearKeyCdmProxyTestKeySystem[] =
-    "org.chromium.externalclearkey.cdmproxytest";
+const char kExternalClearKeyCdmProxyKeySystem[] =
+    "org.chromium.externalclearkey.cdmproxy";
 
 const int64_t kSecondsPerMinute = 60;
 const int64_t kMsPerSecond = 1000;
@@ -95,26 +95,32 @@ static scoped_refptr<media::DecoderBuffer> CopyDecoderBufferFrom(
   output_buffer->set_timestamp(
       base::TimeDelta::FromMicroseconds(input_buffer.timestamp));
 
-  // TODO(xhwang): Unify how to check whether a buffer is encrypted.
-  // See http://crbug.com/675003
-  if (input_buffer.iv_size != 0) {
-    DCHECK_GT(input_buffer.key_id_size, 0u);
-    std::vector<media::SubsampleEntry> subsamples;
-    for (uint32_t i = 0; i < input_buffer.num_subsamples; ++i) {
-      subsamples.push_back(
-          media::SubsampleEntry(input_buffer.subsamples[i].clear_bytes,
-                                input_buffer.subsamples[i].cipher_bytes));
-    }
+  if (input_buffer.encryption_scheme == cdm::EncryptionScheme::kUnencrypted)
+    return output_buffer;
 
-    std::unique_ptr<media::DecryptConfig> decrypt_config(
-        new media::DecryptConfig(
-            std::string(reinterpret_cast<const char*>(input_buffer.key_id),
-                        input_buffer.key_id_size),
-            std::string(reinterpret_cast<const char*>(input_buffer.iv),
-                        input_buffer.iv_size),
-            subsamples));
+  DCHECK_GT(input_buffer.iv_size, 0u);
+  DCHECK_GT(input_buffer.key_id_size, 0u);
+  std::vector<media::SubsampleEntry> subsamples;
+  for (uint32_t i = 0; i < input_buffer.num_subsamples; ++i) {
+    subsamples.push_back(
+        media::SubsampleEntry(input_buffer.subsamples[i].clear_bytes,
+                              input_buffer.subsamples[i].cipher_bytes));
+  }
 
-    output_buffer->set_decrypt_config(std::move(decrypt_config));
+  const std::string key_id_string(
+      reinterpret_cast<const char*>(input_buffer.key_id),
+      input_buffer.key_id_size);
+  const std::string iv_string(reinterpret_cast<const char*>(input_buffer.iv),
+                              input_buffer.iv_size);
+  if (input_buffer.encryption_scheme == cdm::EncryptionScheme::kCenc) {
+    output_buffer->set_decrypt_config(media::DecryptConfig::CreateCencConfig(
+        key_id_string, iv_string, subsamples));
+  } else {
+    DCHECK_EQ(input_buffer.encryption_scheme, cdm::EncryptionScheme::kCbcs);
+    output_buffer->set_decrypt_config(media::DecryptConfig::CreateCbcsConfig(
+        key_id_string, iv_string, subsamples,
+        media::EncryptionPattern(input_buffer.pattern.crypt_byte_block,
+                                 input_buffer.pattern.skip_byte_block)));
   }
 
   return output_buffer;
@@ -145,14 +151,14 @@ static cdm::Exception ConvertException(
 static media::CdmSessionType ConvertSessionType(cdm::SessionType session_type) {
   switch (session_type) {
     case cdm::kTemporary:
-      return media::CdmSessionType::TEMPORARY_SESSION;
+      return media::CdmSessionType::kTemporary;
     case cdm::kPersistentLicense:
-      return media::CdmSessionType::PERSISTENT_LICENSE_SESSION;
-    case cdm::kPersistentKeyRelease:
-      return media::CdmSessionType::PERSISTENT_RELEASE_MESSAGE_SESSION;
+      return media::CdmSessionType::kPersistentLicense;
+    case cdm::kPersistentUsageRecord:
+      return media::CdmSessionType::kPersistentUsageRecord;
   }
   NOTREACHED();
-  return media::CdmSessionType::TEMPORARY_SESSION;
+  return media::CdmSessionType::kTemporary;
 }
 
 static media::EmeInitDataType ConvertInitDataType(
@@ -258,14 +264,15 @@ void* CreateCdmInstance(int cdm_interface_version,
       key_system_string != kExternalClearKeyVerifyCdmHostTestKeySystem &&
       key_system_string != kExternalClearKeyStorageIdTestKeySystem &&
       key_system_string != kExternalClearKeyDifferentGuidTestKeySystem &&
-      key_system_string != kExternalClearKeyCdmProxyTestKeySystem) {
+      key_system_string != kExternalClearKeyCdmProxyKeySystem) {
     DVLOG(1) << "Unsupported key system:" << key_system_string;
     return nullptr;
   }
 
-  // We support both CDM_9 and CDM_10.
+  // We support CDM_9, CDM_10 and CDM_11.
   using CDM_9 = cdm::ContentDecryptionModule_9;
   using CDM_10 = cdm::ContentDecryptionModule_10;
+  using CDM_11 = cdm::ContentDecryptionModule_11;
 
   if (cdm_interface_version == CDM_9::kVersion) {
     CDM_9::Host* host = static_cast<CDM_9::Host*>(
@@ -285,6 +292,17 @@ void* CreateCdmInstance(int cdm_interface_version,
 
     DVLOG(1) << __func__ << ": Create ClearKeyCdm with CDM_10::Host.";
     return static_cast<CDM_10*>(
+        new media::ClearKeyCdm(host, key_system_string));
+  }
+
+  if (cdm_interface_version == CDM_11::kVersion) {
+    CDM_11::Host* host = static_cast<CDM_11::Host*>(
+        get_cdm_host_func(CDM_11::Host::kVersion, user_data));
+    if (!host)
+      return nullptr;
+
+    DVLOG(1) << __func__ << ": Create ClearKeyCdm with CDM_11::Host.";
+    return static_cast<CDM_11*>(
         new media::ClearKeyCdm(host, key_system_string));
   }
 
@@ -353,36 +371,6 @@ namespace media {
 
 namespace {
 
-bool IsSupportedConfigEncryptionScheme(cdm::EncryptionScheme scheme) {
-  // TODO(crbug.com/658026): Support other decryption schemes.
-  switch (scheme) {
-    case cdm::EncryptionScheme::kUnencrypted:
-    case cdm::EncryptionScheme::kCenc:
-      return true;
-    case cdm::EncryptionScheme::kCbcs:
-      return false;
-  }
-
-  NOTREACHED();
-  return false;
-}
-
-bool IsSupportedBufferEncryptionScheme(cdm::EncryptionScheme scheme,
-                                       cdm::Pattern pattern) {
-  // TODO(crbug.com/658026): Support other decryption schemes.
-  switch (scheme) {
-    case cdm::EncryptionScheme::kUnencrypted:
-      return true;
-    case cdm::EncryptionScheme::kCenc:
-      return pattern.crypt_byte_block == 0 && pattern.skip_byte_block == 0;
-    case cdm::EncryptionScheme::kCbcs:
-      return false;
-  }
-
-  NOTREACHED();
-  return false;
-}
-
 cdm::InputBuffer_2 ToInputBuffer_2(cdm::InputBuffer_1 encrypted_buffer) {
   cdm::InputBuffer_2 buffer = {};
   buffer.data = encrypted_buffer.data;
@@ -428,9 +416,9 @@ void ClearKeyCdm::Initialize(bool allow_distinctive_identifier,
   allow_persistent_state_ = allow_persistent_state;
 
   // CdmProxy must be created during initialization time. OnInitialized() will
-  // be called in OnCdmProxyTestComplete().
-  if (key_system_ == kExternalClearKeyCdmProxyTestKeySystem) {
-    StartCdmProxyTest();
+  // be called in OnCdmProxyHandlerInitialized().
+  if (key_system_ == kExternalClearKeyCdmProxyKeySystem) {
+    InitializeCdmProxyHandler();
     return;
   }
 
@@ -495,8 +483,6 @@ void ClearKeyCdm::CreateSessionAndGenerateRequest(
     ReportVerifyCdmHostTestResult();
   } else if (key_system_ == kExternalClearKeyStorageIdTestKeySystem) {
     StartStorageIdTest();
-  } else if (key_system_ == kExternalClearKeyCdmProxyTestKeySystem) {
-    ReportCdmProxyTestResult();
   }
 }
 
@@ -526,6 +512,16 @@ void ClearKeyCdm::UpdateSession(uint32_t promise_id,
                                 uint32_t response_size) {
   DVLOG(1) << __func__;
   std::string web_session_str(session_id, session_id_length);
+  std::vector<uint8_t> response_vector(response, response + response_size);
+
+  // Push the license to CdmProxy.
+  // TODO(xhwang): There's a potential race condition here where key status
+  // update is dispatched in the render process first, which triggers the
+  // resume-decryption-after-no-key logic, and by the time we try to decrypt
+  // again in the ClearKeyCdmProxy (GPU process), SetKey() hasn't been
+  // dispatched yet. To solve this, handle no-key in ClearKeyCdmProxy.
+  if (cdm_proxy_handler_)
+    cdm_proxy_handler_->SetKey(response_vector);
 
   std::unique_ptr<media::SimpleCdmPromise> promise(
       new media::CdmCallbackPromise<>(
@@ -533,9 +529,7 @@ void ClearKeyCdm::UpdateSession(uint32_t promise_id,
                      promise_id, web_session_str),
           base::Bind(&ClearKeyCdm::OnPromiseFailed, base::Unretained(this),
                      promise_id)));
-  cdm_->UpdateSession(web_session_str,
-                      std::vector<uint8_t>(response, response + response_size),
-                      std::move(promise));
+  cdm_->UpdateSession(web_session_str, response_vector, std::move(promise));
 }
 
 void ClearKeyCdm::OnUpdateSuccess(uint32_t promise_id,
@@ -661,6 +655,10 @@ cdm::Status ClearKeyCdm::Decrypt(const cdm::InputBuffer_2& encrypted_buffer,
   DVLOG(1) << __func__;
   DCHECK(encrypted_buffer.data);
 
+  // When CdmProxy is used, the CDM cannot do any decryption or decoding.
+  if (key_system_ == kExternalClearKeyCdmProxyKeySystem)
+    return cdm::kDecryptError;
+
   scoped_refptr<DecoderBuffer> buffer;
   cdm::Status status = DecryptToMediaDecoderBuffer(encrypted_buffer, &buffer);
 
@@ -695,11 +693,8 @@ cdm::Status ClearKeyCdm::InitializeAudioDecoder(
 
 cdm::Status ClearKeyCdm::InitializeAudioDecoder(
     const cdm::AudioDecoderConfig_2& audio_decoder_config) {
-  if (key_system_ == kExternalClearKeyDecryptOnlyKeySystem)
-    return cdm::kInitializationError;
-
-  if (!IsSupportedConfigEncryptionScheme(
-          audio_decoder_config.encryption_scheme)) {
+  if (key_system_ == kExternalClearKeyDecryptOnlyKeySystem ||
+      key_system_ == kExternalClearKeyCdmProxyKeySystem) {
     return cdm::kInitializationError;
   }
 
@@ -713,8 +708,7 @@ cdm::Status ClearKeyCdm::InitializeAudioDecoder(
 
   return cdm::kSuccess;
 #else
-  NOTIMPLEMENTED();
-  return cdm::kSessionError;
+  return cdm::kInitializationError;
 #endif  // CLEAR_KEY_CDM_USE_FFMPEG_DECODER
 }
 
@@ -732,11 +726,8 @@ cdm::Status ClearKeyCdm::InitializeVideoDecoder(
 
 cdm::Status ClearKeyCdm::InitializeVideoDecoder(
     const cdm::VideoDecoderConfig_2& video_decoder_config) {
-  if (key_system_ == kExternalClearKeyDecryptOnlyKeySystem)
-    return cdm::kInitializationError;
-
-  if (!IsSupportedConfigEncryptionScheme(
-          video_decoder_config.encryption_scheme)) {
+  if (key_system_ == kExternalClearKeyDecryptOnlyKeySystem ||
+      key_system_ == kExternalClearKeyCdmProxyKeySystem) {
     return cdm::kInitializationError;
   }
 
@@ -885,17 +876,10 @@ cdm::Status ClearKeyCdm::DecryptToMediaDecoderBuffer(
     scoped_refptr<DecoderBuffer>* decrypted_buffer) {
   DCHECK(decrypted_buffer);
 
-  if (!IsSupportedBufferEncryptionScheme(encrypted_buffer.encryption_scheme,
-                                         encrypted_buffer.pattern)) {
-    return cdm::kDecryptError;
-  }
-
   scoped_refptr<DecoderBuffer> buffer = CopyDecoderBufferFrom(encrypted_buffer);
 
-  // TODO(xhwang): Unify how to check whether a buffer is encrypted.
-  // See http://crbug.com/675003
-  if (buffer->end_of_stream() || !buffer->decrypt_config() ||
-      !buffer->decrypt_config()->is_encrypted()) {
+  // EOS and unencrypted streams can be returned as-is.
+  if (buffer->end_of_stream() || !buffer->decrypt_config()) {
     *decrypted_buffer = std::move(buffer);
     return cdm::kSuccess;
   }
@@ -1100,29 +1084,20 @@ void ClearKeyCdm::StartStorageIdTest() {
   cdm_host_proxy_->RequestStorageId(0);
 }
 
-void ClearKeyCdm::StartCdmProxyTest() {
+void ClearKeyCdm::InitializeCdmProxyHandler() {
   DVLOG(1) << __func__;
-  DCHECK(!cdm_proxy_test_);
+  DCHECK(!cdm_proxy_handler_);
 
-  cdm_proxy_test_.reset(new CdmProxyTest(cdm_host_proxy_.get()));
-  cdm_proxy_test_->Run(base::BindOnce(&ClearKeyCdm::OnCdmProxyTestComplete,
-                                      base::Unretained(this)));
+  cdm_proxy_handler_ = std::make_unique<CdmProxyHandler>(cdm_host_proxy_.get());
+  cdm_proxy_handler_->Initialize(base::BindOnce(
+      &ClearKeyCdm::OnCdmProxyHandlerInitialized, base::Unretained(this)));
 }
 
-void ClearKeyCdm::OnCdmProxyTestComplete(bool success) {
+void ClearKeyCdm::OnCdmProxyHandlerInitialized(bool success) {
   DVLOG(1) << __func__;
-  DCHECK(cdm_proxy_test_);
+  DCHECK(cdm_proxy_handler_);
 
-  cdm_proxy_test_.reset();
-  has_cdm_proxy_test_passed_ = success;
-
-  // Ignore test result here. It will be reported in ReportCdmProxyTestResult().
-  cdm_host_proxy_->OnInitialized(true);
-}
-
-void ClearKeyCdm::ReportCdmProxyTestResult() {
-  // StartCdmProxyTest() should have already been called and finished.
-  OnUnitTestComplete(has_cdm_proxy_test_passed_);
+  cdm_host_proxy_->OnInitialized(success);
 }
 
 }  // namespace media

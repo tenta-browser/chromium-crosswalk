@@ -5,21 +5,22 @@
 // https://drafts.css-houdini.org/css-paint-api/#paintrenderingcontext2d
 
 [
-    Exposed=PaintWorklet,
-    RuntimeEnabled=CSSPaintAPI
+    Exposed=PaintWorklet
 ] interface PaintRenderingContext2D {
     // state
     void save(); // push state on state stack
     void restore(); // pop state stack and restore state
 
     // transformations (default transform is the identity matrix)
-    [RuntimeEnabled=CanvasTransformations] attribute SVGMatrix currentTransform;
     void scale(unrestricted double x, unrestricted double y);
     void rotate(unrestricted double angle);
     void translate(unrestricted double x, unrestricted double y);
     void transform(unrestricted double a, unrestricted double b, unrestricted double c, unrestricted double d, unrestricted double e, unrestricted double f);
     void setTransform(unrestricted double a, unrestricted double b, unrestricted double c, unrestricted double d, unrestricted double e, unrestricted double f);
     void resetTransform();
+    [RaisesException] void setTransform(optional DOMMatrix2DInit transform);
+    DOMMatrix getTransform();
+
 
     // compositing
     attribute unrestricted double globalAlpha; // (default 1.0)

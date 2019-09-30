@@ -27,20 +27,24 @@
 
 #include "base/callback_forward.h"
 #include "base/memory/scoped_refptr.h"
-#include "base/single_thread_task_runner.h"
 #include "base/threading/thread.h"
 #include "third_party/blink/public/platform/web_common.h"
 #include "third_party/blink/public/platform/web_thread_type.h"
 
 #include <stdint.h>
 
-namespace blink {
-namespace scheduler {
+namespace base {
+class SingleThreadTaskRunner;
+class TimeTicks;
+namespace sequence_manager {
 class TaskTimeObserver;
 }
+}  // namespace base
 
-class FrameScheduler;
-class WebScheduler;
+namespace blink {
+
+class FrameOrWorkerScheduler;
+class ThreadScheduler;
 
 // Always an integer value.
 typedef uintptr_t PlatformThreadId;
@@ -50,13 +54,13 @@ struct BLINK_PLATFORM_EXPORT WebThreadCreationParams {
 
   WebThreadCreationParams& SetThreadNameForTest(const char* name);
 
-  // Sets a scheduler for the frame which was responsible for the creation
+  // Sets a scheduler for the context which was responsible for the creation
   // of this thread.
-  WebThreadCreationParams& SetFrameScheduler(FrameScheduler*);
+  WebThreadCreationParams& SetFrameOrWorkerScheduler(FrameOrWorkerScheduler*);
 
   WebThreadType thread_type;
   const char* name;
-  FrameScheduler* frame_scheduler;  // NOT OWNED
+  FrameOrWorkerScheduler* frame_or_worker_scheduler;  // NOT OWNED
   base::Thread::Options thread_options;
 };
 
@@ -66,9 +70,8 @@ struct BLINK_PLATFORM_EXPORT WebThreadCreationParams {
 // run.
 class BLINK_PLATFORM_EXPORT WebThread {
  public:
-  // An IdleTask is passed a deadline in CLOCK_MONOTONIC seconds and is
-  // expected to complete before this deadline.
-  using IdleTask = base::OnceCallback<void(double deadline_seconds)>;
+  // An IdleTask is expected to complete before the deadline it is passed.
+  using IdleTask = base::OnceCallback<void(base::TimeTicks deadline)>;
 
   class BLINK_PLATFORM_EXPORT TaskObserver {
    public:
@@ -103,11 +106,12 @@ class BLINK_PLATFORM_EXPORT WebThread {
   // NOTE: TaskTimeObserver implementation should be extremely fast!
   // This API is performance sensitive. Use only if you have a compelling
   // reason.
-  virtual void AddTaskTimeObserver(scheduler::TaskTimeObserver*) {}
-  virtual void RemoveTaskTimeObserver(scheduler::TaskTimeObserver*) {}
+  virtual void AddTaskTimeObserver(base::sequence_manager::TaskTimeObserver*) {}
+  virtual void RemoveTaskTimeObserver(
+      base::sequence_manager::TaskTimeObserver*) {}
 
   // Returns the scheduler associated with the thread.
-  virtual WebScheduler* Scheduler() const = 0;
+  virtual ThreadScheduler* Scheduler() const = 0;
 
   virtual ~WebThread() = default;
 };

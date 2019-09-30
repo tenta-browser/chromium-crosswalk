@@ -58,6 +58,7 @@
 #include "third_party/blink/renderer/core/css/font_face.h"
 #include "third_party/blink/renderer/core/css/media_query_evaluator.h"
 #include "third_party/blink/renderer/core/css/page_rule_collector.h"
+#include "third_party/blink/renderer/core/css/part_names.h"
 #include "third_party/blink/renderer/core/css/properties/css_property.h"
 #include "third_party/blink/renderer/core/css/resolver/animated_style_builder.h"
 #include "third_party/blink/renderer/core/css/resolver/css_variable_resolver.h"
@@ -76,6 +77,7 @@
 #include "third_party/blink/renderer/core/dom/first_letter_pseudo_element.h"
 #include "third_party/blink/renderer/core/dom/node_computed_style.h"
 #include "third_party/blink/renderer/core/dom/shadow_root.h"
+#include "third_party/blink/renderer/core/dom/space_split_string.h"
 #include "third_party/blink/renderer/core/dom/text.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/frame/local_frame_view.h"
@@ -84,14 +86,16 @@
 #include "third_party/blink/renderer/core/html/html_iframe_element.h"
 #include "third_party/blink/renderer/core/html/html_slot_element.h"
 #include "third_party/blink/renderer/core/html_names.h"
-#include "third_party/blink/renderer/core/layout/generated_children.h"
 #include "third_party/blink/renderer/core/media_type_names.h"
 #include "third_party/blink/renderer/core/probe/core_probes.h"
 #include "third_party/blink/renderer/core/style/style_inherited_variables.h"
 #include "third_party/blink/renderer/core/style_property_shorthand.h"
 #include "third_party/blink/renderer/core/svg/svg_element.h"
 #include "third_party/blink/renderer/platform/runtime_enabled_features.h"
+#include "third_party/blink/renderer/platform/wtf/hash_set.h"
 #include "third_party/blink/renderer/platform/wtf/std_lib_extras.h"
+#include "third_party/blink/renderer/platform/wtf/text/atomic_string.h"
+#include "third_party/blink/renderer/platform/wtf/text/atomic_string_hash.h"
 
 namespace blink {
 
@@ -186,6 +190,9 @@ static inline ScopedStyleResolver* ScopedResolverFor(const Element& element) {
   return tree_scope->GetScopedStyleResolver();
 }
 
+// Matches :host and :host-context rules if the element is a shadow host.
+// It matches rules from the ShadowHostRules of the ScopedStyleResolver
+// of the attached shadow root.
 static void MatchHostRules(const Element& element,
                            ElementRuleCollector& collector) {
   ShadowRoot* shadow_root = element.GetShadowRoot();
@@ -200,6 +207,10 @@ static void MatchHostRules(const Element& element,
   }
 }
 
+// Matches `::slotted` selectors. It matches rules in the element's slot's
+// scope. If that slot is itself slotted it will match rules in the slot's
+// slot's scope and so on. The result is that it considers a chain of scopes
+// descending from the element's own scope.
 static void MatchSlottedRules(const Element& element,
                               ElementRuleCollector& collector) {
   HTMLSlotElement* slot = element.AssignedSlot();
@@ -220,6 +231,8 @@ static void MatchSlottedRules(const Element& element,
   }
 }
 
+// Matches rules from the element's scope. The selectors may cross shadow
+// boundaries during matching, like for :host-context.
 static void MatchElementScopeRules(const Element& element,
                                    ScopedStyleResolver* element_scope_resolver,
                                    ElementRuleCollector& collector) {
@@ -246,24 +259,38 @@ void StyleResolver::MatchPseudoPartRules(const Element& element,
   if (!RuntimeEnabledFeatures::CSSPartPseudoElementEnabled())
     return;
 
-  if (!element.HasPartName())
+  const SpaceSplitString* part_names = element.PartNames();
+  if (!part_names)
     return;
 
-  TreeScope& tree_scope = element.GetTreeScope();
-  if (tree_scope == GetDocument().GetTreeScope())
+  PartNames current_names(*part_names);
+
+  // ::part selectors in the shadow host's scope and above can match this
+  // element.
+  Element* host = element.OwnerShadowHost();
+  if (!host)
     return;
 
-  TreeScope* parent_tree_scope = &tree_scope;
-  // TODO(b/805271): We can terminate early if we pass through a host with no
-  // exported parts. Requires implementing partmap.
-  while ((parent_tree_scope = parent_tree_scope->ParentTreeScope())) {
-    if (ScopedStyleResolver* resolver =
-            parent_tree_scope->GetScopedStyleResolver()) {
+  while (current_names.size()) {
+    TreeScope& tree_scope = host->GetTreeScope();
+    if (ScopedStyleResolver* resolver = tree_scope.GetScopedStyleResolver()) {
       collector.ClearMatchedRules();
-      resolver->CollectMatchingPartPseudoRules(collector);
+      resolver->CollectMatchingPartPseudoRules(collector, current_names);
       collector.SortAndTransferMatchedRules();
       collector.FinishAddingAuthorRulesForTreeScope();
     }
+
+    // If the host doesn't forward any parts using partmap= then the element is
+    // unreachable from any scope further above and we can stop.
+    const NamesMap* part_map = host->PartNamesMap();
+    if (!part_map)
+      return;
+
+    // We have reached the top-level document.
+    if (!(host = host->OwnerShadowHost()))
+      return;
+
+    current_names.PushMap(*part_map);
   }
 }
 
@@ -376,7 +403,7 @@ void StyleResolver::MatchAuthorRulesV0(const Element& element,
                                        ElementRuleCollector& collector) {
   collector.ClearMatchedRules();
 
-  CascadeOrder cascade_order = 0;
+  ShadowV0CascadeOrder cascade_order = 0;
   HeapVector<Member<ScopedStyleResolver>, 8> resolvers_in_shadow_tree;
   CollectScopedResolversForHostedShadowTrees(element, resolvers_in_shadow_tree);
 
@@ -500,9 +527,11 @@ void StyleResolver::CollectTreeBoundaryCrossingRulesV0CascadeOrder(
     return;
 
   // When comparing rules declared in outer treescopes, outer's rules win.
-  CascadeOrder outer_cascade_order = tree_boundary_crossing_scopes.size() * 2;
+  ShadowV0CascadeOrder outer_cascade_order =
+      tree_boundary_crossing_scopes.size() * 2;
   // When comparing rules declared in inner treescopes, inner's rules win.
-  CascadeOrder inner_cascade_order = tree_boundary_crossing_scopes.size();
+  ShadowV0CascadeOrder inner_cascade_order =
+      tree_boundary_crossing_scopes.size();
 
   for (const auto& scoping_node : tree_boundary_crossing_scopes) {
     // Skip rule collection for element when tree boundary crossing rules of
@@ -513,7 +542,7 @@ void StyleResolver::CollectTreeBoundaryCrossingRulesV0CascadeOrder(
     if (!ShouldCheckScope(element, *scoping_node, is_inner_tree_scope))
       continue;
 
-    CascadeOrder cascade_order =
+    ShadowV0CascadeOrder cascade_order =
         is_inner_tree_scope ? inner_cascade_order : outer_cascade_order;
     scoping_node->GetTreeScope()
         .GetScopedStyleResolver()
@@ -756,7 +785,7 @@ scoped_refptr<ComputedStyle> StyleResolver::StyleForElement(
 
 // TODO(alancutter): Create compositor keyframe values directly instead of
 // intermediate AnimatableValues.
-scoped_refptr<AnimatableValue> StyleResolver::CreateAnimatableValueSnapshot(
+AnimatableValue* StyleResolver::CreateAnimatableValueSnapshot(
     Element& element,
     const ComputedStyle& base_style,
     const ComputedStyle* parent_style,
@@ -771,84 +800,14 @@ scoped_refptr<AnimatableValue> StyleResolver::CreateAnimatableValueSnapshot(
     StyleBuilder::ApplyProperty(property, state, *value);
     state.GetFontBuilder().CreateFont(
         state.GetDocument().GetStyleEngine().GetFontSelector(),
-        state.MutableStyleRef());
+        state.StyleRef());
   }
   return CSSAnimatableValueFactory::Create(property, *state.Style());
-}
-
-PseudoElement* StyleResolver::CreatePseudoElement(Element* parent,
-                                                  PseudoId pseudo_id) {
-  if (pseudo_id == kPseudoIdFirstLetter)
-    return FirstLetterPseudoElement::Create(parent);
-  return PseudoElement::Create(parent, pseudo_id);
-}
-
-PseudoElement* StyleResolver::CreatePseudoElementIfNeeded(Element& parent,
-                                                          PseudoId pseudo_id) {
-  if (!parent.CanGeneratePseudoElement(pseudo_id))
-    return nullptr;
-
-  LayoutObject* parent_layout_object = parent.GetLayoutObject();
-  if (!parent_layout_object) {
-    DCHECK(parent.HasDisplayContentsStyle());
-    parent_layout_object =
-        LayoutTreeBuilderTraversal::ParentLayoutObject(parent);
-  }
-
-  if (!parent_layout_object)
-    return nullptr;
-
-  ComputedStyle* parent_style = parent.MutableComputedStyle();
-  DCHECK(parent_style);
-
-  // The first letter pseudo element has to look up the tree and see if any
-  // of the ancestors are first letter.
-  if (pseudo_id < kFirstInternalPseudoId && pseudo_id != kPseudoIdFirstLetter &&
-      !parent_style->HasPseudoStyle(pseudo_id)) {
-    return nullptr;
-  }
-
-  if (pseudo_id == kPseudoIdBackdrop && !parent.IsInTopLayer())
-    return nullptr;
-
-  if (pseudo_id == kPseudoIdFirstLetter &&
-      (parent.IsSVGElement() ||
-       !FirstLetterPseudoElement::FirstLetterTextLayoutObject(parent)))
-    return nullptr;
-
-  if (!CanHaveGeneratedChildren(*parent_layout_object))
-    return nullptr;
-
-  if (ComputedStyle* cached_style =
-          parent_style->GetCachedPseudoStyle(pseudo_id)) {
-    if (!PseudoElementLayoutObjectIsNeeded(cached_style))
-      return nullptr;
-    return CreatePseudoElement(&parent, pseudo_id);
-  }
-
-  StyleResolverState state(GetDocument(), &parent, parent_style,
-                           parent_layout_object->Style());
-  if (!PseudoStyleForElementInternal(parent, pseudo_id, parent_style, state))
-    return nullptr;
-  scoped_refptr<ComputedStyle> style = state.TakeStyle();
-  DCHECK(style);
-  parent_style->AddCachedPseudoStyle(style);
-
-  if (!PseudoElementLayoutObjectIsNeeded(style.get()))
-    return nullptr;
-
-  PseudoElement* pseudo = CreatePseudoElement(&parent, pseudo_id);
-
-  SetAnimationUpdateIfNeeded(state, *pseudo);
-  if (ElementAnimations* element_animations = pseudo->GetElementAnimations())
-    element_animations->CssAnimations().MaybeApplyPendingUpdate(pseudo);
-  return pseudo;
 }
 
 bool StyleResolver::PseudoStyleForElementInternal(
     Element& element,
     const PseudoStyleRequest& pseudo_style_request,
-    const ComputedStyle* parent_style,
     StyleResolverState& state) {
   DCHECK(GetDocument().GetFrame());
   DCHECK(GetDocument().GetSettings());
@@ -938,8 +897,7 @@ scoped_refptr<ComputedStyle> StyleResolver::PseudoStyleForElement(
 
   StyleResolverState state(GetDocument(), element, parent_style,
                            parent_layout_object_style);
-  if (!PseudoStyleForElementInternal(*element, pseudo_style_request,
-                                     parent_style, state)) {
+  if (!PseudoStyleForElementInternal(*element, pseudo_style_request, state)) {
     if (pseudo_style_request.type == PseudoStyleRequest::kForRenderer)
       return nullptr;
     return state.TakeStyle();
@@ -1007,6 +965,7 @@ scoped_refptr<ComputedStyle> StyleResolver::InitialStyleForElement(
                                                            : EOrder::kLogical);
   initial_style->SetZoom(frame && !document.Printing() ? frame->PageZoomFactor()
                                                        : 1);
+  initial_style->SetEffectiveZoom(initial_style->Zoom());
 
   FontDescription document_font_description =
       initial_style->GetFontDescription();
@@ -1032,8 +991,7 @@ scoped_refptr<ComputedStyle> StyleResolver::StyleForText(Text* text_node) {
 
 void StyleResolver::UpdateFont(StyleResolverState& state) {
   state.GetFontBuilder().CreateFont(
-      GetDocument().GetStyleEngine().GetFontSelector(),
-      state.MutableStyleRef());
+      GetDocument().GetStyleEngine().GetFontSelector(), state.StyleRef());
   state.SetConversionFontSizes(CSSToLengthConversionData::FontSizes(
       state.Style(), state.RootElementStyle()));
   state.SetConversionZoom(state.Style()->EffectiveZoom());
@@ -1151,7 +1109,8 @@ void StyleResolver::ApplyAnimatedCustomProperty(
       ActiveInterpolationsForCustomProperty(state, property);
   const Interpolation& interpolation = *interpolations.front();
   if (interpolation.IsInvalidatableInterpolation()) {
-    CSSInterpolationTypesMap map(state.GetDocument().GetPropertyRegistry());
+    CSSInterpolationTypesMap map(state.GetDocument().GetPropertyRegistry(),
+                                 state.GetDocument());
     CSSInterpolationEnvironment environment(map, state, &variable_resolver);
     InvalidatableInterpolation::ApplyStack(interpolations, environment);
   } else {
@@ -1265,7 +1224,8 @@ void StyleResolver::ApplyAnimatedStandardProperties(
       continue;
     const Interpolation& interpolation = *entry.value.front();
     if (interpolation.IsInvalidatableInterpolation()) {
-      CSSInterpolationTypesMap map(state.GetDocument().GetPropertyRegistry());
+      CSSInterpolationTypesMap map(state.GetDocument().GetPropertyRegistry(),
+                                   state.GetDocument());
       CSSInterpolationEnvironment environment(map, state, nullptr);
       InvalidatableInterpolation::ApplyStack(entry.value, environment);
     } else {
@@ -1342,6 +1302,14 @@ static inline bool IsValidFirstLetterStyleProperty(CSSPropertyID id) {
     case CSSPropertyBackgroundRepeatX:
     case CSSPropertyBackgroundRepeatY:
     case CSSPropertyBackgroundSize:
+    case CSSPropertyBorderBlockEnd:
+    case CSSPropertyBorderBlockEndColor:
+    case CSSPropertyBorderBlockEndStyle:
+    case CSSPropertyBorderBlockEndWidth:
+    case CSSPropertyBorderBlockStart:
+    case CSSPropertyBorderBlockStartColor:
+    case CSSPropertyBorderBlockStartStyle:
+    case CSSPropertyBorderBlockStartWidth:
     case CSSPropertyBorderBottomColor:
     case CSSPropertyBorderBottomLeftRadius:
     case CSSPropertyBorderBottomRightRadius:
@@ -1352,6 +1320,14 @@ static inline bool IsValidFirstLetterStyleProperty(CSSPropertyID id) {
     case CSSPropertyBorderImageSlice:
     case CSSPropertyBorderImageSource:
     case CSSPropertyBorderImageWidth:
+    case CSSPropertyBorderInlineEnd:
+    case CSSPropertyBorderInlineEndColor:
+    case CSSPropertyBorderInlineEndStyle:
+    case CSSPropertyBorderInlineEndWidth:
+    case CSSPropertyBorderInlineStart:
+    case CSSPropertyBorderInlineStartColor:
+    case CSSPropertyBorderInlineStartStyle:
+    case CSSPropertyBorderInlineStartWidth:
     case CSSPropertyBorderLeftColor:
     case CSSPropertyBorderLeftStyle:
     case CSSPropertyBorderLeftWidth:
@@ -1382,7 +1358,11 @@ static inline bool IsValidFirstLetterStyleProperty(CSSPropertyID id) {
     case CSSPropertyFontWeight:
     case CSSPropertyLetterSpacing:
     case CSSPropertyLineHeight:
+    case CSSPropertyMarginBlockEnd:
+    case CSSPropertyMarginBlockStart:
     case CSSPropertyMarginBottom:
+    case CSSPropertyMarginInlineEnd:
+    case CSSPropertyMarginInlineStart:
     case CSSPropertyMarginLeft:
     case CSSPropertyMarginRight:
     case CSSPropertyMarginTop:
@@ -1400,34 +1380,14 @@ static inline bool IsValidFirstLetterStyleProperty(CSSPropertyID id) {
     case CSSPropertyTextTransform:
     case CSSPropertyTextUnderlinePosition:
     case CSSPropertyVerticalAlign:
-    case CSSPropertyWebkitBorderAfter:
-    case CSSPropertyWebkitBorderAfterColor:
-    case CSSPropertyWebkitBorderAfterStyle:
-    case CSSPropertyWebkitBorderAfterWidth:
-    case CSSPropertyWebkitBorderBefore:
-    case CSSPropertyWebkitBorderBeforeColor:
-    case CSSPropertyWebkitBorderBeforeStyle:
-    case CSSPropertyWebkitBorderBeforeWidth:
-    case CSSPropertyWebkitBorderEnd:
-    case CSSPropertyWebkitBorderEndColor:
-    case CSSPropertyWebkitBorderEndStyle:
-    case CSSPropertyWebkitBorderEndWidth:
     case CSSPropertyWebkitBorderHorizontalSpacing:
     case CSSPropertyWebkitBorderImage:
-    case CSSPropertyWebkitBorderStart:
-    case CSSPropertyWebkitBorderStartColor:
-    case CSSPropertyWebkitBorderStartStyle:
-    case CSSPropertyWebkitBorderStartWidth:
     case CSSPropertyWebkitBorderVerticalSpacing:
     case CSSPropertyWebkitFontSmoothing:
-    case CSSPropertyWebkitMarginAfter:
     case CSSPropertyWebkitMarginAfterCollapse:
-    case CSSPropertyWebkitMarginBefore:
     case CSSPropertyWebkitMarginBeforeCollapse:
     case CSSPropertyWebkitMarginBottomCollapse:
     case CSSPropertyWebkitMarginCollapse:
-    case CSSPropertyWebkitMarginEnd:
-    case CSSPropertyWebkitMarginStart:
     case CSSPropertyWebkitMarginTopCollapse:
     case CSSPropertyWordSpacing:
       return true;
@@ -1568,7 +1528,10 @@ void StyleResolver::ApplyProperties(
       // non-inherited properties as they might override the value inherited
       // here. For this reason we don't allow declarations with explicitly
       // inherited properties to be cached.
-      DCHECK(!current.Value().IsInheritedValue());
+      DCHECK(!current.Value().IsInheritedValue() ||
+             (!state.ApplyPropertyToRegularStyle() &&
+              (!state.ApplyPropertyToVisitedLinkStyle() ||
+               !current.Property().IsValidForVisitedLink())));
       continue;
     }
 
@@ -1752,7 +1715,7 @@ void StyleResolver::ApplyCustomProperties(StyleResolverState& state,
   if (apply_animations == kIncludeAnimations) {
     ApplyAnimatedCustomProperties(state);
   }
-  // TODO(leviw): stop recalculating every time
+
   CSSVariableResolver(state).ResolveVariableDefinitions();
 }
 

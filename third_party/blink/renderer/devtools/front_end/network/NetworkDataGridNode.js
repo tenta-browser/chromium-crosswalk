@@ -546,7 +546,7 @@ Network.NetworkRequestNode = class extends Network.NetworkNode {
   showingInitiatorChainChanged() {
     const showInitiatorChain = this.showingInitiatorChain();
 
-    const initiatorGraph = BrowserSDK.networkLog.initiatorGraphForRequest(this._request);
+    const initiatorGraph = SDK.networkLog.initiatorGraphForRequest(this._request);
     for (const request of initiatorGraph.initiators) {
       if (request === this._request)
         continue;
@@ -636,7 +636,7 @@ Network.NetworkRequestNode = class extends Network.NetworkNode {
    * @return {boolean}
    */
   isNavigationRequest() {
-    const pageLoad = BrowserSDK.PageLoad.forRequest(this._request);
+    const pageLoad = SDK.NetworkLog.PageLoad.forRequest(this._request);
     return pageLoad ? pageLoad.mainRequest === this._request : false;
   }
 
@@ -843,6 +843,9 @@ Network.NetworkRequestNode = class extends Network.NetworkNode {
     } else if (this._request.wasBlocked()) {
       let reason = Common.UIString('other');
       switch (this._request.blockedReason()) {
+        case Protocol.Network.BlockedReason.Other:
+          reason = Common.UIString('other');
+          break;
         case Protocol.Network.BlockedReason.Csp:
           reason = Common.UIString('csp');
           break;
@@ -855,8 +858,14 @@ Network.NetworkRequestNode = class extends Network.NetworkNode {
         case Protocol.Network.BlockedReason.Inspector:
           reason = Common.UIString('devtools');
           break;
-        case Protocol.Network.BlockedReason.Other:
-          reason = Common.UIString('other');
+        case Protocol.Network.BlockedReason.SubresourceFilter:
+          reason = Common.UIString('subresource-filter');
+          break;
+        case Protocol.Network.BlockedReason.ContentType:
+          reason = Common.UIString('content-type');
+          break;
+        case Protocol.Network.BlockedReason.CollapsedByClient:
+          reason = Common.UIString('extension');
           break;
       }
       this._setTextAndTitle(cell, Common.UIString('(blocked:%s)', reason));
@@ -873,7 +882,7 @@ Network.NetworkRequestNode = class extends Network.NetworkNode {
   _renderInitiatorCell(cell) {
     this._initiatorCell = cell;
     const request = this._request;
-    const initiator = BrowserSDK.networkLog.initiatorInfoForRequest(request);
+    const initiator = SDK.networkLog.initiatorInfoForRequest(request);
 
     const timing = request.timing;
     if (timing && timing.pushStart)
@@ -926,6 +935,11 @@ Network.NetworkRequestNode = class extends Network.NetworkNode {
         cell.appendChild(createTextNode(Common.UIString('Preload')));
         break;
 
+      case SDK.NetworkRequest.InitiatorType.SignedExchange:
+        cell.appendChild(Components.Linkifier.linkifyURL(initiator.url));
+        this._appendSubtitle(cell, Common.UIString('signed-exchange'));
+        break;
+
       default:
         cell.title = Common.UIString('Other');
         cell.classList.add('network-dim-cell');
@@ -939,6 +953,9 @@ Network.NetworkRequestNode = class extends Network.NetworkNode {
   _renderSizeCell(cell) {
     if (this._request.fetchedViaServiceWorker) {
       this._setTextAndTitle(cell, Common.UIString('(from ServiceWorker)'));
+      cell.classList.add('network-dim-cell');
+    } else if (this._request.redirectSource() && this._request.redirectSource().signedExchangeInfo()) {
+      this._setTextAndTitle(cell, Common.UIString('(from signed-exchange)'));
       cell.classList.add('network-dim-cell');
     } else if (this._request.cached()) {
       if (this._request.cachedInMemory())

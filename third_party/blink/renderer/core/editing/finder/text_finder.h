@@ -41,6 +41,7 @@
 
 namespace blink {
 
+class IdleDeadline;
 class LocalFrame;
 class Range;
 class WebLocalFrameImpl;
@@ -49,9 +50,6 @@ struct WebFindOptions;
 struct WebFloatPoint;
 struct WebFloatRect;
 struct WebRect;
-
-template <typename T>
-class WebVector;
 
 class CORE_EXPORT TextFinder final
     : public GarbageCollectedFinalized<TextFinder> {
@@ -69,7 +67,7 @@ class CORE_EXPORT TextFinder final
   void IncreaseMatchCount(int identifier, int count);
   int FindMatchMarkersVersion() const { return find_match_markers_version_; }
   WebFloatRect ActiveFindMatchRect();
-  void FindMatchRects(WebVector<WebFloatRect>&);
+  Vector<WebFloatRect> FindMatchRects();
   int SelectNearestFindMatch(const WebFloatPoint&, WebRect* selection_rect);
 
   // Starts brand new scoping request: resets the scoping state and
@@ -102,6 +100,7 @@ class CORE_EXPORT TextFinder final
 
   void ResetActiveMatch() { active_match_ = nullptr; }
 
+  bool FrameScoping() const { return frame_scoping_; }
   int TotalMatchCount() const { return total_match_count_; }
   bool ScopingInProgress() const { return scoping_in_progress_; }
   void IncreaseMarkerVersion() { ++find_match_markers_version_; }
@@ -129,8 +128,8 @@ class CORE_EXPORT TextFinder final
   void Trace(blink::Visitor*);
 
  private:
-  class DeferredScopeStringMatches;
-  friend class DeferredScopeStringMatches;
+  class IdleScopeStringMatchesCallback;
+  friend class IdleScopeStringMatchesCallback;
 
   explicit TextFinder(WebLocalFrameImpl& owner_frame);
 
@@ -187,7 +186,8 @@ class CORE_EXPORT TextFinder final
   // multiple frames to be searched at the same time and provides a way to
   // cancel at any time (see cancelPendingScopingEffort).  The parameter
   // searchText specifies what to look for.
-  void ScopeStringMatches(int identifier,
+  void ScopeStringMatches(IdleDeadline* deadline,
+                          int identifier,
                           const WebString& search_text,
                           const WebFindOptions&);
 
@@ -196,13 +196,18 @@ class CORE_EXPORT TextFinder final
                               const WebString& search_text,
                               const WebFindOptions&);
 
-  // Called by a DeferredScopeStringMatches instance.
-  void ResumeScopingStringMatches(int identifier,
+  // Called by an IdleScopeStringMatchesCallback instance.
+  void ResumeScopingStringMatches(IdleDeadline* deadline,
+                                  int identifier,
                                   const WebString& search_text,
                                   const WebFindOptions&);
 
   // Determines whether to invalidate the content area and scrollbar.
   void InvalidateIfNecessary();
+
+  // Issues a paint invalidation on the layout viewport's vertical scrollbar,
+  // which is responsible for painting the tickmarks.
+  void InvalidatePaintForTickmarks();
 
   LocalFrame* GetFrame() const;
 
@@ -258,7 +263,7 @@ class CORE_EXPORT TextFinder final
   int next_invalidate_after_;
 
   // Pending call to scopeStringMatches.
-  Member<DeferredScopeStringMatches> deferred_scoping_work_;
+  Member<IdleScopeStringMatchesCallback> idle_scoping_callback_;
 
   // Version number incremented whenever this frame's find-in-page match
   // markers change.
@@ -274,7 +279,7 @@ class CORE_EXPORT TextFinder final
   // This flag is used by the scoping effort to determine if we need to figure
   // out which rectangle is the active match. Once we find the active
   // rectangle we clear this flag.
-  bool locating_active_rect_;
+  bool should_locate_active_rect_;
 
   // Keeps track of whether there is an scoping effort ongoing in the frame.
   bool scoping_in_progress_;

@@ -16,19 +16,23 @@
 #include "base/observer_list.h"
 #include "cc/trees/layer_tree_host_client.h"
 #include "cc/trees/layer_tree_host_single_thread_client.h"
+#include "components/viz/common/frame_sinks/begin_frame_source.h"
 #include "components/viz/common/surfaces/frame_sink_id.h"
+#include "components/viz/common/surfaces/local_surface_id.h"
 #include "components/viz/host/host_frame_sink_client.h"
 #include "content/common/content_export.h"
 #include "content/public/browser/android/compositor.h"
 #include "gpu/command_buffer/common/capabilities.h"
 #include "gpu/ipc/common/surface_handle.h"
 #include "gpu/vulkan/buildflags.h"
-#include "services/ui/public/cpp/gpu/context_provider_command_buffer.h"
+#include "services/viz/privileged/interfaces/compositing/display_private.mojom.h"
+#include "services/ws/public/cpp/gpu/context_provider_command_buffer.h"
 #include "third_party/khronos/GLES2/gl2.h"
 #include "ui/android/resources/resource_manager_impl.h"
 #include "ui/android/resources/ui_resource_provider.h"
 #include "ui/android/window_android_compositor.h"
 #include "ui/compositor/compositor_lock.h"
+#include "ui/compositor/external_begin_frame_client.h"
 #include "ui/display/display_observer.h"
 
 struct ANativeWindow;
@@ -39,10 +43,15 @@ class Layer;
 class LayerTreeHost;
 }
 
+namespace ui {
+class ExternalBeginFrameControllerClientImpl;
+}
+
 namespace viz {
 class Display;
 class FrameSinkId;
 class FrameSinkManagerImpl;
+class HostDisplayClient;
 class HostFrameSinkManager;
 class OutputSurface;
 }
@@ -80,6 +89,10 @@ class CONTENT_EXPORT CompositorImpl
   // Test functions:
   bool IsLockedForTesting() const { return lock_manager_.IsLocked(); }
   void SetVisibleForTesting(bool visible) { SetVisible(visible); }
+  void SetSwapCompletedWithSizeCallbackForTesting(
+      base::RepeatingCallback<void(const gfx::Size&)> cb) {
+    swap_completed_with_size_for_testing_ = std::move(cb);
+  }
 
  private:
   // Compositor implementation.
@@ -115,7 +128,9 @@ class CONTENT_EXPORT CompositorImpl
   void DidCommitAndDrawFrame() override {}
   void DidReceiveCompositorFrameAck() override;
   void DidCompletePageScaleAnimation() override {}
-  bool IsForSubframe() override;
+  void DidPresentCompositorFrame(
+      uint32_t frame_token,
+      const gfx::PresentationFeedback& feedback) override {}
 
   // LayerTreeHostSingleThreadClient implementation.
   void DidSubmitCompositorFrame() override;
@@ -133,9 +148,11 @@ class CONTENT_EXPORT CompositorImpl
       ui::CompositorLockClient* client,
       base::TimeDelta timeout) override;
   bool IsDrawingFirstVisibleFrame() const override;
+  void SetVSyncPaused(bool paused) override;
 
   // viz::HostFrameSinkClient implementation.
-  void OnFirstSurfaceActivation(const viz::SurfaceInfo& surface_info) override;
+  void OnFirstSurfaceActivation(const viz::SurfaceInfo& surface_info) override {
+  }
   void OnFrameTokenChanged(uint32_t frame_token) override {}
 
   // display::DisplayObserver implementation.
@@ -151,14 +168,14 @@ class CONTENT_EXPORT CompositorImpl
   void HandlePendingLayerTreeFrameSinkRequest();
 
 #if BUILDFLAG(ENABLE_VULKAN)
-  void CreateVulkanOutputSurface();
+  bool CreateVulkanOutputSurface();
 #endif
   void OnGpuChannelEstablished(
       scoped_refptr<gpu::GpuChannelHost> gpu_channel_host);
   void InitializeDisplay(
       std::unique_ptr<viz::OutputSurface> display_output_surface,
       scoped_refptr<viz::ContextProvider> context_provider);
-  void DidSwapBuffers();
+  void DidSwapBuffers(const gfx::Size& swap_size);
 
   bool HavePendingReadbacks();
 
@@ -168,6 +185,21 @@ class CONTENT_EXPORT CompositorImpl
   // longer visible on low-end devices.
   void EnqueueLowEndBackgroundCleanup();
   void DoLowEndBackgroundCleanup();
+
+  // Returns a new surface ID when in surface-synchronization mode. Otherwise
+  // returns an empty surface.
+  viz::LocalSurfaceId GenerateLocalSurfaceId() const;
+
+  // Tears down the display for both Viz and non-Viz, unregistering the root
+  // frame sink ID in the process.
+  void TearDownDisplayAndUnregisterRootFrameSink();
+
+  // Registers the root frame sink ID.
+  void RegisterRootFrameSink();
+
+  // Viz specific functions:
+  void InitializeVizLayerTreeFrameSink(
+      scoped_refptr<ws::ContextProviderCommandBuffer> context_provider);
 
   viz::FrameSinkId frame_sink_id_;
 
@@ -216,9 +248,20 @@ class CONTENT_EXPORT CompositorImpl
   ui::CompositorLockManager lock_manager_;
   bool has_submitted_frame_since_became_visible_ = false;
 
-  // A task which runs cleanup tasks on low-end Android after a delay. Enqueued
-  // when we hide, canceled when we're shown.
-  base::CancelableOnceClosure low_end_background_cleanup_task_;
+  // If true, we are using surface synchronization.
+  const bool enable_surface_synchronization_;
+
+  // If true, we are using a Viz process.
+  const bool enable_viz_;
+
+  // Viz-specific members for communicating with the display.
+  viz::mojom::DisplayPrivateAssociatedPtr display_private_;
+  std::unique_ptr<viz::HostDisplayClient> display_client_;
+  bool vsync_paused_ = false;
+
+  // Test-only. Called when we are notified of a swap.
+  base::RepeatingCallback<void(const gfx::Size&)>
+      swap_completed_with_size_for_testing_;
 
   base::WeakPtrFactory<CompositorImpl> weak_factory_;
 

@@ -5,13 +5,13 @@
 #include "components/viz/service/frame_sinks/compositor_frame_sink_support.h"
 
 #include "base/macros.h"
-#include "cc/resources/resource_provider.h"
 #include "components/viz/common/frame_sinks/copy_output_request.h"
 #include "components/viz/common/frame_sinks/copy_output_result.h"
 #include "components/viz/common/quads/compositor_frame.h"
 #include "components/viz/common/surfaces/frame_sink_id.h"
 #include "components/viz/common/surfaces/surface_id.h"
 #include "components/viz/common/surfaces/surface_info.h"
+#include "components/viz/service/display_embedder/server_shared_bitmap_manager.h"
 #include "components/viz/service/frame_sinks/frame_sink_manager_impl.h"
 #include "components/viz/test/begin_frame_args_test.h"
 #include "components/viz/test/compositor_frame_helpers.h"
@@ -23,6 +23,7 @@
 #include "services/viz/public/interfaces/compositing/compositor_frame_sink.mojom.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/khronos/GLES2/gl2.h"
 
 using testing::UnorderedElementsAre;
 using testing::IsEmpty;
@@ -68,17 +69,10 @@ class MockFrameSinkManagerClient : public mojom::FrameSinkManagerClient {
   // mojom::FrameSinkManagerClient:
   MOCK_METHOD1(OnSurfaceCreated, void(const SurfaceId&));
   MOCK_METHOD1(OnFirstSurfaceActivation, void(const SurfaceInfo&));
+  MOCK_METHOD2(OnFrameTokenChanged, void(const FrameSinkId&, uint32_t));
   void OnAggregatedHitTestRegionListUpdated(
       const FrameSinkId& frame_sink_id,
-      mojo::ScopedSharedBufferHandle active_handle,
-      uint32_t active_handle_size,
-      mojo::ScopedSharedBufferHandle idle_handle,
-      uint32_t idle_handle_sizes) override {}
-  void SwitchActiveAggregatedHitTestRegionList(
-      const FrameSinkId& frame_sink_id,
-      uint8_t active_handle_index) override {}
-  void OnFrameTokenChanged(const FrameSinkId& frame_sink_id,
-                           uint32_t frame_token) override {}
+      const std::vector<AggregatedHitTestRegion>& hit_test_data) override {}
 
  private:
   DISALLOW_COPY_AND_ASSIGN(MockFrameSinkManagerClient);
@@ -87,7 +81,8 @@ class MockFrameSinkManagerClient : public mojom::FrameSinkManagerClient {
 class CompositorFrameSinkSupportTest : public testing::Test {
  public:
   CompositorFrameSinkSupportTest()
-      : begin_frame_source_(0.f, false),
+      : manager_(&shared_bitmap_manager_),
+        begin_frame_source_(0.f, false),
         local_surface_id_(3, kArbitraryToken),
         frame_sync_token_(GenTestSyncToken(4)),
         consumer_sync_token_(GenTestSyncToken(5)) {
@@ -110,31 +105,38 @@ class CompositorFrameSinkSupportTest : public testing::Test {
     manager_.surface_manager()->RemoveObserver(&surface_observer_);
   }
 
-  void SubmitCompositorFrameWithResources(ResourceId* resource_ids,
-                                          size_t num_resource_ids) {
-    auto frame = MakeDefaultCompositorFrame();
+  void AddResourcesToFrame(CompositorFrame* frame,
+                           ResourceId* resource_ids,
+                           size_t num_resource_ids) {
     for (size_t i = 0u; i < num_resource_ids; ++i) {
       TransferableResource resource;
       resource.id = resource_ids[i];
       resource.mailbox_holder.texture_target = GL_TEXTURE_2D;
       resource.mailbox_holder.sync_token = frame_sync_token_;
-      frame.resource_list.push_back(resource);
+      frame->resource_list.push_back(resource);
     }
+  }
+
+  void SubmitCompositorFrameWithResources(ResourceId* resource_ids,
+                                          size_t num_resource_ids) {
+    auto frame = MakeDefaultCompositorFrame();
+    AddResourcesToFrame(&frame, resource_ids, num_resource_ids);
     support_->SubmitCompositorFrame(local_surface_id_, std::move(frame));
     EXPECT_EQ(surface_observer_.last_created_surface_id().local_surface_id(),
               local_surface_id_);
   }
 
   bool SubmitCompositorFrameWithCopyRequest(
+      CompositorFrame frame,
       std::unique_ptr<CopyOutputRequest> request) {
-    auto frame = MakeDefaultCompositorFrame();
     frame.render_pass_list.back()->copy_requests.push_back(std::move(request));
     const auto result = support_->MaybeSubmitCompositorFrame(
-        local_surface_id_, std::move(frame), nullptr);
+        local_surface_id_, std::move(frame), base::nullopt, 0,
+        mojom::CompositorFrameSink::SubmitCompositorFrameSyncCallback());
     switch (result) {
-      case CompositorFrameSinkSupport::ACCEPTED:
+      case SubmitResult::ACCEPTED:
         return true;
-      case CompositorFrameSinkSupport::COPY_OUTPUT_REQUESTS_NOT_ALLOWED:
+      case SubmitResult::COPY_OUTPUT_REQUESTS_NOT_ALLOWED:
         return false;
       default:
         ADD_FAILURE()
@@ -157,6 +159,18 @@ class CompositorFrameSinkSupportTest : public testing::Test {
       unref_array.push_back(resource);
     }
     support_->UnrefResources(unref_array);
+  }
+
+  void CheckReturnedResourcesMatchExpected(ResourceId* expected_returned_ids,
+                                           size_t expected_resources) {
+    const std::vector<ReturnedResource>& actual_resources =
+        fake_support_client_.returned_resources();
+    ASSERT_EQ(expected_resources, actual_resources.size());
+    for (size_t i = 0; i < expected_resources; ++i) {
+      ReturnedResource resource = actual_resources[i];
+      EXPECT_EQ(expected_returned_ids[i], resource.id);
+    }
+    fake_support_client_.clear_returned_resources();
   }
 
   void CheckReturnedResourcesMatchExpected(ResourceId* expected_returned_ids,
@@ -186,6 +200,7 @@ class CompositorFrameSinkSupportTest : public testing::Test {
   }
 
  protected:
+  ServerSharedBitmapManager shared_bitmap_manager_;
   FrameSinkManagerImpl manager_;
   MockFrameSinkManagerClient frame_sink_manager_client_;
   FakeCompositorFrameSinkClient fake_support_client_;
@@ -540,23 +555,29 @@ TEST_F(CompositorFrameSinkSupportTest, MonotonicallyIncreasingLocalSurfaceIds) {
   LocalSurfaceId local_surface_id5(8, 1, kArbitraryToken);
   LocalSurfaceId local_surface_id6(9, 3, kArbitraryToken);
   auto result = support->MaybeSubmitCompositorFrame(
-      local_surface_id1, MakeDefaultCompositorFrame(), nullptr);
-  EXPECT_EQ(CompositorFrameSinkSupport::ACCEPTED, result);
+      local_surface_id1, MakeDefaultCompositorFrame(), base::nullopt, 0,
+      mojom::CompositorFrameSink::SubmitCompositorFrameSyncCallback());
+  EXPECT_EQ(SubmitResult::ACCEPTED, result);
   result = support->MaybeSubmitCompositorFrame(
-      local_surface_id2, MakeDefaultCompositorFrame(), nullptr);
-  EXPECT_EQ(CompositorFrameSinkSupport::ACCEPTED, result);
+      local_surface_id2, MakeDefaultCompositorFrame(), base::nullopt, 0,
+      mojom::CompositorFrameSink::SubmitCompositorFrameSyncCallback());
+  EXPECT_EQ(SubmitResult::ACCEPTED, result);
   result = support->MaybeSubmitCompositorFrame(
-      local_surface_id3, MakeDefaultCompositorFrame(), nullptr);
-  EXPECT_EQ(CompositorFrameSinkSupport::ACCEPTED, result);
+      local_surface_id3, MakeDefaultCompositorFrame(), base::nullopt, 0,
+      mojom::CompositorFrameSink::SubmitCompositorFrameSyncCallback());
+  EXPECT_EQ(SubmitResult::ACCEPTED, result);
   result = support->MaybeSubmitCompositorFrame(
-      local_surface_id4, MakeDefaultCompositorFrame(), nullptr);
-  EXPECT_EQ(CompositorFrameSinkSupport::SURFACE_INVARIANTS_VIOLATION, result);
+      local_surface_id4, MakeDefaultCompositorFrame(), base::nullopt, 0,
+      mojom::CompositorFrameSink::SubmitCompositorFrameSyncCallback());
+  EXPECT_EQ(SubmitResult::SURFACE_INVARIANTS_VIOLATION, result);
   result = support->MaybeSubmitCompositorFrame(
-      local_surface_id5, MakeDefaultCompositorFrame(), nullptr);
-  EXPECT_EQ(CompositorFrameSinkSupport::SURFACE_INVARIANTS_VIOLATION, result);
+      local_surface_id5, MakeDefaultCompositorFrame(), base::nullopt, 0,
+      mojom::CompositorFrameSink::SubmitCompositorFrameSyncCallback());
+  EXPECT_EQ(SubmitResult::SURFACE_INVARIANTS_VIOLATION, result);
   result = support->MaybeSubmitCompositorFrame(
-      local_surface_id6, MakeDefaultCompositorFrame(), nullptr);
-  EXPECT_EQ(CompositorFrameSinkSupport::ACCEPTED, result);
+      local_surface_id6, MakeDefaultCompositorFrame(), base::nullopt, 0,
+      mojom::CompositorFrameSink::SubmitCompositorFrameSyncCallback());
+  EXPECT_EQ(SubmitResult::ACCEPTED, result);
 
   manager_.InvalidateFrameSinkId(kAnotherArbitraryFrameSinkId);
 }
@@ -578,8 +599,19 @@ TEST_F(CompositorFrameSinkSupportTest, ProhibitsUnprivilegedCopyRequests) {
             *got_nothing = result->IsEmpty();
           },
           &did_receive_aborted_copy_result));
-  EXPECT_FALSE(SubmitCompositorFrameWithCopyRequest(std::move(request)));
+
+  auto frame = MakeDefaultCompositorFrame();
+  ResourceId frame_resource_ids[] = {1, 2, 3};
+  AddResourcesToFrame(&frame, frame_resource_ids,
+                      base::size(frame_resource_ids));
+
+  EXPECT_FALSE(SubmitCompositorFrameWithCopyRequest(std::move(frame),
+                                                    std::move(request)));
   EXPECT_TRUE(did_receive_aborted_copy_result);
+
+  // All the resources in the rejected frame should have been returned.
+  CheckReturnedResourcesMatchExpected(frame_resource_ids,
+                                      base::size(frame_resource_ids));
 
   manager_.InvalidateFrameSinkId(kAnotherArbitraryFrameSinkId);
 }
@@ -699,7 +731,7 @@ TEST_F(CompositorFrameSinkSupportTest, DuplicateCopyRequest) {
   {
     auto frame = CompositorFrameBuilder()
                      .AddDefaultRenderPass()
-                     .SetReferencedSurfaces({surface_id})
+                     .SetReferencedSurfaces({SurfaceRange(surface_id)})
                      .Build();
     support_->SubmitCompositorFrame(local_surface_id_, std::move(frame));
     EXPECT_EQ(surface_observer_.last_created_surface_id().local_surface_id(),
@@ -775,8 +807,9 @@ TEST_F(CompositorFrameSinkSupportTest, ZeroDeviceScaleFactor) {
                    .SetDeviceScaleFactor(0.f)
                    .Build();
   const auto result = support_->MaybeSubmitCompositorFrame(
-      local_surface_id_, std::move(frame), nullptr);
-  EXPECT_EQ(CompositorFrameSinkSupport::SURFACE_INVARIANTS_VIOLATION, result);
+      local_surface_id_, std::move(frame), base::nullopt, 0,
+      mojom::CompositorFrameSink::SubmitCompositorFrameSyncCallback());
+  EXPECT_EQ(SubmitResult::SURFACE_INVARIANTS_VIOLATION, result);
   EXPECT_FALSE(GetSurfaceForId(id));
 }
 
@@ -789,9 +822,10 @@ TEST_F(CompositorFrameSinkSupportTest, FrameSizeMismatch) {
   auto frame = CompositorFrameBuilder()
                    .AddRenderPass(gfx::Rect(5, 5), gfx::Rect())
                    .Build();
-  auto result = support_->MaybeSubmitCompositorFrame(local_surface_id_,
-                                                     std::move(frame), nullptr);
-  EXPECT_EQ(CompositorFrameSinkSupport::ACCEPTED, result);
+  auto result = support_->MaybeSubmitCompositorFrame(
+      local_surface_id_, std::move(frame), base::nullopt, 0,
+      mojom::CompositorFrameSink::SubmitCompositorFrameSyncCallback());
+  EXPECT_EQ(SubmitResult::ACCEPTED, result);
   EXPECT_TRUE(GetSurfaceForId(id));
 
   // Submit a frame with size (5,4). This frame should be rejected and the
@@ -799,9 +833,19 @@ TEST_F(CompositorFrameSinkSupportTest, FrameSizeMismatch) {
   frame = CompositorFrameBuilder()
               .AddRenderPass(gfx::Rect(5, 4), gfx::Rect())
               .Build();
-  result = support_->MaybeSubmitCompositorFrame(local_surface_id_,
-                                                std::move(frame), nullptr);
-  EXPECT_EQ(CompositorFrameSinkSupport::SURFACE_INVARIANTS_VIOLATION, result);
+  ResourceId frame_resource_ids[] = {1, 2, 3};
+  AddResourcesToFrame(&frame, frame_resource_ids,
+                      base::size(frame_resource_ids));
+
+  result = support_->MaybeSubmitCompositorFrame(
+      local_surface_id_, std::move(frame), base::nullopt, 0,
+      mojom::CompositorFrameSink::SubmitCompositorFrameSyncCallback());
+
+  EXPECT_EQ(SubmitResult::SURFACE_INVARIANTS_VIOLATION, result);
+
+  // All the resources in the rejected frame should have been returned.
+  CheckReturnedResourcesMatchExpected(frame_resource_ids,
+                                      base::size(frame_resource_ids));
 }
 
 // Check that if the device scale factor of a CompositorFrame doesn't match the
@@ -815,9 +859,10 @@ TEST_F(CompositorFrameSinkSupportTest, DeviceScaleFactorMismatch) {
                    .AddDefaultRenderPass()
                    .SetDeviceScaleFactor(0.5f)
                    .Build();
-  auto result = support_->MaybeSubmitCompositorFrame(local_surface_id_,
-                                                     std::move(frame), nullptr);
-  EXPECT_EQ(CompositorFrameSinkSupport::ACCEPTED, result);
+  auto result = support_->MaybeSubmitCompositorFrame(
+      local_surface_id_, std::move(frame), base::nullopt, 0,
+      mojom::CompositorFrameSink::SubmitCompositorFrameSyncCallback());
+  EXPECT_EQ(SubmitResult::ACCEPTED, result);
   EXPECT_TRUE(GetSurfaceForId(id));
 
   // Submit a frame with device scale factor of 0.4. This frame should be
@@ -826,9 +871,10 @@ TEST_F(CompositorFrameSinkSupportTest, DeviceScaleFactorMismatch) {
               .AddDefaultRenderPass()
               .SetDeviceScaleFactor(0.4f)
               .Build();
-  result = support_->MaybeSubmitCompositorFrame(local_surface_id_,
-                                                std::move(frame), nullptr);
-  EXPECT_EQ(CompositorFrameSinkSupport::SURFACE_INVARIANTS_VIOLATION, result);
+  result = support_->MaybeSubmitCompositorFrame(
+      local_surface_id_, std::move(frame), base::nullopt, 0,
+      mojom::CompositorFrameSink::SubmitCompositorFrameSyncCallback());
+  EXPECT_EQ(SubmitResult::SURFACE_INVARIANTS_VIOLATION, result);
 }
 
 TEST_F(CompositorFrameSinkSupportTest, PassesOnBeginFrameAcks) {
@@ -1013,6 +1059,24 @@ TEST_F(CompositorFrameSinkSupportTest,
   EXPECT_TRUE(requests_map.empty());
   GetSurfaceForId(id2)->TakeCopyOutputRequests(&requests_map);
   EXPECT_FALSE(requests_map.empty());
+}
+
+// Verifies that OnFrameTokenUpdate is issued after OnFirstSurfaceActivation.
+TEST_F(CompositorFrameSinkSupportTest,
+       OnFrameTokenUpdateAfterFirstSurfaceActivation) {
+  LocalSurfaceId local_surface_id(1, kArbitraryToken);
+  uint32_t frame_token = 2u;
+  auto frame = CompositorFrameBuilder()
+                   .AddDefaultRenderPass()
+                   .SetFrameToken(frame_token)
+                   .SetSendFrameTokenToEmbedder(true)
+                   .Build();
+
+  testing::InSequence sequence;
+  EXPECT_CALL(frame_sink_manager_client_, OnSurfaceCreated(_));
+  EXPECT_CALL(frame_sink_manager_client_, OnFirstSurfaceActivation(_));
+  EXPECT_CALL(frame_sink_manager_client_, OnFrameTokenChanged(_, frame_token));
+  support_->SubmitCompositorFrame(local_surface_id, std::move(frame));
 }
 
 }  // namespace

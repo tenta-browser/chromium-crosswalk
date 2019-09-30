@@ -239,29 +239,30 @@ void NotificationChannelsProviderAndroid::MigrateToChannelsIfNecessary(
   prefs->SetBoolean(prefs::kMigratedToSiteNotificationChannels, true);
 }
 
-void NotificationChannelsProviderAndroid::UnmigrateChannelsIfNecessary(
+void NotificationChannelsProviderAndroid::ClearBlockedChannelsIfNecessary(
     PrefService* prefs,
-    content_settings::ProviderInterface* pref_provider) {
+    TemplateURLService* template_url_service) {
   if (!platform_supports_channels_ ||
-      !prefs->GetBoolean(prefs::kMigratedToSiteNotificationChannels)) {
+      prefs->GetBoolean(prefs::kClearedBlockedSiteNotificationChannels)) {
     return;
   }
-  std::unique_ptr<content_settings::RuleIterator> it(
-      GetRuleIterator(CONTENT_SETTINGS_TYPE_NOTIFICATIONS, std::string(),
-                      false /* incognito */));
-  while (it && it->HasNext()) {
-    const content_settings::Rule& rule = it->Next();
-    pref_provider->SetWebsiteSetting(rule.primary_pattern,
-                                     rule.secondary_pattern,
-                                     CONTENT_SETTINGS_TYPE_NOTIFICATIONS,
-                                     content_settings::ResourceIdentifier(),
-                                     new base::Value(rule.value->Clone()));
-  }
-  for (auto& channel : bridge_->GetChannels())
-    bridge_->DeleteChannel(channel.id);
-  cached_channels_.clear();
 
-  prefs->SetBoolean(prefs::kMigratedToSiteNotificationChannels, false);
+  for (const NotificationChannel& channel : bridge_->GetChannels()) {
+    if (channel.status != NotificationChannelStatus::BLOCKED)
+      continue;
+    if (OriginMatchesDefaultSearchEngine(template_url_service,
+                                         channel.origin)) {
+      // Do not clear the DSE permission, as it should always be ALLOW or BLOCK.
+      continue;
+    }
+    bridge_->DeleteChannel(channel.id);
+  }
+
+  // Reset the cache.
+  cached_channels_.clear();
+  initialized_cached_channels_ = false;
+
+  prefs->SetBoolean(prefs::kClearedBlockedSiteNotificationChannels, true);
 }
 
 void NotificationChannelsProviderAndroid::ClearBlockedChannelsIfNecessary(
@@ -425,8 +426,6 @@ base::Time NotificationChannelsProviderAndroid::GetWebsiteSettingLastModified(
 void NotificationChannelsProviderAndroid::CreateChannelIfRequired(
     const std::string& origin_string,
     NotificationChannelStatus new_channel_status) {
-  // TODO(awdf): Maybe check cached incognito status here to make sure
-  // channels are never created in incognito mode.
   auto channel_entry = cached_channels_.find(origin_string);
   if (channel_entry == cached_channels_.end()) {
     base::Time timestamp = clock_->Now();

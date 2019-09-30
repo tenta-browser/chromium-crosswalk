@@ -19,9 +19,9 @@
 #include "base/test/scoped_command_line.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/scoped_task_environment.h"
+#include "base/time/default_clock.h"
 #include "build/build_config.h"
 #include "chrome/browser/flag_descriptions.h"
-#include "chrome/browser/net/nqe/ui_network_quality_estimator_service.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/webui/interventions_internals/interventions_internals.mojom.h"
 #include "chrome/common/chrome_constants.h"
@@ -29,7 +29,8 @@
 #include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile.h"
 #include "chrome/test/base/testing_profile_manager.h"
-#include "components/previews/content/previews_io_data.h"
+#include "components/blacklist/opt_out_blacklist/opt_out_blacklist_data.h"
+#include "components/previews/content/previews_decider_impl.h"
 #include "components/previews/content/previews_ui_service.h"
 #include "components/previews/core/previews_features.h"
 #include "components/previews/core/previews_logger.h"
@@ -189,38 +190,22 @@ class TestPreviewsLogger : public previews::PreviewsLogger {
   bool remove_is_called_;
 };
 
-// Mock class to test interaction between PageHandler and the
-// UINetworkQualityEstimatorService.
-class TestUINetworkQualityEstimatorService
-    : public UINetworkQualityEstimatorService {
- public:
-  explicit TestUINetworkQualityEstimatorService(Profile* profile)
-      : UINetworkQualityEstimatorService(profile), remove_is_called_(false) {}
-
-  // UINetworkQualityEstimatorService:
-  void RemoveEffectiveConnectionTypeObserver(
-      net::EffectiveConnectionTypeObserver* observer) override {
-    remove_is_called_ = true;
-  }
-
-  bool RemovedObserverIsCalled() const { return remove_is_called_; }
-
- private:
-  // Check if the observer removed itself from the observer list.
-  bool remove_is_called_;
-};
-
 // A dummy class to setup PreviewsUIService.
-class TestPreviewsIOData : public previews::PreviewsIOData {
+class TestPreviewsDeciderImpl : public previews::PreviewsDeciderImpl {
  public:
-  TestPreviewsIOData() : PreviewsIOData(nullptr, nullptr) {}
+  TestPreviewsDeciderImpl()
+      : PreviewsDeciderImpl(nullptr,
+                            nullptr,
+                            base::DefaultClock::GetInstance()) {}
 
-  // previews::PreviewsIOData:
+  // previews::PreviewsDeciderImpl:
   void Initialize(
       base::WeakPtr<previews::PreviewsUIService> previews_ui_service,
-      std::unique_ptr<previews::PreviewsOptOutStore> opt_out_store,
+      std::unique_ptr<blacklist::OptOutStore> opt_out_store,
       std::unique_ptr<previews::PreviewsOptimizationGuide> previews_opt_guide,
-      const previews::PreviewsIsEnabledCallback& is_enabled_callback) override {
+      const previews::PreviewsIsEnabledCallback& is_enabled_callback,
+      blacklist::BlacklistData::AllowedTypesAndVersions allowed_types)
+      override {
     // Do nothing.
   }
 };
@@ -228,14 +213,15 @@ class TestPreviewsIOData : public previews::PreviewsIOData {
 // Mocked TestPreviewsService for testing InterventionsInternalsPageHandler.
 class TestPreviewsUIService : public previews::PreviewsUIService {
  public:
-  TestPreviewsUIService(TestPreviewsIOData* io_data,
+  TestPreviewsUIService(TestPreviewsDeciderImpl* previews_decider_impl,
                         std::unique_ptr<previews::PreviewsLogger> logger)
-      : PreviewsUIService(io_data,
+      : PreviewsUIService(previews_decider_impl,
                           nullptr, /* io_task_runner */
                           nullptr, /* previews_opt_out_store */
                           nullptr, /* previews_opt_guide */
                           base::Bind(&MockedPreviewsIsEnabled),
-                          std::move(logger)),
+                          std::move(logger),
+                          blacklist::BlacklistData::AllowedTypesAndVersions()),
         blacklist_ignored_(false) {}
   ~TestPreviewsUIService() override {}
 
@@ -260,7 +246,7 @@ class InterventionsInternalsPageHandlerTest : public testing::Test {
   ~InterventionsInternalsPageHandlerTest() override {}
 
   void SetUp() override {
-    TestPreviewsIOData io_data;
+    TestPreviewsDeciderImpl io_data;
     std::unique_ptr<TestPreviewsLogger> logger =
         std::make_unique<TestPreviewsLogger>();
     logger_ = logger.get();
@@ -268,16 +254,11 @@ class InterventionsInternalsPageHandlerTest : public testing::Test {
         std::make_unique<TestPreviewsUIService>(&io_data, std::move(logger));
 
     ASSERT_TRUE(profile_manager_.SetUp());
-    TestingProfile* test_profile =
-        profile_manager_.CreateTestingProfile(chrome::kInitialProfile);
-    ui_nqe_service_ =
-        std::make_unique<TestUINetworkQualityEstimatorService>(test_profile);
 
     mojom::InterventionsInternalsPageHandlerPtr page_handler_ptr;
     handler_request_ = mojo::MakeRequest(&page_handler_ptr);
     page_handler_ = std::make_unique<InterventionsInternalsPageHandler>(
-        std::move(handler_request_), previews_ui_service_.get(),
-        ui_nqe_service_.get());
+        std::move(handler_request_), previews_ui_service_.get());
 
     mojom::InterventionsInternalsPagePtr page_ptr;
     page_request_ = mojo::MakeRequest(&page_ptr);
@@ -298,7 +279,6 @@ class InterventionsInternalsPageHandlerTest : public testing::Test {
 
   TestPreviewsLogger* logger_;
   std::unique_ptr<TestPreviewsUIService> previews_ui_service_;
-  std::unique_ptr<TestUINetworkQualityEstimatorService> ui_nqe_service_;
 
   // InterventionsInternalPageHandler's variables.
   mojom::InterventionsInternalsPageHandlerRequest handler_request_;
@@ -642,6 +622,13 @@ TEST_F(InterventionsInternalsPageHandlerTest, OnNewMessageLogAddedPostToPage) {
     base::RunLoop().RunUntilIdle();
 
     mojom::MessageLogPtr* actual = page_->message();
+    // Discard any messages generated by network quality tracker.
+    while ((*actual)->type == "ECT Changed") {
+      page_handler_->OnNewMessageLogAdded(message);
+      base::RunLoop().RunUntilIdle();
+
+      actual = page_->message();
+    }
     EXPECT_EQ(message.event_type, (*actual)->type);
     EXPECT_EQ(message.event_description, (*actual)->description);
     EXPECT_EQ(message.url, (*actual)->url);
@@ -653,10 +640,8 @@ TEST_F(InterventionsInternalsPageHandlerTest, OnNewMessageLogAddedPostToPage) {
 
 TEST_F(InterventionsInternalsPageHandlerTest, ObserverIsRemovedWhenDestroyed) {
   EXPECT_FALSE(logger_->RemovedObserverIsCalled());
-  EXPECT_FALSE(ui_nqe_service_->RemovedObserverIsCalled());
   page_handler_.reset();
   EXPECT_TRUE(logger_->RemovedObserverIsCalled());
-  EXPECT_TRUE(ui_nqe_service_->RemovedObserverIsCalled());
 }
 
 TEST_F(InterventionsInternalsPageHandlerTest, OnNewBlacklistedHostPostToPage) {

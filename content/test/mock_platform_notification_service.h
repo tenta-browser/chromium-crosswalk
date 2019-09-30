@@ -14,8 +14,8 @@
 #include "base/macros.h"
 #include "base/optional.h"
 #include "base/strings/string16.h"
+#include "content/public/browser/notification_database_data.h"
 #include "content/public/browser/platform_notification_service.h"
-#include "third_party/blink/public/platform/modules/permissions/permission_status.mojom.h"
 #include "url/gurl.h"
 
 namespace content {
@@ -41,18 +41,7 @@ class MockPlatformNotificationService : public PlatformNotificationService {
   // the UI thread.
   void SimulateClose(const std::string& title, bool by_user);
 
-  // Sets the notification permission returned by CheckPermission.
-  void SetPermission(blink::mojom::PermissionStatus permission_status);
-
   // PlatformNotificationService implementation.
-  blink::mojom::PermissionStatus CheckPermissionOnUIThread(
-      BrowserContext* browser_context,
-      const GURL& origin,
-      int render_process_id) override;
-  blink::mojom::PermissionStatus CheckPermissionOnIOThread(
-      ResourceContext* resource_context,
-      const GURL& origin,
-      int render_process_id) override;
   void DisplayNotification(
       BrowserContext* browser_context,
       const std::string& notification_id,
@@ -73,11 +62,11 @@ class MockPlatformNotificationService : public PlatformNotificationService {
   void GetDisplayedNotifications(
       BrowserContext* browser_context,
       const DisplayedNotificationsCallback& callback) override;
-
- protected:
-  // Checks if |origin| has permission to display notifications. May be called
-  // on both the IO and the UI threads.
-  virtual blink::mojom::PermissionStatus CheckPermission(const GURL& origin);
+  int64_t ReadNextPersistentNotificationId(
+      BrowserContext* browser_context) override;
+  void RecordNotificationUkmEvent(
+      BrowserContext* browser_context,
+      const NotificationDatabaseData& data) override;
 
  private:
   // Structure to represent the information of a persistent notification.
@@ -97,9 +86,7 @@ class MockPlatformNotificationService : public PlatformNotificationService {
   // Mapping of titles to notification ids giving test a usable identifier.
   std::unordered_map<std::string, std::string> notification_id_map_;
 
-  // Permission is initialized to GRANTED for the convenience of most tests.
-  blink::mojom::PermissionStatus permission_status_ =
-      blink::mojom::PermissionStatus::GRANTED;
+  int64_t next_persistent_notification_id_ = 1;
 
   DISALLOW_COPY_AND_ASSIGN(MockPlatformNotificationService);
 };

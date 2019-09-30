@@ -8,6 +8,7 @@
 #include <memory>
 
 #include "base/memory/ptr_util.h"
+#include "third_party/blink/public/platform/modules/fetch/fetch_api_request.mojom-shared.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/script/script.h"
 #include "third_party/blink/renderer/platform/cross_origin_attribute_value.h"
@@ -22,7 +23,6 @@
 
 namespace blink {
 
-class CSSPreloaderResourceClient;
 class Document;
 
 class CORE_EXPORT PreloadRequest {
@@ -67,18 +67,21 @@ class CORE_EXPORT PreloadRequest {
         referrer_policy, referrer_source, is_image_set));
   }
 
-  bool IsSafeToSendToAnotherThread() const;
-
-  Resource* Start(Document*, CSSPreloaderResourceClient*);
+  Resource* Start(Document*);
 
   void SetDefer(FetchParameters::DeferOption defer) { defer_ = defer; }
-  void SetCharset(const String& charset) { charset_ = charset.IsolatedCopy(); }
+  void SetCharset(const String& charset) { charset_ = charset; }
   void SetCrossOrigin(CrossOriginAttributeValue cross_origin) {
     cross_origin_ = cross_origin;
   }
   CrossOriginAttributeValue CrossOrigin() const { return cross_origin_; }
 
-  void SetNonce(const String& nonce) { nonce_ = nonce.IsolatedCopy(); }
+  void SetImportance(mojom::FetchImportanceMode importance) {
+    importance_ = importance;
+  }
+  mojom::FetchImportanceMode Importance() const { return importance_; }
+
+  void SetNonce(const String& nonce) { nonce_ = nonce; }
   const String& Nonce() const { return nonce_; }
 
   Resource::Type ResourceType() const { return resource_type_; }
@@ -131,12 +134,12 @@ class CORE_EXPORT PreloadRequest {
                  ResourceFetcher::IsImageSet is_image_set)
       : initiator_name_(initiator_name),
         initiator_position_(initiator_position),
-        resource_url_(resource_url.IsolatedCopy()),
-        base_url_(base_url.Copy()),
+        resource_url_(resource_url),
+        base_url_(base_url),
         resource_type_(resource_type),
         script_type_(ScriptType::kClassic),
         cross_origin_(kCrossOriginAttributeNotSet),
-        discovery_time_(CurrentTimeTicksInSeconds()),
+        importance_(mojom::FetchImportanceMode::kImportanceAuto),
         defer_(FetchParameters::kNoDefer),
         resource_width_(resource_width),
         client_hints_preferences_(client_hints_preferences),
@@ -156,8 +159,8 @@ class CORE_EXPORT PreloadRequest {
   Resource::Type resource_type_;
   ScriptType script_type_;
   CrossOriginAttributeValue cross_origin_;
+  mojom::FetchImportanceMode importance_;
   String nonce_;
-  double discovery_time_;
   FetchParameters::DeferOption defer_;
   FetchParameters::ResourceWidth resource_width_;
   ClientHintsPreferences client_hints_preferences_;

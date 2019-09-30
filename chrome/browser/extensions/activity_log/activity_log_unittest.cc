@@ -10,7 +10,6 @@
 
 #include "base/command_line.h"
 #include "base/macros.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/synchronization/waitable_event.h"
 #include "build/build_config.h"
@@ -238,7 +237,7 @@ TEST_F(ActivityLogTest, LogPrerender) {
   GURL url("http://www.google.com");
 
   prerender::test_utils::RestorePrerenderMode restore_prerender_mode;
-  prerender::PrerenderManager::SetOmniboxMode(
+  prerender::PrerenderManager::SetMode(
       prerender::PrerenderManager::PRERENDER_MODE_ENABLED);
   prerender::PrerenderManager* prerender_manager =
       prerender::PrerenderManagerFactory::GetForBrowserContext(profile());

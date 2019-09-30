@@ -7,10 +7,11 @@
 #include <utility>
 
 #include "base/logging.h"
-#include "base/threading/thread_task_runner_handle.h"
+#include "base/threading/sequenced_task_runner_handle.h"
 #include "components/sync/base/bind_to_task_runner.h"
 #include "components/sync/base/data_type_histogram.h"
 #include "components/sync/base/model_type.h"
+#include "components/sync/driver/configure_context.h"
 #include "components/sync/driver/generic_change_processor_factory.h"
 #include "components/sync/driver/sync_api_component_factory.h"
 #include "components/sync/driver/sync_client.h"
@@ -43,9 +44,14 @@ AsyncDirectoryTypeController::AsyncDirectoryTypeController(
       model_thread_(std::move(model_thread)) {}
 
 void AsyncDirectoryTypeController::LoadModels(
+    const ConfigureContext& configure_context,
     const ModelLoadCallback& model_load_callback) {
   DCHECK(CalledOnValidThread());
+  DCHECK_EQ(configure_context.storage_option, ConfigureContext::STORAGE_ON_DISK)
+      << " for type " << ModelTypeToString(type());
+
   model_load_callback_ = model_load_callback;
+
   if (state() != NOT_RUNNING) {
     model_load_callback.Run(type(),
                             SyncError(FROM_HERE, SyncError::DATATYPE_ERROR,
@@ -56,9 +62,9 @@ void AsyncDirectoryTypeController::LoadModels(
   state_ = MODEL_STARTING;
   // Since we can't be called multiple times before Stop() is called,
   // |shared_change_processor_| must be null here.
-  DCHECK(!shared_change_processor_.get());
+  DCHECK(!shared_change_processor_);
   shared_change_processor_ = CreateSharedChangeProcessor();
-  DCHECK(shared_change_processor_.get());
+  DCHECK(shared_change_processor_);
   if (!StartModels()) {
     // If we are waiting for some external service to load before associating
     // or we failed to start the models, we exit early.
@@ -115,12 +121,13 @@ void AsyncDirectoryTypeController::StartAssociating(
     local_merge_result.set_error(error);
     StartDone(ASSOCIATION_FAILED, local_merge_result, SyncMergeResult(type()));
     // StartDone should have cleared the SharedChangeProcessor.
-    DCHECK(!shared_change_processor_.get());
+    DCHECK(!shared_change_processor_);
     return;
   }
 }
 
-void AsyncDirectoryTypeController::Stop() {
+// For directory datatypes metadata clears by SyncManager::PurgeDisabledTypes().
+void AsyncDirectoryTypeController::Stop(SyncStopMetadataFate metadata_fate) {
   DCHECK(CalledOnValidThread());
 
   if (state() == NOT_RUNNING)
@@ -171,7 +178,7 @@ void AsyncDirectoryTypeController::StartDone(
   if (IsSuccessfulResult(start_result)) {
     new_state = RUNNING;
   } else {
-    new_state = (start_result == ASSOCIATION_FAILED ? DISABLED : NOT_RUNNING);
+    new_state = (start_result == ASSOCIATION_FAILED ? FAILED : NOT_RUNNING);
   }
 
   // If we failed to start up, and we haven't been stopped yet, we need to
@@ -226,7 +233,7 @@ bool AsyncDirectoryTypeController::StartAssociationAsync() {
       FROM_HERE,
       base::Bind(
           &SharedChangeProcessor::StartAssociation, shared_change_processor_,
-          BindToCurrentThread(base::Bind(
+          BindToCurrentSequence(base::Bind(
               &AsyncDirectoryTypeController::StartDone, base::AsWeakPtr(this))),
           sync_client_, processor_factory_.get(), user_share_,
           base::Passed(CreateErrorHandler())));
@@ -241,15 +248,15 @@ ChangeProcessor* AsyncDirectoryTypeController::GetChangeProcessor() const {
 void AsyncDirectoryTypeController::DisconnectSharedChangeProcessor() {
   DCHECK(CalledOnValidThread());
   // |shared_change_processor_| can already be null if Stop() is
-  // called after StartDone(_, DISABLED, _).
-  if (shared_change_processor_.get()) {
+  // called after StartDone(_, FAILED, _).
+  if (shared_change_processor_) {
     shared_change_processor_->Disconnect();
   }
 }
 
 void AsyncDirectoryTypeController::StopSyncableService() {
   DCHECK(CalledOnValidThread());
-  if (shared_change_processor_.get()) {
+  if (shared_change_processor_) {
     PostTaskOnModelThread(FROM_HERE,
                           base::Bind(&SharedChangeProcessor::StopLocalService,
                                      shared_change_processor_));
@@ -260,7 +267,7 @@ std::unique_ptr<DataTypeErrorHandler>
 AsyncDirectoryTypeController::CreateErrorHandler() {
   DCHECK(CalledOnValidThread());
   return std::make_unique<DataTypeErrorHandlerImpl>(
-      base::ThreadTaskRunnerHandle::Get(), dump_stack_,
+      base::SequencedTaskRunnerHandle::Get(), dump_stack_,
       base::Bind(&AsyncDirectoryTypeController::DisableImpl,
                  base::AsWeakPtr(this)));
 }

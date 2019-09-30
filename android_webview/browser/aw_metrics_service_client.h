@@ -13,7 +13,6 @@
 #include "components/metrics/enabled_state_provider.h"
 #include "components/metrics/metrics_log_uploader.h"
 #include "components/metrics/metrics_service_client.h"
-#include "components/version_info/channel.h"
 
 class PrefService;
 
@@ -43,6 +42,10 @@ class AwMetricsServiceClient : public metrics::MetricsServiceClient,
 
  public:
   static AwMetricsServiceClient* GetInstance();
+
+  // If the client ID was pre-loaded on the Java side, store it in "client_id"
+  // and return true; otherwise, return false.
+  static bool GetPreloadedClientId(std::string* client_id);
 
   // Retrieve the client ID or generate one if none exists.
   static void LoadOrCreateClientId();

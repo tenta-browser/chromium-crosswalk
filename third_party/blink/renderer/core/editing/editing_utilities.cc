@@ -25,8 +25,9 @@
 
 #include "third_party/blink/renderer/core/editing/editing_utilities.h"
 
+#include "third_party/blink/renderer/core/clipboard/clipboard_mime_types.h"
 #include "third_party/blink/renderer/core/clipboard/data_object.h"
-#include "third_party/blink/renderer/core/clipboard/pasteboard.h"
+#include "third_party/blink/renderer/core/clipboard/system_clipboard.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/element_traversal.h"
 #include "third_party/blink/renderer/core/dom/node_computed_style.h"
@@ -71,7 +72,7 @@
 #include "third_party/blink/renderer/core/layout/layout_object.h"
 #include "third_party/blink/renderer/core/layout/layout_table_cell.h"
 #include "third_party/blink/renderer/core/svg/svg_image_element.h"
-#include "third_party/blink/renderer/platform/clipboard/clipboard_mime_types.h"
+#include "third_party/blink/renderer/platform/graphics/static_bitmap_image.h"
 #include "third_party/blink/renderer/platform/wtf/assertions.h"
 #include "third_party/blink/renderer/platform/wtf/std_lib_extras.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_builder.h"
@@ -86,7 +87,7 @@ namespace {
 std::ostream& operator<<(std::ostream& os, PositionMoveType type) {
   static const char* const kTexts[] = {"CodeUnit", "BackwardDeletion",
                                        "GraphemeCluster"};
-  const auto& it = std::begin(kTexts) + static_cast<size_t>(type);
+  auto* const* const it = std::begin(kTexts) + static_cast<size_t>(type);
   DCHECK_GE(it, std::begin(kTexts)) << "Unknown PositionMoveType value";
   DCHECK_LT(it, std::end(kTexts)) << "Unknown PositionMoveType value";
   return os << *it;
@@ -457,7 +458,7 @@ ContainerNode* HighestEditableRoot(const PositionInFlatTree& position) {
 }
 
 bool IsEditablePosition(const Position& position) {
-  const Node* node = position.ParentAnchoredEquivalent().AnchorNode();
+  const Node* node = position.ComputeContainerNode();
   if (!node)
     return false;
   DCHECK(node->GetDocument().IsActive());
@@ -1608,7 +1609,7 @@ DispatchEventResult DispatchBeforeInputInsertText(
       input_type, data, InputTypeIsCancelable(input_type),
       InputEvent::EventIsComposing::kNotComposing,
       ranges ? ranges : TargetRangesForInputEvent(*target));
-  return target->DispatchEvent(before_input_event);
+  return target->DispatchEvent(*before_input_event);
 }
 
 DispatchEventResult DispatchBeforeInputEditorCommand(
@@ -1620,7 +1621,7 @@ DispatchEventResult DispatchBeforeInputEditorCommand(
   InputEvent* before_input_event = InputEvent::CreateBeforeInput(
       input_type, g_null_atom, InputTypeIsCancelable(input_type),
       InputEvent::EventIsComposing::kNotComposing, ranges);
-  return target->DispatchEvent(before_input_event);
+  return target->DispatchEvent(*before_input_event);
 }
 
 DispatchEventResult DispatchBeforeInputDataTransfer(
@@ -1652,7 +1653,7 @@ DispatchEventResult DispatchBeforeInputDataTransfer(
         InputEvent::EventIsComposing::kNotComposing,
         TargetRangesForInputEvent(*target));
   }
-  return target->DispatchEvent(before_input_event);
+  return target->DispatchEvent(*before_input_event);
 }
 
 // |IsEmptyNonEditableNodeInEditable()| is introduced for fixing
@@ -1701,7 +1702,7 @@ static scoped_refptr<Image> ImageFromNode(const Node& node) {
 
   if (layout_object->IsCanvas()) {
     return ToHTMLCanvasElement(const_cast<Node&>(node))
-        .CopiedImage(kFrontBuffer, kPreferNoAcceleration);
+        .Snapshot(kFrontBuffer, kPreferNoAcceleration);
   }
 
   if (!layout_object->IsImage())
@@ -1727,15 +1728,13 @@ AtomicString GetUrlStringFromNode(const Node& node) {
   return AtomicString();
 }
 
-void WriteImageNodeToPasteboard(Pasteboard* pasteboard,
-                                const Node& node,
-                                const String& title) {
+void WriteImageNodeToClipboard(const Node& node, const String& title) {
   const scoped_refptr<Image> image = ImageFromNode(node);
   if (!image.get())
     return;
   const KURL url_string = node.GetDocument().CompleteURL(
       StripLeadingAndTrailingHTMLSpaces(GetUrlStringFromNode(node)));
-  pasteboard->WriteImage(image.get(), url_string, title);
+  SystemClipboard::GetInstance().WriteImage(image.get(), url_string, title);
 }
 
 Element* FindEventTargetFrom(LocalFrame& frame,

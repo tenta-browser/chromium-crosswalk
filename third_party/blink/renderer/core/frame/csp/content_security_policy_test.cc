@@ -30,7 +30,7 @@ class ContentSecurityPolicyTest : public testing::Test {
         secure_origin(SecurityOrigin::Create(secure_url)) {}
 
  protected:
-  virtual void SetUp() { execution_context = CreateExecutionContext(); }
+  void SetUp() override { execution_context = CreateExecutionContext(); }
 
   NullExecutionContext* CreateExecutionContext() {
     NullExecutionContext* context = new NullExecutionContext();
@@ -239,10 +239,10 @@ TEST_F(ContentSecurityPolicyTest, SandboxInMeta) {
   csp->BindToExecutionContext(execution_context.Get());
   csp->DidReceiveHeader("sandbox;", kContentSecurityPolicyHeaderTypeEnforce,
                         kContentSecurityPolicyHeaderSourceMeta);
-  EXPECT_FALSE(execution_context->GetSecurityOrigin()->IsUnique());
+  EXPECT_FALSE(execution_context->GetSecurityOrigin()->IsOpaque());
   csp->DidReceiveHeader("sandbox;", kContentSecurityPolicyHeaderTypeEnforce,
                         kContentSecurityPolicyHeaderSourceHTTP);
-  EXPECT_TRUE(execution_context->GetSecurityOrigin()->IsUnique());
+  EXPECT_TRUE(execution_context->GetSecurityOrigin()->IsOpaque());
 }
 
 // Tests that report-uri directives are discarded from policies
@@ -1003,6 +1003,7 @@ TEST_F(ContentSecurityPolicyTest, DirectiveType) {
       {ContentSecurityPolicy::DirectiveType::kImgSrc, "img-src"},
       {ContentSecurityPolicy::DirectiveType::kManifestSrc, "manifest-src"},
       {ContentSecurityPolicy::DirectiveType::kMediaSrc, "media-src"},
+      {ContentSecurityPolicy::DirectiveType::kNavigateTo, "navigate-to"},
       {ContentSecurityPolicy::DirectiveType::kObjectSrc, "object-src"},
       {ContentSecurityPolicy::DirectiveType::kPluginTypes, "plugin-types"},
       {ContentSecurityPolicy::DirectiveType::kReportURI, "report-uri"},

@@ -13,7 +13,6 @@
 #include "base/json/json_writer.h"
 #include "base/macros.h"
 #include "base/memory/singleton.h"
-#include "base/message_loop/message_loop.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
@@ -208,7 +207,7 @@ class SocketTunnel {
         base::Bind(
             &SocketTunnel::OnRead, base::Unretained(this), from, to, buffer));
     if (result != net::ERR_IO_PENDING)
-      OnRead(from, to, buffer, result);
+      OnRead(from, to, std::move(buffer), result);
   }
 
   void OnRead(net::StreamSocket* from,
@@ -222,7 +221,7 @@ class SocketTunnel {
 
     int total = result;
     scoped_refptr<net::DrainableIOBuffer> drainable =
-        new net::DrainableIOBuffer(buffer.get(), total);
+        base::MakeRefCounted<net::DrainableIOBuffer>(std::move(buffer), total);
 
     ++pending_writes_;
     result = to->Write(drainable.get(), total,

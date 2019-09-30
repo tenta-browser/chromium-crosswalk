@@ -18,17 +18,21 @@
       "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
         {
-          "object": "LayoutInline (relative positioned) SPAN id='target'",
+          "object": "LayoutBlockFlow HTML",
           "rect": [8, 7, 200, 102],
-          "reason": "disappeared"
+          "reason": "chunk disappeared"
+        },
+        {
+          "object": "LayoutBlockFlow HTML",
+          "rect": [8, 8, 100, 100],
+          "reason": "chunk appeared"
+        },
+        {
+          "object": "LayoutBlockFlow HTML",
+          "rect": [8, 8, 100, 100],
+          "reason": "chunk disappeared"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutBlockFlow DIV",
-      "reason": "style change"
     }
   ]
 }

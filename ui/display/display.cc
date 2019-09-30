@@ -149,6 +149,41 @@ bool Display::HasEnsureForcedColorProfile() {
   return has_ensure_forced_color_profile;
 }
 
+// static
+display::Display::Rotation Display::DegreesToRotation(int degrees) {
+  if (degrees == 0)
+    return display::Display::ROTATE_0;
+  if (degrees == 90)
+    return display::Display::ROTATE_90;
+  if (degrees == 180)
+    return display::Display::ROTATE_180;
+  if (degrees == 270)
+    return display::Display::ROTATE_270;
+  NOTREACHED();
+  return display::Display::ROTATE_0;
+}
+
+// static
+int Display::RotationToDegrees(display::Display::Rotation rotation) {
+  switch (rotation) {
+    case display::Display::ROTATE_0:
+      return 0;
+    case display::Display::ROTATE_90:
+      return 90;
+    case display::Display::ROTATE_180:
+      return 180;
+    case display::Display::ROTATE_270:
+      return 270;
+  }
+  NOTREACHED();
+  return 0;
+}
+
+// static
+bool Display::IsValidRotation(int degrees) {
+  return degrees == 0 || degrees == 90 || degrees == 180 || degrees == 270;
+}
+
 Display::Display() : Display(kInvalidDisplayId) {}
 
 Display::Display(int64_t id) : Display(id, gfx::Rect()) {}
@@ -171,6 +206,11 @@ Display::Display(int64_t id, const gfx::Rect& bounds)
 Display::Display(const Display& other) = default;
 
 Display::~Display() {}
+
+// static
+Display Display::GetDefaultDisplay() {
+  return Display(kDefaultDisplayId, gfx::Rect(0, 0, 1920, 1080));
+}
 
 int Display::RotationAsDegree() const {
   switch (rotation_) {
@@ -229,9 +269,7 @@ void Display::SetScaleAndBounds(float device_scale_factor,
                                                1.0f / device_scale_factor_),
                       gfx::ScaleToFlooredSize(bounds_in_pixel.size(),
                                               1.0f / device_scale_factor_));
-#if defined(OS_ANDROID)
   size_in_pixels_ = bounds_in_pixel.size();
-#endif  // defined(OS_ANDROID)
   UpdateWorkAreaFromInsets(insets);
 }
 
@@ -260,7 +298,6 @@ void Display::UpdateWorkAreaFromInsets(const gfx::Insets& insets) {
 }
 
 gfx::Size Display::GetSizeInPixel() const {
-  // TODO(oshima): This should always use size_in_pixels_.
   if (!size_in_pixels_.IsEmpty())
     return size_in_pixels_;
   return gfx::ScaleToFlooredSize(size(), device_scale_factor_);

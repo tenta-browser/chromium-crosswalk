@@ -71,8 +71,8 @@ void CacheTestUtil::CreateCacheEntriesOnIOThread(
   SetNumberOfWaitedTasks(keys.size());
 
   for (const std::string& key : keys) {
-    WaitForCompletion(
-        backend_->CreateEntry(key, &entries_[pos++], done_callback_));
+    WaitForCompletion(backend_->CreateEntry(key, net::HIGHEST, &entries_[pos++],
+                                            done_callback_));
   }
 }
 
@@ -141,7 +141,7 @@ void CacheTestUtil::GetNextKey(int error) {
 
     error = iterator_->OpenNextEntry(
         &current_entry_,
-        base::Bind(&CacheTestUtil::GetNextKey, base::Unretained(this)));
+        base::BindOnce(&CacheTestUtil::GetNextKey, base::Unretained(this)));
   }
 }
 

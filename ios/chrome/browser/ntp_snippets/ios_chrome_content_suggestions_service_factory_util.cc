@@ -4,11 +4,14 @@
 
 #include "ios/chrome/browser/ntp_snippets/ios_chrome_content_suggestions_service_factory_util.h"
 
+#include <string>
+#include <utility>
+
 #include "base/feature_list.h"
 #include "base/files/file_path.h"
 #include "base/json/json_reader.h"
 #include "base/memory/singleton.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/time/default_clock.h"
 #include "base/values.h"
@@ -48,6 +51,7 @@
 #include "ios/chrome/common/channel_info.h"
 #include "ios/web/public/browser_state.h"
 #include "net/url_request/url_request_context_getter.h"
+#include "services/network/public/cpp/shared_url_loader_factory.h"
 
 using history::HistoryService;
 using image_fetcher::CreateIOSImageDecoder;
@@ -165,20 +169,23 @@ void RegisterRemoteSuggestionsProvider(ContentSuggestionsService* service,
       IdentityManagerFactory::GetForBrowserState(chrome_browser_state);
   scoped_refptr<net::URLRequestContextGetter> request_context =
       browser_state->GetRequestContext();
+  scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory =
+      browser_state->GetSharedURLLoaderFactory();
+
   base::FilePath database_dir(
       browser_state->GetStatePath().Append(ntp_snippets::kDatabaseFolder));
 
   std::string api_key;
   // This API needs whitelisted API keys. Get the key only if it is not a
   // dummy key.
-  if (google_apis::HasKeysConfigured()) {
+  if (google_apis::HasAPIKeyConfigured()) {
     bool is_stable_channel = GetChannel() == version_info::Channel::STABLE;
     api_key = is_stable_channel ? google_apis::GetAPIKey()
                                 : google_apis::GetNonStableAPIKey();
   }
   auto suggestions_fetcher = std::make_unique<RemoteSuggestionsFetcherImpl>(
-      identity_manager, request_context, prefs, nullptr,
-      base::BindRepeating(&ParseJson), GetFetchEndpoint(GetChannel()), api_key,
+      identity_manager, url_loader_factory, prefs, nullptr,
+      base::BindRepeating(&ParseJson), GetFetchEndpoint(), api_key,
       service->user_classifier());
 
   // This pref is also used for logging. If it is changed, change it in the
@@ -188,8 +195,8 @@ void RegisterRemoteSuggestionsProvider(ContentSuggestionsService* service,
       service, prefs, GetApplicationContext()->GetApplicationLocale(),
       service->category_ranker(), service->remote_suggestions_scheduler(),
       std::move(suggestions_fetcher),
-      std::make_unique<ImageFetcherImpl>(CreateIOSImageDecoder(),
-                                         request_context.get()),
+      std::make_unique<ImageFetcherImpl>(
+          CreateIOSImageDecoder(), browser_state->GetSharedURLLoaderFactory()),
       std::make_unique<RemoteSuggestionsDatabase>(database_dir),
       std::make_unique<RemoteSuggestionsStatusServiceImpl>(
           identity_manager->HasPrimaryAccount(), prefs, pref_name),

@@ -19,6 +19,7 @@
 #include "third_party/blink/renderer/modules/webaudio/cross_thread_audio_worklet_processor_info.h"
 #include "third_party/blink/renderer/platform/audio/audio_bus.h"
 #include "third_party/blink/renderer/platform/audio/audio_utilities.h"
+#include "third_party/blink/renderer/platform/bindings/exception_messages.h"
 #include "third_party/blink/renderer/platform/cross_thread_functional.h"
 #include "third_party/blink/renderer/platform/heap/persistent.h"
 
@@ -98,7 +99,7 @@ void AudioWorkletHandler::Process(size_t frames_to_process) {
       output_buses.push_back(Output(i).Bus());
 
     for (const auto& param_name : param_value_map_.Keys()) {
-      const auto param_handler = param_handler_map_.at(param_name);
+      auto* const param_handler = param_handler_map_.at(param_name);
       AudioFloatArray* param_values = param_value_map_.at(param_name);
       if (param_handler->HasSampleAccurateValues()) {
         param_handler->CalculateSampleAccurateValues(
@@ -128,7 +129,7 @@ void AudioWorkletHandler::Process(size_t frames_to_process) {
 
 void AudioWorkletHandler::CheckNumberOfChannelsForInput(AudioNodeInput* input) {
   DCHECK(Context()->IsAudioThread());
-  DCHECK(Context()->IsGraphOwner());
+  Context()->AssertGraphOwner();
   DCHECK(input);
 
   // Dynamic channel count only works when the node has 1 input and 1 output.
@@ -141,6 +142,13 @@ void AudioWorkletHandler::CheckNumberOfChannelsForInput(AudioNodeInput* input) {
       // downstream in the graph.
       Output(0).SetNumberOfChannels(number_of_input_channels);
     }
+  }
+
+  // If the node has zero output, it becomes the "automatic pull" node. This
+  // does not apply to the general case where we have outputs that aren't
+  // connected.
+  if (NumberOfOutputs() == 0) {
+    Context()->GetDeferredTaskHandler().AddAutomaticPullNode(this);
   }
 
   AudioHandler::CheckNumberOfChannelsForInput(input);
@@ -214,11 +222,13 @@ AudioWorkletNode::AudioWorkletNode(
   HashMap<String, scoped_refptr<AudioParamHandler>> param_handler_map;
   for (const auto& param_info : param_info_list) {
     String param_name = param_info.Name().IsolatedCopy();
-    AudioParam* audio_param =
-        AudioParam::Create(context, kParamTypeAudioWorklet,
-                           "AudioWorklet(\"" + name + "\")." + param_name,
-                           param_info.DefaultValue(), param_info.MinValue(),
-                           param_info.MaxValue());
+    AudioParam* audio_param = AudioParam::Create(
+        context, kParamTypeAudioWorklet,
+        param_info.DefaultValue(), AudioParamHandler::AutomationRate::kAudio,
+        AudioParamHandler::AutomationRateMode::kVariable, param_info.MinValue(),
+        param_info.MaxValue());
+    audio_param->SetCustomParamName("AudioWorkletNode(\"" + name + "\")." +
+                                    param_name);
     audio_param_map.Set(param_name, audio_param);
     param_handler_map.Set(param_name, WrapRefCounted(&audio_param->Handler()));
 
@@ -253,18 +263,18 @@ AudioWorkletNode* AudioWorkletNode::Create(
 
   if (options.numberOfInputs() == 0 && options.numberOfOutputs() == 0) {
     exception_state.ThrowDOMException(
-        kNotSupportedError,
+        DOMExceptionCode::kNotSupportedError,
         "AudioWorkletNode cannot be created: Number of inputs and number of "
-            "outputs cannot be both zero.");
+        "outputs cannot be both zero.");
     return nullptr;
   }
 
   if (options.hasOutputChannelCount()) {
     if (options.numberOfOutputs() != options.outputChannelCount().size()) {
       exception_state.ThrowDOMException(
-          kIndexSizeError,
+          DOMExceptionCode::kIndexSizeError,
           "AudioWorkletNode cannot be created: Length of specified "
-              "'outputChannelCount' (" +
+          "'outputChannelCount' (" +
               String::Number(options.outputChannelCount().size()) +
               ") does not match the given number of outputs (" +
               String::Number(options.numberOfOutputs()) + ").");
@@ -275,10 +285,9 @@ AudioWorkletNode* AudioWorkletNode::Create(
       if (channel_count < 1 ||
           channel_count > BaseAudioContext::MaxNumberOfChannels()) {
         exception_state.ThrowDOMException(
-            kNotSupportedError,
+            DOMExceptionCode::kNotSupportedError,
             ExceptionMessages::IndexOutsideRange<unsigned long>(
-                "channel count", channel_count,
-                1,
+                "channel count", channel_count, 1,
                 ExceptionMessages::kInclusiveBound,
                 BaseAudioContext::MaxNumberOfChannels(),
                 ExceptionMessages::kInclusiveBound));
@@ -289,16 +298,16 @@ AudioWorkletNode* AudioWorkletNode::Create(
 
   if (!context->audioWorklet()->IsReady()) {
     exception_state.ThrowDOMException(
-        kInvalidStateError,
+        DOMExceptionCode::kInvalidStateError,
         "AudioWorkletNode cannot be created: AudioWorklet does not have a "
-            "valid AudioWorkletGlobalScope. Load a script via "
-            "audioWorklet.addModule() first.");
+        "valid AudioWorkletGlobalScope. Load a script via "
+        "audioWorklet.addModule() first.");
     return nullptr;
   }
 
   if (!context->audioWorklet()->IsProcessorRegistered(name)) {
     exception_state.ThrowDOMException(
-        kInvalidStateError,
+        DOMExceptionCode::kInvalidStateError,
         "AudioWorkletNode cannot be created: The node name '" + name +
             "' is not defined in AudioWorkletGlobalScope.");
     return nullptr;
@@ -314,16 +323,19 @@ AudioWorkletNode* AudioWorkletNode::Create(
           channel->port1());
 
   if (!node) {
-    exception_state.ThrowDOMException(
-        kInvalidStateError,
-        "AudioWorkletNode cannot be created.");
+    exception_state.ThrowDOMException(DOMExceptionCode::kInvalidStateError,
+                                      "AudioWorkletNode cannot be created.");
     return nullptr;
   }
 
   node->HandleChannelOptions(options, exception_state);
 
-  // context keeps reference as a source node.
-  context->NotifySourceNodeStartedProcessing(node);
+  // context keeps reference as a source node if the node has a valid output.
+  // The node with zero output cannot be a source, so it won't be added as an
+  // active source node.
+  if (node->numberOfOutputs() > 0) {
+    context->NotifySourceNodeStartedProcessing(node);
+  }
 
   v8::Isolate* isolate = script_state->GetIsolate();
   SerializedScriptValue::SerializeOptions serialize_options;
@@ -347,7 +359,7 @@ AudioWorkletNode* AudioWorkletNode::Create(
 
   // This is non-blocking async call. |node| still can be returned to user
   // before the scheduled async task is completed.
-  context->audioWorklet()->CreateProcessor(&node->GetWorkletHandler(),
+  context->audioWorklet()->CreateProcessor(node->GetWorkletHandler(),
                                            std::move(processor_port_channel),
                                            std::move(serialized_node_options));
 
@@ -367,11 +379,11 @@ MessagePort* AudioWorkletNode::port() const {
 }
 
 void AudioWorkletNode::FireProcessorError() {
-  DispatchEvent(Event::Create(EventTypeNames::processorerror));
+  DispatchEvent(*Event::Create(EventTypeNames::processorerror));
 }
 
-AudioWorkletHandler& AudioWorkletNode::GetWorkletHandler() const {
-  return static_cast<AudioWorkletHandler&>(Handler());
+scoped_refptr<AudioWorkletHandler> AudioWorkletNode::GetWorkletHandler() const {
+  return WrapRefCounted(&static_cast<AudioWorkletHandler&>(Handler()));
 }
 
 void AudioWorkletNode::Trace(blink::Visitor* visitor) {

@@ -12,10 +12,10 @@
 #include "base/compiler_specific.h"
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
+#include "base/scoped_observer.h"
 #include "build/build_config.h"
 #include "content/public/browser/browser_thread.h"
-#include "content/public/browser/notification_observer.h"
-#include "content/public/browser/notification_registrar.h"
+#include "content/public/browser/render_widget_host_observer.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/common/file_chooser_params.h"
 #include "net/base/directory_lister.h"
@@ -37,15 +37,16 @@ struct SelectedFileInfo;
 // It implements both the initialisation and listener functions for
 // file-selection dialogs.
 //
-// Since FileSelectHelper has-a NotificationRegistrar, it needs to live on and
-// be destroyed on the UI thread. References to FileSelectHelper may be passed
-// on to other threads.
+// Since FileSelectHelper listens to observations of a widget, it needs to live
+// on and be destroyed on the UI thread. References to FileSelectHelper may be
+// passed on to other threads.
 class FileSelectHelper : public base::RefCountedThreadSafe<
                              FileSelectHelper,
                              content::BrowserThread::DeleteOnUIThread>,
                          public ui::SelectFileDialog::Listener,
                          public content::WebContentsObserver,
-                         public content::NotificationObserver {
+                         public content::RenderWidgetHostObserver,
+                         private net::DirectoryLister::DirectoryListerDelegate {
  public:
   // Show the file chooser dialog.
   static void RunFileChooser(content::RenderFrameHost* render_frame_host,
@@ -68,27 +69,6 @@ class FileSelectHelper : public base::RefCountedThreadSafe<
   FRIEND_TEST_ALL_PREFIXES(FileSelectHelperTest, LastSelectedDirectory);
   explicit FileSelectHelper(Profile* profile);
   ~FileSelectHelper() override;
-
-  // Utility class which can listen for directory lister events and relay
-  // them to the main object with the correct tracking id.
-  class DirectoryListerDispatchDelegate
-      : public net::DirectoryLister::DirectoryListerDelegate {
-   public:
-    DirectoryListerDispatchDelegate(FileSelectHelper* parent, int id)
-        : parent_(parent),
-          id_(id) {}
-    ~DirectoryListerDispatchDelegate() override {}
-    void OnListFile(
-        const net::DirectoryLister::DirectoryListerData& data) override;
-    void OnListDone(int error) override;
-
-   private:
-    // This FileSelectHelper owns this object.
-    FileSelectHelper* parent_;
-    int id_;
-
-    DISALLOW_COPY_AND_ASSIGN(DirectoryListerDispatchDelegate);
-  };
 
   void RunFileChooser(content::RenderFrameHost* render_frame_host,
                       std::unique_ptr<content::FileChooserParams> params);
@@ -127,10 +107,9 @@ class FileSelectHelper : public base::RefCountedThreadSafe<
       void* params) override;
   void FileSelectionCanceled(void* params) override;
 
-  // content::NotificationObserver overrides.
-  void Observe(int type,
-               const content::NotificationSource& source,
-               const content::NotificationDetails& details) override;
+  // content::RenderWidgetHostObserver overrides.
+  void RenderWidgetHostDestroyed(
+      content::RenderWidgetHost* widget_host) override;
 
   // content::WebContentsObserver overrides.
   void RenderFrameHostChanged(content::RenderFrameHost* old_host,
@@ -147,11 +126,10 @@ class FileSelectHelper : public base::RefCountedThreadSafe<
                            int request_id,
                            content::RenderViewHost* render_view_host);
 
-  // Callbacks from directory enumeration.
-  virtual void OnListFile(
-      int id,
-      const net::DirectoryLister::DirectoryListerData& data);
-  virtual void OnListDone(int id, int error);
+  // net::DirectoryLister::DirectoryListerDelegate overrides.
+  void OnListFile(
+      const net::DirectoryLister::DirectoryListerData& data) override;
+  void OnListDone(int error) override;
 
   void LaunchConfirmationDialog(
       const base::FilePath& path,
@@ -245,14 +223,16 @@ class FileSelectHelper : public base::RefCountedThreadSafe<
   // The mode of file dialog last shown.
   content::FileChooserParams::Mode dialog_mode_;
 
-  // Maintain a list of active directory enumerations.  These could come from
-  // the file select dialog or from drag-and-drop of directories, so there could
-  // be more than one going on at a time.
+  // Maintain an active directory enumeration.  These could come from the file
+  // select dialog or from drag-and-drop of directories.  There could not be
+  // more than one going on at a time.
   struct ActiveDirectoryEnumeration;
-  std::map<int, ActiveDirectoryEnumeration*> directory_enumerations_;
+  std::unique_ptr<ActiveDirectoryEnumeration> directory_enumeration_;
+  // Keep |request_id| argument of EnumerateDirectory() to reply to RVH.
+  int request_id_;
 
-  // Registrar for notifications regarding our RenderViewHost.
-  content::NotificationRegistrar notification_registrar_;
+  ScopedObserver<content::RenderWidgetHost, content::RenderWidgetHostObserver>
+      observer_;
 
   // Temporary files only used on OSX. This class is responsible for deleting
   // these files when they are no longer needed.

@@ -43,13 +43,13 @@ class ScriptTimeout(ChromeDriverException):
   pass
 class InvalidSelector(ChromeDriverException):
   pass
-class SessionNotCreatedException(ChromeDriverException):
+class SessionNotCreated(ChromeDriverException):
   pass
-class NoSuchSession(ChromeDriverException):
+class InvalidSessionId(ChromeDriverException):
   pass
 class UnexpectedAlertOpen(ChromeDriverException):
   pass
-class NoAlertOpen(ChromeDriverException):
+class NoSuchAlert(ChromeDriverException):
   pass
 class NoSuchCookie(ChromeDriverException):
   pass
@@ -62,7 +62,7 @@ class UnsupportedOperation(ChromeDriverException):
 
 def _ExceptionForLegacyResponse(response):
   exception_class_map = {
-    6: NoSuchSession,
+    6: InvalidSessionId,
     7: NoSuchElement,
     8: NoSuchFrame,
     9: UnknownCommand,
@@ -79,10 +79,10 @@ def _ExceptionForLegacyResponse(response):
     23: NoSuchWindow,
     24: InvalidCookieDomain,
     26: UnexpectedAlertOpen,
-    27: NoAlertOpen,
+    27: NoSuchAlert,
     28: ScriptTimeout,
     32: InvalidSelector,
-    33: SessionNotCreatedException,
+    33: SessionNotCreated,
     105: NoSuchCookie
   }
   status = response['status']
@@ -91,24 +91,24 @@ def _ExceptionForLegacyResponse(response):
 
 def _ExceptionForStandardResponse(response):
   exception_map = {
-    'no such session' : NoSuchSession,
+    'invalid session id' : InvalidSessionId,
     'no such element': NoSuchElement,
     'no such frame': NoSuchFrame,
     'unknown command': UnknownCommand,
     'stale element reference': StaleElementReference,
-    'element not visible': ElementNotVisible,
+    'element not interactable': ElementNotVisible,
     'invalid element state': InvalidElementState,
     'unknown error': UnknownError,
     'javascript error': JavaScriptError,
-    'xpath lookup error': XPathLookupError,
+    'invalid selector': XPathLookupError,
     'timeout': Timeout,
     'no such window': NoSuchWindow,
     'invalid cookie domain': InvalidCookieDomain,
     'unexpected alert open': UnexpectedAlertOpen,
-    'no alert open': NoAlertOpen,
-    'asynchronous script timeout': ScriptTimeout,
+    'no such alert': NoSuchAlert,
+    'script timeout': ScriptTimeout,
     'invalid selector': InvalidSelector,
-    'session not created exception': SessionNotCreatedException,
+    'session not created': SessionNotCreated,
     'no such cookie': NoSuchCookie,
     'invalid argument': InvalidArgument,
     'element not interactable': ElementNotInteractable,
@@ -308,7 +308,7 @@ class ChromeDriver(object):
     return self.ExecuteCommand(Command.GET_CURRENT_WINDOW_HANDLE)
 
   def CloseWindow(self):
-    self.ExecuteCommand(Command.CLOSE)
+    return self.ExecuteCommand(Command.CLOSE)
 
   def Load(self, url):
     self.ExecuteCommand(Command.GET, {'url': url})
@@ -356,9 +356,8 @@ class ChromeDriver(object):
     return self.ExecuteCommand(
         Command.FIND_ELEMENTS, {'using': strategy, 'value': target})
 
-  def SetTimeout(self, type, timeout):
-    return self.ExecuteCommand(
-        Command.SET_TIMEOUT, {'type' : type, 'ms': timeout})
+  def SetTimeouts(self, params):
+    return self.ExecuteCommand(Command.SET_TIMEOUTS, params)
 
   def GetCurrentUrl(self):
     return self.ExecuteCommand(Command.GET_CURRENT_URL)

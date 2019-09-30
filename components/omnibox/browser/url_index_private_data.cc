@@ -15,8 +15,8 @@
 #include <utility>
 
 #include "base/containers/stack.h"
-#include "base/files/file_util.h"
 #include "base/feature_list.h"
+#include "base/files/file_util.h"
 #include "base/i18n/break_iterator.h"
 #include "base/i18n/case_conversion.h"
 #include "base/macros.h"
@@ -25,6 +25,7 @@
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
+#include "base/trace_event/memory_usage_estimator.h"
 #include "components/bookmarks/browser/bookmark_model.h"
 #include "components/bookmarks/browser/bookmark_utils.h"
 #include "components/history/core/browser/history_database.h"
@@ -457,7 +458,7 @@ scoped_refptr<URLIndexPrivateData> URLIndexPrivateData::RebuildFromHistory(
 bool URLIndexPrivateData::WritePrivateDataToCacheFileTask(
     scoped_refptr<URLIndexPrivateData> private_data,
     const base::FilePath& file_path) {
-  DCHECK(private_data.get());
+  DCHECK(private_data);
   DCHECK(!file_path.empty());
   return private_data->SaveToFile(file_path);
 }

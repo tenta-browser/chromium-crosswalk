@@ -12,6 +12,8 @@
 #include "base/files/scoped_file.h"
 #include "base/macros.h"
 #include "build/build_config.h"
+#include "media/capture/video/linux/scoped_v4l2_device_fd.h"
+#include "media/capture/video/linux/v4l2_capture_device_impl.h"
 #include "media/capture/video/video_capture_device.h"
 
 #if defined(OS_OPENBSD)
@@ -42,6 +44,7 @@ class CAPTURE_EXPORT V4L2CaptureDelegate final {
   static std::list<uint32_t> GetListOfUsableFourCcs(bool prefer_mjpeg);
 
   V4L2CaptureDelegate(
+      V4L2CaptureDevice* v4l2,
       const VideoCaptureDeviceDescriptor& device_descriptor,
       const scoped_refptr<base::SingleThreadTaskRunner>& v4l2_task_runner,
       int power_line_frequency);
@@ -69,15 +72,23 @@ class CAPTURE_EXPORT V4L2CaptureDelegate final {
 
   class BufferTracker;
 
+  bool RunIoctl(int fd, int request, void* argp);
+  mojom::RangePtr RetrieveUserControlRange(int device_fd, int control_id);
+  void ResetUserAndCameraControlsToDefault(int device_fd);
+
+  // void CloseDevice();
+
   // VIDIOC_QUERYBUFs a buffer from V4L2, creates a BufferTracker for it and
   // enqueues it (VIDIOC_QBUF) back into V4L2.
   bool MapAndQueueBuffer(int index);
 
   void DoCapture();
 
-  void SetErrorState(const base::Location& from_here,
+  void SetErrorState(VideoCaptureError error,
+                     const base::Location& from_here,
                      const std::string& reason);
 
+  V4L2CaptureDevice* const v4l2_;
   const scoped_refptr<base::SingleThreadTaskRunner> v4l2_task_runner_;
   const VideoCaptureDeviceDescriptor device_descriptor_;
   const int power_line_frequency_;
@@ -86,7 +97,7 @@ class CAPTURE_EXPORT V4L2CaptureDelegate final {
   VideoCaptureFormat capture_format_;
   v4l2_format video_fmt_;
   std::unique_ptr<VideoCaptureDevice::Client> client_;
-  base::ScopedFD device_fd_;
+  ScopedV4L2DeviceFD device_fd_;
 
   base::queue<VideoCaptureDevice::TakePhotoCallback> take_photo_callbacks_;
 

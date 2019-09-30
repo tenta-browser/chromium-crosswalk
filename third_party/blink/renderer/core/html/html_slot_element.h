@@ -53,6 +53,13 @@ class CORE_EXPORT HTMLSlotElement final : public HTMLElement {
   const HeapVector<Member<Element>> AssignedElementsForBinding(
       const AssignedNodesOptions&);
 
+  bool IsAssignedNodeSameWithBefore(
+      HeapVector<Member<Node>>& new_assigned_nodes,
+      HeapHashSet<Member<Node>>& old_assigned_nodes);
+  void assign(HeapVector<Member<Node>> nodes);
+  bool ContainsInAssignedNodesCandidates(Node&) const;
+  void SignalSlotChange();
+
   const HeapVector<Member<Node>> FlattenedAssignedNodes();
 
   Node* FirstAssignedNode() const {
@@ -79,7 +86,7 @@ class CORE_EXPORT HTMLSlotElement final : public HTMLElement {
   AtomicString GetName() const;
 
   // This method can be slow because this has to traverse the children of a
-  // shadow host.  This method should be used only when m_assignedNodes is
+  // shadow host.  This method should be used only when |assigned_nodes_| is
   // dirty.  e.g. To detect a slotchange event in DOM mutations.
   bool HasAssignedNodesSlow() const;
   bool FindHostChildWithSameSlotName() const;
@@ -101,7 +108,7 @@ class CORE_EXPORT HTMLSlotElement final : public HTMLElement {
   static const AtomicString& UserAgentCustomAssignSlotName();
   static const AtomicString& UserAgentDefaultSlotName();
 
-  virtual void Trace(blink::Visitor*);
+  void Trace(blink::Visitor*) override;
 
   // For Incremental Shadow DOM
   void ClearAssignedNodes();
@@ -134,9 +141,8 @@ class CORE_EXPORT HTMLSlotElement final : public HTMLElement {
  private:
   HTMLSlotElement(Document&);
 
-  InsertionNotificationRequest InsertedInto(ContainerNode*) final;
-  void RemovedFrom(ContainerNode*) final;
-  void WillRecalcStyle(StyleRecalcChange) final;
+  InsertionNotificationRequest InsertedInto(ContainerNode&) final;
+  void RemovedFrom(ContainerNode&) final;
   void DidRecalcStyle(StyleRecalcChange) final;
 
   void EnqueueSlotChangeEvent();
@@ -145,8 +151,8 @@ class CORE_EXPORT HTMLSlotElement final : public HTMLElement {
 
   const HeapVector<Member<Node>>& ChildrenInFlatTreeIfAssignmentIsSupported();
 
-  static void LazyReattachNodesIfNeeded(const HeapVector<Member<Node>>& nodes1,
-                                        const HeapVector<Member<Node>>& nodes2);
+  void LazyReattachNodesIfNeeded(const HeapVector<Member<Node>>& nodes1,
+                                 const HeapVector<Member<Node>>& nodes2);
   static void LazyReattachNodesNaive(const HeapVector<Member<Node>>& nodes1,
                                      const HeapVector<Member<Node>>& nodes2);
   static void LazyReattachNodesByDynamicProgramming(
@@ -161,6 +167,8 @@ class CORE_EXPORT HTMLSlotElement final : public HTMLElement {
 
   HeapVector<Member<Node>> assigned_nodes_;
   bool slotchange_event_enqueued_ = false;
+
+  HeapHashSet<Member<Node>> assigned_nodes_candidates_;
 
   // For IncrementalShadowDOM
   HeapVector<Member<Node>> flat_tree_children_;

@@ -15,7 +15,6 @@
 #include "base/feature_list.h"
 #include "base/i18n/rtl.h"
 #include "base/json/json_reader.h"
-#include "base/message_loop/message_loop.h"
 #include "base/metrics/field_trial.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/metrics/user_metrics.h"
@@ -51,7 +50,6 @@
 #include "content/common/inter_process_time_ticks_converter.h"
 #include "content/common/render_message_filter.mojom.h"
 #include "content/common/renderer.mojom.h"
-#include "content/common/speech_recognition_messages.h"
 #include "content/common/swapped_out_messages.h"
 #include "content/common/view_messages.h"
 #include "content/public/browser/ax_event_notification_details.h"
@@ -114,6 +112,12 @@ using blink::WebPluginAction;
 namespace content {
 namespace {
 
+// <process id, routing id>
+using RenderViewHostID = std::pair<int32_t, int32_t>;
+using RoutingIDViewMap = base::hash_map<RenderViewHostID, RenderViewHostImpl*>;
+base::LazyInstance<RoutingIDViewMap>::Leaky g_routing_id_view_map =
+    LAZY_INSTANCE_INITIALIZER;
+
 void GetPlatformSpecificPrefs(RendererPreferences* prefs) {
 #if defined(OS_WIN)
   NONCLIENTMETRICS_XP metrics = {0};
@@ -175,13 +179,12 @@ RenderViewHost* RenderViewHost::From(RenderWidgetHost* rwh) {
 // RenderViewHostImpl, public:
 
 // static
-RenderViewHostImpl* RenderViewHostImpl::FromID(int render_process_id,
-                                               int render_view_id) {
-  RenderWidgetHost* widget =
-      RenderWidgetHost::FromID(render_process_id, render_view_id);
-  if (!widget)
-    return nullptr;
-  return From(widget);
+RenderViewHostImpl* RenderViewHostImpl::FromID(int process_id, int routing_id) {
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+  RoutingIDViewMap* views = g_routing_id_view_map.Pointer();
+  RoutingIDViewMap::iterator it =
+      views->find(RenderViewHostID(process_id, routing_id));
+  return it == views->end() ? nullptr : it->second;
 }
 
 // static
@@ -200,6 +203,7 @@ RenderViewHostImpl::RenderViewHostImpl(
     SiteInstance* instance,
     std::unique_ptr<RenderWidgetHostImpl> widget,
     RenderViewHostDelegate* delegate,
+    int32_t routing_id,
     int32_t main_frame_routing_id,
     bool swapped_out,
     bool has_initialized_audio_host)
@@ -209,6 +213,7 @@ RenderViewHostImpl::RenderViewHostImpl(
       instance_(static_cast<SiteInstanceImpl*>(instance)),
       is_active_(!swapped_out),
       is_swapped_out_(swapped_out),
+      routing_id_(routing_id),
       main_frame_routing_id_(main_frame_routing_id),
       is_waiting_for_close_ack_(false),
       sudden_termination_allowed_(false),
@@ -218,6 +223,13 @@ RenderViewHostImpl::RenderViewHostImpl(
       weak_factory_(this) {
   DCHECK(instance_.get());
   CHECK(delegate_);  // http://crbug.com/82827
+  DCHECK_NE(GetRoutingID(), render_widget_host_->GetRoutingID());
+
+  std::pair<RoutingIDViewMap::iterator, bool> result =
+      g_routing_id_view_map.Get().emplace(
+          RenderViewHostID(GetProcess()->GetID(), routing_id_), this);
+  CHECK(result.second) << "Inserting a duplicate item!";
+  GetProcess()->AddRoute(routing_id_, this);
 
   GetWidget()->set_owner_delegate(this);
 
@@ -257,6 +269,12 @@ RenderViewHostImpl::~RenderViewHostImpl() {
                        base::Unretained(ResourceDispatcherHostImpl::Get()),
                        GetProcess()->GetID(), GetRoutingID()));
   }
+
+  // Detach the routing ID as the object is going away.
+  GetProcess()->RemoveRoute(GetRoutingID());
+  g_routing_id_view_map.Get().erase(
+      RenderViewHostID(GetProcess()->GetID(), GetRoutingID()));
+
   delegate_->RenderViewDeleted(this);
   GetProcess()->RemoveObserver(this);
 }
@@ -285,7 +303,7 @@ bool RenderViewHostImpl::CreateRenderView(
   // ignored, so this is safe.
   if (!GetProcess()->Init())
     return false;
-  DCHECK(GetProcess()->HasConnection());
+  DCHECK(GetProcess()->IsInitializedAndNotDead());
   DCHECK(GetProcess()->GetBrowserContext());
   CHECK(main_frame_routing_id_ != MSG_ROUTING_NONE ||
         proxy_route_id != MSG_ROUTING_NONE);
@@ -316,6 +334,7 @@ bool RenderViewHostImpl::CreateRenderView(
   params->web_preferences = GetWebkitPreferences();
   params->view_id = GetRoutingID();
   params->main_frame_routing_id = main_frame_routing_id_;
+  params->main_frame_widget_routing_id = render_widget_host_->GetRoutingID();
   if (main_rfh) {
     main_rfh->BindInterfaceProviderRequest(
         mojo::MakeRequest(&params->main_frame_interface_provider));
@@ -337,17 +356,14 @@ bool RenderViewHostImpl::CreateRenderView(
     params->has_committed_real_load =
         main_rfh->frame_tree_node()->has_committed_real_load();
   }
-  params->enable_auto_resize = GetWidget()->auto_resize_enabled();
-  params->min_size = GetWidget()->min_size_for_auto_resize();
-  params->max_size = GetWidget()->max_size_for_auto_resize();
-  params->page_zoom_level = delegate_->GetPendingPageZoomLevel();
   params->devtools_main_frame_token = devtools_frame_token;
   // GuestViews in the same StoragePartition need to find each other's frames.
   params->renderer_wide_named_frame_lookup =
       GetSiteInstance()->GetSiteURL().SchemeIs(kGuestScheme);
 
-  GetWidget()->GetResizeParams(&params->initial_size);
-  GetWidget()->SetInitialRenderSizeParams(params->initial_size);
+  bool needs_ack = false;
+  GetWidget()->GetVisualProperties(&params->visual_properties, &needs_ack);
+  GetWidget()->SetInitialVisualProperties(params->visual_properties, needs_ack);
 
   GetProcess()->GetRendererInterface()->CreateView(std::move(params));
 
@@ -372,7 +388,8 @@ void RenderViewHostImpl::SetIsActive(bool is_active) {
 }
 
 bool RenderViewHostImpl::IsRenderViewLive() const {
-  return GetProcess()->HasConnection() && GetWidget()->renderer_initialized();
+  return GetProcess()->IsInitializedAndNotDead() &&
+         GetWidget()->renderer_initialized();
 }
 
 void RenderViewHostImpl::SyncRendererPrefs() {
@@ -562,11 +579,6 @@ WebPreferences RenderViewHostImpl::ComputeWebkitPrefs() {
   prefs.background_video_track_optimization_enabled =
       base::FeatureList::IsEnabled(media::kBackgroundVideoTrackOptimization);
 
-  if (base::FeatureList::IsEnabled(media::kUseSurfaceLayerForVideo) &&
-      base::FeatureList::IsEnabled(media::kPictureInPicture)) {
-    prefs.picture_in_picture_enabled = true;
-  }
-
   GetContentClient()->browser()->OverrideWebkitPrefs(this, &prefs);
   return prefs;
 }
@@ -627,14 +639,14 @@ void RenderViewHostImpl::ClosePageIgnoringUnloadEvents() {
   delegate_->Close(this);
 }
 
-void RenderViewHostImpl::RenderProcessExited(RenderProcessHost* host,
-                                             base::TerminationStatus status,
-                                             int exit_code) {
+void RenderViewHostImpl::RenderProcessExited(
+    RenderProcessHost* host,
+    const ChildProcessTerminationInfo& info) {
   if (!GetWidget()->renderer_initialized())
     return;
 
-  GetWidget()->RendererExited(status, exit_code);
-  delegate_->RenderViewTerminated(this, status, exit_code);
+  GetWidget()->RendererExited(info.status, info.exit_code);
+  delegate_->RenderViewTerminated(this, info.status, info.exit_code);
 }
 
 bool RenderViewHostImpl::Send(IPC::Message* msg) {
@@ -650,7 +662,7 @@ RenderProcessHost* RenderViewHostImpl::GetProcess() const {
 }
 
 int RenderViewHostImpl::GetRoutingID() const {
-  return GetWidget()->GetRoutingID();
+  return routing_id_;
 }
 
 RenderFrameHost* RenderViewHostImpl::GetMainFrame() {
@@ -725,8 +737,7 @@ void RenderViewHostImpl::RenderWidgetWillSetIsLoading(bool is_loading) {
 }
 
 bool RenderViewHostImpl::SuddenTerminationAllowed() const {
-  return sudden_termination_allowed_ ||
-      GetProcess()->SuddenTerminationAllowed();
+  return sudden_termination_allowed_;
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -765,7 +776,7 @@ bool RenderViewHostImpl::OnMessageReceived(const IPC::Message& msg) {
                         OnShowFullscreenWidget)
     IPC_MESSAGE_HANDLER(ViewHostMsg_UpdateTargetURL, OnUpdateTargetURL)
     IPC_MESSAGE_HANDLER(ViewHostMsg_Close, OnClose)
-    IPC_MESSAGE_HANDLER(ViewHostMsg_RequestMove, OnRequestMove)
+    IPC_MESSAGE_HANDLER(ViewHostMsg_RequestSetBounds, OnRequestSetBounds)
     IPC_MESSAGE_HANDLER(ViewHostMsg_DocumentAvailableInMainFrame,
                         OnDocumentAvailableInMainFrame)
     IPC_MESSAGE_HANDLER(ViewHostMsg_DidContentsPreferredSizeChange,
@@ -788,7 +799,7 @@ void RenderViewHostImpl::RenderWidgetDidInit() {
 void RenderViewHostImpl::ShutdownAndDestroy() {
   // We can't release the SessionStorageNamespace until our peer
   // in the renderer has wound down.
-  if (GetProcess()->HasConnection()) {
+  if (GetProcess()->IsInitializedAndNotDead()) {
     RenderProcessHostImpl::ReleaseOnCloseACK(
         GetProcess(),
         delegate_->GetSessionStorageNamespaceMap(),
@@ -815,12 +826,12 @@ void RenderViewHostImpl::CreateNewFullscreenWidget(int32_t route_id,
 void RenderViewHostImpl::OnShowWidget(int route_id,
                                       const gfx::Rect& initial_rect) {
   delegate_->ShowCreatedWidget(GetProcess()->GetID(), route_id, initial_rect);
-  Send(new ViewMsg_Move_ACK(route_id));
+  Send(new ViewMsg_SetBounds_ACK(route_id));
 }
 
 void RenderViewHostImpl::OnShowFullscreenWidget(int route_id) {
   delegate_->ShowCreatedFullscreenWidget(GetProcess()->GetID(), route_id);
-  Send(new ViewMsg_Move_ACK(route_id));
+  Send(new ViewMsg_SetBounds_ACK(route_id));
 }
 
 void RenderViewHostImpl::OnRenderProcessGone(int status, int exit_code) {
@@ -844,10 +855,10 @@ void RenderViewHostImpl::OnClose() {
   ClosePageIgnoringUnloadEvents();
 }
 
-void RenderViewHostImpl::OnRequestMove(const gfx::Rect& pos) {
+void RenderViewHostImpl::OnRequestSetBounds(const gfx::Rect& bounds) {
   if (is_active_)
-    delegate_->RequestMove(pos);
-  Send(new ViewMsg_Move_ACK(GetRoutingID()));
+    delegate_->RequestSetBounds(bounds);
+  Send(new ViewMsg_SetBounds_ACK(GetRoutingID()));
 }
 
 void RenderViewHostImpl::OnDocumentAvailableInMainFrame(
@@ -895,14 +906,14 @@ void RenderViewHostImpl::OnFocus() {
 void RenderViewHostImpl::RenderWidgetDidForwardMouseEvent(
     const blink::WebMouseEvent& mouse_event) {
   if (mouse_event.GetType() == WebInputEvent::kMouseWheel &&
-      GetWidget()->ignore_input_events()) {
+      GetWidget()->IsIgnoringInputEvents()) {
     delegate_->OnIgnoredUIEvent();
   }
 }
 
 bool RenderViewHostImpl::MayRenderWidgetForwardKeyboardEvent(
     const NativeWebKeyboardEvent& key_event) {
-  if (GetWidget()->ignore_input_events()) {
+  if (GetWidget()->IsIgnoringInputEvents()) {
     if (key_event.GetType() == WebInputEvent::kRawKeyDown)
       delegate_->OnIgnoredUIEvent();
     return false;
@@ -912,6 +923,11 @@ bool RenderViewHostImpl::MayRenderWidgetForwardKeyboardEvent(
 
 bool RenderViewHostImpl::ShouldContributePriorityToProcess() {
   return is_active_;
+}
+
+void RenderViewHostImpl::RenderWidgetDidShutdown() {
+  bool rv = Send(new ViewMsg_Close(GetRoutingID()));
+  DCHECK(rv);
 }
 
 WebPreferences RenderViewHostImpl::GetWebkitPreferences() {
@@ -946,13 +962,6 @@ void RenderViewHostImpl::DisableScrollbarsForThreshold(const gfx::Size& size) {
 
 void RenderViewHostImpl::EnablePreferredSizeMode() {
   Send(new ViewMsg_EnablePreferredSizeChangedMode(GetRoutingID()));
-}
-
-void RenderViewHostImpl::ExecuteMediaPlayerActionAtLocation(
-  const gfx::Point& location, const blink::WebMediaPlayerAction& action) {
-  // TODO(wjmaclean): See if coordinate transforms need to be done for OOPIFs
-  // and guest views. https://crbug.com/776807
-  Send(new ViewMsg_MediaPlayerActionAt(GetRoutingID(), location, action));
 }
 
 void RenderViewHostImpl::ExecutePluginActionAtLocation(

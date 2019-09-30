@@ -52,14 +52,11 @@ class LocationBar {
   // Updates the visibility and toggled state of the save credit card icon.
   virtual void UpdateSaveCreditCardIcon() = 0;
 
-  // Updates the visibility of the find bar image icon.
-  virtual void UpdateFindBarIconVisibility() = 0;
+  // Updates the visibility and toggled state of the local card migration icon.
+  virtual void UpdateLocalCardMigrationIcon() = 0;
 
   // Updates the visibility of the bookmark star.
   virtual void UpdateBookmarkStarVisibility() = 0;
-
-  // Updates the visibility of the zoom icon.
-  virtual void UpdateZoomViewVisibility() = 0;
 
   // Updates the visibility of the location bar. Animates the transition if
   // |animate| is true.
@@ -71,10 +68,6 @@ class LocationBar {
 
   // Reverts the location bar.  The bar's permanent text will be shown.
   virtual void Revert() = 0;
-
-  // Asks the location bar to show a page info dialog for |web_contents|.
-  // Returns true if a dialog was shown, false otherwise.
-  virtual bool ShowPageInfoDialog(content::WebContents* contents) = 0;
 
   virtual const OmniboxView* GetOmniboxView() const = 0;
   virtual OmniboxView* GetOmniboxView() = 0;

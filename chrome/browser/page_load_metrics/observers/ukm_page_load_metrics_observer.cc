@@ -7,76 +7,31 @@
 #include <memory>
 
 #include "chrome/browser/browser_process.h"
-#include "chrome/browser/net/nqe/ui_network_quality_estimator_service.h"
-#include "chrome/browser/net/nqe/ui_network_quality_estimator_service_factory.h"
 #include "chrome/browser/page_load_metrics/page_load_metrics_util.h"
 #include "chrome/browser/profiles/profile.h"
 #include "components/metrics/net/network_metrics_provider.h"
-#include "content/public/browser/web_contents.h"
+#include "net/http/http_response_headers.h"
 #include "services/metrics/public/cpp/metrics_utils.h"
 #include "services/metrics/public/cpp/ukm_builders.h"
-#include "services/metrics/public/cpp/ukm_entry_builder.h"
 #include "services/metrics/public/cpp/ukm_recorder.h"
+#include "services/network/public/cpp/network_quality_tracker.h"
 #include "third_party/metrics_proto/system_profile.pb.h"
-
-namespace internal {
-
-const char kUkmPageLoadEventName[] = "PageLoad";
-const char kUkmParseStartName[] = "ParseTiming.NavigationToParseStart";
-const char kUkmDomContentLoadedName[] =
-    "DocumentTiming.NavigationToDOMContentLoadedEventFired";
-const char kUkmLoadEventName[] = "DocumentTiming.NavigationToLoadEventFired";
-const char kUkmFirstPaintName[] = "PaintTiming.NavigationToFirstPaint";
-const char kUkmFirstContentfulPaintName[] =
-    "PaintTiming.NavigationToFirstContentfulPaint";
-const char kUkmFirstMeaningfulPaintName[] =
-    "Experimental.PaintTiming.NavigationToFirstMeaningfulPaint";
-const char kUkmInteractiveName[] = "Experimental.NavigationToInteractive";
-const char kUkmFirstInputDelayName[] = "InteractiveTiming.FirstInputDelay";
-const char kUkmFirstInputTimestampName[] =
-    "InteractiveTiming.FirstInputTimestamp";
-const char kUkmForegroundDurationName[] = "PageTiming.ForegroundDuration";
-const char kUkmFailedProvisionaLoadName[] =
-    "PageTiming.NavigationToFailedProvisionalLoad";
-const char kUkmEffectiveConnectionType[] =
-    "Net.EffectiveConnectionType2.OnNavigationStart";
-const char kUkmHttpRttEstimate[] = "Net.HttpRttEstimate.OnNavigationStart";
-const char kUkmTransportRttEstimate[] =
-    "Net.TransportRttEstimate.OnNavigationStart";
-const char kUkmDownstreamKbpsEstimate[] =
-    "Net.DownstreamKbpsEstimate.OnNavigationStart";
-const char kUkmNetErrorCode[] = "Net.ErrorCode.OnFailedProvisionalLoad";
-const char kUkmPageTransition[] = "Navigation.PageTransition";
-
-}  // namespace internal
-
-namespace {
-
-UINetworkQualityEstimatorService* GetNQEService(
-    content::WebContents* web_contents) {
-  Profile* profile =
-      Profile::FromBrowserContext(web_contents->GetBrowserContext());
-  if (!profile)
-    return nullptr;
-  return UINetworkQualityEstimatorServiceFactory::GetForProfile(profile);
-}
-
-}  // namespace
 
 // static
 std::unique_ptr<page_load_metrics::PageLoadMetricsObserver>
-UkmPageLoadMetricsObserver::CreateIfNeeded(content::WebContents* web_contents) {
+UkmPageLoadMetricsObserver::CreateIfNeeded() {
   if (!ukm::UkmRecorder::Get()) {
     return nullptr;
   }
   return std::make_unique<UkmPageLoadMetricsObserver>(
-      GetNQEService(web_contents));
+      g_browser_process->network_quality_tracker());
 }
 
 UkmPageLoadMetricsObserver::UkmPageLoadMetricsObserver(
-    net::NetworkQualityEstimator::NetworkQualityProvider*
-        network_quality_provider)
-    : network_quality_provider_(network_quality_provider) {}
+    network::NetworkQualityTracker* network_quality_tracker)
+    : network_quality_tracker_(network_quality_tracker) {
+  DCHECK(network_quality_tracker_);
+}
 
 UkmPageLoadMetricsObserver::~UkmPageLoadMetricsObserver() = default;
 
@@ -94,14 +49,12 @@ UkmPageLoadMetricsObserver::ObservePolicy UkmPageLoadMetricsObserver::OnStart(
   // record UKM metrics for that data once we've confirmed that we're observing
   // a web page load.
 
-  if (network_quality_provider_) {
-    effective_connection_type_ =
-        network_quality_provider_->GetEffectiveConnectionType();
-    http_rtt_estimate_ = network_quality_provider_->GetHttpRTT();
-    transport_rtt_estimate_ = network_quality_provider_->GetTransportRTT();
-    downstream_kbps_estimate_ =
-        network_quality_provider_->GetDownstreamThroughputKbps();
-  }
+  effective_connection_type_ =
+      network_quality_tracker_->GetEffectiveConnectionType();
+  http_rtt_estimate_ = network_quality_tracker_->GetHttpRTT();
+  transport_rtt_estimate_ = network_quality_tracker_->GetTransportRTT();
+  downstream_kbps_estimate_ =
+      network_quality_tracker_->GetDownstreamThroughputKbps();
   page_transition_ = navigation_handle->GetPageTransition();
   return CONTINUE_OBSERVING;
 }
@@ -109,6 +62,10 @@ UkmPageLoadMetricsObserver::ObservePolicy UkmPageLoadMetricsObserver::OnStart(
 UkmPageLoadMetricsObserver::ObservePolicy UkmPageLoadMetricsObserver::OnCommit(
     content::NavigationHandle* navigation_handle,
     ukm::SourceId source_id) {
+  const net::HttpResponseHeaders* response_headers =
+      navigation_handle->GetResponseHeaders();
+  if (response_headers)
+    http_response_code_ = response_headers->response_code();
   // The PageTransition for the navigation may be updated on commit.
   page_transition_ = navigation_handle->GetPageTransition();
   return CONTINUE_OBSERVING;
@@ -220,6 +177,19 @@ void UkmPageLoadMetricsObserver::RecordTimingMetrics(
         first_input_timestamp.InMilliseconds());
   }
 
+  if (timing.interactive_timing->longest_input_delay) {
+    base::TimeDelta longest_input_delay =
+        timing.interactive_timing->longest_input_delay.value();
+    builder.SetInteractiveTiming_LongestInputDelay(
+        longest_input_delay.InMilliseconds());
+  }
+  if (timing.interactive_timing->longest_input_timestamp) {
+    base::TimeDelta longest_input_timestamp =
+        timing.interactive_timing->longest_input_timestamp.value();
+    builder.SetInteractiveTiming_LongestInputTimestamp(
+        longest_input_timestamp.InMilliseconds());
+  }
+
   // Use a bucket spacing factor of 1.3 for bytes.
   builder.SetNet_CacheBytes(ukm::GetExponentialBucketMin(cache_bytes_, 1.3));
   builder.SetNet_NetworkBytes(
@@ -231,15 +201,13 @@ void UkmPageLoadMetricsObserver::RecordTimingMetrics(
 void UkmPageLoadMetricsObserver::RecordPageLoadExtraInfoMetrics(
     const page_load_metrics::PageLoadExtraInfo& info,
     base::TimeTicks app_background_time) {
-  ukm::UkmRecorder* ukm_recorder = ukm::UkmRecorder::Get();
-  std::unique_ptr<ukm::UkmEntryBuilder> builder = ukm_recorder->GetEntryBuilder(
-      info.source_id, internal::kUkmPageLoadEventName);
+  ukm::builders::PageLoad builder(info.source_id);
   base::Optional<base::TimeDelta> foreground_duration =
       page_load_metrics::GetInitialForegroundDuration(info,
                                                       app_background_time);
   if (foreground_duration) {
-    builder->AddMetric(internal::kUkmForegroundDurationName,
-                       foreground_duration.value().InMilliseconds());
+    builder.SetPageTiming_ForegroundDuration(
+        foreground_duration.value().InMilliseconds());
   }
 
   // Convert to the EffectiveConnectionType as used in SystemProfileProto
@@ -249,25 +217,27 @@ void UkmPageLoadMetricsObserver::RecordPageLoadExtraInfoMetrics(
           metrics::ConvertEffectiveConnectionType(effective_connection_type_);
   if (proto_effective_connection_type !=
       metrics::SystemProfileProto::Network::EFFECTIVE_CONNECTION_TYPE_UNKNOWN) {
-    builder->AddMetric(internal::kUkmEffectiveConnectionType,
-                       static_cast<int64_t>(proto_effective_connection_type));
+    builder.SetNet_EffectiveConnectionType2_OnNavigationStart(
+        static_cast<int64_t>(proto_effective_connection_type));
   }
 
+  if (http_response_code_) {
+    builder.SetNet_HttpResponseCode(
+        static_cast<int64_t>(http_response_code_.value()));
+  }
   if (http_rtt_estimate_) {
-    builder->AddMetric(
-        internal::kUkmHttpRttEstimate,
+    builder.SetNet_HttpRttEstimate_OnNavigationStart(
         static_cast<int64_t>(http_rtt_estimate_.value().InMilliseconds()));
   }
   if (transport_rtt_estimate_) {
-    builder->AddMetric(
-        internal::kUkmTransportRttEstimate,
+    builder.SetNet_TransportRttEstimate_OnNavigationStart(
         static_cast<int64_t>(transport_rtt_estimate_.value().InMilliseconds()));
   }
   if (downstream_kbps_estimate_) {
-    builder->AddMetric(internal::kUkmDownstreamKbpsEstimate,
-                       static_cast<int64_t>(downstream_kbps_estimate_.value()));
+    builder.SetNet_DownstreamKbpsEstimate_OnNavigationStart(
+        static_cast<int64_t>(downstream_kbps_estimate_.value()));
   }
   // page_transition_ fits in a uint32_t, so we can safely cast to int64_t.
-  builder->AddMetric(internal::kUkmPageTransition,
-                     static_cast<int64_t>(page_transition_));
+  builder.SetNavigation_PageTransition(static_cast<int64_t>(page_transition_));
+  builder.Record(ukm::UkmRecorder::Get());
 }

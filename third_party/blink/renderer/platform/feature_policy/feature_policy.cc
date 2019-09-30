@@ -3,6 +3,8 @@
 
 #include "third_party/blink/renderer/platform/feature_policy/feature_policy.h"
 
+#include <algorithm>
+
 #include "third_party/blink/renderer/platform/json/json_values.h"
 #include "third_party/blink/renderer/platform/network/http_parsers.h"
 #include "third_party/blink/renderer/platform/runtime_enabled_features.h"
@@ -14,74 +16,6 @@
 #include "url/gurl.h"
 
 namespace blink {
-
-namespace {
-
-// TODO(loonybear): Deprecate the methods in this namesapce when deprecating old
-// allow syntax.
-bool IsValidOldAllowSyntax(const String& policy,
-                           scoped_refptr<const SecurityOrigin> src_origin) {
-  // Old syntax enable all features on src_origin, If src_origin does not exist
-  // (example, http header does not have a src_origin), then the syntax cannot
-  // be valid.
-  if (!src_origin)
-    return false;
-  // allow = "feature" is also supported by new syntax.
-  if (!policy.Contains(' '))
-    return false;
-  // Old syntax only allows whitespace as valid delimiter.
-  if (policy.Contains(';') || policy.Contains(','))
-    return false;
-  // An empty policy is also allowed in the new syntax.
-  if (policy.ContainsOnlyWhitespace())
-    return false;
-  // Old syntax does not support specifying wildcards / origins for any feature.
-  if (policy.Contains("self") || policy.Contains("src") ||
-      policy.Contains("none") || policy.Contains("*")) {
-    return false;
-  }
-
-  // Verify that the policy follows this syntax:
-  //     allow = "name1 name2 name3 ...", name* = 1*( ALPHA / DIGIT / "-" )
-  auto IsValidFeatureNameCharacter = [](auto c) {
-    return IsASCIIAlphanumeric(c) || c == '-';
-  };
-
-  for (unsigned i = 0; i < policy.length(); i++) {
-    if (!IsValidFeatureNameCharacter(policy[i]) && !IsASCIISpace(policy[i]))
-      return false;
-  }
-  return true;
-}
-
-ParsedFeaturePolicy ParseOldAllowSyntax(const String& policy,
-                                        const url::Origin& origin,
-                                        Vector<String>* messages,
-                                        const FeatureNameMap& feature_names) {
-  ParsedFeaturePolicy whitelists;
-  if (messages) {
-    messages->push_back(
-        "The old syntax (allow=\"feature1 feature2 feature3 ...\") is "
-        "deprecated and will be removed in Chrome 68. Use semicolons to "
-        "separate features (allow=\"feature1; feature2; feature3; ...\").");
-  }
-  Vector<String> tokens;
-  policy.Split(' ', tokens);
-  for (const String& token : tokens) {
-    if (!feature_names.Contains(token)) {
-      if (messages)
-        messages->push_back("Unrecognized feature: '" + token + "'.");
-      continue;
-    }
-    ParsedFeaturePolicyDeclaration whitelist;
-    whitelist.feature = feature_names.at(token);
-    whitelist.origins = {origin};
-    whitelists.push_back(whitelist);
-  }
-  return whitelists;
-}
-
-}  // namespace
 
 ParsedFeaturePolicy ParseFeaturePolicyHeader(
     const String& policy,
@@ -95,10 +29,9 @@ ParsedFeaturePolicy ParseFeaturePolicyAttribute(
     const String& policy,
     scoped_refptr<const SecurityOrigin> self_origin,
     scoped_refptr<const SecurityOrigin> src_origin,
-    Vector<String>* messages,
-    bool* old_syntax) {
+    Vector<String>* messages) {
   return ParseFeaturePolicy(policy, self_origin, src_origin, messages,
-                            GetDefaultFeatureNameMap(), old_syntax);
+                            GetDefaultFeatureNameMap());
 }
 
 ParsedFeaturePolicy ParseFeaturePolicy(
@@ -106,19 +39,8 @@ ParsedFeaturePolicy ParseFeaturePolicy(
     scoped_refptr<const SecurityOrigin> self_origin,
     scoped_refptr<const SecurityOrigin> src_origin,
     Vector<String>* messages,
-    const FeatureNameMap& feature_names,
-    bool* old_syntax) {
-  // Temporarily supporting old allow syntax:
-  //     allow = "feature1 feature2 feature3 ... "
-  // TODO(loonybear): depracate this old syntax in the future.
-  if (IsValidOldAllowSyntax(policy, src_origin)) {
-    if (old_syntax)
-      *old_syntax = true;
-    return ParseOldAllowSyntax(policy, src_origin->ToUrlOrigin(), messages,
-                               feature_names);
-  }
-
-  ParsedFeaturePolicy whitelists;
+    const FeatureNameMap& feature_names) {
+  ParsedFeaturePolicy allowlists;
   BitVector features_specified(
       static_cast<int>(mojom::FeaturePolicyFeature::kMaxValue));
 
@@ -152,8 +74,8 @@ ParsedFeaturePolicy ParseFeaturePolicy(
       if (features_specified.QuickGet(static_cast<int>(feature)))
         continue;
 
-      ParsedFeaturePolicyDeclaration whitelist;
-      whitelist.feature = feature;
+      ParsedFeaturePolicyDeclaration allowlist;
+      allowlist.feature = feature;
       features_specified.QuickSet(static_cast<int>(feature));
       std::vector<url::Origin> origins;
       // If a policy entry has no (optional) values (e,g,
@@ -166,10 +88,10 @@ ParsedFeaturePolicy ParseFeaturePolicy(
       if (tokens.size() == 1) {
         if (!src_origin) {
           origins.push_back(self_origin->ToUrlOrigin());
-        } else if (!src_origin->IsUnique()) {
+        } else if (!src_origin->IsOpaque()) {
           origins.push_back(src_origin->ToUrlOrigin());
         } else {
-          whitelist.matches_opaque_src = true;
+          allowlist.matches_opaque_src = true;
         }
       }
 
@@ -189,15 +111,15 @@ ParsedFeaturePolicy ParseFeaturePolicy(
           // opaque origin of the frame, which is not known yet. In this case,
           // the |matches_opaque_src| flag on the declaration is set, rather
           // than adding an origin to the allowlist.
-          if (src_origin->IsUnique()) {
-            whitelist.matches_opaque_src = true;
+          if (src_origin->IsOpaque()) {
+            allowlist.matches_opaque_src = true;
           } else {
             origins.push_back(src_origin->ToUrlOrigin());
           }
         } else if (EqualIgnoringASCIICase(tokens[i], "'none'")) {
           continue;
         } else if (tokens[i] == "*") {
-          whitelist.matches_all_origins = true;
+          allowlist.matches_all_origins = true;
           break;
         } else {
           url::Origin target_origin = url::Origin::Create(
@@ -208,93 +130,160 @@ ParsedFeaturePolicy ParseFeaturePolicy(
             messages->push_back("Unrecognized origin: '" + tokens[i] + "'.");
         }
       }
-      whitelist.origins = origins;
-      whitelists.push_back(whitelist);
+      allowlist.origins = origins;
+      allowlists.push_back(allowlist);
     }
   }
-  return whitelists;
+  return allowlists;
 }
 
-bool IsSupportedInFeaturePolicy(mojom::FeaturePolicyFeature feature) {
-  switch (feature) {
-    case mojom::FeaturePolicyFeature::kFullscreen:
-    case mojom::FeaturePolicyFeature::kPayment:
-    case mojom::FeaturePolicyFeature::kUsb:
-    case mojom::FeaturePolicyFeature::kWebVr:
-    case mojom::FeaturePolicyFeature::kAccelerometer:
-    case mojom::FeaturePolicyFeature::kAmbientLightSensor:
-    case mojom::FeaturePolicyFeature::kGyroscope:
-    case mojom::FeaturePolicyFeature::kMagnetometer:
-      return true;
-    case mojom::FeaturePolicyFeature::kPictureInPicture:
-      return RuntimeEnabledFeatures::PictureInPictureAPIEnabled();
-    case mojom::FeaturePolicyFeature::kSyncXHR:
-      return true;
-    case mojom::FeaturePolicyFeature::kUnsizedMedia:
-      return RuntimeEnabledFeatures::FeaturePolicyExperimentalFeaturesEnabled();
-    case mojom::FeaturePolicyFeature::kVerticalScroll:
-      return RuntimeEnabledFeatures::FeaturePolicyExperimentalFeaturesEnabled();
-    default:
-      return false;
-  }
+bool IsFeatureDeclared(mojom::FeaturePolicyFeature feature,
+                       const ParsedFeaturePolicy& policy) {
+  return std::any_of(policy.begin(), policy.end(),
+                     [feature](const auto& declaration) {
+                       return declaration.feature == feature;
+                     });
 }
 
+bool RemoveFeatureIfPresent(mojom::FeaturePolicyFeature feature,
+                            ParsedFeaturePolicy& policy) {
+  auto new_end = std::remove_if(policy.begin(), policy.end(),
+                                [feature](const auto& declaration) {
+                                  return declaration.feature == feature;
+                                });
+  if (new_end == policy.end())
+    return false;
+  policy.erase(new_end, policy.end());
+  return true;
+}
+
+bool DisallowFeatureIfNotPresent(mojom::FeaturePolicyFeature feature,
+                                 ParsedFeaturePolicy& policy) {
+  if (IsFeatureDeclared(feature, policy))
+    return false;
+  ParsedFeaturePolicyDeclaration allowlist;
+  allowlist.feature = feature;
+  allowlist.matches_all_origins = false;
+  allowlist.matches_opaque_src = false;
+  policy.push_back(allowlist);
+  return true;
+}
+
+bool AllowFeatureEverywhereIfNotPresent(mojom::FeaturePolicyFeature feature,
+                                        ParsedFeaturePolicy& policy) {
+  if (IsFeatureDeclared(feature, policy))
+    return false;
+  ParsedFeaturePolicyDeclaration allowlist;
+  allowlist.feature = feature;
+  allowlist.matches_all_origins = true;
+  allowlist.matches_opaque_src = true;
+  policy.push_back(allowlist);
+  return true;
+}
+
+void DisallowFeature(mojom::FeaturePolicyFeature feature,
+                     ParsedFeaturePolicy& policy) {
+  RemoveFeatureIfPresent(feature, policy);
+  DisallowFeatureIfNotPresent(feature, policy);
+}
+
+void AllowFeatureEverywhere(mojom::FeaturePolicyFeature feature,
+                            ParsedFeaturePolicy& policy) {
+  RemoveFeatureIfPresent(feature, policy);
+  AllowFeatureEverywhereIfNotPresent(feature, policy);
+}
+
+// This method defines the feature names which will be recognized by the parser
+// for the Feature-Policy HTTP header and the <iframe> "allow" attribute, as
+// well as the features which will be recognized by the document or iframe
+// policy object.
+//
+// Features which are implemented behind a flag should generally also have the
+// same flag controlling whether they are in this map. Note that features which
+// are shipping as part of an origin trial should add their feature names to
+// this map unconditionally, as the trial token could be added after the HTTP
+// header needs to be parsed. This also means that top-level documents which
+// simply want to embed another page which uses an origin trial feature, without
+// using the feature themselves, can use feature policy to allow use of the
+// feature in subframes. (The framed document will still require a valid origin
+// trial token to use the feature in this scenario.)
 const FeatureNameMap& GetDefaultFeatureNameMap() {
   DEFINE_STATIC_LOCAL(FeatureNameMap, default_feature_name_map, ());
   if (default_feature_name_map.IsEmpty()) {
-    default_feature_name_map.Set("fullscreen",
-                                 mojom::FeaturePolicyFeature::kFullscreen);
-    default_feature_name_map.Set("payment",
-                                 mojom::FeaturePolicyFeature::kPayment);
-    default_feature_name_map.Set("usb", mojom::FeaturePolicyFeature::kUsb);
+    default_feature_name_map.Set("autoplay",
+                                 mojom::FeaturePolicyFeature::kAutoplay);
     default_feature_name_map.Set("camera",
                                  mojom::FeaturePolicyFeature::kCamera);
     default_feature_name_map.Set("encrypted-media",
                                  mojom::FeaturePolicyFeature::kEncryptedMedia);
-    default_feature_name_map.Set("microphone",
-                                 mojom::FeaturePolicyFeature::kMicrophone);
-    default_feature_name_map.Set("speaker",
-                                 mojom::FeaturePolicyFeature::kSpeaker);
+    default_feature_name_map.Set("fullscreen",
+                                 mojom::FeaturePolicyFeature::kFullscreen);
     default_feature_name_map.Set("geolocation",
                                  mojom::FeaturePolicyFeature::kGeolocation);
+    default_feature_name_map.Set("microphone",
+                                 mojom::FeaturePolicyFeature::kMicrophone);
     default_feature_name_map.Set("midi",
                                  mojom::FeaturePolicyFeature::kMidiFeature);
+    default_feature_name_map.Set("speaker",
+                                 mojom::FeaturePolicyFeature::kSpeaker);
     default_feature_name_map.Set("sync-xhr",
                                  mojom::FeaturePolicyFeature::kSyncXHR);
+    // Under origin trial: Should be made conditional on WebVR and WebXR
+    // runtime flags once it is out of trial.
     default_feature_name_map.Set("vr", mojom::FeaturePolicyFeature::kWebVr);
-    default_feature_name_map.Set("accelerometer",
-                                 mojom::FeaturePolicyFeature::kAccelerometer);
-    default_feature_name_map.Set(
-        "ambient-light-sensor",
-        mojom::FeaturePolicyFeature::kAmbientLightSensor);
-    default_feature_name_map.Set("gyroscope",
-                                 mojom::FeaturePolicyFeature::kGyroscope);
-    default_feature_name_map.Set("magnetometer",
-                                 mojom::FeaturePolicyFeature::kMagnetometer);
-    if (RuntimeEnabledFeatures::PictureInPictureAPIEnabled()) {
-      default_feature_name_map.Set(
-          "picture-in-picture", mojom::FeaturePolicyFeature::kPictureInPicture);
-    }
-    if (RuntimeEnabledFeatures::FeaturePolicyExperimentalFeaturesEnabled()) {
-      default_feature_name_map.Set(
-          "cookie", mojom::FeaturePolicyFeature::kDocumentCookie);
-      default_feature_name_map.Set(
-          "domain", mojom::FeaturePolicyFeature::kDocumentDomain);
-      default_feature_name_map.Set("docwrite",
+    if (RuntimeEnabledFeatures::ExperimentalProductivityFeaturesEnabled()) {
+      default_feature_name_map.Set("animations",
+                                   mojom::FeaturePolicyFeature::kAnimations);
+      default_feature_name_map.Set("document-write",
                                    mojom::FeaturePolicyFeature::kDocumentWrite);
-      default_feature_name_map.Set("sync-script",
-                                   mojom::FeaturePolicyFeature::kSyncScript);
+      default_feature_name_map.Set(
+          "image-compression", mojom::FeaturePolicyFeature::kImageCompression);
+      default_feature_name_map.Set(
+          "legacy-image-formats",
+          mojom::FeaturePolicyFeature::kLegacyImageFormats);
+      default_feature_name_map.Set(
+          "max-downscaling-image",
+          mojom::FeaturePolicyFeature::kMaxDownscalingImage);
       default_feature_name_map.Set("unsized-media",
                                    mojom::FeaturePolicyFeature::kUnsizedMedia);
       default_feature_name_map.Set(
           "vertical-scroll", mojom::FeaturePolicyFeature::kVerticalScroll);
+      default_feature_name_map.Set("sync-script",
+                                   mojom::FeaturePolicyFeature::kSyncScript);
     }
-    if (RuntimeEnabledFeatures::FeaturePolicyAutoplayFeatureEnabled()) {
-      default_feature_name_map.Set("autoplay",
-                                   mojom::FeaturePolicyFeature::kAutoplay);
+    if (RuntimeEnabledFeatures::PaymentRequestEnabled()) {
+      default_feature_name_map.Set("payment",
+                                   mojom::FeaturePolicyFeature::kPayment);
+    }
+    if (RuntimeEnabledFeatures::PictureInPictureAPIEnabled()) {
+      default_feature_name_map.Set(
+          "picture-in-picture", mojom::FeaturePolicyFeature::kPictureInPicture);
+    }
+    if (RuntimeEnabledFeatures::SensorEnabled()) {
+      default_feature_name_map.Set("accelerometer",
+                                   mojom::FeaturePolicyFeature::kAccelerometer);
+      default_feature_name_map.Set(
+          "ambient-light-sensor",
+          mojom::FeaturePolicyFeature::kAmbientLightSensor);
+      default_feature_name_map.Set("gyroscope",
+                                   mojom::FeaturePolicyFeature::kGyroscope);
+      default_feature_name_map.Set("magnetometer",
+                                   mojom::FeaturePolicyFeature::kMagnetometer);
+    }
+    if (RuntimeEnabledFeatures::WebUSBEnabled()) {
+      default_feature_name_map.Set("usb", mojom::FeaturePolicyFeature::kUsb);
     }
   }
   return default_feature_name_map;
+}
+
+const String& GetNameForFeature(mojom::FeaturePolicyFeature feature) {
+  const static String empty_string;
+  for (const auto& entry : GetDefaultFeatureNameMap()) {
+    if (entry.value == feature)
+      return entry.key;
+  }
+  return empty_string;
 }
 
 }  // namespace blink

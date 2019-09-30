@@ -10,6 +10,7 @@
 #include "base/compiler_specific.h"
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
+#include "base/memory/shared_memory_handle.h"
 #include "base/unguessable_token.h"
 #include "build/build_config.h"
 
@@ -17,7 +18,7 @@
 #include <mach/mach.h>
 #include "base/mac/scoped_mach_port.h"
 #elif defined(OS_FUCHSIA)
-#include "base/fuchsia/scoped_zx_handle.h"
+#include <lib/zx/vmo.h>
 #elif defined(OS_WIN)
 #include "base/win/scoped_handle.h"
 #include "base/win/windows_types.h"
@@ -31,7 +32,7 @@ namespace base {
 namespace subtle {
 
 #if defined(OS_POSIX) && (!defined(OS_MACOSX) || defined(OS_IOS)) && \
-    !defined(OS_FUCHSIA) && !defined(OS_ANDROID)
+    !defined(OS_ANDROID)
 // Helper structs to keep two descriptors on POSIX. It's needed to support
 // ConvertToReadOnly().
 struct BASE_EXPORT FDPair {
@@ -88,6 +89,7 @@ class BASE_EXPORT PlatformSharedMemoryRegion {
     kReadOnly,  // ReadOnlySharedMemoryRegion
     kWritable,  // WritableSharedMemoryRegion
     kUnsafe,    // UnsafeSharedMemoryRegion
+    kMaxValue = kUnsafe
   };
 
 // Platform-specific shared memory type used by this class.
@@ -96,7 +98,7 @@ class BASE_EXPORT PlatformSharedMemoryRegion {
   using ScopedPlatformHandle = mac::ScopedMachSendRight;
 #elif defined(OS_FUCHSIA)
   using PlatformHandle = zx_handle_t;
-  using ScopedPlatformHandle = ScopedZxHandle;
+  using ScopedPlatformHandle = zx::vmo;
 #elif defined(OS_WIN)
   using PlatformHandle = HANDLE;
   using ScopedPlatformHandle = win::ScopedHandle;
@@ -128,6 +130,15 @@ class BASE_EXPORT PlatformSharedMemoryRegion {
                                          Mode mode,
                                          size_t size,
                                          const UnguessableToken& guid);
+
+  // As Take, above, but from a SharedMemoryHandle. This takes ownership of the
+  // handle. |mode| must be kUnsafe or kReadOnly; the latter must be used with a
+  // handle created with SharedMemoryHandle::GetReadOnlyHandle().
+  // TODO(crbug.com/795291): this should only be used while transitioning from
+  // the old shared memory API, and should be removed when done.
+  static PlatformSharedMemoryRegion TakeFromSharedMemoryHandle(
+      const SharedMemoryHandle& handle,
+      Mode mode);
 
   // Default constructor initializes an invalid instance, i.e. an instance that
   // doesn't wrap any valid platform handle.
@@ -171,6 +182,12 @@ class BASE_EXPORT PlatformSharedMemoryRegion {
   // is unknown, |mapped_addr| should be |nullptr|.
   bool ConvertToReadOnly(void* mapped_addr);
 #endif  // defined(OS_MACOSX) && !defined(OS_IOS)
+
+  // Converts the region to unsafe. Returns whether the operation succeeded.
+  // Makes the current instance invalid on failure. Can be called only in
+  // kWritable mode, all other modes will CHECK-fail. The object will have
+  // kUnsafe mode after this call on success.
+  bool ConvertToUnsafe();
 
   // Maps |size| bytes of the shared memory region starting with the given
   // |offset| into the caller's address space. |offset| must be aligned to value

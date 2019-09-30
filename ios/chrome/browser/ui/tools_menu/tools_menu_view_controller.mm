@@ -28,8 +28,8 @@
 #import "ios/chrome/browser/ui/tools_menu/tools_menu_view_tools_cell.h"
 #include "ios/chrome/browser/ui/ui_util.h"
 #import "ios/chrome/browser/ui/uikit_ui_util.h"
-#import "ios/chrome/browser/ui/util/constraints_ui_util.h"
 #import "ios/chrome/common/material_timing.h"
+#import "ios/chrome/common/ui_util/constraints_ui_util.h"
 #include "ios/chrome/grit/ios_strings.h"
 #include "ios/public/provider/chrome/browser/chrome_browser_provider.h"
 #import "ios/public/provider/chrome/browser/user_feedback/user_feedback_provider.h"
@@ -404,11 +404,10 @@ NS_INLINE void AnimateInViews(NSArray* views,
 
 - (void)updateViewConstraints {
   if (!_addedConstraints) {
-    UIView* rootView = [self view];
     NSDictionary* view = @{@"menu" : _menuView};
     NSArray* constraints =
         @[ @"V:|-(0)-[menu]-(0)-|", @"H:|-(0)-[menu]-(0)-|" ];
-    ApplyVisualConstraints(constraints, view, rootView);
+    ApplyVisualConstraints(constraints, view);
     _addedConstraints = YES;
   }
   [super updateViewConstraints];

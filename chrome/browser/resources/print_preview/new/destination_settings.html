@@ -13,6 +13,7 @@
 <link rel="import" href="print_preview_shared_css.html">
 <link rel="import" href="throbber_css.html">
 <link rel="import" href="settings_section.html">
+<link rel="import" href="strings.html">
 
 <dom-module id="print-preview-destination-settings">
   <template>
@@ -34,8 +35,8 @@
       }
 
       .destination-icon {
-        -webkit-margin-end: 8px;
         height: 24px;
+        margin-inline-end: 8px;
         vertical-align: middle;
         width: 24px;
       }
@@ -100,7 +101,8 @@
             invitation-store="[[invitationStore]]"
             recent-destinations="[[recentDestinations]]"
             user-info="{{userInfo}}"
-            show-cloud-print-promo="{{showCloudPrintPromo_}}">
+            show-cloud-print-promo="{{showCloudPrintPromo_}}"
+            on-close="onDialogClose_">
         </print-preview-destination-dialog>
       </template>
     </cr-lazy-render>

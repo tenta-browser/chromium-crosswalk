@@ -15,7 +15,9 @@ cr.define('settings_menu', function() {
       document.body.appendChild(settingsMenu);
     });
 
-    teardown(function() { settingsMenu.remove(); });
+    teardown(function() {
+      settingsMenu.remove();
+    });
 
     test('advancedOpenedBinding', function() {
       assertFalse(settingsMenu.advancedOpened);
@@ -34,11 +36,11 @@ cr.define('settings_menu', function() {
       const advancedToggle = settingsMenu.$$('#advancedButton');
       assertTrue(!!advancedToggle);
 
-      MockInteractions.tap(advancedToggle);
+      advancedToggle.click();
       Polymer.dom.flush();
       assertTrue(settingsMenu.$.advancedSubmenu.opened);
 
-      MockInteractions.tap(advancedToggle);
+      advancedToggle.click();
       Polymer.dom.flush();
       assertFalse(settingsMenu.$.advancedSubmenu.opened);
     });
@@ -70,9 +72,8 @@ cr.define('settings_menu', function() {
       const urlParams = new URLSearchParams('search=foo');
       settings.navigateTo(settings.routes.BASIC, urlParams);
       assertEquals(
-          urlParams.toString(),
-          settings.getQueryParameters().toString());
-      MockInteractions.tap(settingsMenu.$.people);
+          urlParams.toString(), settings.getQueryParameters().toString());
+      settingsMenu.$.people.click();
       assertEquals('', settings.getQueryParameters().toString());
     });
   });
@@ -85,7 +86,9 @@ cr.define('settings_menu', function() {
       document.body.appendChild(settingsMenu);
     });
 
-    teardown(function() { settingsMenu.remove(); });
+    teardown(function() {
+      settingsMenu.remove();
+    });
 
     test('openResetSection', function() {
       const selector = settingsMenu.$.subMenu;
@@ -123,7 +126,6 @@ cr.define('settings_menu', function() {
       assertFalse(settingsMenu.$$('#onStartup').hidden);
       assertFalse(settingsMenu.$$('#advancedButton').hidden);
       assertFalse(settingsMenu.$$('#advancedSubmenu').hidden);
-      assertFalse(settingsMenu.$$('#passwordsAndForms').hidden);
       assertFalse(settingsMenu.$$('#reset').hidden);
       if (!cr.isChromeOS)
         assertFalse(settingsMenu.$$('#defaultBrowser').hidden);

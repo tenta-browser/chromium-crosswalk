@@ -1,44 +1,45 @@
 Tests that audits panel works when only performance category is selected.
 
 
-========== Audits2 Dialog State ==========
-Dialog is visible
-
+========== Audits2 Start Audit State ==========
 [x] Performance
 [ ] Progressive Web App
 [ ] Best practices
 [ ] Accessibility
 [ ] SEO
-Run audit: enabled visible
-Cancel: enabled visible
+[x] Clear storage
+Run audits: enabled visible
 
-
-=============== Lighthouse Results ===============
-bootup-time: true
-consistently-interactive: false
-critical-request-chains: true
-dom-size: true
-estimated-input-latency: false
-first-interactive: false
-first-meaningful-paint: false
-font-display: true
-link-blocking-first-paint: false
-mainthread-work-breakdown: true
-offscreen-images: false
-redirects: false
-screenshot-thumbnails: false
-script-blocking-first-paint: false
-speed-index-metric: false
-time-to-first-byte: true
-total-byte-weight: true
-unminified-css: false
-unminified-javascript: false
-unused-css-rules: false
-user-timings: true
-uses-long-cache-ttl: false
-uses-optimized-images: false
-uses-rel-preload: false
-uses-request-compression: false
-uses-responsive-images: false
-uses-webp-images: false
+=============== Audits run ===============
+bootup-time
+critical-request-chains
+dom-size
+efficient-animated-content
+estimated-input-latency
+first-contentful-paint
+first-cpu-idle
+first-meaningful-paint
+font-display
+interactive
+mainthread-work-breakdown
+metrics
+network-requests
+offscreen-images
+redirects
+render-blocking-resources
+screenshot-thumbnails
+speed-index
+time-to-first-byte
+total-byte-weight
+unminified-css
+unminified-javascript
+unused-css-rules
+user-timings
+uses-long-cache-ttl
+uses-optimized-images
+uses-rel-preconnect
+uses-rel-preload
+uses-responsive-images
+uses-text-compression
+uses-webp-images
 

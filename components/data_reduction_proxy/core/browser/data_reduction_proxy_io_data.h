@@ -25,6 +25,7 @@
 #include "components/data_reduction_proxy/core/common/lofi_decider.h"
 #include "components/data_reduction_proxy/core/common/lofi_ui_service.h"
 #include "components/data_reduction_proxy/core/common/resource_type_provider.h"
+#include "components/data_use_measurement/core/data_use_user_data.h"
 
 namespace base {
 class Value;
@@ -34,6 +35,10 @@ namespace net {
 class NetLog;
 class URLRequestContextGetter;
 class URLRequestInterceptor;
+}
+
+namespace network {
+class NetworkConnectionTracker;
 }
 
 namespace previews {
@@ -60,6 +65,7 @@ class DataReductionProxyIOData : public DataReductionProxyEventStorageDelegate {
       Client client,
       PrefService* prefs,
       net::NetLog* net_log,
+      network::NetworkConnectionTracker* network_connection_tracker,
       scoped_refptr<base::SingleThreadTaskRunner> io_task_runner,
       scoped_refptr<base::SingleThreadTaskRunner> ui_task_runner,
       bool enabled,
@@ -119,7 +125,10 @@ class DataReductionProxyIOData : public DataReductionProxyEventStorageDelegate {
       int64_t original_size,
       bool data_reduction_proxy_enabled,
       DataReductionProxyRequestType request_type,
-      const std::string& mime_type);
+      const std::string& mime_type,
+      bool is_user_traffic,
+      data_use_measurement::DataUseUserData::DataUseContentType content_type,
+      int32_t service_hash_code);
 
   // Overrides of DataReductionProxyEventStorageDelegate. Bridges to the UI
   // thread objects.
@@ -145,6 +154,19 @@ class DataReductionProxyIOData : public DataReductionProxyEventStorageDelegate {
   // cache. This method is not called if only a subset of site entries are
   // cleared.
   void OnCacheCleared(const base::Time start, const base::Time end);
+
+  // Forwards proxy authentication headers to the UI thread.
+  void UpdateProxyRequestHeaders(net::HttpRequestHeaders headers);
+
+  // Notifies |this| that there there is a change in the effective connection
+  // type.
+  void OnEffectiveConnectionTypeChanged(net::EffectiveConnectionType type);
+
+  // Notifies |this| that there there is a change in the HTTP RTT estimate.
+  void OnRTTOrThroughputEstimatesComputed(base::TimeDelta http_rtt);
+
+  // Returns the current estimate of the effective connection type.
+  net::EffectiveConnectionType GetEffectiveConnectionType() const;
 
   // Various accessor methods.
   DataReductionProxyConfigurator* configurator() const {
@@ -287,6 +309,9 @@ class DataReductionProxyIOData : public DataReductionProxyEventStorageDelegate {
   // A net log.
   net::NetLog* net_log_;
 
+  // Watches for network connection changes.
+  network::NetworkConnectionTracker* network_connection_tracker_;
+
   // IO and UI task runners, respectively.
   scoped_refptr<base::SingleThreadTaskRunner> io_task_runner_;
   scoped_refptr<base::SingleThreadTaskRunner> ui_task_runner_;
@@ -316,6 +341,9 @@ class DataReductionProxyIOData : public DataReductionProxyEventStorageDelegate {
   // IO thread is still available at the time of destruction. If the IO thread
   // is unavailable, then the destruction will happen on the UI thread.
   std::unique_ptr<NetworkPropertiesManager> network_properties_manager_;
+
+  // Current estimate of the effective connection type.
+  net::EffectiveConnectionType effective_connection_type_;
 
   base::WeakPtrFactory<DataReductionProxyIOData> weak_factory_;
 

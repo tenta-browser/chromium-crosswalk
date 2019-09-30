@@ -7,15 +7,23 @@
  * display-size-slider is used to change the value of a pref via a slider
  * control. This specific slider is used instead of the settings-slider due to
  * its implementation of the tool tip that displays the current slider value.
+ * This component fires a |immediate-value-changed| event while the dragging is
+ * active. This event includes the immediate value of the slider.
+ *
+ * TODO (crbug.com/858882): this control should be replaced with a common
+ * control like settings-slider or cr-slider.
  */
 
 /**
  * The |value| is the corresponding value that the current slider tick is
  * assocated with. The string |label| is shown in the ui as the label for the
- * current slider value.
+ * current slider value. The |ariaValue| number is used for aria-valuemin,
+ * aria-valuemax, and aria-valuenow, and is optional. If missing, |value| will
+ * be used instead.
  * @typedef {{
- *   value: (number|string|boolean),
- *   label: string
+ *   value: !number,
+ *   label: !string,
+ *   ariaValue: (number|undefined),
  * }}
  */
 let SliderTick;
@@ -46,11 +54,13 @@ Polymer({
     /** True when the user is dragging the slider knob. */
     dragging: {type: Boolean, value: false, readOnly: true},
 
-    /** If true, the knob is expanded. */
-    expand: {type: Boolean, value: false, readOnly: true},
-
     /** @type {number} The index for the current slider value in |ticks|. */
-    index: {type: Number, value: 0, readOnly: true},
+    index: {
+      type: Number,
+      value: 0,
+      readOnly: true,
+      observer: 'onIndexChanged_',
+    },
 
     /** @type {string} The label for the minimum slider value */
     minLabel: {type: String, value: ''},
@@ -79,15 +89,32 @@ Polymer({
      * array contains a value and the label corresponding to that value.
      * @type {SliderTicks}
      */
-    ticks: {type: Array, value: []},
+    ticks: {
+      type: Array,
+      value: () => [],
+    },
+
+    /** @private */
+    holdDown_: {
+      type: Boolean,
+      value: false,
+      reflectToAttribute: true,
+    },
   },
 
-  listeners: {},
+  listeners: {
+    'blur': 'onBlur_',
+    'focus': 'onFocus_',
+    'keydown': 'onKeyDown_',
+    'pointerdown': 'onPointerDown_',
+    'pointerup': 'onPointerUp_',
+  },
 
   observers: [
-    'updateIndex_(pref.value)', 'updateKnobAndLabel_(index, disabled)',
-    'updateSliderParams_(ticks.*)', 'updateMarkers_(min, max)',
-    'updateDisabled_(ticks.*, pref.*)'
+    'updateIndex_(pref.value)',
+    'updateSliderParams_(ticks)',
+    'updateMarkers_(min, max)',
+    'updateDisabled_(ticks, pref.*)',
   ],
 
   hostAttributes: {role: 'slider', tabindex: 0},
@@ -98,14 +125,83 @@ Polymer({
     'up': 'increment_',
     'down': 'decrement_',
     'pagedown home': 'resetToMinIndex_',
-    'pageup end': 'resetToMaxIndex_'
+    'pageup end': 'resetToMaxIndex_',
   },
+
+  /** @override */
+  ready: function() {
+    chrome.settingsPrivate.onPrefsChanged.addListener((prefs) => {
+      prefs.forEach((pref) => {
+        if (pref.key == this.pref.key && this.pref.value != pref.value)
+          this.pref.value = pref.value;
+      });
+    });
+  },
+
+  /** @private {boolean} */
+  usedMouse_: false,
 
   get _isRTL() {
     if (this.__isRTL === undefined) {
       this.__isRTL = window.getComputedStyle(this)['direction'] === 'rtl';
     }
     return this.__isRTL;
+  },
+
+  /** @private */
+  setRippleHoldDown_: function(holdDown) {
+    this.ensureRipple();
+    this._ripple.holdDown = holdDown;
+    this.holdDown_ = holdDown;
+  },
+
+  /** @private */
+  onFocus_: function() {
+    this.setRippleHoldDown_(true);
+  },
+
+  /** @private */
+  onBlur_: function() {
+    this.setRippleHoldDown_(false);
+  },
+
+  /** @private */
+  onChange_: function() {
+    this.setRippleHoldDown_(!this.usedMouse_);
+    this.usedMouse_ = false;
+  },
+
+  /** @private */
+  onKeyDown_: function() {
+    this.usedMouse_ = false;
+    if (!this.disabled)
+      this.onFocus_();
+  },
+
+  /**
+   * @param {!MouseEvent} event
+   * @private
+   */
+  onPointerDown_: function(event) {
+    if (this.disabled || event.button != 0) {
+      event.preventDefault();
+      return;
+    }
+    this.usedMouse_ = true;
+    this.setRippleHoldDown_(false);
+    setTimeout(() => {
+      this.setRippleHoldDown_(true);
+    });
+  },
+
+  /**
+   * @param {!MouseEvent} event
+   * @private
+   */
+  onPointerUp_: function(event) {
+    if (event.button != 0)
+      return;
+    this.setRippleHoldDown_(false);
   },
 
   /**
@@ -118,9 +214,14 @@ Polymer({
     newIndex = this.clampToRange_(newIndex, this.min, this.max);
     if (newIndex != this.index) {
       this._setIndex(newIndex);
-      this.setAttribute('aria-valuenow', this.ticks[this.index].value);
+      this.setAttribute(
+          'aria-valuenow', this.getAriaValueForIndex_(this.ticks, this.index));
       this.setAttribute(
           'aria-valuetext', this.getLabelForIndex_(this.ticks, this.index));
+      if (this.dragging) {
+        this.fire(
+            'immediate-value-changed', {value: this.ticks[newIndex].value});
+      }
     }
   },
 
@@ -134,6 +235,7 @@ Polymer({
     newIndex = this.clampToRange_(newIndex, this.min, this.max);
     if (this.ticks[newIndex].value != this.pref.value)
       this.set('pref.value', this.ticks[newIndex].value);
+    this.onChange_();
   },
 
   /**
@@ -155,7 +257,7 @@ Polymer({
    * container as the slider knob before creating the ripple animation. Without
    * this the PaperInkyFocusBehavior does not know where to create the ripple
    * animation.
-   * @private
+   * @protected
    */
   _createRipple: function() {
     this._rippleContainer = this.$.sliderKnob;
@@ -168,27 +270,6 @@ Polymer({
   },
 
   /**
-   * Overrides _focusChanged from PaperInkyFocusBehavior to create a ripple only
-   * on a focus received via a keyboard. Hide the ripple when the focus was not
-   * triggered via a keyboard event.
-   * @private
-   */
-  _focusedChanged: function(receivedFocusFromKeyboard) {
-    if (receivedFocusFromKeyboard) {
-      this.ensureRipple();
-    }
-    if (this.hasRipple()) {
-      // note, ripple must be un-hidden prior to setting `holdDown`
-      if (receivedFocusFromKeyboard) {
-        this._ripple.style.display = '';
-      } else {
-        this._ripple.style.display = 'none';
-      }
-      this._ripple.holdDown = receivedFocusFromKeyboard;
-    }
-  },
-
-  /**
    * Returns a string concatenated list of class names based on whether the
    * corresponding properties are set.
    * @return {string}
@@ -196,13 +277,12 @@ Polymer({
   getClassNames_: function() {
     return this.mergeClasses_({
       disabled: this.disabled,
-      expand: this.expand,
       dragging: this.dragging,
     });
   },
 
   /**
-   * Returns the current label for the selected slider value.
+   * Returns the current label for the selected slider index.
    * @param {SliderTicks} ticks Slider label and corresponding value for each
    *    tick.
    * @param {number} index Index of the slider tick with the desired label.
@@ -214,23 +294,28 @@ Polymer({
     return ticks[index].label;
   },
 
+  /**
+   * Returns the aria value for a selected slider index. aria-valuenow,
+   * aria-valuemin and aria-valuemax are expected to be a numbers, so sliders
+   * which use strings for labels should populate the ariaValue with a number
+   * as well.
+   * @param {SliderTicks} ticks Slider label and corresponding value for each
+   *    tick.
+   * @param {number} index Index of the slider tick with the desired label.
+   * @return {number|string} Returns the empty string if there is not tick at
+   *    the given index.
+   */
+  getAriaValueForIndex_: function(ticks, index) {
+    if (!ticks || ticks.length == 0 || index >= ticks.length)
+      return '';
+    // ariaValue factored out for closure compilation.
+    let ariaValue = ticks[index].ariaValue;
+    return ariaValue !== undefined ? ariaValue : ticks[index].value;
+  },
+
   /** @private Safely increments the slider index value by 1 and updates pref */
   increment_: function() {
     this.clampIndexAndUpdatePref_(this.index + 1);
-  },
-
-  /**
-   * Handles the mouse down event for the slider knob.
-   * @private
-   */
-  knobDown_: function(event) {
-    this._setExpand(true);
-
-    // cancel selection
-    event.preventDefault();
-
-    // Without this the paper ripple is displayed on click.
-    this.focus();
   },
 
   /**
@@ -239,7 +324,6 @@ Polymer({
    * @private
    */
   knobTrack_: function(event) {
-    event.stopPropagation();
     switch (event.detail.state) {
       case 'start':
         this.knobTrackStart_();
@@ -336,6 +420,7 @@ Polymer({
       eventOffsetFromOriginX = barWidth - eventOffsetFromOriginX;
     const tickWidth = barWidth / (this.ticks.length - 1);
     let newTickIndex = Math.round(eventOffsetFromOriginX / tickWidth);
+    this._setDragging(true);
     this.startIndex_ = this.index;
 
     // Update the index but dont update the pref until mouse is released.
@@ -347,25 +432,10 @@ Polymer({
    * @private
    */
   onBarUp_: function() {
+    if (this.dragging)
+      this._setDragging(false);
     if (this.startIndex_ != this.index)
       this.clampIndexAndUpdatePref_(this.index);
-  },
-
-  /**
-   * Handles the event of the mouse moving out of the slider container.
-   * @private
-   */
-  onMouseOut_: function() {
-    // This is needed to hide the label after the user has clicked on the slider
-    this.blur();
-  },
-
-  /**
-   * Resets the knob back to its default state.
-   * @private
-   */
-  resetKnob_: function() {
-    this._setExpand(false);
   },
 
   /** @private Handles the 'right' key press. */
@@ -381,22 +451,6 @@ Polymer({
   /** @private Handles the 'home' and 'page down' key press. */
   resetToMinIndex_: function() {
     this.clampIndexAndUpdatePref_(this.min);
-  },
-
-  /**
-   * Returs true if the label needs to be displayed to the user. If the |label|
-   * field for the current selected slider tick represented by |index| is not
-   * set, then this returns false.
-   * @param {SliderTicks} ticks Info related to the slider ticks.
-   * @param {number} index Index of the current selected slider value.
-   * @return {boolean}
-   */
-  shouldShowLabel_: function(ticks, index) {
-    if (!ticks || ticks.length == 0)
-      return false;
-    if (index < 0 || index >= ticks.length)
-      return false;
-    return (!!ticks[index].label && ticks[index].label.length != 0);
   },
 
   /**
@@ -425,12 +479,18 @@ Polymer({
   updateIndex_: function() {
     if (!this.ticks || this.ticks.length == 0)
       return;
-    if (!this.pref)
+    if (!this.pref || typeof(this.pref.value) != 'number')
       return;
-    for (let i = 0; i < this.ticks.length; i++)
-      if (this.ticks[i].value == this.pref.value)
-        this._setIndex(i);
-    this.setAttribute('aria-valuenow', this.ticks[this.index].value);
+    let resolvedTick = this.ticks.length - 1;
+    for (let i = 0; i < this.ticks.length; i++) {
+      if (this.ticks[i].value >= this.pref.value) {
+        resolvedTick = i;
+        break;
+      }
+    }
+    this._setIndex(resolvedTick);
+    this.setAttribute(
+        'aria-valuenow', this.getAriaValueForIndex_(this.ticks, this.index));
     this.setAttribute(
         'aria-valuetext', this.getLabelForIndex_(this.ticks, this.index));
   },
@@ -439,12 +499,7 @@ Polymer({
    * Updates the knob position based on the the value of progress indicator.
    * @private
    */
-  updateKnobAndLabel_: function() {
-    if (this.disabled) {
-      this.$.sliderKnob.style.left = '0%';
-      this.$.label.style.left = '0%';
-      return;
-    }
+  onIndexChanged_: function() {
     this._setRatio(this._calcRatio(this.index) * 100);
 
     this.$.sliderKnob.style.left = this.ratio + '%';
@@ -474,11 +529,10 @@ Polymer({
     }
     this.max = this.ticks.length - 1;
     this.setAttribute(
-        'aria-valuemin', this.getLabelForIndex_(this.ticks, this.min));
+        'aria-valuemin', this.getAriaValueForIndex_(this.ticks, this.min));
     this.setAttribute(
-        'aria-valuemax', this.getLabelForIndex_(this.ticks, this.max));
+        'aria-valuemax', this.getAriaValueForIndex_(this.ticks, this.max));
     this.updateIndex_();
   },
 });
-
 })();

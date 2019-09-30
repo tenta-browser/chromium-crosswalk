@@ -18,6 +18,7 @@
 #include "base/location.h"
 #include "base/macros.h"
 #include "base/message_loop/message_loop.h"
+#include "base/sequenced_task_runner.h"
 #include "base/single_thread_task_runner.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/test/scoped_task_environment.h"
@@ -374,7 +375,9 @@ class AppCacheStorageImplTest : public testing::Test {
 
   // Test harness --------------------------------------------------
 
-  AppCacheStorageImplTest() { request_delegate_.set_quit_on_complete(false); }
+  AppCacheStorageImplTest() {
+    request_delegate_.set_on_complete(base::DoNothing());
+  }
 
   template <class Method>
   void RunTestOnIOThread(Method method) {

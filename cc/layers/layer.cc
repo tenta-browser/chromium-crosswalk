@@ -19,7 +19,7 @@
 #include "cc/input/main_thread_scrolling_reason.h"
 #include "cc/layers/layer_client.h"
 #include "cc/layers/layer_impl.h"
-#include "cc/layers/scrollbar_layer_interface.h"
+#include "cc/layers/picture_layer.h"
 #include "cc/tiles/frame_viewer_instrumentation.h"
 #include "cc/trees/draw_property_utils.h"
 #include "cc/trees/effect_node.h"
@@ -65,7 +65,6 @@ Layer::Inputs::Inputs(int layer_id)
       has_will_change_transform_hint(false),
       trilinear_filtering(false),
       hide_layer_and_subtree(false),
-      client_rawptr(nullptr),
       overscroll_behavior(OverscrollBehavior::kOverscrollBehaviorTypeAuto) {}
 
 Layer::Inputs::~Inputs() = default;
@@ -86,7 +85,7 @@ Layer::Layer()
       clip_tree_index_(ClipTree::kInvalidNodeId),
       scroll_tree_index_(ScrollTree::kInvalidNodeId),
       property_tree_sequence_number_(-1),
-      should_flatten_transform_from_property_tree_(false),
+      should_flatten_screen_space_transform_from_property_tree_(false),
       draws_content_(false),
       should_check_backface_visibility_(false),
       cache_render_surface_(false),
@@ -96,8 +95,7 @@ Layer::Layer()
       needs_show_scrollbars_(false),
       has_transform_node_(false),
       subtree_has_copy_request_(false),
-      safe_opaque_background_color_(0),
-      num_unclipped_descendants_(0) {}
+      safe_opaque_background_color_(0) {}
 
 Layer::~Layer() {
   // Our parent should be holding a reference to us so there should be no
@@ -151,7 +149,7 @@ void Layer::SetLayerTreeHost(LayerTreeHost* host) {
     inputs_.mask_layer->SetLayerTreeHost(host);
 
   if (host && !host->IsUsingLayerLists() &&
-      GetMutatorHost()->IsElementAnimating(element_id())) {
+      host->mutator_host()->IsElementAnimating(element_id())) {
     host->SetNeedsCommit();
   }
 }
@@ -185,11 +183,6 @@ void Layer::SetNextCommitWaitsForActivation() {
 void Layer::SetNeedsPushProperties() {
   if (layer_tree_host_)
     layer_tree_host_->AddLayerShouldPushProperties(this);
-}
-
-void Layer::ResetNeedsPushPropertiesForTesting() {
-  if (layer_tree_host_)
-    layer_tree_host_->RemoveLayerShouldPushProperties(this);
 }
 
 bool Layer::IsPropertyChangeAllowed() const {
@@ -362,16 +355,6 @@ void Layer::RemoveAllChildren() {
   }
 }
 
-void Layer::SetChildren(const LayerList& children) {
-  DCHECK(IsPropertyChangeAllowed());
-  if (children == inputs_.children)
-    return;
-
-  RemoveAllChildren();
-  for (size_t i = 0; i < children.size(); ++i)
-    AddChild(children[i]);
-}
-
 bool Layer::HasAncestor(const Layer* ancestor) const {
   for (const Layer* layer = parent(); layer; layer = layer->parent()) {
     if (layer == ancestor)
@@ -424,9 +407,10 @@ void Layer::SetBackgroundColor(SkColor background_color) {
 
 void Layer::SetSafeOpaqueBackgroundColor(SkColor background_color) {
   DCHECK(IsPropertyChangeAllowed());
-  if (safe_opaque_background_color_ == background_color)
+  SkColor opaque_color = SkColorSetA(background_color, 255);
+  if (safe_opaque_background_color_ == opaque_color)
     return;
-  safe_opaque_background_color_ = background_color;
+  safe_opaque_background_color_ = opaque_color;
   SetNeedsPushProperties();
 }
 
@@ -449,7 +433,7 @@ void Layer::SetMasksToBounds(bool masks_to_bounds) {
   SetSubtreePropertyChanged();
 }
 
-void Layer::SetMaskLayer(Layer* mask_layer) {
+void Layer::SetMaskLayer(PictureLayer* mask_layer) {
   DCHECK(IsPropertyChangeAllowed());
   if (inputs_.mask_layer.get() == mask_layer)
     return;
@@ -645,8 +629,10 @@ void Layer::SetPosition(const gfx::PointF& position) {
     return;
 
   SetSubtreePropertyChanged();
-  TransformNode* transform_node = GetTransformNode();
-  if (transform_node) {
+  if (has_transform_node_) {
+    TransformNode* transform_node =
+        layer_tree_host_->property_trees()->transform_tree.Node(
+            transform_tree_index_);
     transform_node->update_post_local_transform(position, transform_origin());
     transform_node->needs_local_transform_update = true;
     transform_node->transform_changed = true;
@@ -685,23 +671,21 @@ void Layer::SetTransform(const gfx::Transform& transform) {
   SetSubtreePropertyChanged();
   if (layer_tree_host_) {
     if (has_transform_node_) {
-      PropertyTrees* property_trees = layer_tree_host_->property_trees();
-      if (TransformNode* transform_node =
-              property_trees->transform_tree.Node(transform_tree_index())) {
-        // We need to trigger a rebuild if we could have affected 2d axis
-        // alignment. We'll check to see if transform and inputs_.transform are
-        // axis align with respect to one another.
-        DCHECK_EQ(transform_tree_index(), transform_node->id);
-        bool preserves_2d_axis_alignment =
-            Are2dAxisAligned(inputs_.transform, transform);
-        transform_node->local = transform;
-        transform_node->needs_local_transform_update = true;
-        transform_node->transform_changed = true;
-        layer_tree_host_->property_trees()->transform_tree.set_needs_update(
-            true);
-        if (!preserves_2d_axis_alignment)
-          SetPropertyTreesNeedRebuild();
-      }
+      TransformNode* transform_node =
+          layer_tree_host_->property_trees()->transform_tree.Node(
+              transform_tree_index_);
+      // We need to trigger a rebuild if we could have affected 2d axis
+      // alignment. We'll check to see if transform and inputs_.transform are
+      // axis align with respect to one another.
+      DCHECK_EQ(transform_tree_index(), transform_node->id);
+      bool preserves_2d_axis_alignment =
+          Are2dAxisAligned(inputs_.transform, transform);
+      transform_node->local = transform;
+      transform_node->needs_local_transform_update = true;
+      transform_node->transform_changed = true;
+      layer_tree_host_->property_trees()->transform_tree.set_needs_update(true);
+      if (!preserves_2d_axis_alignment)
+        SetPropertyTreesNeedRebuild();
     } else {
       SetPropertyTreesNeedRebuild();
     }
@@ -721,8 +705,10 @@ void Layer::SetTransformOrigin(const gfx::Point3F& transform_origin) {
     return;
 
   SetSubtreePropertyChanged();
-  TransformNode* transform_node = GetTransformNode();
-  if (transform_node) {
+  if (has_transform_node_) {
+    TransformNode* transform_node =
+        layer_tree_host_->property_trees()->transform_tree.Node(
+            transform_tree_index_);
     DCHECK_EQ(transform_tree_index(), transform_node->id);
     transform_node->update_pre_local_transform(transform_origin);
     transform_node->update_post_local_transform(position(), transform_origin);
@@ -734,10 +720,6 @@ void Layer::SetTransformOrigin(const gfx::Point3F& transform_origin) {
   }
 
   SetNeedsCommit();
-}
-
-bool Layer::ScrollOffsetAnimationWasInterrupted() const {
-  return GetMutatorHost()->ScrollOffsetAnimationWasInterrupted(element_id());
 }
 
 void Layer::SetScrollParent(Layer* parent) {
@@ -887,12 +869,15 @@ void Layer::AddMainThreadScrollingReasons(
     uint32_t main_thread_scrolling_reasons) {
   DCHECK(IsPropertyChangeAllowed());
   DCHECK(main_thread_scrolling_reasons);
+  // Layer should only see non-transient scrolling reasons. Transient scrolling
+  // reasons are computed per hit test.
+  DCHECK(MainThreadScrollingReason::MainThreadCanSetScrollReasons(
+      main_thread_scrolling_reasons));
   uint32_t new_reasons =
       inputs_.main_thread_scrolling_reasons | main_thread_scrolling_reasons;
   if (inputs_.main_thread_scrolling_reasons == new_reasons)
     return;
   inputs_.main_thread_scrolling_reasons = new_reasons;
-  didUpdateMainThreadScrollingReasons();
   SetPropertyTreesNeedRebuild();
   SetNeedsCommit();
 }
@@ -906,7 +891,6 @@ void Layer::ClearMainThreadScrollingReasons(
   if (new_reasons == inputs_.main_thread_scrolling_reasons)
     return;
   inputs_.main_thread_scrolling_reasons = new_reasons;
-  didUpdateMainThreadScrollingReasons();
   SetPropertyTreesNeedRebuild();
   SetNeedsCommit();
 }
@@ -1038,6 +1022,13 @@ int Layer::scroll_tree_index() const {
   return scroll_tree_index_;
 }
 
+void Layer::SetOffsetToTransformParent(gfx::Vector2dF offset) {
+  if (offset_to_transform_parent_ == offset)
+    return;
+  offset_to_transform_parent_ = offset;
+  SetNeedsPushProperties();
+}
+
 void Layer::InvalidatePropertyTreesIndices() {
   SetTransformTreeIndex(TransformTree::kInvalidNodeId);
   SetClipTreeIndex(ClipTree::kInvalidNodeId);
@@ -1164,17 +1155,16 @@ void Layer::SetStickyPositionConstraint(
 
 void Layer::SetLayerClient(base::WeakPtr<LayerClient> client) {
   inputs_.client = std::move(client);
-  // Both binds the weak_ptr to the main thread and stores a rawptr for access
-  // during commit.
-  inputs_.client_rawptr = client.get();
+  inputs_.debug_info = nullptr;
 }
 
-bool Layer::IsSnapped() {
-  return scrollable();
+bool Layer::IsSnappedToPixelGridInTarget() {
+  return false;
 }
 
 void Layer::PushPropertiesTo(LayerImpl* layer) {
-  TRACE_EVENT0("cc", "Layer::PushPropertiesTo");
+  TRACE_EVENT0(TRACE_DISABLED_BY_DEFAULT("cc.debug"),
+               "Layer::PushPropertiesTo");
   DCHECK(layer_tree_host_);
 
   // The element id should be set first because other setters may
@@ -1185,19 +1175,12 @@ void Layer::PushPropertiesTo(LayerImpl* layer) {
   layer->SetBackgroundColor(inputs_.background_color);
   layer->SetSafeOpaqueBackgroundColor(safe_opaque_background_color_);
   layer->SetBounds(inputs_.bounds);
-
-#if defined(NDEBUG)
-  if (frame_viewer_instrumentation::IsTracingLayerTreeSnapshots())
-    layer->SetDebugInfo(TakeDebugInfo());
-#else
-  layer->SetDebugInfo(TakeDebugInfo());
-#endif
-
+  layer->SetDebugInfo(std::move(inputs_.debug_info));
   layer->SetTransformTreeIndex(transform_tree_index());
   layer->SetEffectTreeIndex(effect_tree_index());
   layer->SetClipTreeIndex(clip_tree_index());
   layer->SetScrollTreeIndex(scroll_tree_index());
-  layer->set_offset_to_transform_parent(offset_to_transform_parent_);
+  layer->SetOffsetToTransformParent(offset_to_transform_parent_);
   layer->SetDrawsContent(DrawsContent());
   layer->SetHitTestableWithoutDrawsContent(
       hit_testable_without_draws_content());
@@ -1211,10 +1194,22 @@ void Layer::PushPropertiesTo(LayerImpl* layer) {
       inputs_.main_thread_scrolling_reasons);
   layer->SetNonFastScrollableRegion(inputs_.non_fast_scrollable_region);
   layer->SetTouchActionRegion(inputs_.touch_action_region);
+  // TODO(sunxd): Pass the correct region for wheel event handlers, see
+  // https://crbug.com/841364.
+  if (layer_tree_host()->event_listener_properties(
+          EventListenerClass::kMouseWheel) ==
+          EventListenerProperties::kBlocking ||
+      layer_tree_host()->event_listener_properties(
+          EventListenerClass::kMouseWheel) ==
+          EventListenerProperties::kBlockingAndPassive) {
+    layer->SetWheelEventHandlerRegion(Region(gfx::Rect(bounds())));
+  } else {
+    layer->SetWheelEventHandlerRegion(Region());
+  }
   layer->SetContentsOpaque(inputs_.contents_opaque);
   layer->SetPosition(inputs_.position);
-  layer->set_should_flatten_transform_from_property_tree(
-      should_flatten_transform_from_property_tree_);
+  layer->SetShouldFlattenScreenSpaceTransformFromPropertyTree(
+      should_flatten_screen_space_transform_from_property_tree_);
   layer->SetUseParentBackfaceVisibility(inputs_.use_parent_backface_visibility);
   layer->SetShouldCheckBackfaceVisibility(should_check_backface_visibility_);
 
@@ -1229,10 +1224,11 @@ void Layer::PushPropertiesTo(LayerImpl* layer) {
   // the pending tree will clobber any impl-side scrolling occuring on the
   // active tree. To do so, avoid scrolling the pending tree along with it
   // instead of trying to undo that scrolling later.
-  if (ScrollOffsetAnimationWasInterrupted())
-    layer->layer_tree_impl()
-        ->property_trees()
-        ->scroll_tree.SetScrollOffsetClobberActiveValue(layer->element_id());
+  if (layer_tree_host_->mutator_host()->ScrollOffsetAnimationWasInterrupted(
+          element_id())) {
+    PropertyTrees* trees = layer->layer_tree_impl()->property_trees();
+    trees->scroll_tree.SetScrollOffsetClobberActiveValue(layer->element_id());
+  }
 
   if (needs_show_scrollbars_)
     layer->set_needs_show_scrollbars(true);
@@ -1246,8 +1242,6 @@ void Layer::PushPropertiesTo(LayerImpl* layer) {
 
   layer->SetHasWillChangeTransformHint(has_will_change_transform_hint());
   layer->SetNeedsPushProperties();
-
-  layer->SetTrilinearFiltering(trilinear_filtering());
 
   // Reset any state that should be cleared for the next update.
   needs_show_scrollbars_ = false;
@@ -1321,30 +1315,25 @@ bool Layer::HasNonAAPaint() const {
   return false;
 }
 
-std::unique_ptr<base::trace_event::ConvertableToTraceFormat>
-Layer::TakeDebugInfo() {
-  // TakeDebugInfo is called from the compositor thread while the main thread is
-  // blocked so we use the raw client pointer as we can't check whether the
-  // reference is safe on the weak pointer.
-  // TODO(flackr): Remove client_rawptr and figure out if we can take the debug
-  // info from the main thread and store it on inputs before doing the commit or
-  // make a WeakPtr which understands the commit and allows checked access from
-  // the compositor thread. https://crbug.com/826455
-  if (inputs_.client_rawptr)
-    return inputs_.client_rawptr->TakeDebugInfo(this);
-  else
-    return nullptr;
-}
-
-void Layer::didUpdateMainThreadScrollingReasons() {
+void Layer::UpdateDebugInfo() {
+  DCHECK(frame_viewer_instrumentation::IsTracingLayerTreeSnapshots());
   if (inputs_.client)
-    inputs_.client->didUpdateMainThreadScrollingReasons();
+    inputs_.debug_info = inputs_.client->TakeDebugInfo(this);
 }
 
 void Layer::SetSubtreePropertyChanged() {
   if (subtree_property_changed_)
     return;
   subtree_property_changed_ = true;
+  SetNeedsPushProperties();
+}
+
+void Layer::SetShouldFlattenScreenSpaceTransformFromPropertyTree(
+    bool should_flatten) {
+  if (should_flatten_screen_space_transform_from_property_tree_ ==
+      should_flatten)
+    return;
+  should_flatten_screen_space_transform_from_property_tree_ = should_flatten;
   SetNeedsPushProperties();
 }
 
@@ -1357,7 +1346,7 @@ void Layer::SetMayContainVideo(bool yes) {
 
 void Layer::SetScrollbarsHiddenFromImplSide(bool hidden) {
   if (inputs_.client)
-    inputs_.client->didChangeScrollbarsHiddenIfOverlay(hidden);
+    inputs_.client->DidChangeScrollbarsHiddenIfOverlay(hidden);
 }
 
 // On<Property>Animated is called due to an ongoing accelerated animation.
@@ -1372,21 +1361,8 @@ void Layer::OnOpacityAnimated(float opacity) {
   inputs_.opacity = opacity;
 }
 
-TransformNode* Layer::GetTransformNode() const {
-  return has_transform_node_
-             ? layer_tree_host_->property_trees()->transform_tree.Node(
-                   transform_tree_index_)
-             : nullptr;
-}
-
 void Layer::OnTransformAnimated(const gfx::Transform& transform) {
   inputs_.transform = transform;
-}
-
-bool Layer::HasTickingAnimationForTesting() const {
-  return layer_tree_host_
-             ? GetMutatorHost()->HasTickingKeyframeModelForTesting(element_id())
-             : false;
 }
 
 void Layer::SetHasWillChangeTransformHint(bool has_will_change) {
@@ -1400,19 +1376,16 @@ void Layer::SetTrilinearFiltering(bool trilinear_filtering) {
   if (inputs_.trilinear_filtering == trilinear_filtering)
     return;
   inputs_.trilinear_filtering = trilinear_filtering;
+  // When true, makes a RenderSurface which makes an effect node.
+  SetPropertyTreesNeedRebuild();
+  // Adding a RenderSurface may change how things in the subtree appear, since
+  // it flattens transforms.
+  SetSubtreePropertyChanged();
   SetNeedsCommit();
-}
-
-MutatorHost* Layer::GetMutatorHost() const {
-  return layer_tree_host_ ? layer_tree_host_->mutator_host() : nullptr;
 }
 
 ElementListType Layer::GetElementTypeForAnimation() const {
   return ElementListType::ACTIVE;
-}
-
-ScrollbarLayerInterface* Layer::ToScrollbarLayer() {
-  return nullptr;
 }
 
 void Layer::RemoveFromClipTree() {
@@ -1437,9 +1410,7 @@ void Layer::AddDrawableDescendants(int num) {
     parent()->AddDrawableDescendants(num);
 }
 
-void Layer::RunMicroBenchmark(MicroBenchmark* benchmark) {
-  benchmark->RunOnLayer(this);
-}
+void Layer::RunMicroBenchmark(MicroBenchmark* benchmark) {}
 
 void Layer::SetElementId(ElementId id) {
   DCHECK(IsPropertyChangeAllowed());
@@ -1461,12 +1432,6 @@ void Layer::SetElementId(ElementId id) {
   }
 
   SetNeedsCommit();
-}
-
-bool Layer::has_copy_requests_in_target_subtree() {
-  return layer_tree_host_->property_trees()
-      ->effect_tree.Node(effect_tree_index())
-      ->subtree_has_copy_request;
 }
 
 gfx::Transform Layer::ScreenSpaceTransform() const {

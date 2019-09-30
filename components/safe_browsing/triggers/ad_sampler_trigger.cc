@@ -10,6 +10,7 @@
 #include "base/metrics/field_trial_params.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/rand_util.h"
+#include "base/single_thread_task_runner.h"
 #include "base/strings/string_number_conversions.h"
 #include "components/safe_browsing/features.h"
 #include "components/safe_browsing/triggers/trigger_manager.h"
@@ -22,8 +23,6 @@
 #include "content/public/browser/web_contents.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
 #include "services/network/public/cpp/simple_url_loader.h"
-
-DEFINE_WEB_CONTENTS_USER_DATA_KEY(safe_browsing::AdSamplerTrigger);
 
 namespace safe_browsing {
 

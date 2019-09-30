@@ -10,7 +10,6 @@
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/renderer/platform/cross_thread_functional.h"
-#include "third_party/blink/renderer/platform/scheduler/child/web_scheduler_impl.h"
 #include "third_party/blink/renderer/platform/scheduler/worker/worker_thread_scheduler.h"
 #include "third_party/blink/renderer/platform/web_task_runner.h"
 
@@ -62,9 +61,7 @@ void RemoveTaskObserver(WebThreadImplForWorkerScheduler* thread,
 }
 
 void ShutdownOnThread(WebThreadImplForWorkerScheduler* thread) {
-  WebSchedulerImpl* web_scheduler_impl =
-      static_cast<WebSchedulerImpl*>(thread->Scheduler());
-  web_scheduler_impl->Shutdown();
+  thread->Scheduler()->Shutdown();
 }
 
 class WebThreadImplForWorkerSchedulerTest : public testing::Test {
@@ -137,27 +134,6 @@ TEST_F(WebThreadImplForWorkerSchedulerTest,
       *thread_->GetTaskRunner(), FROM_HERE,
       CrossThreadBind(&MockTask::Run, WTF::CrossThreadUnretained(&task)));
   thread_.reset();
-}
-
-TEST_F(WebThreadImplForWorkerSchedulerTest, TestIdleTask) {
-  MockIdleTask task;
-  base::WaitableEvent completion(
-      base::WaitableEvent::ResetPolicy::AUTOMATIC,
-      base::WaitableEvent::InitialState::NOT_SIGNALED);
-
-  EXPECT_CALL(task, Run(_));
-  ON_CALL(task, Run(_)).WillByDefault(Invoke([&completion](double) {
-    completion.Signal();
-  }));
-
-  thread_->PostIdleTask(
-      FROM_HERE, base::BindOnce(&MockIdleTask::Run, WTF::Unretained(&task)));
-  // We need to post a wake-up task or idle work will never happen.
-  PostDelayedCrossThreadTask(*thread_->GetTaskRunner(), FROM_HERE,
-                             CrossThreadBind([] {}),
-                             TimeDelta::FromMilliseconds(50));
-
-  completion.Wait();
 }
 
 TEST_F(WebThreadImplForWorkerSchedulerTest, TestTaskObserver) {

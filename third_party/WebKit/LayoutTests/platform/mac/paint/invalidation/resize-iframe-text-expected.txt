@@ -25,36 +25,14 @@
         {
           "object": "LayoutBlockFlow HTML",
           "rect": [8, 299, 61, 23],
-          "reason": "appeared"
+          "reason": "chunk appeared"
         },
         {
           "object": "LayoutView #document",
           "rect": [485, 0, 15, 200],
-          "reason": "disappeared"
+          "reason": "chunk disappeared"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "Scrolling Contents Layer",
-      "reason": "incremental"
-    },
-    {
-      "object": "LayoutView #document",
-      "reason": "incremental"
-    },
-    {
-      "object": "LayoutIFrame (positioned) IFRAME",
-      "reason": "incremental"
-    },
-    {
-      "object": "VerticalScrollbar",
-      "reason": "scroll control"
-    },
-    {
-      "object": "LayoutView #document",
-      "reason": "geometry"
     }
   ]
 }

@@ -34,6 +34,7 @@
 #include "third_party/blink/renderer/core/layout/svg/layout_svg_container.h"
 #include "third_party/blink/renderer/core/layout/svg/layout_svg_root.h"
 #include "third_party/blink/renderer/core/layout/svg/svg_layout_support.h"
+#include "third_party/blink/renderer/core/layout/svg/svg_resources.h"
 #include "third_party/blink/renderer/core/layout/svg/svg_resources_cache.h"
 #include "third_party/blink/renderer/core/paint/paint_layer.h"
 #include "third_party/blink/renderer/core/svg/svg_graphics_element.h"
@@ -86,12 +87,22 @@ void LayoutSVGModelObject::AbsoluteQuads(Vector<FloatQuad>& quads,
   quads.push_back(LocalToAbsoluteQuad(StrokeBoundingBox(), mode));
 }
 
+// This method is called from inside PaintOutline(), and since we call
+// PaintOutline() while transformed to our coord system, return local coords.
+void LayoutSVGModelObject::AddOutlineRects(
+    Vector<LayoutRect>& rects,
+    const LayoutPoint&,
+    IncludeBlockVisualOverflowOrNot) const {
+  rects.push_back(LayoutRect(VisualRectInLocalSVGCoordinates()));
+}
+
 FloatRect LayoutSVGModelObject::LocalBoundingBoxRectForAccessibility() const {
   return StrokeBoundingBox();
 }
 
 void LayoutSVGModelObject::WillBeDestroyed() {
   SVGResourcesCache::ClientDestroyed(*this);
+  SVGResources::ClearClipPathFilterMask(*GetElement(), Style());
   LayoutObject::WillBeDestroyed();
 }
 
@@ -115,6 +126,15 @@ void LayoutSVGModelObject::AddLayerHitTestRects(
 
 void LayoutSVGModelObject::StyleDidChange(StyleDifference diff,
                                           const ComputedStyle* old_style) {
+  // Since layout depends on the bounds of the filter, we need to force layout
+  // when the filter changes. We also need to make sure paint will be
+  // performed, since if the filter changed we will not have cached result from
+  // before and thus will not flag paint in ClientLayoutChanged.
+  if (diff.FilterChanged()) {
+    SetNeedsLayoutAndFullPaintInvalidation(
+        LayoutInvalidationReason::kStyleChange);
+  }
+
   if (diff.NeedsFullLayout()) {
     SetNeedsBoundariesUpdate();
     if (diff.TransformChanged())
@@ -123,17 +143,19 @@ void LayoutSVGModelObject::StyleDidChange(StyleDifference diff,
 
   if (IsBlendingAllowed()) {
     bool has_blend_mode_changed =
-        (old_style && old_style->HasBlendMode()) == !Style()->HasBlendMode();
-    if (Parent() && has_blend_mode_changed)
+        (old_style && old_style->HasBlendMode()) == !StyleRef().HasBlendMode();
+    if (Parent() && has_blend_mode_changed) {
       Parent()->DescendantIsolationRequirementsChanged(
-          Style()->HasBlendMode() ? kDescendantIsolationRequired
-                                  : kDescendantIsolationNeedsUpdate);
+          StyleRef().HasBlendMode() ? kDescendantIsolationRequired
+                                    : kDescendantIsolationNeedsUpdate);
+    }
 
     if (has_blend_mode_changed)
       SetNeedsPaintPropertyUpdate();
   }
 
   LayoutObject::StyleDidChange(diff, old_style);
+  SVGResources::UpdateClipPathFilterMask(*GetElement(), old_style, StyleRef());
   SVGResourcesCache::ClientStyleChanged(*this, diff, StyleRef());
 }
 
@@ -143,14 +165,6 @@ bool LayoutSVGModelObject::NodeAtPoint(HitTestResult&,
                                        HitTestAction) {
   NOTREACHED();
   return false;
-}
-
-// The SVG addOutlineRects() method adds rects in local coordinates so the
-// default absoluteElementBoundingBoxRect() returns incorrect values for SVG
-// objects. Overriding this method provides access to the absolute bounds.
-IntRect LayoutSVGModelObject::AbsoluteElementBoundingBoxRect() const {
-  return LocalToAbsoluteQuad(FloatQuad(VisualRectInLocalSVGCoordinates()))
-      .EnclosingBoundingBox();
 }
 
 }  // namespace blink

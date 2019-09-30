@@ -18,110 +18,16 @@
       "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
         {
-          "object": "LayoutInline (relative positioned) SPAN id='child'",
+          "object": "LayoutBlockFlow (positioned) DIV id='box'",
           "rect": [135, 361, 159, 195],
-          "reason": "paint property change"
+          "reason": "chunk appeared"
         },
         {
-          "object": "LayoutInline (relative positioned) SPAN id='child'",
+          "object": "LayoutBlockFlow HTML",
           "rect": [300, 301, 80, 178],
-          "reason": "paint property change"
+          "reason": "chunk disappeared"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutBlockFlow (positioned) DIV id='box'",
-      "reason": "style change"
-    },
-    {
-      "object": "RootInlineBox",
-      "reason": "style change"
-    },
-    {
-      "object": "LayoutInline (relative positioned) SPAN id='child'",
-      "reason": "style change"
-    },
-    {
-      "object": "InlineFlowBox",
-      "reason": "style change"
-    },
-    {
-      "object": "InlineFlowBox",
-      "reason": "style change"
-    },
-    {
-      "object": "InlineFlowBox",
-      "reason": "style change"
-    },
-    {
-      "object": "InlineFlowBox",
-      "reason": "style change"
-    },
-    {
-      "object": "InlineFlowBox",
-      "reason": "style change"
-    },
-    {
-      "object": "InlineFlowBox",
-      "reason": "style change"
-    },
-    {
-      "object": "InlineFlowBox",
-      "reason": "style change"
-    },
-    {
-      "object": "InlineFlowBox",
-      "reason": "style change"
-    },
-    {
-      "object": "InlineFlowBox",
-      "reason": "style change"
-    },
-    {
-      "object": "LayoutText #text",
-      "reason": "style change"
-    },
-    {
-      "object": "InlineTextBox 'A B C'",
-      "reason": "style change"
-    },
-    {
-      "object": "InlineTextBox 'D E F'",
-      "reason": "style change"
-    },
-    {
-      "object": "InlineTextBox 'G H I'",
-      "reason": "style change"
-    },
-    {
-      "object": "InlineTextBox 'J K L'",
-      "reason": "style change"
-    },
-    {
-      "object": "InlineTextBox 'M N O'",
-      "reason": "style change"
-    },
-    {
-      "object": "InlineTextBox 'P Q R'",
-      "reason": "style change"
-    },
-    {
-      "object": "InlineTextBox 'S T U'",
-      "reason": "style change"
-    },
-    {
-      "object": "InlineTextBox 'V W X'",
-      "reason": "style change"
-    },
-    {
-      "object": "InlineTextBox 'Y Z'",
-      "reason": "style change"
-    },
-    {
-      "object": "LayoutText #text",
-      "reason": "style change"
     }
   ]
 }

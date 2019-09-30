@@ -44,7 +44,6 @@ class UiSceneCreator {
   void CreateViewportAwareRoot();
   void CreateUrlBar();
   void CreateOverflowMenu();
-  void CreateSnackbars();
   void CreateOmnibox();
   void CreateCloseButton();
   void CreateExitPrompt();
@@ -55,11 +54,11 @@ class UiSceneCreator {
   void CreateExitWarning();
   void CreateWebVrSubtree();
   void CreateWebVrOverlayElements();
-  void CreateSplashScreenForDirectWebVrLaunch();
   void CreateWebVrTimeoutScreen();
   void CreateController();
   void CreateKeyboard();
   void Create2dBrowsingHostedUi();
+  void CreateTabsViews();
 
   UiBrowserInterface* browser_;
   UiScene* scene_;

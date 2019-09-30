@@ -7,14 +7,19 @@
       "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
         {
-          "object": "LayoutBlockFlow (positioned) DIV id='target'",
-          "rect": [8, 108, 100, 100],
-          "reason": "disappeared"
+          "object": "LayoutBlockFlow HTML",
+          "rect": [8, 8, 660, 19],
+          "reason": "chunk appeared"
         },
         {
-          "object": "LayoutBlockFlow (positioned) DIV id='target'",
-          "rect": [8, 108, 99, 39],
-          "reason": "disappeared"
+          "object": "LayoutBlockFlow HTML",
+          "rect": [8, 8, 660, 19],
+          "reason": "chunk disappeared"
+        },
+        {
+          "object": "LayoutBlockFlow HTML",
+          "rect": [8, 108, 100, 100],
+          "reason": "chunk disappeared"
         }
       ]
     }

@@ -27,12 +27,29 @@
 }
 
 - (UIBlurEffect*)blurEffect {
+  if (UIAccessibilityIsReduceTransparencyEnabled())
+    return nil;
+
   switch (self.style) {
     case NORMAL:
-      return [UIBlurEffect effectWithStyle:UIBlurEffectStyleLight];
+      return [UIBlurEffect effectWithStyle:UIBlurEffectStyleExtraLight];
     case INCOGNITO:
       return [UIBlurEffect effectWithStyle:UIBlurEffectStyleDark];
   }
+}
+
+- (UIColor*)blurBackgroundColor {
+  if (UIAccessibilityIsReduceTransparencyEnabled()) {
+    switch (self.style) {
+      case NORMAL:
+        return
+            [UIColor colorWithWhite:kBlurBackgroundGrayscaleComponent alpha:1];
+      case INCOGNITO:
+        return UIColorFromRGB(kIncognitoToolbarBackgroundColor);
+    }
+  }
+  return [UIColor colorWithWhite:kBlurBackgroundGrayscaleComponent
+                           alpha:kBlurBackgroundAlpha];
 }
 
 - (UIColor*)NTPBackgroundColor {
@@ -73,7 +90,7 @@
       case NORMAL:
         return [UIColor whiteColor];
       case INCOGNITO:
-        return UIColorFromRGB(kIcongnitoLocationBackgroundColor);
+        return UIColorFromRGB(kIncognitoLocationBackgroundColor);
     }
   }
 }
@@ -102,6 +119,45 @@
   }
 }
 
+- (UIColor*)buttonsTintColorHighlighted {
+  DCHECK(IsUIRefreshPhase1Enabled());
+  switch (self.style) {
+    case NORMAL:
+      return [UIColor colorWithWhite:0
+                               alpha:kToolbarButtonTintColorAlphaHighlighted];
+      break;
+    case INCOGNITO:
+      return [UIColor
+          colorWithWhite:1
+                   alpha:kIncognitoToolbarButtonTintColorAlphaHighlighted];
+      break;
+  }
+}
+
+- (UIColor*)buttonsSpotlightColor {
+  DCHECK(IsUIRefreshPhase1Enabled());
+  switch (self.style) {
+    case NORMAL:
+      return [UIColor colorWithWhite:0 alpha:kToolbarSpotlightAlpha];
+      break;
+    case INCOGNITO:
+      return [UIColor colorWithWhite:1 alpha:kToolbarSpotlightAlpha];
+      break;
+  }
+}
+
+- (UIColor*)dimmedButtonsSpotlightColor {
+  DCHECK(IsUIRefreshPhase1Enabled());
+  switch (self.style) {
+    case NORMAL:
+      return [UIColor colorWithWhite:0 alpha:kDimmedToolbarSpotlightAlpha];
+      break;
+    case INCOGNITO:
+      return [UIColor colorWithWhite:1 alpha:kDimmedToolbarSpotlightAlpha];
+      break;
+  }
+}
+
 - (UIColor*)buttonTitleNormalColor {
   switch (self.style) {
     case NORMAL:
@@ -127,9 +183,10 @@
                                alpha:kAdaptiveLocationBarBackgroundAlpha *
                                      visibilityFactor];
     case INCOGNITO:
-      return [UIColor colorWithWhite:1
-                               alpha:kAdaptiveLocationBarBackgroundAlpha *
-                                     visibilityFactor];
+      return
+          [UIColor colorWithWhite:1
+                            alpha:kAdaptiveLocationBarBackgroundAlphaIncognito *
+                                  visibilityFactor];
   }
 }
 

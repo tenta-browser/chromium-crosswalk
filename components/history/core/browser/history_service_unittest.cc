@@ -25,7 +25,6 @@
 #include "base/files/scoped_temp_dir.h"
 #include "base/location.h"
 #include "base/macros.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/utf_string_conversions.h"
@@ -84,17 +83,15 @@ class HistoryServiceTest : public testing::Test {
 
     // Make sure we don't have any event pending that could disrupt the next
     // test.
-    base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE, base::MessageLoop::QuitWhenIdleClosure());
-    base::RunLoop().Run();
+    base::RunLoop().RunUntilIdle();
   }
 
   void CleanupHistoryService() {
     DCHECK(history_service_);
 
+    base::RunLoop run_loop;
     history_service_->ClearCachedDataForContextID(nullptr);
-    history_service_->SetOnBackendDestroyTask(
-        base::MessageLoop::QuitWhenIdleClosure());
+    history_service_->SetOnBackendDestroyTask(run_loop.QuitClosure());
     history_service_->Cleanup();
     history_service_.reset();
 
@@ -102,24 +99,26 @@ class HistoryServiceTest : public testing::Test {
     // moving to the next test. Note: if this never terminates, somebody is
     // probably leaking a reference to the history backend, so it never calls
     // our destroy task.
-    base::RunLoop().Run();
+    run_loop.Run();
   }
 
   // Fills the query_url_row_ and query_url_visits_ structures with the
   // information about the given URL and returns true. If the URL was not
   // found, this will return false and those structures will not be changed.
   bool QueryURL(history::HistoryService* history, const GURL& url) {
+    base::RunLoop run_loop;
     history_service_->QueryURL(
-        url,
-        true,
-        base::Bind(&HistoryServiceTest::SaveURLAndQuit, base::Unretained(this)),
+        url, true,
+        base::BindOnce(&HistoryServiceTest::SaveURLAndQuit,
+                       base::Unretained(this), run_loop.QuitClosure()),
         &tracker_);
-    base::RunLoop().Run();  // Will be exited in SaveURLAndQuit.
+    run_loop.Run();  // Will be exited in SaveURLAndQuit.
     return query_url_success_;
   }
 
   // Callback for HistoryService::QueryURL.
-  void SaveURLAndQuit(bool success,
+  void SaveURLAndQuit(base::OnceClosure done,
+                      bool success,
                       const URLRow& url_row,
                       const VisitVector& visits) {
     query_url_success_ = success;
@@ -130,28 +129,30 @@ class HistoryServiceTest : public testing::Test {
       query_url_row_ = URLRow();
       query_url_visits_.clear();
     }
-    base::RunLoop::QuitCurrentWhenIdleDeprecated();
+    std::move(done).Run();
   }
 
   // Fills in saved_redirects_ with the redirect information for the given URL,
   // returning true on success. False means the URL was not found.
   void QueryRedirectsFrom(history::HistoryService* history, const GURL& url) {
+    base::RunLoop run_loop;
     history_service_->QueryRedirectsFrom(
         url,
         base::Bind(&HistoryServiceTest::OnRedirectQueryComplete,
-                   base::Unretained(this)),
+                   base::Unretained(this), run_loop.QuitClosure()),
         &tracker_);
-    base::RunLoop().Run();  // Will be exited in *QueryComplete.
+    run_loop.Run();  // Will be exited in *QueryComplete.
   }
 
   // Callback for QueryRedirects.
-  void OnRedirectQueryComplete(const history::RedirectList* redirects) {
+  void OnRedirectQueryComplete(base::OnceClosure done,
+                               const history::RedirectList* redirects) {
     saved_redirects_.clear();
     if (!redirects->empty()) {
       saved_redirects_.insert(
           saved_redirects_.end(), redirects->begin(), redirects->end());
     }
-    base::RunLoop::QuitCurrentWhenIdleDeprecated();
+    std::move(done).Run();
   }
 
   base::ScopedTempDir temp_dir_;
@@ -720,8 +721,8 @@ void CheckDirectiveProcessingResult(
 
   base::PlatformThread::Sleep(base::TimeDelta::FromMilliseconds(100));
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::Bind(&CheckDirectiveProcessingResult, timeout,
-                            change_processor, num_changes));
+      FROM_HERE, base::BindOnce(&CheckDirectiveProcessingResult, timeout,
+                                change_processor, num_changes));
 }
 
 // Create a delete directive for a few specific history entries,
@@ -780,9 +781,9 @@ TEST_F(HistoryServiceTest, ProcessGlobalIdDeleteDirective) {
   // processing finishes.
   base::ThreadTaskRunnerHandle::Get()->PostTask(
       FROM_HERE,
-      base::Bind(&CheckDirectiveProcessingResult,
-                 base::Time::Now() + base::TimeDelta::FromSeconds(10),
-                 &change_processor, 2));
+      base::BindOnce(&CheckDirectiveProcessingResult,
+                     base::Time::Now() + base::TimeDelta::FromSeconds(10),
+                     &change_processor, 2));
   base::RunLoop().RunUntilIdle();
   EXPECT_TRUE(QueryURL(history_service_.get(), test_url));
   ASSERT_EQ(5, query_url_row_.visit_count());
@@ -855,9 +856,9 @@ TEST_F(HistoryServiceTest, ProcessTimeRangeDeleteDirective) {
   // directive processing finishes.
   base::ThreadTaskRunnerHandle::Get()->PostTask(
       FROM_HERE,
-      base::Bind(&CheckDirectiveProcessingResult,
-                 base::Time::Now() + base::TimeDelta::FromSeconds(10),
-                 &change_processor, 2));
+      base::BindOnce(&CheckDirectiveProcessingResult,
+                     base::Time::Now() + base::TimeDelta::FromSeconds(10),
+                     &change_processor, 2));
   base::RunLoop().RunUntilIdle();
   EXPECT_TRUE(QueryURL(history_service_.get(), test_url));
   ASSERT_EQ(3, query_url_row_.visit_count());

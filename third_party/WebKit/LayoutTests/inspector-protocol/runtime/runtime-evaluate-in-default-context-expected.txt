@@ -8,5 +8,6 @@ Tests that default execution context is selected correctly.
             value : 42
         }
     }
+    sessionId : <string>
 }
 

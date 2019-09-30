@@ -44,10 +44,13 @@
 #import "ios/chrome/browser/web/error_page_content.h"
 #include "ios/chrome/browser/web_state_list/fake_web_state_list_delegate.h"
 #include "ios/chrome/browser/web_state_list/web_state_list.h"
+#import "ios/chrome/browser/web_state_list/web_usage_enabler/web_state_list_web_usage_enabler.h"
+#import "ios/chrome/browser/web_state_list/web_usage_enabler/web_state_list_web_usage_enabler_factory.h"
 #include "ios/chrome/grit/ios_strings.h"
 #include "ios/chrome/test/block_cleanup_test.h"
 #include "ios/chrome/test/ios_chrome_scoped_testing_local_state.h"
 #include "ios/chrome/test/testing_application_context.h"
+#import "ios/net/protocol_handler_util.h"
 #import "ios/testing/ocmock_complex_type_helper.h"
 #include "ios/web/public/referrer.h"
 #include "ios/web/public/test/test_web_thread_bundle.h"
@@ -113,6 +116,7 @@ using web::WebStateImpl;
 @interface BVCTestTabModel : OCMockComplexTypeHelper
 - (instancetype)init NS_DESIGNATED_INITIALIZER;
 @property(nonatomic, assign) ios::ChromeBrowserState* browserState;
+@property(nonatomic, readonly) WebStateList* webStateList;
 @end
 
 @implementation BVCTestTabModel {
@@ -169,11 +173,16 @@ class BrowserViewControllerTest : public BlockCleanupTest {
     id currentTab = [[BVCTestTabMock alloc]
         initWithRepresentedObject:[OCMockObject niceMockForClass:[Tab class]]];
 
+    // Enable web usage for the mock TabModel's WebStateList.
+    WebStateListWebUsageEnabler* enabler =
+        WebStateListWebUsageEnablerFactory::GetInstance()->GetForBrowserState(
+            chrome_browser_state_.get());
+    enabler->SetWebStateList([tabModel webStateList]);
+    enabler->SetWebUsageEnabled(true);
+
     // Stub methods for TabModel.
     NSUInteger tabCount = 1;
     [[[tabModel stub] andReturnValue:OCMOCK_VALUE(tabCount)] count];
-    BOOL enabled = YES;
-    [[[tabModel stub] andReturnValue:OCMOCK_VALUE(enabled)] webUsageEnabled];
     [[[tabModel stub] andReturn:currentTab] currentTab];
     [[[tabModel stub] andReturn:currentTab] tabAtIndex:0];
     [[tabModel stub] addObserver:[OCMArg any]];
@@ -251,7 +260,7 @@ class BrowserViewControllerTest : public BlockCleanupTest {
 
 TEST_F(BrowserViewControllerTest, TestTabSelected) {
   [bvc_ tabSelected:tab_ notifyToolbar:YES];
-  EXPECT_EQ([[tab_ view] superview], static_cast<UIView*>([bvc_ contentArea]));
+  EXPECT_EQ([[tab_ view] superview], [bvc_ contentArea]);
   EXPECT_TRUE(webStateImpl_->IsVisible());
 }
 
@@ -262,7 +271,7 @@ TEST_F(BrowserViewControllerTest, TestTabSelectedIsNewTab) {
   id tabMock = (id)tab_;
   [tabMock onSelector:@selector(url) callBlockExpectation:block];
   [bvc_ tabSelected:tab_ notifyToolbar:YES];
-  EXPECT_EQ([[tab_ view] superview], static_cast<UIView*>([bvc_ contentArea]));
+  EXPECT_EQ([[tab_ view] superview], [bvc_ contentArea]);
   EXPECT_TRUE(webStateImpl_->IsVisible());
 }
 
@@ -290,11 +299,9 @@ TEST_F(BrowserViewControllerTest, TestErrorController) {
   NSDictionary* userInfoDic = [NSDictionary
       dictionaryWithObjectsAndKeys:badURLString,
                                    NSURLErrorFailingURLStringErrorKey,
-                                   [NSError
-                                       errorWithDomain:base::SysUTF8ToNSString(
-                                                           net::kErrorDomain)
-                                                  code:-104
-                                              userInfo:nil],
+                                   [NSError errorWithDomain:net::kNSErrorDomain
+                                                       code:-104
+                                                   userInfo:nil],
                                    NSUnderlyingErrorKey, nil];
   NSError* testError =
       [NSError errorWithDomain:@"testdomain" code:-1 userInfo:userInfoDic];

@@ -9,15 +9,9 @@
         {
           "object": "LayoutBlockFlow (relative positioned) DIV id='target'",
           "rect": [508, 28, 150, 20],
-          "reason": "appeared"
+          "reason": "chunk appeared"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutBlockFlow (relative positioned) DIV id='target'",
-      "reason": "style change"
     }
   ]
 }

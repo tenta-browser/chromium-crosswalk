@@ -16,8 +16,18 @@
 
 namespace ash {
 
+class DemoSessionMetricsRecorder;
 class DesktopTaskSwitchMetricRecorder;
 class PointerMetricsRecorder;
+
+// CrosDictationStartDictationMethod enum values.
+// These values are persisted to logs and should not be renumbered or re-used.
+// See tools/metrics/histograms/enums.xml.
+enum class DictationToggleMethod {
+  kToggleByKeyboard,
+  kToggleByButton,
+  kMaxValue = kToggleByButton
+};
 
 // User Metrics Recorder provides a repeating callback (RecordPeriodicMetrics)
 // on a timer to allow recording of state data over time to the UMA records.
@@ -40,8 +50,14 @@ class ASH_EXPORT UserMetricsRecorder {
   static void RecordUserClickOnShelfButton(
       LoginMetricsRecorder::ShelfButtonClickTarget target);
 
+  // Record the method used to activate dictation.
+  static void RecordUserToggleDictation(DictationToggleMethod method);
+
   // Records an Ash owned user action.
   void RecordUserMetricsAction(UserMetricsAction action);
+
+  // Starts recording demo session metrics. Used in Demo Mode.
+  void StartDemoSessionMetricsRecording();
 
   TaskSwitchMetricsRecorder& task_switch_metrics_recorder() {
     return task_switch_metrics_recorder_;
@@ -93,6 +109,9 @@ class ASH_EXPORT UserMetricsRecorder {
 
   // Metric recorder to track login authentication activity.
   std::unique_ptr<LoginMetricsRecorder> login_metrics_recorder_;
+
+  // Metric recorder to track app use in demo sessions.
+  std::unique_ptr<DemoSessionMetricsRecorder> demo_session_metrics_recorder_;
 
   DISALLOW_COPY_AND_ASSIGN(UserMetricsRecorder);
 };

@@ -13,21 +13,11 @@
       "backgroundColor": "#FF0000",
       "paintInvalidations": [
         {
-          "object": "LayoutTableRow TR",
+          "object": "LayoutTableCell TD id='target'",
           "rect": [0, 0, 37, 23],
           "reason": "appeared"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutTableCell TD id='target'",
-      "reason": "style change"
-    },
-    {
-      "object": "RootInlineBox",
-      "reason": "style change"
     }
   ]
 }

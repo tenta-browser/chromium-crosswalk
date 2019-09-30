@@ -23,80 +23,26 @@
           "reason": "incremental"
         },
         {
-          "object": "NGPaintFragment",
-          "rect": [8, 12, 340, 14],
+          "object": "NGPhysicalTextFragment 'Test passes if you see \"Success\" after window resizes.'",
+          "rect": [8, 8, 341, 19],
           "reason": "appeared"
         },
         {
-          "object": "NGPaintFragment",
-          "rect": [8, 12, 340, 14],
+          "object": "NGPhysicalTextFragment 'Test passes if you see \"Success\" after window resizes.'",
+          "rect": [8, 8, 341, 19],
           "reason": "disappeared"
         },
         {
           "object": "LayoutNGBlockFlow HTML",
-          "rect": [9, 304, 59, 13],
-          "reason": "appeared"
+          "rect": [8, 300, 60, 22],
+          "reason": "chunk appeared"
         },
         {
           "object": "LayoutView #document",
           "rect": [485, 0, 15, 200],
-          "reason": "disappeared"
+          "reason": "chunk disappeared"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "Scrolling Contents Layer",
-      "reason": "incremental"
-    },
-    {
-      "object": "LayoutView #document",
-      "reason": "incremental"
-    },
-    {
-      "object": "NGPaintFragment",
-      "reason": "subtree"
-    },
-    {
-      "object": "NGPaintFragment",
-      "reason": "subtree"
-    },
-    {
-      "object": "LayoutIFrame (positioned) IFRAME",
-      "reason": "subtree"
-    },
-    {
-      "object": "VerticalScrollbar",
-      "reason": "scroll control"
-    },
-    {
-      "object": "LayoutView #document",
-      "reason": "subtree"
-    },
-    {
-      "object": "LayoutView #document",
-      "reason": "geometry"
-    },
-    {
-      "object": "LayoutNGBlockFlow HTML",
-      "reason": "subtree"
-    },
-    {
-      "object": "LayoutNGBlockFlow BODY",
-      "reason": "subtree"
-    },
-    {
-      "object": "LayoutNGBlockFlow DIV",
-      "reason": "subtree"
-    },
-    {
-      "object": "NGPaintFragment",
-      "reason": "subtree"
-    },
-    {
-      "object": "NGPaintFragment",
-      "reason": "subtree"
     }
   ]
 }

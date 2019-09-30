@@ -8,7 +8,6 @@ import android.content.ComponentName;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.net.Uri;
-import android.os.AsyncTask;
 import android.os.ParcelFileDescriptor;
 import android.support.test.filters.LargeTest;
 
@@ -18,6 +17,7 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
+import org.chromium.base.AsyncTask;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.RetryOnFailure;
@@ -66,9 +66,9 @@ public class ShareIntentTest {
         @Override
         public void startActivity(Intent intent) {
             final Uri uri = intent.getClipData().getItemAt(0).getUri();
-            new AsyncTask<Void, Void, Void>() {
+            new AsyncTask<Void>() {
                 @Override
-                protected Void doInBackground(Void... params) {
+                protected Void doInBackground() {
                     ChromeFileProvider provider = new ChromeFileProvider();
                     ParcelFileDescriptor file = null;
                     try {
@@ -83,7 +83,8 @@ public class ShareIntentTest {
                     }
                     return null;
                 }
-            }.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
+            }
+                    .executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
         }
 
         /**

@@ -91,7 +91,7 @@ cr.define('settings_sync_account_control', function() {
       testElement.syncStatus = {signedIn: false, signedInUsername: ''};
       sync_test_util.simulateStoredAccounts([]);
 
-      assertVisible(testElement.$$('#promo-headers'), true);
+      assertVisible(testElement.$$('#promo-header'), true);
       assertVisible(testElement.$$('#avatar-row'), false);
       assertVisible(testElement.$$('#menu'), false);
       assertVisible(testElement.$$('#sign-in'), true);
@@ -106,6 +106,7 @@ cr.define('settings_sync_account_control', function() {
         signedInUsername: '',
         statusAction: settings.StatusAction.NO_ACTION,
         hasError: false,
+        disabled: false,
       };
       sync_test_util.simulateStoredAccounts([
         {
@@ -121,10 +122,10 @@ cr.define('settings_sync_account_control', function() {
       ]);
 
       const userInfo = testElement.$$('#user-info');
-      const syncButton = testElement.$$('#avatar-row .action-button');
+      const syncButton = testElement.$$('#sync-button');
 
       // Avatar row shows the right account.
-      assertVisible(testElement.$$('#promo-headers'), true);
+      assertVisible(testElement.$$('#promo-header'), true);
       assertVisible(testElement.$$('#avatar-row'), true);
       assertTrue(userInfo.textContent.includes('fooName'));
       assertTrue(userInfo.textContent.includes('foo@foo.com'));
@@ -135,17 +136,16 @@ cr.define('settings_sync_account_control', function() {
       assertTrue(!!testElement.$$('#menu'));
       assertFalse(testElement.$$('#menu').open);
       const items = testElement.root.querySelectorAll('.dropdown-item');
-      assertEquals(3, items.length);
+      assertEquals(4, items.length);
       assertTrue(items[0].textContent.includes('foo@foo.com'));
       assertTrue(items[1].textContent.includes('bar@bar.com'));
       assertEquals(items[2].id, 'sign-in-item');
+      assertEquals(items[3].id, 'sign-out-item');
 
       // "sync to" button is showing the correct name and syncs with the
       // correct account when clicked.
       assertVisible(syncButton, true);
-      assertVisible(testElement.$$('#avatar-row .secondary-button'), false);
-      assertTrue(syncButton.textContent.includes('foo'));
-      assertFalse(syncButton.textContent.includes('bar'));
+      assertVisible(testElement.$$('#turn-off'), false);
       syncButton.click();
       Polymer.dom.flush();
 
@@ -173,8 +173,6 @@ cr.define('settings_sync_account_control', function() {
             assertTrue(userInfo.textContent.includes('barName'));
             assertTrue(userInfo.textContent.includes('bar@bar.com'));
             assertVisible(syncButton, true);
-            assertTrue(syncButton.textContent.includes('bar'));
-            assertFalse(syncButton.textContent.includes('foo'));
 
             browserProxy.resetResolver('startSyncingWithEmail');
             syncButton.click();
@@ -200,6 +198,8 @@ cr.define('settings_sync_account_control', function() {
         signedInUsername: 'bar@bar.com',
         statusAction: settings.StatusAction.NO_ACTION,
         hasError: false,
+        hasUnrecoverableError: false,
+        disabled: false,
       };
       sync_test_util.simulateStoredAccounts([
         {
@@ -216,7 +216,7 @@ cr.define('settings_sync_account_control', function() {
 
       assertVisible(testElement.$$('#avatar-row'), true);
       assertVisible(testElement.$$('paper-icon-button-light'), false);
-      assertVisible(testElement.$$('#promo-headers'), false);
+      assertVisible(testElement.$$('#promo-header'), false);
       assertFalse(testElement.$$('#sync-icon-container').hidden);
 
       assertFalse(!!testElement.$$('#menu'));
@@ -227,8 +227,9 @@ cr.define('settings_sync_account_control', function() {
       assertFalse(userInfo.textContent.includes('fooName'));
       assertFalse(userInfo.textContent.includes('foo@foo.com'));
 
-      assertVisible(testElement.$$('#avatar-row .action-button'), false);
-      assertVisible(testElement.$$('#avatar-row .secondary-button'), true);
+      assertVisible(testElement.$$('#sync-button'), false);
+      assertVisible(testElement.$$('#turn-off'), true);
+      assertVisible(testElement.$$('#sync-paused-button'), false);
 
       testElement.$$('#avatar-row .secondary-button').click();
       Polymer.dom.flush();
@@ -239,7 +240,9 @@ cr.define('settings_sync_account_control', function() {
         signedIn: true,
         signedInUsername: 'bar@bar.com',
         hasError: true,
+        hasUnrecoverableError: false,
         statusAction: settings.StatusAction.CONFIRM_SYNC_SETTINGS,
+        disabled: false,
       };
       assertTrue(testElement.$$('#sync-icon-container')
                      .classList.contains('sync-problem'));
@@ -254,15 +257,133 @@ cr.define('settings_sync_account_control', function() {
         signedIn: true,
         signedInUsername: 'bar@bar.com',
         hasError: true,
+        hasUnrecoverableError: false,
         statusAction: settings.StatusAction.REAUTHENTICATE,
+        disabled: false,
       };
       assertTrue(testElement.$$('#sync-icon-container')
-                     .classList.contains('sync-disabled'));
+                     .classList.contains('sync-paused'));
       assertTrue(!!testElement.$$('[icon=\'settings:sync-disabled\']'));
       displayedText = userInfo.querySelector('span:not([hidden])').textContent;
       assertFalse(displayedText.includes('barName'));
       assertFalse(displayedText.includes('fooName'));
       assertTrue(displayedText.includes('Sync is paused'));
+      // Not embedded in a subpage, so there is no sync-paused button.
+      assertVisible(testElement.$$('#sync-paused-button'), false);
+
+      testElement.syncStatus = {
+        signedIn: true,
+        signedInUsername: 'bar@bar.com',
+        statusAction: settings.StatusAction.NO_ACTION,
+        hasError: false,
+        hasUnrecoverableError: false,
+        disabled: true,
+      };
+
+      assertTrue(testElement.$$('#sync-icon-container')
+                     .classList.contains('sync-disabled'));
+      assertTrue(!!testElement.$$('[icon=\'cr:sync\']'));
+      displayedText = userInfo.querySelector('span:not([hidden])').textContent;
+      assertFalse(displayedText.includes('barName'));
+      assertFalse(displayedText.includes('fooName'));
+      assertTrue(displayedText.includes('Sync disabled'));
+
+      testElement.syncStatus = {
+        signedIn: true,
+        signedInUsername: 'bar@bar.com',
+        statusAction: settings.StatusAction.REAUTHENTICATE,
+        hasError: false,
+        hasUnrecoverableError: true,
+        disabled: false,
+      };
+      assertTrue(testElement.$$('#sync-icon-container')
+                     .classList.contains('sync-problem'));
+      assertTrue(!!testElement.$$('[icon=\'settings:sync-problem\']'));
+      displayedText = userInfo.querySelector('span:not([hidden])').textContent;
+      assertFalse(displayedText.includes('barName'));
+      assertFalse(displayedText.includes('fooName'));
+      assertTrue(displayedText.includes('Sync isn\'t working'));
+    });
+
+    test('embedded in another page', function() {
+      testElement.embeddedInSubpage = true;
+      forcePromoResetWithCount(100, false);
+      const banner = testElement.$$('#banner');
+      assertVisible(banner, true);
+
+      testElement.syncStatus = {
+        signedIn: true,
+        signedInUsername: 'bar@bar.com',
+        statusAction: settings.StatusAction.NO_ACTION,
+        hasError: false,
+        hasUnrecoverableError: false,
+        disabled: false,
+      };
+
+      assertVisible(testElement.$$('#turn-off'), false);
+      assertVisible(testElement.$$('#sync-paused-button'), false);
+
+      testElement.embeddedInSubpage = true;
+      testElement.syncStatus = {
+        signedIn: true,
+        signedInUsername: 'bar@bar.com',
+        hasError: true,
+        hasUnrecoverableError: false,
+        statusAction: settings.StatusAction.REAUTHENTICATE,
+        disabled: false,
+      };
+      assertVisible(testElement.$$('#turn-off'), false);
+      assertVisible(testElement.$$('#sync-paused-button'), true);
+
+      testElement.embeddedInSubpage = true;
+      testElement.syncStatus = {
+        signedIn: true,
+        signedInUsername: 'bar@bar.com',
+        hasError: true,
+        hasUnrecoverableError: true,
+        statusAction: settings.StatusAction.REAUTHENTICATE,
+        disabled: false,
+      };
+      assertVisible(testElement.$$('#turn-off'), false);
+      assertVisible(testElement.$$('#sync-paused-button'), true);
+
+      testElement.embeddedInSubpage = true;
+      testElement.syncStatus = {
+        signedIn: true,
+        signedInUsername: 'bar@bar.com',
+        hasError: true,
+        hasUnrecoverableError: true,
+        statusAction: settings.StatusAction.NO_ACTION,
+        disabled: false,
+      };
+      assertVisible(testElement.$$('#turn-off'), false);
+      assertVisible(testElement.$$('#sync-paused-button'), false);
+    });
+
+    test('hide buttons', function() {
+      testElement.hideButtons = true;
+      testElement.syncStatus = {
+        signedIn: true,
+        signedInUsername: 'bar@bar.com',
+        statusAction: settings.StatusAction.NO_ACTION,
+        hasError: false,
+        hasUnrecoverableError: false,
+        disabled: false,
+      };
+
+      assertVisible(testElement.$$('#turn-off'), false);
+      assertVisible(testElement.$$('#sync-paused-button'), false);
+
+      testElement.syncStatus = {
+        signedIn: true,
+        signedInUsername: 'bar@bar.com',
+        hasError: true,
+        hasUnrecoverableError: false,
+        statusAction: settings.StatusAction.REAUTHENTICATE,
+        disabled: false,
+      };
+      assertVisible(testElement.$$('#turn-off'), false);
+      assertVisible(testElement.$$('#sync-paused-button'), false);
     });
   });
 });

@@ -8,17 +8,19 @@
 #include "base/files/file_util.h"
 #include "base/location.h"
 #include "base/macros.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/threading/thread.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "components/services/leveldb/public/cpp/util.h"
+#include "content/browser/code_cache/generated_code_cache.h"
+#include "content/browser/code_cache/generated_code_cache_context.h"
 #include "content/browser/dom_storage/local_storage_database.pb.h"
 #include "content/browser/gpu/shader_cache_factory.h"
 #include "content/browser/storage_partition_impl.h"
 #include "content/public/browser/local_storage_usage_info.h"
 #include "content/public/browser/storage_partition.h"
+#include "content/public/common/content_features.h"
 #include "content/public/test/test_browser_context.h"
 #include "content/public/test/test_browser_thread.h"
 #include "content/public/test/test_browser_thread_bundle.h"
@@ -29,6 +31,7 @@
 #include "net/url_request/url_request_context.h"
 #include "net/url_request/url_request_context_getter.h"
 #include "ppapi/buildflags/buildflags.h"
+#include "services/network/cookie_manager.h"
 #include "storage/browser/quota/quota_manager.h"
 #include "storage/browser/test/mock_quota_manager.h"
 #include "storage/browser/test/mock_special_storage_policy.h"
@@ -44,6 +47,8 @@
 #endif  // BUILDFLAG(ENABLE_PLUGINS)
 
 using net::CanonicalCookie;
+using CookieDeletionFilter = network::mojom::CookieDeletionFilter;
+using CookieDeletionFilterPtr = network::mojom::CookieDeletionFilterPtr;
 
 namespace content {
 namespace {
@@ -56,6 +61,7 @@ const char kTestOrigin1[] = "http://host1:1/";
 const char kTestOrigin2[] = "http://host2:1/";
 const char kTestOrigin3[] = "http://host3:1/";
 const char kTestOriginDevTools[] = "chrome-devtools://abcdefghijklmnopqrstuvw/";
+const char kTestURL[] = "http://host4/script.js";
 
 #if BUILDFLAG(ENABLE_PLUGINS)
 const char kWidevineCdmPluginId[] = "application_x-ppapi-widevine-cdm";
@@ -66,6 +72,7 @@ const GURL kOrigin1(kTestOrigin1);
 const GURL kOrigin2(kTestOrigin2);
 const GURL kOrigin3(kTestOrigin3);
 const GURL kOriginDevTools(kTestOriginDevTools);
+const GURL kResourceURL(kTestURL);
 
 const blink::mojom::StorageType kTemporary =
     blink::mojom::StorageType::kTemporary;
@@ -79,14 +86,6 @@ const uint32_t kAllQuotaRemoveMask =
     StoragePartition::REMOVE_DATA_MASK_FILE_SYSTEMS |
     StoragePartition::REMOVE_DATA_MASK_INDEXEDDB |
     StoragePartition::REMOVE_DATA_MASK_WEBSQL;
-
-bool AlwaysTrueCookiePredicate(const net::CanonicalCookie& cookie) {
-  return true;
-}
-
-bool AlwaysFalseCookiePredicate(const net::CanonicalCookie& cookie) {
-  return false;
-}
 
 class AwaitCompletionHelper {
  public:
@@ -276,6 +275,49 @@ class RemoveLocalStorageTester {
   AwaitCompletionHelper await_completion_;
 
   DISALLOW_COPY_AND_ASSIGN(RemoveLocalStorageTester);
+};
+
+class RemoveCodeCacheTester {
+ public:
+  explicit RemoveCodeCacheTester(GeneratedCodeCacheContext* code_cache_context)
+      : code_cache_context_(code_cache_context) {}
+
+  bool ContainsEntry(GURL url, url::Origin origin) {
+    entry_exists_ = false;
+    GeneratedCodeCache::ReadDataCallback callback = base::BindRepeating(
+        &RemoveCodeCacheTester::FetchEntryCallback, base::Unretained(this));
+    code_cache_context_->generated_code_cache()->FetchEntry(url, origin,
+                                                            callback);
+    await_completion_.BlockUntilNotified();
+    return entry_exists_;
+  }
+
+  void AddEntry(GURL url, url::Origin origin, const std::string& data) {
+    std::vector<uint8_t> data_vector(data.begin(), data.end());
+    code_cache_context_->generated_code_cache()->WriteData(
+        url, origin, base::Time::Now(), data_vector);
+    base::RunLoop().RunUntilIdle();
+  }
+
+  std::string received_data() { return received_data_; }
+
+ private:
+  void FetchEntryCallback(const base::Time& response_time,
+                          const std::vector<uint8_t>& data) {
+    if (!response_time.is_null()) {
+      entry_exists_ = true;
+      received_data_ = std::string(data.begin(), data.end());
+    } else {
+      entry_exists_ = false;
+    }
+    await_completion_.Notify();
+  }
+
+  bool entry_exists_;
+  AwaitCompletionHelper await_completion_;
+  GeneratedCodeCacheContext* code_cache_context_;
+  std::string received_data_;
+  DISALLOW_COPY_AND_ASSIGN(RemoveCodeCacheTester);
 };
 
 #if BUILDFLAG(ENABLE_PLUGINS)
@@ -573,16 +615,19 @@ void ClearCookies(content::StoragePartition* partition,
       delete_begin, delete_end, run_loop->QuitClosure());
 }
 
-void ClearCookiesWithMatcher(
-    content::StoragePartition* partition,
-    const base::Time delete_begin,
-    const base::Time delete_end,
-    const StoragePartition::CookieMatcherFunction& cookie_matcher,
-    base::RunLoop* run_loop) {
+void ClearCookiesMatchingInfo(content::StoragePartition* partition,
+                              CookieDeletionFilterPtr delete_filter,
+                              base::RunLoop* run_loop) {
+  base::Time delete_begin;
+  if (delete_filter->created_after_time.has_value())
+    delete_begin = delete_filter->created_after_time.value();
+  base::Time delete_end;
+  if (delete_filter->created_before_time.has_value())
+    delete_end = delete_filter->created_before_time.value();
   partition->ClearData(StoragePartition::REMOVE_DATA_MASK_COOKIES,
                        StoragePartition::QUOTA_MANAGED_STORAGE_MASK_ALL,
                        StoragePartition::OriginMatcherFunction(),
-                       cookie_matcher, delete_begin, delete_end,
+                       std::move(delete_filter), delete_begin, delete_end,
                        run_loop->QuitClosure());
 }
 
@@ -608,6 +653,15 @@ void ClearData(content::StoragePartition* partition,
       time, time, run_loop->QuitClosure());
 }
 
+void ClearCodeCache(content::StoragePartition* partition,
+                    base::RunLoop* run_loop) {
+  base::Time delete_begin;
+  base::Time delete_end;
+  partition->ClearHttpAndMediaCaches(
+      delete_begin, delete_end, base::RepeatingCallback<bool(const GURL&)>(),
+      run_loop->QuitClosure());
+}
+
 #if BUILDFLAG(ENABLE_PLUGINS)
 void ClearPluginPrivateData(content::StoragePartition* partition,
                             const GURL& storage_origin,
@@ -621,6 +675,11 @@ void ClearPluginPrivateData(content::StoragePartition* partition,
       run_loop->QuitClosure());
 }
 #endif  // BUILDFLAG(ENABLE_PLUGINS)
+
+bool FilterMatchesCookie(const CookieDeletionFilterPtr& filter,
+                         const net::CanonicalCookie& cookie) {
+  return network::DeletionFilterToInfo(filter.Clone()).Matches(cookie);
+}
 
 }  // namespace
 
@@ -1130,13 +1189,8 @@ TEST_F(StoragePartitionImplTest, RemoveCookieLastHour) {
   EXPECT_FALSE(tester.ContainsCookie());
 }
 
-TEST_F(StoragePartitionImplTest, RemoveCookieWithMatcher) {
+TEST_F(StoragePartitionImplTest, RemoveCookieWithDeleteInfo) {
   RemoveCookieTester tester(browser_context());
-  StoragePartition::CookieMatcherFunction true_predicate =
-      base::Bind(&AlwaysTrueCookiePredicate);
-
-  StoragePartition::CookieMatcherFunction false_predicate =
-      base::Bind(&AlwaysFalseCookiePredicate);
 
   tester.AddCookie();
   ASSERT_TRUE(tester.ContainsCookie());
@@ -1145,21 +1199,10 @@ TEST_F(StoragePartitionImplTest, RemoveCookieWithMatcher) {
       BrowserContext::GetDefaultStoragePartition(browser_context()));
   partition->SetURLRequestContext(browser_context()->GetRequestContext());
 
-  // Return false from our predicate, and make sure the cookies is still around.
-  base::RunLoop run_loop;
-  base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE,
-      base::BindOnce(&ClearCookiesWithMatcher, partition, base::Time(),
-                     base::Time::Max(), std::move(false_predicate), &run_loop));
-  run_loop.RunUntilIdle();
-  EXPECT_TRUE(tester.ContainsCookie());
-
-  // Now we return true from our predicate.
   base::RunLoop run_loop2;
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE,
-      base::BindOnce(&ClearCookiesWithMatcher, partition, base::Time(),
-                     base::Time::Max(), std::move(true_predicate), &run_loop2));
+      FROM_HERE, base::BindOnce(&ClearCookiesMatchingInfo, partition,
+                                CookieDeletionFilter::New(), &run_loop2));
   run_loop2.RunUntilIdle();
   EXPECT_FALSE(tester.ContainsCookie());
 }
@@ -1267,6 +1310,32 @@ TEST_F(StoragePartitionImplTest, RemoveLocalStorageForLastWeek) {
   EXPECT_FALSE(tester.DOMStorageExistsForOrigin(kOrigin1));
   EXPECT_FALSE(tester.DOMStorageExistsForOrigin(kOrigin2));
   EXPECT_TRUE(tester.DOMStorageExistsForOrigin(kOrigin3));
+}
+
+TEST_F(StoragePartitionImplTest, ClearCodeCache) {
+  // Run this test only when the IsolatedCodeCache feature is enabled
+  if (!base::FeatureList::IsEnabled(features::kIsolatedCodeCache))
+    return;
+
+  StoragePartitionImpl* partition = static_cast<StoragePartitionImpl*>(
+      BrowserContext::GetDefaultStoragePartition(browser_context()));
+  // Ensure code cache is initialized.
+  base::RunLoop().RunUntilIdle();
+
+  RemoveCodeCacheTester tester(partition->GetGeneratedCodeCacheContext());
+
+  url::Origin origin = url::Origin::Create(kOrigin1);
+  std::string data("SomeData");
+  tester.AddEntry(kResourceURL, origin, data);
+  EXPECT_TRUE(tester.ContainsEntry(kResourceURL, origin));
+  EXPECT_EQ(tester.received_data(), data);
+
+  base::RunLoop run_loop;
+  base::ThreadTaskRunnerHandle::Get()->PostTask(
+      FROM_HERE, base::BindOnce(&ClearCodeCache, partition, &run_loop));
+  run_loop.Run();
+
+  EXPECT_FALSE(tester.ContainsEntry(kResourceURL, origin));
 }
 
 #if BUILDFLAG(ENABLE_PLUGINS)
@@ -1397,8 +1466,8 @@ TEST(StoragePartitionImplStaticTest, CreatePredicateForHostCookies) {
   GURL url3("https://www.google.com/");
 
   net::CookieOptions options;
-  net::CookieStore::CookiePredicate predicate =
-      StoragePartitionImpl::CreatePredicateForHostCookies(url);
+  CookieDeletionFilterPtr deletion_filter = CookieDeletionFilter::New();
+  deletion_filter->host_name = url.host();
 
   base::Time now = base::Time::Now();
   std::vector<std::unique_ptr<CanonicalCookie>> valid_cookies;
@@ -1413,10 +1482,14 @@ TEST(StoragePartitionImplStaticTest, CreatePredicateForHostCookies) {
       CanonicalCookie::Create(url2, "A=B;domain=.example.com", now, options));
   invalid_cookies.push_back(CanonicalCookie::Create(url3, "A=B", now, options));
 
-  for (const auto& cookie : valid_cookies)
-    EXPECT_TRUE(predicate.Run(*cookie)) << cookie->DebugString();
-  for (const auto& cookie : invalid_cookies)
-    EXPECT_FALSE(predicate.Run(*cookie)) << cookie->DebugString();
+  for (const auto& cookie : valid_cookies) {
+    EXPECT_TRUE(FilterMatchesCookie(deletion_filter, *cookie))
+        << cookie->DebugString();
+  }
+  for (const auto& cookie : invalid_cookies) {
+    EXPECT_FALSE(FilterMatchesCookie(deletion_filter, *cookie))
+        << cookie->DebugString();
+  }
 }
 
 }  // namespace content

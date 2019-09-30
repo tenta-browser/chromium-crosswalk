@@ -11,6 +11,7 @@
 #include "ui/views/layout/layout_manager.h"
 #include "ui/views/window/frame_buttons.h"
 
+class HostedAppButtonContainer;
 class OpaqueBrowserFrameViewLayoutDelegate;
 
 namespace views {
@@ -28,7 +29,7 @@ class OpaqueBrowserFrameViewLayout : public views::LayoutManager {
   static const int kContentEdgeShadowThickness;
 
   // Constants public for testing only.
-  static const int kNonClientRestoredExtraThickness;
+  static constexpr int kRefreshNonClientExtraTopThickness = 1;
   static const int kFrameBorderThickness;
   static const int kTitlebarTopEdgeThickness;
   static const int kIconLeftSpacing;
@@ -49,9 +50,8 @@ class OpaqueBrowserFrameViewLayout : public views::LayoutManager {
       const std::vector<views::FrameButton>& leading_buttons,
       const std::vector<views::FrameButton>& trailing_buttons);
 
-  gfx::Rect GetBoundsForTabStrip(
-      const gfx::Size& tabstrip_preferred_size,
-      int available_width) const;
+  gfx::Rect GetBoundsForTabStrip(const gfx::Size& tabstrip_preferred_size,
+                                 int total_width) const;
 
   gfx::Size GetMinimumSize(int available_width) const;
 
@@ -67,6 +67,11 @@ class OpaqueBrowserFrameViewLayout : public views::LayoutManager {
   // This does not include any client edge.  If |restored| is true, acts as if
   // the window is restored regardless of the real mode.
   int FrameBorderThickness(bool restored) const;
+
+  // Returns the thickness of the border that makes up the window frame edge
+  // along the top of the frame. If |restored| is true, this acts as if the
+  // window is restored regardless of the actual mode.
+  int FrameTopBorderThickness(bool restored) const;
 
   // Returns the thickness of the entire nonclient left, right, and bottom
   // borders, including both the window frame and any client edge.
@@ -129,11 +134,11 @@ class OpaqueBrowserFrameViewLayout : public views::LayoutManager {
 
   const gfx::Rect& client_view_bounds() const { return client_view_bounds_; }
 
-  // Determines whether the title bar is condensed vertically, as when the
-  // window is maximized. If true, the title bar is just the height of a tab,
-  // rather than having extra vertical space above the tabs. This also removes
-  // the thick frame border and rounded corners.
-  bool IsTitleBarCondensed() const;
+  // Returns the extra thickness of the area above the tabs. The value returned
+  // is dependent on whether in material refresh mode or not.
+  int GetNonClientRestoredExtraThickness() const;
+
+  bool HasClientEdge() const;
 
  protected:
   // Whether a specific button should be inserted on the leading or trailing
@@ -154,10 +159,10 @@ class OpaqueBrowserFrameViewLayout : public views::LayoutManager {
 
   views::View* new_avatar_button_;
 
-  // How far from the leading/trailing edge of the view the next window control
-  // should be placed.
-  int leading_button_start_;
-  int trailing_button_start_;
+  // The leading and trailing x positions of the empty space available for
+  // laying out titlebar elements.
+  int available_space_leading_x_;
+  int available_space_trailing_x_;
 
   // The size of the window buttons, and the avatar menu item (if any). This
   // does not count labels or other elements that should be counted in a
@@ -169,9 +174,9 @@ class OpaqueBrowserFrameViewLayout : public views::LayoutManager {
   // the tab strip (instead of the usual left).
   bool ShouldIncognitoIconBeOnRight() const;
 
-  // Determines the amount of spacing between the New Tab button and the element
-  // to its immediate right.
-  int NewTabCaptionSpacing() const;
+  // Determines the amount of spacing between the tabstrip and the caption
+  // buttons.
+  int TabStripCaptionSpacing() const;
 
   // Layout various sub-components of this view.
   void LayoutWindowControls(views::View* host);
@@ -194,7 +199,7 @@ class OpaqueBrowserFrameViewLayout : public views::LayoutManager {
   // Internal implementation of ViewAdded() and ViewRemoved().
   void SetView(int id, views::View* view);
 
-  // Overriden from views::LayoutManager:
+  // views::LayoutManager:
   void Layout(views::View* host) override;
   gfx::Size GetPreferredSize(const views::View* host) const override;
   void ViewAdded(views::View* host, views::View* view) override;
@@ -227,6 +232,8 @@ class OpaqueBrowserFrameViewLayout : public views::LayoutManager {
 
   views::View* window_icon_;
   views::Label* window_title_;
+
+  HostedAppButtonContainer* hosted_app_button_container_ = nullptr;
 
   views::View* incognito_icon_;
 

@@ -12,3 +12,8 @@ NSString* const kPopupMenuToolsMenuTableViewId =
     @"kPopupMenuToolsMenuTableViewId";
 NSString* const kPopupMenuNavigationTableViewId =
     @"kPopupMenuNavigationTableViewId";
+
+const CGFloat kSelectedItemBackgroundAlpha = 0.05;
+const CGFloat kHighlightAnimationDuration = 0.5;
+
+const CGFloat kPopupMenuCornerRadius = 13;

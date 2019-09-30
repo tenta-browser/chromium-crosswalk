@@ -18,7 +18,8 @@
 #include "content/browser/service_worker/embedded_worker_test_helper.h"
 #include "content/browser/service_worker/service_worker_context_wrapper.h"
 #include "content/common/service_worker/service_worker_types.h"
-#include "content/public/test/mock_resource_context.h"
+#include "content/public/browser/permission_type.h"
+#include "content/public/test/mock_permission_manager.h"
 #include "content/public/test/test_browser_context.h"
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "content/public/test/test_utils.h"
@@ -26,15 +27,17 @@
 #include "content/test/test_content_browser_client.h"
 #include "mojo/public/cpp/bindings/binding.h"
 #include "mojo/public/cpp/bindings/interface_request.h"
+#include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/public/platform/modules/notifications/notification_service.mojom.h"
 #include "third_party/blink/public/platform/modules/permissions/permission_status.mojom.h"
 
+using ::testing::Return;
+using ::testing::_;
+
 namespace content {
 
 namespace {
-
-const int kFakeRenderProcessId = 1;
 
 const char kTestOrigin[] = "https://example.com";
 const char kTestServiceWorkerUrl[] = "https://example.com/sw.js";
@@ -53,8 +56,12 @@ class MockNonPersistentNotificationListener
 
   // NonPersistentNotificationListener interface.
   void OnShow() override {}
-  void OnClick() override {}
-  void OnClose() override {}
+  void OnClick(OnClickCallback completed_closure) override {
+    std::move(completed_closure).Run();
+  }
+  void OnClose(OnCloseCallback completed_closure) override {
+    std::move(completed_closure).Run();
+  }
 
  private:
   mojo::Binding<blink::mojom::NonPersistentNotificationListener> binding_;
@@ -105,10 +112,14 @@ class BlinkNotificationServiceImplTest : public ::testing::Test {
 
     blink::mojom::NotificationServicePtr notification_service_ptr;
     notification_service_ = std::make_unique<BlinkNotificationServiceImpl>(
-        notification_context_.get(), &browser_context_, &resource_context_,
-        embedded_worker_helper_->context_wrapper(), kFakeRenderProcessId,
+        notification_context_.get(), &browser_context_,
+        embedded_worker_helper_->context_wrapper(),
         url::Origin::Create(GURL(kTestOrigin)),
         mojo::MakeRequest(&notification_service_ptr));
+
+    // Provide a mock permission manager to the |browser_context_|.
+    browser_context_.SetPermissionControllerDelegate(
+        std::make_unique<testing::NiceMock<MockPermissionManager>>());
   }
 
   void TearDown() override {
@@ -130,10 +141,10 @@ class BlinkNotificationServiceImplTest : public ::testing::Test {
       base::RunLoop run_loop;
       embedded_worker_helper_->context()->RegisterServiceWorker(
           GURL(kTestServiceWorkerUrl), options,
-          base::AdaptCallbackForRepeating(base::BindOnce(
+          base::BindOnce(
               &BlinkNotificationServiceImplTest::DidRegisterServiceWorker,
               base::Unretained(this), &service_worker_registration_id,
-              run_loop.QuitClosure())));
+              run_loop.QuitClosure()));
       run_loop.Run();
     }
 
@@ -164,11 +175,12 @@ class BlinkNotificationServiceImplTest : public ::testing::Test {
 
   void DidRegisterServiceWorker(int64_t* out_service_worker_registration_id,
                                 base::OnceClosure quit_closure,
-                                ServiceWorkerStatusCode status,
+                                blink::ServiceWorkerStatusCode status,
                                 const std::string& status_message,
                                 int64_t service_worker_registration_id) {
     DCHECK(out_service_worker_registration_id);
-    EXPECT_EQ(SERVICE_WORKER_OK, status) << ServiceWorkerStatusToString(status);
+    EXPECT_EQ(blink::ServiceWorkerStatusCode::kOk, status)
+        << blink::ServiceWorkerStatusToString(status);
 
     *out_service_worker_registration_id = service_worker_registration_id;
 
@@ -178,10 +190,11 @@ class BlinkNotificationServiceImplTest : public ::testing::Test {
   void DidFindServiceWorkerRegistration(
       scoped_refptr<ServiceWorkerRegistration>* out_service_worker_registration,
       base::OnceClosure quit_closure,
-      ServiceWorkerStatusCode status,
+      blink::ServiceWorkerStatusCode status,
       scoped_refptr<ServiceWorkerRegistration> service_worker_registration) {
     DCHECK(out_service_worker_registration);
-    EXPECT_EQ(SERVICE_WORKER_OK, status) << ServiceWorkerStatusToString(status);
+    EXPECT_EQ(blink::ServiceWorkerStatusCode::kOk, status)
+        << blink::ServiceWorkerStatusToString(status);
 
     *out_service_worker_registration = service_worker_registration;
 
@@ -189,8 +202,10 @@ class BlinkNotificationServiceImplTest : public ::testing::Test {
   }
 
   void DidGetPermissionStatus(
+      base::OnceClosure quit_closure,
       blink::mojom::PermissionStatus permission_status) {
     permission_callback_result_ = permission_status;
+    std::move(quit_closure).Run();
   }
 
   blink::mojom::PermissionStatus GetPermissionCallbackResult() {
@@ -217,6 +232,13 @@ class BlinkNotificationServiceImplTest : public ::testing::Test {
       std::unique_ptr<std::set<std::string>> notification_ids,
       bool supports_synchronization) {
     get_displayed_callback_result_ = *notification_ids;
+    std::move(quit_closure).Run();
+  }
+
+  void DidReadNotificationData(base::OnceClosure quit_closure,
+                               bool success,
+                               const NotificationDatabaseData& data) {
+    read_notification_data_callback_result_ = success;
     std::move(quit_closure).Run();
   }
 
@@ -259,6 +281,32 @@ class BlinkNotificationServiceImplTest : public ::testing::Test {
     return get_displayed_callback_result_;
   }
 
+  // Synchronous wrapper of
+  // PlatformNotificationContext::ReadNotificationData
+  bool ReadNotificationData(const std::string& notification_id) {
+    base::RunLoop run_loop;
+    notification_context_->ReadNotificationDataAndRecordInteraction(
+        notification_id, GURL(kTestOrigin),
+        PlatformNotificationContext::Interaction::NONE,
+        base::AdaptCallbackForRepeating(base::BindOnce(
+            &BlinkNotificationServiceImplTest::DidReadNotificationData,
+            base::Unretained(this), run_loop.QuitClosure())));
+    run_loop.Run();
+    return read_notification_data_callback_result_;
+  }
+
+  // Updates the permission status for the |kTestOrigin| to the given
+  // |permission_status| through the PermissionManager.
+  void SetPermissionStatus(blink::mojom::PermissionStatus permission_status) {
+    MockPermissionManager* mock_permission_manager =
+        static_cast<MockPermissionManager*>(
+            browser_context_.GetPermissionControllerDelegate());
+
+    ON_CALL(*mock_permission_manager,
+            GetPermissionStatus(PermissionType::NOTIFICATIONS, _, _))
+        .WillByDefault(Return(permission_status));
+  }
+
  protected:
   TestBrowserThreadBundle thread_bundle_;  // Must be first member.
 
@@ -267,6 +315,8 @@ class BlinkNotificationServiceImplTest : public ::testing::Test {
   std::unique_ptr<BlinkNotificationServiceImpl> notification_service_;
 
   TestBrowserContext browser_context_;
+
+  scoped_refptr<PlatformNotificationContextImpl> notification_context_;
 
   MockPlatformNotificationService mock_platform_service_;
 
@@ -277,8 +327,6 @@ class BlinkNotificationServiceImplTest : public ::testing::Test {
  private:
   NotificationBrowserClient notification_browser_client_;
 
-  scoped_refptr<PlatformNotificationContextImpl> notification_context_;
-
   blink::mojom::PermissionStatus permission_callback_result_ =
       blink::mojom::PermissionStatus::ASK;
 
@@ -286,41 +334,54 @@ class BlinkNotificationServiceImplTest : public ::testing::Test {
 
   std::vector<std::string> get_notifications_callback_result_;
 
-  MockResourceContext resource_context_;
+  bool read_notification_data_callback_result_ = false;
 
   DISALLOW_COPY_AND_ASSIGN(BlinkNotificationServiceImplTest);
 };
 
 TEST_F(BlinkNotificationServiceImplTest, GetPermissionStatus) {
-  mock_platform_service_.SetPermission(blink::mojom::PermissionStatus::GRANTED);
+  SetPermissionStatus(blink::mojom::PermissionStatus::GRANTED);
 
-  notification_service_->GetPermissionStatus(
-      base::BindOnce(&BlinkNotificationServiceImplTest::DidGetPermissionStatus,
-                     base::Unretained(this)));
+  {
+    base::RunLoop run_loop;
+    notification_service_->GetPermissionStatus(base::BindOnce(
+        &BlinkNotificationServiceImplTest::DidGetPermissionStatus,
+        base::Unretained(this), run_loop.QuitClosure()));
+    run_loop.Run();
+  }
 
   EXPECT_EQ(blink::mojom::PermissionStatus::GRANTED,
             GetPermissionCallbackResult());
 
-  mock_platform_service_.SetPermission(blink::mojom::PermissionStatus::DENIED);
+  SetPermissionStatus(blink::mojom::PermissionStatus::DENIED);
 
-  notification_service_->GetPermissionStatus(
-      base::BindOnce(&BlinkNotificationServiceImplTest::DidGetPermissionStatus,
-                     base::Unretained(this)));
+  {
+    base::RunLoop run_loop;
+    notification_service_->GetPermissionStatus(base::BindOnce(
+        &BlinkNotificationServiceImplTest::DidGetPermissionStatus,
+        base::Unretained(this), run_loop.QuitClosure()));
+    run_loop.Run();
+  }
 
   EXPECT_EQ(blink::mojom::PermissionStatus::DENIED,
             GetPermissionCallbackResult());
 
-  mock_platform_service_.SetPermission(blink::mojom::PermissionStatus::ASK);
-  notification_service_->GetPermissionStatus(
-      base::BindOnce(&BlinkNotificationServiceImplTest::DidGetPermissionStatus,
-                     base::Unretained(this)));
+  SetPermissionStatus(blink::mojom::PermissionStatus::ASK);
+
+  {
+    base::RunLoop run_loop;
+    notification_service_->GetPermissionStatus(base::BindOnce(
+        &BlinkNotificationServiceImplTest::DidGetPermissionStatus,
+        base::Unretained(this), run_loop.QuitClosure()));
+    run_loop.Run();
+  }
 
   EXPECT_EQ(blink::mojom::PermissionStatus::ASK, GetPermissionCallbackResult());
 }
 
 TEST_F(BlinkNotificationServiceImplTest,
        DisplayNonPersistentNotificationWithPermission) {
-  mock_platform_service_.SetPermission(blink::mojom::PermissionStatus::GRANTED);
+  SetPermissionStatus(blink::mojom::PermissionStatus::GRANTED);
 
   notification_service_->DisplayNonPersistentNotification(
       "token", PlatformNotificationData(), NotificationResources(),
@@ -337,7 +398,7 @@ TEST_F(BlinkNotificationServiceImplTest,
 
 TEST_F(BlinkNotificationServiceImplTest,
        DisplayNonPersistentNotificationWithoutPermission) {
-  mock_platform_service_.SetPermission(blink::mojom::PermissionStatus::DENIED);
+  SetPermissionStatus(blink::mojom::PermissionStatus::DENIED);
 
   notification_service_->DisplayNonPersistentNotification(
       "token", PlatformNotificationData(), NotificationResources(),
@@ -354,7 +415,7 @@ TEST_F(BlinkNotificationServiceImplTest,
 
 TEST_F(BlinkNotificationServiceImplTest,
        DisplayPersistentNotificationWithPermission) {
-  mock_platform_service_.SetPermission(blink::mojom::PermissionStatus::GRANTED);
+  SetPermissionStatus(blink::mojom::PermissionStatus::GRANTED);
 
   scoped_refptr<ServiceWorkerRegistration> registration;
   RegisterServiceWorker(&registration);
@@ -371,9 +432,68 @@ TEST_F(BlinkNotificationServiceImplTest,
   EXPECT_EQ(1u, GetDisplayedNotifications().size());
 }
 
+TEST_F(BlinkNotificationServiceImplTest, CloseDisplayedPersistentNotification) {
+  SetPermissionStatus(blink::mojom::PermissionStatus::GRANTED);
+
+  scoped_refptr<ServiceWorkerRegistration> registration;
+  RegisterServiceWorker(&registration);
+
+  DisplayPersistentNotificationSync(
+      registration->id(), PlatformNotificationData(), NotificationResources());
+
+  ASSERT_EQ(blink::mojom::PersistentNotificationError::NONE,
+            display_persistent_callback_result_);
+
+  // Wait for service to receive the Display call.
+  RunAllTasksUntilIdle();
+
+  std::set<std::string> notification_ids = GetDisplayedNotifications();
+  ASSERT_EQ(1u, notification_ids.size());
+
+  notification_service_->ClosePersistentNotification(*notification_ids.begin());
+
+  // Wait for service to receive the Close call.
+  RunAllTasksUntilIdle();
+
+  EXPECT_EQ(0u, GetDisplayedNotifications().size());
+}
+
+TEST_F(BlinkNotificationServiceImplTest,
+       ClosePersistentNotificationDeletesFromDatabase) {
+  SetPermissionStatus(blink::mojom::PermissionStatus::GRANTED);
+
+  scoped_refptr<ServiceWorkerRegistration> registration;
+  RegisterServiceWorker(&registration);
+
+  DisplayPersistentNotificationSync(
+      registration->id(), PlatformNotificationData(), NotificationResources());
+
+  ASSERT_EQ(blink::mojom::PersistentNotificationError::NONE,
+            display_persistent_callback_result_);
+
+  // Wait for service to receive the Display call.
+  RunAllTasksUntilIdle();
+
+  std::set<std::string> notification_ids = GetDisplayedNotifications();
+  ASSERT_EQ(1u, notification_ids.size());
+
+  std::string notification_id = *notification_ids.begin();
+
+  // Check data was indeed written.
+  ASSERT_EQ(true /* success */, ReadNotificationData(notification_id));
+
+  notification_service_->ClosePersistentNotification(notification_id);
+
+  // Wait for service to receive the Close call.
+  RunAllTasksUntilIdle();
+
+  // Data should now be deleted.
+  EXPECT_EQ(false /* success */, ReadNotificationData(notification_id));
+}
+
 TEST_F(BlinkNotificationServiceImplTest,
        DisplayPersistentNotificationWithoutPermission) {
-  mock_platform_service_.SetPermission(blink::mojom::PermissionStatus::DENIED);
+  SetPermissionStatus(blink::mojom::PermissionStatus::DENIED);
 
   scoped_refptr<ServiceWorkerRegistration> registration;
   RegisterServiceWorker(&registration);
@@ -392,7 +512,7 @@ TEST_F(BlinkNotificationServiceImplTest,
 
 TEST_F(BlinkNotificationServiceImplTest,
        DisplayMultiplePersistentNotifications) {
-  mock_platform_service_.SetPermission(blink::mojom::PermissionStatus::GRANTED);
+  SetPermissionStatus(blink::mojom::PermissionStatus::GRANTED);
 
   scoped_refptr<ServiceWorkerRegistration> registration;
   RegisterServiceWorker(&registration);
@@ -410,7 +530,7 @@ TEST_F(BlinkNotificationServiceImplTest,
 }
 
 TEST_F(BlinkNotificationServiceImplTest, GetNotifications) {
-  mock_platform_service_.SetPermission(blink::mojom::PermissionStatus::GRANTED);
+  SetPermissionStatus(blink::mojom::PermissionStatus::GRANTED);
 
   scoped_refptr<ServiceWorkerRegistration> registration;
   RegisterServiceWorker(&registration);
@@ -429,7 +549,7 @@ TEST_F(BlinkNotificationServiceImplTest, GetNotifications) {
 }
 
 TEST_F(BlinkNotificationServiceImplTest, GetNotificationsWithoutPermission) {
-  mock_platform_service_.SetPermission(blink::mojom::PermissionStatus::GRANTED);
+  SetPermissionStatus(blink::mojom::PermissionStatus::GRANTED);
 
   scoped_refptr<ServiceWorkerRegistration> registration;
   RegisterServiceWorker(&registration);
@@ -440,14 +560,14 @@ TEST_F(BlinkNotificationServiceImplTest, GetNotificationsWithoutPermission) {
   // Wait for service to receive all the Display calls.
   RunAllTasksUntilIdle();
 
-  mock_platform_service_.SetPermission(blink::mojom::PermissionStatus::DENIED);
+  SetPermissionStatus(blink::mojom::PermissionStatus::DENIED);
 
   EXPECT_EQ(
       0u, GetNotificationsSync(registration->id(), "" /* filter_tag */).size());
 }
 
 TEST_F(BlinkNotificationServiceImplTest, GetNotificationsWithFilter) {
-  mock_platform_service_.SetPermission(blink::mojom::PermissionStatus::GRANTED);
+  SetPermissionStatus(blink::mojom::PermissionStatus::GRANTED);
 
   scoped_refptr<ServiceWorkerRegistration> registration;
   RegisterServiceWorker(&registration);

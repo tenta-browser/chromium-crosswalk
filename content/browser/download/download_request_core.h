@@ -109,7 +109,7 @@ class CONTENT_EXPORT DownloadRequestCore
   std::string DebugString() const;
 
   static std::unique_ptr<net::URLRequest> CreateRequestOnIOThread(
-      uint32_t download_id,
+      bool is_new_download,
       download::DownloadUrlParameters* params);
 
   // Size of the buffer used between the DownloadRequestCore and the
@@ -129,7 +129,7 @@ class CONTENT_EXPORT DownloadRequestCore
   // "Passthrough" fields. These are only kept here so that they can be used to
   // populate the download::DownloadCreateInfo when the time comes.
   std::unique_ptr<download::DownloadSaveInfo> save_info_;
-  uint32_t download_id_;
+  bool is_new_download_;
   std::string guid_;
   bool fetch_error_body_;
   download::DownloadUrlParameters::RequestHeadersType request_headers_;
@@ -144,11 +144,6 @@ class CONTENT_EXPORT DownloadRequestCore
   // system enters power saving mode while a URLRequest is alive, it can cause
   // URLRequest to fail and the associated download will be interrupted.
   device::mojom::WakeLockPtr wake_lock_;
-
-  // The following are used to collect stats.
-  base::TimeTicks download_start_time_;
-  base::TimeTicks last_stream_pause_time_;
-  base::TimeDelta total_pause_time_;
 
   int64_t bytes_read_;
 

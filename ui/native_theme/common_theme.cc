@@ -6,7 +6,6 @@
 
 #include "base/logging.h"
 #include "third_party/skia/include/core/SkCanvas.h"
-#include "ui/base/material_design/material_design_controller.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/color_palette.h"
@@ -45,36 +44,33 @@ SkColor GetAuraColor(NativeTheme::ColorId color_id,
   }
 
   // Second wave of MD colors (colors that only appear in secondary UI).
-  if (ui::MaterialDesignController::IsSecondaryUiMaterial()) {
-    static const SkColor kPrimaryTextColor = SK_ColorBLACK;
+  static const SkColor kPrimaryTextColor = SK_ColorBLACK;
 
-    switch (color_id) {
-      // Labels
-      case NativeTheme::kColorId_LabelEnabledColor:
-        return kPrimaryTextColor;
-      case NativeTheme::kColorId_LabelDisabledColor:
-        return SkColorSetA(
-            base_theme->GetSystemColor(NativeTheme::kColorId_LabelEnabledColor),
-            gfx::kDisabledControlAlpha);
+  switch (color_id) {
+    // Labels
+    case NativeTheme::kColorId_LabelEnabledColor:
+      return kPrimaryTextColor;
+    case NativeTheme::kColorId_LabelDisabledColor:
+      return SkColorSetA(
+          base_theme->GetSystemColor(NativeTheme::kColorId_LabelEnabledColor),
+          gfx::kDisabledControlAlpha);
 
-      // FocusableBorder
-      case NativeTheme::kColorId_UnfocusedBorderColor:
-        return SkColorSetA(SK_ColorBLACK, 0x4e);
+    // FocusableBorder
+    case NativeTheme::kColorId_UnfocusedBorderColor:
+      return SkColorSetA(SK_ColorBLACK, 0x4e);
 
-      // Textfields
-      case NativeTheme::kColorId_TextfieldDefaultColor:
-        return kPrimaryTextColor;
-      case NativeTheme::kColorId_TextfieldDefaultBackground:
-        return base_theme->GetSystemColor(
-            NativeTheme::kColorId_DialogBackground);
-      case NativeTheme::kColorId_TextfieldReadOnlyColor:
-        return SkColorSetA(base_theme->GetSystemColor(
-                               NativeTheme::kColorId_TextfieldDefaultColor),
-                           gfx::kDisabledControlAlpha);
+    // Textfields
+    case NativeTheme::kColorId_TextfieldDefaultColor:
+      return kPrimaryTextColor;
+    case NativeTheme::kColorId_TextfieldDefaultBackground:
+      return base_theme->GetSystemColor(NativeTheme::kColorId_DialogBackground);
+    case NativeTheme::kColorId_TextfieldReadOnlyColor:
+      return SkColorSetA(base_theme->GetSystemColor(
+                             NativeTheme::kColorId_TextfieldDefaultColor),
+                         gfx::kDisabledControlAlpha);
 
-      default:
-        break;
-    }
+    default:
+      break;
   }
 
   // Shared constant for disabled text.
@@ -89,6 +85,10 @@ SkColor GetAuraColor(NativeTheme::ColorId color_id,
   static const SkColor kBlueButtonTextColor = SK_ColorWHITE;
   static const SkColor kBlueButtonShadowColor = SkColorSetRGB(0x53, 0x8C, 0xEA);
   // MenuItem:
+  static const SkColor kTouchableMenuItemLabelColor =
+      SkColorSetRGB(0x20, 0x21, 0x24);
+  static const SkColor kActionableSubmenuVerticalSeparatorColor =
+      SkColorSetARGB(0x24, 0x20, 0x21, 0x24);
   static const SkColor kMenuBackgroundColor = SK_ColorWHITE;
   static const SkColor kMenuHighlightBackgroundColor =
       SkColorSetA(SK_ColorBLACK, 0x14);
@@ -154,7 +154,7 @@ SkColor GetAuraColor(NativeTheme::ColorId color_id,
   static const SkColor kTableGroupingIndicatorColor =
       SkColorSetRGB(0xCC, 0xCC, 0xCC);
   // Material spinner/throbber:
-  static const SkColor kThrobberSpinningColor = gfx::kGoogleBlue500;
+  static const SkColor kThrobberSpinningColor = gfx::kGoogleBlue600;
   static const SkColor kThrobberWaitingColor = SkColorSetRGB(0xA6, 0xA6, 0xA6);
   static const SkColor kThrobberLightColor = SkColorSetRGB(0xF4, 0xF8, 0xFD);
 
@@ -187,6 +187,10 @@ SkColor GetAuraColor(NativeTheme::ColorId color_id,
       return kDisabledTextColor;
 
     // MenuItem
+    case NativeTheme::kColorId_TouchableMenuItemLabelColor:
+      return kTouchableMenuItemLabelColor;
+    case NativeTheme::kColorId_ActionableSubmenuVerticalSeparatorColor:
+      return kActionableSubmenuVerticalSeparatorColor;
     case NativeTheme::kColorId_SelectedMenuItemForegroundColor:
       return kSelectedMenuItemForegroundColor;
     case NativeTheme::kColorId_MenuBorderColor:
@@ -344,11 +348,11 @@ SkColor GetAuraColor(NativeTheme::ColorId color_id,
 
     // Alert icon colors
     case NativeTheme::kColorId_AlertSeverityLow:
-      return gfx::kGoogleGreen700;
+      return gfx::kGoogleGreen600;
     case NativeTheme::kColorId_AlertSeverityMedium:
       return gfx::kGoogleYellow700;
     case NativeTheme::kColorId_AlertSeverityHigh:
-      return gfx::kGoogleRed700;
+      return gfx::kGoogleRed600;
 
     case NativeTheme::kColorId_NumColors:
       break;

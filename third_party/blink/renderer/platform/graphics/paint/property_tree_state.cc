@@ -10,11 +10,10 @@ namespace blink {
 
 const PropertyTreeState& PropertyTreeState::Root() {
   DEFINE_STATIC_LOCAL(
-      std::unique_ptr<PropertyTreeState>, root,
-      (std::make_unique<PropertyTreeState>(TransformPaintPropertyNode::Root(),
-                                           ClipPaintPropertyNode::Root(),
-                                           EffectPaintPropertyNode::Root())));
-  return *root;
+      PropertyTreeState, root,
+      (&TransformPaintPropertyNode::Root(), &ClipPaintPropertyNode::Root(),
+       &EffectPaintPropertyNode::Root()));
+  return root;
 }
 
 const CompositorElementId PropertyTreeState::GetCompositorElementId(
@@ -53,5 +52,10 @@ String PropertyTreeState::ToTreeString() const {
 }
 
 #endif
+
+size_t PropertyTreeState::CacheMemoryUsageInBytes() const {
+  return Clip()->CacheMemoryUsageInBytes() +
+         Transform()->CacheMemoryUsageInBytes();
+}
 
 }  // namespace blink

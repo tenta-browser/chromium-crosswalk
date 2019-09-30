@@ -30,6 +30,7 @@
 #include "net/http/transport_security_state.h"
 #include "net/proxy_resolution/proxy_resolution_service.h"
 #include "net/ssl/ssl_config_service_defaults.h"
+#include "net/test/test_with_scoped_task_environment.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace net {
@@ -234,7 +235,7 @@ void MockHttpStream::CompleteRead() {
   base::ResetAndReturn(&callback_).Run(result);
 }
 
-class HttpResponseBodyDrainerTest : public testing::Test {
+class HttpResponseBodyDrainerTest : public TestWithScopedTaskEnvironment {
  protected:
   HttpResponseBodyDrainerTest()
       : proxy_resolution_service_(ProxyResolutionService::CreateDirect()),
@@ -259,12 +260,12 @@ class HttpResponseBodyDrainerTest : public testing::Test {
   }
 
   std::unique_ptr<ProxyResolutionService> proxy_resolution_service_;
-  scoped_refptr<SSLConfigService> ssl_config_service_;
+  std::unique_ptr<SSLConfigService> ssl_config_service_;
   std::unique_ptr<HttpServerPropertiesImpl> http_server_properties_;
   MockCertVerifier cert_verifier_;
   TransportSecurityState transport_security_state_;
   MultiLogCTVerifier ct_verifier_;
-  CTPolicyEnforcer ct_policy_enforcer_;
+  DefaultCTPolicyEnforcer ct_policy_enforcer_;
   const std::unique_ptr<HttpNetworkSession> session_;
   CloseResultWaiter result_waiter_;
   MockHttpStream* const mock_stream_;  // Owned by |drainer_|.

@@ -5,7 +5,6 @@
 #include "remoting/protocol/connection_tester.h"
 
 #include "base/bind.h"
-#include "base/message_loop/message_loop.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "net/base/io_buffer.h"
 #include "net/base/net_errors.h"
@@ -56,12 +55,13 @@ void StreamConnectionTester::CheckResults() {
 
 void StreamConnectionTester::Done() {
   done_ = true;
-  task_runner_->PostTask(FROM_HERE, base::MessageLoop::QuitWhenIdleClosure());
+  task_runner_->PostTask(FROM_HERE,
+                         base::RunLoop::QuitCurrentWhenIdleClosureDeprecated());
 }
 
 void StreamConnectionTester::InitBuffers() {
-  output_buffer_ = new net::DrainableIOBuffer(
-      new net::IOBuffer(test_data_size_), test_data_size_);
+  output_buffer_ = base::MakeRefCounted<net::DrainableIOBuffer>(
+      base::MakeRefCounted<net::IOBuffer>(test_data_size_), test_data_size_);
   for (int i = 0; i < test_data_size_; ++i) {
     output_buffer_->data()[i] = static_cast<char>(i);
   }
@@ -173,7 +173,8 @@ void DatagramConnectionTester::CheckResults() {
 
 void DatagramConnectionTester::Done() {
   done_ = true;
-  task_runner_->PostTask(FROM_HERE, base::MessageLoop::QuitWhenIdleClosure());
+  task_runner_->PostTask(FROM_HERE,
+                         base::RunLoop::QuitCurrentWhenIdleClosureDeprecated());
 }
 
 void DatagramConnectionTester::DoWrite() {

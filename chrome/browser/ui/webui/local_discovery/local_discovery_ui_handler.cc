@@ -9,8 +9,8 @@
 #include <utility>
 
 #include "base/bind.h"
-#include "base/message_loop/message_loop.h"
 #include "base/metrics/user_metrics.h"
+#include "base/no_destructor.h"
 #include "base/stl_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
@@ -21,8 +21,7 @@
 #include "chrome/browser/printing/cloud_print/privet_device_lister_impl.h"
 #include "chrome/browser/printing/cloud_print/privet_http_asynchronous_factory.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/signin/profile_oauth2_token_service_factory.h"
-#include "chrome/browser/signin/signin_manager_factory.h"
+#include "chrome/browser/signin/identity_manager_factory.h"
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/browser_tabstrip.h"
 #include "chrome/browser/ui/chrome_pages.h"
@@ -30,9 +29,9 @@
 #include "chrome/grit/generated_resources.h"
 #include "components/cloud_devices/common/cloud_devices_urls.h"
 #include "components/prefs/pref_service.h"
-#include "components/signin/core/browser/profile_oauth2_token_service.h"
 #include "content/public/browser/web_ui.h"
 #include "printing/buildflags/buildflags.h"
+#include "services/network/public/cpp/shared_url_loader_factory.h"
 #include "ui/base/l10n/l10n_util.h"
 
 #if BUILDFLAG(ENABLE_PRINT_PREVIEW) && !defined(OS_CHROMEOS)
@@ -95,7 +94,26 @@ void ReadDevicesList(const CloudPrintPrinterList::DeviceList& devices,
   }
 }
 
+scoped_refptr<network::SharedURLLoaderFactory>&
+GetURLLoaderFactoryForTesting() {
+  static base::NoDestructor<scoped_refptr<network::SharedURLLoaderFactory>>
+      instance;
+  return *instance;
+}
+
 }  // namespace
+
+LocalDiscoveryUIHandler::SetURLLoaderFactoryForTesting::
+    SetURLLoaderFactoryForTesting(
+        scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory) {
+  DCHECK(!GetURLLoaderFactoryForTesting());
+  GetURLLoaderFactoryForTesting() = url_loader_factory;
+}
+
+LocalDiscoveryUIHandler::SetURLLoaderFactoryForTesting::
+    ~SetURLLoaderFactoryForTesting() {
+  GetURLLoaderFactoryForTesting() = nullptr;
+}
 
 LocalDiscoveryUIHandler::LocalDiscoveryUIHandler()
     : is_visible_(false),
@@ -105,10 +123,10 @@ LocalDiscoveryUIHandler::LocalDiscoveryUIHandler()
 
 LocalDiscoveryUIHandler::~LocalDiscoveryUIHandler() {
   Profile* profile = Profile::FromWebUI(web_ui());
-  SigninManagerBase* signin_manager =
-      SigninManagerFactory::GetInstance()->GetForProfile(profile);
-  if (signin_manager)
-    signin_manager->RemoveObserver(this);
+  identity::IdentityManager* identity_manager =
+      IdentityManagerFactory::GetForProfile(profile);
+  if (identity_manager)
+    identity_manager->RemoveObserver(this);
   ResetCurrentRegistration();
   SetIsVisible(false);
 }
@@ -171,14 +189,20 @@ void LocalDiscoveryUIHandler::HandleStart(const base::ListValue* args) {
     privet_lister_.reset(
         new cloud_print::PrivetDeviceListerImpl(service_discovery_client_.get(),
                                                 this));
+
+    scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory =
+        GetURLLoaderFactoryForTesting();
+    if (!url_loader_factory)
+      url_loader_factory = profile->GetURLLoaderFactory();
+
     privet_http_factory_ =
         cloud_print::PrivetHTTPAsynchronousFactory::CreateInstance(
-            profile->GetRequestContext());
+            url_loader_factory);
 
-    SigninManagerBase* signin_manager =
-        SigninManagerFactory::GetInstance()->GetForProfile(profile);
-    if (signin_manager)
-      signin_manager->AddObserver(this);
+    identity::IdentityManager* identity_manager =
+        IdentityManagerFactory::GetForProfile(profile);
+    if (identity_manager)
+      identity_manager->AddObserver(this);
   }
 
   privet_lister_->Start();
@@ -404,14 +428,13 @@ void LocalDiscoveryUIHandler::OnDeviceListUnavailable() {
   CheckListingDone();
 }
 
-void LocalDiscoveryUIHandler::GoogleSigninSucceeded(
-    const std::string& account_id,
-    const std::string& username) {
+void LocalDiscoveryUIHandler::OnPrimaryAccountSet(
+    const AccountInfo& primary_account_info) {
   CheckUserLoggedIn();
 }
 
-void LocalDiscoveryUIHandler::GoogleSignedOut(const std::string& account_id,
-                                              const std::string& username) {
+void LocalDiscoveryUIHandler::OnPrimaryAccountCleared(
+    const AccountInfo& previous_primary_account_info) {
   CheckUserLoggedIn();
 }
 
@@ -458,12 +481,12 @@ void LocalDiscoveryUIHandler::SetIsVisible(bool visible) {
 
 std::string LocalDiscoveryUIHandler::GetSyncAccount() const {
   Profile* profile = Profile::FromWebUI(web_ui());
-  SigninManagerBase* signin_manager =
-      SigninManagerFactory::GetForProfileIfExists(profile);
+  identity::IdentityManager* identity_manager =
+      IdentityManagerFactory::GetForProfile(profile);
 
   std::string email;
-  if (signin_manager)
-    email = signin_manager->GetAuthenticatedAccountInfo().email;
+  if (identity_manager && identity_manager->HasPrimaryAccount())
+    email = identity_manager->GetPrimaryAccountInfo().email;
   return email;
 }
 
@@ -515,19 +538,17 @@ std::unique_ptr<GCDApiFlow> LocalDiscoveryUIHandler::CreateApiFlow() {
   if (!profile)
     return std::unique_ptr<GCDApiFlow>();
 
-  ProfileOAuth2TokenService* token_service =
-      ProfileOAuth2TokenServiceFactory::GetForProfile(profile);
-  if (!token_service)
+  identity::IdentityManager* identity_manager =
+      IdentityManagerFactory::GetForProfile(profile);
+  if (!(identity_manager && identity_manager->HasPrimaryAccount()))
     return std::unique_ptr<GCDApiFlow>();
 
-  SigninManagerBase* signin_manager =
-      SigninManagerFactory::GetInstance()->GetForProfile(profile);
-  if (!signin_manager)
-    return std::unique_ptr<GCDApiFlow>();
+  scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory =
+      GetURLLoaderFactoryForTesting();
+  if (!url_loader_factory)
+    url_loader_factory = profile->GetURLLoaderFactory();
 
-  return GCDApiFlow::Create(profile->GetRequestContext(),
-                            token_service,
-                            signin_manager->GetAuthenticatedAccountId());
+  return GCDApiFlow::Create(url_loader_factory, identity_manager);
 }
 
 bool LocalDiscoveryUIHandler::IsUserSupervisedOrOffTheRecord() {

@@ -11,6 +11,7 @@
 #include "base/strings/string_util.h"
 #include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
+#include "chrome/browser/net/system_network_context_manager.h"
 #include "chrome/browser/translate/chrome_translate_client.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/pref_names.h"
@@ -19,7 +20,6 @@
 #include "components/translate/core/browser/translate_download_manager.h"
 #include "components/translate/core/browser/translate_manager.h"
 #include "content/public/common/url_constants.h"
-#include "ui/base/material_design/material_design_controller.h"
 #include "url/gurl.h"
 
 #if defined(OS_CHROMEOS)
@@ -51,8 +51,13 @@ void TranslateService::Initialize() {
   g_translate_service->OnResourceRequestsAllowed();
   translate::TranslateDownloadManager* download_manager =
       translate::TranslateDownloadManager::GetInstance();
-  download_manager->set_request_context(
-      g_browser_process->system_request_context());
+  SystemNetworkContextManager* system_network_context_manager =
+      g_browser_process->system_network_context_manager();
+  // Manager will be null if called from InitializeForTesting.
+  if (system_network_context_manager) {
+    download_manager->set_url_loader_factory(
+        system_network_context_manager->GetSharedURLLoaderFactory());
+  }
   download_manager->set_application_locale(
       g_browser_process->GetApplicationLocale());
 }
@@ -65,7 +70,7 @@ void TranslateService::Shutdown(bool cleanup_pending_fetcher) {
     download_manager->Shutdown();
   } else {
     // This path is only used by browser tests.
-    download_manager->set_request_context(NULL);
+    download_manager->set_url_loader_factory(nullptr);
   }
 }
 
@@ -99,12 +104,8 @@ void TranslateService::OnResourceRequestsAllowed() {
 
 // static
 bool TranslateService::IsTranslateBubbleEnabled() {
-#if defined(USE_AURA)
+#if defined(USE_AURA) || defined(OS_MACOSX)
   return true;
-#elif defined(OS_MACOSX)
-  // On Mac, the translate bubble is shown instead of the infobar if the
-  // --secondary-ui-md flag is enabled.
-  return ui::MaterialDesignController::IsSecondaryUiMaterial();
 #else
   // The bubble UX is not implemented on other platforms.
   return false;
@@ -135,4 +136,9 @@ bool TranslateService::IsTranslatableURL(const GURL& url) {
            url.DomainIs(file_manager::kFileManagerAppId)) &&
 #endif
          !url.SchemeIs(url::kFtpScheme);
+}
+
+bool TranslateService::IsAvailable(PrefService* prefs) {
+  return translate::TranslateManager::IsAvailable(
+      ChromeTranslateClient::CreateTranslatePrefs(prefs).get());
 }

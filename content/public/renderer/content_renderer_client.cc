@@ -10,7 +10,6 @@
 #include "third_party/blink/public/platform/web_audio_device.h"
 #include "third_party/blink/public/platform/web_media_stream_center.h"
 #include "third_party/blink/public/platform/web_rtc_peer_connection_handler.h"
-#include "third_party/blink/public/platform/web_socket_handshake_throttle.h"
 #include "third_party/blink/public/platform/web_speech_synthesizer.h"
 #include "ui/gfx/icc_profile.h"
 #include "url/gurl.h"
@@ -23,6 +22,15 @@ SkBitmap* ContentRendererClient::GetSadPluginBitmap() {
 
 SkBitmap* ContentRendererClient::GetSadWebViewBitmap() {
   return nullptr;
+}
+
+bool ContentRendererClient::IsPluginHandledByMimeHandlerView(
+    RenderFrame* embedder_frame,
+    const blink::WebElement& owner_element,
+    const GURL& original_url,
+    const std::string& original_mime_type,
+    int32_t instance_id_to_use) {
+  return false;
 }
 
 bool ContentRendererClient::OverrideCreatePlugin(
@@ -51,11 +59,11 @@ bool ContentRendererClient::ShouldTrackUseCounter(const GURL& url) {
   return true;
 }
 
-void ContentRendererClient::DeferMediaLoad(
-    RenderFrame* render_frame,
-    bool has_played_media_before,
-    const base::Closure& closure) {
-  closure.Run();
+bool ContentRendererClient::DeferMediaLoad(RenderFrame* render_frame,
+                                           bool has_played_media_before,
+                                           base::OnceClosure closure) {
+  std::move(closure).Run();
+  return false;
 }
 
 std::unique_ptr<blink::WebMIDIAccessor>
@@ -64,22 +72,12 @@ ContentRendererClient::OverrideCreateMIDIAccessor(
   return nullptr;
 }
 
-std::unique_ptr<blink::WebAudioDevice>
-ContentRendererClient::OverrideCreateAudioDevice(
-    const blink::WebAudioLatencyHint& latency_hint) {
-  return nullptr;
-}
-
-blink::WebClipboard* ContentRendererClient::OverrideWebClipboard() {
-  return nullptr;
-}
-
 blink::WebThemeEngine* ContentRendererClient::OverrideThemeEngine() {
   return nullptr;
 }
 
-std::unique_ptr<blink::WebSocketHandshakeThrottle>
-ContentRendererClient::CreateWebSocketHandshakeThrottle() {
+std::unique_ptr<WebSocketHandshakeThrottleProvider>
+ContentRendererClient::CreateWebSocketHandshakeThrottleProvider() {
   return nullptr;
 }
 
@@ -97,10 +95,6 @@ void ContentRendererClient::PostCompositorThreadCreated(
 
 bool ContentRendererClient::RunIdleHandlerWhenWidgetsHidden() {
   return true;
-}
-
-bool ContentRendererClient::AllowStoppingWhenProcessBackgrounded() {
-  return false;
 }
 
 bool ContentRendererClient::AllowPopup() {
@@ -129,8 +123,7 @@ bool ContentRendererClient::ShouldFork(blink::WebLocalFrame* frame,
                                        const GURL& url,
                                        const std::string& http_method,
                                        bool is_initial_navigation,
-                                       bool is_server_redirect,
-                                       bool* send_referrer) {
+                                       bool is_server_redirect) {
   return false;
 }
 
@@ -242,6 +235,11 @@ BrowserPluginDelegate* ContentRendererClient::CreateBrowserPluginDelegate(
   return nullptr;
 }
 
+bool ContentRendererClient::IsExcludedHeaderForServiceWorkerFetchEvent(
+    const std::string& header_name) {
+  return false;
+}
+
 bool ContentRendererClient::ShouldEnforceWebRTCRoutingPreferences() {
   return true;
 }
@@ -255,8 +253,17 @@ ContentRendererClient::GetTaskSchedulerInitParams() {
   return nullptr;
 }
 
-bool ContentRendererClient::AllowIdleMediaSuspend() {
+bool ContentRendererClient::IsIdleMediaSuspendEnabled() {
   return true;
+}
+
+bool ContentRendererClient::IsBackgroundMediaSuspendEnabled(
+    RenderFrame* render_frame) {
+#if defined(OS_ANDROID)
+  return true;
+#else
+  return false;
+#endif
 }
 
 bool ContentRendererClient::OverrideLegacySymantecCertConsoleMessage(
@@ -275,6 +282,10 @@ blink::WebFrame* ContentRendererClient::FindFrame(
     blink::WebLocalFrame* relative_to_frame,
     const std::string& name) {
   return nullptr;
+}
+
+bool ContentRendererClient::IsSafeRedirectTarget(const GURL& url) {
+  return true;
 }
 
 }  // namespace content

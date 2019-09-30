@@ -29,8 +29,6 @@ int g_seconds_delay_after_show = 5;
 
 }  // anonymous namespace
 
-DEFINE_WEB_CONTENTS_USER_DATA_KEY(SiteEngagementService::Helper);
-
 // static
 void SiteEngagementService::Helper::SetSecondsBetweenUserInputCheck(
     int seconds) {
@@ -67,7 +65,7 @@ void SiteEngagementService::Helper::OnEngagementLevelChanged(
 
 SiteEngagementService::Helper::PeriodicTracker::PeriodicTracker(
     SiteEngagementService::Helper* helper)
-    : helper_(helper), pause_timer_(new base::Timer(true, false)) {}
+    : helper_(helper), pause_timer_(new base::OneShotTimer()) {}
 
 SiteEngagementService::Helper::PeriodicTracker::~PeriodicTracker() {}
 
@@ -92,7 +90,7 @@ bool SiteEngagementService::Helper::PeriodicTracker::IsTimerRunning() {
 }
 
 void SiteEngagementService::Helper::PeriodicTracker::SetPauseTimerForTesting(
-    std::unique_ptr<base::Timer> timer) {
+    std::unique_ptr<base::OneShotTimer> timer) {
   pause_timer_ = std::move(timer);
 }
 
@@ -146,9 +144,6 @@ void SiteEngagementService::Helper::InputTracker::DidGetUserInteraction(
       break;
     case blink::WebInputEvent::kGestureScrollBegin:
       helper()->RecordUserInput(SiteEngagementService::ENGAGEMENT_SCROLL);
-      break;
-    case blink::WebInputEvent::kUndefined:
-      // Explicitly ignore browser-initiated navigation input.
       break;
     default:
       NOTREACHED();

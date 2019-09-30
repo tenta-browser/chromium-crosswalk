@@ -7,12 +7,12 @@
 
 #include <deque>
 #include <memory>
-#include "third_party/blink/renderer/bindings/core/v8/exception_state.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/dom/element.h"
 #include "third_party/blink/renderer/core/page/scrolling/scroll_state_init.h"
+#include "third_party/blink/renderer/core/scroll/scroll_state_data.h"
+#include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/bindings/script_wrappable.h"
-#include "third_party/blink/renderer/platform/scroll/scroll_state_data.h"
 #include "third_party/blink/renderer/platform/wtf/forward.h"
 
 namespace blink {
@@ -26,7 +26,7 @@ class CORE_EXPORT ScrollState final : public ScriptWrappable {
   static ScrollState* Create(ScrollStateInit);
   static ScrollState* Create(std::unique_ptr<ScrollStateData>);
 
-  ~ScrollState() = default;
+  ~ScrollState() override = default;
 
   // Web exposed methods.
 

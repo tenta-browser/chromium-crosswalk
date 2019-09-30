@@ -2,6 +2,8 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
+import("//testing/libfuzzer/fuzzer_test.gni")
+
 static_library("common") {
   sources = [
     "activation_decision.h",
@@ -27,6 +29,8 @@ static_library("common") {
     "memory_mapped_ruleset.h",
     "scoped_timers.h",
     "time_measurements.h",
+    "unindexed_ruleset.cc",
+    "unindexed_ruleset.h",
   ]
 
   public_deps = [
@@ -60,21 +64,6 @@ static_library("test_support") {
   ]
 }
 
-static_library("tools_lib") {
-  sources = [
-    "tools/filter_tool.cc",
-    "tools/filter_tool.h",
-    "tools/indexing_tool.cc",
-    "tools/indexing_tool.h",
-  ]
-  deps = [
-    ":common",
-    "//base",
-    "//components/url_pattern_index:util",
-    "//url",
-  ]
-}
-
 source_set("unit_tests") {
   testonly = true
   sources = [
@@ -82,13 +71,11 @@ source_set("unit_tests") {
     "first_party_origin_unittest.cc",
     "indexed_ruleset_unittest.cc",
     "scoped_timers_unittest.cc",
-    "tools/filter_tool_unittest.cc",
-    "tools/indexing_tool_unittest.cc",
+    "unindexed_ruleset_unittest.cc",
   ]
   deps = [
     ":common",
     ":test_support",
-    ":tools_lib",
     "//base",
     "//base/test:test_support",
     "//components/url_pattern_index:test_support",
@@ -98,26 +85,14 @@ source_set("unit_tests") {
   ]
 }
 
-if (is_linux || is_mac || is_win) {
-  executable("subresource_filter_tool") {
-    sources = [
-      "tools/filter_tool_main.cc",
-    ]
-    deps = [
-      ":tools_lib",
-      "//base",
-      "//build/config:exe_and_shlib_deps",
-    ]
-  }
-
-  executable("subresource_indexing_tool") {
-    sources = [
-      "tools/indexing_tool_main.cc",
-    ]
-    deps = [
-      ":tools_lib",
-      "//base",
-      "//build/config:exe_and_shlib_deps",
-    ]
-  }
+fuzzer_test("indexed_ruleset_fuzzer") {
+  sources = [
+    "indexed_ruleset_fuzzer.cc",
+  ]
+  deps = [
+    ":common",
+    "//base",
+    "//base/test:test_support",
+    "//url",
+  ]
 }

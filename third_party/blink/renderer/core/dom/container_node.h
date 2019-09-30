@@ -289,7 +289,6 @@ class CORE_EXPORT ContainerNode : public Node {
                                    Node* node_before_change,
                                    Node* node_after_change);
   void RecalcDescendantStyles(StyleRecalcChange);
-  void RecalcDescendantStylesForReattach();
   void RebuildChildrenLayoutTrees(WhitespaceAttacher&);
   void RebuildLayoutTreeForChild(Node* child, WhitespaceAttacher&);
   void RebuildNonDistributedChildren();
@@ -365,9 +364,7 @@ class CORE_EXPORT ContainerNode : public Node {
   // CDATA_SECTION_NODE, TEXT_NODE or COMMENT_NODE has changed its value.
   virtual void ChildrenChanged(const ChildrenChange&);
 
-  virtual void Trace(blink::Visitor*);
-
-  virtual void TraceWrappers(const ScriptWrappableVisitor*) const;
+  void Trace(blink::Visitor*) override;
 
  protected:
   ContainerNode(TreeScope*, ConstructionType = kCreateContainer);
@@ -458,10 +455,6 @@ class CORE_EXPORT ContainerNode : public Node {
   TraceWrapperMember<Node> first_child_;
   TraceWrapperMember<Node> last_child_;
 };
-
-#if DCHECK_IS_ON()
-bool ChildAttachedAllowedWhenAttachingChildren(ContainerNode*);
-#endif
 
 WILL_NOT_BE_EAGERLY_TRACED_CLASS(ContainerNode);
 

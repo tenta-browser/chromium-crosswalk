@@ -19,7 +19,7 @@ from telemetry.value import list_of_scalar_values
 
 
 _SPEEDOMETER_DIR = os.path.join(path_util.GetChromiumSrcDir(),
-    'third_party', 'WebKit', 'PerformanceTests', 'Speedometer')
+    'third_party', 'blink', 'perf_tests', 'speedometer')
 _SPEEDOMETER_SUITE_NAME_BASE = '{0}-TodoMVC'
 _SPEEDOMETER_SUITES = [
   'VanillaJS',
@@ -120,7 +120,7 @@ class Speedometer2Measurement(legacy_page_test.LegacyPageTest):
               key=suite_name), important=False))
 
 
-@benchmark.Owner(emails=['hablich@chromium.org'])
+@benchmark.Info(emails=['hablich@chromium.org'])
 class Speedometer2(perf_benchmark.PerfBenchmark):
   """Speedometer2 Benchmark.
 
@@ -176,7 +176,7 @@ class Speedometer2(perf_benchmark.PerfBenchmark):
         raise parser.error('--suite: Invalid regex.')
 
 
-@benchmark.Owner(emails=['hablich@chromium.org'])
+@benchmark.Info(emails=['hablich@chromium.org'])
 class V8Speedometer2Future(Speedometer2):
   """Speedometer2 benchmark with the V8 flag --future.
 

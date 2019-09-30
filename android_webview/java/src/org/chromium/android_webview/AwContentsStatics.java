@@ -84,15 +84,6 @@ public class AwContentsStatics {
         nativeSetServiceWorkerIoThreadClient(ioThreadClient, browserContext);
     }
 
-    // Can be called from any thread.
-    public static boolean getSafeBrowsingEnabledByManifest() {
-        return nativeGetSafeBrowsingEnabledByManifest();
-    }
-
-    public static void setSafeBrowsingEnabledByManifest(boolean enable) {
-        nativeSetSafeBrowsingEnabledByManifest(enable);
-    }
-
     @CalledByNative
     private static void safeBrowsingWhitelistAssigned(Callback<Boolean> callback, boolean success) {
         if (callback == null) return;
@@ -129,6 +120,14 @@ public class AwContentsStatics {
         nativeSetCheckClearTextPermitted(permitted);
     }
 
+    public static void setProxyOverride(String host, int port, String[] exclusionList) {
+        nativeSetProxyOverride(host, port, exclusionList);
+    }
+
+    public static void clearProxyOverride() {
+        nativeClearProxyOverride();
+    }
+
     /**
      * Return the first substring consisting of the address of a physical location.
      * @see {@link android.webkit.WebView#findAddress(String)}
@@ -152,9 +151,10 @@ public class AwContentsStatics {
     private static native String nativeGetProductVersion();
     private static native void nativeSetServiceWorkerIoThreadClient(
             AwContentsIoThreadClient ioThreadClient, AwBrowserContext browserContext);
-    private static native boolean nativeGetSafeBrowsingEnabledByManifest();
-    private static native void nativeSetSafeBrowsingEnabledByManifest(boolean enable);
     private static native void nativeSetSafeBrowsingWhitelist(
             String[] urls, Callback<Boolean> callback);
     private static native void nativeSetCheckClearTextPermitted(boolean permitted);
+    private static native void nativeSetProxyOverride(
+            String host, int port, String[] exclusionList);
+    private static native void nativeClearProxyOverride();
 }

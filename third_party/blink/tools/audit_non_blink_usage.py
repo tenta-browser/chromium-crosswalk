@@ -27,29 +27,46 @@ _CONFIG = [
             'gfx::ColorSpace',
             'gfx::CubicBezier',
             'gfx::ICCProfile',
-            'gfx::ScrollOffset',
+            'gfx::RadToDeg',
 
             # //base constructs that are allowed everywhere
             'base::AdoptRef',
+            'base::AutoReset',
+            'base::File',
+            'base::FilePath',
+            'base::GetUniqueIdForProcess',
             'base::Location',
             'base::MakeRefCounted',
             'base::Optional',
+            'base::OptionalOrNullptr',
             'base::RefCountedData',
             'base::CreateSequencedTaskRunnerWithTraits',
+            'base::ReadOnlySharedMemoryMapping',
+            'base::ReadOnlySharedMemoryRegion',
             'base::SequencedTaskRunner',
             'base::SingleThreadTaskRunner',
+            'base::ScopedFD',
+            'base::SysInfo',
             'base::ThreadChecker',
             'base::Time',
             'base::TimeDelta',
             'base::TimeTicks',
             'base::UnguessableToken',
+            'base::UnsafeSharedMemoryRegion',
             'base::WeakPtr',
             'base::WeakPtrFactory',
+            'base::WritableSharedMemoryMapping',
+            'base::in_place',
             'base::make_optional',
             'base::make_span',
             'base::nullopt',
+            'base::sequence_manager::TaskTimeObserver',
+            'base::size',
             'base::span',
             'logging::GetVlogLevel',
+
+            # //base/bind_helpers.h.
+            'base::DoNothing',
 
             # //base/callback.h is allowed, but you need to use WTF::Bind or
             # WTF::BindRepeating to create callbacks in Blink.
@@ -61,16 +78,131 @@ _CONFIG = [
             # //base/memory/ptr_util.h.
             'base::WrapUnique',
 
+            # //base/metrics/field_trial_params.h.
+            'base::GetFieldTrialParamValueByFeature',
+            'base::GetFieldTrialParamByFeatureAsBool',
+            'base::GetFieldTrialParamByFeatureAsDouble',
+            'base::GetFieldTrialParamByFeatureAsInt',
+
+            # //base/numerics/safe_conversions.h.
+            'base::as_signed',
+            'base::as_unsigned',
+            'base::checked_cast',
+            'base::strict_cast',
+            'base::saturated_cast',
+            'base::SafeUnsignedAbs',
+            'base::StrictNumeric',
+            'base::MakeStrictNum',
+            'base::IsValueInRangeForNumericType',
+            'base::IsTypeInRangeForNumericType',
+            'base::IsValueNegative',
+
             # //base/synchronization/waitable_event.h.
             'base::WaitableEvent',
 
+            # //base/numerics/checked_math.h.
+            'base::CheckedNumeric',
+            'base::IsValidForType',
+            'base::ValueOrDieForType',
+            'base::ValueOrDefaultForType',
+            'base::MakeCheckedNum',
+            'base::CheckMax',
+            'base::CheckMin',
+            'base::CheckAdd',
+            'base::CheckSub',
+            'base::CheckMul',
+            'base::CheckDiv',
+            'base::CheckMod',
+            'base::CheckLsh',
+            'base::CheckRsh',
+            'base::CheckAnd',
+            'base::CheckOr',
+            'base::CheckXor',
+
             # Debugging helpers from //base/debug are allowed everywhere.
             'base::debug::.+',
+
+            # Base atomic utilities
+            'base::AtomicSequenceNumber',
+
+            # Task traits
+            'base::TaskTraits',
+            'base::MayBlock',
+            'base::TaskPriority',
+            'base::TaskShutdownBehavior',
+            'base::WithBaseSyncPrimitives',
+
+            # Byte order
+            'base::ByteSwap',
+            'base::NetToHost(16|32|64)',
+            'base::HostToNet(16|32|64)',
+
+            # (Cryptographic) random number generation
+            'base::RandUint64',
+            'base::RandInt',
+            'base::RandGenerator',
+            'base::RandDouble',
+            'base::RandBytes',
 
             # Feature list checking.
             'base::Feature.*',
             'base::FEATURE_.+',
 
+            # PartitionAlloc
+            'base::PartitionFree',
+
+            # cc painting types.
+            'cc::PaintCanvas',
+            'cc::PaintFlags',
+
+            # Chromium geometry types.
+            'gfx::Point',
+            'gfx::Rect',
+            'gfx::RectF',
+            'gfx::Size',
+            'gfx::SizeF',
+            'gfx::Transform',
+            'gfx::Vector2d',
+            'gfx::Vector2dF',
+            # Wrapper of SkRegion used in Chromium.
+            'cc::Region',
+
+            # A geometric set of TouchActions associated with areas, and only
+            # depends on the geometry types above.
+            'cc::TouchActionRegion',
+
+            # Selection bounds.
+            'cc::LayerSelection',
+            'gfx::SelectionBound',
+
+            # cc::Layers.
+            'cc::Layer',
+            'cc::PictureLayer',
+
+            # cc::Layer helper data structs.
+            'cc::ElementId',
+            'cc::LayerPositionConstraint',
+            'cc::LayerStickyPositionConstraint',
+            'cc::OverscrollBehavior',
+            'cc::Scrollbar',
+            'cc::ScrollbarLayerInterface',
+            'cc::ScrollbarOrientation',
+            'cc::ScrollbarPart',
+
+            # cc::Layer helper enums.
+            'cc::HORIZONTAL',
+            'cc::VERTICAL',
+            'cc::THUMB',
+            'cc::TICKMARKS',
+            'cc::BrowserControlsState',
+            'cc::EventListenerClass',
+            'cc::EventListenerProperties',
+
+            # Scrolling
+            'cc::ScrollOffsetAnimationCurve',
+            'cc::ScrollStateData',
+            'gfx::RectToSkRect',
+            'gfx::ScrollOffset',
 
             # Standalone utility libraries that only depend on //base
             'skia::.+',
@@ -100,6 +232,9 @@ _CONFIG = [
             # Assume that identifiers where the first qualifier is internal are
             # nested in the blink namespace.
             'internal::.+',
+
+            # Network service.
+            'network::.+',
 
             # Some test helpers live in the blink::test namespace.
             'test::.+',
@@ -133,6 +268,17 @@ _CONFIG = [
         'allowed': ['gin::.+'],
     },
     {
+        'paths': ['third_party/blink/renderer/bindings/core/v8/v8_gc_for_context_dispose.cc'],
+        'allowed': [
+            # For memory reduction histogram.
+            'base::ProcessMetrics',
+        ],
+    },
+    {
+        'paths': ['third_party/blink/renderer/core/clipboard'],
+        'allowed': ['gfx::PNGCodec', 'net::EscapeForHTML'],
+    },
+    {
         'paths': ['third_party/blink/renderer/core/css'],
         'allowed': [
             # Internal implementation details for CSS.
@@ -140,9 +286,42 @@ _CONFIG = [
         ],
     },
     {
-        'paths': ['third_party/blink/renderer/core/inspector/InspectorMemoryAgent.cpp'],
+        'paths': ['third_party/blink/renderer/core/fetch/data_consumer_handle_test_util.cc'],
         'allowed': [
+            # The existing code already contains gin::IsolateHolder.
+            'gin::IsolateHolder',
+        ],
+    },
+    {
+        'paths': ['third_party/blink/renderer/core/paint'],
+        'allowed': [
+            # cc painting types.
+            'cc::ContentLayerClient',
+            'cc::DisplayItemList',
+            'cc::DrawRecordOp',
+        ],
+    },
+    {
+        'paths': ['third_party/blink/renderer/core/page/scrolling'],
+        'allowed': [
+            # cc scrollbar layer types.
+            'cc::PaintedOverlayScrollbarLayer',
+            'cc::PaintedScrollbarLayer',
+            'cc::SolidColorScrollbarLayer',
+        ],
+    },
+    {
+        'paths': ['third_party/blink/renderer/core/inspector/inspector_memory_agent.cc'],
+        'allowed': [
+            'base::ModuleCache',
+            'base::PoissonAllocationSampler',
             'base::SamplingHeapProfiler',
+        ],
+    },
+    {
+        'paths': ['third_party/blink/renderer/core/inspector/inspector_performance_agent.cc'],
+        'allowed': [
+            'base::subtle::TimeTicksNowIgnoringOverride',
         ],
     },
     {
@@ -151,7 +330,10 @@ _CONFIG = [
             'third_party/blink/renderer/modules/gamepad/',
             'third_party/blink/renderer/modules/sensor/',
         ],
-        'allowed': ['device::.+'],
+        'allowed': [
+            'base::subtle::Atomic32',
+            'device::.+',
+        ],
     },
     {
         'paths': [
@@ -160,9 +342,22 @@ _CONFIG = [
             'third_party/blink/renderer/modules/webgl/',
             'third_party/blink/renderer/modules/xr/',
         ],
-        # These modules need access to GL drawing.
+        # The modules listed above need access to the following GL drawing and
+        # display-related types.
         'allowed': [
             'gpu::gles2::GLES2Interface',
+            'gpu::MailboxHolder',
+            'display::Display',
+        ],
+    },
+    {
+        'paths': [
+            'third_party/blink/renderer/modules/webgpu/',
+        ],
+        # The WebGPU Blink module needs access to the WebGPU control
+        # command buffer interface.
+        'allowed': [
+            'gpu::webgpu::WebGPUInterface',
         ],
     },
     {
@@ -188,10 +383,58 @@ _CONFIG = [
     },
     {
         'paths': [
+            'third_party/blink/renderer/modules/animationworklet/',
+        ],
+        'allowed': [
+            'cc::AnimationOptions',
+        ],
+    },
+    {
+        'paths': [
             'third_party/blink/renderer/modules/webdatabase/',
         ],
         'allowed': ['sql::.+'],
     },
+    {
+        'paths': [
+            'third_party/blink/renderer/core/layout/layout_theme.cc',
+            'third_party/blink/renderer/core/paint/fallback_theme.cc',
+            'third_party/blink/renderer/core/paint/fallback_theme.h',
+            'third_party/blink/renderer/core/paint/theme_painter.cc',
+        ],
+        'allowed': ['ui::NativeTheme.*'],
+    },
+    {
+        'paths': [
+            'third_party/blink/renderer/modules/crypto/',
+        ],
+        'allowed': ['crypto::.+'],
+    },
+    {
+        'paths': [
+            'third_party/blink/renderer/modules/peerconnection',
+            'third_party/blink/renderer/bindings/modules/v8/serialization',
+        ],
+        'allowed': [
+            'cricket::.*',
+            'rtc::.+',
+            'webrtc::.+',
+        ]
+    },
+    {
+        'paths': [
+            'third_party/blink/renderer/modules/peerconnection/adapters/',
+        ],
+        # The code in adapters/ wraps WebRTC APIs using STL/WebRTC types only.
+        # Thus, the restriction that objects should only be created and
+        # destroyed on the same thread can be relaxed since no Blink types (like
+        # AtomicString or HeapVector) are used cross thread. These Blink types
+        # are converted to the STL/WebRTC counterparts in the parent directory.
+        'allowed': [
+            'base::OnTaskRunnerDeleter',
+            'sigslot::.+',
+        ],
+    }
 ]
 
 
@@ -277,8 +520,10 @@ def check(path, contents):
     # Only check code. Ignore tests.
     # TODO(tkent): Remove 'Test' after the great mv.
     if (ext not in ('.cc', '.cpp', '.h', '.mm')
+            or path.find('/testing/') >= 0
             or basename.endswith('Test')
             or basename.endswith('_test')
+            or basename.endswith('_test_helpers')
             or basename.endswith('_unittest')):
         return results
     entries = _find_matching_entries(path)

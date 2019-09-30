@@ -4,7 +4,7 @@
 
 #include "content/renderer/media/stream/local_media_stream_audio_source.h"
 
-#include "content/renderer/media/audio_device_factory.h"
+#include "content/renderer/media/audio/audio_device_factory.h"
 #include "content/renderer/media/webrtc_logging.h"
 #include "content/renderer/render_frame_impl.h"
 
@@ -41,7 +41,6 @@ LocalMediaStreamAudioSource::LocalMediaStreamAudioSource(
   SetFormat(media::AudioParameters(
       media::AudioParameters::AUDIO_PCM_LOW_LATENCY,
       device.input.channel_layout(), device.input.sample_rate(),
-      16,  // Legacy parameter (data is always in 32-bit float format).
       frames_per_buffer));
 }
 
@@ -66,9 +65,10 @@ bool LocalMediaStreamAudioSource::EnsureSourceIsStarted() {
           << consumer_render_frame_id_ << " with audio parameters={"
           << GetAudioParameters().AsHumanReadableString() << "}.";
 
-  source_ =
-      AudioDeviceFactory::NewAudioCapturerSource(consumer_render_frame_id_);
-  source_->Initialize(GetAudioParameters(), this, device().session_id);
+  source_ = AudioDeviceFactory::NewAudioCapturerSource(
+      consumer_render_frame_id_,
+      media::AudioSourceParameters(device().session_id));
+  source_->Initialize(GetAudioParameters(), this);
   source_->Start();
   return true;
 }

@@ -151,7 +151,7 @@ class VIZ_COMMON_EXPORT BeginFrameSource {
   // The higher 32 bits are used for a process restart id that changes if a
   // process allocating BeginFrameSources has been restarted. The lower 32 bits
   // are allocated from an atomic sequence.
-  uint64_t source_id_;
+  const uint64_t source_id_;
 
   DISALLOW_COPY_AND_ASSIGN(BeginFrameSource);
 };
@@ -262,8 +262,11 @@ class VIZ_COMMON_EXPORT ExternalBeginFrameSourceClient {
 // an observable BeginFrameSource.
 class VIZ_COMMON_EXPORT ExternalBeginFrameSource : public BeginFrameSource {
  public:
-  // Client lifetime must be preserved by owner past the lifetime of this class.
-  explicit ExternalBeginFrameSource(ExternalBeginFrameSourceClient* client);
+  // Client lifetime must be preserved by owner for the lifetime of the class.
+  // In order to allow derived classes to implement the client interface, no
+  // calls to |client| are made during construction / destruction.
+  explicit ExternalBeginFrameSource(ExternalBeginFrameSourceClient* client,
+                                    uint32_t restart_id = kNotRestartableId);
   ~ExternalBeginFrameSource() override;
 
   // BeginFrameSource implementation.

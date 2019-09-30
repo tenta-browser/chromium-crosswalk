@@ -15,7 +15,9 @@
 #include "ui/aura/client/focus_client.h"
 #include "ui/aura/client/window_parenting_client.h"
 #include "ui/aura/test/test_window_delegate.h"
+#include "ui/aura/test/window_occlusion_tracker_test_api.h"
 #include "ui/aura/window.h"
+#include "ui/aura/window_occlusion_tracker.h"
 #include "ui/aura/window_tree_host.h"
 #include "ui/display/screen.h"
 #include "ui/events/event_processor.h"
@@ -26,10 +28,13 @@
 #include "ui/views/test/test_views_delegate.h"
 #include "ui/views/test/views_test_base.h"
 #include "ui/views/test/widget_test.h"
+#include "ui/views/view_constants_aura.h"
 #include "ui/views/widget/widget.h"
 #include "ui/views/window/dialog_delegate.h"
 
 #if defined(OS_WIN)
+#include <windows.h>
+
 #include "ui/base/view_prop.h"
 #include "ui/base/win/window_event_target.h"
 #include "ui/views/win/hwnd_util.h"
@@ -119,6 +124,7 @@ TEST_F(DesktopNativeWidgetAuraTest, NativeViewNoActivate) {
                          ->GetFocusedWindow());
 }
 
+#if defined(OS_WIN)
 // Verifies that if the DesktopWindowTreeHost is already shown, the native view
 // still reports not visible as we haven't shown the content window.
 TEST_F(DesktopNativeWidgetAuraTest, WidgetNotVisibleOnlyWindowTreeHostShown) {
@@ -128,11 +134,11 @@ TEST_F(DesktopNativeWidgetAuraTest, WidgetNotVisibleOnlyWindowTreeHostShown) {
   init_params.ownership = Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
   init_params.native_widget = new DesktopNativeWidgetAura(&widget);
   widget.Init(init_params);
-  DesktopNativeWidgetAura* desktop_native_widget_aura =
-      static_cast<DesktopNativeWidgetAura*>(widget.native_widget());
-  desktop_native_widget_aura->host()->Show();
+  ShowWindow(widget.GetNativeView()->GetHost()->GetAcceleratedWidget(),
+             SW_SHOWNORMAL);
   EXPECT_FALSE(widget.IsVisible());
 }
+#endif
 
 TEST_F(DesktopNativeWidgetAuraTest, DesktopAuraWindowShowFrameless) {
   Widget widget;
@@ -277,6 +283,64 @@ TEST_F(DesktopNativeWidgetAuraTest, DontAccessContentWindowDuringDestruction) {
 
     widget.Show();
   }
+}
+
+namespace {
+
+std::unique_ptr<Widget> CreateAndShowControlWidget(aura::Window* parent) {
+  Widget::InitParams params(Widget::InitParams::TYPE_CONTROL);
+  params.ownership = views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
+  params.parent = parent;
+  auto widget = std::make_unique<Widget>();
+  widget->Init(params);
+  widget->Show();
+  return widget;
+}
+
+}  // namespace
+
+TEST_F(DesktopNativeWidgetAuraTest, ReorderDoesntRecomputeOcclusion) {
+  // Create the parent widget.
+  Widget parent;
+  Widget::InitParams init_params =
+      CreateParams(Widget::InitParams::TYPE_WINDOW);
+  init_params.ownership = Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
+  DesktopNativeWidgetAura* desktop_native_widget_aura =
+      new DesktopNativeWidgetAura(&parent);
+  init_params.native_widget = desktop_native_widget_aura;
+  parent.Init(init_params);
+  parent.Show();
+
+  aura::Window* parent_window = parent.GetNativeWindow();
+  aura::WindowOcclusionTracker::Track(parent_window);
+
+  View* contents_view = parent.GetContentsView();
+
+  // Create child widgets.
+  std::unique_ptr<Widget> w1(CreateAndShowControlWidget(parent_window));
+  std::unique_ptr<Widget> w2(CreateAndShowControlWidget(parent_window));
+  std::unique_ptr<Widget> w3(CreateAndShowControlWidget(parent_window));
+
+  // Create child views.
+  View* host_view1 = new View();
+  w1->GetNativeView()->SetProperty(kHostViewKey, host_view1);
+  contents_view->AddChildView(host_view1);
+
+  View* host_view2 = new View();
+  w2->GetNativeView()->SetProperty(kHostViewKey, host_view2);
+  contents_view->AddChildView(host_view2);
+
+  View* host_view3 = new View();
+  w3->GetNativeView()->SetProperty(kHostViewKey, host_view3);
+  contents_view->AddChildView(host_view3);
+
+  // Reorder child views. Expect occlusion to only be recomputed once.
+  aura::test::WindowOcclusionTrackerTestApi window_occlusion_tracker_test_api;
+  const int num_times_occlusion_recomputed =
+      window_occlusion_tracker_test_api.GetNumTimesOcclusionRecomputed();
+  contents_view->ReorderChildView(host_view3, 0);
+  EXPECT_EQ(num_times_occlusion_recomputed + 1,
+            window_occlusion_tracker_test_api.GetNumTimesOcclusionRecomputed());
 }
 
 void QuitNestedLoopAndCloseWidget(std::unique_ptr<Widget> widget,

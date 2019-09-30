@@ -4,7 +4,7 @@
 
 #include "chrome/browser/signin/force_signin_verifier.h"
 
-#include "base/test/histogram_tester.h"
+#include "base/test/metrics/histogram_tester.h"
 #include "chrome/test/base/testing_profile.h"
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -58,7 +58,8 @@ TEST_F(ForceSigninVerifierTest, OnGetTokenSuccess) {
   ASSERT_FALSE(verifier_->IsDelayTaskPosted());
   EXPECT_CALL(*verifier_.get(), CloseAllBrowserWindows()).Times(0);
 
-  verifier_->OnGetTokenSuccess(verifier_->request(), "", base::Time::Now());
+  verifier_->OnGetTokenSuccess(verifier_->request(),
+                               OAuth2AccessTokenConsumer::TokenResponse());
   ASSERT_EQ(nullptr, verifier_->request());
   ASSERT_TRUE(verifier_->HasTokenBeenVerified());
   ASSERT_FALSE(verifier_->IsDelayTaskPosted());
@@ -123,8 +124,8 @@ TEST_F(ForceSigninVerifierTest, OnLostConnection) {
   ASSERT_EQ(nullptr, verifier_->request());
   ASSERT_TRUE(verifier_->IsDelayTaskPosted());
 
-  verifier_->OnNetworkChanged(
-      net::NetworkChangeNotifier::ConnectionType::CONNECTION_NONE);
+  verifier_->OnConnectionChanged(
+      network::mojom::ConnectionType::CONNECTION_NONE);
 
   ASSERT_EQ(0, verifier_->FailureCount());
   ASSERT_EQ(nullptr, verifier_->request());
@@ -138,8 +139,8 @@ TEST_F(ForceSigninVerifierTest, OnReconnected) {
   ASSERT_EQ(nullptr, verifier_->request());
   ASSERT_TRUE(verifier_->IsDelayTaskPosted());
 
-  verifier_->OnNetworkChanged(
-      net::NetworkChangeNotifier::ConnectionType::CONNECTION_WIFI);
+  verifier_->OnConnectionChanged(
+      network::mojom::ConnectionType::CONNECTION_WIFI);
 
   ASSERT_EQ(0, verifier_->FailureCount());
   ASSERT_NE(nullptr, verifier_->request());

@@ -42,6 +42,8 @@ OfflineItem::OfflineItem()
     : filter(OfflineItemFilter::FILTER_OTHER),
       is_transient(false),
       is_suggested(false),
+      is_accelerated(false),
+      refresh_visuals(false),
       total_size_bytes(0),
       externally_removed(false),
       is_openable(false),
@@ -52,7 +54,8 @@ OfflineItem::OfflineItem()
       is_resumable(false),
       allow_metered(false),
       received_bytes(0),
-      time_remaining_ms(0) {}
+      time_remaining_ms(0),
+      is_dangerous(false) {}
 
 OfflineItem::OfflineItem(const OfflineItem& other) = default;
 
@@ -68,6 +71,8 @@ bool OfflineItem::operator==(const OfflineItem& offline_item) const {
          filter == offline_item.filter &&
          is_transient == offline_item.is_transient &&
          is_suggested == offline_item.is_suggested &&
+         is_accelerated == offline_item.is_accelerated &&
+         refresh_visuals == offline_item.refresh_visuals &&
          total_size_bytes == offline_item.total_size_bytes &&
          externally_removed == offline_item.externally_removed &&
          creation_time == offline_item.creation_time &&
@@ -84,12 +89,18 @@ bool OfflineItem::operator==(const OfflineItem& offline_item) const {
          allow_metered == offline_item.allow_metered &&
          received_bytes == offline_item.received_bytes &&
          progress == offline_item.progress &&
-         time_remaining_ms == offline_item.time_remaining_ms;
+         time_remaining_ms == offline_item.time_remaining_ms &&
+         is_dangerous == offline_item.is_dangerous;
 }
 
 OfflineItemVisuals::OfflineItemVisuals() = default;
 OfflineItemVisuals::OfflineItemVisuals(const OfflineItemVisuals& other) =
     default;
 OfflineItemVisuals::~OfflineItemVisuals() = default;
+
+OfflineItemShareInfo::OfflineItemShareInfo() = default;
+OfflineItemShareInfo::OfflineItemShareInfo(const OfflineItemShareInfo& other) =
+    default;
+OfflineItemShareInfo::~OfflineItemShareInfo() = default;
 
 }  // namespace offline_items_collection

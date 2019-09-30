@@ -35,7 +35,7 @@ const SkColor kBorderColor = SK_ColorBLUE;
 
 class TestView : public views::View {
  public:
-  TestView(const char* name) : views::View(), name_(name) {}
+  TestView(const char* name) : name_(name) {}
 
   const char* GetClassName() const override { return name_; }
 
@@ -68,6 +68,9 @@ class FakeFrontendChannel : public FrontendChannel {
   void sendProtocolResponse(int callId,
                             std::unique_ptr<Serializable> message) override {}
   void flushProtocolNotifications() override {}
+  void fallThrough(int call_id,
+                   const std::string& method,
+                   const std::string& message) override {}
   void sendProtocolNotification(
       std::unique_ptr<Serializable> message) override {
     protocol_notification_messages_.push_back(message->serialize());

@@ -7,6 +7,7 @@ import("//build/config/chrome_build.gni")
 import("//build/config/features.gni")
 import("//build/config/sanitizers/sanitizers.gni")
 import("//build/config/sysroot.gni")
+import("//build/util/lastchange.gni")
 import("//build/util/process_version.gni")
 import("//build/util/version.gni")
 import("//chrome/process_version_rc_template.gni")  # For branding_file_path.
@@ -51,10 +52,6 @@ if (enable_nacl) {
 if (is_chrome_branded && (current_cpu == "x86" || current_cpu == "x64")) {
   packaging_files_shlibs +=
       [ "$root_out_dir/$widevine_cdm_path/libwidevinecdm.so" ]
-}
-
-if (!libcpp_is_static && use_custom_libcxx) {
-  packaging_files_shlibs += [ "$root_out_dir/libc++.so" ]
 }
 
 packaging_files_binaries = packaging_files_executables + packaging_files_shlibs
@@ -332,9 +329,9 @@ process_version("save_build_info") {
   # Just output the default version info variables (no template).
   process_only = true
   sources = [
-    "//build/util/LASTCHANGE",
     "//chrome/VERSION",
     branding_file_path,
+    lastchange_file,
   ]
   output = "$root_out_dir/installer/version.txt"
 }
@@ -373,10 +370,6 @@ group("installer_deps") {
   if (!is_chromeos) {
     public_deps += [ ":rpm_packaging_files" ]
   }
-
-  if (!libcpp_is_static && use_custom_libcxx) {
-    public_deps += [ "//buildtools/third_party/libc++:libc++" ]
-  }
 }
 
 # Creates .deb and .rpm (RPM for non-ChromeOS only) installer packages.
@@ -405,6 +398,8 @@ template("linux_package") {
       deb_arch = "amd64"
     } else if (current_cpu == "arm") {
       deb_arch = "arm"
+    } else if (current_cpu == "arm64") {
+      deb_arch = "arm64"
     } else if (current_cpu == "mipsel") {
       deb_arch = "mipsel"
     } else if (current_cpu == "mips64el") {
@@ -461,6 +456,8 @@ template("linux_package") {
         rpm_arch = "x86_64"
       } else if (current_cpu == "arm") {
         rpm_arch = "arm"
+      } else if (current_cpu == "arm64") {
+        rpm_arch = "arm64"
       } else if (current_cpu == "mipsel") {
         rpm_arch = "mipsel"
       } else if (current_cpu == "mips64el") {

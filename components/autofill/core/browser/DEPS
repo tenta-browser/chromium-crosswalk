@@ -6,12 +6,7 @@ include_rules = [
   "+components/metrics",
   "+components/policy",
   "+components/security_state",
-
-  # Autofill depends on //services/identity/public/cpp for its core Google
-  # identity dependencies, but depends on this isolated file for recording
-  # some browser-specific signin metrics.
-  "+components/signin/core/browser/signin_metrics.h",
-
+  "+components/signin/core/browser",
   "+components/sync",
   "+components/variations",
   "+components/version_info",
@@ -23,16 +18,22 @@ include_rules = [
   "+net",
   "+services/identity/public",
   "+services/metrics/public",
+  "+services/network/public",
+  "+services/network/test",
   "+sql",
   "+third_party/fips181",
   "+third_party/libaddressinput", # For address i18n.
   "+third_party/libphonenumber",  # For phone number i18n.
   "+third_party/re2",
+  "+ui/accessibility",
   "+ui/base",
   "+ui/gfx",
 ]
 
 specific_include_rules = {
+  "autofill_download_manager_unittest\.cc": [
+    "+services/network/test",
+  ],
   "autofill_manager_unittest\.cc": [
     "+components/ukm",
   ],
@@ -45,4 +46,7 @@ specific_include_rules = {
   "test_autofill_client\.h": [
     "+components/ukm",
   ],
+  "password_requirements_spec_fetcher_unittest\.cc": [
+    "+services/network/test",
+  ]
 }

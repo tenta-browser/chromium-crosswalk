@@ -15,6 +15,7 @@
 #include "components/autofill/content/browser/content_autofill_driver_factory.h"
 #include "components/autofill/core/browser/autofill_manager.h"
 #include "components/autofill/core/browser/test_autofill_client.h"
+#include "components/autofill/core/common/autofill_prefs.h"
 #include "components/sync_preferences/testing_pref_service_syncable.h"
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/navigation_handle.h"
@@ -39,18 +40,19 @@ const base::FilePath::CharType kDocRoot[] =
 class MockAutofillClient : public TestAutofillClient {
  public:
   MockAutofillClient() {}
-  virtual ~MockAutofillClient() {}
+  ~MockAutofillClient() override {}
 
-  virtual PrefService* GetPrefs() { return &prefs_; }
+  PrefService* GetPrefs() override { return &prefs_; }
 
   user_prefs::PrefRegistrySyncable* GetPrefRegistry() {
     return prefs_.registry();
   }
 
-  MOCK_METHOD4(ShowAutofillPopup,
+  MOCK_METHOD5(ShowAutofillPopup,
                void(const gfx::RectF& element_bounds,
                     base::i18n::TextDirection text_direction,
                     const std::vector<autofill::Suggestion>& suggestions,
+                    bool autoselect_first_suggestion,
                     base::WeakPtr<AutofillPopupDelegate> delegate));
 
   MOCK_METHOD0(HideAutofillPopup, void());
@@ -84,14 +86,14 @@ class ContentAutofillDriverBrowserTest : public InProcessBrowserTest,
                                          public content::WebContentsObserver {
  public:
   ContentAutofillDriverBrowserTest() {}
-  virtual ~ContentAutofillDriverBrowserTest() {}
+  ~ContentAutofillDriverBrowserTest() override {}
 
   void SetUpOnMainThread() override {
     content::WebContents* web_contents =
         browser()->tab_strip_model()->GetActiveWebContents();
     ASSERT_TRUE(web_contents != NULL);
     Observe(web_contents);
-    AutofillManager::RegisterProfilePrefs(autofill_client_.GetPrefRegistry());
+    prefs::RegisterProfilePrefs(autofill_client_.GetPrefRegistry());
 
     web_contents->RemoveUserData(
         ContentAutofillDriverFactory::

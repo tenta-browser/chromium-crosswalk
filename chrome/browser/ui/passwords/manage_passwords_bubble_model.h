@@ -63,17 +63,6 @@ class ManagePasswordsBubbleModel {
   // Called by the view code when the save/update button is clicked by the user.
   void OnSaveClicked();
 
-  // Called by the view code when the update link is clicked by the user.
-  // TODO(vasilii): remove when the cocoa bubble is gone.
-  void OnUpdateClicked(const autofill::PasswordForm& password_form);
-
-  // Called by the view code when the "Done" button is clicked by the user.
-  // TODO(vasilii): remove when the cocoa bubble is gone.
-  void OnDoneClicked();
-
-  // TODO(vasilii): remove when the cocoa bubble is gone.
-  void OnOKClicked();
-
   // Called by the view code when the manage button is clicked by the user.
   void OnManageClicked();
 
@@ -82,6 +71,7 @@ class ManagePasswordsBubbleModel {
   void OnNavigateToPasswordManagerAccountDashboardLinkClicked();
 
   // Called by the view code when the brand name link is clicked by the user.
+  // TODO(crbug.com/862269): Remove when "Smart Lock" is gone.
   void OnBrandLinkClicked();
 
   // Called by the view code when the auto-signin toast is about to close due to
@@ -143,15 +133,14 @@ class ManagePasswordsBubbleModel {
   Profile* GetProfile() const;
   content::WebContents* GetWebContents() const;
 
-  // Returns true iff the multiple account selection prompt for account update
-  // should be presented.
-  // TODO(vasilii): remove when the cocoa bubble is gone.
-  bool ShouldShowMultipleAccountUpdateUI() const;
-
   // The password bubble can switch its state between "save" and "update"
   // depending on the user input. |state_| only captures the correct state on
   // creation. This method returns true iff the current state is "update".
   bool IsCurrentStateUpdate() const;
+
+  // Returns true iff the bubble is supposed to show the footer about syncing
+  // to Google account.
+  bool ShouldShowFooter() const;
 
   // Returns the value for the username field when the bubble is opened.
   const base::string16& GetCurrentUsername() const;

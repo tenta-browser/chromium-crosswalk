@@ -8,10 +8,19 @@
 #include <memory>
 #include <utility>
 
+#include "ash/session/test_session_controller_client.h"
 #include "ash/strings/grit/ash_strings.h"
+#include "ash/test/ash_test_base.h"
+#include "ash/test/ash_test_helper.h"
+#include "base/logging.h"
 #include "base/memory/ptr_util.h"
-#include "base/test/histogram_tester.h"
-#include "testing/gtest/include/gtest/gtest.h"
+#include "base/strings/utf_string_conversions.h"
+#include "base/test/metrics/histogram_tester.h"
+#include "chromeos/services/multidevice_setup/public/cpp/fake_multidevice_setup.h"
+#include "chromeos/services/multidevice_setup/public/mojom/constants.mojom.h"
+#include "chromeos/services/multidevice_setup/public/mojom/multidevice_setup.mojom.h"
+#include "services/service_manager/public/cpp/connector.h"
+#include "services/service_manager/public/mojom/connector.mojom.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/message_center/fake_message_center.h"
 #include "ui/message_center/message_center.h"
@@ -19,6 +28,12 @@
 namespace ash {
 
 namespace {
+
+const char kTestUserEmail[] = "test@example.com";
+const char kTestHostDeviceName[] = "Test Device";
+
+// Note: Must be formatted as a GUID.
+const char kTestServiceUserId[] = "01234567-89ab-cdef-0123-456789abcdef";
 
 class TestMessageCenter : public message_center::FakeMessageCenter {
  public:
@@ -70,7 +85,7 @@ class TestMessageCenter : public message_center::FakeMessageCenter {
 
 }  // namespace
 
-class MultiDeviceNotificationPresenterTest : public testing::Test {
+class MultiDeviceNotificationPresenterTest : public NoSessionAshTestBase {
  public:
   class TestOpenUiDelegate
       : public MultiDeviceNotificationPresenter::OpenUiDelegate {
@@ -113,16 +128,73 @@ class MultiDeviceNotificationPresenterTest : public testing::Test {
   MultiDeviceNotificationPresenterTest() = default;
 
   void SetUp() override {
+    NoSessionAshTestBase::SetUp();
+
     std::unique_ptr<TestOpenUiDelegate> test_open_ui_delegate =
         std::make_unique<TestOpenUiDelegate>();
-
     test_open_ui_delegate_ = test_open_ui_delegate.get();
+
+    service_manager::mojom::ConnectorRequest request;
+    connector_ = service_manager::Connector::Create(&request);
+
+    fake_multidevice_setup_ =
+        std::make_unique<chromeos::multidevice_setup::FakeMultiDeviceSetup>();
+    service_manager::Connector::TestApi test_api(connector_.get());
+    test_api.OverrideBinderForTesting(
+        service_manager::Identity(
+            chromeos::multidevice_setup::mojom::kServiceName,
+            kTestServiceUserId),
+        chromeos::multidevice_setup::mojom::MultiDeviceSetup::Name_,
+        base::BindRepeating(
+            &chromeos::multidevice_setup::FakeMultiDeviceSetup::BindHandle,
+            base::Unretained(fake_multidevice_setup_.get())));
 
     notification_presenter_ =
         std::make_unique<MultiDeviceNotificationPresenter>(
-            &test_message_center_);
+            &test_message_center_, connector_.get());
     notification_presenter_->open_ui_delegate_ =
         std::move(test_open_ui_delegate);
+  }
+
+  void TearDown() override {
+    notification_presenter_.reset();
+    NoSessionAshTestBase::TearDown();
+  }
+
+  void InvokePendingMojoCalls() { notification_presenter_->FlushForTesting(); }
+
+  void SignIntoAccount() {
+    TestSessionControllerClient* test_session_client =
+        GetSessionControllerClient();
+    test_session_client->AddUserSession(
+        kTestUserEmail, user_manager::USER_TYPE_REGULAR,
+        true /* enable_settings */, true /* provide_pref_service */,
+        false /* is_new_profile */, kTestServiceUserId);
+    test_session_client->SetSessionState(session_manager::SessionState::ACTIVE);
+    test_session_client->SwitchActiveUser(
+        AccountId::FromUserEmail(kTestUserEmail));
+
+    InvokePendingMojoCalls();
+    EXPECT_TRUE(fake_multidevice_setup_->delegate().is_bound());
+  }
+
+  void ShowNewUserNotification() {
+    EXPECT_TRUE(fake_multidevice_setup_->delegate().is_bound());
+    fake_multidevice_setup_->delegate()->OnPotentialHostExistsForNewUser();
+    InvokePendingMojoCalls();
+  }
+
+  void ShowExistingUserHostSwitchedNotification() {
+    EXPECT_TRUE(fake_multidevice_setup_->delegate().is_bound());
+    fake_multidevice_setup_->delegate()->OnConnectedHostSwitchedForExistingUser(
+        kTestHostDeviceName);
+    InvokePendingMojoCalls();
+  }
+
+  void ShowExistingUserNewChromebookNotification() {
+    EXPECT_TRUE(fake_multidevice_setup_->delegate().is_bound());
+    fake_multidevice_setup_->delegate()->OnNewChromebookAddedForExistingUser();
+    InvokePendingMojoCalls();
   }
 
   void ClickNotification() {
@@ -191,6 +263,9 @@ class MultiDeviceNotificationPresenterTest : public testing::Test {
   base::HistogramTester histogram_tester_;
   TestOpenUiDelegate* test_open_ui_delegate_;
   TestMessageCenter test_message_center_;
+  std::unique_ptr<service_manager::Connector> connector_;
+  std::unique_ptr<chromeos::multidevice_setup::FakeMultiDeviceSetup>
+      fake_multidevice_setup_;
   std::unique_ptr<MultiDeviceNotificationPresenter> notification_presenter_;
 
  private:
@@ -211,8 +286,9 @@ class MultiDeviceNotificationPresenterTest : public testing::Test {
         break;
       case MultiDeviceNotificationPresenter::Status::
           kExistingUserHostSwitchedNotificationVisible:
-        title = l10n_util::GetStringUTF16(
-            IDS_ASH_MULTI_DEVICE_SETUP_EXISTING_USER_HOST_SWITCHED_TITLE);
+        title = l10n_util::GetStringFUTF16(
+            IDS_ASH_MULTI_DEVICE_SETUP_EXISTING_USER_HOST_SWITCHED_TITLE,
+            base::ASCIIToUTF16(kTestHostDeviceName));
         message = l10n_util::GetStringUTF16(
             IDS_ASH_MULTI_DEVICE_SETUP_EXISTING_USER_HOST_SWITCHED_MESSAGE);
         break;
@@ -233,9 +309,32 @@ class MultiDeviceNotificationPresenterTest : public testing::Test {
   DISALLOW_COPY_AND_ASSIGN(MultiDeviceNotificationPresenterTest);
 };
 
+TEST_F(MultiDeviceNotificationPresenterTest, NotSignedIntoAccount) {
+  static const session_manager::SessionState kNonActiveStates[] = {
+      session_manager::SessionState::UNKNOWN,
+      session_manager::SessionState::OOBE,
+      session_manager::SessionState::LOGIN_PRIMARY,
+      session_manager::SessionState::LOGGED_IN_NOT_ACTIVE,
+      session_manager::SessionState::LOCKED,
+      session_manager::SessionState::LOGIN_SECONDARY};
+
+  // For each of the states which is not ACTIVE, set the session state. None of
+  // these should trigger a SetAccountStatusChangeDelegate() call.
+  for (const auto state : kNonActiveStates) {
+    GetSessionControllerClient()->SetSessionState(state);
+    InvokePendingMojoCalls();
+    EXPECT_FALSE(fake_multidevice_setup_->delegate().is_bound());
+  }
+
+  SignIntoAccount();
+  EXPECT_TRUE(fake_multidevice_setup_->delegate().is_bound());
+}
+
 TEST_F(MultiDeviceNotificationPresenterTest,
        TestHostNewUserPotentialHostExistsNotification_RemoveProgrammatically) {
-  notification_presenter_->OnPotentialHostExistsForNewUser();
+  SignIntoAccount();
+
+  ShowNewUserNotification();
   VerifyNewUserPotentialHostExistsNotificationIsVisible();
 
   notification_presenter_->RemoveMultiDeviceSetupNotification();
@@ -248,7 +347,9 @@ TEST_F(MultiDeviceNotificationPresenterTest,
 
 TEST_F(MultiDeviceNotificationPresenterTest,
        TestHostNewUserPotentialHostExistsNotification_TapNotification) {
-  notification_presenter_->OnPotentialHostExistsForNewUser();
+  SignIntoAccount();
+
+  ShowNewUserNotification();
   VerifyNewUserPotentialHostExistsNotificationIsVisible();
 
   ClickNotification();
@@ -261,7 +362,9 @@ TEST_F(MultiDeviceNotificationPresenterTest,
 
 TEST_F(MultiDeviceNotificationPresenterTest,
        TestHostExistingUserHostSwitchedNotification_RemoveProgrammatically) {
-  notification_presenter_->OnConnectedHostSwitchedForExistingUser();
+  SignIntoAccount();
+
+  ShowExistingUserHostSwitchedNotification();
   VerifyExistingUserHostSwitchedNotificationIsVisible();
 
   notification_presenter_->RemoveMultiDeviceSetupNotification();
@@ -275,7 +378,9 @@ TEST_F(MultiDeviceNotificationPresenterTest,
 
 TEST_F(MultiDeviceNotificationPresenterTest,
        TestHostExistingUserHostSwitchedNotification_TapNotification) {
-  notification_presenter_->OnConnectedHostSwitchedForExistingUser();
+  SignIntoAccount();
+
+  ShowExistingUserHostSwitchedNotification();
   VerifyExistingUserHostSwitchedNotificationIsVisible();
 
   ClickNotification();
@@ -290,7 +395,9 @@ TEST_F(MultiDeviceNotificationPresenterTest,
 TEST_F(
     MultiDeviceNotificationPresenterTest,
     TestHostExistingUserNewChromebookAddedNotification_RemoveProgrammatically) {
-  notification_presenter_->OnNewChromebookAddedForExistingUser();
+  SignIntoAccount();
+
+  ShowExistingUserNewChromebookNotification();
   VerifyExistingUserNewChromebookAddedNotificationIsVisible();
 
   notification_presenter_->RemoveMultiDeviceSetupNotification();
@@ -303,7 +410,9 @@ TEST_F(
 
 TEST_F(MultiDeviceNotificationPresenterTest,
        TestHostExistingUserNewChromebookAddedNotification_TapNotification) {
-  notification_presenter_->OnNewChromebookAddedForExistingUser();
+  SignIntoAccount();
+
+  ShowExistingUserNewChromebookNotification();
   VerifyExistingUserNewChromebookAddedNotificationIsVisible();
 
   ClickNotification();
@@ -315,13 +424,15 @@ TEST_F(MultiDeviceNotificationPresenterTest,
 }
 
 TEST_F(MultiDeviceNotificationPresenterTest, NotificationsReplaceOneAnother) {
-  notification_presenter_->OnPotentialHostExistsForNewUser();
+  SignIntoAccount();
+
+  ShowNewUserNotification();
   VerifyNewUserPotentialHostExistsNotificationIsVisible();
 
-  notification_presenter_->OnConnectedHostSwitchedForExistingUser();
+  ShowExistingUserHostSwitchedNotification();
   VerifyExistingUserHostSwitchedNotificationIsVisible();
 
-  notification_presenter_->OnNewChromebookAddedForExistingUser();
+  ShowExistingUserNewChromebookNotification();
   VerifyExistingUserNewChromebookAddedNotificationIsVisible();
 
   ClickNotification();
@@ -333,21 +444,23 @@ TEST_F(MultiDeviceNotificationPresenterTest, NotificationsReplaceOneAnother) {
 }
 
 TEST_F(MultiDeviceNotificationPresenterTest, NotificationsReplaceThemselves) {
-  notification_presenter_->OnPotentialHostExistsForNewUser();
+  SignIntoAccount();
+
+  ShowNewUserNotification();
   VerifyNewUserPotentialHostExistsNotificationIsVisible();
-  notification_presenter_->OnPotentialHostExistsForNewUser();
+  ShowNewUserNotification();
   VerifyNewUserPotentialHostExistsNotificationIsVisible();
   notification_presenter_->RemoveMultiDeviceSetupNotification();
 
-  notification_presenter_->OnConnectedHostSwitchedForExistingUser();
+  ShowExistingUserHostSwitchedNotification();
   VerifyExistingUserHostSwitchedNotificationIsVisible();
-  notification_presenter_->OnConnectedHostSwitchedForExistingUser();
+  ShowExistingUserHostSwitchedNotification();
   VerifyExistingUserHostSwitchedNotificationIsVisible();
   notification_presenter_->RemoveMultiDeviceSetupNotification();
 
-  notification_presenter_->OnNewChromebookAddedForExistingUser();
+  ShowExistingUserNewChromebookNotification();
   VerifyExistingUserNewChromebookAddedNotificationIsVisible();
-  notification_presenter_->OnNewChromebookAddedForExistingUser();
+  ShowExistingUserNewChromebookNotification();
   VerifyExistingUserNewChromebookAddedNotificationIsVisible();
   notification_presenter_->RemoveMultiDeviceSetupNotification();
 

@@ -691,7 +691,10 @@ void HTMLConstructionSite::InsertHTMLFormElement(AtomicHTMLToken* token,
       ToHTMLFormElement(CreateElement(token, xhtmlNamespaceURI));
   if (!OpenElements()->HasTemplateInHTMLScope())
     form_ = form_element;
-  form_element->SetDemoted(is_demoted);
+  if (is_demoted) {
+    UseCounter::Count(OwnerDocumentForCurrentNode(),
+                      WebFeature::kDemotedFormElement);
+  }
   AttachLater(CurrentNode(), form_element);
   open_elements_.Push(HTMLStackItem::Create(form_element, token));
 }
@@ -732,14 +735,7 @@ void HTMLConstructionSite::InsertScriptElement(AtomicHTMLToken* token) {
       // elements since scripts can never see those flags or effects thereof.
       .SetCreatedByParser(parser_content_policy_ !=
                           kAllowScriptingContentAndDoNotMarkAlreadyStarted)
-      .SetAlreadyStarted(is_parsing_fragment_ && flags.IsCreatedByParser())
-      // TODO(csharrison): This logic only works if the tokenizer/parser was not
-      // blocked waiting for scripts when the element was inserted. This usually
-      // fails for instance, on second document.write if a script writes twice
-      // in a row. To fix this, the parser might have to keep track of raw
-      // string position.
-      .SetCreatedDuringDocumentWrite(
-          OwnerDocumentForCurrentNode().IsInDocumentWrite());
+      .SetAlreadyStarted(is_parsing_fragment_ && flags.IsCreatedByParser());
   HTMLScriptElement* element = nullptr;
   if (const auto* is_attribute = token->GetAttributeItem(HTMLNames::isAttr)) {
     element = ToHTMLScriptElement(OwnerDocumentForCurrentNode().CreateElement(

@@ -1023,6 +1023,9 @@ void CookieTreeFlashLSONode::DeleteStoredObjects() {
   LocalDataContainer* container = GetModel()->data_container();
   container->flash_lso_helper_->DeleteFlashLSOsForSite(
       domain_, base::Closure());
+  auto entry = std::find(container->flash_lso_domain_list_.begin(),
+                         container->flash_lso_domain_list_.end(), domain_);
+  container->flash_lso_domain_list_.erase(entry);
 }
 
 CookieTreeNode::DetailedInfo CookieTreeFlashLSONode::GetDetailedInfo() const {
@@ -1071,14 +1074,14 @@ void CookiesTreeModel::ScopedBatchUpdateNotifier::StartBatchUpdate() {
 ///////////////////////////////////////////////////////////////////////////////
 // CookiesTreeModel, public:
 CookiesTreeModel::CookiesTreeModel(
-    LocalDataContainer* data_container,
+    std::unique_ptr<LocalDataContainer> data_container,
     ExtensionSpecialStoragePolicy* special_storage_policy)
     : ui::TreeNodeModel<CookieTreeNode>(
           std::make_unique<CookieTreeRootNode>(this)),
 #if BUILDFLAG(ENABLE_EXTENSIONS)
       special_storage_policy_(special_storage_policy),
 #endif
-      data_container_(data_container) {
+      data_container_(std::move(data_container)) {
   data_container_->Init(this);
 }
 
@@ -1187,6 +1190,8 @@ void CookiesTreeModel::UpdateSearchResults(const base::string16& filter) {
   PopulateServiceWorkerUsageInfoWithFilter(data_container(), &notifier, filter);
   PopulateSharedWorkerInfoWithFilter(data_container(), &notifier, filter);
   PopulateCacheStorageUsageInfoWithFilter(data_container(), &notifier, filter);
+  PopulateFlashLSOInfoWithFilter(data_container(), &notifier, filter);
+  PopulateMediaLicenseInfoWithFilter(data_container(), &notifier, filter);
 }
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)

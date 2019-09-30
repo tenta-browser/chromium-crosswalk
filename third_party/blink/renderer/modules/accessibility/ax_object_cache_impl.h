@@ -35,7 +35,7 @@
 #include "mojo/public/cpp/bindings/binding.h"
 #include "third_party/blink/public/platform/modules/permissions/permission.mojom-blink.h"
 #include "third_party/blink/public/platform/modules/permissions/permission_status.mojom-blink.h"
-#include "third_party/blink/renderer/core/dom/ax_object_cache_base.h"
+#include "third_party/blink/renderer/core/accessibility/ax_object_cache_base.h"
 #include "third_party/blink/renderer/core/dom/context_lifecycle_observer.h"
 #include "third_party/blink/renderer/modules/accessibility/ax_object.h"
 #include "third_party/blink/renderer/modules/modules_export.h"
@@ -65,6 +65,7 @@ class MODULES_EXPORT AXObjectCacheImpl
     kAXChildrenChanged,
     kAXClicked,
     kAXDocumentSelectionChanged,
+    kAXDocumentTitleChanged,
     kAXExpandedChanged,
     kAXFocusedUIElementChanged,
     kAXHide,
@@ -90,13 +91,20 @@ class MODULES_EXPORT AXObjectCacheImpl
   };
 
   explicit AXObjectCacheImpl(Document&);
-  virtual ~AXObjectCacheImpl();
-  virtual void Trace(blink::Visitor*);
+  ~AXObjectCacheImpl() override;
+  void Trace(blink::Visitor*) override;
 
   Document& GetDocument() { return *document_; }
   AXObject* FocusedObject();
 
   void Dispose() override;
+
+  //
+  // Iterators.
+  //
+
+  AXObject::InOrderTraversalIterator InOrderTraversalBegin();
+  AXObject::InOrderTraversalIterator InOrderTraversalEnd();
 
   void SelectionChanged(Node*) override;
   void UpdateReverseRelations(const AXObject* relation_source,
@@ -105,10 +113,11 @@ class MODULES_EXPORT AXObjectCacheImpl
   void ChildrenChanged(LayoutObject*) override;
   void ChildrenChanged(AccessibleNode*) override;
   void CheckedStateChanged(Node*) override;
-  virtual void ListboxOptionStateChanged(HTMLOptionElement*);
-  virtual void ListboxSelectedChildrenChanged(HTMLSelectElement*);
-  virtual void ListboxActiveIndexChanged(HTMLSelectElement*);
-  virtual void RadiobuttonRemovedFromGroup(HTMLInputElement*);
+  void ListboxOptionStateChanged(HTMLOptionElement*) override;
+  void ListboxSelectedChildrenChanged(HTMLSelectElement*) override;
+  void ListboxActiveIndexChanged(HTMLSelectElement*) override;
+  void LocationChanged(LayoutObject*) override;
+  void RadiobuttonRemovedFromGroup(HTMLInputElement*) override;
 
   void Remove(AccessibleNode*) override;
   void Remove(LayoutObject*) override;
@@ -121,17 +130,21 @@ class MODULES_EXPORT AXObjectCacheImpl
   // changed.
   void TextChanged(LayoutObject*) override;
   void TextChanged(AXObject*, Node* optional_node = nullptr);
+  void DocumentTitleChanged() override;
   // Called when a node has just been attached, so we can make sure we have the
   // right subclass of AXObject.
   void UpdateCacheAfterNodeIsAttached(Node*) override;
+  void DidInsertChildrenOfNode(Node*) override;
 
   void HandleAttributeChanged(const QualifiedName& attr_name,
                               Element*) override;
+  void HandleAutofillStateChanged(Element*, bool) override;
   void HandleFocusedUIElementChanged(Node* old_focused_node,
                                      Node* new_focused_node) override;
   void HandleInitialFocus() override;
   void HandleTextFormControlChanged(Node*) override;
   void HandleEditableTextContentChanged(Node*) override;
+  void HandleScaleAndLocationChanged(Document*) override;
   void HandleTextMarkerDataAdded(Node* start, Node* end) override;
   void HandleValueChanged(Node*) override;
   void HandleUpdateActiveMenuOption(LayoutMenuList*, int option_index) override;
@@ -140,6 +153,8 @@ class MODULES_EXPORT AXObjectCacheImpl
   void HandleLoadComplete(Document*) override;
   void HandleLayoutComplete(Document*) override;
   void HandleClicked(Node*) override;
+  void HandleAttributeChanged(const QualifiedName& attr_name,
+                              AccessibleNode*) override;
 
   void SetCanvasObjectBounds(HTMLCanvasElement*,
                              Element*,
@@ -159,9 +174,6 @@ class MODULES_EXPORT AXObjectCacheImpl
   String ComputedNameForNode(Node*) override;
 
   void OnTouchAccessibilityHover(const IntPoint&) override;
-
-  // Returns the root object for the entire document.
-  AXObject* RootObject();
 
   AXObject* ObjectFromAXID(AXID id) const { return objects_.at(id); }
   AXObject* Root();
@@ -188,6 +200,8 @@ class MODULES_EXPORT AXObjectCacheImpl
   void Remove(AXID);
 
   void ChildrenChanged(AXObject*, Node* node_for_relation_update = nullptr);
+
+  void MaybeNewRelationTarget(Node* node, AXObject* obj);
 
   void HandleActiveDescendantChanged(Node*);
   void HandlePossibleRoleChange(Node*);
@@ -295,7 +309,7 @@ class MODULES_EXPORT AXObjectCacheImpl
   // mojom::blink::PermissionObserver implementation.
   // Called when we get an updated AOM event listener permission value from
   // the browser.
-  void OnPermissionStatusChange(mojom::PermissionStatus);
+  void OnPermissionStatusChange(mojom::PermissionStatus) override;
 
   // When a <tr> or <td> is inserted or removed, the containing table may have
   // gained or lost rows or columns.

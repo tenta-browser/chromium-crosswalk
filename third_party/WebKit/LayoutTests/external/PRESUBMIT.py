@@ -5,7 +5,7 @@
 """Lint functionality duplicated from web-platform-tests upstream.
 
 This is to catch lint errors that would otherwise be caught in WPT CI.
-See http://web-platform-tests.org/writing-tests/lint-tool.html for more
+See https://web-platform-tests.org/writing-tests/lint-tool.html for more
 information about the lint tool.
 """
 
@@ -13,12 +13,11 @@ information about the lint tool.
 def _LintWPT(input_api, output_api):
     wpt_path = input_api.os_path.join(input_api.PresubmitLocalPath(), 'wpt')
     linter_path = input_api.os_path.join(
-        input_api.PresubmitLocalPath(), '..', '..', 'Tools', 'Scripts',
-        'webkitpy', 'thirdparty', 'wpt', 'wpt', 'wpt')
+        input_api.PresubmitLocalPath(), '..', '..', '..', 'blink', 'tools',
+        'blinkpy', 'third_party', 'wpt', 'wpt', 'wpt')
 
     paths_in_wpt = []
-    for f in input_api.AffectedFiles():
-        abs_path = f.AbsoluteLocalPath()
+    for abs_path in input_api.AbsoluteLocalPaths():
         if abs_path.endswith(input_api.os_path.relpath(abs_path, wpt_path)):
             paths_in_wpt.append(abs_path)
 
@@ -40,10 +39,11 @@ def _LintWPT(input_api, output_api):
         args,
         stdout=input_api.subprocess.PIPE,
         stderr=input_api.subprocess.PIPE)
-    stdout, _ = proc.communicate()
+    stdout, stderr = proc.communicate()
 
-    if stdout:
-        return [output_api.PresubmitError(stdout)]
+    if proc.returncode != 0:
+        return [output_api.PresubmitError('wpt lint failed:',
+                                          long_text=stdout+stderr)]
     return []
 
 

@@ -15,7 +15,8 @@
 #include "base/files/file_util.h"
 #include "base/macros.h"
 #include "base/metrics/histogram_macros.h"
-#include "sql/connection.h"
+#include "base/stl_util.h"
+#include "sql/database.h"
 #include "sql/meta_table.h"
 #include "sql/statement.h"
 #include "sql/transaction.h"
@@ -28,8 +29,8 @@ namespace {
 
 // Definitions for database schema.
 
-const int kCurrentVersion = 5;
-const int kCompatibleVersion = 2;
+const int kQuotaDatabaseCurrentSchemaVersion = 5;
+const int kQuotaDatabaseCompatibleVersion = 2;
 
 const char kHostQuotaTable[] = "HostQuotaTable";
 const char kOriginInfoTable[] = "OriginInfoTable";
@@ -37,30 +38,12 @@ const char kEvictionInfoTable[] = "EvictionInfoTable";
 const char kIsOriginTableBootstrapped[] = "IsOriginTableBootstrapped";
 
 bool VerifyValidQuotaConfig(const char* key) {
-  return (key != NULL &&
+  return (key != nullptr &&
           (!strcmp(key, QuotaDatabase::kDesiredAvailableSpaceKey) ||
            !strcmp(key, QuotaDatabase::kTemporaryQuotaOverrideKey)));
 }
 
 const int kCommitIntervalMs = 30000;
-
-enum OriginType {
-  // This enum is logged to UMA so only append to it - don't change
-  // the meaning of the existing values.
-  OTHER = 0,
-  NONE = 1,
-  GOOGLE_DURABLE = 2,
-  NON_GOOGLE_DURABLE = 3,
-  GOOGLE_UNLIMITED_EXTENSION = 4,
-  NON_GOOGLE_UNLIMITED_EXTENSION = 5,
-  IN_USE = 6,
-
-  MAX_ORIGIN_TYPE
-};
-
-void HistogramOriginType(const OriginType& entry) {
-  UMA_HISTOGRAM_ENUMERATION("Quota.LRUOriginTypes", entry, MAX_ORIGIN_TYPE);
-}
 
 void LogDaysSinceLastAccess(base::Time this_time,
                             const QuotaDatabase::OriginInfoTableEntry& entry) {
@@ -163,7 +146,7 @@ QuotaDatabase::~QuotaDatabase() {
   }
 }
 
-void QuotaDatabase::CloseConnection() {
+void QuotaDatabase::CloseDatabase() {
   meta_table_.reset();
   db_.reset();
 }
@@ -197,6 +180,8 @@ bool QuotaDatabase::SetHostQuota(const std::string& host,
   DCHECK_GE(quota, 0);
   if (!LazyOpen(true))
     return false;
+  if (quota == 0)
+    return DeleteHostQuota(host, type);
   if (!InsertOrReplaceHostQuota(host, type, quota))
     return false;
   ScheduleCommit();
@@ -223,9 +208,10 @@ bool QuotaDatabase::SetOriginLastAccessTime(
     entry.used_count = 1;
     const char* kSql =
         "INSERT INTO OriginInfoTable"
-        " (used_count, last_access_time, origin, type)"
-        " VALUES (?, ?, ?, ?)";
+        " (used_count, last_access_time, origin, type, last_modified_time)"
+        " VALUES (?, ?, ?, ?, ?)";
     statement.Assign(db_->GetCachedStatement(SQL_FROM_HERE, kSql));
+    statement.BindInt64(4, last_access_time.ToInternalValue());
   }
   statement.BindInt(0, entry.used_count);
   statement.BindInt64(1, last_access_time.ToInternalValue());
@@ -257,8 +243,9 @@ bool QuotaDatabase::SetOriginLastModifiedTime(
   } else {
     const char* kSql =
         "INSERT INTO OriginInfoTable"
-        " (last_modified_time, origin, type)  VALUES (?, ?, ?)";
+        " (last_modified_time, origin, type, last_access_time)  VALUES (?, ?, ?, ?)";
     statement.Assign(db_->GetCachedStatement(SQL_FROM_HERE, kSql));
+    statement.BindInt64(3, last_modified_time.ToInternalValue());
   }
   statement.BindInt64(0, last_modified_time.ToInternalValue());
   statement.BindString(1, origin.spec());
@@ -278,7 +265,7 @@ bool QuotaDatabase::GetOriginLastEvictionTime(const GURL& origin,
   if (!LazyOpen(false))
     return false;
 
-  const char kSql[] =
+  static const char kSql[] =
       "SELECT last_eviction_time"
       " FROM EvictionInfoTable"
       " WHERE origin = ? AND type = ?";
@@ -300,7 +287,7 @@ bool QuotaDatabase::SetOriginLastEvictionTime(const GURL& origin,
   if (!LazyOpen(true))
     return false;
 
-  const char kSql[] =
+  static const char kSql[] =
       "INSERT OR REPLACE INTO EvictionInfoTable"
       " (last_eviction_time, origin, type)"
       " VALUES (?, ?, ?)";
@@ -321,7 +308,7 @@ bool QuotaDatabase::DeleteOriginLastEvictionTime(const GURL& origin,
   if (!LazyOpen(false))
     return false;
 
-  const char kSql[] =
+  static const char kSql[] =
       "DELETE FROM EvictionInfoTable"
       " WHERE origin = ? AND type = ?";
 
@@ -341,14 +328,12 @@ bool QuotaDatabase::RegisterInitialOriginInfo(
   if (!LazyOpen(true))
     return false;
 
-  typedef std::set<GURL>::const_iterator itr_type;
-  for (itr_type itr = origins.begin(), end = origins.end();
-       itr != end; ++itr) {
+  for (const auto& origin : origins) {
     const char* kSql =
         "INSERT OR IGNORE INTO OriginInfoTable"
         " (origin, type) VALUES (?, ?)";
     sql::Statement statement(db_->GetCachedStatement(SQL_FROM_HERE, kSql));
-    statement.BindString(0, itr->spec());
+    statement.BindString(0, origin.spec());
     statement.BindInt(1, static_cast<int>(type));
 
     if (!statement.Run())
@@ -447,37 +432,29 @@ bool QuotaDatabase::GetLRUOrigin(
   if (!LazyOpen(false))
     return false;
 
-  const char* kSql = "SELECT origin FROM OriginInfoTable"
-                     " WHERE type = ?"
-                     " ORDER BY last_access_time ASC";
+  static const char kSql[] =
+      "SELECT origin FROM OriginInfoTable"
+      " WHERE type = ?"
+      " ORDER BY last_access_time ASC";
 
   sql::Statement statement(db_->GetCachedStatement(SQL_FROM_HERE, kSql));
   statement.BindInt(0, static_cast<int>(type));
 
   while (statement.Step()) {
     GURL url(statement.ColumnString(0));
-    if (exceptions.find(url) != exceptions.end()) {
-      HistogramOriginType(IN_USE);
+    if (base::ContainsKey(exceptions, url))
+      continue;
+
+    if (special_storage_policy && (
+        special_storage_policy->IsStorageDurable(url) ||
+        special_storage_policy->IsStorageUnlimited(url))) {
       continue;
     }
-    if (special_storage_policy) {
-      bool is_google = url.DomainIs("google.com");
-      if (special_storage_policy->IsStorageDurable(url)) {
-        HistogramOriginType(is_google ? GOOGLE_DURABLE : NON_GOOGLE_DURABLE);
-        continue;
-      }
-      if (special_storage_policy->IsStorageUnlimited(url)) {
-        HistogramOriginType(is_google ? GOOGLE_UNLIMITED_EXTENSION
-                                      : NON_GOOGLE_UNLIMITED_EXTENSION);
-        continue;
-      }
-    }
-    HistogramOriginType(OTHER);
+
     *origin = url;
     return true;
   }
 
-  HistogramOriginType(NONE);
   *origin = GURL();
   return statement.Succeeded();
 }
@@ -553,7 +530,7 @@ bool QuotaDatabase::LazyOpen(bool create_if_needed) {
     return false;
   }
 
-  db_.reset(new sql::Connection);
+  db_.reset(new sql::Database);
   meta_table_.reset(new sql::MetaTable);
 
   db_->set_histogram_tag("Quota");
@@ -591,19 +568,21 @@ bool QuotaDatabase::EnsureDatabaseVersion() {
   static const size_t kIndexCount = arraysize(kIndexes);
   if (!sql::MetaTable::DoesTableExist(db_.get()))
     return CreateSchema(db_.get(), meta_table_.get(),
-                        kCurrentVersion, kCompatibleVersion,
-                        kTables, kTableCount,
+                        kQuotaDatabaseCurrentSchemaVersion,
+                        kQuotaDatabaseCompatibleVersion, kTables, kTableCount,
                         kIndexes, kIndexCount);
 
-  if (!meta_table_->Init(db_.get(), kCurrentVersion, kCompatibleVersion))
+  if (!meta_table_->Init(db_.get(), kQuotaDatabaseCurrentSchemaVersion,
+                         kQuotaDatabaseCompatibleVersion))
     return false;
 
-  if (meta_table_->GetCompatibleVersionNumber() > kCurrentVersion) {
+  if (meta_table_->GetCompatibleVersionNumber() >
+      kQuotaDatabaseCurrentSchemaVersion) {
     LOG(WARNING) << "Quota database is too new.";
     return false;
   }
 
-  if (meta_table_->GetVersionNumber() < kCurrentVersion) {
+  if (meta_table_->GetVersionNumber() < kQuotaDatabaseCurrentSchemaVersion) {
     if (!UpgradeSchema(meta_table_->GetVersionNumber()))
       return ResetSchema();
   }
@@ -619,12 +598,14 @@ bool QuotaDatabase::EnsureDatabaseVersion() {
 }
 
 // static
-bool QuotaDatabase::CreateSchema(
-    sql::Connection* database,
-    sql::MetaTable* meta_table,
-    int schema_version, int compatible_version,
-    const TableSchema* tables, size_t tables_size,
-    const IndexSchema* indexes, size_t indexes_size) {
+bool QuotaDatabase::CreateSchema(sql::Database* database,
+                                 sql::MetaTable* meta_table,
+                                 int schema_version,
+                                 int compatible_version,
+                                 const TableSchema* tables,
+                                 size_t tables_size,
+                                 const IndexSchema* indexes,
+                                 size_t indexes_size) {
   // TODO(kinuko): Factor out the common code to create databases.
   sql::Transaction transaction(database);
   if (!transaction.Begin())
@@ -671,7 +652,7 @@ bool QuotaDatabase::ResetSchema() {
   db_.reset();
   meta_table_.reset();
 
-  if (!sql::Connection::Delete(db_file_path_))
+  if (!sql::Database::Delete(db_file_path_))
     return false;
 
   // So we can't go recursive.
@@ -687,7 +668,6 @@ bool QuotaDatabase::UpgradeSchema(int current_version) {
 
   if (current_version == 2) {
     QuotaTableImporter importer;
-    typedef std::vector<QuotaTableEntry> QuotaTableEntries;
     if (!DumpQuotaTable(base::BindRepeating(&QuotaTableImporter::Append,
                                             base::Unretained(&importer)))) {
       return false;
@@ -697,9 +677,8 @@ bool QuotaDatabase::UpgradeSchema(int current_version) {
     sql::Transaction transaction(db_.get());
     if (!transaction.Begin())
       return false;
-    for (QuotaTableEntries::const_iterator iter = importer.entries.begin();
-         iter != importer.entries.end(); ++iter) {
-      if (!InsertOrReplaceHostQuota(iter->host, iter->type, iter->quota))
+    for (const auto& entry : importer.entries) {
+      if (!InsertOrReplaceHostQuota(entry.host, entry.type, entry.quota))
         return false;
     }
     return transaction.Commit();

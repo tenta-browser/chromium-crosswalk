@@ -336,10 +336,23 @@ void PictureLayerImpl::AppendQuads(viz::RenderPass* render_pass,
     gfx::Size texture_size = quad_content_rect.size();
     gfx::RectF texture_rect = gfx::RectF(gfx::SizeF(texture_size));
 
+    viz::PictureDrawQuad::ImageAnimationMap image_animation_map;
+    const auto* controller = layer_tree_impl()->image_animation_controller();
+    WhichTree tree = layer_tree_impl()->IsPendingTree()
+                         ? WhichTree::PENDING_TREE
+                         : WhichTree::ACTIVE_TREE;
+    for (const auto& image_data : raster_source_->GetDisplayItemList()
+                                      ->discardable_image_map()
+                                      .animated_images_metadata()) {
+      image_animation_map[image_data.paint_image_id] =
+          controller->GetFrameIndexForImage(image_data.paint_image_id, tree);
+    }
+
     auto* quad = render_pass->CreateAndAppendDrawQuad<viz::PictureDrawQuad>();
     quad->SetNew(shared_quad_state, geometry_rect, visible_geometry_rect,
                  needs_blending, texture_rect, texture_size, nearest_neighbor_,
                  viz::RGBA_8888, quad_content_rect, max_contents_scale,
+                 std::move(image_animation_map),
                  raster_source_->GetDisplayItemList());
     ValidateQuadResources(quad);
     return;
@@ -664,7 +677,8 @@ void PictureLayerImpl::UpdateViewportRectForTilePriorityInContentSpace() {
   gfx::Rect viewport_rect_for_tile_priority =
       layer_tree_impl()->ViewportRectForTilePriority();
   if (visible_rect_in_content_space.IsEmpty() ||
-      layer_tree_impl()->DeviceViewport() != viewport_rect_for_tile_priority) {
+      layer_tree_impl()->GetDeviceViewport() !=
+          viewport_rect_for_tile_priority) {
     gfx::Transform view_to_layer(gfx::Transform::kSkipInitialization);
     if (ScreenSpaceTransform().GetInverse(&view_to_layer)) {
       // Transform from view space to content space.
@@ -771,6 +785,10 @@ void PictureLayerImpl::UpdateRasterSource(
   // We could do this after doing UpdateTiles, which would avoid doing this for
   // tilings that are going to disappear on the pending tree (if scale changed).
   // But that would also be more complicated, so we just do it here for now.
+  //
+  // TODO(crbug.com/843787): If the LayerTreeFrameSink is lost, and we activate,
+  // this ends up running with the old LayerTreeFrameSink, or possibly with a
+  // null LayerTreeFrameSink, which can give incorrect results or maybe crash.
   if (pending_set) {
     tilings_->UpdateTilingsToCurrentRasterSourceForActivation(
         raster_source_, pending_set, invalidation_, MinimumContentsScale(),
@@ -932,8 +950,7 @@ bool PictureLayerImpl::ShouldAnimate(PaintImage::Id paint_image_id) const {
 
 gfx::Size PictureLayerImpl::CalculateTileSize(
     const gfx::Size& content_bounds) const {
-  int max_texture_size =
-      layer_tree_impl()->resource_provider()->max_texture_size();
+  int max_texture_size = layer_tree_impl()->max_texture_size();
 
   if (mask_type_ == Layer::LayerMaskType::SINGLE_TEXTURE_MASK) {
     // Masks are not tiled, so if we can't cover the whole mask with one tile,
@@ -1302,7 +1319,7 @@ void PictureLayerImpl::RecalculateRasterScales() {
       int64_t maximum_area =
           static_cast<int64_t>(bounds_at_maximum_scale.width()) *
           static_cast<int64_t>(bounds_at_maximum_scale.height());
-      gfx::Size viewport = layer_tree_impl()->device_viewport_size();
+      gfx::Size viewport = layer_tree_impl()->GetDeviceViewport().size();
 
       // Use the square of the maximum viewport dimension direction, to
       // compensate for viewports with different aspect ratios.
@@ -1321,7 +1338,7 @@ void PictureLayerImpl::RecalculateRasterScales() {
       int64_t start_area =
           static_cast<int64_t>(bounds_at_starting_scale.width()) *
           static_cast<int64_t>(bounds_at_starting_scale.height());
-      gfx::Size viewport = layer_tree_impl()->device_viewport_size();
+      gfx::Size viewport = layer_tree_impl()->GetDeviceViewport().size();
       int64_t viewport_area = static_cast<int64_t>(viewport.width()) *
                               static_cast<int64_t>(viewport.height());
       if (start_area <= viewport_area)
@@ -1452,10 +1469,10 @@ float PictureLayerImpl::MaximumContentsScale() const {
   // have tilings that would become larger than the max_texture_size since they
   // use a single tile for the entire tiling. Other layers can have tilings such
   // that dimension * scale does not overflow.
-  float max_dimension = static_cast<float>(
-      mask_type_ == Layer::LayerMaskType::SINGLE_TEXTURE_MASK
-          ? layer_tree_impl()->resource_provider()->max_texture_size()
-          : std::numeric_limits<int>::max());
+  float max_dimension =
+      static_cast<float>(mask_type_ == Layer::LayerMaskType::SINGLE_TEXTURE_MASK
+                             ? layer_tree_impl()->max_texture_size()
+                             : std::numeric_limits<int>::max());
   float max_scale_width = max_dimension / bounds().width();
   float max_scale_height = max_dimension / bounds().height();
   float max_scale = std::min(max_scale_width, max_scale_height);

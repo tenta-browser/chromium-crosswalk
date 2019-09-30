@@ -10,15 +10,15 @@
 #include "base/rand_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/time/time.h"
 #include "build/build_config.h"
 #include "components/autofill/core/browser/autofill_external_delegate.h"
-#include "components/autofill/core/browser/autofill_manager.h"
 #include "components/autofill/core/browser/autofill_profile.h"
 #include "components/autofill/core/browser/credit_card.h"
 #include "components/autofill/core/browser/field_types.h"
 #include "components/autofill/core/browser/webdata/autofill_table.h"
 #include "components/autofill/core/common/autofill_constants.h"
-#include "components/autofill/core/common/autofill_pref_names.h"
+#include "components/autofill/core/common/autofill_prefs.h"
 #include "components/autofill/core/common/form_data.h"
 #include "components/autofill/core/common/form_field_data.h"
 #include "components/os_crypt/os_crypt_mocker.h"
@@ -35,6 +35,8 @@ namespace autofill {
 namespace test {
 
 namespace {
+
+const int kValidityStateBitfield = 1984;
 
 std::string GetRandomCardNumber() {
   const size_t length = 16;
@@ -55,7 +57,7 @@ std::unique_ptr<PrefService> PrefServiceForTesting() {
 
 std::unique_ptr<PrefService> PrefServiceForTesting(
     user_prefs::PrefRegistrySyncable* registry) {
-  AutofillManager::RegisterProfilePrefs(registry);
+  prefs::RegisterProfilePrefs(registry);
 
   PrefServiceFactory factory;
   factory.set_user_prefs(base::MakeRefCounted<TestingPrefStore>());
@@ -101,14 +103,16 @@ void CreateTestSelectField(const std::vector<const char*>& values,
   CreateTestSelectField("", "", "", values, values, values.size(), field);
 }
 
-void CreateTestAddressFormData(FormData* form) {
+void CreateTestAddressFormData(FormData* form, const char* unique_id) {
   std::vector<ServerFieldTypeSet> types;
-  CreateTestAddressFormData(form, &types);
+  CreateTestAddressFormData(form, &types, unique_id);
 }
 
 void CreateTestAddressFormData(FormData* form,
-                               std::vector<ServerFieldTypeSet>* types) {
-  form->name = ASCIIToUTF16("MyForm");
+                               std::vector<ServerFieldTypeSet>* types,
+                               const char* unique_id) {
+  form->name =
+      ASCIIToUTF16("MyForm") + ASCIIToUTF16(unique_id ? unique_id : "");
   form->origin = GURL("http://myform.com/form.html");
   form->action = GURL("http://myform.com/submit.html");
   form->main_frame_origin =
@@ -174,6 +178,77 @@ void CreateTestAddressFormData(FormData* form,
   types->push_back(type_set);
 }
 
+void CreateTestPersonalInformationFormData(FormData* form,
+                                           const char* unique_id) {
+  form->name =
+      ASCIIToUTF16("MyForm") + ASCIIToUTF16(unique_id ? unique_id : "");
+  form->origin = GURL("http://myform.com/form.html");
+  form->action = GURL("http://myform.com/submit.html");
+  form->main_frame_origin =
+      url::Origin::Create(GURL("https://myform_root.com/form.html"));
+
+  FormFieldData field;
+  ServerFieldTypeSet type_set;
+  test::CreateTestFormField("First Name", "firstname", "", "text", &field);
+  form->fields.push_back(field);
+  test::CreateTestFormField("Middle Name", "middlename", "", "text", &field);
+  form->fields.push_back(field);
+  test::CreateTestFormField("Last Name", "lastname", "", "text", &field);
+  form->fields.push_back(field);
+  test::CreateTestFormField("Email", "email", "", "email", &field);
+  form->fields.push_back(field);
+}
+
+void CreateTestCreditCardFormData(FormData* form,
+                                  bool is_https,
+                                  bool use_month_type,
+                                  bool split_names,
+                                  const char* unique_id) {
+  form->name =
+      ASCIIToUTF16("MyForm") + ASCIIToUTF16(unique_id ? unique_id : "");
+  if (is_https) {
+    form->origin = GURL("https://myform.com/form.html");
+    form->action = GURL("https://myform.com/submit.html");
+    form->main_frame_origin =
+        url::Origin::Create(GURL("https://myform_root.com/form.html"));
+  } else {
+    form->origin = GURL("http://myform.com/form.html");
+    form->action = GURL("http://myform.com/submit.html");
+    form->main_frame_origin =
+        url::Origin::Create(GURL("http://myform_root.com/form.html"));
+  }
+
+  FormFieldData field;
+  if (split_names) {
+    test::CreateTestFormField("First Name on Card", "firstnameoncard", "",
+                              "text", &field);
+    field.autocomplete_attribute = "cc-given-name";
+    form->fields.push_back(field);
+    test::CreateTestFormField("Last Name on Card", "lastnameoncard", "", "text",
+                              &field);
+    field.autocomplete_attribute = "cc-family-name";
+    form->fields.push_back(field);
+    field.autocomplete_attribute = "";
+  } else {
+    test::CreateTestFormField("Name on Card", "nameoncard", "", "text", &field);
+    form->fields.push_back(field);
+  }
+  test::CreateTestFormField("Card Number", "cardnumber", "", "text", &field);
+  form->fields.push_back(field);
+  if (use_month_type) {
+    test::CreateTestFormField("Expiration Date", "ccmonth", "", "month",
+                              &field);
+    form->fields.push_back(field);
+  } else {
+    test::CreateTestFormField("Expiration Date", "ccmonth", "", "text", &field);
+    form->fields.push_back(field);
+    test::CreateTestFormField("", "ccyear", "", "text", &field);
+    form->fields.push_back(field);
+  }
+  test::CreateTestFormField("CVC", "cvc", "", "text", &field);
+  form->fields.push_back(field);
+}
+
 inline void check_and_set(
     FormGroup* profile, ServerFieldType type, const char* value) {
   if (value)
@@ -181,7 +256,7 @@ inline void check_and_set(
 }
 
 AutofillProfile GetFullValidProfileForCanada() {
-  AutofillProfile profile(base::GenerateGUID(), "http://www.example.com/");
+  AutofillProfile profile(base::GenerateGUID(), kEmptyOrigin);
   SetProfileInfo(&profile, "Alice", "", "Wonderland", "alice@wonderland.ca",
                  "Fiction", "666 Notre-Dame Ouest", "Apt 8", "Montreal", "QC",
                  "H3B 2T9", "CA", "15141112233");
@@ -189,7 +264,7 @@ AutofillProfile GetFullValidProfileForCanada() {
 }
 
 AutofillProfile GetFullValidProfileForChina() {
-  AutofillProfile profile(base::GenerateGUID(), "http://www.example.com/");
+  AutofillProfile profile(base::GenerateGUID(), kEmptyOrigin);
   SetProfileInfo(&profile, "John", "H.", "Doe", "johndoe@google.cn", "Google",
                  "100 Century Avenue", "", "赫章县", "毕节地区", "贵州省",
                  "200120", "CN", "+86-21-6133-7666");
@@ -197,7 +272,7 @@ AutofillProfile GetFullValidProfileForChina() {
 }
 
 AutofillProfile GetFullProfile() {
-  AutofillProfile profile(base::GenerateGUID(), "http://www.example.com/");
+  AutofillProfile profile(base::GenerateGUID(), kEmptyOrigin);
   SetProfileInfo(&profile,
                  "John",
                  "H.",
@@ -214,7 +289,7 @@ AutofillProfile GetFullProfile() {
 }
 
 AutofillProfile GetFullProfile2() {
-  AutofillProfile profile(base::GenerateGUID(), "https://www.example.com/");
+  AutofillProfile profile(base::GenerateGUID(), kEmptyOrigin);
   SetProfileInfo(&profile,
                  "Jane",
                  "A.",
@@ -231,7 +306,7 @@ AutofillProfile GetFullProfile2() {
 }
 
 AutofillProfile GetFullCanadianProfile() {
-  AutofillProfile profile(base::GenerateGUID(), "http://www.example.com/");
+  AutofillProfile profile(base::GenerateGUID(), kEmptyOrigin);
   SetProfileInfo(&profile, "Wayne", "", "Gretzky", "wayne@hockey.com", "NHL",
                  "123 Hockey rd.", "Apt 8", "Moncton", "New Brunswick",
                  "E1A 0A6", "CA", "15068531212");
@@ -239,7 +314,7 @@ AutofillProfile GetFullCanadianProfile() {
 }
 
 AutofillProfile GetIncompleteProfile1() {
-  AutofillProfile profile(base::GenerateGUID(), "https://www.example.com/");
+  AutofillProfile profile(base::GenerateGUID(), kEmptyOrigin);
   SetProfileInfo(&profile, "John", "H.", "Doe", "jsmith@example.com", "ACME",
                  "123 Main Street", "Unit 1", "Greensdale", "MI", "48838", "US",
                  "");
@@ -247,7 +322,7 @@ AutofillProfile GetIncompleteProfile1() {
 }
 
 AutofillProfile GetIncompleteProfile2() {
-  AutofillProfile profile(base::GenerateGUID(), "https://www.example.com/");
+  AutofillProfile profile(base::GenerateGUID(), kEmptyOrigin);
   SetProfileInfo(&profile, "", "", "", "jsmith@example.com", "", "", "", "", "",
                  "", "", "");
   return profile;
@@ -265,15 +340,59 @@ AutofillProfile GetVerifiedProfile2() {
   return profile;
 }
 
+AutofillProfile GetServerProfile() {
+  AutofillProfile profile(AutofillProfile::SERVER_PROFILE, "id1");
+  // Note: server profiles don't have email addresses and only have full names.
+  SetProfileInfo(&profile, "", "", "", "", "Google, Inc.", "123 Fake St.",
+                 "Apt. 42", "Mountain View", "California", "94043", "US",
+                 "1.800.555.1234");
+
+  profile.SetInfo(NAME_FULL, ASCIIToUTF16("John K. Doe"), "en");
+  profile.SetRawInfo(ADDRESS_HOME_SORTING_CODE, ASCIIToUTF16("CEDEX"));
+  profile.SetRawInfo(ADDRESS_HOME_DEPENDENT_LOCALITY,
+                     ASCIIToUTF16("Santa Clara"));
+
+  profile.set_language_code("en");
+  profile.SetValidityFromBitfieldValue(kValidityStateBitfield);
+  profile.set_use_count(7);
+  profile.set_use_date(base::Time::FromTimeT(54321));
+
+  profile.GenerateServerProfileIdentifier();
+
+  return profile;
+}
+
+AutofillProfile GetServerProfile2() {
+  AutofillProfile profile(AutofillProfile::SERVER_PROFILE, "id2");
+  // Note: server profiles don't have email addresses.
+  SetProfileInfo(&profile, "", "", "", "", "Main, Inc.", "4323 Wrong St.",
+                 "Apt. 1032", "Sunnyvale", "California", "10011", "US",
+                 "+1 514-123-1234");
+
+  profile.SetInfo(NAME_FULL, ASCIIToUTF16("Jim S. Bristow"), "en");
+  profile.SetRawInfo(ADDRESS_HOME_SORTING_CODE, ASCIIToUTF16("XEDEC"));
+  profile.SetRawInfo(ADDRESS_HOME_DEPENDENT_LOCALITY,
+                     ASCIIToUTF16("Santa Monica"));
+
+  profile.set_language_code("en");
+  profile.SetValidityFromBitfieldValue(kValidityStateBitfield);
+  profile.set_use_count(14);
+  profile.set_use_date(base::Time::FromTimeT(98765));
+
+  profile.GenerateServerProfileIdentifier();
+
+  return profile;
+}
+
 CreditCard GetCreditCard() {
-  CreditCard credit_card(base::GenerateGUID(), "http://www.example.com");
+  CreditCard credit_card(base::GenerateGUID(), kEmptyOrigin);
   SetCreditCardInfo(&credit_card, "Test User", "4111111111111111" /* Visa */,
                     "11", "2022", "1");
   return credit_card;
 }
 
 CreditCard GetCreditCard2() {
-  CreditCard credit_card(base::GenerateGUID(), "https://www.example.com");
+  CreditCard credit_card(base::GenerateGUID(), kEmptyOrigin);
   SetCreditCardInfo(&credit_card, "Someone Else", "378282246310005" /* AmEx */,
                     "07", "2022", "1");
   return credit_card;
@@ -296,6 +415,7 @@ CreditCard GetMaskedServerCard() {
   test::SetCreditCardInfo(&credit_card, "Bonnie Parker",
                           "2109" /* Mastercard */, "12", "2020", "1");
   credit_card.SetNetworkForMaskedCard(kMasterCard);
+  credit_card.set_card_type(CreditCard::CARD_TYPE_CREDIT);
   return credit_card;
 }
 
@@ -304,6 +424,7 @@ CreditCard GetMaskedServerCardAmex() {
   test::SetCreditCardInfo(&credit_card, "Justin Thyme", "8431" /* Amex */, "9",
                           "2020", "1");
   credit_card.SetNetworkForMaskedCard(kAmericanExpressCard);
+  credit_card.set_card_type(CreditCard::CARD_TYPE_PREPAID);
   return credit_card;
 }
 
@@ -326,7 +447,7 @@ CreditCard GetRandomCreditCard(CreditCard::RecordType record_type) {
 
   CreditCard credit_card =
       (record_type == CreditCard::LOCAL_CARD)
-          ? CreditCard(base::GenerateGUID(), "http://www.example.com")
+          ? CreditCard(base::GenerateGUID(), kEmptyOrigin)
           : CreditCard(record_type, base::GenerateGUID().substr(24));
   test::SetCreditCardInfo(
       &credit_card, "Justin Thyme", GetRandomCardNumber().c_str(),
@@ -461,7 +582,7 @@ void FillUploadField(AutofillUploadContents::Field* field,
     field->set_type(control_type);
   if (autocomplete)
     field->set_autocomplete(autocomplete);
-  field->set_autofill_type(autofill_type);
+  field->add_autofill_type(autofill_type);
 }
 
 void FillQueryField(AutofillQueryContents::Form::Field* field,
@@ -487,7 +608,24 @@ void GenerateTestAutofillPopup(
 
   std::vector<Suggestion> suggestions;
   suggestions.push_back(Suggestion(base::ASCIIToUTF16("Test suggestion")));
-  autofill_external_delegate->OnSuggestionsReturned(query_id, suggestions);
+  autofill_external_delegate->OnSuggestionsReturned(
+      query_id, suggestions, /*autoselect_first_suggestion=*/false);
+}
+
+std::string ObfuscatedCardDigitsAsUTF8(const std::string& str) {
+  return base::UTF16ToUTF8(
+      internal::GetObfuscatedStringForCardDigits(base::ASCIIToUTF16(str)));
+}
+
+std::string NextYear() {
+  base::Time::Exploded now;
+  base::Time::Now().LocalExplode(&now);
+  return std::to_string(now.year + 1);
+}
+std::string LastYear() {
+  base::Time::Exploded now;
+  base::Time::Now().LocalExplode(&now);
+  return std::to_string(now.year - 1);
 }
 
 }  // namespace test

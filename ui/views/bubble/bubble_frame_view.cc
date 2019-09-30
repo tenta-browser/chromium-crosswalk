@@ -12,11 +12,11 @@
 #include "ui/base/default_style.h"
 #include "ui/base/hit_test.h"
 #include "ui/base/l10n/l10n_util.h"
-#include "ui/base/material_design/material_design_controller.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/compositor/paint_recorder.h"
 #include "ui/display/display.h"
 #include "ui/display/screen.h"
+#include "ui/gfx/color_palette.h"
 #include "ui/gfx/geometry/vector2d.h"
 #include "ui/gfx/path.h"
 #include "ui/gfx/skia_util.h"
@@ -24,7 +24,7 @@
 #include "ui/resources/grit/ui_resources.h"
 #include "ui/strings/grit/ui_strings.h"
 #include "ui/views/bubble/bubble_border.h"
-#include "ui/views/bubble/bubble_dialog_delegate.h"
+#include "ui/views/bubble/bubble_dialog_delegate_view.h"
 #include "ui/views/controls/button/image_button.h"
 #include "ui/views/controls/button/image_button_factory.h"
 #include "ui/views/controls/image_view.h"
@@ -40,12 +40,6 @@
 namespace views {
 
 namespace {
-
-// Background color of the footnote view.
-constexpr SkColor kFootnoteBackgroundColor = SkColorSetRGB(250, 250, 250);
-
-// Color of the top border of the footnote.
-constexpr SkColor kFootnoteBorderColor = SkColorSetRGB(235, 235, 235);
 
 // Get the |vertical| or horizontal amount that |available_bounds| overflows
 // |window_bounds|.
@@ -132,21 +126,8 @@ std::unique_ptr<Label> BubbleFrameView::CreateDefaultTitleLabel(
 // static
 Button* BubbleFrameView::CreateCloseButton(ButtonListener* listener) {
   ImageButton* close_button = nullptr;
-  if (ui::MaterialDesignController::IsSecondaryUiMaterial()) {
-    close_button = CreateVectorImageButton(listener);
-    SetImageFromVectorIcon(close_button, vector_icons::kClose16Icon);
-  } else {
-    ui::ResourceBundle* rb = &ui::ResourceBundle::GetSharedInstance();
-    close_button = new ImageButton(listener);
-    close_button->SetImage(Button::STATE_NORMAL,
-                           *rb->GetImageNamed(IDR_CLOSE_DIALOG).ToImageSkia());
-    close_button->SetImage(
-        Button::STATE_HOVERED,
-        *rb->GetImageNamed(IDR_CLOSE_DIALOG_H).ToImageSkia());
-    close_button->SetImage(
-        Button::STATE_PRESSED,
-        *rb->GetImageNamed(IDR_CLOSE_DIALOG_P).ToImageSkia());
-  }
+  close_button = CreateVectorImageButton(listener);
+  SetImageFromVectorIcon(close_button, vector_icons::kCloseRoundedIcon);
   close_button->SetTooltipText(l10n_util::GetStringUTF16(IDS_APP_CLOSE));
   close_button->SizeToPreferredSize();
 
@@ -254,9 +235,6 @@ void BubbleFrameView::GetWindowMask(const gfx::Size& size,
     rect.fBottom += SkIntToScalar(kBottomBorderShadowSize);
     window_mask->addRect(rect);
   }
-  gfx::Path arrow_path;
-  if (bubble_border_->GetArrowPath(gfx::Rect(size), &arrow_path))
-    window_mask->addPath(arrow_path, 0, 0);
 }
 
 void BubbleFrameView::ResetWindowControls() {
@@ -273,9 +251,11 @@ void BubbleFrameView::UpdateWindowIcon() {
 void BubbleFrameView::UpdateWindowTitle() {
   if (default_title_) {
     const WidgetDelegate* delegate = GetWidget()->widget_delegate();
-    default_title_->SetVisible(delegate->ShouldShowWindowTitle());
+    default_title_->SetVisible(delegate->ShouldShowWindowTitle() &&
+                               !delegate->GetWindowTitle().empty());
     default_title_->SetText(delegate->GetWindowTitle());
   }  // custom_title_'s updates are handled by its creator.
+  Layout();
 }
 
 void BubbleFrameView::SizeConstraintsChanged() {}
@@ -413,6 +393,9 @@ void BubbleFrameView::OnNativeThemeChanged(const ui::NativeTheme* theme) {
 
 void BubbleFrameView::ViewHierarchyChanged(
     const ViewHierarchyChangedDetails& details) {
+  if (details.is_add && details.child == this)
+    OnThemeChanged();
+
   if (!details.is_add && details.parent == footnote_container_ &&
       footnote_container_->child_count() == 1 &&
       details.child == footnote_container_->child_at(0)) {
@@ -464,9 +447,9 @@ void BubbleFrameView::SetFootnoteView(View* view) {
   footnote_container_->SetLayoutManager(
       std::make_unique<BoxLayout>(BoxLayout::kVertical, footnote_margins_, 0));
   footnote_container_->SetBackground(
-      CreateSolidBackground(kFootnoteBackgroundColor));
+      CreateSolidBackground(gfx::kGoogleGrey050));
   footnote_container_->SetBorder(
-      CreateSolidSidedBorder(1, 0, 0, 0, kFootnoteBorderColor));
+      CreateSolidSidedBorder(1, 0, 0, 0, gfx::kGoogleGrey200));
   footnote_container_->AddChildView(view);
   footnote_container_->SetVisible(view->visible());
   AddChildView(footnote_container_);
@@ -575,8 +558,7 @@ void BubbleFrameView::OffsetArrowIfOffScreen(const gfx::Rect& anchor_rect,
   // |offscreen_adjust|, e.g. positive |offscreen_adjust| means bubble
   // window needs to be moved to the right and that means we need to move arrow
   // to the left, and that means negative offset.
-  bubble_border_->set_arrow_offset(
-      bubble_border_->GetArrowOffset(window_bounds.size()) - offscreen_adjust);
+  bubble_border_->set_arrow_offset(-offscreen_adjust);
   if (offscreen_adjust)
     SchedulePaint();
 }

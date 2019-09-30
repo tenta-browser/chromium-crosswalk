@@ -11,21 +11,28 @@ namespace content {
 
 bool IsAudioInputMediaType(MediaStreamType type) {
   return (type == MEDIA_DEVICE_AUDIO_CAPTURE ||
-          type == MEDIA_TAB_AUDIO_CAPTURE ||
-          type == MEDIA_DESKTOP_AUDIO_CAPTURE);
+          type == MEDIA_GUM_TAB_AUDIO_CAPTURE ||
+          type == MEDIA_GUM_DESKTOP_AUDIO_CAPTURE);
 }
 
-bool IsVideoMediaType(MediaStreamType type) {
+bool IsVideoInputMediaType(MediaStreamType type) {
   return (type == MEDIA_DEVICE_VIDEO_CAPTURE ||
-          type == MEDIA_TAB_VIDEO_CAPTURE ||
-          type == MEDIA_DESKTOP_VIDEO_CAPTURE);
+          type == MEDIA_GUM_TAB_VIDEO_CAPTURE ||
+          type == MEDIA_GUM_DESKTOP_VIDEO_CAPTURE ||
+          type == MEDIA_DISPLAY_VIDEO_CAPTURE);
 }
 
 bool IsScreenCaptureMediaType(MediaStreamType type) {
-  return (type == MEDIA_TAB_AUDIO_CAPTURE ||
-          type == MEDIA_TAB_VIDEO_CAPTURE ||
-          type == MEDIA_DESKTOP_AUDIO_CAPTURE ||
-          type == MEDIA_DESKTOP_VIDEO_CAPTURE);
+  return (type == MEDIA_DISPLAY_VIDEO_CAPTURE ||
+          type == MEDIA_GUM_TAB_AUDIO_CAPTURE ||
+          type == MEDIA_GUM_TAB_VIDEO_CAPTURE ||
+          type == MEDIA_GUM_DESKTOP_AUDIO_CAPTURE ||
+          type == MEDIA_GUM_DESKTOP_VIDEO_CAPTURE);
+}
+
+bool IsDeviceMediaType(MediaStreamType type) {
+  return (type == MEDIA_DEVICE_AUDIO_CAPTURE ||
+          type == MEDIA_DEVICE_VIDEO_CAPTURE);
 }
 
 // static
@@ -40,21 +47,19 @@ MediaStreamDevice::MediaStreamDevice(MediaStreamType type,
     : type(type),
       id(id),
       video_facing(media::MEDIA_VIDEO_FACING_NONE),
-      name(name) {
-#if defined(OS_ANDROID)
-  if (name.find("front") != std::string::npos) {
-    video_facing = media::MEDIA_VIDEO_FACING_USER;
-  } else if (name.find("back") != std::string::npos) {
-    video_facing = media::MEDIA_VIDEO_FACING_ENVIRONMENT;
-  }
-#endif
-}
+      name(name) {}
 
-MediaStreamDevice::MediaStreamDevice(MediaStreamType type,
-                                     const std::string& id,
-                                     const std::string& name,
-                                     media::VideoFacingMode facing)
-    : type(type), id(id), video_facing(facing), name(name) {}
+MediaStreamDevice::MediaStreamDevice(
+    MediaStreamType type,
+    const std::string& id,
+    const std::string& name,
+    media::VideoFacingMode facing,
+    const base::Optional<std::string>& group_id)
+    : type(type),
+      id(id),
+      video_facing(facing),
+      group_id(group_id),
+      name(name) {}
 
 MediaStreamDevice::MediaStreamDevice(MediaStreamType type,
                                      const std::string& id,
@@ -69,7 +74,6 @@ MediaStreamDevice::MediaStreamDevice(MediaStreamType type,
       input(media::AudioParameters::AUDIO_FAKE,
             static_cast<media::ChannelLayout>(channel_layout),
             sample_rate,
-            16,
             frames_per_buffer) {
   DCHECK(input.IsValid());
 }

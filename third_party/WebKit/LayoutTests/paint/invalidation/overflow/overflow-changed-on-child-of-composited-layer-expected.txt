@@ -23,13 +23,13 @@
       "paintInvalidations": [
         {
           "object": "LayoutBlockFlow DIV id='parent'",
-          "rect": [0, 0, 744, 100],
-          "reason": "full"
+          "rect": [0, 0, 745, 102],
+          "reason": "full layer"
         },
         {
           "object": "LayoutBlockFlow DIV id='parent'",
-          "rect": [0, 0, 102, 102],
-          "reason": "appeared"
+          "rect": [0, 0, 744, 100],
+          "reason": "full layer"
         }
       ],
       "transform": 1
@@ -44,12 +44,6 @@
         [0, 0, 1, 0],
         [27, 19, 0, 1]
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutBlockFlow DIV id='test'",
-      "reason": "style change"
     }
   ]
 }

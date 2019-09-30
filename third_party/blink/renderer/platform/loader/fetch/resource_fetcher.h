@@ -28,6 +28,7 @@
 #define THIRD_PARTY_BLINK_RENDERER_PLATFORM_LOADER_FETCH_RESOURCE_FETCHER_H_
 
 #include <memory>
+#include "third_party/blink/public/mojom/service_worker/service_worker_object.mojom-blink.h"
 #include "third_party/blink/renderer/platform/loader/fetch/fetch_context.h"
 #include "third_party/blink/renderer/platform/loader/fetch/fetch_initiator_info.h"
 #include "third_party/blink/renderer/platform/loader/fetch/fetch_parameters.h"
@@ -42,6 +43,7 @@
 #include "third_party/blink/renderer/platform/wtf/hash_map.h"
 #include "third_party/blink/renderer/platform/wtf/hash_set.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_hash.h"
+#include "third_party/blink/renderer/platform/wtf/time.h"
 
 namespace blink {
 
@@ -54,10 +56,14 @@ class ResourceTimingInfo;
 // enforces a bunch of security checks and rules for resource revalidation. Its
 // lifetime is roughly per-DocumentLoader, in that it is generally created in
 // the DocumentLoader constructor and loses its ability to generate network
-// requests when the DocumentLoader is destroyed. Documents also hold a pointer
-// to ResourceFetcher for their lifetime (and will create one if they are
-// initialized without a LocalFrame), so a Document can keep a ResourceFetcher
-// alive past detach if scripts still reference the Document.
+// requests when the DocumentLoader is destroyed.
+//
+// It is also created for workers and worklets.
+//
+// Documents also hold a pointer to ResourceFetcher for their lifetime (and will
+// create one if they are initialized without a LocalFrame), so a Document can
+// keep a ResourceFetcher alive past detach if scripts still reference the
+// Document.
 class PLATFORM_EXPORT ResourceFetcher
     : public GarbageCollectedFinalized<ResourceFetcher> {
   WTF_MAKE_NONCOPYABLE(ResourceFetcher);
@@ -118,8 +124,7 @@ class PLATFORM_EXPORT ResourceFetcher
 
   int CountPreloads() const { return preloads_.size(); }
   void ClearPreloads(ClearPreloadsPolicy = kClearAllPreloads);
-  void LogPreloadStats(ClearPreloadsPolicy);
-  void WarnUnusedPreloads();
+  Vector<KURL> GetUrlsOfUnusedPreloads();
 
   MHTMLArchive* Archive() const { return archive_.Get(); }
   ArchiveResource* CreateArchive(Resource*);
@@ -133,14 +138,14 @@ class PLATFORM_EXPORT ResourceFetcher
 
   enum LoaderFinishType { kDidFinishLoading, kDidFinishFirstPartInMultipart };
   void HandleLoaderFinish(Resource*,
-                          double finish_time,
+                          TimeTicks finish_time,
                           LoaderFinishType,
                           uint32_t inflight_keepalive_bytes,
-                          bool blocked_cross_site_document);
+                          bool should_report_corb_blocking);
   void HandleLoaderError(Resource*,
                          const ResourceError&,
                          uint32_t inflight_keepalive_bytes);
-  bool IsControlledByServiceWorker() const;
+  blink::mojom::ControllerServiceWorkerMode IsControlledByServiceWorker() const;
 
   String GetCacheIdentifier() const;
 
@@ -162,7 +167,7 @@ class PLATFORM_EXPORT ResourceFetcher
   void RemovePreload(Resource*);
 
   void LoosenLoadThrottlingPolicy() { scheduler_->LoosenThrottlingPolicy(); }
-  void OnNetworkQuiet() { scheduler_->OnNetworkQuiet(); }
+  void OnNetworkQuiet();
 
   // Workaround for https://crbug.com/666214.
   // TODO(hiroshige): Remove this hack.
@@ -175,6 +180,11 @@ class PLATFORM_EXPORT ResourceFetcher
   // leak detector) to clean up loaders after page navigation before instance
   // counting.
   void PrepareForLeakDetection();
+
+  void SetStaleWhileRevalidateEnabled(bool enabled);
+
+  using ResourceFetcherSet = PersistentHeapHashSet<WeakMember<ResourceFetcher>>;
+  static const ResourceFetcherSet& MainThreadFetchers();
 
  private:
   friend class ResourceCacheValidationSuppressor;
@@ -203,22 +213,22 @@ class PLATFORM_EXPORT ResourceFetcher
           FetchParameters::SpeculativePreloadType::kNotSpeculative,
       bool is_link_preload = false);
 
-  Resource* RequestResourceInternal(FetchParameters&,
-                                    const ResourceFactory&,
-                                    const SubstituteData&);
-  ResourceRequestBlockedReason PrepareRequest(FetchParameters&,
-                                              const ResourceFactory&,
-                                              const SubstituteData&,
-                                              unsigned long identifier);
+  base::Optional<ResourceRequestBlockedReason> PrepareRequest(
+      FetchParameters&,
+      const ResourceFactory&,
+      const SubstituteData&,
+      unsigned long identifier);
 
   Resource* ResourceForStaticData(const FetchParameters&,
                                   const ResourceFactory&,
                                   const SubstituteData&);
   Resource* ResourceForBlockedRequest(const FetchParameters&,
                                       const ResourceFactory&,
-                                      ResourceRequestBlockedReason);
+                                      ResourceRequestBlockedReason,
+                                      ResourceClient*);
 
   Resource* MatchPreload(const FetchParameters& params, Resource::Type);
+  void PrintPreloadWarning(Resource*, Resource::MatchStatus);
   void InsertAsPreloadIfNecessary(Resource*,
                                   const FetchParameters& params,
                                   Resource::Type);
@@ -274,6 +284,9 @@ class PLATFORM_EXPORT ResourceFetcher
                               const ResourceFactory&,
                               bool is_static_data) const;
 
+  void ScheduleStaleRevalidate(Resource* stale_resource);
+  void RevalidateStaleResource(Resource* stale_resource);
+
   Member<FetchContext> context_;
   Member<ResourceLoadScheduler> scheduler_;
 
@@ -309,11 +322,12 @@ class PLATFORM_EXPORT ResourceFetcher
 
   uint32_t inflight_keepalive_bytes_ = 0;
 
-  // 28 bits left
+  // 27 bits left
   bool auto_load_images_ : 1;
   bool images_enabled_ : 1;
   bool allow_stale_resources_ : 1;
   bool image_fetched_ : 1;
+  bool stale_while_revalidate_enabled_ : 1;
 
   static constexpr uint32_t kKeepaliveInflightBytesQuota = 64 * 1024;
 };

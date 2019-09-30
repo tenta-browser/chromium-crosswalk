@@ -11,12 +11,14 @@
 
 #include "base/atomic_sequence_num.h"
 #include "base/bind.h"
-#include "base/message_loop/message_loop.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/stl_util.h"
 #include "base/values.h"
+#include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/render_process_host.h"
+#include "content/public/browser/service_worker_context.h"
+#include "content/public/browser/storage_partition.h"
 #include "extensions/browser/api_activity_monitor.h"
 #include "extensions/browser/event_router_factory.h"
 #include "extensions/browser/events/lazy_event_dispatcher.h"
@@ -186,10 +188,11 @@ void EventRouter::AddServiceWorkerEventListener(
     content::RenderProcessHost* process,
     const ExtensionId& extension_id,
     const GURL& service_worker_scope,
+    int64_t service_worker_version_id,
     int worker_thread_id) {
   listeners_.AddListener(EventListener::ForExtensionServiceWorker(
-      event_name, extension_id, process, service_worker_scope, worker_thread_id,
-      nullptr));
+      event_name, extension_id, process, service_worker_scope,
+      service_worker_version_id, worker_thread_id, nullptr));
 }
 
 void EventRouter::RemoveEventListener(const std::string& event_name,
@@ -205,11 +208,12 @@ void EventRouter::RemoveServiceWorkerEventListener(
     content::RenderProcessHost* process,
     const ExtensionId& extension_id,
     const GURL& service_worker_scope,
+    int64_t service_worker_version_id,
     int worker_thread_id) {
   std::unique_ptr<EventListener> listener =
-      EventListener::ForExtensionServiceWorker(event_name, extension_id,
-                                               process, service_worker_scope,
-                                               worker_thread_id, nullptr);
+      EventListener::ForExtensionServiceWorker(
+          event_name, extension_id, process, service_worker_scope,
+          service_worker_version_id, worker_thread_id, nullptr);
   listeners_.RemoveListener(listener.get());
 }
 
@@ -244,6 +248,14 @@ void EventRouter::UnregisterObserver(Observer* observer) {
   }
 }
 
+void EventRouter::AddObserverForTesting(TestObserver* observer) {
+  test_observers_.AddObserver(observer);
+}
+
+void EventRouter::RemoveObserverForTesting(TestObserver* observer) {
+  test_observers_.RemoveObserver(observer);
+}
+
 void EventRouter::OnListenerAdded(const EventListener* listener) {
   const EventListenerInfo details(listener->event_name(),
                                   listener->extension_id(),
@@ -273,9 +285,9 @@ void EventRouter::OnListenerRemoved(const EventListener* listener) {
     observer->second->OnListenerRemoved(details);
 }
 
-void EventRouter::RenderProcessExited(content::RenderProcessHost* host,
-                                      base::TerminationStatus status,
-                                      int exit_code) {
+void EventRouter::RenderProcessExited(
+    content::RenderProcessHost* host,
+    const content::ChildProcessTerminationInfo& info) {
   listeners_.RemoveListenersForProcess(host);
   observed_process_set_.erase(host);
   host->RemoveObserver(this);
@@ -308,8 +320,8 @@ void EventRouter::AddLazyServiceWorkerEventListener(
   std::unique_ptr<EventListener> listener =
       EventListener::ForExtensionServiceWorker(
           event_name, extension_id, nullptr, service_worker_scope,
-          kMainThreadId,  // Lazy, without worker thread id.
-          nullptr);
+          // Lazy listener, without worker version id and thread id.
+          blink::mojom::kInvalidServiceWorkerVersionId, kMainThreadId, nullptr);
   AddLazyEventListenerImpl(std::move(listener),
                            RegisteredEventType::kServiceWorker);
 }
@@ -321,8 +333,8 @@ void EventRouter::RemoveLazyServiceWorkerEventListener(
   std::unique_ptr<EventListener> listener =
       EventListener::ForExtensionServiceWorker(
           event_name, extension_id, nullptr, service_worker_scope,
-          kMainThreadId,  // Lazy, without worker thread id.
-          nullptr);
+          // Lazy listener, without worker version id and thread id.
+          blink::mojom::kInvalidServiceWorkerVersionId, kMainThreadId, nullptr);
   RemoveLazyEventListenerImpl(std::move(listener),
                               RegisteredEventType::kServiceWorker);
 }
@@ -339,7 +351,8 @@ void EventRouter::AddFilteredEventListener(
       is_for_service_worker
           ? EventListener::ForExtensionServiceWorker(
                 event_name, extension_id, process, sw_identifier->scope,
-                sw_identifier->thread_id, filter.CreateDeepCopy())
+                sw_identifier->version_id, sw_identifier->thread_id,
+                filter.CreateDeepCopy())
           : EventListener::ForExtension(event_name, extension_id, process,
                                         filter.CreateDeepCopy()));
 
@@ -350,7 +363,8 @@ void EventRouter::AddFilteredEventListener(
       is_for_service_worker
           ? EventListener::ForExtensionServiceWorker(
                 event_name, extension_id, nullptr, sw_identifier->scope,
-                kMainThreadId,  // Lazy, without worker thread id.
+                // Lazy listener, without worker version id and thread id.
+                blink::mojom::kInvalidServiceWorkerVersionId, kMainThreadId,
                 filter.CreateDeepCopy())
           : EventListener::ForExtension(event_name, extension_id,
                                         nullptr,  // Lazy, without process.
@@ -371,7 +385,8 @@ void EventRouter::RemoveFilteredEventListener(
       is_for_service_worker
           ? EventListener::ForExtensionServiceWorker(
                 event_name, extension_id, process, sw_identifier->scope,
-                sw_identifier->thread_id, filter.CreateDeepCopy())
+                sw_identifier->version_id, sw_identifier->thread_id,
+                filter.CreateDeepCopy())
           : EventListener::ForExtension(event_name, extension_id, process,
                                         filter.CreateDeepCopy());
 
@@ -511,6 +526,10 @@ void EventRouter::DispatchEventImpl(const std::string& restrict_to_extension_id,
   DCHECK(!event->restrict_to_browser_context ||
          ExtensionsBrowserClient::Get()->IsSameContext(
              browser_context_, event->restrict_to_browser_context));
+
+  for (TestObserver& observer : test_observers_)
+    observer.OnWillDispatchEvent(*event);
+
   std::set<const EventListener*> listeners(
       listeners_.GetEventListeners(*event));
 
@@ -553,9 +572,11 @@ void EventRouter::DispatchEventImpl(const std::string& restrict_to_extension_id,
             listener->process()->GetBrowserContext(), listener)) {
       continue;
     }
-    DispatchEventToProcess(listener->extension_id(), listener->listener_url(),
-                           listener->process(), listener->worker_thread_id(),
-                           event, listener->filter(), false /* did_enqueue */);
+
+    DispatchEventToProcess(
+        listener->extension_id(), listener->listener_url(), listener->process(),
+        listener->service_worker_version_id(), listener->worker_thread_id(),
+        event, listener->filter(), false /* did_enqueue */);
   }
 }
 
@@ -563,6 +584,7 @@ void EventRouter::DispatchEventToProcess(
     const std::string& extension_id,
     const GURL& listener_url,
     content::RenderProcessHost* process,
+    int64_t service_worker_version_id,
     int worker_thread_id,
     const linked_ptr<Event>& event,
     const base::DictionaryValue* listener_filter,
@@ -637,13 +659,30 @@ void EventRouter::DispatchEventToProcess(
                            event->event_args.get(), event->user_gesture,
                            event->filter_info);
 
+  for (TestObserver& observer : test_observers_)
+    observer.OnDidDispatchEventToProcess(*event);
+
   // TODO(lazyboy): This is wrong for extensions SW events. We need to:
   // 1. Increment worker ref count
   // 2. Add EventAck IPC to decrement that ref count.
   if (extension) {
     ReportEvent(event->histogram_value, extension, did_enqueue);
-    IncrementInFlightEvents(listener_context, extension, event_id,
-                            event->event_name);
+
+    const bool is_for_service_worker = worker_thread_id != kMainThreadId;
+    // TODO(lazyboy): It would be nice to unify inflight-event increment code
+    // for worker and non-worker below. That would also require passing in
+    // dummy worker thread id and service worker context to the unified
+    // method...
+    if (is_for_service_worker) {
+      content::ServiceWorkerContext* service_worker_context =
+          process->GetStoragePartition()->GetServiceWorkerContext();
+      event_ack_data_.IncrementInflightEvent(
+          service_worker_context, process->GetID(), service_worker_version_id,
+          event_id);
+    } else {
+      IncrementInFlightEvents(listener_context, extension, event_id,
+                              event->event_name);
+    }
   }
 }
 
@@ -683,14 +722,15 @@ void EventRouter::IncrementInFlightEvents(BrowserContext* context,
     ProcessManager* pm = ProcessManager::Get(context);
     ExtensionHost* host = pm->GetBackgroundHostForExtension(extension->id());
     if (host) {
-      pm->IncrementLazyKeepaliveCount(extension);
+      pm->IncrementLazyKeepaliveCount(extension, Activity::EVENT, event_name);
       host->OnBackgroundEventDispatched(event_name, event_id);
     }
   }
 }
 
 void EventRouter::OnEventAck(BrowserContext* context,
-                             const std::string& extension_id) {
+                             const std::string& extension_id,
+                             const std::string& event_name) {
   ProcessManager* pm = ProcessManager::Get(context);
   ExtensionHost* host = pm->GetBackgroundHostForExtension(extension_id);
   // The event ACK is routed to the background host, so this should never be
@@ -700,7 +740,8 @@ void EventRouter::OnEventAck(BrowserContext* context,
   // HasLazyBackgroundPage is true. Find out why we're getting it anyway.
   if (host->extension() &&
       BackgroundInfo::HasLazyBackgroundPage(host->extension()))
-    pm->DecrementLazyKeepaliveCount(host->extension());
+    pm->DecrementLazyKeepaliveCount(host->extension(), Activity::EVENT,
+                                    event_name);
 }
 
 bool EventRouter::HasRegisteredEvents(const ExtensionId& extension_id) const {
@@ -773,7 +814,8 @@ void EventRouter::DispatchPendingEvent(
                                     params->extension_id)) {
     DispatchEventToProcess(
         params->extension_id, params->url, params->render_process_host,
-        params->worker_thread_id, event, nullptr, true /* did_enqueue */);
+        params->service_worker_version_id, params->worker_thread_id, event,
+        nullptr, true /* did_enqueue */);
   }
 }
 
@@ -914,10 +956,9 @@ Event::Event(events::HistogramValue histogram_value,
 
 Event::~Event() {}
 
-Event* Event::DeepCopy() {
+Event* Event::DeepCopy() const {
   Event* copy = new Event(
-      histogram_value, event_name,
-      std::unique_ptr<base::ListValue>(event_args->DeepCopy()),
+      histogram_value, event_name, event_args->CreateDeepCopy(),
       restrict_to_browser_context, event_url, user_gesture, filter_info);
   copy->will_dispatch_callback = will_dispatch_callback;
   return copy;

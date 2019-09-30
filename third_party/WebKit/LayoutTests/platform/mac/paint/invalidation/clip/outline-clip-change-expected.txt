@@ -20,32 +20,14 @@
         {
           "object": "LayoutBlockFlow (positioned) A id='link' class='updated'",
           "rect": [48, 102, 92, 23],
-          "reason": "appeared"
+          "reason": "chunk appeared"
         },
         {
-          "object": "InlineTextBox 'Lorem Ipsum'",
+          "object": "LayoutBlockFlow HTML",
           "rect": [48, 102, 87, 18],
-          "reason": "subtree"
+          "reason": "chunk disappeared"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutBlockFlow (positioned) A id='link' class='updated'",
-      "reason": "subtree"
-    },
-    {
-      "object": "RootInlineBox",
-      "reason": "subtree"
-    },
-    {
-      "object": "LayoutText #text",
-      "reason": "subtree"
-    },
-    {
-      "object": "InlineTextBox 'Lorem Ipsum'",
-      "reason": "subtree"
     }
   ]
 }

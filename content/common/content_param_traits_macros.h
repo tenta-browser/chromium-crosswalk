@@ -8,8 +8,9 @@
 #ifndef CONTENT_COMMON_CONTENT_PARAM_TRAITS_MACROS_H_
 #define CONTENT_COMMON_CONTENT_PARAM_TRAITS_MACROS_H_
 
-#include "cc/ipc/cc_param_traits.h"
+#include "components/viz/common/quads/selection.h"
 #include "content/common/content_export.h"
+#include "content/common/content_param_traits.h"
 #include "content/common/download/mhtml_save_status.h"
 #include "content/common/render_widget_surface_properties.h"
 #include "content/public/common/input_event_ack_state.h"
@@ -22,6 +23,7 @@
 #include "third_party/blink/public/web/web_ime_text_span.h"
 #include "ui/gfx/gpu_memory_buffer.h"
 #include "ui/gfx/ipc/geometry/gfx_param_traits.h"
+#include "ui/gfx/ipc/gfx_param_traits.h"
 
 #undef IPC_MESSAGE_EXPORT
 #define IPC_MESSAGE_EXPORT CONTENT_EXPORT
@@ -45,8 +47,13 @@ IPC_ENUM_TRAITS_MAX_VALUE(blink::mojom::PageVisibilityState,
                           blink::mojom::PageVisibilityState::kMaxValue)
 IPC_ENUM_TRAITS_MAX_VALUE(blink::WebImeTextSpan::Type,
                           blink::WebImeTextSpan::Type::kMisspellingSuggestion)
-IPC_ENUM_TRAITS_MAX_VALUE(ui::mojom::ImeTextSpanThickness,
-                          ui::mojom::ImeTextSpanThickness::kThick)
+IPC_ENUM_TRAITS_MAX_VALUE(ws::mojom::ImeTextSpanThickness,
+                          ws::mojom::ImeTextSpanThickness::kThick)
+
+IPC_STRUCT_TRAITS_BEGIN(viz::Selection<gfx::SelectionBound>)
+  IPC_STRUCT_TRAITS_MEMBER(start)
+  IPC_STRUCT_TRAITS_MEMBER(end)
+IPC_STRUCT_TRAITS_END()
 
 IPC_STRUCT_TRAITS_BEGIN(blink::WebImeTextSpan)
   IPC_STRUCT_TRAITS_MEMBER(type)

@@ -6,6 +6,7 @@
 
 #include "build/build_config.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/blink/renderer/core/html/html_body_element.h"
 #include "third_party/blink/renderer/core/html/html_element.h"
 #include "third_party/blink/renderer/core/layout/layout_image.h"
 #include "third_party/blink/renderer/core/testing/core_unit_test_helper.h"
@@ -131,46 +132,48 @@ TEST_F(LayoutBoxTest, BackgroundRect) {
   // translucent image extends to the borders.
   LayoutBox* layout_box = ToLayoutBox(GetLayoutObjectByElementId("target1"));
   EXPECT_EQ(LayoutRect(20, 20, 100, 100),
-            layout_box->BackgroundRect(kBackgroundKnownOpaqueRect));
+            layout_box->PhysicalBackgroundRect(kBackgroundKnownOpaqueRect));
   EXPECT_EQ(LayoutRect(0, 0, 140, 140),
-            layout_box->BackgroundRect(kBackgroundClipRect));
+            layout_box->PhysicalBackgroundRect(kBackgroundClipRect));
 
   // #target2's background color is opaque but only fills the padding-box
   // because it has local attachment. This eclipses the content-box image.
   layout_box = ToLayoutBox(GetLayoutObjectByElementId("target2"));
   EXPECT_EQ(LayoutRect(10, 10, 120, 120),
-            layout_box->BackgroundRect(kBackgroundKnownOpaqueRect));
+            layout_box->PhysicalBackgroundRect(kBackgroundKnownOpaqueRect));
   EXPECT_EQ(LayoutRect(10, 10, 120, 120),
-            layout_box->BackgroundRect(kBackgroundClipRect));
+            layout_box->PhysicalBackgroundRect(kBackgroundClipRect));
 
   // #target3's background color is not opaque so we only have a clip rect.
   layout_box = ToLayoutBox(GetLayoutObjectByElementId("target3"));
-  EXPECT_TRUE(layout_box->BackgroundRect(kBackgroundKnownOpaqueRect).IsEmpty());
+  EXPECT_TRUE(
+      layout_box->PhysicalBackgroundRect(kBackgroundKnownOpaqueRect).IsEmpty());
   EXPECT_EQ(LayoutRect(0, 0, 140, 140),
-            layout_box->BackgroundRect(kBackgroundClipRect));
+            layout_box->PhysicalBackgroundRect(kBackgroundClipRect));
 
   // #target4's background color has a blend mode so it isn't opaque.
   layout_box = ToLayoutBox(GetLayoutObjectByElementId("target4"));
-  EXPECT_TRUE(layout_box->BackgroundRect(kBackgroundKnownOpaqueRect).IsEmpty());
+  EXPECT_TRUE(
+      layout_box->PhysicalBackgroundRect(kBackgroundKnownOpaqueRect).IsEmpty());
   EXPECT_EQ(LayoutRect(0, 0, 140, 140),
-            layout_box->BackgroundRect(kBackgroundClipRect));
+            layout_box->PhysicalBackgroundRect(kBackgroundClipRect));
 
   // #target5's solid background only covers the content-box but it has a "none"
   // background covering the border box.
   layout_box = ToLayoutBox(GetLayoutObjectByElementId("target5"));
   EXPECT_EQ(LayoutRect(20, 20, 100, 100),
-            layout_box->BackgroundRect(kBackgroundKnownOpaqueRect));
+            layout_box->PhysicalBackgroundRect(kBackgroundKnownOpaqueRect));
   EXPECT_EQ(LayoutRect(0, 0, 140, 140),
-            layout_box->BackgroundRect(kBackgroundClipRect));
+            layout_box->PhysicalBackgroundRect(kBackgroundClipRect));
 
   // Because it can scroll due to local attachment, the opaque local background
   // in #target6 is treated as padding box for the clip rect, but remains the
   // content box for the known opaque rect.
   layout_box = ToLayoutBox(GetLayoutObjectByElementId("target6"));
   EXPECT_EQ(LayoutRect(20, 20, 100, 100),
-            layout_box->BackgroundRect(kBackgroundKnownOpaqueRect));
+            layout_box->PhysicalBackgroundRect(kBackgroundKnownOpaqueRect));
   EXPECT_EQ(LayoutRect(10, 10, 120, 120),
-            layout_box->BackgroundRect(kBackgroundClipRect));
+            layout_box->PhysicalBackgroundRect(kBackgroundClipRect));
 }
 
 TEST_F(LayoutBoxTest, LocationContainer) {
@@ -433,12 +436,26 @@ TEST_F(LayoutBoxTest, ContentsVisualOverflowPropagation) {
   EXPECT_EQ(LayoutRect(-70, 0, 230, 210), a->VisualOverflowRect());
 }
 
+TEST_F(LayoutBoxTest, HitTestContainPaint) {
+  SetBodyInnerHTML(R"HTML(
+    <div id='container' style='width: 100px; height: 200px; contain: paint'>
+      <div id='child' style='width: 300px; height: 400px;'></div>
+    </div>
+  )HTML");
+
+  auto* child = GetDocument().getElementById("child");
+  EXPECT_EQ(GetDocument().documentElement(), HitTest(1, 1));
+  EXPECT_EQ(child, HitTest(10, 10));
+  EXPECT_EQ(GetDocument().FirstBodyElement(), HitTest(150, 10));
+  EXPECT_EQ(GetDocument().documentElement(), HitTest(10, 250));
+}
+
 class AnimatedImage : public StubImage {
  public:
   bool MaybeAnimated() override { return true; }
 };
 
-TEST_F(LayoutBoxTest, DeferredInvalidation) {
+TEST_F(LayoutBoxTest, DelayedInvalidation) {
   SetBodyInnerHTML("<img id='image' style='width: 100px; height: 100px;'/>");
   auto* obj = ToLayoutBox(GetLayoutObjectByElementId("image"));
   ASSERT_TRUE(obj);
@@ -450,19 +467,24 @@ TEST_F(LayoutBoxTest, DeferredInvalidation) {
   ToLayoutImage(obj)->ImageResource()->SetImageResource(image);
   ASSERT_TRUE(ToLayoutImage(obj)->CachedImage()->GetImage()->MaybeAnimated());
 
-  // CanDeferInvalidation::kYes results in a deferred invalidation.
   obj->ClearPaintInvalidationFlags();
+  EXPECT_FALSE(obj->ShouldDoFullPaintInvalidation());
   EXPECT_EQ(obj->FullPaintInvalidationReason(), PaintInvalidationReason::kNone);
-  obj->ImageChanged(image, ImageResourceObserver::CanDeferInvalidation::kYes);
-  EXPECT_EQ(obj->FullPaintInvalidationReason(),
-            PaintInvalidationReason::kDelayedFull);
+  EXPECT_FALSE(obj->ShouldDelayFullPaintInvalidation());
 
-  // CanDeferInvalidation::kNo results in a immediate invalidation.
-  obj->ClearPaintInvalidationFlags();
-  EXPECT_EQ(obj->FullPaintInvalidationReason(), PaintInvalidationReason::kNone);
-  obj->ImageChanged(image, ImageResourceObserver::CanDeferInvalidation::kNo);
+  // CanDeferInvalidation::kYes results in a deferred invalidation.
+  obj->ImageChanged(image, ImageResourceObserver::CanDeferInvalidation::kYes);
+  EXPECT_FALSE(obj->ShouldDoFullPaintInvalidation());
   EXPECT_EQ(obj->FullPaintInvalidationReason(),
             PaintInvalidationReason::kImage);
+  EXPECT_TRUE(obj->ShouldDelayFullPaintInvalidation());
+
+  // CanDeferInvalidation::kNo results in a immediate invalidation.
+  obj->ImageChanged(image, ImageResourceObserver::CanDeferInvalidation::kNo);
+  EXPECT_TRUE(obj->ShouldDoFullPaintInvalidation());
+  EXPECT_EQ(obj->FullPaintInvalidationReason(),
+            PaintInvalidationReason::kImage);
+  EXPECT_FALSE(obj->ShouldDelayFullPaintInvalidation());
 }
 
 TEST_F(LayoutBoxTest, MarkerContainerLayoutOverflowRect) {

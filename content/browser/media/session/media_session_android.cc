@@ -12,6 +12,7 @@
 #include "content/common/android/media_metadata_android.h"
 #include "content/public/browser/media_session.h"
 #include "jni/MediaSessionImpl_jni.h"
+#include "services/media_session/public/mojom/audio_focus.mojom.h"
 
 namespace content {
 
@@ -160,6 +161,14 @@ void MediaSessionAndroid::DidReceiveAction(JNIEnv* env,
                                            int action) {
   media_session()->DidReceiveAction(
       static_cast<blink::mojom::MediaSessionAction>(action));
+}
+
+void MediaSessionAndroid::RequestSystemAudioFocus(
+    JNIEnv* env,
+    const base::android::JavaParamRef<jobject>& j_obj) {
+  DCHECK(media_session());
+  static_cast<MediaSessionImpl*>(media_session())
+      ->RequestSystemAudioFocus(media_session::mojom::AudioFocusType::kGain);
 }
 
 WebContentsAndroid* MediaSessionAndroid::GetWebContentsAndroid() {

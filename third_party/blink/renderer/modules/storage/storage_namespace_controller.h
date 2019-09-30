@@ -29,14 +29,14 @@ class MODULES_EXPORT StorageNamespaceController final
   StorageNamespace* SessionStorage(bool optional_create = true);
   ~StorageNamespaceController();
 
-  bool CanAccessStorage(LocalFrame*, StorageArea::StorageType) const;
+  bool CanAccessStorageArea(LocalFrame*, StorageArea::StorageType) const;
 
   static void ProvideStorageNamespaceTo(Page&, WebViewClient*);
   static StorageNamespaceController* From(Page* page) {
     return Supplement<Page>::From<StorageNamespaceController>(page);
   }
 
-  void Trace(blink::Visitor*);
+  void Trace(blink::Visitor*) override;
 
   InspectorDOMStorageAgent* InspectorAgent() { return inspector_agent_; }
   void SetInspectorAgent(InspectorDOMStorageAgent* agent) {

@@ -12,13 +12,16 @@
 #include "chrome/browser/media/router/mojo/media_route_controller.h"
 #include "chrome/browser/media/router/mojo/media_router_mojo_metrics.h"
 #include "chrome/browser/media/router/providers/cast/cast_media_route_provider.h"
+#include "chrome/browser/media/router/providers/cast/chrome_cast_message_handler.h"
 #include "chrome/browser/media/router/providers/wired_display/wired_display_media_route_provider.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/chrome_features.h"
 #include "chrome/common/media_router/media_source_helper.h"
 #include "components/cast_channel/cast_socket_service.h"
 #include "content/public/browser/browser_thread.h"
+#include "content/public/common/service_manager_connection.h"
 #include "extensions/common/extension.h"
+#include "services/service_manager/public/cpp/connector.h"
 #if defined(OS_WIN)
 #include "chrome/browser/media/router/mojo/media_route_provider_util_win.h"
 #endif
@@ -71,11 +74,7 @@ MediaRouterDesktop::GetProviderIdForPresentation(
 }
 
 MediaRouterDesktop::MediaRouterDesktop(content::BrowserContext* context)
-    : MediaRouterMojoImpl(context),
-      cast_provider_(nullptr, base::OnTaskRunnerDeleter(nullptr)),
-      media_sink_service_(DualMediaSinkService::GetInstance()),
-      weak_factory_(this) {
-  InitializeMediaRouteProviders();
+    : MediaRouterDesktop(context, DualMediaSinkService::GetInstance()) {
 #if defined(OS_WIN)
   CanFirewallUseLocalPorts(
       base::BindOnce(&MediaRouterDesktop::OnFirewallCheckComplete,
@@ -87,6 +86,7 @@ MediaRouterDesktop::MediaRouterDesktop(content::BrowserContext* context,
                                        DualMediaSinkService* media_sink_service)
     : MediaRouterMojoImpl(context),
       cast_provider_(nullptr, base::OnTaskRunnerDeleter(nullptr)),
+      dial_provider_(nullptr, base::OnTaskRunnerDeleter(nullptr)),
       media_sink_service_(media_sink_service),
       weak_factory_(this) {
   InitializeMediaRouteProviders();
@@ -101,10 +101,11 @@ void MediaRouterDesktop::RegisterMediaRouteProvider(
   // discovery / sink query. We are migrating discovery from the external Media
   // Route Provider to the Media Router (https://crbug.com/687383), so we need
   // to disable it in the provider.
-  config->enable_cast_discovery = !media_router::CastDiscoveryEnabled();
-  config->enable_dial_sink_query = !media_router::DialSinkQueryEnabled();
-  config->enable_cast_sink_query =
-      !media_router::CastMediaRouteProviderEnabled();
+  config->enable_cast_discovery = !CastDiscoveryEnabled();
+  config->enable_dial_sink_query = !DialMediaRouteProviderEnabled();
+  config->enable_cast_sink_query = !CastMediaRouteProviderEnabled();
+  config->use_views_dialog = ShouldUseViewsDialog();
+  config->use_mirroring_service = ShouldUseMirroringService();
   std::move(callback).Run(instance_id(), std::move(config));
 
   SyncStateToMediaRouteProvider(provider_id);
@@ -208,17 +209,36 @@ void MediaRouterDesktop::InitializeMediaRouteProviders() {
     InitializeWiredDisplayMediaRouteProvider();
   if (CastMediaRouteProviderEnabled())
     InitializeCastMediaRouteProvider();
-  if (DialSinkQueryEnabled())
+  if (DialMediaRouteProviderEnabled())
     InitializeDialMediaRouteProvider();
 }
 
 void MediaRouterDesktop::InitializeExtensionMediaRouteProviderProxy() {
+  if (!extension_provider_proxy_) {
+    extension_provider_proxy_ =
+        std::make_unique<ExtensionMediaRouteProviderProxy>(context());
+  }
   mojom::MediaRouteProviderPtr extension_provider_proxy_ptr;
-  extension_provider_proxy_ =
-      std::make_unique<ExtensionMediaRouteProviderProxy>(
-          context(), mojo::MakeRequest(&extension_provider_proxy_ptr));
+  extension_provider_proxy_->Bind(
+      mojo::MakeRequest(&extension_provider_proxy_ptr));
+  extension_provider_proxy_ptr.set_connection_error_handler(base::BindOnce(
+      &MediaRouterDesktop::OnExtensionProviderError, base::Unretained(this)));
   media_route_providers_[MediaRouteProviderId::EXTENSION] =
       std::move(extension_provider_proxy_ptr);
+}
+
+void MediaRouterDesktop::OnExtensionProviderError() {
+  // The message pipe for |extension_provider_proxy_| might error out due to
+  // Media Router extension causing dropped callbacks. Detect this case and
+  // recover by re-creating the pipe.
+  DVLOG(2) << "Extension MRP encountered error.";
+  if (extension_provider_error_count_ >= kMaxMediaRouteProviderErrorCount)
+    return;
+
+  ++extension_provider_error_count_;
+  DVLOG(2) << "Reconnecting to extension MRP: "
+           << extension_provider_error_count_;
+  InitializeExtensionMediaRouteProviderProxy();
 }
 
 void MediaRouterDesktop::InitializeWiredDisplayMediaRouteProvider() {
@@ -244,7 +264,9 @@ void MediaRouterDesktop::InitializeCastMediaRouteProvider() {
           new CastMediaRouteProvider(
               mojo::MakeRequest(&cast_provider_ptr),
               media_router_ptr.PassInterface(),
-              media_sink_service_->cast_app_discovery_service(), task_runner),
+              media_sink_service_->GetCastMediaSinkServiceImpl(),
+              media_sink_service_->cast_app_discovery_service(),
+              GetCastMessageHandler(), task_runner),
           base::OnTaskRunnerDeleter(task_runner));
   RegisterMediaRouteProvider(MediaRouteProviderId::CAST,
                              std::move(cast_provider_ptr), base::DoNothing());
@@ -254,18 +276,29 @@ void MediaRouterDesktop::InitializeDialMediaRouteProvider() {
   mojom::MediaRouterPtr media_router_ptr;
   MediaRouterMojoImpl::BindToMojoRequest(mojo::MakeRequest(&media_router_ptr));
   mojom::MediaRouteProviderPtr dial_provider_ptr;
-  DCHECK(media_sink_service_);
 
-  dial_provider_ = std::make_unique<DialMediaRouteProvider>(
-      mojo::MakeRequest(&dial_provider_ptr), std::move(media_router_ptr),
-      media_sink_service_->dial_media_sink_service());
+  auto* dial_media_sink_service =
+      media_sink_service_->GetDialMediaSinkServiceImpl();
+  std::string receiver_id_hash_token = GetReceiverIdHashToken(
+      Profile::FromBrowserContext(context())->GetPrefs());
+  auto task_runner = dial_media_sink_service->task_runner();
+
+  service_manager::Connector* connector =
+      content::ServiceManagerConnection::GetForProcess()->GetConnector();
+  dial_provider_ =
+      std::unique_ptr<DialMediaRouteProvider, base::OnTaskRunnerDeleter>(
+          new DialMediaRouteProvider(mojo::MakeRequest(&dial_provider_ptr),
+                                     media_router_ptr.PassInterface(),
+                                     dial_media_sink_service, connector,
+                                     receiver_id_hash_token, task_runner),
+          base::OnTaskRunnerDeleter(task_runner));
   RegisterMediaRouteProvider(MediaRouteProviderId::DIAL,
                              std::move(dial_provider_ptr), base::DoNothing());
 }
 
 #if defined(OS_WIN)
 void MediaRouterDesktop::EnsureMdnsDiscoveryEnabled() {
-  if (media_router::CastDiscoveryEnabled()) {
+  if (CastDiscoveryEnabled()) {
     media_sink_service_->StartMdnsDiscovery();
   } else {
     media_route_providers_[MediaRouteProviderId::EXTENSION]

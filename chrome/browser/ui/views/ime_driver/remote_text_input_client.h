@@ -5,7 +5,7 @@
 #ifndef CHROME_BROWSER_UI_VIEWS_IME_DRIVER_REMOTE_TEXT_INPUT_CLIENT_H_
 #define CHROME_BROWSER_UI_VIEWS_IME_DRIVER_REMOTE_TEXT_INPUT_CLIENT_H_
 
-#include "services/ui/public/interfaces/ime/ime.mojom.h"
+#include "services/ws/public/mojom/ime/ime.mojom.h"
 #include "ui/base/ime/input_method_delegate.h"
 #include "ui/base/ime/text_input_client.h"
 
@@ -15,7 +15,7 @@
 class RemoteTextInputClient : public ui::TextInputClient,
                               public ui::internal::InputMethodDelegate {
  public:
-  RemoteTextInputClient(ui::mojom::TextInputClientPtr remote_client,
+  RemoteTextInputClient(ws::mojom::TextInputClientPtr remote_client,
                         ui::TextInputType text_input_type,
                         ui::TextInputMode text_input_mode,
                         base::i18n::TextDirection text_direction,
@@ -42,6 +42,7 @@ class RemoteTextInputClient : public ui::TextInputClient,
   bool GetCompositionCharacterBounds(uint32_t index,
                                      gfx::Rect* rect) const override;
   bool HasCompositionText() const override;
+  FocusReason GetFocusReason() const override;
   bool GetTextRange(gfx::Range* range) const override;
   bool GetCompositionTextRange(gfx::Range* range) const override;
   bool GetSelectionRange(gfx::Range* range) const override;
@@ -56,13 +57,14 @@ class RemoteTextInputClient : public ui::TextInputClient,
   void EnsureCaretNotInRect(const gfx::Rect& rect) override;
   bool IsTextEditCommandEnabled(ui::TextEditCommand command) const override;
   void SetTextEditCommandForNextKeyEvent(ui::TextEditCommand command) override;
-  const std::string& GetClientSourceInfo() const override;
+  ukm::SourceId GetClientSourceForMetrics() const override;
+  bool ShouldDoLearning() override;
 
   // ui::internal::InputMethodDelegate:
   ui::EventDispatchDetails DispatchKeyEventPostIME(
       ui::KeyEvent* event) override;
 
-  ui::mojom::TextInputClientPtr remote_client_;
+  ws::mojom::TextInputClientPtr remote_client_;
   ui::TextInputType text_input_type_;
   ui::TextInputMode text_input_mode_;
   base::i18n::TextDirection text_direction_;

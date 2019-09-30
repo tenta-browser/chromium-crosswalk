@@ -61,9 +61,9 @@ static icu::UnicodeSet* createUnicodeSet(const UChar32* characters,
   return unicodeSet;
 }
 
-#define CREATE_UNICODE_SET(name)                                             \
-  createUnicodeSet(name##Array, WTF_ARRAY_LENGTH(name##Array), name##Ranges, \
-                   WTF_ARRAY_LENGTH(name##Ranges))
+#define CREATE_UNICODE_SET(name)                                      \
+  createUnicodeSet(name##Array, arraysize(name##Array), name##Ranges, \
+                   arraysize(name##Ranges))
 
 #define RETURN_HAS_PROPERTY(c, name)            \
   static icu::UnicodeSet* unicodeSet = nullptr; \
@@ -116,6 +116,14 @@ bool Character::IsCJKIdeographOrSymbolSlow(UChar32 c) {
 
 bool Character::IsPotentialCustomElementNameChar(UChar32 character) {
   RETURN_HAS_PROPERTY(character, kIsPotentialCustomElementNameChar);
+}
+
+bool Character::IsBidiControl(UChar32 character) {
+  RETURN_HAS_PROPERTY(character, kIsBidiControl);
+}
+
+bool Character::IsHangulSlow(UChar32 character) {
+  RETURN_HAS_PROPERTY(character, kIsHangul);
 }
 
 unsigned Character::ExpansionOpportunityCount(const LChar* characters,
@@ -287,9 +295,21 @@ bool Character::IsCommonOrInheritedScript(UChar32 character) {
          (script == USCRIPT_COMMON || script == USCRIPT_INHERITED);
 }
 
-bool Character::IsUnassignedOrPrivateUse(UChar32 character) {
-  return WTF::Unicode::Category(character) &
-         (WTF::Unicode::kOther_NotAssigned | WTF::Unicode::kOther_PrivateUse);
+bool Character::IsPrivateUse(UChar32 character) {
+  return WTF::Unicode::Category(character) & WTF::Unicode::kOther_PrivateUse;
+}
+
+bool Character::IsNonCharacter(UChar32 character) {
+  return U_IS_UNICODE_NONCHAR(character);
+}
+
+bool Character::HasDefiniteScript(UChar32 character) {
+  ICUError err;
+  UScriptCode hint_char_script = uscript_getScript(character, &err);
+  if (!U_SUCCESS(err))
+    return false;
+  return hint_char_script != USCRIPT_INHERITED &&
+         hint_char_script != USCRIPT_COMMON;
 }
 
 }  // namespace blink

@@ -27,6 +27,7 @@
 #include "third_party/blink/renderer/core/dom/events/event_path.h"
 
 #include "third_party/blink/renderer/core/dom/document.h"
+#include "third_party/blink/renderer/core/dom/events/window_event_context.h"
 #include "third_party/blink/renderer/core/dom/shadow_root.h"
 #include "third_party/blink/renderer/core/dom/v0_insertion_point.h"
 #include "third_party/blink/renderer/core/event_names.h"
@@ -90,7 +91,7 @@ void EventPath::Initialize() {
 void EventPath::CalculatePath() {
   DCHECK(node_);
   DCHECK(node_event_contexts_.IsEmpty());
-  node_->UpdateDistribution();
+  node_->UpdateDistributionForLegacyDistributedNodes();
 
   // For performance and memory usage reasons we want to store the
   // path using as few bytes as possible and with as few allocations
@@ -101,7 +102,7 @@ void EventPath::CalculatePath() {
 
   nodes_in_path.push_back(current);
   while (current) {
-    if (event_ && current->KeepEventInNode(event_))
+    if (event_ && current->KeepEventInNode(*event_))
       break;
     HeapVector<Member<V0InsertionPoint>, 8> insertion_points;
     CollectDestinationInsertionPoints(*current, insertion_points);

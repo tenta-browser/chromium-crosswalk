@@ -8,64 +8,10 @@
       "paintInvalidations": [
         {
           "object": "LayoutSVGRoot svg",
-          "rect": [50, 50, 572, 82],
-          "reason": "appeared"
+          "rect": [50, 52, 571, 84],
+          "reason": "chunk appeared"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutSVGContainer g",
-      "reason": "appeared"
-    },
-    {
-      "object": "LayoutSVGText text id='text'",
-      "reason": "appeared"
-    },
-    {
-      "object": "RootInlineBox",
-      "reason": "appeared"
-    },
-    {
-      "object": "LayoutSVGTSpan tspan id='tspan'",
-      "reason": "appeared"
-    },
-    {
-      "object": "InlineFlowBox",
-      "reason": "appeared"
-    },
-    {
-      "object": "LayoutSVGInlineText #text",
-      "reason": "appeared"
-    },
-    {
-      "object": "InlineTextBox 'Two lines of text should be visible.'",
-      "reason": "appeared"
-    },
-    {
-      "object": "LayoutSVGInlineText #text",
-      "reason": "appeared"
-    },
-    {
-      "object": "InlineTextBox ' '",
-      "reason": "appeared"
-    },
-    {
-      "object": "LayoutSVGTSpan tspan",
-      "reason": "appeared"
-    },
-    {
-      "object": "InlineFlowBox",
-      "reason": "appeared"
-    },
-    {
-      "object": "LayoutSVGInlineText #text",
-      "reason": "appeared"
-    },
-    {
-      "object": "InlineTextBox 'Two lines of text should be visible.'",
-      "reason": "appeared"
     }
   ]
 }

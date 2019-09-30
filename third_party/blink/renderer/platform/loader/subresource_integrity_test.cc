@@ -271,11 +271,9 @@ class SubresourceIntegrityTest : public testing::Test {
       response.SetWasFetchedViaServiceWorker(true);
 
       if (service_worker_mode == kSWOpaqueResponse) {
-        response.SetResponseTypeViaServiceWorker(
-            network::mojom::FetchResponseType::kOpaque);
+        response.SetType(network::mojom::FetchResponseType::kOpaque);
       } else {
-        response.SetResponseTypeViaServiceWorker(
-            network::mojom::FetchResponseType::kDefault);
+        response.SetType(network::mojom::FetchResponseType::kDefault);
       }
     }
 
@@ -470,7 +468,7 @@ TEST_F(SubresourceIntegrityTest, Parsing) {
       "sha384-XVVXBGoYw6AJOh9J+Z8pBDMVVPfkBpngexkA7JqZu8d5GENND6TEIup/tA1v5GPr "
       "sha512-tbUPioKbVBplr0b1ucnWB57SJWt4x9dOE0Vy2mzCXvH3FepqDZ+"
       "07yMK81ytlg0MPaIrPAjcHqba5csorDWtKg==",
-      valid_sha384_and_sha512, WTF_ARRAY_LENGTH(valid_sha384_and_sha512));
+      valid_sha384_and_sha512, arraysize(valid_sha384_and_sha512));
 
   const IntegrityMetadata valid_sha256_and_sha256[] = {
       IntegrityMetadata("BpfBw7ivV8q2jLiT13fxDYAe2tJllusRSZ273h2nFSE=",
@@ -479,7 +477,7 @@ TEST_F(SubresourceIntegrityTest, Parsing) {
   };
   ExpectParseMultipleHashes(
       "sha256-BpfBw7ivV8q2jLiT13fxDYAe2tJllusRSZ273h2nFSE= sha256-deadbeef",
-      valid_sha256_and_sha256, WTF_ARRAY_LENGTH(valid_sha256_and_sha256));
+      valid_sha256_and_sha256, arraysize(valid_sha256_and_sha256));
 
   const IntegrityMetadata valid_sha256_and_invalid_sha256[] = {
       IntegrityMetadata("BpfBw7ivV8q2jLiT13fxDYAe2tJllusRSZ273h2nFSE=",
@@ -488,7 +486,7 @@ TEST_F(SubresourceIntegrityTest, Parsing) {
   ExpectParseMultipleHashes(
       "sha256-BpfBw7ivV8q2jLiT13fxDYAe2tJllusRSZ273h2nFSE= sha256-!!!!",
       valid_sha256_and_invalid_sha256,
-      WTF_ARRAY_LENGTH(valid_sha256_and_invalid_sha256));
+      arraysize(valid_sha256_and_invalid_sha256));
 
   const IntegrityMetadata invalid_sha256_and_valid_sha256[] = {
       IntegrityMetadata("BpfBw7ivV8q2jLiT13fxDYAe2tJllusRSZ273h2nFSE=",
@@ -497,7 +495,7 @@ TEST_F(SubresourceIntegrityTest, Parsing) {
   ExpectParseMultipleHashes(
       "sha256-!!! sha256-BpfBw7ivV8q2jLiT13fxDYAe2tJllusRSZ273h2nFSE=",
       invalid_sha256_and_valid_sha256,
-      WTF_ARRAY_LENGTH(invalid_sha256_and_valid_sha256));
+      arraysize(invalid_sha256_and_valid_sha256));
 
   ExpectParse("sha256-BpfBw7ivV8q2jLiT13fxDYAe2tJllusRSZ273h2nFSE=?foo=bar",
               "BpfBw7ivV8q2jLiT13fxDYAe2tJllusRSZ273h2nFSE=",

@@ -8,6 +8,7 @@
 #include "base/strings/string_piece.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chrome_notification_types.h"
+#include "chrome/browser/extensions/browser_extension_window_controller.h"
 #include "chrome/browser/extensions/extension_view.h"
 #include "chrome/browser/extensions/window_controller.h"
 #include "chrome/browser/file_select_helper.h"
@@ -160,21 +161,6 @@ WebContents* ExtensionViewHost::OpenURLFromTab(
       // Otherwise they are not driven by a user gesture.
       Browser* browser = view_->GetBrowser();
       return browser ? browser->OpenURL(params) : nullptr;
-    }
-    case WindowOpenDisposition::CURRENT_TAB: {
-      // Only allow these from hosts that are bound to a browser (e.g. popups).
-      // Otherwise they are not driven by a user gesture.
-      Browser* browser = view_->GetBrowser();
-      if (!browser)
-        return nullptr;
-
-      // Only allow navigations that will surely result in a download.
-      if (!params.suggested_filename.has_value() ||
-          !(params.url.SchemeIsBlob() || params.url.SchemeIsFileSystem() ||
-            params.url.SchemeIs(url::kDataScheme))) {
-        return nullptr;
-      }
-      return browser->OpenURL(params);
     }
     default:
       return nullptr;

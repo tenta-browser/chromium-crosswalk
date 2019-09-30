@@ -6,12 +6,6 @@
       "contentsOpaque": true,
       "backgroundColor": "#FFFFFF"
     }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutView #document",
-      "reason": "incremental"
-    }
   ]
 }
 {
@@ -21,12 +15,6 @@
       "bounds": [400, 250],
       "contentsOpaque": true,
       "backgroundColor": "#FFFFFF"
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutView #document",
-      "reason": "incremental"
     }
   ]
 }
@@ -44,22 +32,11 @@
           "reason": "incremental"
         },
         {
-          "object": "LayoutBlockFlow (positioned) DIV",
+          "object": "LayoutBlockFlow HTML",
           "rect": [8, 250, 392, 350],
-          "reason": "incremental"
-        },
-        {
-          "object": "LayoutBlockFlow (positioned) DIV",
-          "rect": [8, 250, 392, 158],
           "reason": "incremental"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutView #document",
-      "reason": "incremental"
     }
   ]
 }
@@ -77,22 +54,11 @@
           "reason": "incremental"
         },
         {
-          "object": "LayoutBlockFlow (positioned) DIV",
+          "object": "LayoutBlockFlow HTML",
           "rect": [400, 8, 400, 592],
-          "reason": "incremental"
-        },
-        {
-          "object": "LayoutBlockFlow (positioned) DIV",
-          "rect": [400, 8, 8, 400],
           "reason": "incremental"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutView #document",
-      "reason": "incremental"
     }
   ]
 }

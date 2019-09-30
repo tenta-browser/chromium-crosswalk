@@ -16,7 +16,7 @@ SyntheticMouseDriver::~SyntheticMouseDriver() {}
 
 void SyntheticMouseDriver::DispatchEvent(SyntheticGestureTarget* target,
                                          const base::TimeTicks& timestamp) {
-  mouse_event_.SetTimeStampSeconds(ConvertTimestampToSeconds(timestamp));
+  mouse_event_.SetTimeStamp(timestamp);
   if (mouse_event_.GetType() != blink::WebInputEvent::kUndefined) {
     target->DispatchInputEventToPlatform(mouse_event_);
     mouse_event_.SetType(blink::WebInputEvent::kUndefined);
@@ -66,6 +66,10 @@ void SyntheticMouseDriver::Release(
       (~SyntheticPointerActionParams::GetWebMouseEventModifier(button));
 }
 
+void SyntheticMouseDriver::Leave(int index) {
+  NOTIMPLEMENTED();
+}
+
 bool SyntheticMouseDriver::UserInputCheck(
     const SyntheticPointerActionParams& params) const {
   if (params.index() != 0)
@@ -85,9 +89,14 @@ bool SyntheticMouseDriver::UserInputCheck(
   }
 
   if (params.pointer_action_type() ==
-          SyntheticPointerActionParams::PointerActionType::RELEASE &&
-      mouse_event_.click_count <= 0) {
-    return false;
+      SyntheticPointerActionParams::PointerActionType::RELEASE) {
+    if (mouse_event_.click_count <= 0)
+      return false;
+
+    int modifiers =
+        SyntheticPointerActionParams::GetWebMouseEventModifier(params.button());
+    if (!(last_modifiers_ & modifiers))
+      return false;
   }
 
   return true;

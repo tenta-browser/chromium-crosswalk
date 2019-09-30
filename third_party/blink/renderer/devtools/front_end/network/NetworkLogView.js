@@ -134,6 +134,8 @@ Network.NetworkLogView = class extends UI.VBox {
     this._dataGrid = this._columns.dataGrid();
     this._setupDataGrid();
     this._columns.sortByCurrentColumn();
+    filterBar.filterButton().addEventListener(
+        UI.ToolbarButton.Events.Click, this._dataGrid.scheduleUpdate.bind(this._dataGrid, true /* isFromUser */));
 
     this._summaryBarElement = this.element.createChild('div', 'network-summary-bar');
 
@@ -144,33 +146,15 @@ Network.NetworkLogView = class extends UI.VBox {
         .addChangeListener(this._invalidateAllItems.bind(this, false), this);
 
     SDK.targetManager.observeModels(SDK.NetworkManager, this);
-    BrowserSDK.networkLog.addEventListener(BrowserSDK.NetworkLog.Events.RequestAdded, this._onRequestUpdated, this);
-    BrowserSDK.networkLog.addEventListener(BrowserSDK.NetworkLog.Events.RequestUpdated, this._onRequestUpdated, this);
-    BrowserSDK.networkLog.addEventListener(BrowserSDK.NetworkLog.Events.Reset, this._reset, this);
+    SDK.networkLog.addEventListener(SDK.NetworkLog.Events.RequestAdded, this._onRequestUpdated, this);
+    SDK.networkLog.addEventListener(SDK.NetworkLog.Events.RequestUpdated, this._onRequestUpdated, this);
+    SDK.networkLog.addEventListener(SDK.NetworkLog.Events.Reset, this._reset, this);
 
     this._updateGroupByFrame();
     Common.moduleSetting('network.group-by-frame').addChangeListener(() => this._updateGroupByFrame());
 
     this._filterBar = filterBar;
-    this._searchHint = new UI.HBox();
-    this._searchHint.element.classList.add('open-search-view');
-    this._filterStringSearchReminder = this._createSearchPrompt();
-    this._updateSearchPrompt();
   }
-
-  _createSearchPrompt() {
-    const text = this._searchHint.contentElement.createChild('div', 'search-button');
-    text.createChild('span').textContent = ls`Search headers and response bodies for `;
-    const filterString = text.createChild('strong');
-    const button = UI.createTextButton('Find All', () => this._openSearchView());
-    this._searchHint.contentElement.appendChild(button);
-    this._filterBar.element.addEventListener('keydown', event => {
-      if (event.key === 'ArrowDown')
-        button.focus();
-    });
-    return filterString;
-  }
-
 
   _updateGroupByFrame() {
     const value = Common.moduleSetting('network.group-by-frame').get();
@@ -482,7 +466,7 @@ Network.NetworkLogView = class extends UI.VBox {
       this._harLoadFailed(e);
       return;
     }
-    BrowserSDK.networkLog.importRequests(HARImporter.Importer.requestsFromHARLog(harRoot.log));
+    SDK.networkLog.importRequests(HARImporter.Importer.requestsFromHARLog(harRoot.log));
   }
 
   /**
@@ -602,7 +586,6 @@ Network.NetworkLogView = class extends UI.VBox {
     this.removeAllNodeHighlights();
     this._parseFilterQuery(this._textFilterUI.value());
     this._filterRequests();
-    this._updateSearchPrompt();
   }
 
   _showRecordingHint() {
@@ -708,7 +691,7 @@ Network.NetworkLogView = class extends UI.VBox {
     let maxTime = -1;
 
     let nodeCount = 0;
-    for (const request of BrowserSDK.networkLog.requests()) {
+    for (const request of SDK.networkLog.requests()) {
       const node = request[Network.NetworkLogView._networkNodeSymbol];
       if (!node)
         continue;
@@ -814,7 +797,7 @@ Network.NetworkLogView = class extends UI.VBox {
    * @param {boolean=} deferUpdate
    */
   _invalidateAllItems(deferUpdate) {
-    this._staleRequests = new Set(BrowserSDK.networkLog.requests());
+    this._staleRequests = new Set(SDK.networkLog.requests());
     if (deferUpdate)
       this.scheduleRefresh();
     else
@@ -1245,12 +1228,12 @@ Network.NetworkLogView = class extends UI.VBox {
   }
 
   _harRequests() {
-    const httpRequests = BrowserSDK.networkLog.requests().filter(Network.NetworkLogView.HTTPRequestsFilter);
+    const httpRequests = SDK.networkLog.requests().filter(Network.NetworkLogView.HTTPRequestsFilter);
     return httpRequests.filter(Network.NetworkLogView.FinishedRequestsFilter);
   }
 
   async _copyAll() {
-    const harArchive = {log: await BrowserSDK.HARLog.build(this._harRequests())};
+    const harArchive = {log: await SDK.HARLog.build(this._harRequests())};
     InspectorFrontendHost.copyText(JSON.stringify(harArchive, null, 2));
   }
 
@@ -1267,7 +1250,7 @@ Network.NetworkLogView = class extends UI.VBox {
    * @param {string} platform
    */
   async _copyAllCurlCommand(platform) {
-    const requests = BrowserSDK.networkLog.requests();
+    const requests = SDK.networkLog.requests();
     const commands = await Promise.all(requests.map(request => this._generateCurlCommand(request, platform)));
     if (platform === 'win')
       InspectorFrontendHost.copyText(commands.join(' &\r\n'));
@@ -1285,7 +1268,7 @@ Network.NetworkLogView = class extends UI.VBox {
   }
 
   async _copyAllFetchCall() {
-    const requests = BrowserSDK.networkLog.requests();
+    const requests = SDK.networkLog.requests();
     const commands = await Promise.all(requests.map(request => this._generateFetchCall(request)));
     InspectorFrontendHost.copyText(commands.join(' ;\n'));
   }
@@ -1299,7 +1282,7 @@ Network.NetworkLogView = class extends UI.VBox {
   }
 
   async _copyAllPowerShellCommand() {
-    const requests = BrowserSDK.networkLog.requests();
+    const requests = SDK.networkLog.requests();
     const commands = await Promise.all(requests.map(request => this._generatePowerShellCommand(request)));
     InspectorFrontendHost.copyText(commands.join(';\r\n'));
   }
@@ -1486,6 +1469,7 @@ Network.NetworkLogView = class extends UI.VBox {
    * @param {!SDK.NetworkRequest} request
    */
   selectRequest(request) {
+    this.setTextFilterValue('');
     const node = this._reveal(request);
     if (node)
       node.select();
@@ -1560,8 +1544,7 @@ Network.NetworkLogView = class extends UI.VBox {
 
     const headers = {};
     for (const headerArray of headerData)
-      headers[headerArray[0]] = headers[headerArray[1]];
-
+      headers[headerArray[0]] = headerArray[1];
 
     const credentials =
         request.requestCookies || requestHeaders.some(({name}) => credentialHeaders[name.toLowerCase()]) ? 'include' :
@@ -1577,7 +1560,7 @@ Network.NetworkLogView = class extends UI.VBox {
 
     const fetchOptions = {
       credentials,
-      headers,
+      headers: Object.keys(headers).length ? headers : void 0,
       referrer,
       referrerPolicy,
       body: requestBody,
@@ -1647,23 +1630,19 @@ Network.NetworkLogView = class extends UI.VBox {
        * @return {string}
        */
       function escapeCharacter(x) {
-        let code = x.charCodeAt(0);
-        if (code < 256) {
-          // Add leading zero when needed to not care about the next character.
-          return code < 16 ? '\\x0' + code.toString(16) : '\\x' + code.toString(16);
-        }
-        code = code.toString(16);
-        return '\\u' + ('0000' + code).substr(code.length, 4);
+        const code = x.charCodeAt(0);
+        // Add leading zero when needed to not care about the next character.
+        return code < 16 ? '\\u0' + code.toString(16) : '\\u' + code.toString(16);
       }
 
-      if (/[^\x20-\x7E]|\'/.test(str)) {
+      if (/[\u0000-\u001f\u007f-\u009f]|\'/.test(str)) {
         // Use ANSI-C quoting syntax.
         return '$\'' +
             str.replace(/\\/g, '\\\\')
                 .replace(/\'/g, '\\\'')
                 .replace(/\n/g, '\\n')
                 .replace(/\r/g, '\\r')
-                .replace(/[^\x20-\x7E]/g, escapeCharacter) +
+                .replace(/[\u0000-\u001f\u007f-\u009f]/g, escapeCharacter) +
             '\'';
       } else {
         // Use single quote syntax.
@@ -1771,23 +1750,6 @@ Network.NetworkLogView = class extends UI.VBox {
     }
 
     return command.join(' ');
-  }
-
-  _updateSearchPrompt() {
-    const filterString = this._filterBar.visible() ? this._textFilterUI.value() : '';
-    if (filterString.length) {
-      const filterBarElement = this._filterBar.element;
-      this._searchHint.show(/** @type {!Element} */ (filterBarElement.parentElement), filterBarElement.nextSibling);
-      this._filterStringSearchReminder.textContent = filterString;
-    } else {
-      this._searchHint.hideWidget();
-    }
-  }
-
-  _openSearchView() {
-    const filterString = this._textFilterUI.value();
-    this._textFilterUI.setValue('');
-    Network.SearchNetworkView.openSearch(filterString, true);
   }
 };
 

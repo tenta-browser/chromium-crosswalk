@@ -12,6 +12,7 @@
 #include "content/public/browser/navigation_ui_data.h"
 #include "content/public/common/previews_state.h"
 #include "content/public/common/resource_type.h"
+#include "third_party/blink/public/platform/resource_request_blocked_reason.h"
 #include "third_party/blink/public/platform/web_referrer_policy.h"
 #include "ui/base/page_transition_types.h"
 
@@ -28,6 +29,8 @@ class WebContents;
 class ResourceRequestInfo {
  public:
   // Returns the ResourceRequestInfo associated with the given URLRequest.
+  CONTENT_EXPORT static ResourceRequestInfo* ForRequest(
+      net::URLRequest* request);
   CONTENT_EXPORT static const ResourceRequestInfo* ForRequest(
       const net::URLRequest* request);
 
@@ -170,6 +173,9 @@ class ResourceRequestInfo {
   // Returns the current state of Previews.
   virtual PreviewsState GetPreviewsState() const = 0;
 
+  // Sets the PreviewsState to |previews_state|.
+  virtual void SetPreviewsState(PreviewsState previews_state) = 0;
+
   // PlzNavigate
   // Only used for navigations. Returns opaque data set by the embedder on the
   // UI thread at the beginning of navigation.
@@ -183,8 +189,18 @@ class ResourceRequestInfo {
     kNotCanceled,
   };
 
-  // If and why this request was canceled by DevTools.
+  // If and why this request was canceled by DevTools. TODO(johannes): Remove.
   virtual DevToolsStatus GetDevToolsStatus() const = 0;
+
+  // Used to annotate requests blocked using net::ERR_BLOCKED_BY_CLIENT and
+  // net::ERR_BLOCKED_BY_RESPONSE errors, with a ResourceRequestBlockedReason.
+  virtual void SetResourceRequestBlockedReason(
+      blink::ResourceRequestBlockedReason) = 0;
+
+  // Returns the ResourceRequestBlockedReason for this request, else
+  // base::nullopt.
+  virtual base::Optional<blink::ResourceRequestBlockedReason>
+  GetResourceRequestBlockedReason() const = 0;
 
   // When the client of a request decides to cancel it, it may optionally
   // provide an application-defined description of the canncellation reason.

@@ -31,25 +31,22 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_BINDINGS_CORE_V8_SCRIPT_EVENT_LISTENER_H_
 #define THIRD_PARTY_BLINK_RENDERER_BINDINGS_CORE_V8_SCRIPT_EVENT_LISTENER_H_
 
-#include "base/memory/scoped_refptr.h"
-#include "third_party/blink/renderer/bindings/core/v8/script_value.h"
-#include "third_party/blink/renderer/bindings/core/v8/v8_lazy_event_listener.h"
+#include <memory>
+
+#include "third_party/blink/renderer/core/dom/events/event_listener.h"
 
 namespace blink {
 
-class EventListener;
-class ExecutionContext;
 class LocalFrame;
-class Node;
 class QualifiedName;
 class SourceLocation;
 
-V8LazyEventListener* CreateAttributeEventListener(
+EventListener* CreateAttributeEventListener(
     Node*,
     const QualifiedName&,
     const AtomicString& value,
     const AtomicString& event_parameter_name);
-V8LazyEventListener* CreateAttributeEventListener(
+EventListener* CreateAttributeEventListener(
     LocalFrame*,
     const QualifiedName&,
     const AtomicString& value,

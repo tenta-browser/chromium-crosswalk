@@ -6,11 +6,11 @@
 #include "base/bind.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/test/scoped_task_environment.h"
 #include "base/threading/thread_task_runner_handle.h"
+#include "net/base/completion_repeating_callback.h"
 #include "net/base/io_buffer.h"
 #include "net/base/net_errors.h"
 #include "net/base/test_completion_callback.h"
@@ -25,9 +25,8 @@ class AppCacheDiskCacheTest : public testing::Test {
 
   void SetUp() override {
     ASSERT_TRUE(directory_.CreateUniqueTempDir());
-    completion_callback_ = base::Bind(
-        &AppCacheDiskCacheTest::OnComplete,
-        base::Unretained(this));
+    completion_callback_ = base::BindRepeating(
+        &AppCacheDiskCacheTest::OnComplete, base::Unretained(this));
   }
 
   void TearDown() override { scoped_task_environment_.RunUntilIdle(); }
@@ -43,7 +42,7 @@ class AppCacheDiskCacheTest : public testing::Test {
 
   base::test::ScopedTaskEnvironment scoped_task_environment_;
   base::ScopedTempDir directory_;
-  net::CompletionCallback completion_callback_;
+  net::CompletionRepeatingCallback completion_callback_;
   std::vector<int> completion_results_;
 
   static const int k10MBytes = 10 * 1024 * 1024;

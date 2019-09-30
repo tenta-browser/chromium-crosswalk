@@ -21,9 +21,11 @@ class OptimizationGuideService;
 }
 
 namespace previews {
-class PreviewsIOData;
+class PreviewsDeciderImpl;
 class PreviewsUIService;
 }
+
+class PreviewsLitePageDecider;
 
 // Keyed service that owns a previews::PreviewsUIService. PreviewsService lives
 // on the UI thread.
@@ -32,24 +34,33 @@ class PreviewsService : public KeyedService {
   PreviewsService();
   ~PreviewsService() override;
 
-  // Initializes the UI Service. |previews_io_data| is the main previews IO
+  // Initializes the UI Service. |previews_decider_impl| is the main previews IO
   // object, and cannot be null. |optimization_guide_service| is the
   // Optimization Guide Service that is being listened to and is guaranteed to
   // outlive |this|. |io_task_runner| is the IO thread task runner.
   // |profile_path| is the path to user data on disc.
   void Initialize(
-      previews::PreviewsIOData* previews_io_data,
+      previews::PreviewsDeciderImpl* previews_decider_impl,
       optimization_guide::OptimizationGuideService* optimization_guide_service,
       const scoped_refptr<base::SingleThreadTaskRunner>& io_task_runner,
       const base::FilePath& profile_path);
 
+  // The previews UI thread service.
   previews::PreviewsUIService* previews_ui_service() {
     return previews_ui_service_.get();
+  }
+
+  // The server lite page preview decider.
+  PreviewsLitePageDecider* previews_lite_page_decider() {
+    return previews_lite_page_decider_.get();
   }
 
  private:
   // The previews UI thread service.
   std::unique_ptr<previews::PreviewsUIService> previews_ui_service_;
+
+  // The server lite page preview decider.
+  std::unique_ptr<PreviewsLitePageDecider> previews_lite_page_decider_;
 
   DISALLOW_COPY_AND_ASSIGN(PreviewsService);
 };

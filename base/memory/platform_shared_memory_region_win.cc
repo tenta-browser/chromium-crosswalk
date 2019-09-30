@@ -157,6 +157,19 @@ PlatformSharedMemoryRegion PlatformSharedMemoryRegion::Take(
   return PlatformSharedMemoryRegion(std::move(handle), mode, size, guid);
 }
 
+// static
+PlatformSharedMemoryRegion
+PlatformSharedMemoryRegion::TakeFromSharedMemoryHandle(
+    const SharedMemoryHandle& handle,
+    Mode mode) {
+  CHECK(mode == Mode::kReadOnly || mode == Mode::kUnsafe);
+  if (!handle.IsValid())
+    return {};
+
+  return Take(base::win::ScopedHandle(handle.GetHandle()), mode,
+              handle.GetSize(), handle.GetGUID());
+}
+
 HANDLE PlatformSharedMemoryRegion::GetPlatformHandle() const {
   return handle_.Get();
 }
@@ -203,6 +216,17 @@ bool PlatformSharedMemoryRegion::ConvertToReadOnly() {
 
   handle_.Set(duped_handle);
   mode_ = Mode::kReadOnly;
+  return true;
+}
+
+bool PlatformSharedMemoryRegion::ConvertToUnsafe() {
+  if (!IsValid())
+    return false;
+
+  CHECK_EQ(mode_, Mode::kWritable)
+      << "Only writable shared memory region can be converted to unsafe";
+
+  mode_ = Mode::kUnsafe;
   return true;
 }
 

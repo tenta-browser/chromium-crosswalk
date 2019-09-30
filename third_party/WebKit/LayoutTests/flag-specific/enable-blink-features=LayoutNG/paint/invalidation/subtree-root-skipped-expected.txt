@@ -23,14 +23,14 @@
           "reason": "subtree"
         },
         {
-          "object": "NGPaintFragment",
-          "rect": [9, 34, 102, 11],
-          "reason": "appeared"
+          "object": "NGPhysicalTextFragment 'Selection is here'",
+          "rect": [8, 30, 103, 19],
+          "reason": "chunk appeared"
         },
         {
-          "object": "NGPaintFragment",
-          "rect": [9, 34, 102, 11],
-          "reason": "disappeared"
+          "object": "NGPhysicalTextFragment 'Selection is here'",
+          "rect": [8, 30, 103, 19],
+          "reason": "chunk disappeared"
         },
         {
           "object": "InlineTextBox 'PASS'",
@@ -48,44 +48,6 @@
           "reason": "geometry"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "NGPaintFragment",
-      "reason": "subtree"
-    },
-    {
-      "object": "LayoutTextControl INPUT id='input'",
-      "reason": "subtree"
-    },
-    {
-      "object": "LayoutBlockFlow DIV",
-      "reason": "subtree"
-    },
-    {
-      "object": "RootInlineBox",
-      "reason": "subtree"
-    },
-    {
-      "object": "LayoutText #text",
-      "reason": "subtree"
-    },
-    {
-      "object": "InlineTextBox 'PASS'",
-      "reason": "subtree"
-    },
-    {
-      "object": "NGPaintFragment",
-      "reason": "subtree"
-    },
-    {
-      "object": "NGPaintFragment",
-      "reason": "subtree"
-    },
-    {
-      "object": "LayoutNGBlockFlow (positioned) DIV id='div'",
-      "reason": "geometry"
     }
   ]
 }

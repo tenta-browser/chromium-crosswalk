@@ -11,6 +11,7 @@
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "chromeos/chromeos_export.h"
+#include "net/base/completion_once_callback.h"
 #include "net/proxy_resolution/dhcp_pac_file_fetcher.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
 #include "url/gurl.h"
@@ -37,9 +38,13 @@ class CHROMEOS_EXPORT DhcpPacFileFetcherChromeos
       net::URLRequestContext* url_request_context);
   ~DhcpPacFileFetcherChromeos() override;
 
-  // net::DhcpPacFileFetcher
+  // net::DhcpPacFileFetcher implementation
+
+  // TODO(https://crbug.com/882996)  Even though it is documented at
+  // DhcpPacFileFetcher::Fetch() that only one fetch is allowed to be
+  // outstanding at any given time, crashes show that this is not obeyed.
   int Fetch(base::string16* utf16_text,
-            const net::CompletionCallback& callback,
+            net::CompletionOnceCallback callback,
             const net::NetLogWithSource& net_log,
             const net::NetworkTrafficAnnotationTag traffic_annotation) override;
   void Cancel() override;
@@ -49,7 +54,7 @@ class CHROMEOS_EXPORT DhcpPacFileFetcherChromeos
 
  private:
   void ContinueFetch(base::string16* utf16_text,
-                     net::CompletionCallback callback,
+                     net::CompletionOnceCallback callback,
                      const net::NetworkTrafficAnnotationTag traffic_annotation,
                      std::string pac_url);
 

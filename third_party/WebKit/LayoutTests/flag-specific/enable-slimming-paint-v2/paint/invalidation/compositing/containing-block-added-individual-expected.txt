@@ -9,7 +9,7 @@
         {
           "object": "LayoutBlockFlow (positioned) DIV class='fixed'",
           "rect": [50, 50, 75, 75],
-          "reason": "disappeared"
+          "reason": "chunk disappeared"
         }
       ]
     },
@@ -22,15 +22,9 @@
         {
           "object": "LayoutBlockFlow (positioned) DIV class='fixed'",
           "rect": [50, 50, 75, 75],
-          "reason": "appeared"
+          "reason": "chunk appeared"
         }
       ]
-    }
-  ],
-  "objectPaintInvalidations": [
-    {
-      "object": "LayoutBlockFlow (positioned) DIV class='fixed'",
-      "reason": "geometry"
     }
   ]
 }

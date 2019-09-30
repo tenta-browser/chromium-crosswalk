@@ -22,6 +22,7 @@ BackgroundTest.prototype = {
 
   /** @override */
   setUp: function() {
+    window.EventType = chrome.automation.EventType;
     window.RoleType = chrome.automation.RoleType;
     window.doCmd = this.doCmd;
     window.press = this.press;
@@ -108,7 +109,7 @@ BackgroundTest.prototype = {
       <p>After2</p>
       <p>After3</p>
     </div>
-    <div id="live" aria-live="polite"></div>
+    <div id="live" aria-live="assertive"></div>
     <div id="delete" role="button">Delete</div>
     <script>
       document.getElementById('delete').addEventListener('click', function() {
@@ -117,6 +118,15 @@ BackgroundTest.prototype = {
         document.getElementById('live').innerText = 'Deleted';
       });
     </script>
+  */},
+
+  detailsDoc: function() {/*!
+    <p aria-details="details">start</p>
+    <div role="group">
+      <p>Before</p>
+      <p id="details">Details</p>
+      <p>After</p>
+    </div>
   */},
 };
 
@@ -139,16 +149,16 @@ TEST_F('BackgroundTest', 'ForwardBackwardNavigation', function() {
 
     mockFeedback.call(doCmd('nextLink'))
         .expectSpeech('alpha', 'Link')
-        .expectBraille('alpha lnk Press Search+Space to activate.');
+        .expectBraille('alpha lnk');
     mockFeedback.call(doCmd('nextLink'))
         .expectSpeech('beta', 'Link')
-        .expectBraille('beta lnk Press Search+Space to activate.');
+        .expectBraille('beta lnk');
     mockFeedback.call(doCmd('nextLink'))
         .expectSpeech('delta', 'Link')
-        .expectBraille('delta lnk Press Search+Space to activate.');
+        .expectBraille('delta lnk');
     mockFeedback.call(doCmd('previousLink'))
         .expectSpeech('beta', 'Link')
-        .expectBraille('beta lnk Press Search+Space to activate.');
+        .expectBraille('beta lnk');
     mockFeedback.call(doCmd('nextHeading'))
         .expectSpeech('charlie', 'Heading 1')
         .expectBraille('charlie h1');
@@ -161,10 +171,10 @@ TEST_F('BackgroundTest', 'ForwardBackwardNavigation', function() {
 
     mockFeedback.call(doCmd('nextObject'))
         .expectSpeech('delta', 'Link')
-        .expectBraille('delta lnk Press Search+Space to activate.');
+        .expectBraille('delta lnk');
     mockFeedback.call(doCmd('nextObject'))
         .expectSpeech('echo', 'Link')
-        .expectBraille('echo lnk Press Search+Space to activate.');
+        .expectBraille('echo lnk');
     mockFeedback.call(doCmd('nextObject'))
         .expectSpeech('foxtraut', 'Heading 2')
         .expectBraille('foxtraut h2');
@@ -267,7 +277,7 @@ TEST_F('BackgroundTest', 'SelectSingleBasic', function() {
     var incrementSelectedIndex =
         this.incrementSelectedIndex.bind(this, undefined, '#fruitSelect');
     mockFeedback.expectSpeech('apple', 'has pop up', 'Collapsed')
-        .expectBraille('apple btn +popup + Press Search+Space to activate.')
+        .expectBraille('apple btn +popup +')
         .call(incrementSelectedIndex)
         .expectSpeech('grape', /2 of 3/)
         .expectBraille('grape mnuitm 2/3 (x)')
@@ -310,7 +320,7 @@ TEST_F('BackgroundTest', 'AriaLabel', function() {
       mockFeedback.expectSpeech('foo')
           .expectSpeech('Link')
           .expectSpeech('Press Search+Space to activate.')
-          .expectBraille('foo lnk Press Search+Space to activate.');
+          .expectBraille('foo lnk');
       mockFeedback.replay();
     }
   );
@@ -398,7 +408,7 @@ TEST_F('BackgroundTest', 'FocusInputElement', function() {
     }.bind(this));
 });
 
-// Flaky, see http://crbug.com/643902.
+// Flaky, see https://crbug.com/622387.
 TEST_F('BackgroundTest', 'DISABLED_UseEditableState', function() {
   this.runWithLoadedTree(
     function() {/*!
@@ -488,7 +498,7 @@ SYNC_TEST_F('BackgroundTest', 'GlobsToRegExp', function() {
       Background.globsToRegExp_(['url1*', 'u?l2', '*url3']).toString());
 });
 
-// Flaky, see http://crbug.com/635032
+// Flaky, see https://crbug.com/622387.
 TEST_F('BackgroundTest', 'DISABLED_ActiveOrInactive', function() {
   var mockFeedback = this.createMockFeedback();
   this.runWithLoadedTree(function() {/*!
@@ -872,6 +882,17 @@ TEST_F('BackgroundTest', 'DisappearingObject', function() {
   });
 });
 
+/** Tests that focus jumps to details properly when indicated. */
+TEST_F('BackgroundTest', 'JumpToDetails', function() {
+  var mockFeedback = this.createMockFeedback();
+  this.runWithLoadedTree(this.detailsDoc, function(rootNode) {
+    mockFeedback.call(doCmd('jumpToDetails'))
+      .expectSpeech('Details');
+
+    mockFeedback.replay();
+  });
+});
+
 TEST_F('BackgroundTest', 'ButtonNameValueDescription', function() {
   var mockFeedback = this.createMockFeedback();
   this.runWithLoadedTree(function(root) {/*!
@@ -1146,7 +1167,7 @@ TEST_F('BackgroundTest', 'HeadingLevels', function() {
   });
 });
 
-// Flaky, see crbug.com/693928.
+// Flaky, see https://crbug.com/622387.
 TEST_F('BackgroundTest', 'DISABLED_EditableNavigation', function() {
   var mockFeedback = this.createMockFeedback();
   this.runWithLoadedTree(function(root) {/*!
@@ -1164,12 +1185,14 @@ TEST_F('BackgroundTest', 'DISABLED_EditableNavigation', function() {
   });
 });
 
-TEST_F('BackgroundTest', 'NavigationMovesFocus', function() {
+// Flaky, see https://crbug.com/622387.
+TEST_F('BackgroundTest', 'DISABLED_NavigationMovesFocus', function() {
   this.runWithLoadedTree(function(root) {/*!
     <p>start</p>
     <input type="text"></input>
   */}, function(root) {
-    this.listenOnce(root, 'focus', function(e) {
+    this.listenOnce(
+        root.find({role: RoleType.TEXT_FIELD}), 'focus', function(e) {
       var focus = ChromeVoxState.instance.currentRange.start.node;
       assertEquals(RoleType.TEXT_FIELD, focus.role);
       assertTrue(focus.state.focused);
@@ -1339,11 +1362,13 @@ TEST_F('BackgroundTest', 'EditableKeyCommand', function() {
   });
 });
 
-TEST_F('BackgroundTest', 'TextSelectionAndLiveRegion', function() {
+// Flaky. See http://crbug.com/857382.
+TEST_F('BackgroundTest', 'DISABLED_TextSelectionAndLiveRegion', function() {
+  DesktopAutomationHandler.announceActions = true;
   var mockFeedback = this.createMockFeedback();
   this.runWithLoadedTree(function(root) {/*!
     <div><input value="test" type="text"></input></div>
-    <div id="live" aria-live="polite"></div>
+    <div id="live" aria-live="assertive"></div>
     <script>
       const input = document.querySelector('input');
       const [div, live] = document.querySelectorAll('div');
@@ -1416,7 +1441,7 @@ TEST_F('BackgroundTest', 'TableColumnHeaders', function() {
   });
 });
 
-// Flaky, see http://crbug.com/825429.
+// Flaky, see https://crbug.com/622387.
 TEST_F('BackgroundTest', 'DISABLED_ActiveDescendantUpdates', function() {
   var mockFeedback = this.createMockFeedback();
   this.runWithLoadedTree(function(root) {/*!
@@ -1449,7 +1474,8 @@ TEST_F('BackgroundTest', 'DISABLED_ActiveDescendantUpdates', function() {
   });
 });
 
-TEST_F('BackgroundTest', 'NavigationEscapesEdit', function() {
+// Flaky, see https://crbug.com/622387.
+TEST_F('BackgroundTest', 'DISABLED_NavigationEscapesEdit', function() {
   var mockFeedback = this.createMockFeedback();
   this.runWithLoadedTree(function() {/*!
     <p>before content editable</p>
@@ -1473,53 +1499,54 @@ TEST_F('BackgroundTest', 'NavigationEscapesEdit', function() {
     const [contentEditable, textArea] =
           root.findAll({role: RoleType.TEXT_FIELD});
 
-    mockFeedback.call(contentEditable.focus.bind(contentEditable))
-        .expectSpeech('Edit text')
-        .call(assertBeginning.bind(this, true))
-        .call(assertEnd.bind(this, false))
+    this.listenOnce(contentEditable, EventType.FOCUS, function() {
+      mockFeedback.call(assertBeginning.bind(this, true))
+          .call(assertEnd.bind(this, false))
 
-        .call(press(40  /* ArrowDown */))
-        .expectSpeech('is')
-        .call(assertBeginning.bind(this, false))
-        .call(assertEnd.bind(this, false))
+          .call(press(40  /* ArrowDown */))
+          .expectSpeech('is')
+          .call(assertBeginning.bind(this, false))
+          .call(assertEnd.bind(this, false))
 
-        .call(press(40  /* ArrowDown */))
-        .expectSpeech('a')
-        .call(assertBeginning.bind(this, false))
-        .call(assertEnd.bind(this, false))
+          .call(press(40  /* ArrowDown */))
+          .expectSpeech('a')
+          .call(assertBeginning.bind(this, false))
+          .call(assertEnd.bind(this, false))
 
-        .call(press(40  /* ArrowDown */))
-        .expectSpeech('test')
-        .call(assertBeginning.bind(this, false))
-        .call(assertEnd.bind(this, true))
+          .call(press(40  /* ArrowDown */))
+          .expectSpeech('test')
+          .call(assertBeginning.bind(this, false))
+          .call(assertEnd.bind(this, true))
 
-        .call(textArea.focus.bind(textArea))
-        .expectSpeech('Text area')
-        .call(assertBeginning.bind(this, true))
-        .call(assertEnd.bind(this, false))
-        .clearPendingOutput()
+          .call(textArea.focus.bind(textArea))
+          .expectSpeech('Text area')
+          .call(assertBeginning.bind(this, true))
+          .call(assertEnd.bind(this, false))
+          .clearPendingOutput()
 
-        .call(press(40  /* ArrowDown */))
-        .expectSpeech('is')
-        .call(press(39  /* ArrowRight */))
-        .expectSpeech('s')
-        .call(assertBeginning.bind(this, false))
-        .call(assertEnd.bind(this, false))
+          .call(press(40  /* ArrowDown */))
+          .expectSpeech('is')
+          .call(press(39  /* ArrowRight */))
+          .expectSpeech('s')
+          .call(assertBeginning.bind(this, false))
+          .call(assertEnd.bind(this, false))
 
-        .call(press(40  /* ArrowDown */))
-        .call(press(37  /* ArrowLeft */))
-        .expectSpeech('a')
-        .call(assertBeginning.bind(this, false))
-        .call(assertEnd.bind(this, false))
+          .call(press(40  /* ArrowDown */))
+          .call(press(37  /* ArrowLeft */))
+          .expectSpeech('a')
+          .call(assertBeginning.bind(this, false))
+          .call(assertEnd.bind(this, false))
 
-        .call(press(40  /* ArrowDown */))
-        .expectSpeech('test')
-        .call(press(39  /* ArrowRight */))
-        .expectSpeech('e')
-        .call(assertBeginning.bind(this, false))
-        .call(assertEnd.bind(this, true))
+          .call(press(40  /* ArrowDown */))
+          .expectSpeech('test')
+          .call(press(39  /* ArrowRight */))
+          .expectSpeech('e')
+          .call(assertBeginning.bind(this, false))
+          .call(assertEnd.bind(this, true))
 
-        .replay();
+          .replay();
+    }.bind(this));
+    contentEditable.focus();
   });
 });
 
@@ -1605,6 +1632,90 @@ TEST_F('BackgroundTest', 'NavigationIgnoresDescriptions', function() {
         .expectEarcon(cvox.Earcon.WRAP)
         .call(doCmd('nextObject'))
         .expectSpeech('before')
+        .replay();
+  });
+});
+
+TEST_F('BackgroundTest', 'MathContentViaInnerHtml', function() {
+  var mockFeedback = this.createMockFeedback();
+  this.runWithLoadedTree(function(root) {/*
+    <div role="math">
+      <semantics>
+        <mrow class="MJX-TeXAtom-ORD">
+          <mstyle displaystyle="true" scriptlevel="0">
+            <mi>a</mi>
+            <mo stretchy="false">(</mo>
+            <mi>y</mi>
+            <mo>+</mo>
+            <mi>m</mi>
+            <msup>
+              <mo stretchy="false">)</mo>
+              <mrow class="MJX-TeXAtom-ORD">
+                <mn>2</mn>
+              </mrow>
+            </msup>
+            <mo>+</mo>
+            <mi>b</mi>
+            <mo stretchy="false">(</mo>
+            <mi>y</mi>
+            <mo>+</mo>
+            <mi>m</mi>
+            <mo stretchy="false">)</mo>
+            <mo>+</mo>
+            <mi>c</mi>
+            <mo>=</mo>
+            <mn>0.</mn>
+          </mstyle>
+        </mrow>
+        <annotation encoding="application/x-tex">{\displaystyle a(y+m)^{2}+b(y+m)+c=0.}</annotation>
+      </semantics>
+    </div>
+  */}, function(root) {
+    mockFeedback
+        .call(doCmd('nextObject'))
+        .expectSpeech('a ( y + m ) squared + b ( y + m ) + c = 0 .')
+        .expectSpeech('Press up, down, left, or right to explore math.')
+        .replay();
+  });
+});
+
+TEST_F('BackgroundTest', 'GestureGranularity', function() {
+  var mockFeedback = this.createMockFeedback();
+  this.runWithLoadedTree(function(root) {/*
+    <p>This is a test</p>
+  */}, function(root) {
+    var doGesture = (gesture) => {
+      return () => { GestureCommandHandler.onAccessibilityGesture_(gesture) };
+    };
+    mockFeedback
+        .call(doGesture('swipeLeft3'))
+        .expectSpeech('Word')
+        .call(doGesture('swipeDown1'))
+        .expectSpeech('is')
+        .call(doGesture('swipeDown1'))
+        .expectSpeech('a')
+        .call(doGesture('swipeUp1'))
+        .expectSpeech('is')
+
+        .call(doGesture('swipeLeft3'))
+        .expectSpeech('Character')
+        .call(doGesture('swipeDown1'))
+        .expectSpeech('s')
+        .call(doGesture('swipeUp1'))
+        .expectSpeech('i')
+
+        .call(doGesture('swipeLeft3'))
+        .expectSpeech('Line')
+        .call(doGesture('swipeUp1'))
+        .expectSpeech('This is a test')
+
+        .call(doGesture('swipeRight3'))
+        .expectSpeech('Character')
+        .call(doGesture('swipeRight3'))
+        .expectSpeech('Word')
+        .call(doGesture('swipeRight3'))
+        .expectSpeech('Line')
+
         .replay();
   });
 });

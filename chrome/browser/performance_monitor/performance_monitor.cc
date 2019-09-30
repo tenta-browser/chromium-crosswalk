@@ -71,9 +71,9 @@ void GatherMetricsForRenderProcess(content::RenderProcessHost* host,
 
 }  // namespace
 
-PerformanceMonitor::PerformanceMonitor() {}
+PerformanceMonitor::PerformanceMonitor() = default;
 
-PerformanceMonitor::~PerformanceMonitor() {}
+PerformanceMonitor::~PerformanceMonitor() = default;
 
 // static
 PerformanceMonitor* PerformanceMonitor::GetInstance() {
@@ -102,7 +102,7 @@ void PerformanceMonitor::GatherMetricsMapOnUIThread() {
     content::RenderProcessHost* host = rph_iter.GetCurrentValue();
     ProcessMetricsMetadata data;
     data.process_type = content::PROCESS_TYPE_RENDERER;
-    data.handle = host->GetHandle();
+    data.handle = host->GetProcess().Handle();
 
     GatherMetricsForRenderProcess(host, &data);
     MarkProcessAsAlive(data, current_update_sequence);
@@ -146,9 +146,11 @@ void PerformanceMonitor::GatherMetricsMapOnIOThread(
 
   // Find all child processes (does not include renderers), which has to be
   // done on the IO thread.
+  // This creates a race on usage of the child process handles on Windows.
+  // See https://crbug.com/821453.
   for (content::BrowserChildProcessHostIterator iter; !iter.Done(); ++iter) {
     ProcessMetricsMetadata child_process_data;
-    child_process_data.handle = iter.GetData().handle;
+    child_process_data.handle = iter.GetData().GetHandle();
     child_process_data.process_type = iter.GetData().process_type;
 
     if (iter.GetData().name == base::ASCIIToUTF16(content::kFlashPluginName)) {

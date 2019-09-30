@@ -11,14 +11,11 @@
 
 #include "base/compiler_specific.h"
 #include "base/macros.h"
+#include "components/browser_sync/profile_sync_service.h"
 #include "components/sync/base/model_type.h"
 #include "components/sync/engine/cycle/sync_cycle_snapshot.h"
 
 class Profile;
-
-namespace browser_sync {
-class ProfileSyncService;
-}  // namespace browser_sync
 
 namespace syncer {
 class SyncSetupInProgressHandle;
@@ -42,10 +39,13 @@ class ProfileSyncServiceHarness {
   static std::unique_ptr<ProfileSyncServiceHarness> Create(
       Profile* profile,
       const std::string& username,
-      const std::string& gaia_id,
       const std::string& password,
       SigninType signin_type);
   virtual ~ProfileSyncServiceHarness();
+
+  // Creates a ProfileSyncService for the profile passed at construction and
+  // signs in without actually enabling sync the feature.
+  bool SignIn();
 
   // Creates a ProfileSyncService for the profile passed at construction and
   // enables sync for all available datatypes. Returns true only after sync has
@@ -55,7 +55,7 @@ class ProfileSyncServiceHarness {
 
   // Setup sync without the authenticating through the passphrase encryption.
   // Use this method when you need to setup a client that you're going to call
-  // RestartSyncService() directly after.
+  // StopSyncService(), StartSyncService() directly after.
   bool SetupSyncForClearingServerData();
 
   // Both SetupSync and SetupSyncForClear call into this method.
@@ -64,13 +64,31 @@ class ProfileSyncServiceHarness {
   bool SetupSync(syncer::ModelTypeSet synced_datatypes,
                  bool skip_passphrase_verification = false);
 
-  // Restart sync service to simulate a sign-in/sign-out. This is useful
-  // to recover from a lost birthday. Use directly after a clear server data
-  // command to start from clean slate.
-  bool RestartSyncService();
+  // Methods to stop and restart the sync service.
+  //
+  // For example, this can be used to simulate a sign-in/sign-out or can be
+  // useful to recover from a lost birthday.
+  // To start from a clear slate, clear server
+  // data first, then call StopSyncService(syncer::SyncService::CLEAR_DATA)
+  // followed by StartSyncService().
+  // To simulate the user being offline for a while, call
+  // StopSyncService(syncer::SyncService::KEEP_DATA) followed by
+  // StartSyncService();
+  // Stops the sync service.
+  void StopSyncService(syncer::SyncService::SyncStopDataFate data_fate);
+  // Starts the sync service after a previous stop.
+  bool StartSyncService();
 
-  // Sign out of sync service.
+#if !defined(OS_CHROMEOS)
+  // Sign out of sync service. ChromeOS doesn't have the concept of sign-out,
+  // so this only exists on other platforms.
   void SignoutSyncService();
+#endif  // !OS_CHROMEOS
+
+  // Returns whether this client has unsynced items. Avoid verifying false
+  // return values, because tests typically shouldn't make assumptions about
+  // other datatypes.
+  bool HasUnsyncedItems();
 
   // Calling this acts as a barrier and blocks the caller until |this| and
   // |partner| have both completed a sync cycle.  When calling this method,
@@ -104,7 +122,7 @@ class ProfileSyncServiceHarness {
   // Blocks the caller until sync setup is complete. Returns true if and only
   // if sync setup completed successfully. See syncer::SyncService's
   // IsSyncActive() method for the definition of what successful means here.
-  bool AwaitSyncSetupCompletion();
+  bool AwaitSyncSetupCompletion(bool skip_passphrase_verification);
 
   // Returns the ProfileSyncService member of the sync client.
   browser_sync::ProfileSyncService* service() const { return service_; }
@@ -145,15 +163,15 @@ class ProfileSyncServiceHarness {
  private:
   ProfileSyncServiceHarness(Profile* profile,
                             const std::string& username,
-                            const std::string& gaia_id,
                             const std::string& password,
                             SigninType signin_type);
 
   // Gets detailed status from |service_| in pretty-printable form.
   std::string GetServiceStatus();
 
-  // Returns true if sync is disabled for this client.
-  bool IsSyncDisabled() const;
+  // Returns true if the user has enabled and configured sync for this client.
+  // Note that this does not imply sync is actually running.
+  bool IsSyncEnabledByUser() const;
 
   // Sync profile associated with this sync client.
   Profile* profile_;
@@ -166,7 +184,6 @@ class ProfileSyncServiceHarness {
 
   // Credentials used for GAIA authentication.
   std::string username_;
-  std::string gaia_id_;
   std::string password_;
 
   // Used to decide what method of profile signin to use.
